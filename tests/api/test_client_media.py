@@ -25,7 +25,7 @@ from openminion.api.server.client_media import (
     MAX_PENDING_COUNT,
     handle_media_http,
 )
-from openminion.api.server.streaming import handle_turn_stream_request
+from openminion.api.server.client_streaming import handle_turn_stream_request
 from openminion.base.config import OpenMinionConfig, save_config
 from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.artifact.models import sha_to_ref

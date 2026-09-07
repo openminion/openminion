@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.modules.tool.runtime.policy import Policy
-from openminion.tools.host.plugin import _h_metrics, collect_host_metrics, register
+from openminion.tools.host.plugin import (
+    _h_inventory_report,
+    _h_metrics,
+    collect_host_metrics,
+    register,
+)
 
 
 def _ctx(tmp_path: Path) -> RuntimeContext:
@@ -36,6 +45,7 @@ def test_register_adds_host_metrics_tool() -> None:
     registry = ToolRegistry()
     register(registry)
     assert "host.metrics" in registry.list()
+    assert "host.inventory_report" in registry.list()
 
 
 def test_h_metrics_returns_platform_disk_and_memory(tmp_path: Path) -> None:
@@ -91,3 +101,53 @@ def test_h_metrics_content_formats_unknown_memory(monkeypatch, tmp_path: Path) -
     payload = _h_metrics({"include_disk": False}, _ctx(tmp_path))
     assert payload["ok"] is True
     assert "Memory: unknown used / unknown total" in payload["content"]
+
+
+def test_h_inventory_report_writes_matching_json_and_markdown(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+
+    payload = _h_inventory_report({"output_dir": "inventory"}, ctx)
+
+    workspace = Path(ctx.workspace)
+    json_path = workspace / payload["data"]["json_path"]
+    markdown_path = workspace / payload["data"]["markdown_path"]
+    report = json.loads(json_path.read_text(encoding="utf-8"))
+    markdown = markdown_path.read_text(encoding="utf-8")
+    assert payload["verified"] is True
+    assert report["schema_version"] == "openminion.local-system-inventory.v1"
+    assert list(report) == [
+        "schema_version",
+        "source",
+        "platform",
+        "memory",
+        "disk",
+        "warnings",
+    ]
+    assert markdown.startswith("# Local System Inventory\n")
+    assert markdown.index("## Platform") < markdown.index("## Memory")
+    assert markdown.index("## Memory") < markdown.index("## Disk")
+    assert markdown.index("## Disk") < markdown.index("## Warnings")
+    assert f"- system: {report['platform']['system']}" in markdown
+    assert f"- total_bytes: {report['memory']['total_bytes']}" in markdown
+    assert str(tmp_path) not in json_path.read_text(encoding="utf-8")
+    assert payload["data"]["json_path"] == "inventory/system-inventory.json"
+    assert payload["data"]["markdown_path"] == "inventory/system-inventory.md"
+    for disk in report["disk"]:
+        assert f"- path: {disk['path']}" in markdown
+
+
+def test_h_inventory_report_does_not_overwrite_without_permission(
+    tmp_path: Path,
+) -> None:
+    ctx = _ctx(tmp_path)
+    _h_inventory_report({"output_dir": "inventory"}, ctx)
+
+    with pytest.raises(ToolRuntimeError, match="already exists"):
+        _h_inventory_report({"output_dir": "inventory"}, ctx)
+
+
+def test_h_inventory_report_rejects_path_outside_workspace(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+
+    with pytest.raises(ToolRuntimeError, match="escapes workspace root"):
+        _h_inventory_report({"output_dir": "../outside"}, ctx)

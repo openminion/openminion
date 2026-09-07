@@ -179,6 +179,7 @@ def test_unsupported_capability_is_typed_error(tmp_path):
         )
 
 
+@pytest.mark.package_integration
 def test_graphify_adapter_reads_pragmagraph_graphify_payload(tmp_path):
     graph_path = tmp_path / "graph.json"
     write_graphify_payload(graph_path)

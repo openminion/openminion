@@ -49,7 +49,7 @@ def test_validator_rejects_incompatible_component() -> None:
 def test_cron_repository_contract_compatibility(tmp_path: Path) -> None:
     store = SQLiteSessionStore(tmp_path / "sessions.db")
     try:
-        assert store.contract_version == SESSION_REPOSITORY_INTERFACE_VERSION
+        assert store.repository_contract_version == SESSION_REPOSITORY_INTERFACE_VERSION
         ensure_cron_repository_compatibility(store)
     finally:
         store.close()

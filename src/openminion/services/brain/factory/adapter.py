@@ -34,21 +34,33 @@ def create_tool_api(
     runtime_registry: Any | None = None,
     agent_name: str | None = None,
     skill_api: Any | None = None,
+    secret_service: Any | None = None,
+    memory_service: Any | None = None,
+    policy_ctl: Any | None = None,
     a2a_delegate_api: Any | None = None,
+    agent_query: Any | None = None,
     agent_profile: Any | None = None,
+    task_manager: Any | None = None,
+    telemetryctl: Any | None = None,
+    artifactctl: Any | None = None,
 ) -> Any:
     return create_tool_adapter(
         mode=mode,
         workspace=workspace_root,
         runtime_config=runtime_config,
         runtime_registry=runtime_registry,
-        policy=None,
-        policy_adapter=None,
         reactions_enabled=getattr(runtime_config, "reactions_enabled", True),
         agent_id=str(agent_name or "").strip() or None,
         skill_api=skill_api,
+        secret_service=secret_service,
+        memory_service=memory_service,
+        policy_ctl=policy_ctl,
         a2a_delegate_api=a2a_delegate_api,
+        agent_query=agent_query,
         agent_profile=agent_profile,
+        task_manager=task_manager,
+        telemetryctl=telemetryctl,
+        artifactctl=artifactctl,
     )
 
 
@@ -82,6 +94,8 @@ def create_context_api(
     telemetryctl: Any | None = None,
     skill_config: Any | None = None,
     skill_home_root: Any | None = None,
+    artifactctl: Any | None = None,
+    owns_artifactctl: bool = False,
 ) -> Any:
     return create_context_adapter(
         mode=mode,
@@ -94,6 +108,8 @@ def create_context_api(
         telemetryctl=telemetryctl,
         skill_config=skill_config,
         skill_home_root=skill_home_root,
+        artifactctl=artifactctl,
+        owns_artifactctl=owns_artifactctl,
     )
 
 
@@ -124,7 +140,7 @@ def create_policy_api(
     action_policy_config: ActionPolicyConfig | None = None,
 ) -> Any:
     if policy_service is not None and mode != "local":
-        from openminion.modules.policy.adapters.brain import PolicyCtlBrainAdapter
+        from openminion.modules.brain.adapters.policy import PolicyCtlBrainAdapter
 
         return PolicyCtlBrainAdapter(
             policy_service,

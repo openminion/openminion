@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from http import HTTPStatus
 import re
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qsl, unquote
 
 from openminion.api.server.client_artifacts import ClientArtifactError
@@ -112,8 +112,11 @@ def _bounded_int(value: str | None, *, default: int, maximum: int) -> int:
 
 
 def _artifact_error(code: str) -> Exception:
-    return ClientArtifactError(
-        HTTPStatus.BAD_REQUEST,
-        code,
-        "Request is invalid.",
+    return cast(
+        Exception,
+        ClientArtifactError(
+            HTTPStatus.BAD_REQUEST,
+            code,
+            "Request is invalid.",
+        ),
     )

@@ -298,6 +298,7 @@ def _build_direct_tool_closure_message(
             f"The explicit requested tool batch ({rendered_tools}) already completed "
             "successfully for this turn. Do not call more tools."
         ),
+        meta={"direct_tool_closure": True},
     )
 
 

@@ -249,8 +249,7 @@ def build_structured_retry_message(
             f"{orchestrate_guidance}"
             "Do not emit direct tool calls in decide mode. If the user explicitly "
             "asks to hand work to another agent, keep mode='act' and express that "
-            "through execution_target.kind='delegated' plus target_agent_id or "
-            "target_capability. "
+            "through execution_target.kind='delegated' plus target_agent_id. "
             "Do not claim tools are unavailable in decide mode. "
             "Tool capabilities are provided in the decide prompt context. "
             "Execution tools are available in act phase. "
@@ -280,7 +279,7 @@ def build_structured_retry_message(
             "Do not return mode, commands, next_action, continue/replan closures, "
             "or plain-text limitation statements here. If the user explicitly "
             "requested delegation, set execution_target.kind='delegated' and "
-            "provide target_agent_id or target_capability. Tool choice happens "
+            "provide target_agent_id. Tool choice happens "
             "inside the act loop, not in the decide payload."
         )
         return _finalize_retry_message(

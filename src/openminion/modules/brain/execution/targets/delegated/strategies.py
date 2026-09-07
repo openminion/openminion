@@ -114,6 +114,33 @@ def _is_available_state(state: str) -> bool:
     return normalized in {"available", "healthy", "online", "ready", "unknown"}
 
 
+def list_available_agent_ids(registry: Any) -> list[str]:
+    if isinstance(registry, dict):
+        agent_ids = {_normalized_text(agent_id) for agent_id in registry}
+    else:
+        list_agents = getattr(registry, "list_agents", None)
+        candidates = (
+            list(list_agents()) if callable(list_agents) else list(registry or [])
+        )
+        agent_ids = {
+            _normalized_text(
+                getattr(item, "agent_id", None)
+                or getattr(item, "name", None)
+                or (item.get("agent_id") if isinstance(item, dict) else None)
+                or (item.get("name") if isinstance(item, dict) else None)
+            )
+            for item in candidates
+        }
+    return sorted(
+        agent_id
+        for agent_id in agent_ids
+        if agent_id
+        and _is_available_state(
+            _describe_registry_state(registry, agent_id=agent_id)[1]
+        )
+    )
+
+
 def _normalized_error_details(raw: Any) -> dict[str, Any]:
     return dict(raw) if isinstance(raw, dict) else {}
 
@@ -157,8 +184,6 @@ def _delegate_command(
     }
     if delegation_context.active_skill_id:
         params["active_skill_id"] = delegation_context.active_skill_id
-    if payload.target_capability:
-        params["target_capability"] = payload.target_capability
     parent_context = _delegation_context_payload(
         delegation_context,
         fallback=payload.delegation_context,
@@ -205,10 +230,8 @@ class AcceptOrFailResolver(AgentResolver):
         self,
         *,
         target_agent_id: str | None,
-        target_capability: str | None,
         registry: Any,
     ) -> str:
-        del target_capability
         normalized = _normalized_text(target_agent_id)
         if not normalized:
             raise ValueError("delegate requires target_agent_id in v1")
@@ -673,14 +696,30 @@ class DefaultAsyncCancellationPolicy(AsyncCancellationPolicy):
             trace_id=str(getattr(ctx.state, "trace_id", "") or ""),
         )
         normalized = dict(raw or {}) if isinstance(raw, dict) else {}
+        message = _normalized_text(normalized.get("summary")) or "Delegation cancelled."
+        raw_error = normalized.get("error")
+        error = dict(raw_error) if isinstance(raw_error, dict) else {}
+        status = _normalized_text(normalized.get("status")).lower()
+        if status not in {"canceled", "cancelled"}:
+            return ExecutionResult(
+                status="error",
+                working_state=ctx.state,
+                message=message,
+                action_result=ActionResult(
+                    command_id=job_id,
+                    status=BRAIN_ACTION_STATUS_FAILED,
+                    summary=message,
+                    error=ActionError(
+                        code=_normalized_text(error.get("code"))
+                        or "A2A_JOB_CANCEL_FAILED",
+                        message=_normalized_text(error.get("message")) or message,
+                    ),
+                ),
+            )
         if task_id:
             tracker = TaskManagerTaskTracker()
             tracker.bind_context(ctx=ctx)
             tracker.mark_cancelled(task_id=task_id)
-        message = _normalized_text(normalized.get("summary")) or "Delegation cancelled."
-        error = (
-            normalized.get("error") if isinstance(normalized.get("error"), dict) else {}
-        )
         return ExecutionResult(
             status="stopped",
             working_state=ctx.state,
@@ -751,6 +790,7 @@ __all__ = [
     "FailFastPolicy",
     "FailOnClarificationPolicy",
     "HashKeyGenerator",
+    "list_available_agent_ids",
     "PassThroughSynthesizer",
     "PollingResumeStrategy",
     "RegistryDiscoveryProvider",

@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from openminion.modules.brain.loop.adaptive import (
     ACT_ADAPTIVE_ALLOWED_TOOLS,
     ActLoopMode,
@@ -292,6 +294,71 @@ def test_general_adaptive_profile_allows_decompose_control_tool() -> None:
     }
 
 
+def test_restricted_entry_keeps_full_allowed_surface_without_control_tools() -> None:
+    llm_client = _FakeLLMClient()
+    executor = _FakeCommandExecutor()
+    ctx, services = _ctx(llm_client, executor)
+    allowed = frozenset({"file.list_dir", "file.read"})
+    services.runner = SimpleNamespace(
+        tool_api=SimpleNamespace(
+            is_tool_allowed=lambda name: name in allowed,
+            registry=object(),
+        ),
+        options=SimpleNamespace(failure_strategy="halt"),
+    )
+    ctx.decision.reason_code = "entry_tool_call"
+    ctx.decision._entry_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text="",
+        tool_calls=[
+            ToolCall(id="call-1", name="file.list_dir", arguments={"path": "."})
+        ],
+    )
+    captured: dict[str, Any] = {}
+
+    def _fake_run_adaptive_tool_loop(*args, **kwargs):
+        del args
+        captured.update(kwargs)
+        profile = kwargs["profile"]
+        return AdaptiveToolLoopOutcome(
+            profile_name=profile.profile_name,
+            mode_name=profile.mode_name,
+            termination_reason="final_text",
+            state=AdaptiveToolLoopState(),
+            allowed_tools=profile.allowed_tools,
+            mode_result=SimpleNamespace(
+                status="done",
+                working_state=ctx.state,
+                message="ok",
+            ),
+        )
+
+    with (
+        patch(
+            "openminion.modules.brain.loop.adaptive.modes._with_exposed_runtime_tools",
+            return_value=allowed,
+        ),
+        patch(
+            "openminion.modules.brain.loop.adaptive.modes.build_runtime_tool_specs",
+            side_effect=lambda _runner, *, allowed_tools, metadata=None: [
+                SimpleNamespace(name=name) for name in sorted(allowed_tools)
+            ],
+        ),
+        patch(
+            "openminion.modules.brain.loop.adaptive.run_adaptive_tool_loop",
+            side_effect=_fake_run_adaptive_tool_loop,
+        ),
+    ):
+        result = ActLoopMode().execute(ctx)
+
+    assert result.status == "done"
+    assert captured["profile"].allowed_tools == allowed
+    assert {spec.name for spec in captured["tool_specs"]} == allowed
+    assert captured["requestable_tool_specs"] is None
+
+
 def test_general_adaptive_does_not_infer_tool_scope_from_user_prose() -> None:
     llm_client = _FakeLLMClient()
     executor = _FakeCommandExecutor()
@@ -341,11 +408,14 @@ def test_general_adaptive_does_not_infer_tool_scope_from_user_prose() -> None:
     assert "web.search" in tool_names
 
 
-def test_research_child_general_adaptive_does_not_expose_decompose() -> None:
+@pytest.mark.parametrize(
+    "reason_code", ["coding_subtask", "research_iteration_fallback"]
+)
+def test_child_general_adaptive_does_not_expose_decompose(reason_code: str) -> None:
     llm_client = _FakeLLMClient()
     executor = _FakeCommandExecutor()
     ctx, _services = _ctx(llm_client, executor)
-    ctx.decision.reason_code = "research_iteration_fallback"
+    ctx.decision.reason_code = reason_code
     captured: dict[str, Any] = {}
 
     def _fake_run_adaptive_tool_loop(*args, **kwargs):
@@ -375,7 +445,8 @@ def test_research_child_general_adaptive_does_not_expose_decompose() -> None:
     assert result.status == "done"
     profile = captured["profile"]
     assert getattr(profile, "profile_name", "") == "general_adaptive_v1"
-    assert bool(getattr(profile, "allow_plan_tool", True)) is False
+    if reason_code == "research_iteration_fallback":
+        assert bool(getattr(profile, "allow_plan_tool", True)) is False
     assert "decompose" not in set(getattr(profile, "allowed_tools", frozenset()))
     tool_names = {
         str(getattr(spec, "name", "") or "").strip()
@@ -1574,6 +1645,7 @@ def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
     services = _FakeServices()
     services.runner = SimpleNamespace(
         tool_api=None,
+        options=SimpleNamespace(failure_strategy="halt"),
         memory_api=SimpleNamespace(
             _backend=SimpleNamespace(
                 candidate_update=MagicMock(),
@@ -1603,6 +1675,13 @@ def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
     assert result.action_result.outputs["memory_consolidation.applied_count"] == 2
     assert result.action_result.outputs["memory_consolidation.promoted_count"] == 1
     assert result.action_result.outputs["memory_consolidation.deferred_count"] == 1
+    assert result.action_result.outputs["memory_consolidation.target_scope"] == (
+        "agent:agent"
+    )
+    assert result.action_result.outputs["memory_consolidation.candidate_ids"] == [
+        "cand-1"
+    ]
+    assert result.action_result.outputs["memory_consolidation.state_hash"]
     backend = services.runner.memory_api._backend
     assert backend.promote_candidate.call_count == 1
 
@@ -1647,6 +1726,7 @@ def test_act_adaptive_forces_answer_only_closure_for_direct_tool_turn() -> None:
     ctx, services = _ctx(llm_client, executor)
     services.runner = SimpleNamespace(
         tool_api=None,
+        options=SimpleNamespace(failure_strategy="halt"),
         _idempotency_key=lambda **_: "idem-direct-tool-clamp",
     )
     ctx.user_input = 'tool file.list_dir {"path":"."}'
@@ -1789,6 +1869,7 @@ def test_act_adaptive_clamps_overexpanded_entry_batch_for_explicit_tool_command(
     ctx, services = _ctx(llm_client, executor)
     services.runner = SimpleNamespace(
         tool_api=None,
+        options=SimpleNamespace(failure_strategy="halt"),
         _idempotency_key=lambda **_: "idem-direct-tool-clamp",
     )
     ctx.user_input = 'tool file.list_dir {"path":"."}'
@@ -3207,6 +3288,7 @@ def test_act_adaptive_forces_answer_only_closure_after_successful_duplicate_batc
     ctx, services = _ctx(llm_client, executor)
     services.runner = SimpleNamespace(
         tool_api=None,
+        options=SimpleNamespace(failure_strategy="halt"),
         _idempotency_key=lambda **_: "idem-duplicate-batch-closure",
     )
     ctx.user_input = "inspect the repo root"

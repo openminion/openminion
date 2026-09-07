@@ -1,7 +1,7 @@
 # OpenMinion API Compatibility
 
 Status: active
-Last updated: 2026-07-10
+Last updated: 2026-09-06
 
 Purpose: record the supported public import roots and entrypoint compatibility
 posture for `openminion`.
@@ -49,25 +49,28 @@ The following package-owned console scripts are part of the documented operator
 surface:
 
 1. `openminion`
-2. `openminiond`
-3. `openminion-tool`
-4. `identityctl`
-5. `openminion-controlplane`
-6. `runtimectl`
-7. `brainctl`
-8. `memctl`
-9. `sessctl`
-10. `contextctl`
-11. `ctxctl`
-12. `agentregctl`
-13. `artifactctl`
-14. `openminion-controlplane-telegram`
-15. `skill`
-16. `skillctl`
-17. `a2actl`
-18. `rlmctl`
-19. `retrievectl`
-20. `policyctl`
+2. `telemetryctl`
+3. `opsctl`
+4. `openminiond`
+5. `openminion-tool`
+6. `identityctl`
+7. `openminion-controlplane`
+8. `runtimectl`
+9. `brainctl`
+10. `memctl`
+11. `sessctl`
+12. `contextctl`
+13. `ctxctl`
+14. `agentregctl`
+15. `artifactctl`
+16. `openminion-controlplane-telegram`
+17. `openminion-controlplane-slack`
+18. `skill`
+19. `skillctl`
+20. `a2actl`
+21. `rlmctl`
+22. `retrievectl`
+23. `policyctl`
 
 The script names are defined in `pyproject.toml`.
 
@@ -80,13 +83,37 @@ The local HTTP API also exposes `POST /memory/records/list` and
 `POST /memory/records/search`. These are operator query surfaces, not a
 multi-tenant authentication or RBAC promise.
 
+Remote active-work inspection uses the existing durable owners:
+
+1. `GET /sessions/{session_id}/events` returns structural persisted session
+   events after an optional `after_id` cursor without exposing event payloads.
+2. `GET /sessions/{session_id}/messages` remains the persisted message and
+   artifact-reference projection.
+3. Task responses include session, event, message, turn-input, and live-stream
+   links only when their required identifiers are present in task metadata.
+4. `POST /v1/approvals/resume` applies an explicit typed approval decision;
+   deny decisions do not create a grant.
+
+The HTTP server requires `runtime.ipc_token` when bound to a non-loopback host,
+including when it is created through the Python server factory. Requests use
+the existing `X-IPC-Token` header. Loopback development remains usable without
+a token.
+
+Remote use means placing this API behind an operator-owned trusted tunnel. The
+package does not provide a hosted relay, TLS termination, or push service.
+Persisted event polling resumes after the last returned `next_after_id` across
+process restarts. Active-turn SSE reattachment works only while that turn and
+process remain active; queued turn input is likewise process-local and does not
+claim in-flight steering after a restart.
+
 Delegated Sophiagraph access is an additive internal integration surface.
 `SubagentRunContext.memory_posture` accepts the closed values `none` and
 `read_only_bounded`; serialized string compatibility is retained. The
 OpenMinion policy store remains authoritative for issue, use, expiry, and
 revocation. Untrusted delegated callers never receive a raw Sophiagraph store.
-This surface requires `sophiagraph>=0.0.7`, the first compatible package line
-that contains the public `sophiagraph.access` import root.
+This surface requires the package baseline `sophiagraph>=0.0.10`, which
+contains the public `sophiagraph.access` import root and the namespace contracts
+used by the current runtime.
 
 Memory portability and model compatibility should consume public Sophiagraph
 facades such as `sophiagraph.portability` and `sophiagraph.models`. The

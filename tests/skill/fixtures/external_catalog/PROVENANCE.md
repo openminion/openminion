@@ -27,6 +27,11 @@ Fixture families (SOCE-01):
 3. Suspicious-tool samples: `claude-api`, `figma_create_design_system_rules`,
    `linear` — contain embedded filenames, code symbols, and prose tokens that
    trigger `_TOOL_RE` false positives for tool-extraction normalization testing
+4. Hermes-shaped `system-inventory` — covers passive unknown metadata,
+   unsupported plugin-only directories, a nearest-ancestor nested skill, and a
+   bounded reference resource
+5. OpenAI-shaped `swiftui-performance-audit` — covers companion metadata and
+   progressive retrieval of `references/ContentView.swift`
 
 License context:
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
@@ -40,6 +41,8 @@ class AgentRunResult(Generic[OutputT]):
     output: OutputT
     text: str
     raw: dict[str, Any]
+    run_id: str | None = None
+    run_state: str | None = None
 
 
 class Agent(Generic[InputT, OutputT]):
@@ -100,7 +103,7 @@ class Agent(Generic[InputT, OutputT]):
     def _build_payload(self, message: str) -> dict[str, Any]:
         payload: dict[str, Any] = {"message": message}
         if self.instructions:
-            payload["system_prompt"] = self.instructions
+            payload["override_system_prompt"] = self.instructions
         if self.model:
             payload["override_model"] = self.model
         if self.tools:
@@ -110,6 +113,8 @@ class Agent(Generic[InputT, OutputT]):
         if self.subagent_context is not None:
             payload["subagent_context"] = self.subagent_context.as_payload()
             payload["inbound_metadata"] = self.subagent_context.as_inbound_metadata()
+            if self.subagent_context.timeout_seconds is not None:
+                payload["timeout_seconds"] = self.subagent_context.timeout_seconds
         return payload
 
     def _register_handoff_tools_for_run(self, runtime: APIRuntime) -> list[str]:
@@ -195,14 +200,24 @@ class Agent(Generic[InputT, OutputT]):
     ) -> AgentRunResult[Any]:
         runtime = self._ensure_runtime()
         payload = self._build_payload(self._serialize_input(message))
-        registered_handoffs = self._register_handoff_tools_for_run(runtime)
-        try:
-            raw = runtime.run_turn(payload=payload, progress_callback=on_delta)
-        finally:
-            self._unregister_handoff_tools(runtime, registered_handoffs)
+        registry = getattr(runtime, "tools", None)
+        registration_lock = getattr(registry, "temporary_registration_lock", None)
+        with registration_lock or nullcontext():
+            registered_handoffs = self._register_handoff_tools_for_run(runtime)
+            try:
+                raw = runtime.run_turn(payload=payload, progress_callback=on_delta)
+            finally:
+                self._unregister_handoff_tools(runtime, registered_handoffs)
         reply_text = self._reply_text(raw)
         output = self._coerce_output(reply_text)
-        return AgentRunResult(output=output, text=reply_text, raw=dict(raw or {}))
+        raw_payload = dict(raw or {})
+        return AgentRunResult(
+            output=output,
+            text=reply_text,
+            raw=raw_payload,
+            run_id=str(raw_payload.get("run_id") or "").strip() or None,
+            run_state=str(raw_payload.get("run_state") or "").strip() or None,
+        )
 
     def run(self, message: MessageInput) -> AgentRunResult[Any]:
         return self._run_once(message)

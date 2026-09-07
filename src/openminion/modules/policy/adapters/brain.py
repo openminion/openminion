@@ -14,7 +14,6 @@ from openminion.base.config.action_policy import (
     normalize_action_policy_mode_override,
     overlay_action_policy_mode,
 )
-
 from ..runtime.action_policy import policy_config_from_action_policy
 from ..constants import (
     POLICY_DECISION_ALLOW,
@@ -132,6 +131,15 @@ class PolicyCtlBrainAdapter:
 
         config_overrides = self._effective_policy_config(working_state=working_state)
         if self._is_policy_disabled(config_overrides=config_overrides):
+            if str(getattr(command, "tool_name", "") or "") == (
+                "blockchain.send_transaction"
+            ):
+                return PolicyDecision(
+                    outcome="DENY",
+                    explanation=(
+                        "Blockchain transaction send requires enforcing policy mode."
+                    ),
+                )
             self._log_policy_bypass(command=command, working_state=working_state)
             return PolicyDecision(
                 outcome="ALLOW",
@@ -213,6 +221,27 @@ class PolicyCtlBrainAdapter:
             "ctx": ctx,
             "risk_override": self._risk_override_for_command(command),
         }
+        if str(getattr(command, "tool_name", "") or "") == (
+            "blockchain.send_transaction"
+        ):
+            from openminion.tools.blockchain.confirmation import (
+                BlockchainConfirmationPreviewError,
+                build_blockchain_send_confirmation_preview,
+                canonical_blockchain_send_args,
+            )
+
+            try:
+                check_kwargs["invocation"] = {
+                    **invocation,
+                    "args": canonical_blockchain_send_args(invocation["args"]),
+                }
+                check_kwargs["confirmation_preview"] = (
+                    build_blockchain_send_confirmation_preview(
+                        check_kwargs["invocation"]["args"]
+                    )
+                )
+            except BlockchainConfirmationPreviewError as exc:
+                check_kwargs["confirmation_preview_error"] = exc.reason
         if config_overrides is not None:
             check_kwargs["config_overrides"] = config_overrides
         return self._ctl.check(**check_kwargs)
@@ -243,6 +272,8 @@ class PolicyCtlBrainAdapter:
             explanation=str(getattr(decision, "reason", "") or ""),
             require_clarification=require_clarification,
             clarification_question=clarification_question or None,
+            approval_id=str(getattr(decision, "approval_id", "") or "") or None,
+            confirmation_preview=getattr(decision, "confirmation_preview", None),
         )
 
     @staticmethod
@@ -289,6 +320,12 @@ class PolicyCtlBrainAdapter:
         session_context: dict[str, Any],
     ) -> str:
         """Create a one-time allow grant for a confirmed pending command."""
+        approval_id = str(
+            getattr(working_state, "pending_policy_approval_id", "") or ""
+        ).strip()
+        if approval_id:
+            grant_id = self._ctl.resolve_confirmation(approval_id, "allow_once")
+            return str(grant_id or "")
         invocation, ctx = self._build_invocation_and_context(
             command=command,
             working_state=working_state,
@@ -303,10 +340,17 @@ class PolicyCtlBrainAdapter:
             max_uses=1,
         )
 
+    def deny_confirmation(self, *, working_state: Any) -> None:
+        approval_id = str(
+            getattr(working_state, "pending_policy_approval_id", "") or ""
+        ).strip()
+        if approval_id:
+            self._ctl.resolve_confirmation(approval_id, "deny")
+
     def parse_confirmation_response(self, text: str) -> str:
         action_policy_config = self._action_policy_config
         if action_policy_config is not None:
-            from ..runtime.service import parse_confirmation_response
+            from ..runtime.confirmation import parse_confirmation_response
 
             return parse_confirmation_response(
                 text,

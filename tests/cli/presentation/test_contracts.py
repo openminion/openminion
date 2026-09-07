@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import pathlib
 
-import pytest
-
 from openminion.cli.presentation.contracts import (
     Composer,
     OverlayPresenter,
@@ -37,12 +35,6 @@ class _StubTranscript:
 
     def clear_messages(self):
         pass
-
-    def filter_messages(self, query: str):
-        pass
-
-    def copy_selected_message(self):
-        return None
 
     def copy_last_copyable_message(self):
         return None
@@ -113,7 +105,7 @@ def test_partial_implementation_fails_protocol_check() -> None:
     assert not isinstance(Partial(), TranscriptSink)
 
 
-def test_contracts_module_does_not_import_textual_or_prompt_toolkit() -> None:
+def test_contracts_module_does_not_import_renderer_packages() -> None:
     src = (
         pathlib.Path(__file__).resolve().parents[3]
         / "src"
@@ -122,51 +114,5 @@ def test_contracts_module_does_not_import_textual_or_prompt_toolkit() -> None:
         / "presentation"
         / "contracts.py"
     ).read_text(encoding="utf-8")
-    assert "import textual" not in src
-    assert "from textual" not in src
     assert "import prompt_toolkit" not in src
     assert "from prompt_toolkit" not in src
-
-
-@pytest.mark.asyncio
-async def test_focus_transcript_satisfies_transcript_sink_protocol() -> None:
-    from textual.app import App
-    from textual.containers import Vertical
-
-    from openminion.cli.interactive.widgets import FocusTranscript
-
-    class _Harness(App):
-        def compose(self):
-            self.transcript = FocusTranscript()
-            yield Vertical(self.transcript)
-
-    async with _Harness().run_test() as pilot:
-        await pilot.pause()
-        t = pilot.app.transcript
-        assert isinstance(t, TranscriptSink), (
-            "FocusTranscript must satisfy TranscriptSink protocol"
-        )
-
-
-@pytest.mark.asyncio
-async def test_focus_composer_satisfies_composer_protocol() -> None:
-    from textual.app import App
-    from textual.containers import Vertical
-
-    from openminion.cli.interactive.widgets import FocusComposer
-
-    class _Harness(App):
-        def compose(self):
-            self.composer = FocusComposer()
-            yield Vertical(self.composer)
-
-    async with _Harness().run_test() as pilot:
-        await pilot.pause()
-        assert isinstance(pilot.app.composer, Composer)
-
-
-def test_focus_status_line_satisfies_status_line_protocol() -> None:
-    from openminion.cli.interactive.widgets import FocusStatusLine
-
-    line = FocusStatusLine()
-    assert isinstance(line, StatusLine)

@@ -11,8 +11,8 @@ Top-level settings:
 
 Subpackages:
 - `commands/` — subcommand handlers bound by the parser
-- `interactive/` — shared interactive CLI and opt-in Textual runtime ownership
-- `interactive/terminal/` — default terminal shell and renderer
+- `interactive/` — shared interactive runtime and project-context ownership
+- `interactive/terminal/` — canonical terminal shell and renderer
 - `status/` — status-line rendering helpers
 
 Grouped helpers:
@@ -25,4 +25,6 @@ Grouped helpers:
   built-in fallback, optional provider discovery, and interactive animation
   resolution
 Compatibility note:
-- CLC moved grouped helpers out of the `cli/` root, but `openminion.cli.<module>` compatibility imports remain supported through `openminion.cli.__init__` aliases so older public imports keep resolving without reintroducing flat root files.
+- `openminion.cli.<module>` compatibility imports remain supported through
+  `openminion.cli.__init__` aliases while implementation helpers stay in their
+  owning subpackages.

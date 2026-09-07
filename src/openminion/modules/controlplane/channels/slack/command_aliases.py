@@ -37,5 +37,7 @@ def normalize_slash_command_text(command: str, text: str) -> str:
     command_name = str(command or "").strip()
     body = str(text or "").strip()
     if command_name == "/openminion":
-        return normalize_command_text(body or "help")
-    return normalize_command_text((command_name + " " + body).strip())
+        normalized = normalize_command_text(body or "help")
+    else:
+        normalized = normalize_command_text((command_name + " " + body).strip())
+    return normalized if normalized.startswith("/") else f"/{normalized}"

@@ -11,7 +11,7 @@ import pytest
 from tests._csc_fixtures import _csc_install_default_agent
 
 from openminion.api.runtime import APIRuntime
-from openminion.api.queries.sessions import (
+from openminion.api.queries.client_sessions import (
     SessionQueryError,
     client_event_payload,
 )

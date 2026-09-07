@@ -7,7 +7,9 @@ import tempfile
 import threading
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
+from urllib.parse import urlparse
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -19,9 +21,18 @@ from openminion.api.server import (
 )
 from openminion.api.runtime import APIRuntime
 from openminion.base.config import OpenMinionConfig, save_config
-from openminion.api.server.streaming import _desktop_chunk, handle_turn_stream_request
-from openminion.api.server.client_auth import ClientAuthService
-from openminion.base.version import OPENMINION_VERSION
+from openminion.api.server.streaming import (
+    TURN_STREAM_CAPABILITIES,
+    handle_turn_stream_attach_request,
+    handle_turn_stream_request,
+    try_handle_turn_stream_attach,
+)
+from openminion.services.runtime.manager import (
+    TurnChunk,
+    TurnError,
+    TurnResponse,
+)
+from openminion.modules.runtime.contracts import TURN_STREAM_SCHEMA_VERSION
 
 
 def _install_json_body(handler: _OpenMinionAPIHandler, body: dict) -> None:
@@ -46,7 +57,6 @@ class _FakeHandle:
         self._chunks = chunks
         self._result = result
         self._result_exc = result_exc
-        self.cancelled = False
 
     def stream(self, timeout_s: float):  # noqa: ANN001
         del timeout_s
@@ -57,10 +67,6 @@ class _FakeHandle:
         if self._result_exc is not None:
             raise self._result_exc
         return self._result
-
-    def cancel(self) -> bool:
-        self.cancelled = True
-        return True
 
 
 @dataclass
@@ -83,91 +89,7 @@ class _BusyError(RuntimeError):
     retry_after_s = 7
 
 
-def _desktop_turn_body(**overrides: object) -> dict[str, object]:
-    body: dict[str, object] = {
-        "trace_id": "11111111-1111-4111-8111-111111111111",
-        "session_id": "desktop-session",
-        "agent_id": "openminion",
-        "input_text": "hello",
-        "mode": "oneshot",
-        "stream": True,
-        "channel": "console",
-        "user": "api-user",
-        "idempotency_key": "22222222-2222-4222-8222-222222222222",
-    }
-    body.update(overrides)
-    return body
-
-
 class APIStreamingTransportTests(unittest.TestCase):
-    def test_desktop_chunk_projection_drops_raw_tool_values(self) -> None:
-        projected = _desktop_chunk(
-            {
-                "trace_id": "trace-1",
-                "kind": "tool_completed",
-                "ts": "2026-08-20T00:00:00Z",
-                "data": {
-                    "tool_name": "workspace.search",
-                    "call_id": "call-1",
-                    "state": "ok",
-                    "ok": True,
-                    "duration_ms": 12,
-                    "exit_code": 0,
-                    "args": {"path": "/private", "query": "secret"},
-                    "content": "sensitive result",
-                    "runtime_binding_id": "private-binding",
-                },
-            }
-        )
-        self.assertEqual(
-            projected,
-            {
-                "trace_id": "trace-1",
-                "kind": "tool_completed",
-                "ts": "2026-08-20T00:00:00Z",
-                "data": {
-                    "tool_name": "workspace.search",
-                    "call_id": "call-1",
-                    "state": "ok",
-                    "ok": True,
-                    "duration_ms": 12,
-                    "exit_code": 0,
-                },
-            },
-        )
-
-    def test_desktop_tool_completion_accepts_nullable_metrics(self) -> None:
-        projected = _desktop_chunk(
-            {
-                "trace_id": "trace-1",
-                "kind": "tool_completed",
-                "ts": "2026-08-20T00:00:00Z",
-                "data": {
-                    "tool_name": "workspace.search",
-                    "call_id": "call-1",
-                    "state": "ok",
-                    "ok": True,
-                },
-            }
-        )
-
-        self.assertEqual(
-            projected,
-            {
-                "trace_id": "trace-1",
-                "kind": "tool_completed",
-                "ts": "2026-08-20T00:00:00Z",
-                "data": {
-                    "tool_name": "workspace.search",
-                    "call_id": "call-1",
-                    "state": "ok",
-                    "ok": True,
-                    "duration_ms": None,
-                    "exit_code": None,
-                },
-            },
-        )
-
     def setUp(self) -> None:
         reset_api_metrics()
 
@@ -228,169 +150,70 @@ class APIStreamingTransportTests(unittest.TestCase):
             ["meta", "chunk", "chunk", "response", "done"],
         )
         self.assertEqual(observed_status, [200])
+        meta = events[0][1]
+        self.assertIsInstance(meta, dict)
+        self.assertEqual(meta["stream_schema_version"], TURN_STREAM_SCHEMA_VERSION)
+        self.assertEqual(meta["capabilities"], list(TURN_STREAM_CAPABILITIES))
         close_submission.assert_called_once()
 
-    def test_desktop_stream_validates_exact_body_and_echoes_identity(self) -> None:
-        rejected: list[tuple[HTTPStatus, dict]] = []
-        with mock.patch(
-            "openminion.api.server.streaming.open_turn_submission"
-        ) as open_submission:
-            handle_turn_stream_request(
-                body=_desktop_turn_body(extra=True),
-                request_id="33333333-3333-4333-8333-333333333333",
-                config_path=None,
-                runtime=None,
-                start_sse_response=lambda: self.fail("SSE should not start"),
-                write_sse_event=lambda **_kwargs: self.fail("SSE should not write"),
-                write_json=lambda status, payload: rejected.append((status, payload)),
-                observe_request_metrics=lambda **_kwargs: 0,
-                log_request_done=lambda **_kwargs: None,
-                perf_counter=lambda: 0.0,
-                desktop_client=True,
-            )
-        open_submission.assert_not_called()
-        self.assertEqual(rejected[0][0], HTTPStatus.BAD_REQUEST)
-        self.assertEqual(rejected[0][1]["error"]["code"], "invalid_request")
-
+    def test_turn_response_errors_emit_response_error_and_done_error(self) -> None:
         events: list[tuple[str, object]] = []
+        observed_status: list[int] = []
         submission = _FakeSubmission(
-            handle=_FakeHandle(chunks=[], result=object()),
-            request=_FakeRequest(
-                session_id="desktop-session",
-                trace_id="11111111-1111-4111-8111-111111111111",
+            handle=_FakeHandle(
+                chunks=[],
+                result=TurnResponse(
+                    final_text="",
+                    errors=[
+                        TurnError(
+                            code="provider_failed",
+                            message="provider unavailable",
+                            retryable=True,
+                            details={"provider": "example"},
+                        )
+                    ],
+                ),
             ),
+            request=_FakeRequest(session_id="s-error", trace_id="r-error"),
             timeout_s=1.0,
-            session_id="desktop-session",
-            run_id="11111111-1111-4111-8111-111111111111",
+            session_id="s-error",
+            run_id="r-error",
         )
+
         with (
             mock.patch(
                 "openminion.api.server.streaming.open_turn_submission",
                 return_value=submission,
             ),
             mock.patch("openminion.api.server.streaming.close_submission"),
-            mock.patch(
-                "openminion.api.server.streaming.turn_response_to_dict",
-                return_value={"final_text": "ok"},
-            ),
         ):
             handle_turn_stream_request(
-                body=_desktop_turn_body(),
-                request_id="33333333-3333-4333-8333-333333333333",
+                body={"message": "hello"},
+                request_id="req-error",
                 config_path=None,
                 runtime=None,
                 start_sse_response=lambda: None,
                 write_sse_event=lambda *, event, data: events.append((event, data)),
-                write_json=lambda *_args: self.fail("unexpected JSON response"),
-                observe_request_metrics=lambda **_kwargs: 0,
-                log_request_done=lambda **_kwargs: None,
-                perf_counter=lambda: 0.0,
-                desktop_client=True,
-            )
-        self.assertEqual(events[0][0], "meta")
-        self.assertEqual(
-            events[0][1],
-            {
-                "request_id": "33333333-3333-4333-8333-333333333333",
-                "trace_id": "11111111-1111-4111-8111-111111111111",
-                "session_id": "desktop-session",
-            },
-        )
-
-    def test_desktop_stream_bounds_events_without_changing_legacy_streams(self) -> None:
-        desktop_events: list[tuple[str, object]] = []
-        desktop_handle = _FakeHandle(chunks=[_FakeChunk(1)], result=object())
-        desktop_submission = _FakeSubmission(
-            handle=desktop_handle,
-            request=_FakeRequest(
-                session_id="desktop-session",
-                trace_id="11111111-1111-4111-8111-111111111111",
-            ),
-            timeout_s=1.0,
-            session_id="desktop-session",
-            run_id="11111111-1111-4111-8111-111111111111",
-        )
-        with (
-            mock.patch(
-                "openminion.api.server.streaming.open_turn_submission",
-                return_value=desktop_submission,
-            ),
-            mock.patch("openminion.api.server.streaming.close_submission"),
-            mock.patch(
-                "openminion.api.server.streaming.turn_chunk_to_dict",
-                return_value={"data": "x" * (256 * 1024)},
-            ),
-            mock.patch(
-                "openminion.api.server.streaming.turn_response_to_dict",
-                return_value={"final_text": "done"},
-            ),
-        ):
-            handle_turn_stream_request(
-                body=_desktop_turn_body(),
-                request_id="33333333-3333-4333-8333-333333333333",
-                config_path=None,
-                runtime=None,
-                start_sse_response=lambda: None,
-                write_sse_event=lambda *, event, data: desktop_events.append(
-                    (event, data)
+                write_json=lambda status, payload: (_ for _ in ()).throw(
+                    AssertionError(f"unexpected json write {status} {payload}")
                 ),
-                write_json=lambda *_args: self.fail("unexpected JSON response"),
-                observe_request_metrics=lambda **_kwargs: 0,
-                log_request_done=lambda **_kwargs: None,
-                perf_counter=lambda: 0.0,
-                desktop_client=True,
-            )
-        self.assertFalse(desktop_handle.cancelled)
-        self.assertEqual(
-            [event for event, _ in desktop_events],
-            ["meta", "response", "done"],
-        )
-        self.assertNotIn("x" * 1024, repr(desktop_events))
-
-        legacy_events: list[tuple[str, object]] = []
-        legacy_handle = _FakeHandle(chunks=[_FakeChunk(1)], result=object())
-        legacy_submission = _FakeSubmission(
-            handle=legacy_handle,
-            request=_FakeRequest(session_id="legacy", trace_id="legacy-trace"),
-            timeout_s=1.0,
-            session_id="legacy",
-            run_id="legacy-trace",
-        )
-        with (
-            mock.patch(
-                "openminion.api.server.streaming.open_turn_submission",
-                return_value=legacy_submission,
-            ),
-            mock.patch("openminion.api.server.streaming.close_submission"),
-            mock.patch(
-                "openminion.api.server.streaming.turn_chunk_to_dict",
-                return_value={"data": "x" * (256 * 1024)},
-            ),
-            mock.patch(
-                "openminion.api.server.streaming.turn_response_to_dict",
-                return_value={"final_text": "ok"},
-            ),
-        ):
-            handle_turn_stream_request(
-                body={"message": "legacy"},
-                request_id="legacy-request",
-                config_path=None,
-                runtime=None,
-                start_sse_response=lambda: None,
-                write_sse_event=lambda *, event, data: legacy_events.append(
-                    (event, data)
+                observe_request_metrics=lambda **kwargs: (
+                    observed_status.append(int(kwargs["status"])) or 0
                 ),
-                write_json=lambda *_args: self.fail("unexpected JSON response"),
-                observe_request_metrics=lambda **_kwargs: 0,
-                log_request_done=lambda **_kwargs: None,
+                log_request_done=lambda **kwargs: None,
                 perf_counter=lambda: 0.0,
-                desktop_client=False,
             )
-        self.assertFalse(legacy_handle.cancelled)
+
         self.assertEqual(
-            [event for event, _ in legacy_events],
-            ["meta", "chunk", "response", "done"],
+            [event for event, _ in events],
+            ["meta", "response", "error", "done"],
         )
+        error = events[2][1]
+        self.assertIsInstance(error, dict)
+        self.assertEqual(error["code"], "provider_failed")
+        self.assertEqual(error["details"], {"provider": "example"})
+        self.assertEqual(events[-1][1]["status"], "error")
+        self.assertEqual(observed_status, [int(HTTPStatus.INTERNAL_SERVER_ERROR)])
 
     def test_streaming_timeout_emits_error_and_done_error_status(self) -> None:
         events: list[tuple[str, object]] = []
@@ -649,6 +472,51 @@ class APIStreamingTransportTests(unittest.TestCase):
         self.assertEqual(by_route.get("POST /v1/turn/stream"), 2)
         self.assertEqual(by_route_status["POST /v1/turn/stream"]["2xx"], 2)
 
+    def test_sync_turn_response_errors_are_not_reported_as_success(self) -> None:
+        submission = _FakeSubmission(
+            handle=_FakeHandle(chunks=[], result=object()),
+            request=_FakeRequest(session_id="s-json-error", trace_id="r-json-error"),
+            timeout_s=1.0,
+            session_id="s-json-error",
+            run_id="r-json-error",
+        )
+        turn = {
+            "trace_id": "r-json-error",
+            "final_text": "",
+            "errors": [
+                {
+                    "code": "provider_failed",
+                    "message": "provider unavailable",
+                    "retryable": True,
+                    "details": {"provider": "example"},
+                }
+            ],
+        }
+        with (
+            mock.patch(
+                "openminion.api.routes.turns.open_turn_submission",
+                return_value=submission,
+            ),
+            mock.patch(
+                "openminion.api.routes.turns.collect_sync_turn_payload",
+                return_value={"trace_id": "r-json-error", "turn": turn},
+            ),
+            mock.patch("openminion.api.routes.turns.close_submission"),
+        ):
+            status, payload = dispatch_request(
+                "POST",
+                "/v1/turn",
+                None,
+                body={"message": "hello"},
+                request_id="req-json-error",
+            )
+
+        self.assertEqual(status, HTTPStatus.INTERNAL_SERVER_ERROR)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "provider_failed")
+        self.assertTrue(payload["error"]["retryable"])
+        self.assertEqual(payload["turn"], turn)
+
     def test_stream_endpoint_with_runtime_emits_real_chunks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_path = _write_echo_config(Path(tmp))
@@ -693,6 +561,7 @@ class APIStreamingTransportTests(unittest.TestCase):
                 done_payload = _parse_sse_events(handler.wfile.getvalue())[-1][1]
                 self.assertIsInstance(done_payload, dict)
                 self.assertEqual(done_payload.get("status"), "complete")
+                self.assertIn(b"id: ", handler.wfile.getvalue())
             finally:
                 runtime.close()
 
@@ -813,52 +682,23 @@ class APIStreamingNegotiationTests(unittest.TestCase):
         handler.runtime = None
         handler.runtime_bootstrap_error = None
         _install_json_body(handler, {"message": "hello"})
-        handler._handle_turn_stream = mock.Mock()  # type: ignore[attr-defined]
         handler._write_json = mock.Mock()  # type: ignore[attr-defined]
 
-        with mock.patch("openminion.api.server.app.dispatch_request") as dispatch:
+        with (
+            mock.patch("openminion.api.server.app.dispatch_request") as dispatch,
+            mock.patch(
+                "openminion.api.server.app.handle_http_turn_stream_request"
+            ) as handle_stream,
+        ):
             _OpenMinionAPIHandler.do_POST(handler)
 
-        handler._handle_turn_stream.assert_called_once_with(  # type: ignore[attr-defined]
+        handle_stream.assert_called_once_with(
+            handler,
             body={"message": "hello"},
             request_id="req-sse-1",
         )
         handler._write_json.assert_not_called()  # type: ignore[attr-defined]
         dispatch.assert_not_called()
-
-    def test_desktop_stream_rejects_query_before_stream_dispatch(self) -> None:
-        service = ClientAuthService(
-            master_token="master-token",
-            config_path="config.json",
-            home_root=".",
-            data_root=".openminion",
-            bind_host="127.0.0.1",
-            daemon_version=OPENMINION_VERSION,
-        )
-        lease = service.mint(protocol_min=1, protocol_max=1, ttl_seconds=60)
-        handler = object.__new__(_OpenMinionAPIHandler)
-        handler.path = "/v1/turn/stream?unexpected=1"
-        handler.headers = {
-            "Accept": "text/event-stream",
-            "Content-Type": "application/json",
-            "X-OpenMinion-Client-Token": lease["client_token"],
-            "X-Request-ID": "33333333-3333-4333-8333-333333333333",
-        }
-        handler.config_path = None
-        handler.runtime = None
-        handler.runtime_bootstrap_error = None
-        handler.client_address = ("127.0.0.1", 1234)
-        handler.client_auth = service
-        _install_json_body(handler, _desktop_turn_body())
-        handler._handle_turn_stream = mock.Mock()  # type: ignore[attr-defined]
-        handler._write_json = mock.Mock()  # type: ignore[attr-defined]
-
-        _OpenMinionAPIHandler.do_POST(handler)
-
-        handler._handle_turn_stream.assert_not_called()  # type: ignore[attr-defined]
-        status, payload = handler._write_json.call_args.args  # type: ignore[attr-defined]
-        self.assertEqual(status, HTTPStatus.BAD_REQUEST)
-        self.assertEqual(payload["error"]["code"], "invalid_request")
 
     def test_do_post_turn_stream_defaults_to_json_dispatch(self) -> None:
         handler = object.__new__(_OpenMinionAPIHandler)
@@ -868,7 +708,6 @@ class APIStreamingNegotiationTests(unittest.TestCase):
         handler.runtime = None
         handler.runtime_bootstrap_error = None
         _install_json_body(handler, {"message": "hello"})
-        handler._handle_turn_stream = mock.Mock()  # type: ignore[attr-defined]
         handler._write_json = mock.Mock()  # type: ignore[attr-defined]
 
         with mock.patch(
@@ -877,7 +716,6 @@ class APIStreamingNegotiationTests(unittest.TestCase):
         ) as dispatch:
             _OpenMinionAPIHandler.do_POST(handler)
 
-        handler._handle_turn_stream.assert_not_called()  # type: ignore[attr-defined]
         dispatch.assert_called_once_with(
             "POST",
             "/v1/turn/stream",
@@ -890,67 +728,232 @@ class APIStreamingNegotiationTests(unittest.TestCase):
             request_id="req-json-1",
             client_auth=None,
             client_identity=None,
+            client_artifacts=None,
             client_approvals=None,
             client_media=None,
         )
         handler._write_json.assert_called_once_with(HTTPStatus.OK, {"ok": True})  # type: ignore[attr-defined]
 
-    def test_client_auth_denial_happens_before_sse_headers(self) -> None:
+    def test_do_get_routes_sse_attach_with_cursor(self) -> None:
         handler = object.__new__(_OpenMinionAPIHandler)
-        handler.path = "/v1/turn/stream"
-        handler.headers = {"Accept": "text/event-stream"}
-        handler.config_path = None
-        handler.runtime = None
-        handler.runtime_bootstrap_error = None
-        handler.client_address = ("127.0.0.1", 1234)
-        handler.client_auth = ClientAuthService(
-            master_token="master-token",
-            config_path="config.json",
-            home_root=".",
-            data_root=".openminion",
-            bind_host="127.0.0.1",
-            daemon_version=OPENMINION_VERSION,
-        )
-        handler._handle_turn_stream = mock.Mock()  # type: ignore[attr-defined]
-        handler._write_json = mock.Mock()  # type: ignore[attr-defined]
-
-        _OpenMinionAPIHandler.do_POST(handler)
-
-        handler._handle_turn_stream.assert_not_called()  # type: ignore[attr-defined]
-        status, payload = handler._write_json.call_args.args  # type: ignore[attr-defined]
-        self.assertEqual(status, HTTPStatus.FORBIDDEN)
-        self.assertEqual(payload["error"]["code"], "forbidden")
-
-    def test_desktop_stream_requires_event_stream_accept_header(self) -> None:
-        service = ClientAuthService(
-            master_token="master-token",
-            config_path="config.json",
-            home_root=".",
-            data_root=".openminion",
-            bind_host="127.0.0.1",
-            daemon_version=OPENMINION_VERSION,
-        )
-        lease = service.mint(protocol_min=1, protocol_max=1, ttl_seconds=60)
-        handler = object.__new__(_OpenMinionAPIHandler)
-        handler.path = "/v1/turn/stream"
+        handler.path = "/v1/turn/trace-1/stream?after_sequence=7"
         handler.headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "X-OpenMinion-Client-Token": lease["client_token"],
-            "X-Request-ID": "33333333-3333-4333-8333-333333333333",
+            "Accept": "text/event-stream",
+            "Last-Event-ID": "trace-1:6",
+            "X-Request-ID": "req-attach",
         }
         handler.config_path = None
         handler.runtime = None
         handler.runtime_bootstrap_error = None
-        handler.client_address = ("127.0.0.1", 1234)
-        handler.client_auth = service
-        _install_json_body(handler, _desktop_turn_body())
-        handler._handle_turn_stream = mock.Mock()  # type: ignore[attr-defined]
+
+        with (
+            mock.patch("openminion.api.server.app.dispatch_request") as dispatch,
+            mock.patch(
+                "openminion.api.server.app.try_handle_turn_stream_attach",
+                return_value=True,
+            ) as handle_attach,
+        ):
+            _OpenMinionAPIHandler.do_GET(handler)
+
+        handle_attach.assert_called_once_with(
+            handler,
+            parsed=mock.ANY,
+            request_id="req-attach",
+        )
+        dispatch.assert_not_called()
+
+
+class APIStreamAttachTests(unittest.TestCase):
+    def test_http_attach_parser_uses_query_cursor(self) -> None:
+        handler = SimpleNamespace(
+            headers={
+                "Accept": "text/event-stream",
+                "Last-Event-ID": "trace-attach:6",
+            },
+            config_path=None,
+            runtime=None,
+            _write_sse_event=mock.Mock(),
+            _write_json=mock.Mock(),
+        )
+        parsed = urlparse("/v1/turn/trace-attach/stream?after_sequence=7")
+
+        with mock.patch(
+            "openminion.api.server.streaming.handle_turn_stream_attach_request"
+        ) as attach:
+            handled = try_handle_turn_stream_attach(
+                handler,
+                parsed=parsed,
+                request_id="req-attach",
+            )
+
+        self.assertTrue(handled)
+        self.assertEqual(attach.call_args.kwargs["trace_id"], "trace-attach")
+        self.assertEqual(attach.call_args.kwargs["after_sequence"], 7)
+        self.assertEqual(attach.call_args.kwargs["request_id"], "req-attach")
+
+    def test_active_status_route_returns_language_neutral_snapshot(self) -> None:
+        handle = SimpleNamespace(
+            session_id="session-status",
+            agent_id="agent-status",
+            stream_schema_version=TURN_STREAM_SCHEMA_VERSION,
+            replay_floor_sequence=4,
+            current_phase_status=lambda: {
+                "schema_version": "openminion.phase-status.v1",
+                "status_key": "executing",
+                "facts": {
+                    "schema_version": "openminion.phase-status.v1",
+                    "status_key": "executing",
+                    "step_index": 2,
+                },
+            },
+        )
+        runtime = SimpleNamespace(
+            runtime_manager=SimpleNamespace(
+                get_turn_handle=lambda trace_id: (
+                    handle if trace_id == "trace-status" else None
+                )
+            )
+        )
+
+        status, payload = dispatch_request(
+            "GET",
+            "/v1/turn/trace-status/status",
+            None,
+            runtime=runtime,
+            request_id="req-status",
+        )
+
+        self.assertEqual(status, HTTPStatus.OK)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"]["facts"]["status_key"], "executing")
+        self.assertEqual(
+            payload["stream"]["schema_version"], TURN_STREAM_SCHEMA_VERSION
+        )
+        self.assertEqual(payload["stream"]["replay_floor_sequence"], 4)
+
+    def test_attach_replays_from_cursor_with_sse_ids(self) -> None:
+        chunks = [
+            TurnChunk(
+                trace_id="trace-attach",
+                kind="status",
+                data={"status_key": "working"},
+                sequence=2,
+                event_id="trace-attach:2",
+            ),
+            TurnChunk(
+                trace_id="trace-attach",
+                kind="final_text",
+                data={"text": "done"},
+                sequence=3,
+                event_id="trace-attach:3",
+            ),
+        ]
+
+        class _AttachHandle:
+            session_id = "session-attach"
+            agent_id = "agent-attach"
+            replay_floor_sequence = 1
+
+            def subscribe(self, *, after_sequence, timeout_s):  # noqa: ANN001
+                del timeout_s
+                return iter(
+                    chunk for chunk in chunks if chunk.sequence > after_sequence
+                )
+
+            def result(self, timeout_s):  # noqa: ANN001
+                del timeout_s
+                return TurnResponse(final_text="done")
+
+        handle = _AttachHandle()
+        runtime = SimpleNamespace(
+            runtime_manager=SimpleNamespace(
+                get_turn_handle=lambda trace_id: (
+                    handle if trace_id == "trace-attach" else None
+                )
+            )
+        )
+        events: list[tuple[str, object, str | None]] = []
+
+        handle_turn_stream_attach_request(
+            trace_id="trace-attach",
+            after_sequence=1,
+            request_id="req-attach",
+            config_path=None,
+            runtime=runtime,
+            start_sse_response=lambda: None,
+            write_sse_event=lambda *, event, data, event_id=None: events.append(
+                (event, data, event_id)
+            ),
+            write_json=lambda status, payload: (_ for _ in ()).throw(
+                AssertionError(f"unexpected json write {status} {payload}")
+            ),
+            observe_request_metrics=lambda **kwargs: 0,
+            log_request_done=lambda **kwargs: None,
+            perf_counter=lambda: 0.0,
+        )
+
+        self.assertEqual(
+            [event for event, _, _ in events],
+            ["meta", "chunk", "chunk", "response", "done"],
+        )
+        self.assertEqual(events[1][2], "trace-attach:2")
+        self.assertEqual(events[2][2], "trace-attach:3")
+        self.assertEqual(events[0][1]["replay_floor_sequence"], 1)
+
+
+class APIIPCAuthenticationTests(unittest.TestCase):
+    def _handler(self, token: str | None) -> _OpenMinionAPIHandler:
+        handler = object.__new__(_OpenMinionAPIHandler)
+        handler.path = "/v1/health"
+        handler.headers = {
+            "X-Request-ID": "req-auth",
+            **({"X-IPC-Token": token} if token is not None else {}),
+        }
+        handler.config_path = None
+        handler.runtime = None
+        handler.runtime_bootstrap_error = None
+        handler.ipc_token = "configured-secret"
+        handler.close_connection = False
+        handler.wfile = io.BytesIO()
+        handler.send_response = mock.Mock()
+        handler.send_header = mock.Mock()
+        handler.end_headers = mock.Mock()
+        return handler
+
+    def test_missing_or_wrong_ipc_token_is_rejected_before_dispatch(self) -> None:
+        for token in (None, "wrong"):
+            handler = self._handler(token)
+            with mock.patch("openminion.api.server.app.dispatch_request") as dispatch:
+                _OpenMinionAPIHandler.do_GET(handler)
+            dispatch.assert_not_called()
+            handler.send_response.assert_called_once_with(int(HTTPStatus.UNAUTHORIZED))
+            payload = json.loads(handler.wfile.getvalue())
+            self.assertEqual(payload["error"]["code"], "ipc_auth_required")
+
+    def test_matching_ipc_token_reaches_dispatch(self) -> None:
+        handler = self._handler("configured-secret")
         handler._write_json = mock.Mock()  # type: ignore[attr-defined]
+        with mock.patch(
+            "openminion.api.server.app.dispatch_request",
+            return_value=(HTTPStatus.OK, {"ok": True}),
+        ) as dispatch:
+            _OpenMinionAPIHandler.do_GET(handler)
 
-        _OpenMinionAPIHandler.do_POST(handler)
+        dispatch.assert_called_once()
+        handler._write_json.assert_called_once_with(HTTPStatus.OK, {"ok": True})  # type: ignore[attr-defined]
 
-        handler._handle_turn_stream.assert_not_called()  # type: ignore[attr-defined]
-        status, payload = handler._write_json.call_args.args  # type: ignore[attr-defined]
-        self.assertEqual(status, HTTPStatus.BAD_REQUEST)
-        self.assertEqual(payload["error"]["code"], "invalid_request")
+    def test_sse_request_requires_token_before_stream_setup(self) -> None:
+        handler = self._handler(None)
+        handler.path = "/v1/turn/stream"
+        handler.headers = {
+            "Accept": "text/event-stream",
+            "X-Request-ID": "req-sse-auth",
+            "Content-Length": "999",
+        }
+        with mock.patch(
+            "openminion.api.server.app.handle_http_turn_stream_request"
+        ) as handle_stream:
+            _OpenMinionAPIHandler.do_POST(handler)
+
+        handle_stream.assert_not_called()
+        handler.send_response.assert_called_once_with(int(HTTPStatus.UNAUTHORIZED))

@@ -96,6 +96,9 @@ def test_shortlist_tool_schemas_uses_model_authored_exact_names() -> None:
     assert runtime.calls[0]["tools"] == []
     assert runtime.calls[0]["tool_choice"] == "none"
     assert runtime.calls[0]["metadata"] == {"purpose": "tool_schema_shortlist"}
+    shortlist_prompt = runtime.calls[0]["messages"][1].content
+    assert "complete requested workflow" in shortlist_prompt
+    assert "include both agent.list and task.delegate" in shortlist_prompt
 
 
 def test_shortlist_tool_schemas_skips_small_tool_surfaces() -> None:

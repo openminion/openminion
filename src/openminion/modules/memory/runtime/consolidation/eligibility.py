@@ -40,7 +40,7 @@ def _candidate_ids(candidates: Sequence[Any]) -> tuple[str, ...]:
     )
 
 
-def _state_hash(candidate_ids: Sequence[str]) -> str:
+def candidate_state_hash(candidate_ids: Sequence[str]) -> str:
     digest = hashlib.sha256()
     for candidate_id in candidate_ids:
         digest.update(candidate_id.encode("utf-8"))
@@ -147,7 +147,7 @@ class ConsolidationEligibilityChecker:
                 reason_code="NO_RECENT_ROLLOUT",
             )
 
-        state_hash = _state_hash(candidate_ids)
+        state_hash = candidate_state_hash(candidate_ids)
         maintenance = self._maintenance_state(session_id, agent_id)
         if (
             str(maintenance.get("last_consolidation_state_hash", "") or "").strip()
@@ -202,4 +202,5 @@ __all__ = [
     "ConsolidationEligibilityChecker",
     "ConsolidationEligibilityReason",
     "EligibilityResult",
+    "candidate_state_hash",
 ]

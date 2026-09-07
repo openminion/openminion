@@ -67,6 +67,7 @@ def action_result_to_tool_message(
         payload["error"] = {
             "code": action_result.error.code,
             "message": _truncate_tool_message_text(action_result.error.message),
+            "details": _compact_tool_message_value(action_result.error.details),
         }
 
     meta: dict[str, Any] = {}

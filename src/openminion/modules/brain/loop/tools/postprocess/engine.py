@@ -6,9 +6,10 @@ import time
 from typing import Any
 
 from openminion.modules.llm import ProviderError
-from openminion.modules.llm.schemas import Message
+from openminion.modules.llm.schemas import Message, ToolCall
 from ..budget import (
     _debit_llm_usage,
+    _effective_cap,
     _profile_budget_exhausted,
     _remaining_budget_fraction,
     _tool_call_budget_exhausted,
@@ -16,7 +17,6 @@ from ..budget import (
 )
 from ..budget_control import (
     _answer_only_finalization_messages,
-    _effective_cap,
     _force_budget_answer_only_finalization,
     _maybe_extend_iteration_budget,
     _is_internal_failure_final_text,
@@ -29,6 +29,7 @@ from ..contracts import (
     ADAPTIVE_TERM_FINAL_TEXT,
     ADAPTIVE_TERM_LLM_ERROR,
     AdaptiveToolLoopOutcome,
+    AdaptiveToolLoopState,
 )
 from ..correction import build_correction_history_summary
 from ..direct_tool import (
@@ -90,6 +91,40 @@ def _suppressed_tool_retry_message(
     return "This turn cannot call tools. Return a user-facing answer without any tool calls."
 
 
+def _reopen_terminal_tool_request(loop_state: AdaptiveToolLoopState) -> bool:
+    terminal_tool = str(
+        loop_state.scratchpad.get("tool_schema_shortlisting.terminal_tool", "") or ""
+    ).strip()
+    if not terminal_tool or not loop_state.direct_tool_requested_batch_satisfied:
+        return False
+
+    loop_state.direct_tool_turn = None
+    loop_state.direct_tool_requested_batch_satisfied = False
+    loop_state.direct_tool_closure_consumed = False
+    loop_state.scratchpad.pop("direct_tool_closure_forced", None)
+    loop_state.scratchpad.pop("direct_tool_completed_tool_names", None)
+    loop_state.scratchpad.pop("tool_schema_shortlisting.terminal_tool", None)
+    loop_state.scratchpad["tool_schema_shortlisting.reopened_terminal_tool"] = (
+        terminal_tool
+    )
+    loop_state.messages = [
+        message
+        for message in loop_state.messages
+        if not message.meta.get("direct_tool_closure")
+    ]
+    loop_state.messages.append(
+        Message(
+            role="system",
+            content=(
+                "The attempted native tool call explicitly continues the task. "
+                f"The terminal hint for {terminal_tool} is revoked. Continue the "
+                "normal tool loop and finish the original user request."
+            ),
+        )
+    )
+    return True
+
+
 def _mutating_file_fallback_outcome(runner: Any) -> AdaptiveToolLoopOutcome | None:
     fallback_text = mutating_file_evidence_fallback_text(runner.loop_state)
     if not fallback_text:
@@ -110,13 +145,34 @@ class AdaptiveLoopRunnerPostprocessMixin(
     AdaptiveLoopRunnerClosureMixin,
     AdaptiveLoopRunnerNoToolMixin,
 ):
-    def _append_response_messages(self, response: Any) -> None:
-        response_tool_calls = list(getattr(response, "tool_calls", []) or [])
+    def _append_response_messages(
+        self, response: Any, *, tool_calls: list[Any] | None = None
+    ) -> None:
+        response_tool_calls = (
+            list(getattr(response, "tool_calls", []) or [])
+            if tool_calls is None
+            else [
+                ToolCall(
+                    id=str(getattr(call, "id", "") or ""),
+                    name=str(getattr(call, "name", "") or ""),
+                    arguments=dict(getattr(call, "arguments", {}) or {}),
+                    batch_index=int(getattr(call, "batch_index", 0) or 0),
+                    depends_on=list(getattr(call, "depends_on", []) or []),
+                )
+                for call in tool_calls
+            ]
+        )
         fallback_text = str(getattr(response, "output_text", "") or "").strip()
         assistant_messages = [
             message
             for message in list(getattr(response, "assistant_messages", []) or [])
             if not _looks_like_unexecutable_tool_payload_text(message.content)
+        ]
+        assistant_messages = [
+            message.model_copy(update={"tool_calls": []})
+            if message.tool_calls
+            else message
+            for message in assistant_messages
         ]
         if response_tool_calls and not any(
             message.tool_calls for message in assistant_messages
@@ -200,10 +256,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
             return None
         _debit_llm_usage(self.loop_ctx, response)
         self.loop_state.llm_calls += 1
-        for assistant_message in list(
-            getattr(response, "assistant_messages", []) or []
-        ):
-            self.loop_state.messages.append(assistant_message)
+        self._append_response_messages(response, tool_calls=[])
         if not bool(getattr(response, "ok", False)):
             return None
         if getattr(response, "empty_payload_recovered", False) is True:
@@ -379,7 +432,6 @@ class AdaptiveLoopRunnerPostprocessMixin(
 
     def _prepare_llm_response(self) -> Any:
         profile = self.profile
-        loop_state = self.loop_state
         self.loop_state.iteration += 1
         emit_adaptive_status(
             self.loop_ctx,
@@ -415,11 +467,12 @@ class AdaptiveLoopRunnerPostprocessMixin(
         if intent_state_message is not None:
             self.loop_state.messages.append(intent_state_message)
         _set_turn_progress(
-            loop_state,
+            self.loop_state,
             llm_call_count=self.loop_state.llm_calls + 1,
-            llm_call_limit=_effective_cap(profile, loop_state),
+            llm_call_limit=_effective_cap(profile, self.loop_state),
             progress_phase="thinking...",
             tool_name="",
+            detail_code="thinking",
         )
         emit_adaptive_status(
             self.loop_ctx,
@@ -432,8 +485,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
         llm_tools, llm_tool_choice, response_was_tool_suppressed = (
             self._prepare_llm_request()
         )
-
-        if self.pending_response is not None:
+        if response_was_pending := self.pending_response is not None:
             response = self.pending_response
             self.pending_response = None
         else:
@@ -466,22 +518,23 @@ class AdaptiveLoopRunnerPostprocessMixin(
                 )
         iter_llm_duration_ms = int((time.monotonic() - llm_start) * 1000)
         iter_tool_records: list[IterationToolCallRecord] = []
-        iter_input_tokens = 0
-        iter_output_tokens = 0
+        iter_input_tokens = iter_output_tokens = 0
         usage = getattr(response, "usage", None)
         if usage is not None:
             iter_input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
             iter_output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-        _debit_llm_usage(self.loop_ctx, response)
+        if not response_was_pending:
+            _debit_llm_usage(self.loop_ctx, response)
         self.loop_state.llm_calls += 1
         _set_turn_progress(
-            loop_state,
+            self.loop_state,
             llm_call_count=self.loop_state.llm_calls,
-            llm_call_limit=_effective_cap(profile, loop_state),
+            llm_call_limit=_effective_cap(profile, self.loop_state),
             input_tokens_delta=iter_input_tokens,
             output_tokens_delta=iter_output_tokens,
             progress_phase="composing answer",
             tool_name="",
+            detail_code="composing_answer",
         )
         if not bool(getattr(response, "ok", False)):
             error = getattr(response, "error", None)
@@ -518,8 +571,12 @@ class AdaptiveLoopRunnerPostprocessMixin(
         tool_calls: list[Any],
         response_was_tool_suppressed: bool,
     ) -> tuple[bool, AdaptiveToolLoopOutcome | None]:
+        if tool_calls:
+            self.loop_state.scratchpad.pop("empty_payload_recovery_retry_count", None)
         if not response_was_tool_suppressed or not tool_calls:
             return False, None
+        if _reopen_terminal_tool_request(self.loop_state):
+            return True, None
         if bool(
             self.loop_state.scratchpad.get(
                 "duplicate_batch_answer_only_closure_pending", False

@@ -1,6 +1,6 @@
 # Starter Examples
 
-`openminion/examples/starter/` holds copy-first snippets for the most common
+`examples/starter/` holds copy-first snippets for the most common
 runtime and extension surfaces. The extension imports match the current
 scaffold output and may evolve while OpenMinion is pre-1.0.
 

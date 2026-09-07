@@ -56,8 +56,8 @@ class SkillMatchingMixin:
         statuses = self._resolve_status_filter(status_filter, risk_hint)
         rows = self.store.list_latest_skills(status_filter=statuses, agent_id=agent_id)
 
-        narrow_threshold = int(getattr(self.config, "selection_rag_threshold", 10))
-        narrow_topk = int(getattr(self.config, "selection_rag_topk", 5))
+        narrow_threshold = int(self.config.selection_rag_threshold)
+        narrow_topk = int(self.config.selection_rag_topk)
         if len(rows) > narrow_threshold:
             rows, narrow_extra = self._narrow_skill_rows(
                 rows,
@@ -192,6 +192,8 @@ class SkillMatchingMixin:
         intent_lower: str,
         step_hint: dict[str, Any],
     ) -> tuple[float, list[str], _SkillMatchTieBreak]:
+        """Score bounded recall candidates; the LLM owns final skill selection."""
+
         score = 0.0
         reasons: list[str] = []
         exact_match_count = 0
@@ -329,7 +331,7 @@ class SkillMatchingMixin:
                 exact_match_count=exact_match_count,
                 compact_phrase_count=compact_phrase_count,
                 compact_signal_score=compact_signal_score,
-                identity_score=0.0,
+                identity_score=identity_score,
                 status_rank=_status_preference_rank(package.status),
                 skill_id=package.skill_id,
             ),

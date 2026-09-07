@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_file_and_admit
 
 
 SAMPLES_ROOT = Path(__file__).resolve().parents[2] / "examples" / "skills"
@@ -62,8 +63,8 @@ class TestSkillPolicyMetadata:
         ctl = Skill(_cfg(tmp_path))
         try:
             path = SAMPLES_ROOT / "api-account-create-post-share" / "SKILL.md"
-            skill_id, version_hash, warnings = ctl.ingest_file(
-                path, name="api-account-create-post-share"
+            skill_id, version_hash, warnings = ingest_file_and_admit(
+                ctl, path, name="api-account-create-post-share"
             )
 
             snippet, _ = ctl.render_snippet(
@@ -81,8 +82,8 @@ class TestSkillPolicyMetadata:
         ctl = Skill(_cfg(tmp_path))
         try:
             path = SAMPLES_ROOT / "api-account-publish-share" / "SKILL.md"
-            skill_id, version_hash, warnings = ctl.ingest_file(
-                path, name="api-account-publish-share"
+            skill_id, version_hash, warnings = ingest_file_and_admit(
+                ctl, path, name="api-account-publish-share"
             )
 
             snippet, _ = ctl.render_snippet(
@@ -100,8 +101,8 @@ class TestSkillPolicyMetadata:
         ctl = Skill(_cfg(tmp_path))
         try:
             path = SAMPLES_ROOT / "api-account-create-post-share" / "SKILL.md"
-            skill_id, version_hash, warnings = ctl.ingest_file(
-                path, name="api-account-create-post-share"
+            skill_id, version_hash, warnings = ingest_file_and_admit(
+                ctl, path, name="api-account-create-post-share"
             )
 
             snippet, _ = ctl.render_snippet(
@@ -121,8 +122,8 @@ class TestPolicyGatingBehavior:
         ctl = Skill(_cfg(tmp_path))
         try:
             path = SAMPLES_ROOT / "api-account-create-post-share" / "SKILL.md"
-            skill_id, version_hash, warnings = ctl.ingest_file(
-                path, name="api-account-create-post-share"
+            skill_id, version_hash, warnings = ingest_file_and_admit(
+                ctl, path, name="api-account-create-post-share"
             )
 
             snippet, _ = ctl.render_snippet(
@@ -140,8 +141,8 @@ class TestPolicyGatingBehavior:
         ctl = Skill(_cfg(tmp_path))
         try:
             path = SAMPLES_ROOT / "api-account-create-post-share" / "SKILL.md"
-            skill_id, version_hash, warnings = ctl.ingest_file(
-                path, name="api-account-create-post-share"
+            skill_id, version_hash, warnings = ingest_file_and_admit(
+                ctl, path, name="api-account-create-post-share"
             )
 
             snippet, _ = ctl.render_snippet(
@@ -161,8 +162,8 @@ class TestVerificationRequirements:
         ctl = Skill(_cfg(tmp_path))
         try:
             path = SAMPLES_ROOT / "api-account-create-post-share" / "SKILL.md"
-            skill_id, version_hash, warnings = ctl.ingest_file(
-                path, name="api-account-create-post-share"
+            skill_id, version_hash, warnings = ingest_file_and_admit(
+                ctl, path, name="api-account-create-post-share"
             )
 
             snippet, _ = ctl.render_snippet(
@@ -181,8 +182,8 @@ class TestVerificationRequirements:
         ctl = Skill(_cfg(tmp_path))
         try:
             path = SAMPLES_ROOT / "api-account-publish-share" / "SKILL.md"
-            skill_id, version_hash, warnings = ctl.ingest_file(
-                path, name="api-account-publish-share"
+            skill_id, version_hash, warnings = ingest_file_and_admit(
+                ctl, path, name="api-account-publish-share"
             )
 
             snippet, _ = ctl.render_snippet(

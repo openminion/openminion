@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import ast
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import sys
+import tempfile
 
 REPO_IMPORT_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_IMPORT_ROOT) not in sys.path:
@@ -135,6 +137,10 @@ def validate(
                 findings.append(
                     f"baselined_method_grew: {row.path}:{row.qualname} has {row.loc} LOC > baseline {entry.loc}"
                 )
+            elif row.loc < entry.loc:
+                findings.append(
+                    f"stale_method_headroom: {row.path}:{row.qualname} has {row.loc} LOC < baseline {entry.loc}; run --emit-baseline"
+                )
         elif entry is not None:
             seen.add(key)
             findings.append(
@@ -152,13 +158,69 @@ def validate(
     return findings, metrics
 
 
+def emit_baseline(
+    *, repo_root: Path, source_root: Path, baseline_path: Path, ceiling: int
+) -> tuple[bool, list[str]]:
+    rows = {
+        (row.path, row.qualname): row
+        for row in iter_methods(repo_root=repo_root, source_root=source_root)
+        if row.loc > ceiling
+    }
+    baseline = load_baseline(baseline_path)
+    blocked = [
+        f"new_over_ceiling_method: {row.path}:{row.qualname}"
+        for key, row in rows.items()
+        if key not in baseline
+    ]
+    blocked.extend(
+        f"baselined_method_grew: {row.path}:{row.qualname} has {row.loc} LOC > baseline {baseline[key].loc}"
+        for key, row in rows.items()
+        if key in baseline and row.loc > baseline[key].loc
+    )
+    if blocked:
+        return False, blocked
+    changed = set(rows) != set(baseline) or any(
+        row.loc < baseline[key].loc for key, row in rows.items()
+    )
+    if not changed:
+        return False, ["unchanged_method_baseline"]
+    lines = ["# path\tqualname\tloc\treason"]
+    for key, row in sorted(rows.items()):
+        entry = baseline[key]
+        lines.append(f"{row.path}\t{row.qualname}\t{row.loc}\t{entry.reason}")
+    baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=baseline_path.parent, delete=False
+    ) as handle:
+        temp_path = Path(handle.name)
+        handle.write("\n".join(lines) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp_path, baseline_path)
+    return True, []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     parser.add_argument("--source-root", type=Path, default=DEFAULT_SOURCE_ROOT)
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument("--ceiling", type=int, default=DEFAULT_CEILING)
+    parser.add_argument("--emit-baseline", action="store_true")
     args = parser.parse_args(argv)
+    if args.emit_baseline:
+        written, findings = emit_baseline(
+            repo_root=args.repo_root.resolve(),
+            source_root=args.source_root.resolve(),
+            baseline_path=args.baseline.resolve(),
+            ceiling=max(1, args.ceiling),
+        )
+        if not written:
+            for finding in findings:
+                print(finding, file=sys.stderr)
+            return 1
+        print(f"method-LOC baseline written: {args.baseline}")
+        return 0
     findings, metrics = validate(
         repo_root=args.repo_root.resolve(),
         source_root=args.source_root.resolve(),

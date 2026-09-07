@@ -10,11 +10,55 @@ from openminion.modules.brain.loop.tools.iteration.helpers import (
     _finalize_tool_result_from_context,
 )
 from openminion.modules.brain.loop.services import runner_from_context
+from openminion.modules.brain.loop.providers.retry import build_provider_retry_policy
 from openminion.modules.brain.runner.tick.context import (
     _store_pending_confirmation_metadata,
 )
-from openminion.modules.brain.schemas import ActionResult
+from openminion.modules.brain.schemas import ActionResult, ToolCommand
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
+
+
+_VERIFICATION_TARGET_KIND_ARG = "verification_target_kind"
+_VERIFICATION_TARGET_ID_ARG = "verification_target_id"
+
+
+def _bind_verification_target(command: Any) -> Any:
+    if not isinstance(command, ToolCommand):
+        return command
+    args = dict(command.args)
+    inputs = dict(command.inputs)
+    target_kind = str(
+        args.pop(
+            _VERIFICATION_TARGET_KIND_ARG,
+            inputs.pop(
+                _VERIFICATION_TARGET_KIND_ARG,
+                command.verification_target_kind or "",
+            ),
+        )
+        or ""
+    ).strip()
+    target_id = str(
+        args.pop(
+            _VERIFICATION_TARGET_ID_ARG,
+            inputs.pop(
+                _VERIFICATION_TARGET_ID_ARG,
+                command.verification_target_id or "",
+            ),
+        )
+        or ""
+    ).strip()
+    if target_kind not in {"criterion", "deliverable"} or not target_id:
+        target_kind = ""
+        target_id = ""
+    return command.model_copy(
+        update={
+            "args": args,
+            "inputs": inputs,
+            "verification_target_kind": target_kind or None,
+            "verification_target_id": target_id or None,
+        },
+        deep=True,
+    )
 
 
 class _CodingLoopContextAdapter:
@@ -26,7 +70,12 @@ class _CodingLoopContextAdapter:
     ) -> None:
         self.state = ctx.state
         self._ctx = ctx
-        self.session_api = getattr(runner_from_context(ctx), "session_api", None)
+        runner = runner_from_context(ctx)
+        self.session_api = getattr(runner, "session_api", None)
+        self.provider_retry_max_attempts = build_provider_retry_policy(
+            getattr(runner, "options", None),
+            getattr(runner, "llm_api", None),
+        ).max_attempts
         self.prepared_parallel_dispatch_supported = all(
             callable(getattr(ctx.command_executor, name, None))
             for name in (
@@ -43,6 +92,7 @@ class _CodingLoopContextAdapter:
         command: Any,
         include_reflect: bool = False,
     ):
+        command = _bind_verification_target(command)
         outcome = self._ctx.command_executor.execute_command(
             state=self._ctx.state,
             command=command,
@@ -57,6 +107,7 @@ class _CodingLoopContextAdapter:
         command: Any,
         include_reflect: bool = False,
     ):
+        command = _bind_verification_target(command)
         return self._ctx.command_executor.prepare_tool_dispatch(
             state=self._ctx.state,
             command=command,
@@ -100,6 +151,12 @@ class _CodingLoopContextAdapter:
             approved_command=prepare_outcome.approved_command,
             action_result=prepare_outcome.action_result,
             tool_budget_debited=prepare_outcome.tool_budget_debited,
+            policy_approval_id=prepare_outcome.policy_approval_id,
+            policy_confirmation_preview=(prepare_outcome.policy_confirmation_preview),
+        )
+        self.state.pending_policy_approval_id = prepare_outcome.policy_approval_id
+        self.state.pending_policy_confirmation_preview = (
+            prepare_outcome.policy_confirmation_preview
         )
         return self._postprocess_outcome(
             outcome,
@@ -127,7 +184,8 @@ class _CodingLoopContextAdapter:
             )
             _store_pending_confirmation_metadata(self.state)
             self.state.post_action_user_message = confirmation_required_user_message(
-                approved_command
+                approved_command,
+                self.state.pending_policy_confirmation_preview,
             )
         if (
             action_result is not None

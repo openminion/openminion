@@ -423,9 +423,13 @@ class ClientArtifactCoordinator:
     def revoke_client(self, identity: ClientIdentity) -> None:
         with self._lock:
             sessions = {
-                item.session_id
-                for item in (*self._cursors.values(), *self._records.values())
-                if item.client_id == identity.client_id
+                state.session_id
+                for state in self._cursors.values()
+                if state.client_id == identity.client_id
+            } | {
+                record.session_id
+                for record in self._records.values()
+                if record.client_id == identity.client_id
             }
             for session_id in sessions:
                 self._session_generations[session_id] = (
@@ -456,10 +460,10 @@ class ClientArtifactCoordinator:
 
     def close(self) -> None:
         with self._lock:
-            for session_id in {
-                item.session_id
-                for item in (*self._cursors.values(), *self._records.values())
-            }:
+            session_ids = {state.session_id for state in self._cursors.values()} | {
+                record.session_id for record in self._records.values()
+            }
+            for session_id in session_ids:
                 self._session_generations[session_id] = (
                     self._session_generations.get(session_id, 0) + 1
                 )
@@ -857,35 +861,35 @@ class ClientArtifactCoordinator:
         _trim_tombstones(self._record_tombstones, client_cap=256, global_cap=1024)
 
     def _clear_client_locked(self, client_id: str) -> None:
-        for key, value in tuple(self._cursors.items()):
-            if value.client_id == client_id:
+        for key, state in tuple(self._cursors.items()):
+            if state.client_id == client_id:
                 self._cursors.pop(key, None)
-        for key, value in tuple(self._records.items()):
-            if value.client_id == client_id:
+        for key, record in tuple(self._records.items()):
+            if record.client_id == client_id:
                 self._records.pop(key, None)
                 self._record_by_source.pop(
                     (
-                        value.client_id,
-                        value.session_id,
-                        value.source_kind,
-                        value.source_id,
+                        record.client_id,
+                        record.session_id,
+                        record.source_kind,
+                        record.source_id,
                     ),
                     None,
                 )
 
     def _clear_session_locked(self, session_id: str) -> None:
-        for key, value in tuple(self._cursors.items()):
-            if value.session_id == session_id:
+        for key, state in tuple(self._cursors.items()):
+            if state.session_id == session_id:
                 self._cursors.pop(key, None)
-        for key, value in tuple(self._records.items()):
-            if value.session_id == session_id:
+        for key, record in tuple(self._records.items()):
+            if record.session_id == session_id:
                 self._records.pop(key, None)
                 self._record_by_source.pop(
                     (
-                        value.client_id,
-                        value.session_id,
-                        value.source_kind,
-                        value.source_id,
+                        record.client_id,
+                        record.session_id,
+                        record.source_kind,
+                        record.source_id,
                     ),
                     None,
                 )

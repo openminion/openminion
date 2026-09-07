@@ -1,15 +1,12 @@
-from __future__ import annotations
-
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import Any
 
-from openminion.cli.status.tool_calls import format_tool_args_preview
+from openminion.cli.status.tool_calls import format_public_tool_activity
 
 from ..status_line import TerminalStatusLine
 
-_DEFAULT_TURN_STATUS = "Working..."
-_TOOL_STATUS_MAX = 96
+_DEFAULT_TURN_STATUS = "Working on it..."
 
 _PROGRESS_KIND_ALIASES = {
     "tool_start": "tool_started",
@@ -36,22 +33,18 @@ def normalize_progress_kind(payload: dict[str, Any] | None) -> str:
     return ""
 
 
-def tool_progress_status_label(payload: dict[str, Any], *, verb: str) -> str:
+def tool_progress_status_label(payload: dict[str, Any], *, pending: bool) -> str:
     name = (
         str(
-            payload.get("tool_name") or payload.get("name") or payload.get("tool") or ""
+            payload.get("model_tool_name")
+            or payload.get("tool_name")
+            or payload.get("name")
+            or payload.get("tool")
+            or ""
         ).strip()
         or "tool"
     )
-    args = payload.get("args") or payload.get("arguments")
-    preview = format_tool_args_preview(
-        name, args if isinstance(args, Mapping) else None
-    )
-    call = f"{name}({preview})" if preview else name
-    label = f"{verb} {call}"
-    if len(label) > _TOOL_STATUS_MAX:
-        return f"{label[: _TOOL_STATUS_MAX - 3]}..."
-    return label
+    return str(format_public_tool_activity(name, pending=pending))
 
 
 def apply_turn_progress_status(
@@ -79,8 +72,6 @@ async def tick_turn_status_line(
     status_line: TerminalStatusLine,
     invalidate_prompt: Callable[[], None] | None = None,
 ) -> None:
-    """Keep the active turn footer clock fresh while prompt input is available."""
-
     loop = asyncio.get_running_loop()
     started_at = loop.time()
     while True:

@@ -1,119 +1,24 @@
 """Runtime tool-family config normalization."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 from openminion.base.config.base import ConfigError
-from openminion.base.config.parse import _as_bool
+
+from .tool_family import (
+    BlockchainToolRuntimeConfig,
+    ToolFamilyRuntimeConfig,
+    blockchain_tool_runtime_config_to_dict,
+    coerce_blockchain_tool_runtime_config,
+    coerce_tool_family_runtime_config,
+)
 
 _SUPPORTED_RUNTIME_TOOL_FAMILIES = ("search", "fetch", "browser", "weather")
-_SUPPORTED_RUNTIME_TOOL_CONFIG_KEYS = (*_SUPPORTED_RUNTIME_TOOL_FAMILIES, "gws")
-
-
-def _normalize_provider_tokens(raw_value: object, *, field_path: str) -> list[str]:
-    if raw_value is None:
-        return []
-    if not isinstance(raw_value, list):
-        raise ConfigError(f"{field_path} must be an array of provider ids.")
-
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for index, item in enumerate(raw_value):
-        token = str(item or "").strip().lower()
-        if not token:
-            raise ConfigError(f"{field_path}[{index}] must be a non-empty provider id.")
-        if token in seen:
-            raise ConfigError(
-                f"{field_path} must not contain duplicate provider ids: {token!r}."
-            )
-        seen.add(token)
-        normalized.append(token)
-    return normalized
-
-
-def _normalize_allow_fallback(
-    raw_value: object,
-    *,
-    field_path: str,
-) -> bool | None:
-    if raw_value is None:
-        return None
-    if not isinstance(raw_value, (bool, int, float, str)):
-        raise ConfigError(f"{field_path} must be a boolean when provided.")
-    return bool(_as_bool(raw_value, False))
-
-
-@dataclass
-class ToolFamilyRuntimeConfig:
-    enabled_providers: list[str] = field(default_factory=list)
-    default_provider: str = ""
-    provider_order: list[str] = field(default_factory=list)
-    allow_fallback: bool | None = None
-
-
-def coerce_tool_family_runtime_config(
-    value: object,
-    *,
-    family_name: str,
-) -> ToolFamilyRuntimeConfig | None:
-    if value is None:
-        return None
-    if isinstance(value, ToolFamilyRuntimeConfig):
-        return value
-    if not isinstance(value, Mapping):
-        raise ConfigError(f"runtime.tools.{family_name} must be an object.")
-
-    field_path = f"runtime.tools.{family_name}"
-    enabled_providers = _normalize_provider_tokens(
-        value.get("enabled_providers"),
-        field_path=f"{field_path}.enabled_providers",
-    )
-    provider_order = _normalize_provider_tokens(
-        value.get("provider_order"),
-        field_path=f"{field_path}.provider_order",
-    )
-    default_provider = str(value.get("default_provider") or "").strip().lower()
-    allow_fallback = _normalize_allow_fallback(
-        value.get("allow_fallback"),
-        field_path=f"{field_path}.allow_fallback",
-    )
-
-    if "enabled_providers" in value and not enabled_providers:
-        raise ConfigError(
-            f"{field_path}.enabled_providers must contain at least one provider id."
-        )
-    if "provider_order" in value and not provider_order:
-        raise ConfigError(
-            f"{field_path}.provider_order must contain at least one provider id."
-        )
-    if (
-        default_provider
-        and enabled_providers
-        and default_provider not in enabled_providers
-    ):
-        raise ConfigError(
-            f"{field_path}.default_provider must be listed in "
-            f"{field_path}.enabled_providers."
-        )
-    if default_provider and provider_order and default_provider not in provider_order:
-        raise ConfigError(
-            f"{field_path}.default_provider must be listed in "
-            f"{field_path}.provider_order."
-        )
-    if enabled_providers and provider_order:
-        extra = [token for token in provider_order if token not in enabled_providers]
-        if extra:
-            raise ConfigError(
-                f"{field_path}.provider_order must be a subset of "
-                f"{field_path}.enabled_providers: {extra!r}."
-            )
-
-    return ToolFamilyRuntimeConfig(
-        enabled_providers=enabled_providers,
-        default_provider=default_provider,
-        provider_order=provider_order,
-        allow_fallback=allow_fallback,
-    )
+_SUPPORTED_RUNTIME_TOOL_CONFIG_KEYS = (
+    *_SUPPORTED_RUNTIME_TOOL_FAMILIES,
+    "blockchain",
+    "gws",
+)
 
 
 @dataclass
@@ -122,6 +27,7 @@ class ToolRuntimeConfig:
     fetch: ToolFamilyRuntimeConfig | None = None
     browser: ToolFamilyRuntimeConfig | None = None
     weather: ToolFamilyRuntimeConfig | None = None
+    blockchain: BlockchainToolRuntimeConfig | None = None
     gws: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -135,6 +41,7 @@ class ToolRuntimeConfig:
         self.weather = coerce_tool_family_runtime_config(
             self.weather, family_name="weather"
         )
+        self.blockchain = coerce_blockchain_tool_runtime_config(self.blockchain)
         if self.gws is not None:
             if not isinstance(self.gws, Mapping):
                 raise ConfigError("runtime.tools.gws must be an object.")
@@ -157,7 +64,6 @@ def coerce_tool_runtime_config(value: object) -> ToolRuntimeConfig:
     if not isinstance(value, Mapping):
         raise ConfigError("runtime.tools must be an object.")
 
-    normalized: dict[str, Any] = {}
     unknown_families = sorted(
         str(key)
         for key in value.keys()
@@ -170,16 +76,20 @@ def coerce_tool_runtime_config(value: object) -> ToolRuntimeConfig:
             f"{supported}. Unsupported keys: {unknown_families!r}."
         )
 
-    for family_name in _SUPPORTED_RUNTIME_TOOL_FAMILIES:
-        raw_family = value.get(family_name)
-        normalized[family_name] = coerce_tool_family_runtime_config(
-            raw_family,
+    normalized: dict[str, Any] = {
+        family_name: coerce_tool_family_runtime_config(
+            value.get(family_name),
             family_name=family_name,
         )
+        for family_name in _SUPPORTED_RUNTIME_TOOL_FAMILIES
+    }
     raw_gws = value.get("gws")
     if raw_gws is not None and not isinstance(raw_gws, Mapping):
         raise ConfigError("runtime.tools.gws must be an object.")
     normalized["gws"] = dict(raw_gws) if raw_gws is not None else None
+    normalized["blockchain"] = coerce_blockchain_tool_runtime_config(
+        value.get("blockchain")
+    )
     return ToolRuntimeConfig(**normalized)
 
 
@@ -201,4 +111,86 @@ def tool_runtime_config_to_dict(config: ToolRuntimeConfig | None) -> dict[str, A
         payload[family_name] = family_payload
     if normalized.gws is not None:
         payload["gws"] = dict(normalized.gws)
+    if normalized.blockchain is not None:
+        payload["blockchain"] = blockchain_tool_runtime_config_to_dict(
+            normalized.blockchain
+        )
     return payload
+
+
+def merge_tool_runtime_overrides(
+    *,
+    system_tools: ToolRuntimeConfig | None,
+    agent_tools: ToolRuntimeConfig | None,
+) -> ToolRuntimeConfig:
+    system = coerce_tool_runtime_config(system_tools)
+    agent = coerce_tool_runtime_config(agent_tools)
+    families = {
+        name: _merge_tool_family_runtime_overrides(
+            family_name=name,
+            system_family=getattr(system, name),
+            agent_family=getattr(agent, name),
+        )
+        for name in _SUPPORTED_RUNTIME_TOOL_FAMILIES
+    }
+    return ToolRuntimeConfig(
+        **families,
+        blockchain=agent.blockchain or system.blockchain,
+        gws=agent.gws if agent.gws is not None else system.gws,
+    )
+
+
+def _merge_tool_family_runtime_overrides(
+    *,
+    family_name: str,
+    system_family: ToolFamilyRuntimeConfig | None,
+    agent_family: ToolFamilyRuntimeConfig | None,
+) -> ToolFamilyRuntimeConfig | None:
+    if system_family is None or agent_family is None:
+        return agent_family or system_family
+    system_enabled = list(system_family.enabled_providers)
+    agent_enabled = list(agent_family.enabled_providers)
+    if system_enabled and agent_enabled:
+        extra = [item for item in agent_enabled if item not in system_enabled]
+        if extra:
+            raise ConfigError(
+                f"agent runtime override tools.{family_name}.enabled_providers cannot "
+                f"exceed runtime.tools.{family_name}.enabled_providers: {extra!r}."
+            )
+    enabled = agent_enabled or system_enabled
+    default = agent_family.default_provider or system_family.default_provider
+    if enabled and default and default not in enabled:
+        raise ConfigError(
+            f"agent runtime override tools.{family_name}.default_provider={default!r} "
+            f"is blocked by the effective enabled_providers {enabled!r}."
+        )
+    order = list(agent_family.provider_order or system_family.provider_order)
+    extra = [item for item in order if enabled and item not in enabled]
+    if extra:
+        raise ConfigError(
+            f"agent runtime override tools.{family_name}.provider_order cannot exceed "
+            f"the effective enabled_providers: {extra!r}."
+        )
+    fallback = (
+        agent_family.allow_fallback
+        if agent_family.allow_fallback is not None
+        else system_family.allow_fallback
+    )
+    if system_family.allow_fallback is False and agent_family.allow_fallback is True:
+        raise ConfigError(
+            f"agent runtime override tools.{family_name}.allow_fallback=true cannot "
+            f"override runtime.tools.{family_name}.allow_fallback=false."
+        )
+    return ToolFamilyRuntimeConfig(enabled, default, order, fallback)
+
+
+__all__ = (
+    "BlockchainToolRuntimeConfig",
+    "ToolFamilyRuntimeConfig",
+    "ToolRuntimeConfig",
+    "coerce_blockchain_tool_runtime_config",
+    "coerce_tool_family_runtime_config",
+    "coerce_tool_runtime_config",
+    "merge_tool_runtime_overrides",
+    "tool_runtime_config_to_dict",
+)

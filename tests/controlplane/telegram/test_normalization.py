@@ -85,11 +85,11 @@ def test_command_alias_normalization() -> None:
     )
     assert normalize_command_aliases("/diag", bot_username="mybot") == "/diag"
     assert (
-        normalize_command_aliases("/run status abc", bot_username="mybot") == "/job ls"
+        normalize_command_aliases("/run status abc", bot_username="mybot")
+        == "/run status abc"
     )
-    assert (
-        normalize_command_aliases("/cancel abc", bot_username="mybot")
-        == "/profile stop"
+    assert normalize_command_aliases("/cancel abc", bot_username="mybot") == (
+        "/cancel abc"
     )
     assert normalize_command_aliases("/stop", bot_username="mybot") == "/profile stop"
     assert (

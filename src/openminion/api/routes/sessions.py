@@ -7,16 +7,16 @@ from urllib.parse import parse_qs, unquote
 
 from openminion.api.operations.context_traces import maybe_handle_context_traces_request
 from openminion.api.operations.session_shares import maybe_handle_session_shares_request
-from openminion.api.operations.events import handle_append_session_event
+from openminion.api.operations.events import (
+    handle_append_session_event,
+    handle_list_session_events,
+)
 from openminion.api.operations.session_continuations import (
     handle_apply_continuation,
     handle_build_continuation,
 )
 from openminion.api.queries.runs import RunQueryError, list_run_events, list_runs
-from openminion.api.queries.sessions import (
-    SessionQueryError,
-    list_session_messages,
-)
+from openminion.api.queries.sessions import SessionQueryError, list_session_messages
 from .contracts import (
     APIRouteContext,
     RouteResult,
@@ -224,6 +224,15 @@ def handle_request(
             path=path,
             session_id=unquote(events_route.group(1)),
             body=body,
+        )
+    if (
+        method_name == "GET"
+        and (events_route := _EVENTS_RE.fullmatch(path)) is not None
+    ):
+        return handle_list_session_events(  # type: ignore[no-any-return]
+            ctx,
+            session_id=unquote(events_route.group(1)),
+            query=query,
         )
     if method_name == "GET" and (runs_route := _RUNS_RE.fullmatch(path)) is not None:
         return _handle_list_runs(

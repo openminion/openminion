@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from openminion.modules.brain.adapters.llm import _extract_structured_output
 from openminion.modules.brain.interfaces import (
@@ -97,6 +97,31 @@ class LocalSessionStoreTests(unittest.TestCase):
             reloaded_state = WorkingState.model_validate(latest2["state_inline"])
             self.assertEqual(reloaded_state.status, "waiting_user")
             self.assertEqual(reloaded_state.budgets_remaining.tokens, 1000)
+
+    def test_tool_adapter_forwards_turn_approval_to_delegation_seam(self) -> None:
+        callbacks: list[object | None] = []
+
+        class _DelegateSeam:
+            def set_approval_callback(self, callback: object | None) -> None:
+                callbacks.append(callback)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+
+            adapter = ToolAdapter(
+                workspace_root=Path(tmp),
+                a2a_delegate_api=_DelegateSeam(),
+            )
+
+            def callback(*_args: object) -> bool:
+                return True
+
+            previous = adapter.set_approval_callback(callback)
+            restored = adapter.set_approval_callback(previous)
+
+        self.assertIsNone(previous)
+        self.assertIs(restored, callback)
+        self.assertEqual(callbacks, [callback, None])
 
     def test_extract_structured_output_accepts_fallback_submit_output_tool_calls(
         self,
@@ -264,8 +289,10 @@ class LocalSessionStoreTests(unittest.TestCase):
     def test_extract_structured_output_writes_ordered_structured_trace_sidecar(
         self,
     ) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENMINION_TRACE_REQUESTS"] = "1"
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.dict(os.environ, {"OPENMINION_TRACE_REQUESTS": "1"}),
+        ):
             response = SimpleNamespace(
                 provider="openai",
                 model="gpt-5.4",
@@ -631,6 +658,33 @@ class ToolAdapterTests(unittest.TestCase):
         self.assertEqual(len(res_art["artifact_refs"]), 1)
         self.assertEqual(res_art["artifact_refs"][0]["ref"], "art_123")
 
+    def test_tool_adapter_closes_only_its_default_artifactctl(self) -> None:
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+
+        default_artifactctl = MagicMock()
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch(
+                "openminion.modules.brain.adapters.tool.runtime.create_default_artifactctl",
+                return_value=default_artifactctl,
+            ),
+        ):
+            adapter = ToolAdapter(workspace_root=Path(tmp))
+            adapter.close()
+            adapter.close()
+
+        default_artifactctl.close.assert_called_once_with()
+
+        injected_artifactctl = MagicMock()
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = ToolAdapter(
+                workspace_root=Path(tmp),
+                artifactctl=injected_artifactctl,
+            )
+            adapter.close()
+
+        injected_artifactctl.close.assert_not_called()
+
     def test_tool_adapter_uses_policy_workspace_root(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
         from openminion.modules.tool import Policy
@@ -675,8 +729,9 @@ class ToolAdapterTests(unittest.TestCase):
             self.assertEqual(resolved, {first, second})
             self.assertEqual(adapter._effective_workspace_root(), root)
 
-    def test_tool_adapter_workspace_registration_crosses_worker_threads(self) -> None:
+    def test_tool_adapter_workspace_context_crosses_copied_worker_context(self) -> None:
         from concurrent.futures import ThreadPoolExecutor
+        from contextvars import copy_context
 
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 
@@ -689,11 +744,11 @@ class ToolAdapterTests(unittest.TestCase):
             with adapter.workspace_override(child):
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     resolved = executor.submit(
-                        adapter._registered_workspace_override, str(child)
+                        copy_context().run, adapter._effective_workspace_root
                     ).result()
 
             self.assertEqual(resolved, child)
-            self.assertIsNone(adapter._registered_workspace_override(str(child)))
+            self.assertEqual(adapter._effective_workspace_root(), root)
 
     def test_tool_adapter_rebases_parent_path_into_child_workspace(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
@@ -745,13 +800,83 @@ class ToolAdapterTests(unittest.TestCase):
             self.assertEqual(captured["path"], str(child / "accepted.txt"))
             self.assertEqual(captured["workspace_root"], str(child))
 
+    def test_tool_adapter_applies_added_roots_without_mutating_base_policy(
+        self,
+    ) -> None:
+        import copy
+
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+        from openminion.modules.tool import DEFAULT_POLICY, Policy, ToolRegistry
+        from openminion.tools.file.plugin import register
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            added = Path(tmp) / "added"
+            workspace.mkdir()
+            added.mkdir()
+            policy_raw = copy.deepcopy(DEFAULT_POLICY)
+            policy_raw["workspace_root"] = str(workspace)
+            adapter = ToolAdapter(
+                workspace_root=workspace,
+                runtime_registry=ToolRegistry(),
+                policy=Policy(raw=policy_raw),
+            )
+            register(adapter.registry)
+            original_paths = copy.deepcopy(adapter.policy.raw["paths"])
+
+            with adapter.workspace_override(workspace, added_roots=(added,)):
+                result = adapter.execute(
+                    command={
+                        "tool_name": "file.write",
+                        "args": {
+                            "path": str((added / "notes.txt").resolve()),
+                            "content": "ok",
+                        },
+                        "inputs": {"permission_mode": "bypass"},
+                    },
+                    session_id="s1",
+                    trace_id="t1",
+                )
+
+            self.assertEqual(result["status"], "success")
+            self.assertEqual((added / "notes.txt").read_text(), "ok")
+            self.assertEqual(adapter.policy.raw["paths"], original_paths)
+
+    def test_tool_adapter_rejects_retargeted_added_root(self) -> None:
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            added = Path(tmp) / "added"
+            replacement = Path(tmp) / "replacement"
+            workspace.mkdir()
+            added.mkdir()
+            replacement.mkdir()
+            adapter = ToolAdapter(workspace_root=workspace)
+
+            with adapter.workspace_override(workspace, added_roots=(added,)):
+                added.rmdir()
+                added.symlink_to(replacement, target_is_directory=True)
+                result = adapter.execute(
+                    command={"tool_name": "file.read", "args": {"path": "."}},
+                    session_id="s1",
+                    trace_id="t1",
+                )
+
+            self.assertEqual(result["status"], "error")
+            self.assertEqual(result["error"]["code"], "INVALID_RUNTIME_CONTEXT")
+
     def test_tool_adapter_passes_a2a_delegate_seam_to_runtime_context(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
         from openminion.modules.tool.runtime.delegation import A2ADelegateResult
 
         calls = []
+        observability = []
 
         class _DelegateSeam:
+            def bind_observability(self, **kwargs):
+                observability.append(dict(kwargs))
+
             def delegate(
                 self,
                 *,
@@ -806,6 +931,8 @@ class ToolAdapterTests(unittest.TestCase):
         self.assertEqual(
             result["outputs"]["outputs"]["artifact"], {"status": "read_only"}
         )
+        self.assertEqual(observability[0]["session_id"], "s1")
+        self.assertEqual(observability[0]["turn_id"], "t1")
         self.assertEqual(
             calls,
             [
@@ -857,7 +984,7 @@ class ToolAdapterTests(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["summary"], "delegated")
 
-    def test_tool_workspace_binding_updates_adapter_and_policy(self) -> None:
+    def test_tool_workspace_binding_is_context_local(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
         from openminion.services.brain.post_execution.mixin import (
             _bind_tool_workspace_root,
@@ -866,18 +993,17 @@ class ToolAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp) / "parent"
             focused = Path(tmp) / "focused"
+            focused.mkdir()
             adapter = ToolAdapter(workspace_root=parent)
+            metadata = {"workspace_root": str(focused)}
 
-            _bind_tool_workspace_root(adapter, {"workspace_root": str(focused)})
+            with _bind_tool_workspace_root(adapter, metadata, ()):
+                self.assertEqual(adapter._effective_workspace_root(), focused)
 
-            self.assertEqual(adapter.workspace_root, focused)
-            self.assertEqual(adapter.policy.raw["workspace_root"], str(focused))
-            self.assertEqual(
-                adapter.policy.raw["context_metadata"]["workspace_root"],
-                str(focused),
-            )
+            self.assertEqual(adapter.workspace_root, parent)
+            self.assertEqual(adapter._effective_workspace_root(), parent)
 
-    def test_tool_workspace_binding_preserves_cwd_inside_workspace(self) -> None:
+    def test_tool_workspace_binding_consumes_ephemeral_added_roots(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
         from openminion.services.brain.post_execution.mixin import (
             _bind_tool_workspace_root,
@@ -885,80 +1011,25 @@ class ToolAdapterTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "workspace"
-            nested = workspace / "feature"
+            added = Path(tmp) / "added"
+            workspace.mkdir()
+            added.mkdir()
             adapter = ToolAdapter(workspace_root=Path(tmp) / "parent")
+            metadata = {
+                "workspace_root": str(workspace),
+                "openminion_ephemeral_workspace_roots": json.dumps([str(added)]),
+            }
 
-            _bind_tool_workspace_root(
-                adapter,
-                {"workspace_root": str(workspace), "cwd": str(nested)},
-            )
+            raw_roots = metadata.pop("openminion_ephemeral_workspace_roots")
+            added_roots = tuple(Path(value) for value in json.loads(raw_roots))
+            with _bind_tool_workspace_root(adapter, metadata, added_roots):
+                from openminion.modules.brain.adapters.tool.runtime import (
+                    _ADDED_WORKSPACE_ROOTS,
+                )
 
-            self.assertEqual(
-                adapter.policy.raw["context_metadata"]["cwd"],
-                str(nested),
-            )
+                self.assertEqual(_ADDED_WORKSPACE_ROOTS.get(), (added.resolve(),))
 
-    def test_tool_workspace_binding_uses_cwd_when_workspace_root_missing(self) -> None:
-        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-        from openminion.services.brain.post_execution.mixin import (
-            _bind_tool_workspace_root,
-        )
-
-        with tempfile.TemporaryDirectory() as tmp:
-            cwd = Path(tmp) / "focused"
-            adapter = ToolAdapter(workspace_root=Path(tmp) / "parent")
-
-            _bind_tool_workspace_root(adapter, {"cwd": str(cwd)})
-
-            self.assertEqual(adapter.workspace_root, cwd)
-            self.assertEqual(adapter.policy.raw["workspace_root"], str(cwd))
-            self.assertEqual(adapter.policy.raw["context_metadata"]["cwd"], str(cwd))
-
-    def test_tool_workspace_binding_ignores_cwd_outside_workspace(self) -> None:
-        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-        from openminion.services.brain.post_execution.mixin import (
-            _bind_tool_workspace_root,
-        )
-
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp) / "workspace"
-            outside = Path(tmp) / "outside"
-            adapter = ToolAdapter(workspace_root=Path(tmp) / "parent")
-
-            _bind_tool_workspace_root(
-                adapter,
-                {"workspace_root": str(workspace), "cwd": str(outside)},
-            )
-
-            self.assertNotIn("cwd", adapter.policy.raw["context_metadata"])
-
-    def test_turn_tool_binding_preserves_cwd_without_security_policy(self) -> None:
-        from openminion.base.types import Message
-        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-        from openminion.services.brain.post_execution import BrainBridgeTurnMixin
-
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp) / "workspace"
-            cwd = workspace / "feature"
-            adapter = ToolAdapter(workspace_root=Path(tmp) / "parent")
-            bridge = BrainBridgeTurnMixin()
-            bridge._security_policy = None
-
-            bridge._bind_tool_policy_adapter(
-                runner=SimpleNamespace(tool_api=adapter),
-                message=Message(
-                    channel="cli",
-                    target="session-1",
-                    body="write files",
-                    metadata={"workspace_root": str(workspace), "cwd": str(cwd)},
-                ),
-                session_id="session-1",
-                request_id="request-1",
-            )
-
-            self.assertEqual(adapter.workspace_root, workspace)
-            self.assertEqual(adapter.policy.raw["workspace_root"], str(workspace))
-            self.assertEqual(adapter.policy.raw["context_metadata"]["cwd"], str(cwd))
+            self.assertNotIn("openminion_ephemeral_workspace_roots", metadata)
 
 
 class A2AAndPolicyAdapterTests(unittest.TestCase):
@@ -1092,6 +1163,36 @@ class MemoryAdapterTests(unittest.TestCase):
 
 
 class SessctlAdapterTests(unittest.TestCase):
+    def test_owned_artifactctl_closes_with_borrowed_store(self) -> None:
+        from openminion.modules.brain.adapters.session import SessctlAdapter
+
+        close_calls: list[str] = []
+        artifactctl = SimpleNamespace(close=lambda: close_calls.append("artifact"))
+        adapter = SessctlAdapter(
+            SimpleNamespace(),
+            owned_artifactctl=artifactctl,
+        )
+
+        adapter.close()
+        adapter.close()
+
+        self.assertEqual(close_calls, ["artifact"])
+
+    def test_owned_artifactctl_closes_with_adapter(self) -> None:
+        from openminion.modules.brain.adapters.session import SessctlAdapter
+
+        close_calls: list[str] = []
+        artifactctl = SimpleNamespace(close=lambda: close_calls.append("artifact"))
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = SessctlAdapter(
+                Path(tmp) / "sessions.db",
+                artifactctl=artifactctl,
+                owned_artifactctl=artifactctl,
+            )
+            adapter.close()
+            adapter.close()
+        self.assertEqual(close_calls, ["artifact"])
+
     def test_real_session_adapter(self) -> None:
         try:
             importlib.import_module("openminion.modules.session")
@@ -1702,6 +1803,69 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
                 ),
                 "applied",
             )
+
+    def test_context_adapter_close_delegates_to_service(self) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+
+        mock_svc = fake_context_service(pack=fake_context_pack({"pack_version": "1"}))
+        owned_clients = [MagicMock() for _ in range(4)]
+        adapter = ContextCtlAdapter(
+            mock_svc,
+            owned_identity_client=owned_clients[0],
+            owned_memory_client=owned_clients[1],
+            owned_artifact_client=owned_clients[2],
+            owned_skill_client=owned_clients[3],
+        )
+
+        adapter.close()
+        adapter.close()
+
+        mock_svc.close.assert_called_once_with()
+        for client in owned_clients:
+            client.close.assert_called_once_with()
+
+    def test_context_bridge_close_uses_only_realized_resources(self) -> None:
+        from openminion.modules.brain.adapters.context.bridges import (
+            BridgeArtifactClient,
+            BridgeIdentityClient,
+            BridgeMemoryClient,
+            BridgeSkillClient,
+        )
+
+        identity = BridgeIdentityClient(backing_store=object())
+        identity._identity_ctl = MagicMock()
+        identity._skill_client = MagicMock()
+        identity_ctl = identity._identity_ctl
+        nested_skill = identity._skill_client
+
+        memory = BridgeMemoryClient(backing_store=object())
+        memory._memory_ctl = MagicMock()
+        memory_ctl = memory._memory_ctl
+
+        artifact_ctl = MagicMock()
+        artifact = BridgeArtifactClient(
+            artifact_ctl=artifact_ctl,
+            owns_artifactctl=True,
+        )
+
+        skill = BridgeSkillClient(backing_store=object())
+        skill._skill_svc = MagicMock()
+        skill_svc = skill._skill_svc
+
+        for client in (identity, memory, artifact, skill):
+            client.close()
+            client.close()
+
+        identity_ctl.close.assert_called_once_with()
+        nested_skill.close.assert_called_once_with()
+        memory_ctl.close.assert_called_once_with()
+        artifact_ctl.close.assert_called_once_with()
+        skill_svc.close.assert_called_once_with()
+
+        unrealized = BridgeIdentityClient(backing_store=object())
+        unrealized.close()
+        self.assertIsNone(unrealized._identity_ctl)
+        self.assertIsNone(unrealized._skill_client)
 
     def test_context_adapter_derives_prompt_and_runtime_tools_from_single_bundle(
         self,
@@ -2443,6 +2607,13 @@ class AdapterInterfaceContractTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.code, "RATE_LIMITED")
         self.assertEqual(ctx.exception.details.get("status_code"), 429)
+
+    def test_llm_adapter_without_runtime_provider_has_no_retry_cap(self) -> None:
+        from openminion.modules.brain.adapters.llm import LlmctlAdapter
+
+        adapter = LlmctlAdapter(SimpleNamespace())
+
+        self.assertIsNone(adapter.get_provider_retry_max_attempts())
 
     def test_llm_adapter_decide_is_schema_only_and_submit_output_forced(self) -> None:
         try:
@@ -3986,6 +4157,41 @@ class AdapterInterfaceContractTests(unittest.TestCase):
 
 
 class RealToolAndArtifactAdapterTests(unittest.TestCase):
+    def test_agent_profile_extends_command_policy_without_changing_defaults(
+        self,
+    ) -> None:
+        from openminion.modules.brain.adapters.tool import ToolAdapter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            default_adapter = ToolAdapter(workspace_root=Path(tmp))
+            enabled_adapter = ToolAdapter(
+                workspace_root=Path(tmp),
+                agent_profile=SimpleNamespace(
+                    command_policy={
+                        "allow": ["docker", "open"],
+                        "allow_host": True,
+                    },
+                ),
+            )
+
+        self.assertNotIn("docker", default_adapter.policy.raw["commands"]["allow"])
+        self.assertFalse(default_adapter.policy.exec_host_enabled())
+        self.assertIn("docker", enabled_adapter.policy.raw["commands"]["allow"])
+        self.assertIn("docker", enabled_adapter.policy.exec_allowlist())
+        self.assertIn("open", enabled_adapter.policy.raw["commands"]["allow"])
+        self.assertIn("open", enabled_adapter.policy.exec_allowlist())
+        self.assertEqual(
+            enabled_adapter.policy.ensure_command_allowed(
+                ["docker", "desktop", "start"]
+            ),
+            "docker",
+        )
+        self.assertEqual(
+            enabled_adapter.policy.ensure_command_allowed(["open", "-a", "Docker"]),
+            "open",
+        )
+        self.assertTrue(enabled_adapter.policy.exec_host_enabled())
+
     def test_os_adapter_rejects_incompatible_policy_objects(self) -> None:
         try:
             from openminion.modules.brain.adapters.tool import ToolAdapter
@@ -4307,7 +4513,7 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
         self.assertIn("missing_tool", res["error"]["message"])
         self.assertIn("latency_ms", res["metrics"])
 
-    def test_tool_adapter_fallback_when_optional_modules_missing(self) -> None:
+    def test_tool_adapter_propagates_canonical_bootstrap_failure(self) -> None:
         from unittest.mock import patch
         from openminion.modules.brain.adapters.tool import ToolAdapter
 
@@ -4318,23 +4524,14 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
                     "Module-only runtime requires openminion-tool-search-tavily. Module import failed"
                 )
 
-            with patch(
-                "openminion.modules.tool.build_default_tool_registry",
-                side_effect=failing_build_default_tool_registry,
+            with (
+                patch(
+                    "openminion.modules.tool.build_default_tool_registry",
+                    side_effect=failing_build_default_tool_registry,
+                ),
+                self.assertRaisesRegex(RuntimeError, "requires openminion-tool-search"),
             ):
-                adapter = ToolAdapter(workspace_root=Path(tmp))
-
-                self.assertIsNotNone(adapter.registry)
-
-                res = adapter.execute(
-                    command={"tool_name": "unknown_test_tool", "args": {}},
-                    session_id="s1",
-                    trace_id="t1",
-                )
-
-                self.assertIn("status", res)
-                self.assertIn("error", res)
-                self.assertEqual(res["status"], "error")
+                ToolAdapter(workspace_root=Path(tmp))
 
     def test_tool_adapter_accepts_specs_without_args_model(self) -> None:
         from types import SimpleNamespace
@@ -4378,6 +4575,7 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
                     "error": {
                         "code": "DEPENDENCY_MISSING",
                         "message": "Playwright browser runtime is not ready",
+                        "details": {"dependency": "playwright"},
                     },
                 }
 
@@ -4397,6 +4595,9 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
             self.assertIn("not ready", str(res.get("summary", "")).lower())
             self.assertEqual(
                 str(res.get("error", {}).get("code", "")), "DEPENDENCY_MISSING"
+            )
+            self.assertEqual(
+                res.get("error", {}).get("details"), {"dependency": "playwright"}
             )
 
     def test_tool_adapter_success_summary_uses_content_when_summary_missing(

@@ -26,9 +26,11 @@ class TaskManager(TaskManagerProgressMixin, TaskManagerScheduleMixin):
         *,
         cron_repository: TaskCronStoreProtocol,
         lifecycle_repository: TaskLifecycleRepository,
+        owns_lifecycle_repository: bool = False,
     ) -> None:
         self._cron_repository = cron_repository
         self._lifecycle_repository = lifecycle_repository
+        self._owns_lifecycle_repository = owns_lifecycle_repository
 
     @property
     def lifecycle_repository(self) -> TaskLifecycleRepository:
@@ -47,6 +49,7 @@ class TaskManager(TaskManagerProgressMixin, TaskManagerScheduleMixin):
         return cls(
             cron_repository=cron_repository,
             lifecycle_repository=TaskLifecycleRepository(db_path=path_hint),
+            owns_lifecycle_repository=True,
         )
 
     @classmethod
@@ -54,7 +57,14 @@ class TaskManager(TaskManagerProgressMixin, TaskManagerScheduleMixin):
         return cls(
             cron_repository=_NullCronRepository(),  # type: ignore[arg-type]
             lifecycle_repository=TaskLifecycleRepository(db_path=db_path),
+            owns_lifecycle_repository=True,
         )
+
+    def close(self) -> None:
+        if not self._owns_lifecycle_repository:
+            return
+        self._owns_lifecycle_repository = False
+        self._lifecycle_repository.close()
 
     def ensure_task_record(
         self,

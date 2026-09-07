@@ -33,11 +33,10 @@ Internal modules of note:
   validators, and finalization helpers
 - `context/` — provider history, system-prompt resolution, grounding, and turn
   context assembly
-- `hooks.py` — AECR compatibility import for the runtime plugin context
+- `hooks.py` — compatibility import for the runtime plugin context
 - `identity_binding.py` — binds the module-owned identity bundle at turn time
 - `memory/` — memory retrieval, extraction, and turn-recording helpers
 - `telemetry.py` — agent-side event emission
-- `context.py` — builds the system context for a turn
 
 ## Owned objects
 

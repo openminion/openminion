@@ -8,8 +8,15 @@ import sys
 
 OPENMINION_ROOT = Path(__file__).resolve().parents[4]
 OPENMINION_SRC = OPENMINION_ROOT / "src"
+if str(OPENMINION_ROOT) not in sys.path:
+    sys.path.insert(0, str(OPENMINION_ROOT))
 if str(OPENMINION_SRC) not in sys.path:
     sys.path.insert(0, str(OPENMINION_SRC))
+
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
+if __name__ == "__main__":
+    isolate_runtime_roots(prefix="openminion-chx09-mode-matrix-")
 
 from openminion.modules.brain.adapters.a2a import LocalA2AAdapter  # noqa: E402
 from openminion.modules.brain.adapters.context import (  # noqa: E402

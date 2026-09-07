@@ -23,6 +23,9 @@ from openminion.api.routes import (
     handle_tools_request,
     handle_turns_request,
 )
+from openminion.api.routes.approve_pending import (
+    handle_request as handle_approval_request,
+)
 from openminion.api.runtime import APIRuntime
 from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
 from openminion.api.server.client_artifacts import ClientArtifactCoordinator
@@ -34,6 +37,7 @@ from openminion.api.server.observability import finalize_api_response
 _ROUTE_HANDLERS = (
     handle_a2a_request,
     handle_agent_request,
+    handle_approval_request,
     handle_tools_request,
     handle_cron_request,
     handle_debug_request,

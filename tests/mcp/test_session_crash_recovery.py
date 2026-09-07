@@ -11,7 +11,7 @@ from openminion.tools.mcp.manager import (
     MCPFleetManager,
     MCPServerSession,
 )
-from openminion.tools.mcp.transport import MCPServerUnavailableError
+from openminion.tools.mcp.transport import MCPProtocolError, MCPServerUnavailableError
 
 
 FIXTURE_SERVER_PATH = (
@@ -120,3 +120,37 @@ def test_initialize_crash_raises_without_retry_loop(
     assert call_count["request"] == 1
     assert session._restart_total == 0
     assert len(session._restart_history) == 0
+
+
+def test_successful_call_clears_stale_server_failure() -> None:
+    manager = MCPFleetManager.from_runtime_config(_runtime_config())
+    try:
+        manager._record_failed_server(  # noqa: SLF001
+            server_name="fixture",
+            primitive="tools",
+            exc=MCPProtocolError("stale failure"),
+        )
+
+        result = manager.call_tool(
+            server_name="fixture",
+            remote_name="echo-text",
+            arguments={"text": "recovered"},
+        )
+
+        assert result["ok"] is True
+        assert manager.failed_servers == {}
+    finally:
+        manager.close()
+
+
+def test_disabled_server_is_not_started() -> None:
+    config = _runtime_config()
+    config.mcp_servers[0].enabled = False
+
+    manager = MCPFleetManager.from_runtime_config(config)
+    try:
+        assert manager.has_servers() is False
+        assert manager.server_status_snapshot() == {}
+        assert manager.discover_tools() == []
+    finally:
+        manager.close()

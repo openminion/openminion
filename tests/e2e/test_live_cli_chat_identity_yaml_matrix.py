@@ -265,6 +265,7 @@ def _run_cli_turn(
     env["OPENMINION_DATA_ROOT"] = str(data_root)
     env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
     env["OPENMINION_IDENTITY_ROOT"] = str(identity_root)
+    env["OPENMINION_IDENTITY_DB"] = str(_expected_identity_db_path(data_root))
     env["OPENMINION_TRACE_REQUESTS"] = "1"
     env["OPENMINION_TRACE_REQUESTS_DIR"] = str(trace_root)
     current_pythonpath = str(env.get("PYTHONPATH", "")).strip()

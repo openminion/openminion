@@ -103,6 +103,8 @@ def test_openminion_main_missing_config_launches_setup_in_tty() -> None:
                 ),
                 should_launch_setup=True,
                 should_fail_fast=False,
+                home_root=Path("/tmp"),
+                data_root=Path("/tmp/.openminion"),
             ),
         ),
         mock.patch(
@@ -121,6 +123,38 @@ def test_openminion_main_missing_config_launches_setup_in_tty() -> None:
         assert openminion_main([]) == 0
 
     setup_mock.assert_called_once()
+
+
+def test_default_route_setup_preserves_interactive_options() -> None:
+    from openminion.cli.main import _run_setup_from_default_route
+
+    args = SimpleNamespace(
+        config=None,
+        agent="coding",
+        session="existing-session",
+        dir="/workspace/project",
+        add_dir=["/workspace/shared"],
+        theme="dark",
+        color="never",
+        demo=False,
+        no_context=True,
+        no_update_check=True,
+        animation_provider="openminion",
+        animation="pulse",
+        verbosity="normal",
+        progress="minimal",
+    )
+
+    with mock.patch("openminion.cli.commands.setup.run_setup", return_value=0) as run:
+        assert _run_setup_from_default_route(args, "/home/test", "/data/test") == 0
+
+    forwarded = run.call_args.args[0]
+    assert vars(forwarded) == {
+        **vars(args),
+        "home_root": "/home/test",
+        "data_root": "/data/test",
+        "no_chat": False,
+    }
 
 
 def test_openminion_main_no_interactive_fails_fast_without_launching_setup() -> None:

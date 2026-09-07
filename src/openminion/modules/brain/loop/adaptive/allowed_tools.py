@@ -7,7 +7,8 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
 )
-from openminion.modules.tool.exposure import get_allowed_model_tool_names
+from openminion.modules.brain.loop.services import runtime_allows_tool
+from openminion.modules.brain.tools.schema import collect_runtime_tool_names
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_BROWSER,
     MODEL_EXEC_KILL,
@@ -33,6 +34,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_GIT_STASH,
     MODEL_GIT_STATUS,
     MODEL_HOST_METRICS,
+    MODEL_HOST_INVENTORY_REPORT,
     MODEL_IP_LOCAL,
     MODEL_IP_PUBLIC,
     MODEL_LOCATION,
@@ -69,14 +71,30 @@ def _with_decompose_tool_spec(tool_specs: list[Any]) -> list[Any]:
     return [*tool_specs, decompose_tool_spec()]
 
 
+def _allows_general_decompose(*, profile_name: str, decision_reason_code: str) -> bool:
+    return str(profile_name or "").strip() == "general_adaptive_v1" and str(
+        decision_reason_code or ""
+    ).strip() not in {
+        "coding_subtask",
+        "research_iteration_fallback",
+    }
+
+
 def _with_general_decompose_allowed_tools(
-    allowed_tools: frozenset[str], *, profile_name: str, decision_reason_code: str = ""
+    allowed_tools: frozenset[str],
+    runner: Any,
+    *,
+    profile_name: str,
+    decision_reason_code: str = "",
 ) -> frozenset[str]:
-    if str(profile_name or "").strip() != "general_adaptive_v1":
-        return frozenset(allowed_tools)
-    if str(decision_reason_code or "").strip() == "research_iteration_fallback":
-        return frozenset(allowed_tools)
-    return frozenset({*allowed_tools, "decompose"})
+    if not _allows_general_decompose(
+        profile_name=profile_name,
+        decision_reason_code=decision_reason_code,
+    ):
+        return _within_runtime_tool_scope(allowed_tools, runner=runner)
+    return _within_runtime_tool_scope(
+        frozenset({*allowed_tools, "decompose"}), runner=runner
+    )
 
 
 ACT_ADAPTIVE_ALLOWED_TOOLS = frozenset(
@@ -97,6 +115,7 @@ ACT_ADAPTIVE_ALLOWED_TOOLS = frozenset(
         MODEL_TIME,
         MODEL_LOCATION,
         MODEL_HOST_METRICS,
+        MODEL_HOST_INVENTORY_REPORT,
         MODEL_IP_PUBLIC,
         MODEL_IP_LOCAL,
         MODEL_BROWSER,
@@ -132,12 +151,17 @@ ACT_ADAPTIVE_ALLOWED_TOOLS = frozenset(
 def _with_exposed_runtime_tools(
     tool_names: frozenset[str], *, runner: Any, session_id: str
 ) -> frozenset[str]:
-    registry = getattr(getattr(runner, "tool_api", None), "registry", None)
-    exposed = get_allowed_model_tool_names(
-        registry,
+    exposed = collect_runtime_tool_names(
+        runner,
         metadata={"session_id": session_id},
     )
-    return frozenset({*tool_names, *exposed})
+    return _within_runtime_tool_scope(frozenset({*tool_names, *exposed}), runner=runner)
+
+
+def _within_runtime_tool_scope(
+    tool_names: frozenset[str], *, runner: Any
+) -> frozenset[str]:
+    return frozenset(name for name in tool_names if runtime_allows_tool(runner, name))
 
 
 WATCH_ADAPTIVE_ALLOWED_TOOLS = frozenset(
@@ -164,11 +188,9 @@ def _watch_profile_overrides(ctx: ExecutionContext) -> dict[str, Any] | None:
     if action_turn:
         allowed_tools = ACT_ADAPTIVE_ALLOWED_TOOLS
     elif isinstance(raw_allowed, list | tuple | set | frozenset):
-        normalized = frozenset(
+        allowed_tools = frozenset(
             str(item or "").strip() for item in raw_allowed if str(item or "").strip()
         )
-        if normalized:
-            allowed_tools = normalized
     return {
         "turn_kind": turn_kind,
         "allowed_tools": allowed_tools,

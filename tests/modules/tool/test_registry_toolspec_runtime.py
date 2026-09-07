@@ -23,14 +23,14 @@ class _EchoEnvTool:
 
 
 class _ConfirmRequiredTool:
-    name = "file.delete"
+    name = "proc.kill"
     args_model = dict
 
     @staticmethod
     def handler(arguments, ctx):
         del arguments
         ctx.policy.ensure_confirm_if_required(
-            tool_name="file.delete",
+            tool_name="proc.kill",
             args={},
             confirm=ctx.confirm,
             dangerous_default=False,

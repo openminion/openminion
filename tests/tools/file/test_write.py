@@ -46,6 +46,27 @@ def test_file_write_accepts_text_alias(workspace: Path) -> None:
     assert (workspace / "notes.txt").read_text(encoding="utf-8") == "hello"
 
 
+def test_file_write_requires_explicit_content(workspace: Path) -> None:
+    with pytest.raises(ValueError, match="content"):
+        _h_write_file(
+            {"path": str(workspace / "empty-by-accident.txt")},
+            _FakeCtx(workspace),
+        )
+
+    assert not (workspace / "empty-by-accident.txt").exists()
+
+
+def test_file_write_allows_explicit_empty_content(workspace: Path) -> None:
+    path = workspace / "empty-on-purpose.txt"
+    result = _h_write_file(
+        {"path": str(path), "content": ""},
+        _FakeCtx(workspace),
+    )
+
+    assert result["ok"] is True
+    assert path.read_text(encoding="utf-8") == ""
+
+
 def test_file_write_accepts_filename_alias(workspace: Path) -> None:
     result = _h_write_file(
         {"filename": str(workspace / "README.md"), "content": "# ok\n"},

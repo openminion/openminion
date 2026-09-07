@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import platform
 import re
+from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -79,15 +80,54 @@ _DELEGATION_RESULT_SUMMARY_RE = re.compile(
 )
 
 
-def _exec_run_description() -> str:
+def _agent_command_grants(runner: Any | None) -> tuple[str, ...]:
+    tool_api = getattr(runner, "tool_api", None)
+    profile = getattr(tool_api, "agent_profile", None)
+    command_policy = getattr(profile, "command_policy", {})
+    policy_raw = getattr(getattr(tool_api, "policy", None), "raw", {})
+    if not isinstance(command_policy, Mapping) or not isinstance(policy_raw, Mapping):
+        return ()
+    commands = policy_raw.get("commands", {})
+    effective = commands.get("allow", ()) if isinstance(commands, Mapping) else ()
+    return tuple(
+        command
+        for item in command_policy.get("allow", ())
+        if (command := str(item).strip()) and command in effective
+    )
+
+
+def _exec_run_description(runner: Any | None = None) -> str:
     system = platform.system() or "unknown"
     try:
         shell_family = resolve_shell_family().value
     except Exception:
         shell_family = "unknown"
+    grants = _agent_command_grants(runner)
+    grant_note = ""
+    if grants:
+        grant_note = f"Granted executables: {', '.join(grants)}. "
+        if "ssh" in grants:
+            grant_note += (
+                "For remote hosts, use configured operations tools rather than raw "
+                "SSH. "
+            )
+        grant_note += (
+            "Invoke an explicitly requested granted executable directly; do not "
+            "inspect its configuration or credential files first. "
+        )
+    platform_note = ""
+    if system == "Darwin":
+        platform_note = (
+            "Use macOS commands, not Linux service managers. If Docker Desktop is "
+            "stopped and `open` is granted, request approval for `open -a Docker`, "
+            "then retry `docker info` as a separate command. "
+        )
     return (
-        "Run one allowlisted direct command for verification or existing-file "
-        f"workflows on platform={system}, shell_family={shell_family}. Do not use "
+        f"{grant_note}Run one allowlisted direct command for verification or existing-file "
+        f"workflows on platform={system}, shell_family={shell_family}. {platform_note}"
+        "A failed prerequisite check is recoverable: use an authorized start command "
+        "with approval, or explain the missing profile grant and ask the user before "
+        "continuing. Do not use "
         "pipes, redirections, shell chaining, fallback operators, or multi-command "
         "snippets. Prefer host.metrics for disk, memory, and OS status; prefer "
         "structured file/web tools for discovery, reads, scaffolding, or web fetches."
@@ -98,9 +138,10 @@ def _tool_spec_description(
     tool_name: str,
     raw: dict[str, Any],
     descriptions: dict[str, str],
+    runner: Any | None,
 ) -> str:
     if tool_name == "exec.run":
-        return _exec_run_description()
+        return _exec_run_description(runner)
     return str(raw.get("description", "") or "").strip() or descriptions.get(
         tool_name, tool_name
     )
@@ -320,6 +361,8 @@ def _normalize_finalization_status_response(response: LLMResponse) -> LLMRespons
 def _submit_output_close_requested(arguments: dict[str, Any]) -> bool:
     if arguments.get("satisfied") is True:
         return True
+    if str(arguments.get("status", "") or "").strip() == "final_answer":
+        return True
     next_action = str(arguments.get("next_action", "") or "").strip().lower()
     return next_action in {"close", "complete", "done", "final", "final_answer"}
 
@@ -341,15 +384,28 @@ def _normalize_submit_output_final_answer_response(
     if not isinstance(arguments, dict):
         return response
     final_answer = str(arguments.get("final_answer", "") or "").strip()
-    if not final_answer or not _submit_output_close_requested(arguments):
+    if not final_answer:
         return response
-    finalization_status = FinalizationStatus(
-        status="final_answer",
-        reasoning=str(
-            arguments.get("reasoning", arguments.get("reason", ""))
-            or "submit_output final_answer"
-        ),
-    ).model_dump(mode="json")
+    typed_status = str(arguments.get("status", "") or "").strip()
+    if typed_status in {"final_answer", "incomplete", "blocked"}:
+        finalization_status = FinalizationStatus(
+            status=typed_status,
+            reasoning=str(
+                arguments.get("reasoning", arguments.get("reason", "")) or ""
+            ),
+            remaining_work=str(arguments.get("remaining_work", "") or ""),
+            blocking_reason=str(arguments.get("blocking_reason", "") or ""),
+        ).model_dump(mode="json")
+    elif _submit_output_close_requested(arguments):
+        finalization_status = FinalizationStatus(
+            status="final_answer",
+            reasoning=str(
+                arguments.get("reasoning", arguments.get("reason", ""))
+                or "submit_output final_answer"
+            ),
+        ).model_dump(mode="json")
+    else:
+        return response
     return _with_typed_signal_source(
         response,
         field_name=STATE_KEY_FINALIZATION_STATUS,
@@ -609,8 +665,8 @@ def build_runtime_tool_specs(
         "file.read": "Read file contents.",
         "file.find": "Search for files matching a pattern.",
         "file.write": (
-            "Write or overwrite a file and create parent directories "
-            "automatically; use this to scaffold new project files and folders."
+            "Write or overwrite one complete target file path and create its parent "
+            "directories automatically."
         ),
         "file.search": "Search file contents and matches in a workspace.",
         "file.edit": "Apply a targeted file edit or patch.",
@@ -651,14 +707,19 @@ def build_runtime_tool_specs(
         except (ValidationError, json.JSONDecodeError):
             schema_by_name = {}
     specs: list[ToolSpec] = []
+    is_allowed = getattr(getattr(runner, "tool_api", None), "is_tool_allowed", None)
     for tool_name in sorted(allowed_tools):
+        if callable(is_allowed) and not is_allowed(tool_name):
+            continue
         raw = schema_by_name.get(tool_name, {})
         if not raw and tool_name not in descriptions:
             continue
         specs.append(
             ToolSpec(
                 name=tool_name,
-                description=_tool_spec_description(tool_name, raw, descriptions),
+                description=_tool_spec_description(
+                    tool_name, raw, descriptions, runner
+                ),
                 input_schema=dict(raw.get("parameters", {}) or {})
                 or {
                     "type": "object",

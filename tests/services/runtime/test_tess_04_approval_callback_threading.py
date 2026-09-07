@@ -75,7 +75,6 @@ def test_threading_signatures_accept_approval_callback() -> None:
     from openminion.services.runtime.ingress import (
         execute_runtime_turn,
         run_turn_payload,
-        _execute_gateway_turn,
         _run_gateway_once,
     )
 
@@ -84,7 +83,6 @@ def test_threading_signatures_accept_approval_callback() -> None:
         APIRuntime.run_turn,
         run_turn_payload,
         execute_runtime_turn,
-        _execute_gateway_turn,
         _run_gateway_once,
     ):
         sig = inspect.signature(fn)

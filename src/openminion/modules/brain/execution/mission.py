@@ -121,6 +121,16 @@ def llm_calls_max_from_runner(runner: Any) -> int:
     return max(8, min(32, ticks))
 
 
+def refresh_ordinary_turn_budget(
+    *,
+    runner: Any,
+    state: WorkingState,
+) -> None:
+    state.budgets_remaining = _budget_from_profile(runner)
+    state.llm_calls_used = 0
+    state.llm_calls_max = llm_calls_max_from_runner(runner)
+
+
 def mission_is_active(state: WorkingState | None) -> bool:
     mission = getattr(state, "mission", None)
     if mission is None:
@@ -505,6 +515,7 @@ __all__ = [
     "continue_message",
     "ensure_mission_task",
     "llm_calls_max_from_runner",
+    "refresh_ordinary_turn_budget",
     "mission_enabled",
     "mission_is_active",
     "reset_policy_for",

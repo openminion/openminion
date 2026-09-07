@@ -4,6 +4,9 @@ import datetime
 import os
 from pathlib import Path
 import tempfile
+import threading
+import time
+import uuid
 
 import pytest
 import sqlalchemy as sa
@@ -13,11 +16,17 @@ from openminion.modules.memory.models import (
     MemoryCandidate,
     MemoryRecord,
 )
+from openminion.modules.memory.runtime.capture_bundle import (
+    CaptureBundleInput,
+    CaptureBundleIntegrityError,
+    CaptureCandidateInput,
+)
 from openminion.modules.memory.storage.base import (
     CandidateListOptions,
     ListQueryOptions,
 )
 from openminion.modules.memory.storage.postgres.store import PostgresMemoryStore
+from openminion.modules.memory.storage.postgres import write as postgres_write
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 from tests.storage.postgres_test_utils import schema_url
 
@@ -144,6 +153,49 @@ def test_candidate_and_promotion_conformance_round_trip(store) -> None:
     assert promoted.scope == "agent:main"
 
 
+def test_capture_bundle_conformance_round_trip(store) -> None:
+    bundle = CaptureBundleInput(
+        capture_id="capture-conformance",
+        root_turn_id="turn-conformance",
+        session_id="session-conformance",
+        agent_id="agent-conformance",
+        candidates=(
+            CaptureCandidateInput(
+                kind="fact",
+                normalized_key="fact:conformance",
+                title="Conformance fact",
+                content="Capture bundles are atomic.",
+                confidence=0.9,
+            ),
+        ),
+    )
+
+    first = store.apply_capture_bundle(bundle)
+    replay = store.apply_capture_bundle(bundle)
+
+    assert replay == first
+    assert first.disposition == "succeeded"
+    assert len(first.output_ids) == 1
+    assert store.candidate_get(first.output_ids[0]) is not None
+
+    changed = CaptureBundleInput(
+        capture_id=bundle.capture_id,
+        root_turn_id=bundle.root_turn_id,
+        session_id=bundle.session_id,
+        agent_id=bundle.agent_id,
+        candidates=(
+            CaptureCandidateInput(
+                kind="fact",
+                normalized_key="fact:conformance",
+                title="Conformance fact",
+                content="Changed content conflicts.",
+            ),
+        ),
+    )
+    with pytest.raises(CaptureBundleIntegrityError):
+        store.apply_capture_bundle(changed)
+
+
 def test_invalidate_conformance_round_trip(store) -> None:
     record = _record("r-invalidate", scope="session:s-bti")
     store.put(record)
@@ -193,3 +245,81 @@ def test_relation_conformance_round_trip(store) -> None:
         relation_types=["supports"],
     )
     assert [item.id for item in related] == ["r2"]
+
+
+def test_feedback_is_once_per_command_across_postgres_store_instances(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    postgres_url = str(os.environ.get("OPENMINION_TEST_POSTGRES_URL", "")).strip()
+    if not postgres_url:
+        pytest.skip("OPENMINION_TEST_POSTGRES_URL is not set")
+
+    schema_name = f"memory_feedback_{uuid.uuid4().hex}"
+    admin_engine = sa.create_engine(postgres_url, future=True)
+    with admin_engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE SCHEMA "{schema_name}"'))
+    engines = [
+        sa.create_engine(schema_url(postgres_url, schema_name), future=True)
+        for _ in range(2)
+    ]
+    stores = [
+        PostgresMemoryStore(
+            engine,
+            database_path=tmp_path / f"memory-{index}.db",
+            artifactctl=None,
+        )
+        for index, engine in enumerate(engines)
+    ]
+    try:
+        stores[0].put(_record("feedback-race"))
+        original = postgres_write._feedback_update_values
+        first_read = threading.Event()
+        calls_lock = threading.Lock()
+        calls = 0
+
+        def delayed_feedback(*args, **kwargs):
+            nonlocal calls
+            with calls_lock:
+                calls += 1
+                is_first = calls == 1
+            if is_first:
+                first_read.set()
+                time.sleep(0.2)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(postgres_write, "_feedback_update_values", delayed_feedback)
+        results: list[int] = []
+
+        def apply(store: PostgresMemoryStore) -> None:
+            results.append(
+                store.apply_outcome_feedback(
+                    ["feedback-race"],
+                    outcome="success",
+                    command_id="same-command",
+                    observed_at=_now(),
+                    feedback_delta=0.2,
+                )
+            )
+
+        first = threading.Thread(target=apply, args=(stores[0],))
+        second = threading.Thread(target=apply, args=(stores[1],))
+        first.start()
+        assert first_read.wait(timeout=2)
+        second.start()
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert sorted(results) == [0, 1]
+        stored = stores[0].get("feedback-race")
+        assert stored is not None
+        assert stored.meta["outcome_feedback_command_ids"] == ["same-command"]
+        assert stored.meta["outcome_success_count"] == 1
+    finally:
+        for engine in engines:
+            engine.dispose()
+        with admin_engine.begin() as conn:
+            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+        admin_engine.dispose()

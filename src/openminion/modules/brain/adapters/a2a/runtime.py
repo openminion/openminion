@@ -22,6 +22,7 @@ from openminion.modules.a2a.constants import (
     A2A_JOB_STATE_RUNNING,
     A2A_JOB_STATE_SUCCESS,
 )
+from openminion.modules.a2a.errors import A2AError, ERROR_CODE_FAILED
 from openminion.base.config import resolve_data_root
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.modules.brain.schemas import DelegationContext, DelegationResultSummary
@@ -59,7 +60,7 @@ def _call_response_payload(
             "outputs": normalized_data,
             "artifact_refs": [],
             "memory_refs": [],
-            "metrics": _metrics(started_at),
+            "metrics": _metrics(started_at, normalized_data.get("metadata")),
         }
 
     status_code = str(payload.get("status") or "A2A_FAILED")
@@ -128,9 +129,21 @@ class A2actlAdapter:
         handler: Any,
         *,
         tags: list[str] | None = None,
+        job_handler: Any | None = None,
     ) -> None:
         runtime = self._ensure_runtime()
-        runtime.register_agent(agent_id, capabilities, handler, tags=tags)
+        runtime.register_agent(
+            agent_id,
+            capabilities,
+            handler,
+            tags=tags,
+            job_handler=job_handler,
+        )
+
+    def set_approval_callback(self, callback: Any | None) -> Any | None:
+        previous = self._approval_callback
+        self._approval_callback = callback if callable(callback) else None
+        return previous
 
     def call(
         self, *, command: dict[str, Any], session_id: str, trace_id: str
@@ -231,11 +244,12 @@ class A2actlAdapter:
     def poll_task(
         self, *, task_id: str, session_id: str, trace_id: str
     ) -> dict[str, Any]:
-        del session_id, trace_id
+        del trace_id
         runtime = self._ensure_runtime()
         start = time.monotonic()
         try:
             job = runtime.job_status(str(task_id or "").strip())
+            self._require_job_owner(job, session_id=session_id)
             response = _job_record_to_response(job)
             response.setdefault("metrics", _metrics(start))
             return response
@@ -250,11 +264,13 @@ class A2actlAdapter:
     def cancel_task(
         self, *, task_id: str, session_id: str, trace_id: str
     ) -> dict[str, Any]:
-        del session_id, trace_id
+        del trace_id
         runtime = self._ensure_runtime()
         start = time.monotonic()
         try:
-            job = runtime.job_cancel(str(task_id or "").strip())
+            task_id = str(task_id or "").strip()
+            self._require_job_owner(runtime.job_status(task_id), session_id=session_id)
+            job = runtime.job_cancel(task_id)
             response = _job_record_to_response(job)
             response.setdefault("metrics", _metrics(start))
             return response
@@ -265,6 +281,16 @@ class A2actlAdapter:
                 "error": {"code": "A2A_JOB_CANCEL_FAILED", "message": str(exc)},
                 "metrics": _metrics(start),
             }
+
+    def _require_job_owner(self, job: Any, *, session_id: str) -> None:
+        owner = str(getattr(job, "owner_agent_id", "") or "").strip()
+        job_scope = str(getattr(job, "idempotency_scope", "") or "").strip()
+        expected_scope = (
+            f"job.start:{getattr(job, 'agent_id', '')}:"
+            f"{getattr(job, 'method', '')}:{str(session_id or '').strip()}"
+        )
+        if not owner or owner != self._agent_id or job_scope != expected_scope:
+            raise PermissionError("A2A job handle does not belong to this agent")
 
     def _ensure_runtime(self):
         if self._runtime is not None:
@@ -424,18 +450,20 @@ class A2actlAdapter:
             agent_id = str(raw_agent_id or "").strip()
             if not agent_id or agent_id in self._configured_agents_registered:
                 continue
+            handler = self._configured_agent_handler(agent_id=agent_id)
             runtime.register_agent(
                 agent_id,
                 ["delegate", "run", "task", "assist", "chat", "plan", "act"],
-                self._configured_agent_handler(agent_id=agent_id),
+                handler,
                 tags=["configured", "profile"],
+                job_handler=handler,
             )
             self._configured_agents_registered.add(agent_id)
 
     def _configured_agent_handler(
         self, *, agent_id: str
     ) -> Callable[[Any], dict[str, Any]]:
-        def _handler(envelope: Any) -> dict[str, Any]:
+        def _handler(envelope: Any, cancel_event: Any | None = None) -> dict[str, Any]:
             runtime_handle = self._resolve_runtime_handle()
             if runtime_handle is None:
                 raise RuntimeError("Configured runtime handle unavailable")
@@ -447,12 +475,13 @@ class A2actlAdapter:
                 "session_id": _delegated_session_id(
                     parent_session_id=str(meta.get("session_id", "") or "").strip(),
                     target_agent_id=agent_id,
-                    trace_id=str(getattr(envelope, "trace_id", "") or "").strip(),
+                    message_id=str(getattr(envelope, "msg_id", "") or "").strip(),
                 ),
                 "channel": "console",
                 "target": str(getattr(envelope, "from_agent", "") or "a2a").strip()
                 or "a2a",
                 "deliver": False,
+                "timeout_seconds": envelope.timeout_ms / 1000,
                 "inbound_metadata": _delegated_inbound_metadata(
                     envelope=envelope,
                     target_agent_id=agent_id,
@@ -467,12 +496,48 @@ class A2actlAdapter:
                 "request_id": str(getattr(envelope, "msg_id", "") or "").strip()
                 or None,
             }
-            if self._run_turn_accepts_approval_callback(run_turn):
+            if self._run_turn_accepts(run_turn, "approval_callback"):
                 run_turn_kwargs["approval_callback"] = self._approval_callback
+            if cancel_event is not None and self._run_turn_accepts(
+                run_turn, "cancel_event"
+            ):
+                run_turn_kwargs["cancel_event"] = cancel_event
             result = run_turn(**run_turn_kwargs)
             metadata = result.get("metadata")
             normalized_metadata = dict(metadata) if isinstance(metadata, dict) else {}
             body = str(result.get("body", "") or "").strip()
+            brain_status = str(
+                normalized_metadata.get("brain_status", "") or ""
+            ).strip()
+            if brain_status and brain_status not in {"done", "completed"}:
+                reason = str(
+                    normalized_metadata.get("error_message", "") or body
+                ).strip()
+                raise A2AError(
+                    ERROR_CODE_FAILED,
+                    reason or "Child work did not complete.",
+                    {
+                        "brain_status": brain_status,
+                        "error_code": str(
+                            normalized_metadata.get("error_code", "") or ""
+                        ).strip(),
+                    },
+                )
+            projected_metadata = {
+                key: normalized_metadata[key]
+                for key in (
+                    "session_id",
+                    "run_id",
+                    "brain_status",
+                    "error_code",
+                    "error_message",
+                    "tool_loop_termination_reason",
+                    "adaptive.finalization_status",
+                    "delegation_result_summary",
+                    "total_tokens_used",
+                )
+                if key in normalized_metadata
+            }
             response_payload = {
                 "summary": body or "Delegated turn completed.",
                 "message": body,
@@ -485,7 +550,7 @@ class A2actlAdapter:
                 "run_id": str(
                     result.get("run_id", "") or normalized_metadata.get("run_id", "")
                 ).strip(),
-                "metadata": normalized_metadata,
+                "metadata": projected_metadata,
             }
             result_summary = _typed_delegation_result_summary(
                 normalized_metadata.get("delegation_result_summary")
@@ -497,12 +562,12 @@ class A2actlAdapter:
         return _handler
 
     @staticmethod
-    def _run_turn_accepts_approval_callback(run_turn: Any) -> bool:
+    def _run_turn_accepts(run_turn: Any, argument: str) -> bool:
         try:
             parameters = inspect.signature(run_turn).parameters
         except (TypeError, ValueError):
             return False
-        return "approval_callback" in parameters or any(
+        return argument in parameters or any(
             parameter.kind == inspect.Parameter.VAR_KEYWORD
             for parameter in parameters.values()
         )
@@ -522,10 +587,11 @@ class A2actlAdapter:
                 closer()
 
 
-def _metrics(start_time: float) -> dict[str, Any]:
+def _metrics(start_time: float, usage: Any = None) -> dict[str, Any]:
+    usage_payload = usage if isinstance(usage, Mapping) else {}
     return {
         "latency_ms": int((time.monotonic() - start_time) * 1000),
-        "tokens_used": 0,
+        "tokens_used": int(usage_payload.get("total_tokens_used", 0) or 0),
         "cost_estimate": 0.0,
     }
 
@@ -589,10 +655,10 @@ def _delegated_session_id(
     *,
     parent_session_id: str,
     target_agent_id: str,
-    trace_id: str,
+    message_id: str,
 ) -> str:
-    base = parent_session_id or f"a2a-{trace_id or 'delegated'}"
-    return f"{base}::delegate::{target_agent_id}"
+    base = parent_session_id or "a2a"
+    return f"{base}::delegate::{target_agent_id}::{message_id}"
 
 
 def _delegated_inbound_metadata(

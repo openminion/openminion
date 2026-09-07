@@ -137,6 +137,7 @@ def _measure_llmlingua2(blocks: List[InputBlock]) -> Dict[str, Any]:
     }
 
 
+@pytest.mark.timeout(180)
 def test_ab_eval_harness_writes_artifact(tmp_path):
 
     pytest.importorskip("llmlingua")  # eval is meaningless without the real backend

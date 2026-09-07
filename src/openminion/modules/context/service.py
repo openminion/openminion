@@ -44,6 +44,7 @@ from .pack.finalize import (
     build_runtime_cache_lookup_key as _build_runtime_cache_lookup_key_impl,
     finalize_context_pack as _finalize_context_pack_impl,
 )
+from .pack.evidence import pack_evidence_items as _pack_evidence_items_impl
 from .prefix import PinnedPrefixBuilder, PrefixCacheAdapter
 from .render.sections import (
     estimate_tokens as _estimate_tokens_messages_impl,
@@ -273,6 +274,8 @@ class ContextCtlService:
                     raise RuntimeError(message) from exc
                 _logger.warning("%s", message)
 
+    pack_evidence_items = staticmethod(_pack_evidence_items_impl)
+
     def build_pack(self, request: BuildPackRequest) -> ContextPack:
         runtime_state = self._prepare_build_pack_runtime_state(request)
         if runtime_state.cache_allowed and runtime_state.cache_key in self._cache:
@@ -469,10 +472,7 @@ class ContextCtlService:
         runtime_state: _BuildPackRuntimeState,
     ) -> ContextPack:
         cached_pack = self._cache[runtime_state.cache_key]
-        if cached_pack.context_manifest is not None:
-            self._latest_manifest_by_session[request.session_id] = (
-                cached_pack.context_manifest
-            )
+        self._record_latest_manifest(request.session_id, cached_pack)
         self._telemetry.emit_identity_audit_events(
             session_id=request.session_id,
             agent_id=request.agent_id,
@@ -563,11 +563,16 @@ class ContextCtlService:
         drop_count: int,
         truncation_count: int,
     ) -> None:
+        if current_event_id := runtime_state.session_slice.last_event_id or "":
+            for cache_key in list(self._cache):
+                same_session = cache_key[0] == request.session_id
+                if not same_session or cache_key[5] == current_event_id:
+                    continue
+                superseded_pack = self._cache.pop(cache_key)
+                self._manifest_index.pop(superseded_pack.pack_version, None)
         if runtime_state.cache_allowed:
             self._cache[runtime_state.cache_key] = pack
-        if pack.context_manifest is not None:
-            self._manifest_index[pack.pack_version] = pack.context_manifest
-            self._latest_manifest_by_session[request.session_id] = pack.context_manifest
+        self._record_latest_manifest(request.session_id, pack)
         self._telemetry.emit_identity_audit_events(
             session_id=request.session_id,
             agent_id=request.agent_id,
@@ -596,6 +601,22 @@ class ContextCtlService:
             session_id=request.session_id,
             agent_id=request.agent_id,
         )
+
+    def _record_latest_manifest(self, session_id: str, pack: ContextPack) -> None:
+        manifest = pack.context_manifest
+        if manifest is None:
+            return
+        previous = self._latest_manifest_by_session.get(session_id)
+        if previous is not None and not any(
+            cached_pack.context_manifest is previous
+            for cached_pack in self._cache.values()
+        ):
+            for version, indexed_manifest in tuple(self._manifest_index.items()):
+                if indexed_manifest is previous:
+                    self._manifest_index.pop(version)
+                    break
+        self._manifest_index[pack.pack_version] = manifest
+        self._latest_manifest_by_session[session_id] = manifest
 
     def _clear_surfaced_trailer_feedback(
         self,
@@ -910,16 +931,12 @@ class ContextCtlService:
 
     def render_memory_cards(self, records: list[MemoryCard], max_tokens: int) -> str:
         return _render_memory_cards_impl(
-            records,
-            max_tokens,
-            fit_to_budget=_fit_to_budget,
+            records, max_tokens, fit_to_budget=_fit_to_budget
         )
 
     def render_artifact_digest(self, digest: ArtifactDigest, max_tokens: int) -> str:
         return _render_artifact_digest_impl(
-            digest,
-            max_tokens,
-            fit_to_budget=_fit_to_budget,
+            digest, max_tokens, fit_to_budget=_fit_to_budget
         )
 
     def render_procedure_snippet(self, proc: Any, max_tokens: int) -> str:
@@ -937,6 +954,11 @@ class ContextCtlService:
 
     def explain_pack(self, pack_version: str) -> ContextManifest | None:
         return self._manifest_index.get(pack_version)
+
+    def close(self) -> None:
+        self._cache.clear()
+        self._manifest_index.clear()
+        self._latest_manifest_by_session.clear()
 
     def _resolve_identity_budget_config(
         self,

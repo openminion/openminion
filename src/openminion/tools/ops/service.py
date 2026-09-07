@@ -273,13 +273,14 @@ class OpsService:
         )
         target = self.targets.get(job.request.target_id)
         transport = self._transports.get(target.kind)
-        if transport is not None:
-            transport.cancel(job_id)
-        return self.jobs.cancel(
+        cancelled = self.jobs.cancel(
             job_id,
             target_id=target_id,
             session_id=session_id,
         )
+        if transport is not None:
+            transport.cancel(job_id)
+        return cancelled
 
     def inspect_evidence(self, evidence_id: str) -> EvidenceRecord:
         return self.evidence.get(evidence_id)

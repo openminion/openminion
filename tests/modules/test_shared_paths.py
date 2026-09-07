@@ -60,9 +60,7 @@ def test_session_family_consumers_alias_shared_paths() -> None:
     )
 
 
-def test_identity_family_consumers_alias_shared_path_but_keep_identityctl_local() -> (
-    None
-):
+def test_identity_family_consumers_alias_shared_path() -> None:
     assert (
         brain_constants.DEFAULT_IDENTITY_DB_FILENAME
         == module_paths.IDENTITY_DB_FILENAME
@@ -80,9 +78,9 @@ def test_identity_family_consumers_alias_shared_path_but_keep_identityctl_local(
     assert identity_constants.DEFAULT_INTEGRATED_BUNDLE_SUBPATH == Path(
         module_paths.IDENTITY_DIRNAME
     )
-    assert identity_constants.DEFAULT_IDENTITY_CTL_DB_FILENAME == "identityctl.db"
-    assert identity_constants.DEFAULT_INTEGRATED_STORAGE_SUBPATH == (
-        Path(module_paths.IDENTITY_DIRNAME) / "identityctl.db"
+    assert (
+        identity_constants.DEFAULT_INTEGRATED_STORAGE_SUBPATH
+        == module_paths.IDENTITY_DB_SUBPATH
     )
     assert (
         tool_constants.DEFAULT_IDENTITY_DB_SUBPATH == module_paths.IDENTITY_DB_SUBPATH

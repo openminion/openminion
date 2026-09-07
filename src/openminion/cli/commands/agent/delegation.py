@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import shlex
 from types import SimpleNamespace
@@ -19,6 +20,8 @@ class AgentDelegateRequest:
     instruction: str = ""
     task_id: str = ""
     timeout_seconds: int = 120
+    child_artifact: dict[str, Any] | None = None
+    workspace_root: str = ""
 
     def tool_args(self) -> dict[str, Any]:
         return {
@@ -27,6 +30,8 @@ class AgentDelegateRequest:
             "instruction": self.instruction.strip(),
             "task_id": self.task_id.strip(),
             "timeout_seconds": self.timeout_seconds or 120,
+            "child_artifact": dict(self.child_artifact or {}),
+            "workspace_root": self.workspace_root.strip(),
         }
 
 
@@ -45,6 +50,7 @@ def agent_delegate_usage() -> str:
         "  openminion agent delegate-status --task-id <task>\n"
         "  openminion agent delegate-result --task-id <task>\n"
         "  openminion agent delegate-cancel --task-id <task>\n"
+        "  /delegate accept|reject '<child-artifact-json>'\n"
         "\nCompatibility:\n"
         "  openminion agent-ctl delegate ... remains supported."
     )
@@ -61,6 +67,7 @@ def run_agent_delegate_request(
     approval_callback: Any | None = None,
     workspace_root: str | None = None,
     cwd: str | None = None,
+    artifactctl: Any | None = None,
 ) -> dict[str, Any]:
     seam = delegate_api
     if seam is None:
@@ -84,11 +91,19 @@ def run_agent_delegate_request(
             },
         }
     try:
+        tool_args = request.tool_args()
+        if tool_args["mode"] == "accept" and not tool_args["workspace_root"]:
+            tool_args["workspace_root"] = str(
+                Path((cwd or workspace_root or "").strip() or ".")
+                .expanduser()
+                .resolve(strict=False)
+            )
         return dict(
             _h_task_delegate(
-                request.tool_args(),
+                tool_args,
                 SimpleNamespace(
                     a2a_delegate_api=seam,
+                    artifactctl=artifactctl,
                     workspace=Path((cwd or workspace_root or "").strip() or ".")
                     .expanduser()
                     .resolve(strict=False),
@@ -161,13 +176,24 @@ def request_from_slash_args(args: str) -> AgentDelegateRequest:
         raise ValueError(
             "Usage: /delegate <agent> <instruction...> | "
             "/delegate async <agent> <instruction...> | "
-            "/delegate status|result|resume|cancel <task-id>"
+            "/delegate status|result|resume|cancel <task-id> | "
+            "/delegate accept|reject '<child-artifact-json>'"
         )
     action = parts[0].lower()
     if action in {"status", "result", "resume", "cancel"}:
         if len(parts) != 2:
             raise ValueError(f"Usage: /delegate {action} <task-id>")
         return AgentDelegateRequest(mode=action, task_id=parts[1])
+    if action in {"accept", "reject"}:
+        if len(parts) < 2:
+            raise ValueError(f"Usage: /delegate {action} '<child-artifact-json>'")
+        try:
+            child_artifact = json.loads(" ".join(parts[1:]))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"/delegate {action}: invalid artifact JSON") from exc
+        if not isinstance(child_artifact, dict):
+            raise ValueError(f"/delegate {action}: artifact JSON must be an object")
+        return AgentDelegateRequest(mode=action, child_artifact=child_artifact)
     mode = action if action in {"sync", "async"} else "sync"
     offset = 1 if action in {"sync", "async"} else 0
     if len(parts) <= offset + 1:

@@ -45,6 +45,7 @@ def initialize_runtime_components(
         close_runtime_components,
         channel_supervisor=channel_supervisor,
         retrieve_ctl=getattr(runtime, "retrieve_ctl", None),
+        memory_assemblies=getattr(runtime, "_memory_assemblies", None),
         action_policy=getattr(runtime, "action_policy", None),
         runtime_manager=getattr(runtime, "runtime_manager", None),
         lifecycle_bridge=getattr(runtime, "_lifecycle_event_bridge", None),
@@ -67,6 +68,7 @@ def close_runtime_components(
     lifecycle_bridge: object | None,
     tools: object | None,
     runtime_storage: object | None,
+    memory_assemblies: object | None = None,
     sandbox_runner: object | None = None,
     authored_tools: object | None = None,
     ops_service: object | None = None,
@@ -78,6 +80,9 @@ def close_runtime_components(
     if isinstance(agent_services, dict):
         for service in tuple(agent_services.values()):
             _call(service, "close")
+    if isinstance(memory_assemblies, dict):
+        for assembly in tuple(memory_assemblies.values()):
+            _call(assembly, "close")
     _call(llm_runtime, "close")
     _call(retrieve_ctl, "close")
     _call(action_policy, "close")

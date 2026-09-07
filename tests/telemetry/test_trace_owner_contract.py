@@ -103,6 +103,9 @@ def test_write_structured_trace_merges_nested_dicts_and_keeps_existing_keys(
         model="gpt-4.1-mini",
         home_root=tmp_path,
     )
+    assert trace_context["http_sse_response_trace_filename"].endswith(
+        "step01-call01-http-sse-response.json"
+    )
 
     relative = write_structured_trace(
         trace_context=trace_context,

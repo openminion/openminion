@@ -59,6 +59,7 @@ def trace_context_payload(
     for field, suffix in (
         ("http_trace_filename", "-http.json"),
         ("http_response_trace_filename", "-http-response.json"),
+        ("http_sse_response_trace_filename", "-http-sse-response.json"),
         ("structured_trace_filename", "-structured.json"),
     ):
         _, relative_paths[field] = build_trace_file_path(

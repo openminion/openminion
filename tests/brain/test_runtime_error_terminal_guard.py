@@ -55,6 +55,35 @@ def test_dispatch_runtime_error_does_not_retransition_done_state() -> None:
     )
 
 
+def test_dispatch_runtime_error_preserves_provider_error_facts() -> None:
+    state = _state()
+    logger = MagicMock()
+    error = ProviderError(
+        "unsupported tool",
+        code="PROVIDER_ERROR",
+        details={"tool_name": "get_weather", "request_id": "portal-request-1"},
+    )
+    with patch(
+        "openminion.modules.brain.execution.runtime.turn.dispatch._runner_delegate",
+        return_value=SimpleNamespace(status="error"),
+    ) as respond:
+        _dispatch_runtime_error(
+            runner=SimpleNamespace(),
+            state=state,
+            logger=logger,
+            user_input=None,
+            exc=error,
+        )
+
+    action_error = respond.call_args.kwargs["action_result"].error
+    assert action_error.code == "PROVIDER_ERROR"
+    assert action_error.message == "unsupported tool"
+    assert action_error.details == {
+        "tool_name": "get_weather",
+        "request_id": "portal-request-1",
+    }
+
+
 def test_recursive_runtime_error_does_not_retransition_done_state() -> None:
     state = _state()
     logger = MagicMock()

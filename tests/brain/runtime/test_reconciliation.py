@@ -36,15 +36,6 @@ def test_returns_complete_for_non_step_inputs(plan: object) -> None:
             {"step_id": "s1", "status": "completed"},
             {"step_id": "s2", "status": "completed"},
         ],
-        [
-            {"step_id": "s1", "status": "blocked"},
-            {"step_id": "s2", "status": "blocked"},
-        ],
-        [
-            {"step_id": "s1", "status": "completed"},
-            {"step_id": "s2", "status": "blocked"},
-            {"step_id": "s3", "status": "cancelled"},
-        ],
     ],
 )
 def test_returns_complete_when_all_steps_are_terminal(
@@ -58,9 +49,7 @@ def test_returns_complete_when_all_steps_are_terminal(
 
 
 def test_terminal_status_set_pins_contract() -> None:
-    assert PLAN_RECONCILIATION_TERMINAL_STATUSES == frozenset(
-        {"completed", "blocked", "cancelled"}
-    )
+    assert PLAN_RECONCILIATION_TERMINAL_STATUSES == frozenset({"completed"})
 
 
 @pytest.mark.parametrize(
@@ -85,6 +74,17 @@ def test_terminal_status_set_pins_contract() -> None:
                 ],
             },
             ("s1",),
+        ),
+        (
+            {
+                "plan_id": "p1",
+                "steps": [
+                    {"step_id": "s1", "status": "completed"},
+                    {"step_id": "s2", "status": "blocked"},
+                    {"step_id": "s3", "status": "cancelled"},
+                ],
+            },
+            ("s2", "s3"),
         ),
         (
             {
@@ -127,7 +127,7 @@ def test_status_case_insensitive() -> None:
         "plan_id": "p1",
         "steps": [
             {"step_id": "s1", "status": "COMPLETED"},
-            {"step_id": "s2", "status": "Blocked"},
+            {"step_id": "s2", "status": "COMPLETED"},
         ],
     }
     fact = evaluate_plan_reconciliation(plan)

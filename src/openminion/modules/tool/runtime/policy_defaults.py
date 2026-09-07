@@ -10,6 +10,7 @@ from ..constants import (
     TOOL_EXEC_SECURITY_DENY,
     TOOL_REDACTION_MODE_NORMAL,
 )
+from ..contracts.model_ids import MODEL_AGENT_GET, MODEL_AGENT_LIST
 from .command_patterns import COMMAND_ALLOW_PATTERNS, DISCOVERY_KNOWN_TOOLS
 
 
@@ -33,7 +34,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         "deny": [],
     },
     "tools": {
-        "allow_exact": [],
+        "allow_exact": [MODEL_AGENT_LIST, MODEL_AGENT_GET],
         "allow_prefix": [
             "file.",
             "code.",
@@ -42,6 +43,7 @@ DEFAULT_POLICY: dict[str, Any] = {
             "proc.",
             "tool.",
             "browser",
+            "blockchain.",
             "web.",
             "exec.",
             "git.",
@@ -59,6 +61,7 @@ DEFAULT_POLICY: dict[str, Any] = {
             "security.",
             "ops.",
             "mcp.",
+            "memory.",
         ],
         "deny_exact": [],
         "deny_prefix": [],
@@ -69,7 +72,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         },
     },
     "paths": {
-        "read_allow": ["${WORKSPACE}", "~/projects", "~/Downloads"],
+        "read_allow": ["${WORKSPACE}"],
         "write_allow": ["${WORKSPACE}"],
         "deny": [
             "/etc",
@@ -124,6 +127,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         "ask": TOOL_EXEC_ASK_ON_MISS,
         "askFallback": TOOL_EXEC_SECURITY_DENY,
         "allowlist": [],
+        "host_enabled": False,
     },
     "dangerous": {
         "enabled": True,
@@ -145,9 +149,8 @@ DEFAULT_POLICY: dict[str, Any] = {
         "deny_keys_regex": [".*KEY.*", ".*TOKEN.*", ".*SECRET.*"],
     },
     "confirm": {
-        "required_tools": ["file.delete", "proc.kill"],
+        "required_tools": ["proc.kill"],
         "required_when": [
-            {"tool": "file.delete", "args_match": {"recursive": True}},
             {"tool": "file.copy", "args_match": {"overwrite": True}},
             {"tool": "file.move", "args_match": {"overwrite": True}},
             {"tool": "cmd.run", "args_match_contains_argv": ["sudo"]},

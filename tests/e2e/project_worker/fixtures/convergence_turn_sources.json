@@ -1,0 +1,110 @@
+{
+  "schema_version": "openminion.oacc_scripted_turn_sources.v2",
+  "claim_level": "runtime_mechanics",
+  "workspace_rule": "pytest tmp_path child named by scenario; no read or write outside that child except isolated OpenMinion home/data roots",
+  "allowed_tools": [],
+  "dynamic_values": {"python_executable": "sys.executable from the executing pytest process", "repo_root": "Path(__file__).resolve().parents[3] in the project-worker test module"},
+  "cleanup": "pytest tmp_path and isolated runtime roots are removed by the test runner",
+  "scenarios": {
+    "coding_repair": {
+      "requested_deliverables": ["src/calculator.py", "passing tests/test_calculator.py"],
+      "seed_files": {
+        "src/calculator.py": "def add(a, b):\n    return a - b\n",
+        "tests/test_calculator.py": "from src.calculator import add\n\ndef test_add():\n    assert add(2, 3) == 5\n"
+      },
+      "verifier": {
+        "cwd": "scenario workspace",
+        "argv": ["python_executable", "-m", "pytest", "-q", "tests/test_calculator.py"],
+        "expected_before": "fail",
+        "expected_after_turn_1": "fail",
+        "expected_after_turn_2": "pass"
+      },
+      "turns": [
+        {"summary": "record the wrong-operation diagnosis without mutating the workspace", "condition": "productive", "evidence_refs": ["diagnosis:wrong-operation"], "evidence_kinds": ["diagnosis"], "effect_refs": [], "fixture_turn_effects": []},
+        {"summary": "apply the exact addition repair", "condition": "productive", "evidence_refs": ["change:calculator-add", "verification:calculator-pass"], "evidence_kinds": ["change", "verification"], "effect_refs": ["edit:calculator-add"], "fixture_turn_effects": [{"operation": "write_exact", "path": "src/calculator.py", "content": "def add(a, b):\n    return a + b\n"}]}
+      ],
+      "budgets": {"cycles": 2, "replans": 1, "wall_seconds": 60, "mutations": 1},
+      "restart": null,
+      "expected_terminal": {"run_status": "completed", "verification_state": "verified"},
+      "negative_assertion": "the first failed verifier remains non-successful and visible before repair",
+      "evidence_root": "workspace-tmp/openminion-agentic-convergence-certification-2026-08-22/oacc-03/coding_repair/"
+    },
+    "coding_context_resume": {
+      "requested_deliverables": ["src/parser.py", "src/renderer.py", "passing tests/test_pipeline.py"],
+      "seed_files": {
+        "src/parser.py": "def parse(value):\n    raise NotImplementedError\n",
+        "src/renderer.py": "def render(value):\n    raise NotImplementedError\n",
+        "tests/test_pipeline.py": "from src.parser import parse\nfrom src.renderer import render\n\ndef test_pipeline():\n    assert render(parse('  ready  ')) == 'READY'\n"
+      },
+      "verifier": {
+        "cwd": "scenario workspace",
+        "argv": ["python_executable", "-m", "pytest", "-q", "tests/test_pipeline.py"],
+        "expected_before": "fail",
+        "expected_after_turn_1": "fail",
+        "expected_after_turn_2": "pass"
+      },
+      "turns": [
+        {"summary": "complete parser milestone and commit its artifact reference", "condition": "productive", "evidence_refs": ["artifact:parser"], "evidence_kinds": ["artifact"], "effect_refs": ["edit:parser"], "fixture_turn_effects": [{"operation": "write_exact", "path": "src/parser.py", "content": "def parse(value):\n    return value.strip()\n"}]},
+        {"summary": "resume the same project and complete renderer integration", "condition": "productive", "evidence_refs": ["artifact:renderer", "verification:pipeline-pass"], "evidence_kinds": ["artifact", "verification"], "effect_refs": ["edit:renderer"], "fixture_turn_effects": [{"operation": "write_exact", "path": "src/renderer.py", "content": "def render(value):\n    return value.upper()\n"}]}
+      ],
+      "budgets": {"cycles": 2, "replans": 1, "wall_seconds": 120, "mutations": 2},
+      "restart": {"kind": "worker resume from committed checkpoint", "after_cycle": 1},
+      "context_evidence": {"path": "docs/discussions/2026-08-09-openminion-session-context-latency-owner-baseline.md", "sha256": "2cd6de5e2db1e46e7464b1966217da4f5b33ce314b31b33e5ebbab8fbe098708", "claim": "accepted local bounded-context ownership evidence; external provider proof remains separate"},
+      "expected_terminal": {"run_status": "completed", "verification_state": "verified"},
+      "negative_assertion": "checkpoint resume retains the parser artifact reference; bounded context is claimed only from linked SCWA evidence",
+      "evidence_root": "workspace-tmp/openminion-agentic-convergence-certification-2026-08-22/oacc-03/coding_context_resume/"
+    },
+    "research_conflict": {
+      "requested_deliverables": ["research_report.json with source, claim, conflict, and unavailable-source ledgers"],
+      "seed_files": {"research_manifest.json": "copy exact bytes from tests/e2e/project_worker/fixtures/research_manifest.json at SHA-256 17e932128a656eefe73e83b4f86325d5e0dfdd9f5285581e16ab907db23c0548"},
+      "verifier": {"cwd": "scenario workspace", "argv": ["python_executable", "repo_root/tests/e2e/project_worker/fixtures/verify_research.py", "research_manifest.json", "research_report.json"], "expected_before": "fail because report is absent", "expected_after_turn_1": "pass"},
+      "turns": [
+        {"summary": "write the exact conflict-preserving report", "condition": "productive", "evidence_refs": ["source:alpha", "source:beta", "source:gamma-unavailable", "artifact:research-report"], "evidence_kinds": ["source", "source", "source_unavailable", "artifact"], "effect_refs": ["write:research-report"], "fixture_turn_effects": [{"operation": "write_exact", "path": "research_report.json", "content": "{\"as_of_date\":\"2026-08-15\",\"source_ledger\":[{\"source_id\":\"source-alpha\",\"status\":\"available\"},{\"source_id\":\"source-beta\",\"status\":\"available\"},{\"source_id\":\"source-gamma\",\"status\":\"unavailable\"}],\"claim_ledger\":[{\"claim\":\"bounded local execution support is disputed\",\"supporting_source_ids\":[\"source-alpha\"],\"contradicting_source_ids\":[\"source-beta\"],\"disposition\":\"unresolved_conflict\"}],\"unavailable_source_ids\":[\"source-gamma\"]}"}]}
+      ],
+      "budgets": {"cycles": 1, "replans": 0, "wall_seconds": 60, "mutations": 1},
+      "restart": null,
+      "expected_terminal": {"run_status": "completed", "verification_state": "verified"},
+      "negative_assertion": "invented source or omitted unavailable-source fact fails verification",
+      "evidence_root": "workspace-tmp/openminion-agentic-convergence-certification-2026-08-22/oacc-03/research_conflict/"
+    },
+    "research_to_code": {
+      "requested_deliverables": ["decision.json", "src/strategy.py", "passing tests/test_strategy.py"],
+      "seed_files": {
+        "sources.json": "{\"alpha\":\"prefer bounded retry\",\"beta\":\"reject unbounded retry\"}\n",
+        "src/strategy.py": "def retry_limit():\n    raise NotImplementedError\n",
+        "tests/test_strategy.py": "import json\nfrom src.strategy import retry_limit\n\ndef test_decision_and_code():\n    decision = json.load(open('decision.json', encoding='utf-8'))\n    assert decision['retry_limit'] == 1\n    assert decision['source_ids'] == ['alpha', 'beta']\n    assert retry_limit() == 1\n"
+      },
+      "verifier": {"cwd": "scenario workspace", "argv": ["python_executable", "-m", "pytest", "-q", "tests/test_strategy.py"], "expected_before": "fail", "expected_after_turn_1": "fail because code is incomplete", "expected_after_turn_2": "pass"},
+      "turns": [
+        {"summary": "write the source-backed decision record", "condition": "productive", "evidence_refs": ["source:alpha", "source:beta", "artifact:decision-record"], "evidence_kinds": ["source", "source", "artifact"], "effect_refs": ["write:decision-record"], "fixture_turn_effects": [{"operation": "write_exact", "path": "decision.json", "content": "{\"retry_limit\":1,\"source_ids\":[\"alpha\",\"beta\"]}\n"}]},
+        {"summary": "implement the recorded bounded decision", "condition": "productive", "evidence_refs": ["artifact:decision-record", "artifact:strategy", "verification:strategy-pass"], "evidence_kinds": ["artifact", "artifact", "verification"], "effect_refs": ["edit:strategy"], "fixture_turn_effects": [{"operation": "write_exact", "path": "src/strategy.py", "content": "def retry_limit():\n    return 1\n"}]}
+      ],
+      "budgets": {"cycles": 2, "replans": 1, "wall_seconds": 120, "mutations": 2},
+      "restart": null,
+      "expected_terminal": {"run_status": "completed", "verification_state": "verified"},
+      "negative_assertion": "decision-only and code-only states both fail verification",
+      "evidence_root": "workspace-tmp/openminion-agentic-convergence-certification-2026-08-22/oacc-03/research_to_code/"
+    },
+    "process_restart": {
+      "requested_deliverables": ["durable checkpoint cycle 1", "completed checkpoint cycle 2"],
+      "seed_files": {},
+      "existing_test_source": {"selector": "tests/e2e/project_worker/test_long_running_coding.py::test_project_checkpoint_resumes_across_real_cli_processes", "sha256": "51644e5bd2cdf7e9c3da90f4973be2c70718347f1e5e722d608c4cd017d039b5"},
+      "dynamic_values": {"home_root": "tmp_path / home", "data_root": "tmp_path / data", "workspace": "tmp_path", "run_id": "process 1 stdout JSON field run.run_id"},
+      "verifier": {
+        "process_1_argv": ["python_executable", "-m", "openminion.cli.main", "--home-root", "home_root", "--data-root", "data_root", "--no-interactive", "autonomy", "start", "--goal", "Prove restart recovery", "--workspace", "workspace", "--max-iterations", "1", "--replay-response", "first process cycle", "--verify-command", "python_executable -c 'raise SystemExit(1)'", "--json"],
+        "process_2_argv": ["python_executable", "-m", "openminion.cli.main", "--home-root", "home_root", "--data-root", "data_root", "--no-interactive", "autonomy", "resume", "run_id", "--max-iterations", "2", "--replay-response", "second process cycle", "--verify-command", "python_executable -c 'raise SystemExit(0)'", "--json"],
+        "expected_process_1": "blocked with committed cycle-1 checkpoint",
+        "expected_process_2": "completed with checkpoint suffix :cycle:2"
+      },
+      "turns": [
+        {"summary": "first process cycle", "condition": "productive", "evidence_refs": ["checkpoint:cycle-one"], "evidence_kinds": ["checkpoint"], "effect_refs": [], "fixture_turn_effects": []},
+        {"summary": "second process cycle", "condition": "productive", "evidence_refs": ["verification:process-restart-pass"], "evidence_kinds": ["verification"], "effect_refs": [], "fixture_turn_effects": []}
+      ],
+      "budgets": {"cycles": 2, "replans": 1, "wall_seconds": 120, "mutations": 0},
+      "restart": {"kind": "two subprocesses", "after_cycle": 1, "handoff": "same home root, data root, run_id, task_id, session_id, and committed checkpoint"},
+      "expected_terminal": {"run_status": "completed", "verification_state": "verified"},
+      "negative_assertion": "cycle 2 resumes the same durable run and no duplicate-effect claim is made",
+      "evidence_root": "workspace-tmp/openminion-agentic-convergence-certification-2026-08-22/oacc-03/process_restart/"
+    }
+  }
+}

@@ -109,6 +109,7 @@ def test_runtime_exposes_same_memory_adapter(monkeypatch) -> None:
         "agent_security_policy": object(),
         "self_improvement": object(),
         "agent_memory": memory_adapter,
+        "runtime_memory_assembly": object(),
         "action_policy": object(),
         "retrieve_ctl": object(),
         "knowledge_graphs": object(),

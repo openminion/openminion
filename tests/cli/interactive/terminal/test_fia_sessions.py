@@ -87,6 +87,9 @@ def test_render_sessions_list_with_entries() -> None:
                 "channel": "focus",
                 "target": "focus",
                 "updated_at": "2026-05-13T11:00:00",
+                "session_type": "room",
+                "room_routing_mode": "broadcast",
+                "participant_count": 3,
             },
         ),
     ]
@@ -98,6 +101,7 @@ def test_render_sessions_list_with_entries() -> None:
     assert "def-789-012345" in out
     # Active session marker present.
     assert "◆" in out
+    assert "broadcast, 3 participants" in out
 
 
 def test_render_sessions_list_empty() -> None:

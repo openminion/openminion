@@ -86,8 +86,8 @@ class ExecutionTargetPayload(BaseModel):
     target_capability: str = Field(
         default="",
         description=(
-            "Optional capability hint for delegated execution when the user "
-            "asks for a specialist but does not name an exact agent."
+            "Historical compatibility field. New delegated execution requires "
+            "target_agent_id and does not route by capability."
         ),
     )
     expect_async: bool = Field(
@@ -760,14 +760,10 @@ class _DecisionBase(BaseModel):
             if (
                 self.execution_target is not None
                 and self.execution_target.kind == "delegated"
-                and not (
-                    str(self.execution_target.target_agent_id or "").strip()
-                    or str(self.execution_target.target_capability or "").strip()
-                )
+                and not str(self.execution_target.target_agent_id or "").strip()
             ):
                 raise ValueError(
-                    "target_agent_id or target_capability is required when "
-                    "execution_target.kind=delegated"
+                    "target_agent_id is required when execution_target.kind=delegated"
                 )
         if (
             self.request_readiness is not None

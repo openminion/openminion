@@ -14,7 +14,6 @@ IMPORT_SURFACE = [
     ("openminion.cli.parser.flags", "add_json_output_flag"),
     ("openminion.cli.parser.contracts", "CLI_INTERFACE_VERSION"),
     ("openminion.cli.identity.provenance", "build_identity_provenance"),
-    ("openminion.cli.identity.sync", "sync_cli_identity_profiles"),
     ("openminion.cli.transport.daemon_client", "daemon_request"),
     ("openminion.cli.presentation.styles", "StyleToken"),
 ]

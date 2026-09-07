@@ -18,6 +18,11 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
+if __name__ == "__main__":
+    isolate_runtime_roots(prefix="openminion-session-continuation-")
+
 from openminion.api.routes.contracts import APIRouteContext  # noqa: E402
 from openminion.api.routes.sessions import handle_request  # noqa: E402
 from openminion.base.generated_paths import resolve_generated_root  # noqa: E402
@@ -37,7 +42,6 @@ from openminion.modules.session.runtime.continuation import (  # noqa: E402
 from openminion.modules.session.storage.sqlite_store import (  # noqa: E402
     SQLiteSessionStore,
 )
-from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 
 class _Runtime:
@@ -116,7 +120,6 @@ def _render_first_segment(store: SQLiteSessionStore, target_id: str) -> dict:
 
 
 def main() -> int:
-    isolate_runtime_roots(prefix="openminion-session-continuation-")
     artifact_dir = resolve_generated_root(home_root=ROOT) / "session-continuation-e2e"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     db_path = artifact_dir / "session-continuation-e2e.db"

@@ -4,15 +4,21 @@ import asyncio
 import io
 
 from prompt_toolkit.output.defaults import create_output
+from prompt_toolkit.data_structures import Size
+from prompt_toolkit.output import ColorDepth
+from prompt_toolkit.output.vt100 import Vt100_Output
+from prompt_toolkit.application.current import get_app_or_none
 from rich.console import Console
 from rich.text import Text
 
-import openminion.cli.interactive.terminal.transcript as transcript_module
+import openminion.cli.interactive.terminal.prompt_output as prompt_output_module
 from openminion.cli.interactive.terminal.prompt_output import (
+    build_prompt_safe_terminal_writer,
     write_console_render_via_prompt_output,
     write_terminal_control_via_prompt_output,
 )
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
+from openminion.cli.interactive.terminal.streaming import TerminalTurnHandle
 from openminion.cli.presentation.models import (
     ChatMessage,
     MessageKind,
@@ -40,8 +46,9 @@ def test_started_prints_yellow_narration() -> None:
     t, buf = _make("normal")
     t.handle_tool_started({"call_id": "c1", "tool_name": "Bash", "args": {"cmd": "ls"}})
     out = buf.getvalue()
-    assert "Running" in out
-    assert "Bash(ls)" in out
+    assert "Using a tool..." in out
+    assert "Bash" not in out
+    assert "ls" not in out
 
 
 def test_started_records_call_id_in_dedup_set() -> None:
@@ -58,10 +65,34 @@ def test_started_idempotent_on_duplicate_call_id() -> None:
     assert len(buf.getvalue()) == pre_len
 
 
+def test_started_tool_live_state_preserves_public_model_name() -> None:
+    t, buf = _make("normal")
+    handle = TerminalTurnHandle(t._console)
+    t._active_handle = handle
+
+    t.handle_tool_started(
+        {
+            "call_id": "search-1",
+            "tool_name": "search.serper.search",
+            "model_tool_name": "web.search",
+            "args": {"query": "private query"},
+        }
+    )
+
+    assert handle._active_tool is not None
+    assert handle._active_tool["tool_name"] == "web.search"
+    t._console.print(handle._render())
+    rendered = buf.getvalue()
+    assert "Searching the web..." in rendered
+    assert "Using a tool..." not in rendered
+    assert "search.serper.search" not in rendered
+    assert "private query" not in rendered
+
+
 def test_started_handles_empty_call_id() -> None:
     t, buf = _make("normal")
     t.handle_tool_started({"tool_name": "Bash", "args": {"cmd": "ls"}})
-    assert "Running" in buf.getvalue()
+    assert "Using a tool..." in buf.getvalue()
     assert "" not in t._live_narrated_call_ids
 
 
@@ -75,7 +106,7 @@ def test_started_falls_back_when_live_mount_rejects_block() -> None:
     t._active_handle = _BrokenHandle()
     t.handle_tool_started({"call_id": "c1", "tool_name": "Bash", "args": {"cmd": "ls"}})
 
-    assert "Running" in buf.getvalue()
+    assert "Using a tool..." in buf.getvalue()
     assert "c1" in t._live_narrated_call_ids
 
 
@@ -100,7 +131,8 @@ def test_completed_prints_final_block_normal_mode() -> None:
         }
     )
     out = buf.getvalue()
-    assert "Running" in out
+    assert "Using a tool..." in out
+    assert "Finished using a tool." in out
     assert "file1" in out
     assert "file2" in out
 
@@ -213,7 +245,7 @@ def test_repeated_tool_start_is_collapsed_by_signature() -> None:
     t.handle_tool_started({"call_id": "c2", **payload})
 
     out = buf.getvalue()
-    assert out.count("Running web.search(MSFT stock)") == 1
+    assert out.count("Searching the web...") == 1
     assert "c1" in t._live_narrated_call_ids
     assert "c2" in t._live_narrated_call_ids
 
@@ -234,9 +266,32 @@ def test_repeated_tool_failure_result_is_collapsed_by_signature() -> None:
     out = buf.getvalue()
     assert out.count("tool_budget_calls_exceeded") == 1
     assert "1 repeated tool result collapsed" in out
-    assert "web.search(MSFT stock) failed ×1" in out
+    assert "Searched the web failed ×1" in out
+    assert "MSFT stock" not in out
     assert "c1" in t._live_narrated_call_ids
     assert "c2" in t._live_narrated_call_ids
+
+
+def test_completed_tool_preserves_model_tool_name_for_public_title() -> None:
+    t, buf = _make("normal")
+
+    t.handle_tool_completed(
+        {
+            "call_id": "search-1",
+            "tool_name": "search.serper.search",
+            "model_tool_name": "web.search",
+            "runtime_tool_name": "search.serper.search",
+            "runtime_binding_id": "runtime.search.serper",
+            "args": {"query": "private query"},
+            "content": "one result",
+            "exit_code": 0,
+        }
+    )
+
+    out = buf.getvalue()
+    assert "Searched the web." in out
+    assert "search.serper.search" not in out
+    assert "private query" not in out
 
 
 def test_same_tool_args_with_different_result_still_renders() -> None:
@@ -356,8 +411,8 @@ def test_started_during_live_turn_appends_running_block_via_handle() -> None:
     console = Console(file=rendered, force_terminal=False, width=160)
     console.print(handle.renderables[0])
     out = rendered.getvalue()
-    assert "Running" in out
-    assert "file.list_dir(.)" in out
+    assert "List Directory in progress..." in out
+    assert "file.list_dir" not in out
     assert "0s" not in out
 
 
@@ -374,46 +429,6 @@ def test_completed_ignores_live_clear_failure() -> None:
     )
 
     assert "ok" in buf.getvalue()
-
-
-def test_agent_render_uses_prompt_safe_terminal_hook_when_app_running(
-    monkeypatch,
-) -> None:
-    async def _case() -> None:
-        t, buf = _make("normal")
-
-        class _App:
-            is_running = True
-
-        calls: list[bool] = []
-
-        monkeypatch.setattr(transcript_module, "get_app_or_none", lambda: _App())
-
-        def _fake_run_in_terminal(func, render_cli_done=False):
-            assert render_cli_done is False
-            calls.append(True)
-            func()
-
-            async def _done():
-                return None
-
-            return asyncio.create_task(_done())
-
-        monkeypatch.setattr(
-            transcript_module,
-            "run_in_terminal",
-            _fake_run_in_terminal,
-        )
-
-        t.push_message(
-            ChatMessage(kind=MessageKind.AGENT, sender="assistant", body="hello"),
-        )
-        await asyncio.sleep(0)
-
-        assert calls
-        assert "hello" in buf.getvalue()
-
-    asyncio.run(_case())
 
 
 def test_terminal_writer_overrides_direct_console_print() -> None:
@@ -476,13 +491,24 @@ def test_prompt_safe_mode_keeps_inflight_status_out_of_prompt_output() -> None:
     handle = t.begin_turn(role="assistant")
     handle.set_status_label("Working...")
 
-    assert rendered == []
+    assert rendered == ["\n"]
 
 
-def test_prompt_safe_writer_routes_rich_ansi_through_prompt_output() -> None:
+def test_prompt_safe_writer_routes_rich_ansi_through_prompt_output(monkeypatch) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+
+    class _TTYBuffer(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
     console = Console(force_terminal=True, color_system="truecolor", width=160)
-    out = io.StringIO()
-    prompt_output = create_output(stdout=out)
+    out = _TTYBuffer()
+    prompt_output = Vt100_Output(
+        out,
+        lambda: Size(rows=24, columns=80),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+    )
 
     write_console_render_via_prompt_output(
         console=console,
@@ -492,7 +518,43 @@ def test_prompt_safe_writer_routes_rich_ansi_through_prompt_output() -> None:
 
     rendered = out.getvalue()
     assert "hello" in rendered
-    assert "\x1b[" not in rendered
+    assert "\x1b[0;32;1mhello" in rendered
+
+
+def test_prompt_safe_writer_uses_active_prompt_terminal_context(monkeypatch) -> None:
+    console = Console(force_terminal=True, color_system="truecolor", width=160)
+    out = io.StringIO()
+    prompt_output = create_output(stdout=out)
+    marker = object()
+    calls: list[bool] = []
+
+    class _App:
+        is_running = True
+
+    class _Session:
+        app = _App()
+        output = prompt_output
+
+    def _fake_run_in_terminal(render, render_cli_done=False):
+        assert get_app_or_none() is _Session.app
+        calls.append(render_cli_done)
+        render()
+        return marker
+
+    monkeypatch.setattr(
+        prompt_output_module,
+        "run_in_terminal",
+        _fake_run_in_terminal,
+    )
+    monkeypatch.setattr(prompt_output_module, "get_app_or_none", lambda: None)
+    writer = build_prompt_safe_terminal_writer(
+        console=console,
+        prompt_session=_Session(),
+    )
+
+    assert writer(lambda: console.print("Update available")) is marker
+    assert calls == [False]
+    assert "Update available" in out.getvalue()
 
 
 def test_prompt_safe_writer_preserves_terminal_control_bytes() -> None:
@@ -749,7 +811,8 @@ def test_e2e_normal_mode_renders_in_progress_and_final_blocks() -> None:
     runtime = _ScriptedLifecycleRuntime(content="file1\nfile2\n")
     _run_e2e(transcript, runtime)
     out = buf.getvalue()
-    assert "Bash(ls)" in out  # verb-form title on the final block
+    assert "Finished using a tool." in out
+    assert "Bash" not in out
     assert "file1" in out  # final block body
     assert "file2" in out
     assert "done." in out  # agent reply streamed

@@ -59,30 +59,40 @@ class StateStore:
         self._invalidate_slice_cache(session_id)
         return next_version
 
-    def get_latest_working_state(self, session_id: str) -> dict[str, Any] | None:
-        row = self._first_row(
-            """
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
             SELECT session_id, version, ts, state_ref, state_inline_json
             FROM working_state
             WHERE session_id = ?
             ORDER BY version DESC
-            LIMIT 1
-            """,
-            (session_id,),
-        )
-        if row is None:
-            return None
-        return {
-            "session_id": str(row["session_id"]),
-            "version": int(row["version"]),
-            "ts": str(row["ts"]),
-            "state_ref": row["state_ref"],
-            "state_inline": (
+            """
+        if agent_id is None:
+            query += "\nLIMIT 1"
+        rows = self._rs.query_dicts(query, (session_id,))
+        for row in rows:
+            state_inline = (
                 parse_json(str(row["state_inline_json"]), {})
                 if row["state_inline_json"] is not None
                 else None
-            ),
-        }
+            )
+            if agent_id is not None and (
+                not isinstance(state_inline, dict)
+                or state_inline.get("agent_id") != agent_id
+            ):
+                continue
+            return {
+                "session_id": str(row["session_id"]),
+                "version": int(row["version"]),
+                "ts": str(row["ts"]),
+                "state_ref": row["state_ref"],
+                "state_inline": state_inline,
+            }
+        return None
 
     def get_active_state(self, session_id: str) -> dict[str, Any]:
         snapshot = self._first_row(

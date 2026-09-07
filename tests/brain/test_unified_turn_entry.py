@@ -594,7 +594,7 @@ def test_unified_entry_tool_request_keeps_model_selected_general_profile(
     assert getattr(route, "source", "") == "runtime_default_general"
 
 
-def test_entry_decompose_with_one_subtask_routes_to_orchestrate(
+def test_entry_decompose_with_one_subtask_fails_closed(
     tmp_path: Path,
 ) -> None:
     response = _tool_response(
@@ -611,23 +611,9 @@ def test_entry_decompose_with_one_subtask_routes_to_orchestrate(
         logger=fake_logger(),
     )
 
-    assert decision.mode == "act"
-    assert decision.reason_code == "entry_decompose_tool_call"
-    assert getattr(decision, "_entry_response", None) is None
-    route = getattr(decision, "_pre_resolved_act_route", None)
-    assert route is not None
-    assert getattr(route, "act_profile", "") == "orchestrate"
-    assert getattr(getattr(route, "execution_target", None), "kind", "") == "local"
-    assert decision.subtasks == [
-        {
-            "subtask_id": "s1",
-            "goal": "Inspect the repository",
-            "inputs": {},
-            "depends_on": [],
-            "suggested_mode": None,
-            "priority": 0,
-        }
-    ]
+    assert decision.mode == "respond"
+    assert decision.reason_code == "entry_decompose_invalid_payload"
+    assert getattr(decision, "_pre_resolved_act_route", None) is None
 
 
 def test_entry_research_tool_routes_to_research_profile(tmp_path: Path) -> None:

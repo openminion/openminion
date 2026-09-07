@@ -60,7 +60,9 @@ class AgentRegistrar:
                     description=(
                         "Delegate a sub-task to a named agent, or inspect and "
                         "control an existing delegated task by using sync, "
-                        "async, status, resume, cancel, accept, or reject mode."
+                        "async, status, resume, cancel, accept, or reject mode. "
+                        "Call agent.list before delegation unless an exact visible "
+                        "agent_id is already known; never invent role aliases."
                     ),
                     parameters={},
                     aliases=(),

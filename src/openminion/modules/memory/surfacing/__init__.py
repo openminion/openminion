@@ -11,6 +11,12 @@ from openminion.modules.memory.surfacing.render import (
 from openminion.modules.memory.surfacing.decision import (
     annotate_with_recall_source,
 )
+from openminion.modules.memory.surfacing.evidence import (
+    MemoryEvidenceOmission,
+    MemoryRetrievalEvidenceItem,
+    MemoryRetrievalEvidenceSelection,
+    build_memory_retrieval_items,
+)
 
 __all__ = (
     "CONFIDENCE_BAND_HIGH",
@@ -20,4 +26,8 @@ __all__ = (
     "confidence_band",
     "format_records_with_confidence",
     "render_record_with_confidence",
+    "MemoryEvidenceOmission",
+    "MemoryRetrievalEvidenceItem",
+    "MemoryRetrievalEvidenceSelection",
+    "build_memory_retrieval_items",
 )

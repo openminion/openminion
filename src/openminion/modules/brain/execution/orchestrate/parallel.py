@@ -1,6 +1,6 @@
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from typing import Callable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from openminion.modules.brain.constants import (
     BRAIN_DECISION_ROUTE_ACT,
@@ -17,6 +17,7 @@ from ..child_tasks import (
     ExecutionStrategy,
     FailureAction,
     FailurePolicy,
+    SubtaskExecutor,
     SubtaskResult,
     SubtaskSpec,
 )
@@ -194,25 +195,11 @@ class OrderPreservingResultMerger(ParallelResultMerger):
         results: dict[str, ChildTaskResult],
         original_order: list[str],
     ) -> list[ChildTaskResult]:
-        merged: list[ChildTaskResult] = []
-        for subtask_id in original_order:
-            if subtask_id in results:
-                merged.append(results[subtask_id])
-                continue
-            placeholder = ChildTaskResult(
-                subtask_id=subtask_id,
-                task_id=None,
-                was_promoted=False,
-                result=SubtaskResult(
-                    subtask_id=subtask_id,
-                    goal=subtask_id,
-                    status="failed",
-                    mode_used=BRAIN_DECISION_ROUTE_ACT,
-                    error=f"Missing parallel result for subtask {subtask_id!r}.",
-                ),
-            )
-            merged.append(placeholder)
-        return merged
+        return [
+            results[subtask_id]
+            for subtask_id in original_order
+            if subtask_id in results
+        ]
 
 
 class ContinueOnErrorPolicy(FailurePolicy):
@@ -339,7 +326,7 @@ class ParallelExecutionStrategy(ExecutionStrategy):
         budget_by_id: dict[str, BudgetCounters],
         index_by_id: dict[str, int],
         total: int,
-        run_subtask: Callable[[SubtaskSpec, BudgetCounters, int, int], ChildTaskResult],
+        run_subtask: SubtaskExecutor,
         failure_policy: FailurePolicy,
         results: dict[str, ChildTaskResult],
     ) -> bool:
@@ -349,6 +336,7 @@ class ParallelExecutionStrategy(ExecutionStrategy):
                 budget_by_id[subtask.subtask_id],
                 index_by_id[subtask.subtask_id],
                 total,
+                list(results.values()),
             )
             results[subtask.subtask_id] = result
             if result.result.status == "failed":
@@ -365,7 +353,7 @@ class ParallelExecutionStrategy(ExecutionStrategy):
         budget_by_id: dict[str, BudgetCounters],
         index_by_id: dict[str, int],
         total: int,
-        run_subtask: Callable[[SubtaskSpec, BudgetCounters, int, int], ChildTaskResult],
+        run_subtask: SubtaskExecutor,
         failure_policy: FailurePolicy,
         results: dict[str, ChildTaskResult],
     ) -> bool:
@@ -378,6 +366,7 @@ class ParallelExecutionStrategy(ExecutionStrategy):
                     budget_by_id[subtask.subtask_id],
                     index_by_id[subtask.subtask_id],
                     total,
+                    list(results.values()),
                 )
                 pending[future] = subtask
 
@@ -397,14 +386,18 @@ class ParallelExecutionStrategy(ExecutionStrategy):
                     if action == FailureAction.ABORT:
                         abort = True
                         for pending_future, pending_subtask in list(pending.items()):
-                            pending_future.cancel()
-                            results[pending_subtask.subtask_id] = _error_child_result(
-                                subtask=pending_subtask,
-                                error="Cancelled after sibling parallel failure.",
-                            )
-                        pending.clear()
+                            if pending_future.cancel():
+                                results[pending_subtask.subtask_id] = (
+                                    _error_child_result(
+                                        subtask=pending_subtask,
+                                        error=(
+                                            "Cancelled after sibling parallel failure."
+                                        ),
+                                    )
+                                )
+                                pending.pop(pending_future)
                         break
-                if abort:
+                if abort and not pending:
                     break
         return abort
 

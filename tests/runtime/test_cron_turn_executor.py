@@ -99,7 +99,14 @@ def _runtime(
 ):
     runtime_manager = _FakeRuntimeManager(list(responses))
     runner = SimpleNamespace(goal_runtime=goal_runtime)
-    agent_service = SimpleNamespace(_runner=runner)
+    agent_service = SimpleNamespace(
+        _runner=runner,
+        _security_policy=None,
+        _tools=None,
+        _identity_agent_id=agent_name,
+        extract_memory_capture_candidates=lambda **_kwargs: [],
+    )
+    memory_assembly = SimpleNamespace(recover_pending_captures=lambda **_kwargs: None)
     runtime = SimpleNamespace(
         config=SimpleNamespace(
             agent=SimpleNamespace(name=agent_name),
@@ -110,6 +117,7 @@ def _runtime(
         list_registered_agents=(lambda: list(registered_agents or [])),
         sessions=_FakeSessions(),
         resolve_agent_service=(lambda _agent_id: agent_service),
+        resolve_memory_assembly=(lambda _agent_id: memory_assembly),
         tools=build_default_tool_registry(strict=False) if monitoring else None,
         ops_service=local_ops_service() if monitoring else None,
     )
@@ -202,6 +210,52 @@ def test_cron_turn_executor_success_injects_metadata() -> None:
         "cron_run_id": "run-def",
         "scheduled_for": "2026-03-20T00:00:00Z",
     }
+
+
+def test_cron_turn_executor_builds_typed_consolidation_watermark() -> None:
+    runtime, _runtime_manager = _runtime(
+        [
+            SimpleNamespace(
+                final_text="consolidated",
+                errors=[],
+                metadata={
+                    "memory_consolidation.candidate_ids": '["cand-1", "cand-2"]',
+                    "memory_consolidation.state_hash": "hash-123",
+                },
+            )
+        ],
+        registered_agents=["agent-a"],
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=_FakeCronStore(),
+        request_builder=_request_builder,
+        timeout_s=90.0,
+        max_attempts=1,
+    )
+
+    result = executor.execute(
+        {
+            "job_id": "job-consolidate",
+            "agent_id": "agent-a",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "consolidate",
+                "_openminion_memory_consolidation": {"target_scope": "agent:agent-a"},
+            },
+        },
+        {
+            "run_id": "run-consolidate",
+            "due_at": "2026-08-22T00:00:00Z",
+            "isolated_session_id": "consolidation-session",
+        },
+    )
+
+    watermark = result["output"]["coordination_watermark"]
+    assert watermark["target_scope"] == "agent:agent-a"
+    assert watermark["candidate_ids"] == ["cand-1", "cand-2"]
+    assert watermark["state_hash"] == "hash-123"
+    assert watermark["completed_at"]
 
 
 def test_cron_turn_executor_prefers_payload_session_and_forwards_linked_task_id() -> (
@@ -380,6 +434,31 @@ def test_cron_turn_executor_returns_error_after_final_failure() -> None:
     assert len(runtime_manager.submitted) == 2
 
 
+def test_cron_turn_executor_preserves_final_timeout() -> None:
+    runtime, runtime_manager = _runtime(
+        [TimeoutError("slow"), TimeoutError("still slow")],
+        registered_agents=["agent-main"],
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=_FakeCronStore(),
+        request_builder=_request_builder,
+        timeout_s=10.0,
+        max_attempts=2,
+    )
+
+    with pytest.raises(TimeoutError, match="still slow"):
+        executor.execute(
+            {
+                "job_id": "job-timeout",
+                "payload": {"kind": "agentTurn", "message": "time out"},
+            },
+            {"run_id": "run-timeout", "due_at": "2026-03-20T00:00:00Z"},
+        )
+
+    assert len(runtime_manager.submitted) == 2
+
+
 def test_cron_turn_executor_handles_system_cleanup_event() -> None:
     runtime, _runtime_manager = _runtime([], registered_agents=["agent-main"])
     store = _FakeCronStore()
@@ -455,7 +534,12 @@ def test_cron_turn_executor_watch_forwards_bounds_and_stages_progress() -> None:
                                 "tool_name": "file.write",
                                 "ok": True,
                                 "call_id": "call-write",
-                            }
+                            },
+                            {
+                                "tool_name": "file.trash",
+                                "ok": True,
+                                "call_id": "call-trash",
+                            },
                         ]
                     )
                 },
@@ -525,7 +609,8 @@ def test_cron_turn_executor_watch_forwards_bounds_and_stages_progress() -> None:
     assert store.replaced_payloads[-1][0] == "job-watch"
     stored_watch = store.replaced_payloads[-1][1]["_openminion_watch"]
     assert stored_watch["write_audit"] == [
-        {"tool_name": "file.write", "ok": True, "call_id": "call-write"}
+        {"tool_name": "file.write", "ok": True, "call_id": "call-write"},
+        {"tool_name": "file.trash", "ok": True, "call_id": "call-trash"},
     ]
 
 

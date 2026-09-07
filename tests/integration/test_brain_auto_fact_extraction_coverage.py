@@ -86,7 +86,7 @@ def _candidate_payloads(memory_api: LocalMemoryAdapter) -> list[dict]:
     return [row for row in rows if row.get("kind") == "candidate"]
 
 
-def test_brain_runner_afe_event_is_authoritative_for_prose_candidate_staging(
+def test_brain_runner_afe_event_defers_candidates_to_terminal_capture(
     tmp_path,
 ) -> None:
     session_api = LocalSessionStore(tmp_path / "sessions")
@@ -118,10 +118,17 @@ def test_brain_runner_afe_event_is_authoritative_for_prose_candidate_staging(
     assert len(completed) == 1
     payload = dict(completed[0].get("payload", {}) or {})
     assert payload["extracted_items"] == 2
-    assert payload["staged_candidates"] == 2
+    assert payload["staged_candidates"] == 0
     assert payload["initial_confidence"] == 0.3
 
-    candidates = _candidate_payloads(memory_api)
-    assert len(candidates) == 2
-    assert {row["record_type"] for row in candidates} == {"fact", "user_preference"}
-    assert all(row["meta"]["source"] == "auto_extracted" for row in candidates)
+    llm_call_id = str(payload["llm_call_id"])
+    assert not any(
+        event.get("type") == "context.manifest.validation_failed"
+        and event.get("payload", {}).get("llm_call_id") == llm_call_id
+        for event in events
+    )
+    call_order = runner._call_order_tracker[llm_call_id]  # noqa: SLF001
+    assert call_order["manifest_emitted"] is True
+    assert call_order["completed_at"] is not None
+
+    assert _candidate_payloads(memory_api) == []

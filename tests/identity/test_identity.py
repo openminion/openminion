@@ -238,6 +238,67 @@ tool_posture:
     identity.close()
 
 
+def test_load_profiles_from_path_discovers_direct_agent_profile_yaml(
+    tmp_path: Path,
+) -> None:
+    profile_path = tmp_path / "ops-agent" / "profile.yaml"
+    profile_path.parent.mkdir()
+    profile_path.write_text(
+        """
+display_name: Ops Agent
+profile_revision: 1
+role:
+  mission: "Operate precisely"
+personality:
+  tone: "direct"
+risk:
+  risk_level: medium
+tool_posture:
+  tool_use: restricted
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    identity = IdentityCtl(
+        store=SQLiteIdentityStore(sqlite_path=str(tmp_path / "identity.db"))
+    )
+    assert identity.load_profiles_from_path(tmp_path) == ["ops-agent"]
+    assert identity.get_profile("ops-agent") is not None
+    identity.close()
+
+
+def test_profile_yaml_rejects_agent_id_that_differs_from_directory(
+    tmp_path: Path,
+) -> None:
+    profile_path = tmp_path / "ops-agent" / "profile.yaml"
+    profile_path.parent.mkdir()
+    profile_path.write_text(
+        """
+agent_id: other-agent
+display_name: Other Agent
+profile_revision: 1
+role:
+  mission: "Wrong directory"
+personality:
+  tone: "direct"
+risk:
+  risk_level: medium
+tool_posture:
+  tool_use: restricted
+        """.strip(),
+        encoding="utf-8",
+    )
+    identity = IdentityCtl(
+        store=SQLiteIdentityStore(sqlite_path=str(tmp_path / "identity.db"))
+    )
+
+    with pytest.raises(ValueError, match="does not match its agent directory"):
+        identity.load_profiles_from_path(profile_path)
+
+    assert identity.get_profile("other-agent") is None
+    identity.close()
+
+
 def test_load_profiles_from_single_yaml_file_input(tmp_path: Path) -> None:
     profile_path = tmp_path / "single.yaml"
     profile_path.write_text(

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from openminion.modules.brain.schemas import FinalizationStatus
+
 from .budget_finalization import (
     _recover_budget_finalization_status,
     _reject_invalid_answer_only_final_text,
@@ -101,6 +103,63 @@ def _visible_text_outcome(
     )
 
 
+def _missing_contract_outcome(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    runtime: Any,
+    model: str,
+    max_output_tokens: int | None,
+    metadata: dict[str, Any] | None,
+    allowed_tools: frozenset[str],
+    public_mode_tag: str,
+    response: Any,
+    final_text: str,
+    has_successful_tool_evidence: bool,
+) -> AdaptiveToolLoopOutcome:
+    recovered_outcome = _recover_contract_outcome(
+        loop_ctx=loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        runtime=runtime,
+        model=model,
+        max_output_tokens=max_output_tokens,
+        metadata=metadata,
+        allowed_tools=allowed_tools,
+        public_mode_tag=public_mode_tag,
+        final_text=final_text,
+        response=response,
+    )
+    if recovered_outcome is not None:
+        return recovered_outcome
+    if final_text and has_successful_tool_evidence:
+        loop_state.scratchpad["typed_finalization_status_conservative_fallback"] = True
+        return _visible_text_outcome(
+            profile=profile,
+            loop_state=loop_state,
+            allowed_tools=allowed_tools,
+            final_text=final_text,
+            finalization_status=FinalizationStatus(
+                status="incomplete",
+                reasoning=(
+                    "The model-authored answer was preserved after typed "
+                    "finalization recovery was exhausted."
+                ),
+                remaining_work="Confirm the answer's completion status in a later turn.",
+            ).model_dump(mode="json"),
+        )
+    loop_state.termination_reason = ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
+    return AdaptiveToolLoopOutcome(
+        profile_name=profile.profile_name,
+        mode_name=profile.mode_name,
+        termination_reason=ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+        state=loop_state,
+        allowed_tools=allowed_tools,
+        error_message="This act turn required typed finalization_status contract.",
+    )
+
+
 def answer_only_final_text_outcome(
     *,
     loop_ctx: AdaptiveToolLoopContext,
@@ -116,10 +175,11 @@ def answer_only_final_text_outcome(
     final_text: str,
     finalization_status: dict[str, Any] | None,
     has_tool_evidence: bool,
+    has_successful_tool_evidence: bool,
     contract_requested: bool,
 ) -> AdaptiveToolLoopOutcome:
     if contract_requested and finalization_status is None:
-        recovered_outcome = _recover_contract_outcome(
+        return _missing_contract_outcome(
             loop_ctx=loop_ctx,
             profile=profile,
             loop_state=loop_state,
@@ -129,19 +189,9 @@ def answer_only_final_text_outcome(
             metadata=metadata,
             allowed_tools=allowed_tools,
             public_mode_tag=public_mode_tag,
-            final_text=final_text,
             response=response,
-        )
-        if recovered_outcome is not None:
-            return recovered_outcome
-        loop_state.termination_reason = ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
-        return AdaptiveToolLoopOutcome(
-            profile_name=profile.profile_name,
-            mode_name=profile.mode_name,
-            termination_reason=ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
-            state=loop_state,
-            allowed_tools=allowed_tools,
-            error_message="This act turn required typed finalization_status contract.",
+            final_text=final_text,
+            has_successful_tool_evidence=has_successful_tool_evidence,
         )
     rejected_outcome = _reject_invalid_answer_only_final_text(
         final_text=final_text,

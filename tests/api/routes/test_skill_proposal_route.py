@@ -150,174 +150,27 @@ def test_http_get_proposal_returns_404(cfg_path: str) -> None:
     assert result.payload["error"]["code"] == "NOT_FOUND"
 
 
-def test_http_review_proposal_requires_body(cfg_path: str) -> None:
-    _seed_proposal(cfg_path)
-    result = handle_request(
-        _ctx(cfg_path),
-        method_name="POST",
-        path="/v1/skills/proposals/sprq-http-1/review",
-        body=None,
-        query=None,
-    )
-    assert result is not None
-    assert result.status == HTTPStatus.BAD_REQUEST
-
-
-def test_http_review_proposal_requires_reviewer_id(cfg_path: str) -> None:
-    _seed_proposal(cfg_path)
-    result = handle_request(
-        _ctx(cfg_path),
-        method_name="POST",
-        path="/v1/skills/proposals/sprq-http-1/review",
-        body={
-            "criterion_decisions": [
-                {"criterion_id": "fit", "status": "accepted", "comment": "ok"}
-            ]
-        },
-        query=None,
-    )
-    assert result is not None
-    assert result.status == HTTPStatus.BAD_REQUEST
-
-
-def test_http_review_proposal_requires_criteria(cfg_path: str) -> None:
-    _seed_proposal(cfg_path)
-    result = handle_request(
-        _ctx(cfg_path),
-        method_name="POST",
-        path="/v1/skills/proposals/sprq-http-1/review",
-        body={"reviewer_id": "operator-http"},
-        query=None,
-    )
-    assert result is not None
-    assert result.status == HTTPStatus.BAD_REQUEST
-
-
-def test_http_review_proposal_accepts_operator_review(cfg_path: str) -> None:
-    _seed_proposal(cfg_path)
-    result = handle_request(
-        _ctx(cfg_path),
-        method_name="POST",
-        path="/v1/skills/proposals/sprq-http-1/review",
-        body={
-            "reviewer_id": "operator-http",
-            "review_policy_id": "sprq_review_v1",
-            "criterion_decisions": [
-                {
-                    "criterion_id": "fit",
-                    "status": "accepted",
-                    "comment": "Matches intent.",
-                }
-            ],
-        },
-        query=None,
-    )
-    assert result is not None
-    assert result.status == HTTPStatus.OK
-    assert result.payload["review"]["status"] == "accepted"
-    assert result.payload["review"]["reviewer_id"] == "operator-http"
-
-
 @pytest.mark.parametrize(
-    "runtime_id", ["runtime", "system", "auto", "automatic", "self"]
+    ("path", "body"),
+    [
+        ("/v1/skills/proposals/sprq-http-1/review", {"reviewer_id": "operator-http"}),
+        ("/v1/skills/proposals/sprq-http-1/apply", None),
+    ],
 )
-def test_http_review_proposal_rejects_runtime_reviewer(
-    cfg_path: str, runtime_id: str
+def test_http_proposal_mutations_require_proven_operator_authority(
+    cfg_path: str, path: str, body: dict | None
 ) -> None:
     _seed_proposal(cfg_path)
     result = handle_request(
         _ctx(cfg_path),
         method_name="POST",
-        path="/v1/skills/proposals/sprq-http-1/review",
-        body={
-            "reviewer_id": runtime_id,
-            "criterion_decisions": [
-                {"criterion_id": "fit", "status": "accepted", "comment": "x"}
-            ],
-        },
+        path=path,
+        body=body,
         query=None,
     )
     assert result is not None
-    assert result.status == HTTPStatus.BAD_REQUEST
-    inspect = handle_request(
-        _ctx(cfg_path),
-        method_name="GET",
-        path="/v1/skills/proposals/sprq-http-1",
-        body=None,
-        query=None,
-    )
-    assert inspect is not None
-    assert inspect.payload["proposal"]["queue_state"] == "pending"
-
-
-def test_http_review_proposal_returns_404_for_unknown(cfg_path: str) -> None:
-    result = handle_request(
-        _ctx(cfg_path),
-        method_name="POST",
-        path="/v1/skills/proposals/missing-id/review",
-        body={
-            "reviewer_id": "operator-http",
-            "criterion_decisions": [
-                {"criterion_id": "fit", "status": "accepted", "comment": "x"}
-            ],
-        },
-        query=None,
-    )
-    assert result is not None
-    assert result.status == HTTPStatus.NOT_FOUND
-
-
-def test_http_apply_proposal_returns_addition(cfg_path: str) -> None:
-    _seed_proposal(cfg_path)
-    handle_request(
-        _ctx(cfg_path),
-        method_name="POST",
-        path="/v1/skills/proposals/sprq-http-1/review",
-        body={
-            "reviewer_id": "operator-http",
-            "criterion_decisions": [
-                {"criterion_id": "fit", "status": "accepted", "comment": "Accept."}
-            ],
-        },
-        query=None,
-    )
-    result = handle_request(
-        _ctx(cfg_path),
-        method_name="POST",
-        path="/v1/skills/proposals/sprq-http-1/apply",
-        body=None,
-        query=None,
-    )
-    assert result is not None
-    assert result.status == HTTPStatus.OK
-    addition = result.payload["addition"]
-    assert addition["added_skill_id"].startswith("emergent.")
-    assert addition["added_by"] == "operator-http"
-
-
-def test_http_apply_proposal_refuses_pending(cfg_path: str) -> None:
-    _seed_proposal(cfg_path)
-    result = handle_request(
-        _ctx(cfg_path),
-        method_name="POST",
-        path="/v1/skills/proposals/sprq-http-1/apply",
-        body=None,
-        query=None,
-    )
-    assert result is not None
-    assert result.status == HTTPStatus.BAD_REQUEST
-
-
-def test_http_apply_proposal_returns_404_for_unknown(cfg_path: str) -> None:
-    result = handle_request(
-        _ctx(cfg_path),
-        method_name="POST",
-        path="/v1/skills/proposals/missing-id/apply",
-        body=None,
-        query=None,
-    )
-    assert result is not None
-    assert result.status == HTTPStatus.NOT_FOUND
+    assert result.status == HTTPStatus.FORBIDDEN
+    assert result.payload["error"]["code"] == "SKILL_OPERATOR_AUTH_REQUIRED"
 
 
 def test_http_router_does_not_swallow_skill_detail_routes(cfg_path: str) -> None:

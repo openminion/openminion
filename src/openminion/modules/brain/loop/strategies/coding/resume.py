@@ -24,16 +24,18 @@ from openminion.modules.brain.loop.tools.confirmation import (
     confirmation_required_user_message,
     extract_confirmation_replay_queue,
     is_session_confirmation_response,
+    requires_individual_confirmation,
     strip_confirmation_replay_queue,
 )
 from openminion.modules.brain.loop.tools.messages import action_result_to_tool_message
 from openminion.modules.brain.runner.tick.context import (
     _clear_pending_confirmation_metadata,
+    _deny_pending_confirmation,
     _grant_once_from_confirmation,
     _parse_confirmation_response,
 )
 from openminion.modules.brain.schemas import refresh_command_identity, new_uuid
-from openminion.modules.llm.schemas import Message
+from openminion.modules.llm.schemas import Message, ToolCall
 from .runtime import _build_blocked_result, _runner_and_profile_from_context
 
 
@@ -193,14 +195,27 @@ class CodingResumeMixin:
     ) -> None:
         self._record_verifier_candidate(replay_command, action_result)
         tool_name = str(getattr(replay_command, "tool_name", "") or "").strip()
+        call_id = str(getattr(replay_command, "command_id", "") or "")
+        self._loop_state.messages.append(
+            Message(
+                role="assistant",
+                tool_calls=[
+                    ToolCall(
+                        id=call_id,
+                        name=tool_name,
+                        arguments=dict(getattr(replay_command, "args", {}) or {}),
+                    )
+                ],
+            )
+        )
         self._loop_state.append_tool_result(
-            call_id=str(getattr(replay_command, "command_id", "") or ""),
+            call_id=call_id,
             tool_name=tool_name,
             action_result=action_result,
         )
         self._loop_state.messages.append(
             action_result_to_tool_message(
-                str(getattr(replay_command, "command_id", "") or ""),
+                call_id,
                 tool_name,
                 action_result,
             )
@@ -218,9 +233,14 @@ class CodingResumeMixin:
             return None
         runner, _profile = _runner_and_profile_from_context(ctx)
         user_reply = ctx.user_input
-        reply = _parse_confirmation_response(runner, user_reply)
-        session_grant = is_session_confirmation_response(user_reply)
+        reply = _parse_confirmation_response(runner, user_reply, command)
+        session_grant = (
+            is_session_confirmation_response(user_reply)
+            and not requires_individual_confirmation(command)
+            and not bool(ctx.state.pending_policy_approval_id)
+        )
         if reply == BRAIN_CONFIRM_RESPONSE_DENY:
+            _deny_pending_confirmation(runner, state=ctx.state)
             ctx.state.pending_confirmation_command = None
             _clear_pending_confirmation_metadata(ctx.state)
             ctx.state.post_action_user_message = ""
@@ -237,7 +257,10 @@ class CodingResumeMixin:
         if reply != BRAIN_CONFIRM_RESPONSE_AFFIRM and not session_grant:
             message = str(
                 getattr(ctx.state, "post_action_user_message", "") or ""
-            ).strip() or confirmation_required_user_message(command)
+            ).strip() or confirmation_required_user_message(
+                command,
+                ctx.state.pending_policy_confirmation_preview,
+            )
             return ExecutionResult.from_step_output(
                 ctx.respond(
                     message=message,

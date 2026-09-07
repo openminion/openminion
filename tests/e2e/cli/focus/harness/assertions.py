@@ -29,6 +29,8 @@ _FAILED_FINAL_ANSWER_MARKERS = (
     "did not produce a usable synthesized answer",
     "ended without the required typed finalization_status contract",
     "required typed finalization_status contract",
+    "empty_provider_response:",
+    "llm error:",
 )
 
 

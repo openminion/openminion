@@ -186,6 +186,7 @@ def apply_closure_judgment(
         session_api=runner.session_api,
         session_id=state.session_id,
         agent_id=runner.profile.agent_id,
+        llm_api=runner.llm_api,
     )
     write_post_completion_critique_memory(
         runner,

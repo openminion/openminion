@@ -17,14 +17,17 @@ from openminion.cli.interactive.terminal.shell import (
 from openminion.cli.interactive.terminal.shell.actions import (
     _handle_session_slash,
     _handle_shell_preference_slash,
+    _handle_visible_parity_slash,
 )
 from openminion.cli.interactive.terminal.shell.slash_output import (
     PROMPT_SAFE_OUTPUT_SLASHES,
     handle_debug_output_slash,
+    render_context_review,
 )
 from openminion.cli.interactive.terminal.shell.sessions import resume_session
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
+from openminion.cli.interactive.models import ModelSelection
 
 
 class _StubOverlay:
@@ -49,14 +52,34 @@ class _VisibleRuntime:
     permission_mode = "default"
     permission_overrides: dict[str, str] = {}
 
-    def list_models(self) -> list[tuple[str, str, bool]]:
-        return [("openai", "MiniMax-M2.7", True)]
+    def list_models(self) -> list[ModelSelection]:
+        return [
+            ModelSelection(
+                index=1,
+                connection_id="minimax",
+                connection_name="MiniMax",
+                provider="openai",
+                transport_adapter="openai_chat",
+                model="MiniMax-M2.7",
+                configured_connection=True,
+                active=True,
+                agent_default=True,
+            )
+        ]
 
-    def switch_model(self, arg: str) -> tuple[str, str]:
-        return arg, ""
+    def switch_model(self, _arg: str) -> ModelSelection:
+        return self.list_models()[0]
 
     def memory_report(self) -> str:
         return ""
+
+    def context_trace_payload(self, *, session_id: str) -> dict[str, object]:
+        return {
+            "session_id": session_id,
+            "traces": [],
+            "count": 0,
+            "degraded": "context_trace_not_found",
+        }
 
     def list_memory_records(self) -> list[object]:
         return []
@@ -126,6 +149,34 @@ class _VisibleRuntime:
     def execute_goal_command(self, _text: str) -> tuple[str, str]:
         return "ok", "goal ok"
 
+    def room_participants_report(self) -> str:
+        return "Room: review\n  routing: addressed\n  participants: 2"
+
+    def room_invite_agent(self, agent_id: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            participant_type="agent",
+            participant_id=agent_id,
+            role="participant",
+        )
+
+    def room_invite_human(
+        self, human_id: str, *, role: str = "participant"
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            participant_type="human",
+            participant_id=human_id,
+            role=role,
+        )
+
+    def room_kick(self, _participant_type: str, _participant_id: str) -> bool:
+        return True
+
+    def room_activate(self, _agent_id: str) -> None:
+        return None
+
+    def room_set_routing(self, _mode: str) -> None:
+        return None
+
 
 def _extract_implemented_slashes() -> set[str]:
     implemented: set[str] = set()
@@ -134,6 +185,7 @@ def _extract_implemented_slashes() -> set[str]:
         _handle_slash,
         _handle_session_slash,
         _handle_shell_preference_slash,
+        _handle_visible_parity_slash,
         handle_debug_output_slash,
     )
     for dispatcher in dispatchers:
@@ -272,6 +324,25 @@ def test_bare_slash_dispatch_prints_menu() -> None:
     assert "not yet implemented" not in out
 
 
+def test_terminal_room_invite_rejects_agent_role_operand() -> None:
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+
+    asyncio.run(
+        _handle_slash(
+            "/invite agent beta owner",
+            runtime=_VisibleRuntime(),
+            console=console,
+            transcript=TerminalTranscript(console),
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert "usage: /invite agent <id>" in buf.getvalue()
+
+
 def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> None:
     from openminion.cli.interactive.terminal.shell import actions
 
@@ -304,6 +375,139 @@ def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> N
         )
 
 
+def test_context_review_forwards_explicit_paths(monkeypatch, tmp_path: Path) -> None:
+    from openminion.cli.interactive.terminal.shell import slash_output
+
+    captured: dict[str, str] = {}
+
+    def _build_review(payload, **kwargs):
+        captured.update(kwargs)
+        return {"payload": payload}
+
+    monkeypatch.setattr(slash_output, "build_memory_context_review", _build_review)
+    monkeypatch.setattr(
+        slash_output,
+        "render_memory_context_review",
+        lambda review: f"context review: {review['payload']['session_id']}",
+    )
+    runtime = _VisibleRuntime()
+    runtime.context_trace_payload = lambda *, session_id: {
+        "session_id": session_id,
+        "traces": [],
+        "count": 0,
+    }
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+
+    asyncio.run(
+        _handle_slash(
+            "/context-review session=review canary=canary.json "
+            "calibration=calibration.json artifacts=artifacts",
+            runtime=runtime,
+            console=console,
+            transcript=TerminalTranscript(console),
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+        )
+    )
+
+    assert "context review: review" in buf.getvalue()
+    assert captured == {
+        "canary_path": "canary.json",
+        "calibration_path": "calibration.json",
+        "artifacts_dir": "artifacts",
+    }
+
+
+def test_context_review_renders_runtime_degradation() -> None:
+    runtime = _VisibleRuntime()
+    runtime.context_trace_payload = lambda *, session_id: {
+        "session_id": session_id,
+        "traces": [],
+        "count": 0,
+        "degraded": "context_trace_not_found",
+    }
+
+    rendered = render_context_review(runtime, "")
+
+    assert "degraded: context_trace_not_found" in rendered
+
+
+def test_overview_renders_operations_sections(monkeypatch, tmp_path: Path) -> None:
+    from openminion.cli.status import overview
+
+    monkeypatch.setattr(
+        overview,
+        "build_operations_overview",
+        lambda _runtime, *, working_dir: {"working_dir": working_dir},
+    )
+    monkeypatch.setattr(
+        overview,
+        "render_operations_overview",
+        lambda snapshot: (
+            f"Runtime  [available]\nHost  [available]\n{snapshot['working_dir']}"
+        ),
+    )
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+
+    asyncio.run(
+        _handle_slash(
+            "/overview",
+            runtime=_VisibleRuntime(),
+            console=console,
+            transcript=TerminalTranscript(console),
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+        )
+    )
+
+    output = buf.getvalue()
+    assert "Runtime  [available]" in output
+    assert "Host  [available]" in output
+    assert str(tmp_path) in output
+
+
+def test_copy_uses_latest_copyable_message(monkeypatch, tmp_path: Path) -> None:
+    from openminion.cli.interactive.terminal.shell import slash_output
+    from openminion.cli.presentation.models import ChatMessage, MessageKind
+
+    copied: list[str] = []
+    monkeypatch.setattr(
+        slash_output,
+        "copy_to_clipboard",
+        lambda body: copied.append(body) or True,
+    )
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    transcript = TerminalTranscript(console)
+    transcript.push_message(
+        ChatMessage(kind=MessageKind.AGENT, sender="assistant", body="copy this"),
+        render=False,
+    )
+    transcript.push_message(
+        ChatMessage(kind=MessageKind.SYSTEM, sender="system", body="skip this"),
+        render=False,
+    )
+
+    asyncio.run(
+        _handle_slash(
+            "/copy",
+            runtime=_VisibleRuntime(),
+            console=console,
+            transcript=transcript,
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+        )
+    )
+
+    assert copied == ["copy this"]
+    assert "copied last message" in buf.getvalue()
+
+
 def test_prompt_loop_routes_output_slashes_through_transcript(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -333,8 +537,61 @@ def test_prompt_loop_routes_output_slashes_through_transcript(
 
     out = buf.getvalue()
     assert "current model: MiniMax-M2.7" in out
-    assert "Configured model" in out
+    assert "Connection" in out
+    assert "API format" in out
     assert transcript._messages[-1].kind.value == "system"
+
+
+def test_prompt_loop_routes_unknown_slash_with_suggestion_through_transcript(
+    tmp_path: Path,
+) -> None:
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    transcript = TerminalTranscript(console)
+
+    asyncio.run(
+        _handle_slash_input(
+            "/skill",
+            runtime=_VisibleRuntime(),
+            console=console,
+            transcript=transcript,
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+            custom_commands={},
+        )
+    )
+
+    assert transcript._messages[-1].body == (
+        "Unknown command: /skill\n"
+        "Did you mean /skills?\n"
+        "Type / to view available commands."
+    )
+
+
+def test_prompt_loop_passes_skill_id_to_skill_detail_report(tmp_path: Path) -> None:
+    class _SkillDetailRuntime(_VisibleRuntime):
+        def skills_report(self, skill_id: str = "") -> str:
+            return f"Skill detail: {skill_id}"
+
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    transcript = TerminalTranscript(console)
+
+    asyncio.run(
+        _handle_slash_input(
+            "/skills demo_skill",
+            runtime=_SkillDetailRuntime(),
+            console=console,
+            transcript=transcript,
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+            custom_commands={},
+        )
+    )
+
+    assert transcript._messages[-1].body == "Skill detail: demo_skill"
 
 
 def test_resume_session_accepts_dict_session_message_count() -> None:

@@ -26,10 +26,15 @@ class OpenAIRequestCompatProfile:
     collapse_system_messages: bool = False
     disable_fallback_instruction: bool = False
     include_native_tool_contract: bool = True
+    include_stream_tool_contract: bool = False
+    disable_adapter_retries: bool = False
+    preserve_tool_arguments: bool = False
     native_tool_only_instruction: str = ""
     enable_structured_tool_envelope_parse: bool = False
     retry_empty_payload_once: bool = False
+    retry_tool_transcript_error_once: bool = False
     empty_payload_retry_instruction: str = ""
+    force_single_required_tool: bool = False
 
 
 def resolve_openai_request_compat(
@@ -42,7 +47,10 @@ def resolve_openai_request_compat(
         return OpenAIRequestCompatProfile(
             profile_id="cortensor_portal",
             disable_fallback_instruction=True,
-            include_native_tool_contract=False,
+            include_stream_tool_contract=True,
+            disable_adapter_retries=True,
+            preserve_tool_arguments=True,
+            force_single_required_tool=True,
         )
     if (
         normalized_request_dialect == MINIMAX_OPENAI_COMPAT_REQUEST_DIALECT
@@ -54,6 +62,7 @@ def resolve_openai_request_compat(
             disable_fallback_instruction=True,
             enable_structured_tool_envelope_parse=True,
             retry_empty_payload_once=True,
+            retry_tool_transcript_error_once=True,
             native_tool_only_instruction=(
                 "Native tool-calling contract:\n"
                 "1. When tools are needed, emit native API tool calls only.\n"
@@ -71,6 +80,22 @@ def resolve_openai_request_compat(
             ),
         )
     return OpenAIRequestCompatProfile()
+
+
+def should_retry_tool_transcript_error(error: Any) -> bool:
+    details = dict(getattr(error, "details", {}) or {})
+    if int(details.get("status_code", 0) or 0) != 400:
+        return False
+    message = str(
+        details.get("upstream_message") or getattr(error, "message", "") or ""
+    ).lower()
+    return "2013" in message and any(
+        marker in message
+        for marker in (
+            "tool call result does not follow tool call",
+            "tool result's tool id",
+        )
+    )
 
 
 def requires_auto_tool_choice_compat(tool_choice: Any) -> bool:

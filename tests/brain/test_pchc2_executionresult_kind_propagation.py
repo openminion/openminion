@@ -77,6 +77,22 @@ def test_execution_result_to_step_output_default_kind() -> None:
     assert output.kind == RESPOND_KIND_ASSISTANT
 
 
+def test_execution_result_maps_internal_failed_status_to_public_error() -> None:
+    state = _state()
+
+    output = ExecutionResult(status="failed", working_state=state).to_step_output()
+
+    assert output.status == "error"
+
+
+def test_working_state_round_trips_internal_failed_status() -> None:
+    state = _state().model_copy(update={"status": "failed"})
+
+    restored = WorkingState.model_validate(state.model_dump(mode="python"))
+
+    assert restored.status == "failed"
+
+
 def test_execution_result_from_step_output_reads_kind() -> None:
     state = _state()
     output = StepOutput(

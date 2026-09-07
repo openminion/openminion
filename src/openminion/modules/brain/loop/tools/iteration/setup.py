@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, NamedTuple
 
 from pydantic import ValidationError
@@ -7,16 +8,20 @@ from pydantic import ValidationError
 from openminion.modules.brain.execution.public_taxonomy import (
     public_mode_name_for_mode_name,
 )
+from openminion.modules.brain.loop.services import (
+    runner_from_context,
+    runtime_allows_tool,
+)
 from openminion.modules.brain.schemas import DelegationContext
+from openminion.modules.llm.constants import REQUESTABLE_TOOL_NAMES_METADATA_KEY
 from openminion.modules.llm.schemas import Message, ToolSpec
 
 from ..budget_control import (
-    _adaptive_budget_config,
-    _effective_cap,
     _emit_budget_event,
     _emit_high_watermark_if_needed,
     _general_profile_name,
 )
+from ..budget import _effective_cap
 from ..contracts import (
     AdaptiveToolLoopContext,
     AdaptiveToolLoopProfile,
@@ -70,6 +75,22 @@ def _has_system_message(messages: list[Message], content: str) -> bool:
     )
 
 
+def _loop_request_metadata(
+    profile: AdaptiveToolLoopProfile,
+    requestable_specs: list[ToolSpec],
+) -> dict[str, Any] | None:
+    metadata_override = profile.llm_request_overrides.get("metadata")
+    metadata = (
+        dict(metadata_override or {}) if isinstance(metadata_override, dict) else None
+    )
+    if requestable_specs:
+        metadata = dict(metadata or {})
+        metadata[REQUESTABLE_TOOL_NAMES_METADATA_KEY] = json.dumps(
+            [spec.name for spec in requestable_specs if spec.name.strip()]
+        )
+    return metadata
+
+
 def _ensure_system_message(
     messages: list[Message], *, index: int, content: str
 ) -> bool:
@@ -93,9 +114,11 @@ def _tool_efficiency_guidance(profile: AdaptiveToolLoopProfile) -> str:
             "4. For current-events, latest-news, or top-N requests, one or two searches are usually enough; pick the top items from result titles/snippets and answer.",
             "5. These efficiency rules override any skill or example procedure that suggests a fixed number of searches; stop searching once you have enough evidence to answer.",
             "6. Batch related lookups when possible instead of making them one at a time.",
-            "7. If a tool reports a budget or per-tool limit error, do not call another tool; produce the best final answer from the results already available.",
-            "8. Always produce a final answer before your tool budget runs out; a partial sourced answer is better than no answer.",
-            f"9. Your current budget is approximately {int(profile.max_iterations)} iterations / {tool_call_budget} tool calls.",
+            "7. Follow any operation order the user specifies; do not perform a later operation before an earlier one.",
+            "8. Stop after completing the requested operations; do not add related calls the user did not request.",
+            "9. If a tool reports a budget or per-tool limit error, do not call another tool; produce the best final answer from the results already available.",
+            "10. Always produce a final answer before your tool budget runs out; a partial sourced answer is better than no answer.",
+            f"11. Your current budget is approximately {int(profile.max_iterations)} iterations / {tool_call_budget} tool calls.",
         ]
     )
 
@@ -184,6 +207,28 @@ class LoopFrameSetup(NamedTuple):
     pending_response: Any
 
 
+def _with_loop_control_specs(
+    loop_ctx: AdaptiveToolLoopContext,
+    *,
+    profile: AdaptiveToolLoopProfile,
+    tool_specs: list[ToolSpec],
+    requestable_specs: list[ToolSpec],
+) -> tuple[bool, bool, list[ToolSpec]]:
+    runner = runner_from_context(loop_ctx) or getattr(loop_ctx, "_runner", None)
+    tool_request_enabled = bool(requestable_specs) and runtime_allows_tool(
+        runner, TOOL_REQUEST_TOOL_NAME
+    )
+    plan_enabled = plan_tool_enabled(profile) and runtime_allows_tool(
+        runner, PLAN_TOOL_NAME
+    )
+    active_specs = (
+        with_tool_request_spec(tool_specs) if tool_request_enabled else list(tool_specs)
+    )
+    if plan_enabled:
+        active_specs = with_enabled_plan_tool_spec(profile, active_specs)
+    return tool_request_enabled, plan_enabled, active_specs
+
+
 def prepare_loop_frame(
     loop_ctx: AdaptiveToolLoopContext,
     *,
@@ -202,14 +247,15 @@ def prepare_loop_frame(
     )
     public_mode_tag = _public_loop_tag(profile.mode_name)
     requestable_specs = list(requestable_tool_specs or [])
-    tool_request_enabled = bool(requestable_specs)
+    tool_request_enabled, plan_enabled, active_tool_specs = _with_loop_control_specs(
+        loop_ctx,
+        profile=profile,
+        tool_specs=tool_specs,
+        requestable_specs=requestable_specs,
+    )
     requestable_specs_by_name = {
         spec.name.strip(): spec for spec in requestable_specs if spec.name.strip()
     }
-    active_tool_specs = (
-        with_tool_request_spec(tool_specs) if tool_request_enabled else list(tool_specs)
-    )
-    active_tool_specs = with_enabled_plan_tool_spec(profile, active_tool_specs)
     active_tool_names = {
         spec.name.strip()
         for spec in active_tool_specs
@@ -221,14 +267,13 @@ def prepare_loop_frame(
     )
     if tool_request_enabled:
         allowed_tools = frozenset({*allowed_tools, TOOL_REQUEST_TOOL_NAME})
-    if plan_tool_enabled(profile):
+    if plan_enabled:
         allowed_tools = frozenset({*allowed_tools, PLAN_TOOL_NAME})
     seeded_queue = list(seeded_commands or [])
     if not active_tool_specs and allowed_tools and not seeded_queue:
         raise ValueError(
             "tool_specs are required for the resolved adaptive tool surface"
         )
-
     loop_state = initial_state or AdaptiveToolLoopState(messages=list(initial_messages))
     if not loop_state.messages:
         loop_state.messages = list(initial_messages)
@@ -338,10 +383,7 @@ def prepare_loop_frame(
             loop_state.messages.append(inactive_directory_message)
 
     max_output_tokens = profile.llm_request_overrides.get("max_output_tokens")
-    metadata_override = profile.llm_request_overrides.get("metadata")
-    metadata = (
-        dict(metadata_override or {}) if isinstance(metadata_override, dict) else None
-    )
+    metadata = _loop_request_metadata(profile, requestable_specs)
 
     turn_scope_id = _current_turn_scope_id(loop_ctx)
 
@@ -352,7 +394,7 @@ def prepare_loop_frame(
         model=model,
         turn_scope_id=turn_scope_id,
     )
-    if _adaptive_budget_config(profile) is not None:
+    if profile.adaptive_budget_config is not None:
         _emit_budget_event(
             loop_ctx,
             "budget.allocated",

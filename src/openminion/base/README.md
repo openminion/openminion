@@ -56,9 +56,9 @@ Use this owner ladder in order:
 - downward-only per-file budgets for LOC, callable count, maximum callable LOC, and maximum parameter count
 - a 100-line callable ceiling, a 500-line default file ceiling, and a 9,500-line Base ceiling
 
-`config/mcp.py` is the only approved large-file exception at 719 lines because
-it is a declarative catalog under the active MCPH owner. Its budget cannot grow.
-The exact budgets live in
+`config/mcp.py` is the only approved large-file exception because it is a
+declarative catalog. Its budget cannot grow. The exact downward-only budgets
+live in
 `scripts/baselines/base_foundation_ratchet.tsv`; reductions must lower the
 matching baseline row rather than retain unused allowance.
 

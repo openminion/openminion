@@ -254,6 +254,9 @@ def trace_provider_request(
     payload["http_response_trace_filename"] = trace_context[
         "http_response_trace_filename"
     ]
+    payload["http_sse_response_trace_filename"] = trace_context[
+        "http_sse_response_trace_filename"
+    ]
     payload["structured_trace_filename"] = trace_context["structured_trace_filename"]
     payload = apply_content_policy(payload, allow_sensitive_content=True)
     published: list[str] = []
@@ -330,6 +333,9 @@ def trace_provider_response(
     payload["http_response_trace_filename"] = trace_context[
         "http_response_trace_filename"
     ]
+    payload["http_sse_response_trace_filename"] = trace_context[
+        "http_sse_response_trace_filename"
+    ]
     payload["structured_trace_filename"] = trace_context["structured_trace_filename"]
     payload = apply_content_policy(payload, allow_sensitive_content=True)
     published: list[str] = []
@@ -363,6 +369,14 @@ def trace_provider_response(
     except (OSError, TypeError, ValueError) as exc:
         complete = False
         logger.warning("trace_response: failed to write structured trace: %s", exc)
+    for field in (
+        "http_trace_filename",
+        "http_response_trace_filename",
+        "http_sse_response_trace_filename",
+    ):
+        relative = str(trace_context.get(field, "") or "")
+        if relative and (trace_root / relative).is_file():
+            published.append(relative)
     return TraceArtifactPublication(tuple(sorted(published)), complete)
 
 
@@ -432,14 +446,18 @@ async def generate_with_provider_call_telemetry(
     telemetryctl = _service_port_telemetryctl(service_port)
     if telemetryctl is None or not session_id:
         return await generate()
+
+    def read_trace_publication() -> TraceArtifactPublication:
+        return (
+            trace_publication()
+            if trace_publication
+            else TraceArtifactPublication(complete=False)
+        )
+
     llm_call_id = str(uuid4())
     correlation = _llm_correlation_fields(request)
     started_at = time.monotonic()
-    publication = (
-        trace_publication()
-        if trace_publication
-        else TraceArtifactPublication(complete=False)
-    )
+    publication = read_trace_publication()
     await _emit_llm_call_event(
         telemetryctl,
         session_id=session_id,
@@ -448,6 +466,7 @@ async def generate_with_provider_call_telemetry(
         payload={
             "llm_call_id": llm_call_id,
             "model": str(getattr(request, "model", "") or ""),
+            "provider": provider_name,
             "provider_name": provider_name,
             "service_vendor": service_vendor or provider_name,
             "purpose": str(request.metadata.get("purpose") or "act"),
@@ -461,11 +480,7 @@ async def generate_with_provider_call_telemetry(
         response = await generate()
     finally:
         if exc := sys.exception():
-            publication = (
-                trace_publication()
-                if trace_publication
-                else TraceArtifactPublication(complete=False)
-            )
+            publication = read_trace_publication()
             await _emit_llm_call_event(
                 telemetryctl,
                 session_id=session_id,
@@ -473,6 +488,8 @@ async def generate_with_provider_call_telemetry(
                 event_type="llm.call.failed",
                 payload={
                     "llm_call_id": llm_call_id,
+                    "provider": provider_name,
+                    "model": str(getattr(request, "model", "") or ""),
                     "provider_name": provider_name,
                     "service_vendor": service_vendor or provider_name,
                     "provider_round_trip_ms": (time.monotonic() - started_at) * 1000,
@@ -483,11 +500,7 @@ async def generate_with_provider_call_telemetry(
                 status="failed",
                 service_port=service_port,
             )
-    publication = (
-        trace_publication()
-        if trace_publication
-        else TraceArtifactPublication(complete=False)
-    )
+    publication = read_trace_publication()
     await _emit_llm_call_event(
         telemetryctl,
         session_id=session_id,
@@ -495,6 +508,8 @@ async def generate_with_provider_call_telemetry(
         event_type="llm.call.completed",
         payload={
             "llm_call_id": llm_call_id,
+            "provider": provider_name,
+            "model": str(getattr(response, "model", "") or ""),
             "provider_name": provider_name,
             "service_vendor": service_vendor or provider_name,
             "response_model": str(getattr(response, "model", "") or ""),

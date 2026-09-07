@@ -307,6 +307,20 @@ def test_openai_stream_does_not_yield_unknown_event_types():
         assert e.type in {"delta", "done", "error"}
 
 
+def test_openai_stream_passes_runtime_telemetry_handle() -> None:
+    provider = OpenAIProvider()
+    telemetry = object()
+    config = {**_config_for_provider(), "telemetryctl": telemetry}
+
+    with mock.patch(
+        "openminion.modules.llm.providers.openai.adapter.iter_sse_post_lines",
+        return_value=iter(["data: [DONE]"]),
+    ) as stream_lines:
+        list(provider.stream(_make_request(), config))
+
+    assert stream_lines.call_args.kwargs["telemetryctl"] is telemetry
+
+
 def test_openai_stream_malformed_recognized_event_emits_provider_error():
     provider = OpenAIProvider()
     with mock.patch(

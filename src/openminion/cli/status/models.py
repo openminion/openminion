@@ -36,6 +36,7 @@ def build_signature(status: PhaseStatus) -> PhaseStatusSignature:
         status.token_usage_estimated,
         status.tool_name,
         status.progress_phase,
+        status.detail_code,
         status.detail_text,
         status.terminal,
     )
@@ -109,6 +110,8 @@ def build_memory_context_review(
     truncated: list[str] = []
     reasons: list[str] = []
     degraded: list[str] = []
+    if payload_degraded := _safe_text(payload.get("degraded")):
+        degraded.append(payload_degraded)
     traces = list(payload.get("traces", []) or [])
     for item in traces:
         if not isinstance(item, Mapping):

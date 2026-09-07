@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from openminion.modules.artifact.refs import is_canonical_artifact_ref
 from openminion.modules.brain.interfaces import SessionArtifactAPI
@@ -53,6 +53,7 @@ class SessionArtifactFacade:
         sequences = [
             event.get("seq") if isinstance(event, dict) else None for event in events
         ]
+        sequence_numbers = cast(list[int], sequences)
         if (
             resolved_high_water < 0
             or (high_water > 0 and resolved_high_water != high_water)
@@ -63,11 +64,12 @@ class SessionArtifactFacade:
                 if isinstance(event, dict)
             )
             or any(
-                current <= (after_seq if index == 0 else sequences[index - 1])
-                for index, current in enumerate(sequences)
+                current <= (after_seq if index == 0 else sequence_numbers[index - 1])
+                for index, current in enumerate(sequence_numbers)
             )
-            or any(seq > resolved_high_water for seq in sequences)
-            or next_after_seq != (sequences[-1] if sequences else after_seq)
+            or any(seq > resolved_high_water for seq in sequence_numbers)
+            or next_after_seq
+            != (sequence_numbers[-1] if sequence_numbers else after_seq)
             or bool(page["complete"]) != (next_after_seq >= resolved_high_water)
         ):
             raise SessionArtifactOperationError(
@@ -119,4 +121,4 @@ class SessionArtifactFacade:
             raise SessionArtifactUnavailable(
                 "Artifact decision returned an unsupported outcome."
             )
-        return outcome
+        return cast(str, outcome)

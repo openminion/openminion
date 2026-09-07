@@ -100,6 +100,23 @@ COMMAND_SCOPES: dict[str, tuple[str, ...]] = {
     "modules": ("cp.message.read",),
 }
 
+HELP_HIDDEN_COMMANDS = frozenset(
+    {
+        "agent",
+        "agent.info",
+        "agent.list",
+        "agent.ls",
+        "agent.set",
+        "agent.stop",
+        "agent.use",
+        "job.ls",
+        "new",
+        "pair.status",
+        "profile.current",
+        "profile.ls",
+    }
+)
+
 SCOPE_DESCRIPTIONS: dict[str, str] = {
     "chat.interact": "chat with OpenMinion",
     "cp.message.read": "read controlplane messages",

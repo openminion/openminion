@@ -98,6 +98,7 @@ class _FakeNestedSubmitOutputResponse:
         ]
         self.finish_reason = "tool_calls"
         self.provider_raw = {"choices": [{"finish_reason": "tool_calls"}]}
+        self.telemetry = {"request_id": "portal-request-bridge-1"}
 
 
 class _FakeStringifiedActTargetSubmitOutputResponse:
@@ -399,6 +400,49 @@ async def test_llm_bridge_normalizes_nested_submit_output_arguments() -> None:
     assert response.tool_calls[0].name == "submit_output"
     assert response.tool_calls[0].arguments.get("mode") == "respond"
     assert response.tool_calls[0].arguments.get("reason_code") == "greeting"
+
+
+@pytest.mark.asyncio
+async def test_cortensor_portal_bridge_preserves_arguments_and_request_id() -> None:
+    with patch(
+        "openminion.modules.llm.providers.bridge._import_openminion_llm",
+        return_value=(
+            _FakeAgentProfile,
+            _FakeNestedSubmitOutputLLMCTL,
+            _FakeToolPolicy,
+        ),
+    ):
+        bridge = LLMCTLBridgeProvider(
+            provider_name="openai",
+            model="oss-20b",
+            provider_config={
+                "api_key": "test-key",
+                "base_url": "https://api.cortensor.app/v1",
+            },
+        )
+
+    response = await bridge.generate(
+        ProviderRequest(
+            user_message="hi",
+            system_prompt="You are helpful.",
+            tools=[
+                ProviderToolSpec(
+                    name="submit_output",
+                    description="Return structured output.",
+                    parameters={"type": "object"},
+                )
+            ],
+            metadata={"purpose": "decide"},
+        )
+    )
+
+    assert response.tool_calls[0].arguments == {
+        "decision": (
+            '{"mode":"respond","confidence":1.0,'
+            '"reason_code":"greeting","answer":"hello"}'
+        )
+    }
+    assert response.normalization["request_id"] == "portal-request-bridge-1"
 
 
 @pytest.mark.asyncio

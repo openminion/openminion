@@ -267,6 +267,12 @@ def test_sandbox_e2e_missing_runner_does_not_fall_back_to_host(tmp_path: Path) -
 
     assert result["status"] == "error"
     assert result["error"]["code"] == "SANDBOX_UNAVAILABLE"
+    assert "structured file tools" in result["error"]["message"]
+    assert "configure a sandbox" in result["error"]["message"]
+    assert "--allow-unsandboxed-exec" in result["error"]["message"]
+    assert (
+        "not confined to workspace roots" in result["error"]["details"]["host_warning"]
+    )
 
 
 def test_sandbox_e2e_large_output_preserves_artifact_spillover(tmp_path: Path) -> None:

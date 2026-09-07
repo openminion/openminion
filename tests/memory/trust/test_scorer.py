@@ -161,11 +161,12 @@ def test_contradiction_penalty_ignores_invalidated_opposing_peer() -> None:
 
 
 def test_contradiction_penalty_saturates_with_multiple_opposing_peers() -> None:
+    event_time = datetime.now(timezone.utc).isoformat()
     repo = [
         SimpleNamespace(
             id="r1",
             confidence=1.0,
-            event_time="2026-05-22T00:00:00+00:00",
+            event_time=event_time,
             valid_to=None,
             meta={"claim_key": "pref:dark_mode", "polarity": "negates"},
             is_deleted=False,
@@ -173,7 +174,7 @@ def test_contradiction_penalty_saturates_with_multiple_opposing_peers() -> None:
         SimpleNamespace(
             id="r2",
             confidence=1.0,
-            event_time="2026-05-22T00:00:00+00:00",
+            event_time=event_time,
             valid_to=None,
             meta={"claim_key": "pref:dark_mode", "polarity": "negates"},
             is_deleted=False,

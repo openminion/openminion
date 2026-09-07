@@ -58,7 +58,7 @@ def test_guard_off_keeps_existing_history_unchanged(mock_env):
     with patch(
         "openminion.services.context.adapter.ContextCtlGatewayAdapter.from_env"
     ) as adapter_from_env:
-        _maybe_apply_contextctl_call_site(
+        selected = _maybe_apply_contextctl_call_site(
             turn_context=turn_ctx,
             agent_id="a1",
             agent_memory=None,
@@ -68,6 +68,7 @@ def test_guard_off_keeps_existing_history_unchanged(mock_env):
         )
 
     assert turn_ctx.history == original_history
+    assert selected is False
     adapter_from_env.assert_not_called()
 
 
@@ -79,7 +80,7 @@ def test_guard_explicitly_false_keeps_history_unchanged(mock_env):
     with patch(
         "openminion.services.context.adapter.ContextCtlGatewayAdapter.from_env"
     ) as adapter_from_env:
-        _maybe_apply_contextctl_call_site(
+        selected = _maybe_apply_contextctl_call_site(
             turn_context=turn_ctx,
             agent_id="a1",
             agent_memory=None,
@@ -89,6 +90,7 @@ def test_guard_explicitly_false_keeps_history_unchanged(mock_env):
         )
 
     assert turn_ctx.history == original_history
+    assert selected is False
     adapter_from_env.assert_not_called()
 
 
@@ -110,7 +112,7 @@ def test_guard_on_constructs_adapter_and_delegates_select_history(mock_env):
         "openminion.services.context.adapter.ContextCtlGatewayAdapter.from_env",
         return_value=fake_adapter,
     ) as adapter_from_env:
-        _maybe_apply_contextctl_call_site(
+        selected = _maybe_apply_contextctl_call_site(
             turn_context=turn_ctx,
             agent_id="a1",
             agent_memory="mem-bridge",
@@ -119,11 +121,11 @@ def test_guard_on_constructs_adapter_and_delegates_select_history(mock_env):
             user_message="hello",
         )
 
-    adapter_from_env.assert_called_once_with(
-        agent_id="a1",
-        memory_client="mem-bridge",
-        logger=_logger(),
-    )
+    adapter_from_env.assert_called_once()
+    call_kwargs = adapter_from_env.call_args.kwargs
+    assert call_kwargs["agent_id"] == "a1"
+    assert call_kwargs["memory_client"]._memory == "mem-bridge"  # noqa: SLF001
+    assert call_kwargs["logger"] == _logger()
     fake_adapter.build_ctxctl_messages.assert_called_once_with(
         session_id="s1", agent_id="a1", query="hello"
     )
@@ -135,6 +137,70 @@ def test_guard_on_constructs_adapter_and_delegates_select_history(mock_env):
         contextctl_messages=fake_messages,
     )
     assert turn_ctx.history == ["delegated-history"]
+    assert selected is True
+
+
+def test_guard_on_emits_content_free_selection_event(mock_env):
+    mock_env["CONTEXTCTL_GATEWAY_ENABLED"] = "true"
+    fake_adapter = MagicMock()
+    fake_adapter.is_enabled = True
+    fake_adapter.build_ctxctl_messages.return_value = ["contextctl-message"]
+    fake_adapter.select_history.return_value = [
+        Message(channel="contextctl", target="target", body="selected")
+    ]
+    events: list[tuple[str, dict[str, str]]] = []
+
+    class _Memory:
+        def build_context_with_metadata(self, **kwargs):
+            del kwargs
+            return "", {}
+
+    def emit_event(
+        *,
+        session_id,
+        event_type,
+        conversation_id,
+        thread_id,
+        attach_id,
+        payload,
+    ):
+        assert (session_id, conversation_id, thread_id, attach_id) == (
+            "session",
+            "conversation",
+            "thread",
+            "attach",
+        )
+        events.append((event_type, payload))
+
+    with patch(
+        "openminion.services.context.adapter.ContextCtlGatewayAdapter.from_env",
+        return_value=fake_adapter,
+    ):
+        turn_context = build_turn_context(
+            history=[],
+            agent_id="agent",
+            agent_memory=_Memory(),
+            logger=_logger(),
+            emit_memory_event=emit_event,
+            session_id="session",
+            run_id="run",
+            request_id="request",
+            channel="console",
+            target="target",
+            user_message="hello",
+            conversation_id="conversation",
+            thread_id="thread",
+            attach_id="attach",
+            memory_capsule_strategy="always",
+            memory_capsule_cache={},
+            memory_dynamic_retrieval_enabled=False,
+        )
+
+    assert turn_context.history[0].body == "selected"
+    assert (
+        "context.contextctl.selected",
+        {"run_id": "run", "request_id": "request", "history_count": "1"},
+    ) in events
 
 
 def test_guard_on_with_none_messages_falls_back_to_existing_history(mock_env):
@@ -150,7 +216,7 @@ def test_guard_on_with_none_messages_falls_back_to_existing_history(mock_env):
         "openminion.services.context.adapter.ContextCtlGatewayAdapter.from_env",
         return_value=fake_adapter,
     ):
-        _maybe_apply_contextctl_call_site(
+        selected = _maybe_apply_contextctl_call_site(
             turn_context=turn_ctx,
             agent_id="a1",
             agent_memory=None,
@@ -160,6 +226,7 @@ def test_guard_on_with_none_messages_falls_back_to_existing_history(mock_env):
         )
 
     assert turn_ctx.history == original_history
+    assert selected is False
     fake_adapter.select_history.assert_not_called()
 
 
@@ -175,7 +242,7 @@ def test_guard_on_with_disabled_adapter_falls_back(mock_env):
         "openminion.services.context.adapter.ContextCtlGatewayAdapter.from_env",
         return_value=fake_adapter,
     ):
-        _maybe_apply_contextctl_call_site(
+        selected = _maybe_apply_contextctl_call_site(
             turn_context=turn_ctx,
             agent_id="a1",
             agent_memory=None,
@@ -185,6 +252,7 @@ def test_guard_on_with_disabled_adapter_falls_back(mock_env):
         )
 
     assert turn_ctx.history == original_history
+    assert selected is False
     fake_adapter.build_ctxctl_messages.assert_not_called()
 
 
@@ -198,7 +266,7 @@ def test_guard_on_with_adapter_exception_falls_back_deterministically(mock_env):
         side_effect=RuntimeError("synthetic adapter construction failure"),
     ):
         # Must not raise.
-        _maybe_apply_contextctl_call_site(
+        selected = _maybe_apply_contextctl_call_site(
             turn_context=turn_ctx,
             agent_id="a1",
             agent_memory=None,
@@ -208,6 +276,7 @@ def test_guard_on_with_adapter_exception_falls_back_deterministically(mock_env):
         )
 
     assert turn_ctx.history == original_history
+    assert selected is False
 
 
 def test_memory_failure_still_allows_independent_graph_context(mock_env):

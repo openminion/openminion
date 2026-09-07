@@ -28,8 +28,39 @@ _SUPPORTED_RUN_TRIGGERS = frozenset(
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from openminion.modules.session.capture import CaptureIdentity
+
     from .coordinator import BrainRunner
     from ..schemas import StepOutput
+
+
+def close_owned_runner_bundle(
+    runner: "BrainRunner",
+    *,
+    vector_sync,
+    close_policy: bool,
+    close_retrieve: bool,
+) -> None:
+    """Close the resources assembled for the canonical bridge runner."""
+    if vector_sync is not None:
+        vector_sync.stop()
+    for resource in (
+        runner.a2a_api,
+        runner.context_api,
+        runner.tool_api,
+        runner.memory_api,
+        runner.skill_api,
+    ):
+        if resource is not None:
+            resource.close()
+    if runner.policy_api is not None and close_policy:
+        runner.policy_api.close()
+    if runner.retrieve_api is not None and close_retrieve:
+        runner.retrieve_api.close()
+    for resource in (runner.goal_runtime, runner.task_manager, runner.cron_api):
+        if resource is not None:
+            resource.close()
+    runner.session_api.close()
 
 
 def configure_runtime_controls(
@@ -56,6 +87,15 @@ def configure_runtime_controls(
     runner._last_meta_application = None
 
 
+def _normalize_run_trigger(trigger: str) -> str:
+    trigger_mode = str(trigger or RUN_TRIGGER_USER_INPUT).strip()
+    return (
+        trigger_mode
+        if trigger_mode in _SUPPORTED_RUN_TRIGGERS
+        else RUN_TRIGGER_USER_INPUT
+    )
+
+
 def run_until_idle(
     runner: "BrainRunner",
     *,
@@ -66,10 +106,9 @@ def run_until_idle(
     forced_tools: list[str] | None,
     capability_category: str | None,
     trigger: str = RUN_TRIGGER_USER_INPUT,
+    capture_identity: "CaptureIdentity | None" = None,
 ) -> "StepOutput":
-    trigger_mode = str(trigger or RUN_TRIGGER_USER_INPUT).strip()
-    if trigger_mode not in _SUPPORTED_RUN_TRIGGERS:
-        trigger_mode = RUN_TRIGGER_USER_INPUT
+    trigger_mode = _normalize_run_trigger(trigger)
     if trigger_mode == RUN_TRIGGER_PLAN_CONTINUATION:
         user_input = None
         _emit_run_trigger_started(
@@ -100,6 +139,7 @@ def run_until_idle(
         trace_id=trace_id,
         forced_tools=forced_tools,
         capability_category=capability_category,
+        capture_identity=capture_identity,
     )
     iterations = 1
 
@@ -148,11 +188,7 @@ def run_until_idle(
                         last.working_state.mission.latest_route_action or ""
                     ),
                 )
-                CanonicalEventLogger(
-                    session_api=runner.session_api,
-                    session_id=session_id,
-                    agent_id=runner.profile.agent_id,
-                ).emit(
+                _event_logger(runner, session_id).emit(
                     "brain.mission.paused",
                     {
                         "mission_id": last.working_state.mission.mission_id,
@@ -179,7 +215,7 @@ def run_until_idle(
                 )
             break
         previous_status = last.status
-        last = runner.step(session_id=session_id)
+        last = _continue_run(runner, session_id, capture_identity)
         iterations += 1
         if (
             previous_status == BRAIN_STATE_JOB_PENDING
@@ -201,6 +237,14 @@ def run_until_idle(
     return last
 
 
+def _continue_run(
+    runner: "BrainRunner",
+    session_id: str,
+    capture_identity: "CaptureIdentity | None",
+) -> "StepOutput":
+    return runner.step(session_id=session_id, capture_identity=capture_identity)
+
+
 def _emit_run_trigger_started(
     *,
     runner: "BrainRunner",
@@ -210,11 +254,9 @@ def _emit_run_trigger_started(
     trigger: str,
 ) -> None:
     try:
-        CanonicalEventLogger(
-            session_api=runner.session_api,
-            session_id=session_id,
-            agent_id=runner.profile.agent_id,
-        ).emit(event, {"trigger": trigger}, trace_id=trace_id)
+        _event_logger(runner, session_id).emit(
+            event, {"trigger": trigger}, trace_id=trace_id
+        )
     except Exception:  # noqa: BLE001 — telemetry is best-effort
         return
 
@@ -228,11 +270,7 @@ def _terminate_loop(
     details: dict[str, int] | None = None,
 ) -> "StepOutput":
     state = last.working_state
-    logger = CanonicalEventLogger(
-        session_api=runner.session_api,
-        session_id=state.session_id,
-        agent_id=runner.profile.agent_id,
-    )
+    logger = _event_logger(runner, state.session_id)
     payload: dict[str, int | str] = {
         "status_before": str(last.status),
         "cursor": state.cursor,
@@ -247,4 +285,13 @@ def _terminate_loop(
         message=message,
         status=BRAIN_STATE_WAITING_USER,
         action_result=last.action_result,
+    )
+
+
+def _event_logger(runner: "BrainRunner", session_id: str) -> CanonicalEventLogger:
+    return CanonicalEventLogger(
+        session_api=runner.session_api,
+        session_id=session_id,
+        agent_id=runner.profile.agent_id,
+        llm_api=runner.llm_api,
     )

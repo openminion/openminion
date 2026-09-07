@@ -52,6 +52,7 @@ def test_live_export_probe_reaches_pinned_collector(
     payload = json.loads(result.stdout)
     assert payload["status"] == "ready"
     assert payload["proof"]["otlp_transport"] is True
+    assert payload["probe"]["signal"] == "logs"
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         try:

@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from openminion.base.config.env import EnvironmentConfig
-from openminion.base.config.runtime import resolve_identity_root_from_env
-from openminion.base.constants import (
-    OPENMINION_IDENTITY_DB_ENV,
-    OPENMINION_IDENTITY_ROOT_ENV,
+from openminion.base.config.runtime import (
+    resolve_identity_db_from_env,
+    resolve_identity_root_from_env,
 )
+from openminion.base.constants import OPENMINION_IDENTITY_ROOT_ENV
 from openminion.modules.identity.config import (
     from_base_config,
     resolve_default_render_budget,
@@ -34,15 +34,11 @@ from openminion.modules.identity.runtime.renderer import (
     _CANONICAL_PURPOSES,
     normalize_purpose,
 )
-from openminion.services.config import (
-    resolve_services_env,
-    resolve_services_path,
-    resolve_services_roots,
+from openminion.modules.identity.runtime.activation import (
+    current_agent_identity_exists,
+    has_explicit_identity_config,
 )
-from openminion.services.bootstrap.paths import (
-    SERVICES_IDENTITY_DB_FILENAME,
-    SERVICES_IDENTITY_SUBDIR,
-)
+from openminion.services.config import resolve_services_env, resolve_services_roots
 
 from .context.history import _IDENTITY_FRAME, _resolve_system_prompt
 
@@ -133,6 +129,7 @@ class AgentIdentityMixin:
                 base_config=self._config,
                 home_root=roots.home_root,
                 data_root=roots.data_root,
+                env=env.values,
             )
         except Exception as exc:  # noqa: BLE001
             self._logger.debug(
@@ -203,41 +200,35 @@ class AgentIdentityMixin:
         )
 
     def _resolve_bundle_root(self) -> str:
-        env_bundle_root = (
-            self._identity_env().get(OPENMINION_IDENTITY_ROOT_ENV, "").strip()
-        )
-        if env_bundle_root:
-            return str(Path(env_bundle_root).expanduser().resolve())
+        env = self._identity_env()
+        env_bundle_root = env.get(OPENMINION_IDENTITY_ROOT_ENV, "").strip()
         configured_bundle_root = str(
             getattr(self._config.identity, "bundle_root", "")
         ).strip()
-        if configured_bundle_root:
-            return str(Path(configured_bundle_root).expanduser().resolve())
         legacy_root = str(getattr(self._config.identity, "root", "")).strip()
-        if not legacy_root:
+        if legacy_root and Path(legacy_root).suffix.lower() == ".db":
+            legacy_root = ""
+        if not (env_bundle_root or configured_bundle_root or legacy_root):
             return ""
-        legacy_path = Path(legacy_root).expanduser()
-        if legacy_path.suffix.lower() == ".db":
-            return ""
-        return str(legacy_path.resolve())
+        return str(self._resolve_startup_identity_root())
 
     def _resolve_startup_identity_root(self) -> Path:
         env = self._identity_env()
-        env_root = env.get(OPENMINION_IDENTITY_ROOT_ENV, "").strip()
-        if env_root:
-            return resolve_identity_root_from_env(env=env, home_root=self._home_root)
-
-        configured_root = str(getattr(self._config.identity, "root", "")).strip()
-        if configured_root and Path(configured_root).suffix.lower() != ".db":
-            candidate = Path(configured_root).expanduser()
-            if candidate.is_absolute():
-                return candidate.resolve(strict=False)
-            return resolve_services_path(
-                candidate,
-                roots=resolve_services_roots(env=env, home_root=self._home_root),
-            )
-
-        return resolve_identity_root_from_env(env=env, home_root=self._home_root)
+        roots = resolve_services_roots(env=env, home_root=self._home_root)
+        configured_root = str(getattr(self._config.identity, "bundle_root", "")).strip()
+        legacy_root = str(getattr(self._config.identity, "root", "")).strip()
+        if (
+            not configured_root
+            and legacy_root
+            and Path(legacy_root).suffix.lower() != ".db"
+        ):
+            configured_root = legacy_root
+        return resolve_identity_root_from_env(
+            env=env,
+            home_root=roots.home_root,
+            data_root=roots.data_root,
+            configured_root=configured_root,
+        )
 
     @staticmethod
     def _discover_startup_yaml_profile_paths(identity_root: Path) -> list[Path]:
@@ -283,18 +274,21 @@ class AgentIdentityMixin:
         errors: list[str] = []
         for profile_path in profile_paths:
             try:
-                for loaded_id in self._identityctl.load_profiles_from_path(
+                loaded_ids = self._identityctl.load_profiles_from_path(
                     profile_path,
                     skip_unchanged=True,
-                ):
+                )
+                for loaded_id in loaded_ids:
                     upserted_ids.add(str(loaded_id))
             except Exception as exc:  # noqa: BLE001
-                errors.append(f"{profile_path}: {exc}")
                 self._logger.debug(
                     "identity startup yaml sync failed path=%s reason=%s",
                     profile_path,
                     exc,
                 )
+                if profile_path.parent.name == self._identity_agent_id:
+                    raise ValueError(f"{profile_path}: {exc}") from exc
+                errors.append(f"{profile_path}: {exc}")
 
         summary["upserted_profiles"] = sorted(upserted_ids)
         summary["upserted_profiles_count"] = len(upserted_ids)
@@ -509,29 +503,23 @@ class AgentIdentityMixin:
 
     def _resolve_identity_db_path(self) -> str:
         env = self._identity_env()
-        env_path = env.get(OPENMINION_IDENTITY_DB_ENV, "").strip()
-        if env_path:
-            return env_path
         configured_path = str(getattr(self._config.identity, "db_path", "")).strip()
-        if configured_path:
-            candidate = Path(configured_path)
-            if candidate.is_absolute():
-                return str(candidate)
-            roots = resolve_services_roots(env=env, home_root=self._home_root)
-            return str(resolve_services_path(candidate, roots=roots))
         legacy_root = str(getattr(self._config.identity, "root", "")).strip()
-        if legacy_root and Path(legacy_root).suffix.lower() == ".db":
-            candidate = Path(legacy_root)
-            if candidate.is_absolute():
-                return str(candidate)
-            roots = resolve_services_roots(env=env, home_root=self._home_root)
-            return str(resolve_services_path(candidate, roots=roots))
-
+        configured_db = configured_path
+        configured_root = str(getattr(self._config.identity, "bundle_root", "")).strip()
+        if legacy_root:
+            if Path(legacy_root).suffix.lower() == ".db":
+                configured_db = configured_db or legacy_root
+            else:
+                configured_root = configured_root or legacy_root
         roots = resolve_services_roots(env=env, home_root=self._home_root)
         return str(
-            resolve_services_path(
-                Path(SERVICES_IDENTITY_SUBDIR) / SERVICES_IDENTITY_DB_FILENAME,
-                roots=roots,
+            resolve_identity_db_from_env(
+                env=env,
+                home_root=roots.home_root,
+                data_root=roots.data_root,
+                configured_db=configured_db,
+                configured_root=configured_root,
             )
         )
 
@@ -539,11 +527,21 @@ class AgentIdentityMixin:
         try:
             if not self._identity_runtime_configured():
                 return
+            explicitly_configured = has_explicit_identity_config(
+                self._identity_env(), self._config.identity
+            )
             self._create_identity_ctl()
             yaml_summary = self._sync_startup_yaml_profiles()
             self._identity_yaml_sync_summary = dict(yaml_summary or {})
-            fallback_applied = self._ensure_default_identity_profile(
-                imported=self._import_identity_bundle_profile()
+            imported = (
+                self._import_identity_bundle_profile()
+                if explicitly_configured
+                else False
+            )
+            fallback_applied = (
+                self._ensure_default_identity_profile(imported=imported)
+                if explicitly_configured
+                else False
             )
             self._log_identity_startup_sync(
                 yaml_summary=yaml_summary,
@@ -692,15 +690,13 @@ class AgentIdentityMixin:
 
 
 def _identity_runtime_configured(self) -> bool:
-    env = self._identity_env()
-    return any(
-        str(value or "").strip()
-        for value in (
-            env.get(OPENMINION_IDENTITY_DB_ENV, ""),
-            getattr(self._config.identity, "db_path", ""),
-            getattr(self._config.identity, "root", ""),
-            self._resolve_bundle_root(),
-        )
+    if has_explicit_identity_config(self._identity_env(), self._config.identity):
+        return True
+
+    return current_agent_identity_exists(
+        agent_id=self._identity_agent_id,
+        identity_root=self._resolve_startup_identity_root(),
+        db_path=Path(self._resolve_identity_db_path()),
     )
 
 
@@ -753,10 +749,13 @@ def _log_identity_startup_sync(
 
 
 def _disable_identity_runtime(self, exc: Exception) -> None:
+    identityctl = self._identityctl
     self._identityctl = None
     self._identity_tool_filter = None
-    self._logger.debug(
-        "identity runtime not active agent_id=%s reason=%s",
+    if identityctl is not None:
+        identityctl.close()
+    self._logger.error(
+        "identity runtime startup failed agent_id=%s reason=%s",
         self._identity_agent_id,
         exc,
     )

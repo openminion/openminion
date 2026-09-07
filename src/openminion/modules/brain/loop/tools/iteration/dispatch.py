@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
+from pydantic import ValidationError
+
 from openminion.modules.brain.execution.child_tasks import (
     DecomposeControlPayload,
 )
@@ -10,9 +12,10 @@ from openminion.modules.brain.loop.constants import (
 )
 from openminion.modules.llm.schemas import Message
 
-from ..budget_control import _effective_cap
+from ..budget import _effective_cap
 from ..contracts import (
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
+    ADAPTIVE_TERM_FINAL_TEXT,
     AdaptiveToolLoopContext,
     AdaptiveToolLoopOutcome,
     AdaptiveToolLoopProfile,
@@ -25,6 +28,7 @@ from ..decompose import (
     _decompose_decline_result,
     _decompose_invalid_outcome,
     _decompose_tool_calls,
+    _handle_invalid_decompose_payload,
     _subtasks_from_decompose_control,
 )
 from ..events import IterationToolCallRecord
@@ -35,10 +39,12 @@ from ..dispatch import (
 from ..evidence import _count_substantive_non_control_tool_results
 from ..messages import action_result_to_tool_message
 from ..plan_control import (
+    PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY,
     PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY,
     PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY,
     PLAN_TOOL_NAME,
     PLAN_TOOL_USED_SCRATCHPAD_KEY,
+    append_plan_closeout_guidance,
     handle_plan_tool_call,
     with_enabled_plan_tool_spec,
 )
@@ -178,6 +184,7 @@ def _is_plan_tool_call(tool_call: Any) -> bool:
 def _record_successful_plan_action(
     loop_state: AdaptiveToolLoopState,
     arguments: dict[str, Any],
+    outputs: dict[str, Any],
 ) -> None:
     loop_state.scratchpad[PLAN_TOOL_USED_SCRATCHPAD_KEY] = True
     recorded_actions = list(
@@ -187,6 +194,51 @@ def _record_successful_plan_action(
     loop_state.scratchpad[PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY] = recorded_actions
     loop_state.scratchpad[PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY] = (
         _count_substantive_non_control_tool_results(loop_state)
+    )
+    if isinstance(outputs.get("task_plan"), dict):
+        loop_state.task_plan = dict(outputs["task_plan"])
+    if isinstance(outputs.get("task_plan.revision"), dict):
+        loop_state.task_plan_revision = dict(outputs["task_plan.revision"])
+
+
+def _autonomous_plan_continuation_result(
+    *,
+    summary: str,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    batch_had_progress: bool,
+) -> LoopDispatchResult:
+    loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
+    outcome = AdaptiveToolLoopOutcome(
+        profile_name=profile.profile_name,
+        mode_name=profile.mode_name,
+        termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
+        state=loop_state,
+        allowed_tools=profile.allowed_tools,
+        final_text=summary,
+    )
+    return LoopDispatchResult(
+        tool_calls=[],
+        ordered_tool_results=[],
+        cached_indices=frozenset(),
+        iter_batch_parallel_count=0,
+        batch_had_progress=batch_had_progress,
+        continue_loop=False,
+        outcome=outcome,
+    )
+
+
+def _continue_after_plan_control_result(
+    *, batch_had_progress: bool
+) -> LoopDispatchResult:
+    return LoopDispatchResult(
+        tool_calls=[],
+        ordered_tool_results=[],
+        cached_indices=frozenset(),
+        iter_batch_parallel_count=0,
+        batch_had_progress=batch_had_progress,
+        continue_loop=True,
+        outcome=None,
     )
 
 
@@ -230,31 +282,24 @@ def _handle_decompose_calls(
         payload = DecomposeControlPayload.model_validate(
             getattr(decompose_calls[0], "arguments", {}) or {}
         )
-    except Exception as exc:  # noqa: BLE001
-        persist_blocked_tool_calls(
+    except ValidationError as exc:
+        outcome = _handle_invalid_decompose_payload(
             loop_ctx,
+            profile=profile,
             loop_state=loop_state,
-            turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
-            tool_calls=decompose_calls,
-            code="INVALID_DECOMPOSE_PAYLOAD",
-            message=str(exc),
+            decompose_calls=decompose_calls,
+            allowed_tools=allowed_tools,
+            public_mode_tag=public_mode_tag,
+            error_message=str(exc),
         )
         return LoopDispatchResult(
-            tool_calls=tool_calls,
+            tool_calls=decompose_calls,
             ordered_tool_results=[],
             cached_indices=frozenset(),
             iter_batch_parallel_count=0,
             batch_had_progress=False,
-            continue_loop=False,
-            outcome=_decompose_invalid_outcome(
-                loop_ctx=loop_ctx,
-                profile=profile,
-                loop_state=loop_state,
-                allowed_tools=allowed_tools,
-                public_mode_tag=public_mode_tag,
-                reason="invalid_payload",
-                message=str(exc),
-            ),
+            continue_loop=outcome is None,
+            outcome=outcome,
         )
     decompose_subtasks = _subtasks_from_decompose_control(payload)
     if decompose_subtasks:
@@ -387,6 +432,7 @@ def _process_plan_tool_calls(
     set_turn_progress: Any,
 ) -> tuple[list[Any], bool, LoopDispatchResult | None]:
     batch_had_progress = False
+    autonomous_continuation_summary = ""
     plan_tool_calls = [
         tool_call for tool_call in tool_calls if _is_plan_tool_call(tool_call)
     ]
@@ -401,7 +447,12 @@ def _process_plan_tool_calls(
         action_result = handle_plan_tool_call(loop_ctx=loop_ctx, arguments=arguments)
         _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
         if str(getattr(action_result, "status", "") or "") == "success":
-            _record_successful_plan_action(loop_state, arguments)
+            outputs = dict(getattr(action_result, "outputs", {}) or {})
+            _record_successful_plan_action(loop_state, arguments, outputs)
+            if bool(outputs.get(PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY, False)):
+                autonomous_continuation_summary = str(
+                    getattr(action_result, "summary", "") or ""
+                ).strip()
         loop_state.messages.append(
             action_result_to_tool_message(
                 getattr(tool_call, "id", None),
@@ -409,6 +460,7 @@ def _process_plan_tool_calls(
                 action_result,
             )
         )
+        append_plan_closeout_guidance(loop_state, arguments, action_result)
         iter_tool_records.append(
             IterationToolCallRecord(
                 tool_name=PLAN_TOOL_NAME,
@@ -450,19 +502,18 @@ def _process_plan_tool_calls(
             tool_records=iter_tool_records,
             tokens_used=iter_input_tokens + iter_output_tokens,
         )
-        return (
-            [],
-            batch_had_progress,
-            LoopDispatchResult(
-                tool_calls=[],
-                ordered_tool_results=[],
-                cached_indices=frozenset(),
-                iter_batch_parallel_count=0,
+        if autonomous_continuation_summary:
+            result = _autonomous_plan_continuation_result(
+                summary=autonomous_continuation_summary,
+                profile=profile,
+                loop_state=loop_state,
                 batch_had_progress=batch_had_progress,
-                continue_loop=True,
-                outcome=None,
-            ),
+            )
+            return [], batch_had_progress, result
+        result = _continue_after_plan_control_result(
+            batch_had_progress=batch_had_progress
         )
+        return [], batch_had_progress, result
     return regular_tool_calls, batch_had_progress, None
 
 
@@ -712,7 +763,6 @@ def _process_tool_request_calls(
             loop_ctx=loop_ctx,
             profile=profile,
             loop_state=loop_state,
-            signature=signature,
             llm_duration_ms=iter_llm_duration_ms,
             tool_records=iter_tool_records,
             tokens_used=iter_input_tokens + iter_output_tokens,
@@ -726,13 +776,10 @@ def _finish_tool_request_only_dispatch(
     loop_ctx: AdaptiveToolLoopContext,
     profile: AdaptiveToolLoopProfile,
     loop_state: AdaptiveToolLoopState,
-    signature: str,
     llm_duration_ms: int,
     tool_records: list[IterationToolCallRecord],
     tokens_used: int,
 ) -> LoopDispatchResult:
-    if signature not in set(loop_state.seen_signatures):
-        loop_state.seen_signatures.append(signature)
     _emit_iteration_event(
         loop_ctx=loop_ctx,
         profile=profile,

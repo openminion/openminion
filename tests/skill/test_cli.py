@@ -28,6 +28,9 @@ Pull latest changes for a git branch.
 ## Procedure
 - tool.shell run "git fetch --all"
 - tool.shell run "git pull --ff-only"
+
+## Verification
+- Confirm the branch is synchronized.
 """.strip()
 
 
@@ -68,6 +71,26 @@ def _ingest_demo_skill(tmp_path: Path, *, trust: str | None = None) -> tuple[Pat
     output = _run_cli(argv)
     payload = json.loads(output)
     assert payload["ok"] is True
+    admitted = json.loads(
+        _run_cli(
+            [
+                "--config",
+                str(cfg),
+                "admit",
+                "--skill-id",
+                payload["skill_id"],
+                "--version-hash",
+                payload["version_hash"],
+                "--expected-active-version-hash",
+                "none",
+                "--target-status",
+                "verified",
+                "--reason",
+                "test fixture admission",
+            ]
+        )
+    )
+    assert admitted["ok"] is True
     return cfg, payload["skill_id"]
 
 
@@ -101,6 +124,8 @@ def test_cli_inspect_returns_skill_package(tmp_path: Path) -> None:
     assert payload["ok"] is True
     assert payload["skill"]["skill_id"] == skill_id
     assert payload["skill"]["name"] == "Sync Git Branch"
+    assert payload["skill"]["tools"] == ["tool.shell"]
+    assert payload["skill"]["risk_class"] == "low"
 
 
 def test_cli_ingest_persists_explicit_trust(tmp_path: Path) -> None:

@@ -8,6 +8,7 @@ from contextlib import redirect_stdout
 import pytest
 from rich.console import Console
 
+from openminion.cli.presentation import styles
 from openminion.cli.status import TokenUsageSnapshot
 from openminion.cli.interactive.terminal import shell as terminal_shell
 from openminion.cli.interactive.terminal.shell import _run_agent_turn
@@ -53,6 +54,7 @@ class _ProgressRuntime:
                     "trace_id": "focus-terminal-progress",
                     "status_key": "analyzing",
                     "label": "Loading session history...",
+                    "detail_code": "loading_session_history",
                 }
             )
         yield "progress ok"
@@ -93,6 +95,49 @@ class _ApprovalRuntime:
             )
         yield "approval ok"
         await asyncio.sleep(0)
+
+
+class _RoomRuntime:
+    def __init__(self) -> None:
+        self.cancel_event = None
+
+    def is_room_session(self) -> bool:
+        return True
+
+    async def run_room_turn(self, text: str, **kwargs):  # noqa: ANN003, ANN202
+        del text
+        self.cancel_event = kwargs["cancel_event"]
+        return {
+            "agent_id": "alpha",
+            "body": "aggregate",
+            "metadata": {
+                "room_responses": [
+                    {
+                        "agent_id": "alpha",
+                        "body": "alpha reply",
+                        "persisted_outbound_message_id": "out-alpha",
+                    },
+                    {
+                        "agent_id": "beta",
+                        "body": "beta reply",
+                        "persisted_outbound_message_id": "out-beta",
+                    },
+                ]
+            },
+        }
+
+
+class _BlockingRoomRuntime(_RoomRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+
+    async def run_room_turn(self, text: str, **kwargs):  # noqa: ANN003, ANN202
+        del text
+        self.cancel_event = kwargs["cancel_event"]
+        self.started.set()
+        await asyncio.Event().wait()
+        return {}
 
 
 def _make_transcript() -> tuple[TerminalTranscript, io.StringIO]:
@@ -180,6 +225,43 @@ def test_agent_turn_passes_terminal_approval_callback() -> None:
     assert "approval ok" in buf.getvalue()
 
 
+def test_terminal_room_turn_renders_structured_agent_attribution() -> None:
+    buf = io.StringIO()
+    styles.set_color_mode("always")
+    transcript = TerminalTranscript(
+        Console(
+            file=buf,
+            force_terminal=True,
+            color_system="standard",
+            no_color=False,
+            width=80,
+        )
+    )
+    runtime = _RoomRuntime()
+
+    try:
+        asyncio.run(
+            _run_agent_turn(
+                text="review",
+                runtime=runtime,
+                transcript=transcript,
+                status_line=None,
+            )
+        )
+    finally:
+        styles.set_color_mode(None)
+
+    agents = [item for item in transcript._messages if item.kind == MessageKind.AGENT]
+    assert [(item.sender, item.body, item.msg_id) for item in agents] == [
+        ("alpha", "alpha reply", "out-alpha"),
+        ("beta", "beta reply", "out-beta"),
+    ]
+    assert "alpha reply" in buf.getvalue()
+    assert "beta reply" in buf.getvalue()
+    assert "\x1b[1;32malpha" in buf.getvalue()
+    assert "\x1b[1;32mbeta" in buf.getvalue()
+
+
 def test_mid_stream_error_preserves_partial_and_emits_error() -> None:
     transcript, buf = _make_transcript()
     runtime = _StreamingRuntime(
@@ -245,6 +327,42 @@ def test_escape_interrupt_cancels_terminal_turn_and_preserves_partial(
     assert agents[-1].body == "partial reply"
     assert systems
     assert systems[-1].body == "Interrupted current turn."
+
+
+def test_escape_interrupt_sets_room_cancellation_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _BlockingRoomRuntime()
+    transcript, _ = _make_transcript()
+
+    def _fake_watcher(turn_task: asyncio.Task[None]):
+        async def _cancel_after_start() -> None:
+            await runtime.started.wait()
+            turn_task.cancel()
+
+        asyncio.create_task(_cancel_after_start())
+        return terminal_shell._EscapeInterruptWatcher(
+            stop=lambda: None,
+            interrupted=lambda: True,
+        )
+
+    monkeypatch.setattr(
+        terminal_shell,
+        "_start_escape_interrupt_watcher",
+        _fake_watcher,
+    )
+
+    asyncio.run(
+        terminal_shell._run_interruptible_agent_turn(
+            text="review",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
+        )
+    )
+
+    assert runtime.cancel_event is not None
+    assert runtime.cancel_event.is_set()
 
 
 @pytest.mark.skipif(
@@ -345,8 +463,8 @@ def test_progress_callback_updates_live_turn_status_label() -> None:
     )
 
     assert labels
-    assert labels[0] == "Working..."
-    assert any("Loading session history" in label for label in labels)
+    assert labels[0] == "Working on it..."
+    assert any("Reviewing this conversation" in label for label in labels)
 
 
 def test_progress_callback_updates_prompt_toolbar_status_during_interactive_turn() -> (
@@ -379,7 +497,7 @@ def test_progress_callback_updates_prompt_toolbar_status_during_interactive_turn
     )
 
     assert any("Working" in label for label in turn_status_history)
-    assert any("Loading session history" in label for label in turn_status_history)
+    assert any("Reviewing this conversation" in label for label in turn_status_history)
     assert "analyzing" in activity_history
     assert invalidations
     assert status_line.state == "idle"

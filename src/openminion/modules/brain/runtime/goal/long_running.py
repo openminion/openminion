@@ -61,10 +61,19 @@ class LongRunningGoalRuntime:
         goal_store: GoalStore,
         mission_store: MissionStateStore,
         checkpoint_manager: CheckpointManager | None = None,
+        owns_stores: bool = False,
     ) -> None:
         self.goal_store = goal_store
         self.mission_store = mission_store
         self.checkpoint_manager = checkpoint_manager
+        self._owns_stores = owns_stores
+
+    def close(self) -> None:
+        if not self._owns_stores:
+            return
+        self._owns_stores = False
+        self.goal_store.close()
+        self.mission_store.close()
 
     def bind_goal_to_session(self, *, goal_id: str, session_id: str) -> Goal:
         """Make ``goal_id`` the current durable goal for ``session_id``."""
@@ -111,7 +120,7 @@ class LongRunningGoalRuntime:
         ):
             session_api.append_event(
                 session_id=session_id,
-                event_type="goal.resume_context.loaded",
+                type="goal.resume_context.loaded",
                 payload={
                     "goal_count": len(snapshots),
                     "snapshots": [snapshot.as_payload() for snapshot in snapshots],
@@ -146,7 +155,7 @@ class LongRunningGoalRuntime:
         ):
             session_api.append_event(
                 session_id=session_id,
-                event_type="goal.cron.advanced",
+                type="goal.cron.advanced",
                 payload={
                     "goal_id": str(goal_id or "").strip(),
                     "mission_id": str(mission_id or "").strip(),

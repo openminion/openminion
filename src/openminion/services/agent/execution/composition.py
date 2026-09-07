@@ -17,6 +17,7 @@ from .state import TurnRuntimeContext
 @dataclass(slots=True)
 class AgentServiceTurnFlowAdapter:
     _service: Any
+    memory_assembly: Any | None = None
 
     @property
     def provider(self) -> Any:
@@ -179,7 +180,9 @@ class TurnExecutorComponents:
 
 
 def build_service_port(service: Any) -> TurnFlowServicePort:
-    return AgentServiceTurnFlowAdapter(_service=service)
+    return AgentServiceTurnFlowAdapter(
+        service, getattr(service, "_runtime_memory_assembly", None)
+    )
 
 
 def build_turn_executor_components(

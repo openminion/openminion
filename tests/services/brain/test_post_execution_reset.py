@@ -24,8 +24,13 @@ class _DummySessionAPI:
         self.written: dict[str, Any] | None = None
         self.events: list[dict[str, Any]] = []
 
-    def get_latest_working_state(self, session_id: str) -> dict[str, Any]:
-        del session_id
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        del session_id, agent_id
         return dict(self._state)
 
     def put_working_state(
@@ -71,13 +76,14 @@ class _DummyRunner:
         self.session_api = _DummySessionAPI(state)
         self.policy_api = _DummyPolicyAPI() if with_policy else None
         self.profile = SimpleNamespace(
+            agent_id="test-agent",
             budgets=SimpleNamespace(
                 max_ticks_per_user_turn=8,
                 max_tool_calls=8,
                 max_a2a_calls=0,
                 max_total_llm_tokens=100000,
                 max_elapsed_ms=45000,
-            )
+            ),
         )
 
 
@@ -176,6 +182,21 @@ def test_pending_confirmation_preserved_on_cancel_via_both_paths() -> None:
     )
     assert len(bbpc_events) == 1
     assert bbpc_events[0]["payload"] == {"reply": "deny", "command_kind": "tool"}
+
+
+def test_blockchain_session_reply_does_not_preserve_pending_confirmation() -> None:
+    pending = {
+        "command_id": "blockchain-send-1",
+        "kind": "tool",
+        "tool_name": "blockchain.send_transaction",
+        "inputs": {},
+    }
+    runner = _DummyRunner(_state_with_pending(pending=pending))
+
+    written = _run_reset(runner=runner, user_input="session")
+
+    assert written is not None
+    assert written["pending_confirmation_command"] is None
 
 
 @pytest.mark.parametrize(

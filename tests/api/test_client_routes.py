@@ -175,8 +175,8 @@ def test_http_server_enforces_master_and_client_tokens_before_dispatch(
     base_url = f"http://127.0.0.1:{server.server_address[1]}"
     try:
         status, denied = _http_json(Request(f"{base_url}/v1/health"))
-        assert status == 403
-        assert denied["error"]["code"] == "forbidden"
+        assert status == 401
+        assert denied["error"]["code"] == "ipc_auth_required"
         status, health = _http_json(
             Request(
                 f"{base_url}/v1/health",

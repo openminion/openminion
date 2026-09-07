@@ -113,13 +113,10 @@ class GatewayTurnSetupMixin:
         invocation_reason: str,
         parent_invocation_id: str,
     ) -> None:
-        if queued_event is None:
+        if queued_event is None or invocation_reason == "resumed_thread":
             return
         source_event_id = int(queued_event.id)
         source_timestamp = queued_event.created_at
-        if invocation_reason == "resumed_thread":
-            source_event_id = int(routing.lifecycle.invocation_source_event_id)
-            source_timestamp = routing.lifecycle.invocation_started_at
         payload: dict[str, Any] = {
             "scope": "durable",
             "source_event_id": source_event_id,

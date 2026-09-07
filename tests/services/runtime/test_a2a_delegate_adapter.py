@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 import uuid
+
+import pytest
 
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_FAILED,
@@ -10,6 +13,12 @@ from openminion.modules.brain.constants import (
 )
 from openminion.services.runtime.a2a_delegate import A2aRuntimeDelegateAdapter
 from openminion.modules.a2a.models import is_valid_traceparent
+
+
+_APP_DIFF = "git diff -- app.py"
+_APP_DIGEST = hashlib.sha256(_APP_DIFF.encode("utf-8")).hexdigest()
+_PLAN_DIFF = "git diff -- src tests"
+_PLAN_DIGEST = hashlib.sha256(_PLAN_DIFF.encode("utf-8")).hexdigest()
 
 
 class _RecordingCall:
@@ -43,6 +52,35 @@ class _RecordingTelemetry:
         self.events.append((event_type, dict(payload)))
 
 
+def test_current_turn_approval_callback_reaches_bound_a2a_adapter() -> None:
+    initial_callback = object()
+    current_callback = object()
+
+    class _CallOwner:
+        def __init__(self) -> None:
+            self.callback: Any = initial_callback
+
+        def set_approval_callback(self, callback: Any) -> Any:
+            previous = self.callback
+            self.callback = callback
+            return previous
+
+        def call(self, *, command, session_id, trace_id) -> dict[str, Any]:
+            del command, session_id, trace_id
+            return {"status": BRAIN_ACTION_STATUS_SUCCESS, "summary": "ok"}
+
+    owner = _CallOwner()
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=owner.call,
+        parent_agent_id="parent",
+    )
+
+    previous = adapter.set_approval_callback(current_callback)
+
+    assert previous is initial_callback
+    assert owner.callback is current_callback
+
+
 def test_success_status_maps_to_ok_result() -> None:
     call = _RecordingCall(
         {
@@ -60,6 +98,272 @@ def test_success_status_maps_to_ok_result() -> None:
     assert result.content == "delegated turn completed"
     assert result.outputs == {"body": "result text"}
     assert result.target_agent_id == "researcher"
+
+
+def test_fixed_readonly_reviewer_returns_typed_findings_and_child_identity() -> None:
+    call = _RecordingCall(
+        {
+            "status": BRAIN_ACTION_STATUS_SUCCESS,
+            "summary": "review complete",
+            "outputs": {
+                "child_agent_id": "readonly-reviewer",
+                "findings": [
+                    {
+                        "priority": "P1",
+                        "owner": "project plan lineage",
+                        "message": "Add a stale predecessor test.",
+                    }
+                ],
+                "verifier_refs": ["pytest:plan-lineage"],
+                "target_digest": _PLAN_DIGEST,
+                "passed": False,
+            },
+        }
+    )
+    telemetry = _RecordingTelemetry()
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+        telemetryctl=telemetry,
+    )
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    result = adapter.review_readonly(
+        reviewer_agent_id="readonly-reviewer",
+        objective="preserve project plan lineage",
+        criteria=["no P0 findings", "no P1 findings"],
+        readable_base_repository="/repo",
+        bundle_ref="artifact://sha256/bundle",
+        target_digest=_PLAN_DIGEST,
+        diff=_PLAN_DIFF,
+        verifier_refs=["pytest:plan-lineage"],
+        repository_instructions="AGENTS.md",
+        timeout_seconds=30,
+    )
+
+    assert result.ok is True
+    assert result.target_agent_id == "readonly-reviewer"
+    assert result.outputs["child_agent_id"] == "readonly-reviewer"
+    assert result.outputs["findings"][0]["priority"] == "P1"
+    assert result.outputs["review_receipt"] == {
+        "reviewer_agent_id": "readonly-reviewer",
+        "bundle_ref": "artifact://sha256/bundle",
+        "target_digest": _PLAN_DIGEST,
+        "passed": False,
+        "findings": result.outputs["findings"],
+        "verifier_refs": ["pytest:plan-lineage"],
+    }
+    assert [event_type for event_type, _payload in telemetry.events] == [
+        "agent.handoff.started",
+        "agent.handoff.completed",
+    ]
+    assert all(
+        payload["target_agent"] == "readonly-reviewer"
+        and payload["target_digest"] == _PLAN_DIGEST
+        and payload["verifier_refs"] == ["pytest:plan-lineage"]
+        for _event_type, payload in telemetry.events
+    )
+    assert call.command is not None
+    instruction = (
+        "Review objective: preserve project plan lineage\n"
+        "Criteria: no P0 findings, no P1 findings\n"
+        "Readable base repository: /repo\n"
+        "Immutable child bundle: artifact://sha256/bundle\n"
+        f"Target digest: {_PLAN_DIGEST}\n"
+        "Diff: git diff -- src tests\n"
+        "Verifier refs: pytest:plan-lineage\n"
+        "Repository instructions: AGENTS.md"
+    )
+    assert call.command["params"] == {
+        "goal": instruction,
+        "instruction": instruction,
+        "timeout_seconds": 30,
+        "mode": "sync",
+        "permission_mode": "readonly",
+        "workspace_root": "/repo",
+        "cwd": "/repo",
+    }
+
+
+def test_fixed_readonly_reviewer_preserves_typed_mutation_denial() -> None:
+    call = _RecordingCall(
+        {
+            "status": BRAIN_ACTION_STATUS_FAILED,
+            "summary": "reviewer mutation denied",
+            "error": {
+                "code": "POLICY_DENIED",
+                "message": "readonly reviewer cannot write files",
+            },
+        }
+    )
+    telemetry = _RecordingTelemetry()
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+        telemetryctl=telemetry,
+    )
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    result = adapter.review_readonly(
+        reviewer_agent_id="readonly-reviewer",
+        objective="review app.py",
+        criteria=["report findings only"],
+        readable_base_repository="/repo",
+        bundle_ref="artifact://sha256/bundle",
+        target_digest=_APP_DIGEST,
+        diff=_APP_DIFF,
+        verifier_refs=["pytest:app"],
+        repository_instructions="AGENTS.md",
+        timeout_seconds=30,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "POLICY_DENIED"
+    assert result.error_message == "readonly reviewer cannot write files"
+    assert call.command is not None
+    assert call.command["params"]["permission_mode"] == "readonly"
+    assert [event_type for event_type, _payload in telemetry.events] == [
+        "agent.handoff.started",
+        "agent.handoff.failed",
+    ]
+    assert all(
+        payload["target_agent"] == "readonly-reviewer"
+        and payload["target_digest"] == _APP_DIGEST
+        and payload["verifier_refs"] == ["pytest:app"]
+        for _event_type, payload in telemetry.events
+    )
+
+
+def test_fixed_readonly_reviewer_rejects_mismatched_input_digest() -> None:
+    call = _RecordingCall({"status": BRAIN_ACTION_STATUS_SUCCESS})
+    telemetry = _RecordingTelemetry()
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+        telemetryctl=telemetry,
+    )
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    result = adapter.review_readonly(
+        reviewer_agent_id="readonly-reviewer",
+        objective="review app.py",
+        criteria=["report findings only"],
+        readable_base_repository="/repo",
+        bundle_ref="artifact://sha256/bundle",
+        target_digest="stale-digest",
+        diff=_APP_DIFF,
+        verifier_refs=["pytest:app"],
+        repository_instructions="AGENTS.md",
+        timeout_seconds=30,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "A2A_REVIEW_TARGET_MISMATCH"
+    assert call.command is None
+    assert [event for event, _payload in telemetry.events] == [
+        "agent.handoff.started",
+        "agent.handoff.failed",
+    ]
+    assert telemetry.events[-1][1]["review_outcome"] == "denied"
+    assert telemetry.events[-1][1]["reason"] == "target_mismatch"
+
+
+@pytest.mark.parametrize(
+    "outputs",
+    (
+        {
+            "child_agent_id": "",
+            "findings": [],
+            "passed": True,
+            "target_digest": _APP_DIGEST,
+            "verifier_refs": ["pytest:app"],
+        },
+        {
+            "child_agent_id": "child-1",
+            "findings": {},
+            "passed": True,
+            "target_digest": _APP_DIGEST,
+            "verifier_refs": ["pytest:app"],
+        },
+        {
+            "child_agent_id": "child-1",
+            "findings": [42],
+            "passed": True,
+            "target_digest": _APP_DIGEST,
+            "verifier_refs": ["pytest:app"],
+        },
+        {
+            "child_agent_id": "child-1",
+            "findings": [{"priority": "P1", "owner": "", "message": "gap"}],
+            "passed": True,
+            "target_digest": _APP_DIGEST,
+            "verifier_refs": ["pytest:app"],
+        },
+        {
+            "child_agent_id": "child-1",
+            "findings": [],
+            "passed": True,
+            "target_digest": "stale-digest",
+            "verifier_refs": ["pytest:app"],
+        },
+    ),
+)
+def test_fixed_readonly_reviewer_rejects_invalid_result(
+    outputs: dict[str, Any],
+) -> None:
+    call = _RecordingCall(
+        {
+            "status": BRAIN_ACTION_STATUS_SUCCESS,
+            "summary": "review complete",
+            "outputs": outputs,
+        }
+    )
+    telemetry = _RecordingTelemetry()
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+        telemetryctl=telemetry,
+    )
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    result = adapter.review_readonly(
+        reviewer_agent_id="readonly-reviewer",
+        objective="review app.py",
+        criteria=["report findings only"],
+        readable_base_repository="/repo",
+        bundle_ref="artifact://sha256/bundle",
+        target_digest=_APP_DIGEST,
+        diff=_APP_DIFF,
+        verifier_refs=["pytest:app"],
+        repository_instructions="AGENTS.md",
+        timeout_seconds=30,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "A2A_REVIEW_INVALID_RESULT"
+    assert result.target_agent_id == "readonly-reviewer"
+    assert [event_type for event_type, _payload in telemetry.events] == [
+        "agent.handoff.started",
+        "agent.handoff.failed",
+    ]
+    assert telemetry.events[-1][1]["review_outcome"] == "denied"
+    assert telemetry.events[-1][1]["reason"] == "invalid_result"
 
 
 def test_command_shape_carries_model_named_target_and_instruction() -> None:
@@ -132,6 +436,59 @@ def test_idempotency_key_is_stable_for_same_inputs() -> None:
     assert key1 == key2
 
 
+def test_delegate_isolates_identical_inputs_between_parent_sessions() -> None:
+    call = _RecordingCall({"status": BRAIN_ACTION_STATUS_SUCCESS, "summary": "ok"})
+    adapter = A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id="parent")
+
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    adapter.delegate(agent_id="a", instruction="do x", timeout_seconds=10)
+    first_key = call.command["idempotency_key"]
+    first_session = call.session_id
+
+    adapter.bind_observability(
+        session_id="session-2",
+        turn_id="turn-1",
+        invocation_id="31111111-1111-4111-8111-111111111111",
+        execution_id="41111111-1111-4111-8111-111111111111",
+    )
+    adapter.delegate(agent_id="a", instruction="do x", timeout_seconds=10)
+
+    assert call.command["idempotency_key"] != first_key
+    assert call.session_id != first_session
+    assert call.session_id == "task-delegate::session-2"
+
+
+def test_followup_turn_reuses_child_session_without_replaying_prior_result() -> None:
+    call = _RecordingCall({"status": BRAIN_ACTION_STATUS_SUCCESS, "summary": "ok"})
+    adapter = A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id="parent")
+
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    adapter.delegate(agent_id="a", instruction="draft", timeout_seconds=10)
+    first_key = call.command["idempotency_key"]
+    first_session = call.session_id
+
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-2",
+        invocation_id="31111111-1111-4111-8111-111111111111",
+        execution_id="41111111-1111-4111-8111-111111111111",
+    )
+    adapter.delegate(agent_id="a", instruction="revise", timeout_seconds=10)
+
+    assert call.session_id == first_session == "task-delegate::session-1"
+    assert call.command["idempotency_key"] != first_key
+
+
 def test_failed_status_maps_to_typed_failure() -> None:
     call = _RecordingCall(
         {
@@ -194,7 +551,7 @@ def test_async_status_and_cancel_route_through_a2a_lifecycle() -> None:
         def poll_task(self, *, task_id, session_id, trace_id):
             self.polled.append(task_id)
             return {
-                "status": "running",
+                "status": "RUNNING",
                 "task_id": task_id,
                 "trace_id": trace_id,
                 "summary": "still running",
@@ -203,7 +560,7 @@ def test_async_status_and_cancel_route_through_a2a_lifecycle() -> None:
         def cancel_task(self, *, task_id, session_id, trace_id):
             self.cancelled.append(task_id)
             return {
-                "status": "canceled",
+                "status": "CANCELED",
                 "task_id": task_id,
                 "trace_id": trace_id,
                 "summary": "cancelled",
@@ -223,6 +580,31 @@ def test_async_status_and_cancel_route_through_a2a_lifecycle() -> None:
     assert cancelled.ok is True
     assert cancelled.status == "canceled"
     assert call.cancelled == ["job-1"]
+
+
+def test_async_resume_normalizes_durable_completion_status() -> None:
+    class _LifecycleCall(_RecordingCall):
+        def poll_task(self, *, task_id, session_id, trace_id):
+            del session_id
+            return {
+                "status": "COMPLETED",
+                "task_id": task_id,
+                "trace_id": trace_id,
+                "summary": "delegated work completed",
+                "result_inline": {"body": "result text"},
+            }
+
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=_LifecycleCall({}),
+        parent_agent_id="parent",
+    )
+
+    result = adapter.resume(task_id="job-1")
+
+    assert result.ok is True
+    assert result.status == "completed"
+    assert result.content == "delegated work completed"
+    assert result.outputs["outputs"] == {"body": "result text"}
 
 
 def test_lifecycle_methods_resolve_from_bound_call_owner() -> None:

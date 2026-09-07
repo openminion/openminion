@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import json
 from time import perf_counter
 import uuid
 from typing import Any, Literal
@@ -30,6 +32,39 @@ from openminion.modules.memory.storage.base import (
 
 
 class MemoryServiceQueryMixin:
+    def vector_sync_snapshot(self) -> dict[str, list[Any]]:
+        current: list[dict[str, str]] = []
+        retired: list[str] = []
+        for record in self._store.list_all():
+            record_id = str(record.id)
+            if (
+                bool(record.is_deleted)
+                or bool(record.superseded_by_id)
+                or bool(record.valid_to)
+            ):
+                retired.append(record_id)
+                continue
+            text = "\n".join(
+                part
+                for part in (
+                    str(record.title or "").strip(),
+                    (
+                        json.dumps(record.content, sort_keys=True)
+                        if isinstance(record.content, dict)
+                        else str(record.content or "").strip()
+                    ),
+                )
+                if part
+            )
+            current.append(
+                {
+                    "record_id": record_id,
+                    "text": text,
+                    "content_fingerprint": hashlib.sha256(text.encode()).hexdigest(),
+                }
+            )
+        return {"current": current, "retired": retired}
+
     def get(self, record_id: str) -> MemoryRecord:
         record = self._store.get(record_id)
         if not record:

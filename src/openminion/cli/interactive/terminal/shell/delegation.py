@@ -1,6 +1,6 @@
-from __future__ import annotations
-
+import asyncio
 from collections.abc import Callable
+import inspect
 from typing import Any
 
 from rich.console import Console
@@ -42,6 +42,8 @@ def handle_slash_delegate(
         instruction=request.instruction,
         task_id=request.task_id,
         timeout_seconds=request.timeout_seconds,
+        child_artifact=request.child_artifact,
+        workspace_root=request.workspace_root,
         approval_callback=approval_callback,
     )
     console.print(
@@ -49,4 +51,37 @@ def handle_slash_delegate(
     )
 
 
-__all__ = ["handle_slash_delegate"]
+async def run_slash_delegate(
+    text: str,
+    runtime: Any,
+    console: Console,
+    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None,
+) -> None:
+    terminal_loop = asyncio.get_running_loop()
+    delegated_approval_callback = approval_callback
+    if approval_callback is not None:
+
+        async def invoke_approval(
+            tool_name: str, args: dict[str, Any], call_id: Any
+        ) -> bool:
+            result = approval_callback(tool_name, args, call_id)
+            return bool(await result if inspect.isawaitable(result) else result)
+
+        def approval_from_worker(
+            tool_name: str, args: dict[str, Any], call_id: Any
+        ) -> bool:
+            return asyncio.run_coroutine_threadsafe(
+                invoke_approval(tool_name, args, call_id), terminal_loop
+            ).result()
+
+        delegated_approval_callback = approval_from_worker
+    await asyncio.to_thread(
+        handle_slash_delegate,
+        text,
+        runtime=runtime,
+        console=console,
+        approval_callback=delegated_approval_callback,
+    )
+
+
+__all__ = ["handle_slash_delegate", "run_slash_delegate"]

@@ -6,6 +6,11 @@ Canonical top-level entry points:
 - `runtime.py`: `APIRuntime`, the composition root for building API runtime state from config.
 - `turns.py`: `run_turn()` and turn-dispatch exceptions.
 
+The supported `openminion.api` facade exports `APIRuntime`, `Agent`,
+`AgentOutputValidationError`, `AgentRunResult`, `Handoff`, `dispatch_request`,
+and `subagent`. Deeper imports remain owner-specific unless documented here or
+in `API_COMPATIBILITY.md`.
+
 Subpackages organize the internal layers:
 - `server/`: HTTP server implementation, request dispatch, and streaming transport.
 - `routes/`: thin HTTP adaptation only.

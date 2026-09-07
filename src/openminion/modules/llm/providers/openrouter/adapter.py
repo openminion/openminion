@@ -2,6 +2,8 @@ import json
 import time
 from typing import Any, Iterator
 
+from openminion.base.config.parse import as_optional_float
+
 from ...contracts.adapter import (
     ProviderAdapterResult,
     adapter_result_to_llm_response,
@@ -71,7 +73,6 @@ class OpenRouterProvider(OpenAIProvider):
             if request.tools
             else None
         )
-
         payload: dict[str, Any] = {
             "model": model,
             "messages": _messages_openai_like(
@@ -132,6 +133,7 @@ class OpenRouterProvider(OpenAIProvider):
             trace_metadata=request.metadata,
             env=config.get("__env__"),
             http_client=http_client_for_config(self._http_client, config),
+            telemetryctl=config.get("telemetryctl"),
         )
 
         choices = response_payload.get("choices")
@@ -214,17 +216,13 @@ class OpenRouterProvider(OpenAIProvider):
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         assistant_messages = [Message(role="assistant", content=text)] if text else []
-        usage = _usage_from_openai_like(response_payload.get("usage"))
-
-        cost_usd: float | None = None
-        usage_dict = response_payload.get("usage")
-        if isinstance(usage_dict, dict):
-            raw_cost = usage_dict.get("cost")
-            if raw_cost is not None:
-                try:
-                    cost_usd = float(raw_cost)
-                except (TypeError, ValueError):
-                    pass
+        usage_payload = response_payload.get("usage")
+        usage = _usage_from_openai_like(usage_payload)
+        cost_usd = (
+            as_optional_float(usage_payload.get("cost"))
+            if isinstance(usage_payload, dict)
+            else None
+        )
 
         return adapter_result_to_llm_response(
             ProviderAdapterResult(
@@ -237,6 +235,7 @@ class OpenRouterProvider(OpenAIProvider):
                 usage=usage,
                 latency_ms=elapsed_ms,
                 cost_usd=cost_usd,
+                cost_source="provider" if cost_usd is not None else None,
                 finish_reason=str(first_choice.get("finish_reason", "")).strip(),
                 provider_raw=response_payload,
                 normalization_meta={
@@ -315,6 +314,7 @@ class OpenRouterProvider(OpenAIProvider):
                 provider_name=self.name,
                 trace_metadata=request.metadata,
                 http_client=http_client_for_config(self._http_client, config),
+                telemetryctl=config.get("telemetryctl"),
             ):
                 if not line.startswith("data:"):
                     continue
@@ -378,6 +378,7 @@ class OpenRouterProvider(OpenAIProvider):
                 provider_name=self.name,
                 env=config.get("__env__"),
                 http_client=http_client_for_config(self._http_client, config),
+                telemetryctl=config.get("telemetryctl"),
             )
             data = payload.get("data")
             if isinstance(data, list):

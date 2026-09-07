@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import shlex
 import subprocess
@@ -22,11 +20,13 @@ from openminion.cli.presentation.models import (
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.detail_modes import resolve_details_mode
-from .delegation import handle_slash_delegate
+from .delegation import run_slash_delegate
 from .labels import _runtime_label
+from .model_setup import handle_model_setup
 from openminion.cli.presentation.slash_commands import (
     slash_help_rows,
     terminal_slash_commands,
+    unknown_slash_command_message,
 )
 from openminion.cli.presentation.visible_parity import (
     handle_effort_command,
@@ -39,6 +39,7 @@ from openminion.cli.presentation.visible_parity import (
     statusline_label,
 )
 from openminion.cli.presentation.browser import render_browser_command
+from openminion.cli.presentation.graph import render_graph_command
 
 from ..overlays import TerminalOverlayPresenter
 from ..status_line import TerminalStatusLine
@@ -46,7 +47,7 @@ from ..transcript import TerminalTranscript
 from .renderers import (
     _render_cost_snapshot,
     _render_mcp_status,
-    _render_model_status,
+    _render_model_command,
     _render_sessions_list,
     _render_status_block,
     _render_theme_status,
@@ -54,8 +55,13 @@ from .renderers import (
     _switch_theme,
     _switch_theme_variant,
 )
-from .sessions import resume_session, start_new_session
-from .slash_output import handle_debug_output_slash
+from .project import run_slash_project
+from .sessions import handle_room_slash, resume_session, start_new_session
+from .slash_output import (
+    copy_latest_message,
+    handle_debug_output_slash,
+    render_context_review,
+)
 
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _INFO_STYLE = token_rich_style(StyleToken.INFO)
@@ -65,6 +71,22 @@ _MUTED_ITALIC_STYLE = f"italic {_MUTED_STYLE}" if _MUTED_STYLE else "italic"
 _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 
 _SLASH_COMMANDS = terminal_slash_commands()
+_VISIBLE_PARITY_SLASHES = frozenset(
+    {
+        "/browser",
+        "/context",
+        "/context-review",
+        "/effort",
+        "/goal",
+        "/graph",
+        "/memory",
+        "/overview",
+        "/skills",
+        "/statusline",
+        "/tasks",
+        "/undo",
+    }
+)
 _FIGLET_FONT = "small"
 _FIGLET_TEXT = "OpenMinion"
 
@@ -89,8 +111,6 @@ def _render_openminion_figlet() -> Text:
 def _handle_slash_expand(
     text: str, *, transcript: TerminalTranscript, console: Console
 ) -> None:
-    """FTR-05: re-render a truncated tool block in full."""
-
     parts = text.split(maxsplit=1)
     index = 1
     if len(parts) > 1:
@@ -108,8 +128,6 @@ def _handle_slash_expand(
 
 
 def _handle_slash_theme(text: str, *, console: Console) -> None:
-    """FVP-09: theme + variant switching dispatch."""
-
     parts = text.split(maxsplit=2)
     if len(parts) == 1:
         _render_theme_status(console=console)
@@ -121,24 +139,7 @@ def _handle_slash_theme(text: str, *, console: Console) -> None:
 
 
 def _handle_slash_model(text: str, *, runtime: Any, console: Console) -> None:
-    """FPC-04: show or switch the active provider/model. Session-scoped."""
-
-    arg = _slash_arg(text).strip()
-    if not arg:
-        _render_model_status(runtime=runtime, console=console)
-        return
-    try:
-        provider, model = runtime.switch_model(arg)
-    except ValueError as exc:
-        console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
-        return
-    label = f"{provider}/{model}" if model else provider or "(default)"
-    console.print(
-        Text(
-            f"(model: switched to {label} — session-scoped)",
-            style=_MUTED_ITALIC_STYLE,
-        )
-    )
+    _render_model_command(_slash_arg(text), runtime=runtime, console=console)
 
 
 def _runtime_permission_mode(runtime: Any) -> str:
@@ -190,8 +191,6 @@ def _handle_slash_permissions(
     console: Console,
     status_line: TerminalStatusLine | None,
 ) -> None:
-    """Show or set the session-scoped permission mode."""
-
     arg = _slash_arg(text).strip().lower()
     if not arg:
         mode = _runtime_permission_mode(runtime)
@@ -265,8 +264,6 @@ def _permission_mode_message(mode: str) -> str:
 
 
 def _handle_slash_agents(text: str, *, runtime: Any, console: Console) -> None:
-    """List configured agents or show one agent id."""
-
     arg = _slash_arg(text).strip()
     lister = getattr(runtime, "list_agents", None)
     if not callable(lister):
@@ -303,8 +300,6 @@ def _handle_slash_diff(
     console: Console,
     working_dir: str,
 ) -> None:
-    """Render workspace git diff through the terminal tool-block path."""
-
     from openminion.cli.presentation.git.diff import render_git_diff
 
     args = _slash_arg(text).strip()
@@ -342,8 +337,6 @@ def _handle_slash_review(
     console: Console,
     working_dir: str,
 ) -> None:
-    """Run the existing review.diff analyzer from the terminal renderer."""
-
     from openminion.cli.presentation.review import run_review_workflow
 
     args = _slash_arg(text).strip()
@@ -359,8 +352,6 @@ def _handle_slash_readonly(
     console: Console,
     status_line: TerminalStatusLine | None = None,
 ) -> None:
-    """Toggle session-scoped read-only mode."""
-
     arg = _slash_arg(text).strip().lower()
     setter = getattr(runtime, "set_read_only_mode", None)
     if not callable(setter):
@@ -400,8 +391,6 @@ def _handle_slash_readonly(
 
 
 def _handle_slash_compact(*, runtime: Any, console: Console) -> None:
-    """Compact conversation via ``OpenMinionRuntime.compact_history``."""
-
     compacter = getattr(runtime, "compact_history", None)
     if not callable(compacter):
         console.print(
@@ -452,8 +441,6 @@ def _handle_slash_compact(*, runtime: Any, console: Console) -> None:
 def _handle_slash_verbosity(
     cmd: str, *, transcript: TerminalTranscript, console: Console
 ) -> None:
-    """Apply a live verbosity override."""
-
     new_level = cmd[1:]  # strip the leading slash
     transcript.set_verbosity(new_level)
     if new_level == "quiet":
@@ -474,46 +461,20 @@ def _handle_slash_details(
     console.print(Text(f"(details: {message})", style=_MUTED_ITALIC_STYLE))
 
 
-def _handle_slash_export(*, runtime: Any, console: Console) -> None:
-    session_id = str(getattr(runtime, "session_id", "") or "").strip()
-    if session_id:
-        command = f"openminion export transcript --session-id {session_id} --format md"
-    else:
-        command = "openminion export transcript --session-id <session-id> --format md"
-    console.print(
-        Text(
-            f"(export: run `{command}` from a regular terminal; "
-            "add `--output transcript.md` to write a file)",
-            style=_MUTED_ITALIC_STYLE,
-        )
-    )
-
-
-def _handle_slash_editor(console: Console) -> None:
-    console.print(
-        Text(
-            "(editor: external-editor composition is not bound in this renderer yet; "
-            "use multiline input, paste content, or @-mention files)",
-            style=_MUTED_ITALIC_STYLE,
-        )
-    )
-
-
 def _print_slash_help(console: Console) -> None:
     console.print(Text("Slash commands:", style="bold"))
-    for slash, description in slash_help_rows(terminal_only=True):
+    for slash, description in slash_help_rows():
         console.print(f"  {slash:<12} {description}")
 
 
 def _print_unknown_slash_notice(cmd: str, console: Console) -> None:
-    """Unknown / unimplemented slashes get a one-line note instead of a crash."""
-
     console.print(
         Text(
-            f"(slash {cmd} is not yet implemented in the terminal renderer; "
-            "use `openminion --rich` for the Textual shell with "
-            "full slash support)",
-            style=_MUTED_ITALIC_STYLE,
+            unknown_slash_command_message(
+                cmd,
+                available_commands=_SLASH_COMMANDS,
+            ),
+            style=_ERR_STYLE,
         )
     )
 
@@ -526,15 +487,26 @@ def _handle_visible_parity_slash(
     console: Console,
     status_line: TerminalStatusLine,
     working_dir: str,
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> None:
     arg = _slash_arg(text)
     if cmd == "/context":
         console.print(Text(render_context_report(runtime), style=_SYSTEM_STYLE))
+    elif cmd == "/context-review":
+        console.print(Text(render_context_review(runtime, arg), style=_SYSTEM_STYLE))
+    elif cmd == "/overview":
+        from openminion.cli.status.overview import (
+            build_operations_overview,
+            render_operations_overview,
+        )
+
+        snapshot = build_operations_overview(runtime, working_dir=working_dir)
+        console.print(Text(render_operations_overview(snapshot), style=_SYSTEM_STYLE))
     elif cmd == "/memory":
         console.print(Text(render_memory_report(runtime), style=_SYSTEM_STYLE))
+    elif cmd == "/graph":
+        console.print(Text(render_graph_command(arg), style=_SYSTEM_STYLE))
     elif cmd == "/skills":
-        console.print(Text(render_skills_report(runtime), style=_SYSTEM_STYLE))
+        console.print(Text(render_skills_report(runtime, arg), style=_SYSTEM_STYLE))
     elif cmd == "/browser":
         console.print(
             Text(
@@ -566,13 +538,6 @@ def _handle_visible_parity_slash(
             runtime=runtime,
             console=console,
             status_line=status_line,
-        )
-    elif cmd == "/delegate":
-        handle_slash_delegate(
-            text,
-            runtime=runtime,
-            console=console,
-            approval_callback=approval_callback,
         )
 
 
@@ -649,6 +614,8 @@ async def _handle_session_slash(
         )
     elif cmd == "/status":
         _render_status_block(runtime=runtime, console=console, working_dir=working_dir)
+    elif cmd == "/copy":
+        copy_latest_message(transcript, console)
     else:
         return False
     return True
@@ -665,8 +632,6 @@ async def _handle_slash(
     working_dir: str,
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> bool:
-    """Dispatch a slash command and return whether the shell should exit."""
-
     cmd = text.split(maxsplit=1)[0]
 
     if cmd in ("/exit", "/quit"):
@@ -684,18 +649,18 @@ async def _handle_slash(
         working_dir=working_dir,
     ):
         return False
-    if cmd in (
-        "/context",
-        "/memory",
-        "/skills",
-        "/browser",
-        "/tasks",
-        "/effort",
-        "/statusline",
-        "/undo",
-        "/goal",
-        "/delegate",
-    ):
+    if cmd == "/delegate":
+        await run_slash_delegate(text, runtime, console, approval_callback)
+        return False
+    if cmd == "/project":
+        await run_slash_project(
+            text,
+            runtime=runtime,
+            console=console,
+            approval_callback=approval_callback,
+        )
+        return False
+    if cmd in _VISIBLE_PARITY_SLASHES:
         _handle_visible_parity_slash(
             cmd,
             text,
@@ -703,20 +668,10 @@ async def _handle_slash(
             console=console,
             status_line=status_line,
             working_dir=working_dir,
-            approval_callback=approval_callback if cmd == "/delegate" else None,
         )
         return False
-    if cmd == "/tools":
-        _render_tools_command(runtime, console, text)
-        return False
-    if cmd == "/mcp":
-        _render_mcp_status(runtime=runtime, console=console)
-        return False
-    if cmd == "/theme":
-        _handle_slash_theme(text, console=console)
-        return False
-    if cmd == "/model":
-        _handle_slash_model(text, runtime=runtime, console=console)
+    if cmd in ("/tools", "/mcp", "/theme", "/model"):
+        await _handle_tool_view_slash(cmd, text, runtime, console, overlay)
         return False
     if handle_debug_output_slash(
         cmd, text, runtime=runtime, console=console, cost_renderer=_render_cost_snapshot
@@ -724,6 +679,14 @@ async def _handle_slash(
         return False
     if cmd == "/agents":
         _handle_slash_agents(text, runtime=runtime, console=console)
+        return False
+    if cmd in {"/participants", "/invite", "/kick", "/activate", "/routing"}:
+        handle_room_slash(
+            cmd,
+            _slash_arg(text),
+            runtime=runtime,
+            console=console,
+        )
         return False
     if cmd == "/readonly":
         _handle_slash_readonly(
@@ -756,6 +719,29 @@ async def _handle_slash(
     return False
 
 
+async def _handle_tool_view_slash(
+    cmd: str,
+    text: str,
+    runtime: Any,
+    console: Console,
+    overlay: TerminalOverlayPresenter,
+) -> bool:
+    if cmd == "/tools":
+        _render_tools_command(runtime, console, text)
+    elif cmd == "/mcp":
+        _render_mcp_status(runtime=runtime, console=console)
+    elif cmd == "/theme":
+        _handle_slash_theme(text, console=console)
+    elif cmd == "/model":
+        if _slash_arg(text).strip() == "setup":
+            await handle_model_setup(runtime=runtime, console=console, overlay=overlay)
+        else:
+            _handle_slash_model(text, runtime=runtime, console=console)
+    else:
+        return False
+    return True
+
+
 def _handle_shell_preference_slash(
     cmd: str,
     text: str,
@@ -775,10 +761,24 @@ def _handle_shell_preference_slash(
         _handle_slash_verbosity(cmd, transcript=transcript, console=console)
     elif cmd == "/details":
         _handle_slash_details(text, transcript=transcript, console=console)
-    elif cmd == "/export":
-        _handle_slash_export(runtime=runtime, console=console)
-    elif cmd == "/editor":
-        _handle_slash_editor(console)
+    elif cmd in ("/export", "/editor"):
+        if cmd == "/export":
+            session_id = str(getattr(runtime, "session_id", "") or "").strip()
+            command = (
+                f"openminion export transcript --session-id {session_id} --format md"
+                if session_id
+                else "openminion export transcript --session-id <session-id> --format md"
+            )
+            message = (
+                f"(export: run `{command}` from a regular terminal; "
+                "add `--output transcript.md` to write a file)"
+            )
+        else:
+            message = (
+                "(editor: external-editor composition is not bound in this renderer yet; "
+                "use multiline input, paste content, or @-mention files)"
+            )
+        console.print(Text(message, style=_MUTED_ITALIC_STYLE))
     else:
         return False
     return True
@@ -791,7 +791,6 @@ async def _run_shell_escape(
     transcript: TerminalTranscript,
     working_dir: str,
 ) -> None:
-    """FNS-09 parity: `!cmd` runs via subprocess, output as tool block."""
     if not command:
         return
     transcript.push_message(
@@ -861,10 +860,10 @@ async def _run_shell_escape(
 
 
 def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
-    """Print the terminal CLI greeter panel."""
     from openminion import __version__
     from openminion.cli.presentation.header import (
         format_runtime_adapter,
+        format_runtime_permission_posture,
         format_runtime_provider,
         shorten_working_dir,
     )
@@ -875,6 +874,7 @@ def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
     provider = format_runtime_provider(runtime)
     adapter = format_runtime_adapter(runtime)
     cwd_label = shorten_working_dir(working_dir) or working_dir or "."
+    permission_posture = format_runtime_permission_posture(runtime)
     body_lines = [
         Text.assemble(
             ("OpenMinion CLI", token_rich_style(StyleToken.INFO, bold=True)),
@@ -915,6 +915,7 @@ def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
                 ("agent:       ", _MUTED_STYLE),
                 (agent, _SYSTEM_STYLE),
             ),
+            Text(f"permissions: {permission_posture}", style=_SYSTEM_STYLE),
         ]
     )
     project_context = getattr(runtime, "project_context", None)
@@ -947,7 +948,7 @@ def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
     ):
         console.print(
             Text(
-                f"found {project_context.display_name}; consider renaming to OPENMINION.md for canonical support",
+                f"loaded project context from {project_context.display_name}; OpenMinion-native filename: OPENMINION.md",
                 style=_MUTED_ITALIC_STYLE,
             )
         )

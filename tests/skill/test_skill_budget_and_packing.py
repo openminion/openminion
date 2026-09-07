@@ -11,6 +11,7 @@ from openminion.modules.context.segment import (
 )
 from openminion.modules.context.service import _apply_mode_budget_bias
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_text_and_admit
 
 
 def _cfg(tmp_path: Path) -> dict:
@@ -86,8 +87,8 @@ class TestSkillSnippetFitsInBudget:
     def test_snippet_within_plan_budget(self, tmp_path: Path) -> None:
         ctl = Skill(_cfg(tmp_path))
         try:
-            skill_id, version_hash, _ = ctl.ingest_text(
-                name="Deploy Checker", markdown=DEPLOY_SKILL
+            skill_id, version_hash, _ = ingest_text_and_admit(
+                ctl, name="Deploy Checker", markdown=DEPLOY_SKILL
             )
             budgets = default_budgets_for("plan")
             snippet, _ = ctl.render_snippet(
@@ -108,8 +109,8 @@ class TestSkillSnippetFitsInBudget:
     ) -> None:
         ctl = Skill(_cfg(tmp_path))
         try:
-            skill_id, version_hash, _ = ctl.ingest_text(
-                name="Deploy Checker", markdown=DEPLOY_SKILL
+            skill_id, version_hash, _ = ingest_text_and_admit(
+                ctl, name="Deploy Checker", markdown=DEPLOY_SKILL
             )
             snippet, _ = ctl.render_snippet(
                 skill_id=skill_id,

@@ -13,6 +13,7 @@ from tests.e2e.runners.run_cli_chat_probe import (
     main,
     _parse_probe_status,
     _probe_requirement_failure,
+    _replace_provider_events,
     _shutdown_timeout_can_count_as_success,
     _turn_response_boundary_detected,
 )
@@ -449,3 +450,103 @@ def test_probe_requirement_rejects_marker_that_only_appears_in_echoed_prompt() -
         )
         == "missing required assistant output marker(s): OpenRouter GPT smoke OK"
     )
+
+
+def test_probe_requirement_requires_marker_in_final_assistant_turn() -> None:
+    output = "❯ first prompt\n⏺ continuity-ok\n❯ final prompt\n⏺ wrong-final-answer\n"
+
+    assert (
+        _probe_requirement_failure(
+            {"tool_event_count": 0, "tool_names": []},
+            output=output,
+            messages=("first prompt", "final prompt"),
+            required_final_output_markers=("continuity-ok",),
+        )
+        == "missing required final assistant output marker(s): continuity-ok"
+    )
+
+
+def test_summary_selects_content_free_provider_attempts() -> None:
+    summary = _build_summary(
+        session_id="provider-probe",
+        transcript_path=None,
+        events_path=None,
+        output="",
+        events=[
+            {
+                "type": "llm.call.failed",
+                "session_id": "provider-probe::conv:abc",
+                "turn_id": "turn-1",
+                "agent_id": "agent-1",
+                "payload": {
+                    "llm_call_id": "call-1",
+                    "provider_name": "openai",
+                    "service_vendor": "vendor",
+                    "model": "model-1",
+                    "status": "failed",
+                    "provider_round_trip_ms": 12.5,
+                    "error": {
+                        "code": "RATE_LIMITED",
+                        "message": "secret provider message",
+                        "details": {"retryable": True, "raw": "secret"},
+                    },
+                    "usage": {"input_tokens": 10, "output_tokens": 2},
+                    "cost": {"total": 0.01},
+                    "invocation_id": "inv-1",
+                },
+            }
+        ],
+        audit_paths=[],
+        audit_rows=[],
+        event_session_id="provider-probe::conv:abc",
+    )
+
+    assert summary["provider_attempts"] == [
+        {
+            "event_type": "llm.call.failed",
+            "llm_call_id": "call-1",
+            "provider_name": "openai",
+            "service_vendor": "vendor",
+            "model": "model-1",
+            "status": "failed",
+            "error_code": "RATE_LIMITED",
+            "retry_eligible": True,
+            "provider_round_trip_ms": 12.5,
+            "usage": {"input_tokens": 10, "output_tokens": 2},
+            "cost": {"total": 0.01},
+            "invocation_id": "inv-1",
+            "session_id": "provider-probe::conv:abc",
+            "turn_id": "turn-1",
+            "agent_id": "agent-1",
+        }
+    ]
+
+
+def test_provider_telemetry_reuses_canonical_session_agent_by_turn() -> None:
+    events = _replace_provider_events(
+        [
+            {
+                "type": "llm.call.completed",
+                "turn_id": "turn-1",
+                "agent_id": "agent-1",
+                "payload": {},
+            }
+        ],
+        [
+            {
+                "type": "llm.call.completed",
+                "turn_id": "turn-1",
+                "agent_id": "",
+                "payload": {"provider_name": "provider-1"},
+            }
+        ],
+    )
+
+    assert events == [
+        {
+            "type": "llm.call.completed",
+            "turn_id": "turn-1",
+            "agent_id": "agent-1",
+            "payload": {"provider_name": "provider-1"},
+        }
+    ]

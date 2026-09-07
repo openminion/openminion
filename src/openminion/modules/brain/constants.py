@@ -337,9 +337,7 @@ DECISION_RATIONALE_MAX_CHARS = 280
 
 # ALCC plan-reconciliation constants. The diagnostic cap bounds persisted
 # closure-event payloads for pathological plans.
-PLAN_RECONCILIATION_TERMINAL_STATUSES: frozenset[str] = frozenset(
-    {"completed", "blocked", "cancelled"}
-)
+PLAN_RECONCILIATION_TERMINAL_STATUSES: frozenset[str] = frozenset({"completed"})
 PLAN_RECONCILIATION_INCOMPLETE_REASON = "plan_reconciliation_incomplete"
 PLAN_RECONCILIATION_STEP_ID_DIAG_CAP = 24
 

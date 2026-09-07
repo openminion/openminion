@@ -1,7 +1,7 @@
 # OpenMinion Releasing
 
 Status: active
-Last updated: 2026-08-07
+Last updated: 2026-09-06
 
 Purpose: give maintainers a compact package-local release smoke checklist for
 the public `openminion` package surface on the active alpha line defined by
@@ -110,8 +110,7 @@ Do not rely on workspace-root repo docs alone for package-public claims.
 
 ## Publish Sequence
 
-`openminion` follows the same repo-family release path as the sibling package
-repos:
+`openminion` uses this release path:
 
 1. prepare and validate an RC branch,
 2. push an RC tag such as `v<OPENMINION_VERSION>rc1` to publish to TestPyPI,

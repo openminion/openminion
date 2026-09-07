@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from builtins import list as list_type
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 import datetime
 import json
@@ -73,6 +76,7 @@ from .write import (
     supersede_by_contradiction as _supersede_by_contradiction_impl,
     upsert as _upsert_impl,
 )
+from .capture_bundle import apply_capture_bundle as _apply_capture_bundle_impl
 from openminion.modules.storage.runtime.sqlite import connect_database
 
 _ARTIFACTCTL_UNSET = object()
@@ -99,6 +103,7 @@ class SQLiteMemoryStore(MemoryStore):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.busy_timeout = busy_timeout
         self._artifactctl = artifactctl
+        self._owns_artifactctl = artifactctl is _ARTIFACTCTL_UNSET
         self._write_lock = threading.RLock()
 
         with self._connect() as conn:
@@ -113,11 +118,15 @@ class SQLiteMemoryStore(MemoryStore):
                 migrations=list_migrations(),
             )
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = connect_database(self.db_path)
-        conn.execute(f"PRAGMA busy_timeout={max(0, int(self.busy_timeout))}")
-        conn.isolation_level = None
-        return conn
+        try:
+            conn.execute(f"PRAGMA busy_timeout={max(0, int(self.busy_timeout))}")
+            conn.isolation_level = None
+            yield conn
+        finally:
+            conn.close()
 
     def backup_to(self, path: str | Path) -> Path:
         """Write a consistent SQLite backup for reviewed import rollback."""
@@ -147,6 +156,17 @@ class SQLiteMemoryStore(MemoryStore):
         if self._artifactctl is _ARTIFACTCTL_UNSET:
             self._artifactctl = create_default_artifactctl()
         return self._artifactctl
+
+    def close(self) -> None:
+        if not self._owns_artifactctl or self._artifactctl is _ARTIFACTCTL_UNSET:
+            return
+        self._owns_artifactctl = False
+        artifactctl = self._artifactctl
+        self._artifactctl = None
+        artifactctl.close()
+
+    def apply_capture_bundle(self, bundle: Any) -> Any:
+        return _apply_capture_bundle_impl(self, bundle)
 
     def _add_artifact_refs(self, *, owner_id: str, ref_values: Any) -> None:
         targets = normalize_artifact_ref_targets(ref_values)
@@ -464,6 +484,11 @@ class SQLiteMemoryStore(MemoryStore):
             if options.limit is not None:
                 records = records[: max(1, int(options.limit))]
         return records
+
+    def list_all(self) -> list_type[MemoryRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM memory_records ORDER BY id").fetchall()
+        return [self._create_record_from_row(row) for row in rows]
 
     def list_scopes(self) -> list[str]:
         with self._connect() as conn:

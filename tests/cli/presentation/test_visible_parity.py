@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from openminion.cli.status.token_usage import TokenUsageSnapshot
 from openminion.cli.presentation.visible_parity import (
     handle_effort_command,
     handle_statusline_command,
     handle_undo_command,
     render_context_report,
+    format_memory_report,
     render_memory_report,
     render_skills_report,
     render_tasks_report,
     statusline_label,
+)
+from openminion.modules.memory.runtime.capture_status import (
+    CaptureProcessingSummary,
+    RecallProcessingSummary,
 )
 from openminion.modules.task.runtime.lifecycle import TaskManager
 
@@ -128,12 +135,103 @@ def test_render_memory_report_structures_current_session_summary() -> None:
     assert "assistant: first answer" not in body
 
 
+def test_format_memory_report_shows_content_free_capture_health() -> None:
+    body = format_memory_report(
+        [],
+        [],
+        capture=CaptureProcessingSummary(
+            pending=1,
+            processed=2,
+            succeeded_no_output=3,
+            rejected=0,
+            failed_terminal=1,
+            oldest_pending_at="2026-08-24T00:00:00Z",
+            eligible=7,
+            terminal=6,
+            integrity_errors=0,
+        ),
+        recall=RecallProcessingSummary(
+            health="healthy",
+            mode="shadow",
+            capabilities=("keyword", "graph", "vector"),
+            score_domain="hybrid-semantic-v1",
+            selected_memory=2,
+            selected_knowledge=1,
+            omission_reasons=(("budget", 1), ("relevance", 2)),
+        ),
+    )
+
+    assert "capture     7 eligible · 1 pending · 6 terminal" in body
+    assert "terminal    2 processed · 3 no output · 0 rejected · 1 failed" in body
+    assert "integrity   0 errors" in body
+    assert "oldest      2026-08-24T00:00:00Z" in body
+    assert "recall      healthy · mode shadow" in body
+    assert "capability  keyword, graph, vector" in body
+    assert "score       hybrid-semantic-v1" in body
+    assert "selected    memory 2 · knowledge 1" in body
+    assert "omissions   budget 1 · relevance 2" in body
+
+
+def test_format_memory_status_does_not_render_sensitive_runtime_fields() -> None:
+    body = format_memory_report(
+        [],
+        [],
+        capture=CaptureProcessingSummary(
+            pending=0,
+            processed=0,
+            succeeded_no_output=0,
+            rejected=0,
+            failed_terminal=0,
+            oldest_pending_at="",
+        ),
+        recall=SimpleNamespace(
+            health="degraded",
+            mode="sophiagraph",
+            capabilities=("keyword",),
+            score_domain="structured-retrieval-v1",
+            selected_memory=0,
+            selected_knowledge=0,
+            omission_reasons=(),
+            transcript="private transcript",
+            query="private query",
+            exception="private exception",
+            path="/private/path",
+            url="https://private.invalid",
+            provider="provider-name",
+            model="model-name",
+            secret="secret-value",
+        ),
+    )
+
+    assert "recall      degraded" in body
+    for sensitive in (
+        "private transcript",
+        "private query",
+        "private exception",
+        "/private/path",
+        "https://private.invalid",
+        "provider-name",
+        "model-name",
+        "secret-value",
+    ):
+        assert sensitive not in body
+
+
 def test_render_skills_report_uses_runtime_rows() -> None:
     body = render_skills_report(_Runtime())
 
     assert "reviewer" in body
     assert "config" in body
     assert "120 tokens" in body
+    assert "Use /skills <skill_id> to view details." in body
+
+
+def test_render_skills_report_passes_exact_skill_id_to_runtime() -> None:
+    class _SkillRuntime:
+        def skills_report(self, skill_id: str = "") -> str:
+            return f"detail:{skill_id}"
+
+    assert render_skills_report(_SkillRuntime(), "demo-skill") == "detail:demo-skill"
 
 
 def test_render_tasks_report_includes_operator_state_and_resume_action(
@@ -148,7 +246,11 @@ def test_render_tasks_report_includes_operator_state_and_resume_action(
         task_id="task-1",
     )
 
-    runtime = type("Runtime", (), {"task_manager": manager})()
+    runtime = type(
+        "Runtime",
+        (),
+        {"task_manager": manager, "agent_id": "agent-1", "session_id": "session-1"},
+    )()
     inventory_body = render_tasks_report(runtime)
     detail_body = render_tasks_report(runtime, "task-1")
 
@@ -156,6 +258,77 @@ def test_render_tasks_report_includes_operator_state_and_resume_action(
     assert "resume=continue" in inventory_body
     assert "operator_state: running" in detail_body
     assert "resume_action: continue" in detail_body
+
+
+def test_render_tasks_report_uses_active_agent_and_session_scope() -> None:
+    class _ScopedTaskSource:
+        lifecycle_repository = None
+
+        def get_digest(self, *, agent_id: str, session_id: str, limit: int):
+            assert agent_id == "agent-1"
+            assert session_id == "session-1"
+            assert limit == 50
+            task = type(
+                "Task",
+                (),
+                {
+                    "task_id": "task-1",
+                    "title": "Scoped task",
+                    "status": "ACTIVE",
+                    "due_at": None,
+                    "next_step_id": "",
+                    "next_step_title": "",
+                    "metadata": {},
+                },
+            )()
+            return type(
+                "Digest",
+                (),
+                {"tasks_active": [task], "tasks_ready": [], "current_task": None},
+            )()
+
+    runtime = type(
+        "Runtime",
+        (),
+        {
+            "_rt": type("APIRuntime", (), {"task_manager": _ScopedTaskSource()})(),
+            "agent_id": "agent-1",
+            "session_id": "session-1",
+        },
+    )()
+
+    assert "task-1: Scoped task" in render_tasks_report(runtime)
+
+
+def test_render_tasks_report_applies_exact_lifecycle_actions(tmp_path) -> None:
+    from openminion.modules.session.storage.repository import (
+        create_sqlite_cron_repository,
+    )
+
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "scheduled.db")
+    )
+    record = manager.schedule_task(
+        name="scheduled",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "work"},
+        agent_id="agent-1",
+    )
+    runtime = type(
+        "Runtime",
+        (),
+        {"task_manager": manager, "agent_id": "agent-1", "session_id": "session-1"},
+    )()
+
+    paused = render_tasks_report(runtime, f"pause {record.task_id}")
+    resumed = render_tasks_report(runtime, f"resume {record.task_id}")
+    cancelled = render_tasks_report(runtime, f"cancel {record.task_id}")
+
+    assert "status: WAITING" in paused
+    assert "schedule: every:60000ms" in paused
+    assert "scheduler: unknown" in paused
+    assert "status: ACTIVE" in resumed
+    assert "status: CANCELED" in cancelled
 
 
 def test_effort_and_statusline_handlers_delegate_to_runtime() -> None:

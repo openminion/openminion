@@ -8,6 +8,16 @@ from typing import Any
 
 from openminion.base.config.parse import split_comma_tokens
 from openminion.modules.skill.errors import SkillError
+from openminion.modules.skill.interfaces import SkillIngestAuthority
+from openminion.modules.skill.cli_admission import (
+    add_admission_subcommands,
+    run_admission_command,
+)
+from openminion.modules.skill.learning.cli_args import (
+    parse_criterion_args,
+    replay_proof_from_args,
+)
+from openminion.cli.identity.operator import local_operator_id
 from openminion.modules.skill.runtime.skill import Skill
 from openminion.modules.skill.config import load_config
 from openminion.modules.skill.constants import (
@@ -104,6 +114,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     sub = parser.add_subparsers(dest="cmd", required=True)
+    add_admission_subcommands(sub)
     _add_skill_cli_subcommands(sub)
 
     return parser
@@ -422,7 +433,10 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
             scope=args.scope,
             agent_id=args.agent_id,
             trust=getattr(args, "trust", None),
-            promotion_path="operator",
+            authority=SkillIngestAuthority.local_operator(
+                surface="module_cli.skill.ingest",
+                principal_id=local_operator_id(),
+            ),
         )
         _print_ingest_result(skill_id, version_hash, warnings)
         return
@@ -434,9 +448,16 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
             scope=args.scope,
             agent_id=args.agent_id,
             trust=getattr(args, "trust", None),
-            promotion_path="operator",
+            authority=SkillIngestAuthority.local_operator(
+                surface="module_cli.skill.ingest_text",
+                principal_id=local_operator_id(),
+            ),
         )
         _print_ingest_result(skill_id, version_hash, warnings)
+        return
+
+    if args.cmd in {"admit", "rollback"}:
+        _print_json(run_admission_command(ctl, args))
         return
 
     if args.cmd in {"show", "inspect"}:
@@ -551,7 +572,10 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
         updated = ctl.set_skill_status(
             skill_id=package.skill_id,
             new_status=SKILL_STATUS_DEPRECATED,
-            promotion_path="operator",
+            authority=SkillIngestAuthority.local_operator(
+                surface="module_cli.skill.disable",
+                principal_id=local_operator_id(),
+            ),
         )
         _print_json(
             {
@@ -728,7 +752,7 @@ def _dispatch_proposal_cmd(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     if args.cmd == "proposal-review":
-        criteria = _parse_criterion_args(args.criterion)
+        criteria = parse_criterion_args(args.criterion)
         if not criteria:
             raise SkillError(
                 "INVALID_ARGUMENT",
@@ -834,7 +858,7 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     if args.cmd == "learning-replay-proof":
-        proof = _learning_replay_proof_from_args(
+        proof = replay_proof_from_args(
             proposal_id=args.proposal_id,
             shape_id=args.shape_id,
             proof_id=args.proof_id,
@@ -845,7 +869,7 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     if args.cmd == "learning-apply-proved":
-        proof = _learning_replay_proof_from_args(
+        proof = replay_proof_from_args(
             proposal_id=args.proposal_id,
             shape_id=args.shape_id,
             proof_id=args.proof_id,
@@ -877,65 +901,6 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
 
 def _read_json_path(path: str) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def _learning_replay_proof_from_args(
-    *,
-    proposal_id: str,
-    shape_id: str,
-    proof_id: str,
-    status: str,
-    evidence: str,
-) -> Any:
-    from openminion.modules.skill.learning import ReplayProof
-
-    return ReplayProof(
-        proof_id=proof_id,
-        proposal_id=proposal_id,
-        shape_id=shape_id,
-        status=status,
-        evidence_refs=split_comma_tokens(evidence),
-    )
-
-
-def _parse_criterion_args(raw_values: list[str]) -> list[dict[str, str]]:
-    out: list[dict[str, str]] = []
-    for raw in raw_values or []:
-        text = str(raw or "").strip()
-        if not text:
-            continue
-        parts = text.split(":", 2)
-        if len(parts) != 3:
-            raise SkillError(
-                "INVALID_ARGUMENT",
-                "--criterion must be 'criterion_id:status:comment'",
-                {"criterion": text},
-            )
-        criterion_id, status, comment = (
-            parts[0].strip(),
-            parts[1].strip(),
-            parts[2].strip(),
-        )
-        if not criterion_id or not comment:
-            raise SkillError(
-                "INVALID_ARGUMENT",
-                "--criterion id and comment must be non-empty",
-                {"criterion": text},
-            )
-        if status not in {"accepted", "rejected", "deferred"}:
-            raise SkillError(
-                "INVALID_ARGUMENT",
-                "--criterion status must be one of accepted|rejected|deferred",
-                {"criterion": text},
-            )
-        out.append(
-            {
-                "criterion_id": criterion_id,
-                "status": status,
-                "comment": comment,
-            }
-        )
-    return out
 
 
 def _print_json(payload: dict[str, Any]) -> None:

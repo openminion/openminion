@@ -1,0 +1,4 @@
+interface:
+  display_name: SwiftUI Performance Audit
+  short_description: Audit a bundled SwiftUI view
+  default_prompt: Review the bundled ContentView.swift for performance issues.

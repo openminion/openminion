@@ -20,6 +20,8 @@ from openminion.tools.exec.plugin import (
     _h_process_submit,
 )
 from openminion.tools.exec.process import PROCESS_MANAGER
+from openminion.tools.exec.schemas import ExecRunArgs
+from openminion.tools.exec.sessions import _exec_environment
 
 
 @pytest.fixture(autouse=True)
@@ -266,6 +268,19 @@ def test_sandbox_background_session_polls_to_exit(tmp_path: Path) -> None:
     assert final["status"] == "exited"
     assert final["exit_code"] == 0
     assert "done" in "\n".join(combined)
+
+
+def test_sandbox_session_does_not_forward_ambient_ssh_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/ambient-agent.sock")
+    ctx = _ctx(tmp_path, sandbox_runner=_runner())
+    ctx.policy.raw["env"]["allow_keys"].append("SSH_AUTH_SOCK")
+
+    forwarded = _exec_environment(params=ExecRunArgs(command="echo ok"), ctx=ctx)
+
+    assert "SSH_AUTH_SOCK" not in forwarded
 
 
 def test_sandbox_pty_session_accepts_input_and_submit(tmp_path: Path) -> None:

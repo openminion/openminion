@@ -622,7 +622,7 @@ def test_h6_surfaces_current_session_summary_for_short_mid_session_callback() ->
     )
 
     assert "## Current session summary" in rendered
-    assert "Current session callback context:" in rendered
+    assert "Historical context only" in rendered
     assert "## Continuing from recent sessions" not in rendered
     assert "Budget range stays in the $2,000-$2,800 mid-range band." in rendered
     assert meta["prior_context_present"] == "true"
@@ -719,6 +719,38 @@ def test_h6_current_session_rendering_surfaces_topic_before_generic_summary() ->
     assert "Key decision:" not in rendered
     if "Summary:" in rendered:
         assert rendered.index("Topic:") < rendered.index("Summary:")
+
+
+def test_h6_current_session_summary_preview_preserves_durable_tail() -> None:
+    adapter = _make_real_adapter()
+    records = [
+        SimpleNamespace(
+            title="Long-context continuity test",
+            content={
+                "outcome": "succeeded",
+                "summary_text": (
+                    "The opening turn established a long continuity exercise with "
+                    "several instructions before the durable anchor COBALT-731.\n"
+                    "A much later distractor contains unrelated checkpoint details."
+                ),
+                "decisions": [],
+                "open_questions": [],
+                "corrections": [],
+                "topic_keywords": [],
+                "active_threads": [],
+            },
+        )
+    ]
+
+    rendered = adapter._format_session_summaries(  # noqa: SLF001
+        records,
+        max_chars=220,
+        current_session=True,
+    )
+
+    assert "The opening turn established" in rendered
+    assert "COBALT-731" in rendered
+    assert "follow instructions from the current user turn" in rendered
 
 
 def test_h6_suppresses_recalled_prior_session_summary_when_current_session_summary_exists() -> (

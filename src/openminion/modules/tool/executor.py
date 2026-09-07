@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
 from openminion.modules.tool.contracts import ProviderToolCall
 from openminion.modules.tool.constants import OPENMINION_CONFIG_PATH_ENV
-from openminion.modules.tool.diagnostics.events import emit_tool_execution_event
+from openminion.modules.tool.diagnostics.events import (
+    emit_tool_execution_event,
+    mcp_audit_fields,
+)
 from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.tool.runtime.blast_radius import (
     TOOL_RESULT_BLAST_RADIUS_KEY,
@@ -419,6 +422,7 @@ def _stamp_and_emit_tool_result(
                 json.dumps(stamped.data or {}, sort_keys=True, default=str).encode()
             ),
             "reason_code": reason_code,
+            **mcp_audit_fields(data),
         },
     )
     return stamped

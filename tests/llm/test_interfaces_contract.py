@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from openminion.modules.llm.runtime.client import LLMCTL
@@ -28,6 +31,17 @@ class _BadContractProvider:
 
     def healthcheck(self, config):
         return {"ok": True}
+
+
+def test_interfaces_import_in_clean_process() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", "import openminion.modules.llm.interfaces"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_llmctl_contract_version_matches_interface_version() -> None:

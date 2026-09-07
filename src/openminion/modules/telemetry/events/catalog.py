@@ -86,6 +86,7 @@ MEMORY_CANDIDATE_UPDATE = "memory.candidate.update"
 MEMORY_CAPSULE_REFRESHED = "memory.capsule.refreshed"
 MEMORY_CAPSULE_REFRESH_FAILED = "memory.capsule.refresh_failed"
 MEMORY_CAPSULE_REFRESH_SKIPPED = "memory.capsule.refresh_skipped"
+MEMORY_CAPTURE_BUNDLE_COMMIT = "memory.capture_bundle.commit"
 MEMORY_CONTEXT_BUILT = "memory.context.built"
 MEMORY_CONTEXT_FAILED = "memory.context.failed"
 MEMORY_FOLLOWUP_COMPLETED = "memory.followup.completed"
@@ -100,12 +101,15 @@ MEMORY_RECORD_SUPERSEDE = "memory.record.supersede"
 MEMORY_RECORD_TOMBSTONE = "memory.record.tombstone"
 MEMORY_RECORD_UPSERT = "memory.record.upsert"
 MEMORY_RELATION_PUT = "memory.relation.put"
+MEMORY_CAPTURE_STATUS = "memory.capture.status"
+MEMORY_RECALL_STATUS = "memory.recall.status"
 MEMORY_RETRIEVAL_BUILT = "memory.retrieval.built"
 MEMORY_TIER_TRANSITION_PUT = "memory.tier_transition.put"
 MEMORY_TURN_RECORDED = "memory.turn.recorded"
 MEMORY_TURN_RECORD_FAILED = "memory.turn.record_failed"
 MEMORY_WRITE_COMPLETED = "memory.write.completed"
 MEMORY_WRITE_FAILED = "memory.write.failed"
+MEMORY_WRITE_REJECTED = "memory.write.rejected"
 MEMORY_WRITE_STARTED = "memory.write.started"
 
 MEMORY_PROMOTION_EVALUATED = "memory.promotion.evaluated"
@@ -121,6 +125,8 @@ MEMORY_SOFT_DELETED_PURGED = "memory.soft_deleted.purged"
 MEMORY_SUMMARY_COMPRESSED = "memory.summary.compressed"
 
 BRAIN_TUNING_ADJUSTED = "brain.threshold_adjustment"
+PROJECT_LAUNCHED = "project.launched"
+PROJECT_LAUNCH_DENIED = "project.launch_denied"
 TASK_PLAN_ABANDONED = "task_plan.abandoned"
 TASK_PLAN_COMPLETED = "task_plan.completed"
 TASK_PLAN_DECLARED = "task_plan.declared"
@@ -214,6 +220,7 @@ CONTEXT_MANIFEST = "context.manifest"
 CONTEXT_MANIFEST_CREATED = "context.manifest.created"
 CONTEXT_MANIFEST_PERSISTENCE_FAILED = "context.manifest.persistence_failed"
 CONTEXT_PACK = "context_pack"
+CONTEXT_CONTEXTCTL_SELECTED = "context.contextctl.selected"
 
 METRIC = "metric"
 MESSAGE = "message"
@@ -312,6 +319,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         MEMORY_CAPSULE_REFRESHED,
         MEMORY_CAPSULE_REFRESH_FAILED,
         MEMORY_CAPSULE_REFRESH_SKIPPED,
+        MEMORY_CAPTURE_BUNDLE_COMMIT,
         MEMORY_CONTEXT_BUILT,
         MEMORY_CONTEXT_FAILED,
         MEMORY_FOLLOWUP_COMPLETED,
@@ -326,12 +334,15 @@ EVENT_TYPES: frozenset[str] = frozenset(
         MEMORY_RECORD_TOMBSTONE,
         MEMORY_RECORD_UPSERT,
         MEMORY_RELATION_PUT,
+        MEMORY_CAPTURE_STATUS,
+        MEMORY_RECALL_STATUS,
         MEMORY_RETRIEVAL_BUILT,
         MEMORY_TIER_TRANSITION_PUT,
         MEMORY_TURN_RECORDED,
         MEMORY_TURN_RECORD_FAILED,
         MEMORY_WRITE_COMPLETED,
         MEMORY_WRITE_FAILED,
+        MEMORY_WRITE_REJECTED,
         MEMORY_WRITE_STARTED,
         MEMORY_PROMOTION_EVALUATED,
         MEMORY_TIER_TRANSITION_APPLIED,
@@ -345,6 +356,8 @@ EVENT_TYPES: frozenset[str] = frozenset(
         MEMORY_SOFT_DELETED_PURGED,
         MEMORY_SUMMARY_COMPRESSED,
         BRAIN_TUNING_ADJUSTED,
+        PROJECT_LAUNCHED,
+        PROJECT_LAUNCH_DENIED,
         TASK_PLAN_ABANDONED,
         TASK_PLAN_COMPLETED,
         TASK_PLAN_DECLARED,
@@ -427,6 +440,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         CONTEXT_MANIFEST_CREATED,
         CONTEXT_MANIFEST_PERSISTENCE_FAILED,
         CONTEXT_PACK,
+        CONTEXT_CONTEXTCTL_SELECTED,
         METRIC,
         MESSAGE,
         MODULE_DEBUG_FAILURE,
@@ -563,6 +577,7 @@ __all__ = [
     "MEMORY_CAPSULE_REFRESHED",
     "MEMORY_CAPSULE_REFRESH_FAILED",
     "MEMORY_CAPSULE_REFRESH_SKIPPED",
+    "MEMORY_CAPTURE_BUNDLE_COMMIT",
     "MEMORY_CONTEXT_BUILT",
     "MEMORY_CONTEXT_FAILED",
     "MEMORY_FOLLOWUP_COMPLETED",
@@ -577,12 +592,15 @@ __all__ = [
     "MEMORY_RECORD_TOMBSTONE",
     "MEMORY_RECORD_UPSERT",
     "MEMORY_RELATION_PUT",
+    "MEMORY_CAPTURE_STATUS",
+    "MEMORY_RECALL_STATUS",
     "MEMORY_RETRIEVAL_BUILT",
     "MEMORY_TIER_TRANSITION_PUT",
     "MEMORY_TURN_RECORDED",
     "MEMORY_TURN_RECORD_FAILED",
     "MEMORY_WRITE_COMPLETED",
     "MEMORY_WRITE_FAILED",
+    "MEMORY_WRITE_REJECTED",
     "MEMORY_WRITE_STARTED",
     "MEMORY_PROMOTION_EVALUATED",
     "MEMORY_TIER_TRANSITION_APPLIED",
@@ -596,6 +614,8 @@ __all__ = [
     "MEMORY_SOFT_DELETED_PURGED",
     "MEMORY_SUMMARY_COMPRESSED",
     "BRAIN_TUNING_ADJUSTED",
+    "PROJECT_LAUNCHED",
+    "PROJECT_LAUNCH_DENIED",
     "TASK_PLAN_ABANDONED",
     "TASK_PLAN_COMPLETED",
     "TASK_PLAN_DECLARED",
@@ -674,6 +694,7 @@ __all__ = [
     "CONTEXT_MANIFEST_CREATED",
     "CONTEXT_MANIFEST_PERSISTENCE_FAILED",
     "CONTEXT_PACK",
+    "CONTEXT_CONTEXTCTL_SELECTED",
     "METRIC",
     "MESSAGE",
     "MODULE_DEBUG_FAILURE",

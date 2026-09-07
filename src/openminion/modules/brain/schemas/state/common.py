@@ -38,6 +38,7 @@ WorkingStatus = Literal[
     "job_pending",
     "done",
     "error",
+    "failed",
     "stopped",
 ]
 MissionLifecycleStatus = MissionStatus

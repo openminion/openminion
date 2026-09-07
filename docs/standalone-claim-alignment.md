@@ -1,7 +1,7 @@
 # OpenMinion Standalone Claim Alignment
 
 Status: active
-Last updated: 2026-08-15
+Last updated: 2026-09-06
 
 Purpose: keep public `openminion` package claims aligned with the surfaces that
 ship today.
@@ -11,11 +11,13 @@ ship today.
 | Public claim | Current shipped surface | Proof location | Status |
 | --- | --- | --- | --- |
 | local-first Python agent runtime | package metadata, CLI entrypoint, runtime package layout | `pyproject.toml`, `README.md`, package-local release proof | aligned |
-| stable package-level Python API | top-level `openminion` exports `APIRuntime`, `Agent`, `AgentRunResult`, `Handoff`, `OpenMinionConfig`, `MemoryBundle`, `tool`, `subagent`, `__version__` | `src/openminion/__init__.py`, `API_COMPATIBILITY.md`, root import smoke | aligned |
-| public API runtime surface | `openminion.api` re-exports `APIRuntime`, `Agent`, `Handoff`, `dispatch_request`, and related helpers | `src/openminion/api/__init__.py`, `src/openminion/api/README.md`, targeted package regression tests | aligned |
+| stable package-level Python API | top-level `openminion` exports `APIRuntime`, `Agent`, `AgentOutputValidationError`, `AgentRunResult`, `Handoff`, `OpenMinionConfig`, `MemoryBundle`, `tool`, `subagent`, `__version__` | `src/openminion/__init__.py`, `API_COMPATIBILITY.md`, root import smoke | aligned |
+| public API runtime surface | `openminion.api` re-exports `APIRuntime`, `Agent`, `AgentOutputValidationError`, `AgentRunResult`, `Handoff`, `dispatch_request`, and `subagent` | `src/openminion/api/__init__.py`, `src/openminion/api/README.md`, targeted package regression tests | aligned |
 | interactive CLI surface | `openminion` console script and module entrypoint | `pyproject.toml`, `README.md`, CLI smoke gate | aligned |
 | operator subcommands and companion CLIs | `openminiond`, `artifactctl`, `memctl`, `brainctl`, `policyctl`, and related package-owned entrypoints | `pyproject.toml`, package-local `make lint` plus public-surface validators | aligned |
 | examples as runnable teaching surfaces | top-level `examples/` files and `examples/modules/sample` | `examples/`, `docs/runtime-surfaces.md`, focused example smoke tests, compile and lint checks | aligned |
+| human-agent rooms | `openminion room`, room-backed Focus sessions, participant and routing commands | room CLI/runtime tests and attributed transcript tests | aligned, local preview |
+| bounded long-horizon work | project plans, checkpoints, reports, replay, and certification runners | deterministic project/autonomy tests plus separately gated live evidence | alpha substrate, claim-gated |
 
 ## Current package line
 

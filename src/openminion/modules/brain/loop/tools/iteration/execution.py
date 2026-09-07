@@ -13,8 +13,10 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.brain.loop.constants import (
     PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
+    RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY,
+    RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY,
 )
-from openminion.modules.llm.schemas import ToolCall
+from openminion.modules.llm.schemas import Message, ToolCall
 
 from ..contracts import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
@@ -54,7 +56,45 @@ class LoopExecutionResult(NamedTuple):
 
 
 def _error_code(action_result: ActionResult) -> str:
-    return str(action_result.error.code if action_result.error else "").strip().upper()
+    if action_result.error is not None:
+        return str(action_result.error.code or "").strip().upper()
+    outputs = getattr(action_result, "outputs", None)
+    nested_error = outputs.get("error") if isinstance(outputs, dict) else None
+    if isinstance(nested_error, dict):
+        return str(nested_error.get("code", "") or "").strip().upper()
+    return ""
+
+
+def _apply_tool_failure_recovery(
+    loop_state: AdaptiveToolLoopState,
+    *,
+    tool_call: ToolCall,
+    action_result: ActionResult,
+    recovery_enabled: bool,
+    build_recovery_message: Any,
+) -> None:
+    recovery_message: Message | None = build_recovery_message(
+        tool_name=tool_call.name.strip(),
+        action_result=action_result,
+    )
+    if not recovery_enabled:
+        return
+    _reopen_failed_terminal_tool_request(loop_state, action_result)
+    scratchpad = loop_state.scratchpad
+    tool_name = tool_call.name.strip()
+    pending = scratchpad.get(RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY)
+    if action_result.status == BRAIN_ACTION_STATUS_SUCCESS and pending == tool_name:
+        scratchpad.pop(RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY, None)
+        scratchpad.pop(RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY, None)
+        return
+    if recovery_message is not None:
+        loop_state.messages.append(recovery_message)
+        if _error_code(action_result) in {
+            "INVALID_ARGUMENT",
+            "TOOL_ARG_VALIDATION_FAILED",
+        }:
+            scratchpad[RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY] = tool_name
+            scratchpad.pop(RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY, None)
 
 
 def _is_structured_policy_recoverable(action_result: ActionResult) -> bool:
@@ -73,6 +113,26 @@ def _is_confirm_required(action_result: ActionResult) -> bool:
     )
 
 
+def _reopen_failed_terminal_tool_request(
+    loop_state: AdaptiveToolLoopState,
+    action_result: ActionResult,
+) -> None:
+    if action_result.status not in {
+        BRAIN_ACTION_STATUS_FAILED,
+        BRAIN_ACTION_STATUS_TIMEOUT,
+    }:
+        return
+    key = "tool_schema_shortlisting.terminal_tool"
+    terminal_tool = str(loop_state.scratchpad.get(key, "") or "").strip()
+    if not terminal_tool:
+        return
+    loop_state.direct_tool_turn = None
+    loop_state.scratchpad.pop(key, None)
+    loop_state.scratchpad["tool_schema_shortlisting.failed_terminal_tool"] = (
+        terminal_tool
+    )
+
+
 def _record_plan_family_call(
     loop_state: AdaptiveToolLoopState,
     *,
@@ -85,6 +145,35 @@ def _record_plan_family_call(
         return
     loop_state.scratchpad[PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY] = (
         _count_substantive_non_control_tool_results(loop_state)
+    )
+
+
+def _set_pending_confirmation(
+    loop_ctx: AdaptiveToolLoopContext,
+    *,
+    command_outcome: CommandExecutionOutcome,
+    later_outcomes: list[tuple[ToolCall, CommandExecutionOutcome]],
+) -> None:
+    state = loop_ctx.state
+    state.pending_policy_approval_id = command_outcome.policy_approval_id
+    state.pending_policy_confirmation_preview = (
+        command_outcome.policy_confirmation_preview
+    )
+    pending_confirmation = command_outcome.approved_command.model_copy(deep=True)
+    queued_siblings = [
+        later_outcome.approved_command.model_copy(deep=True)
+        for _tool_call, later_outcome in later_outcomes
+        if later_outcome.action_result is not None
+        and _is_confirm_required(later_outcome.action_result)
+    ]
+    state.pending_confirmation_command = (
+        attach_confirmation_replay_queue(pending_confirmation, queued_siblings)
+        if queued_siblings
+        else pending_confirmation
+    )
+    state.post_action_user_message = confirmation_required_user_message(
+        state.pending_confirmation_command,
+        state.pending_policy_confirmation_preview,
     )
 
 
@@ -123,6 +212,37 @@ def execute_iteration_results(
     dispatch_correction_plan: Any,
 ) -> LoopExecutionResult:
     batch_had_progress = initial_batch_had_progress
+    action_results = []
+    for tool_call, command_outcome in ordered_tool_results:
+        tool_name = tool_call.name.strip()
+        action_result = command_outcome.action_result or build_missing_action_result(
+            tool_name
+        )
+        persist_terminal_tool_result(
+            loop_ctx,
+            loop_state=loop_state,
+            turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+            tool_call=tool_call,
+            action_result=action_result,
+        )
+        append_tool_result_payload(
+            loop_state,
+            call_id=tool_call.id,
+            tool_name=tool_name,
+            action_result=action_result,
+        )
+        _record_plan_family_call(
+            loop_state, tool_name=tool_name, action_result=action_result
+        )
+        loop_state.messages.append(
+            action_result_to_tool_message(
+                tool_call.id,
+                tool_name,
+                action_result,
+            )
+        )
+        action_results.append(action_result)
+
     iter_tc_idx = 0
     for result_index, (tool_call, command_outcome) in enumerate(ordered_tool_results):
         tool_name = tool_call.name.strip()
@@ -148,26 +268,7 @@ def execute_iteration_results(
         loop_state.total_tool_calls += 1
         if iter_tc_cache_hit or not command_outcome.tool_budget_debited:
             debit_tool_budget(loop_ctx)
-
-        action_result = command_outcome.action_result or build_missing_action_result(
-            tool_name
-        )
-        persist_terminal_tool_result(
-            loop_ctx,
-            loop_state=loop_state,
-            turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
-            tool_call=tool_call,
-            action_result=action_result,
-        )
-        append_tool_result_payload(
-            loop_state,
-            call_id=tool_call.id,
-            tool_name=tool_name,
-            action_result=action_result,
-        )
-        _record_plan_family_call(
-            loop_state, tool_name=tool_name, action_result=action_result
-        )
+        action_result = action_results[result_index]
 
         tc_args_for_cache = dict(tool_call.arguments)
         loop_cache.invalidate_for_write(tool_name, tc_args_for_cache)
@@ -212,30 +313,10 @@ def execute_iteration_results(
             and profile.stop_on_needs_user
         ):
             if _is_confirm_required(action_result):
-                pending_command = command_outcome.approved_command
-                queued_siblings = []
-                for _later_tool_call, later_outcome in ordered_tool_results[
-                    result_index + 1 :
-                ]:
-                    later_action_result = later_outcome.action_result
-                    later_command = later_outcome.approved_command
-                    if later_action_result is not None and _is_confirm_required(
-                        later_action_result
-                    ):
-                        queued_siblings.append(later_command.model_copy(deep=True))
-                pending_confirmation = pending_command.model_copy(deep=True)
-                if queued_siblings:
-                    loop_ctx.state.pending_confirmation_command = (
-                        attach_confirmation_replay_queue(
-                            pending_confirmation, queued_siblings
-                        )
-                    )
-                else:
-                    loop_ctx.state.pending_confirmation_command = pending_confirmation
-                loop_ctx.state.post_action_user_message = (
-                    confirmation_required_user_message(
-                        loop_ctx.state.pending_confirmation_command
-                    )
+                _set_pending_confirmation(
+                    loop_ctx,
+                    command_outcome=command_outcome,
+                    later_outcomes=ordered_tool_results[result_index + 1 :],
                 )
             loop_state.termination_reason = ADAPTIVE_TERM_NEEDS_USER
             emit_adaptive_status(
@@ -259,13 +340,6 @@ def execute_iteration_results(
             )
 
         if is_budget_exhausted_action_result(action_result):
-            loop_state.messages.append(
-                action_result_to_tool_message(
-                    tool_call.id,
-                    tool_name,
-                    action_result,
-                )
-            )
             budget_finalization_outcome = force_budget_answer_only_finalization(
                 loop_ctx=loop_ctx,
                 profile=profile,
@@ -305,22 +379,13 @@ def execute_iteration_results(
                 ),
             )
 
-        loop_state.messages.append(
-            action_result_to_tool_message(
-                tool_call.id,
-                tool_name,
-                action_result,
-            )
-        )
-        recovery_message = build_tool_failure_recovery_message(
-            tool_name=tool_name,
+        _apply_tool_failure_recovery(
+            loop_state,
+            tool_call=tool_call,
             action_result=action_result,
+            recovery_enabled=profile.allow_llm_recovery_after_tool_failure,
+            build_recovery_message=build_tool_failure_recovery_message,
         )
-        if (
-            recovery_message is not None
-            and profile.allow_llm_recovery_after_tool_failure
-        ):
-            loop_state.messages.append(recovery_message)
         batch_had_progress = True
         if on_tool_result is not None:
             on_tool_result(loop_state)

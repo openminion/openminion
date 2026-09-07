@@ -81,6 +81,38 @@ class SessionContextServiceTests(unittest.TestCase):
         second_result = service.compact_session(session_id=session.id)
         self.assertEqual(second_result.compacted_count, 0)
 
+    def test_history_exclusions_overfetch_without_reintroducing_compacted_rows(
+        self,
+    ) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="room"
+        )
+        records = [
+            self.store.append_message(
+                session_id=session.id,
+                role="inbound" if index % 2 == 0 else "outbound",
+                body=f"message-{index}",
+            )
+            for index in range(6)
+        ]
+        service = SessionContextService(
+            self.store,
+            keep_recent_messages=2,
+            max_compact_per_turn=50,
+        )
+        service.compact_session(session_id=session.id)
+
+        history = service.build_history(
+            session_id=session.id,
+            channel="console",
+            target="room",
+            recent_limit=2,
+            exclude_history_message_ids=(records[-1].id,),
+        )
+
+        self.assertEqual(history[0].metadata.get("role"), "system")
+        self.assertEqual([item.id for item in history[1:]], [records[-2].id])
+
     def test_token_budget_avoids_compacting_tiny_messages_within_safety_bound(
         self,
     ) -> None:
@@ -853,6 +885,7 @@ class SessionContextServiceTests(unittest.TestCase):
                     channel="console",
                     target="chat",
                     recent_limit=5,
+                    exclude_history_message_ids=(),
                     conversation_id=None,
                     thread_id=None,
                 )

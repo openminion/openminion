@@ -9,9 +9,15 @@ from time import perf_counter
 from typing import Any
 
 from openminion.services.runtime.manager import (
-    AgentRuntimeManager, DesktopApprovalRequest, ToolCallSummary, TurnChunk,
-    TurnError, TurnResponse, TurnTelemetry,
-)  # fmt: skip
+    AgentRuntimeManager,
+    ToolCallSummary,
+    TurnChunk,
+    TurnError,
+    TurnResponse,
+    TurnTelemetry,
+)
+from openminion.services.runtime.interfaces import DesktopApprovalRequest
+from openminion.modules.brain.diagnostics.status import phase_status_payload
 from openminion.modules.telemetry.lifecycle import (
     lifecycle_event_from_payload, map_cron_event_to_lifecycle_event,
     map_runtime_event_to_lifecycle_event,
@@ -175,6 +181,9 @@ def attach_cron_scheduler(
         )
         turn_executor = _cron_turn_executor_for_runtime(runtime, cron_store=cron_store)
         delivery_bridge = CronDeliveryBridge(runtime=runtime)
+        from openminion.modules.task import TaskManager
+
+        task_manager = TaskManager.from_cron_repository(cron_store)
 
         scheduler = CronScheduler(
             store=cron_store,
@@ -191,6 +200,11 @@ def attach_cron_scheduler(
                 if lifecycle_bridge is not None
                 else None
             ),
+            can_start_background_work=lambda: (
+                runtime.runtime_manager is None
+                or not runtime.runtime_manager.has_foreground_work()
+            ),
+            record_task_outcomes=task_manager.reconcile_scheduled_outcomes,
         )
         scheduler.start()
         _seed_cron_cleanup_job(cron_store)
@@ -354,6 +368,7 @@ def _execute_runtime_turn_with_timer(
     progress_callback: Any,
     approval_callback: Any,
 ) -> tuple[Any, Any]:
+    approval_options = {"approval_callback": approval_callback} if approval_callback else {}  # fmt: skip
     with phase_timing.use_chat_phase_timer(timer):
         with phase_timing.active_chat_phase("provider_request_build"):
             ingress_request = runtime_turn_request_from_manager_request(
@@ -364,7 +379,7 @@ def _execute_runtime_turn_with_timer(
             runtime=runtime,
             request=ingress_request,
             progress_callback=progress_callback,
-            approval_callback=approval_callback,
+            **approval_options,
         )
     return turn_result, ingress_request
 
@@ -458,6 +473,8 @@ def _emit_turn_phase_status(
     candidate_kind = str(status_payload.get("kind", "") or "").strip()
     if candidate_kind in {"tool_started", "tool_completed", "budget_event"}:
         chunk_kind = candidate_kind
+    else:
+        status_payload = phase_status_payload(status_payload)
     emit_chunk(
         TurnChunk(
             trace_id=request.trace_id,

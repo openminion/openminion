@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
+from threading import RLock
 from typing import TYPE_CHECKING, Any, Literal
 
 from openminion.modules.tool.contracts import ProviderToolCall, ProviderToolSpec
@@ -68,6 +69,7 @@ class ToolRegistry:
         self._tools: dict[str, Any] = {}
         self._category_index: dict[str, set[str]] = {}
         self._sidecar_autostart: Callable[..., dict[str, Any]] | None = None
+        self._temporary_registration_lock = RLock()
         self.mcp_manager: MCPFleetHandle | None = None
         self._exposure_service = ToolExposureService()
         for tool in tools or []:
@@ -76,6 +78,10 @@ class ToolRegistry:
     @property
     def exposure_service(self) -> "ToolExposureService":
         return self._exposure_service
+
+    @property
+    def temporary_registration_lock(self) -> RLock:
+        return self._temporary_registration_lock
 
     def register(self, tool: Any) -> None:
         _catalog_register_tool(self, tool)

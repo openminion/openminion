@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_file_and_admit
 
 
 SAMPLES_ROOT = Path(__file__).resolve().parents[2] / "examples" / "skills"
@@ -32,8 +33,8 @@ def test_e2e_skill_ingest_and_match(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
         path = SAMPLES_ROOT / "api-account-create-post-share" / "SKILL.md"
-        skill_id, version_hash, warnings = ctl.ingest_file(
-            path, name="api-account-create-post-share"
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl, path, name="api-account-create-post-share"
         )
 
         assert skill_id == "api-account-create-post-share"
@@ -70,11 +71,11 @@ def test_e2e_multi_skill_flow(tmp_path: Path) -> None:
         path1 = SAMPLES_ROOT / "api-account-create-post-share" / "SKILL.md"
         path2 = SAMPLES_ROOT / "api-account-publish-share" / "SKILL.md"
 
-        skill_id1, version_hash1, warnings1 = ctl.ingest_file(
-            path1, name="api-account-create-post-share"
+        skill_id1, version_hash1, warnings1 = ingest_file_and_admit(
+            ctl, path1, name="api-account-create-post-share"
         )
-        skill_id2, version_hash2, warnings2 = ctl.ingest_file(
-            path2, name="api-account-publish-share"
+        skill_id2, version_hash2, warnings2 = ingest_file_and_admit(
+            ctl, path2, name="api-account-publish-share"
         )
 
         assert skill_id1 == "api-account-create-post-share"
@@ -99,11 +100,11 @@ def test_e2e_skill_version_tracking(tmp_path: Path) -> None:
     try:
         path = SAMPLES_ROOT / "api-account-create-post-share" / "SKILL.md"
 
-        skill_id1, version_hash1, _ = ctl.ingest_file(
-            path, name="api-account-create-post-share"
+        skill_id1, version_hash1, _ = ingest_file_and_admit(
+            ctl, path, name="api-account-create-post-share"
         )
-        skill_id2, version_hash2, _ = ctl.ingest_file(
-            path, name="api-account-create-post-share"
+        skill_id2, version_hash2, _ = ingest_file_and_admit(
+            ctl, path, name="api-account-create-post-share"
         )
 
         assert len(version_hash1) == 64

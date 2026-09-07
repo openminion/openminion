@@ -36,6 +36,15 @@ class ParserTests(unittest.TestCase):
             parser.parse_args(["--" + "conf", "config.json", "config", "show"])
         self.assertEqual(ctx.exception.code, 2)
 
+    def test_root_profile_precedes_lazy_loaded_command(self) -> None:
+        args = build_parser().parse_args(
+            ["--profile", "minimax-m2-7", "autonomy", "list", "--json"]
+        )
+
+        self.assertEqual(args.agent, "minimax-m2-7")
+        self.assertEqual(args.command, "autonomy")
+        self.assertEqual(args.autonomy_command, "list")
+
     def test_gateway_once_parse(self) -> None:
         parser = build_parser()
         args = parser.parse_args(

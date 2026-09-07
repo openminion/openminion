@@ -13,8 +13,8 @@ the health snapshot.
 
 ## Public surface
 
-Currently exported through direct submodule imports (no `__init__.py`
-re-exports — consumers import by file). The intended public surface:
+Diagnostics owners are imported through their direct submodules. The supported
+package-internal surface is:
 
 - `debug.ToolSelectionDebugPayload` — tool-selection debug record
 - `debug.create_tool_selection_debug_payload(...)` — builder

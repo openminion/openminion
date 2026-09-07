@@ -38,6 +38,8 @@ from tests.context.knowledge.fixtures import (
     write_pragmagraph_snapshot,
 )
 
+pytestmark = pytest.mark.package_integration
+
 ensure_pragmagraph_src_on_path()
 
 

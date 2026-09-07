@@ -93,24 +93,22 @@ def _error(status: HTTPStatus, code: str, message: str) -> RouteResult:
 
 
 def session_cancel_callback(ctx: APIRouteContext) -> Callable[[str], None] | None:
-    if ctx.client_approvals is None:
+    approvals = ctx.client_approvals
+    if approvals is None:
         return None
-    return lambda session_id: ctx.client_approvals.cancel_session(
-        session_id, "session_closed"
-    )
+    return lambda session_id: approvals.cancel_session(session_id, "session_closed")
 
 
 def recovery_callback(
     ctx: APIRouteContext,
     session_id: str,
 ) -> Callable[[str, str, str], str] | None:
-    if ctx.client_approvals is None or ctx.client_identity is None:
+    approvals = ctx.client_approvals
+    if approvals is None or ctx.client_identity is None:
         return None
     client_id = ctx.client_identity.client_id
-    return lambda trace_id, approval_id, expires_at: (
-        ctx.client_approvals.recovery_outcome(
-            client_id, session_id, trace_id, approval_id, expires_at
-        )
+    return lambda trace_id, approval_id, expires_at: approvals.recovery_outcome(
+        client_id, session_id, trace_id, approval_id, expires_at
     )
 
 

@@ -19,10 +19,10 @@ class StorageMigrationTests(unittest.TestCase):
             database_path = Path(tmp) / "state" / "openminion.db"
 
             result = migrate_database(database_path)
-            self.assertEqual(result.current_version, 10)
+            self.assertEqual(result.current_version, 11)
             self.assertEqual(
                 result.applied_versions,
-                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
             )
 
             with sqlite3.connect(str(database_path)) as conn:
@@ -84,6 +84,7 @@ class StorageMigrationTests(unittest.TestCase):
                         (8, "add_session_context_summary_short"),
                         (9, "add_room_participants_and_active_agent"),
                         (10, "add_session_turn_leases"),
+                        (11, "add_canonical_events_and_capture_holds"),
                     ],
                 )
 
@@ -94,19 +95,19 @@ class StorageMigrationTests(unittest.TestCase):
             first = migrate_database(database_path)
             second = migrate_database(database_path)
 
-            self.assertEqual(first.current_version, 10)
+            self.assertEqual(first.current_version, 11)
             self.assertEqual(
                 first.applied_versions,
-                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
             )
-            self.assertEqual(second.current_version, 10)
+            self.assertEqual(second.current_version, 11)
             self.assertEqual(second.applied_versions, ())
 
             with sqlite3.connect(str(database_path)) as conn:
                 migration_count = conn.execute(
                     "SELECT COUNT(*) FROM migrations"
                 ).fetchone()[0]
-                self.assertEqual(migration_count, 10)
+                self.assertEqual(migration_count, 11)
 
     def test_run_migrations_rolls_back_failed_migration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

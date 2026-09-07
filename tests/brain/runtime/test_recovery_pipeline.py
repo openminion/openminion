@@ -356,6 +356,12 @@ def test_build_retry_tool_message_is_deterministic() -> None:
                 "validation_error field=args.q code=missing_required "
                 "expected=required actual=missing"
             ),
+            "details": {
+                "actual_type": "missing",
+                "error_code": "missing_required",
+                "expected_type": "required",
+                "field_path": "args.q",
+            },
         },
     }
 

@@ -209,6 +209,10 @@ def _tool_result_from_payload(*, tool_name: str, payload: Any) -> ToolExecutionR
         }
     )
     data = strip_tool_result_noise(data)
+    if isinstance(raw_error, Mapping):
+        data["error_code"] = str(raw_error.get("code", "") or "EXEC_ERROR")
+        if isinstance(raw_error.get("details"), Mapping):
+            data["details"] = dict(raw_error["details"])
     if not content and data:
         try:
             content = json.dumps(data, sort_keys=True, default=str)
@@ -236,6 +240,15 @@ def execute_tool_spec_call(
     from openminion.modules.tool.errors import ToolRuntimeError
 
     tool_name = str(getattr(tool, "name", "")).strip() or "unknown"
+    if tool_name == "blockchain.send_transaction":
+        return ToolExecutionResult(
+            tool_name=tool_name,
+            ok=False,
+            content="",
+            verified=False,
+            error="Blockchain transaction send requires the canonical policy service.",
+            data={"error_code": "POLICY_MODE_UNSUPPORTED"},
+        )
     args_model = getattr(tool, "args_model", dict)
     validated_args = _validated_tool_arguments(
         tool_name=tool_name,

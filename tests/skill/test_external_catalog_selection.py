@@ -4,6 +4,11 @@ from pathlib import Path
 
 from openminion.modules.skill.models import SkillPackage
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import (
+    ingest_artifact_and_admit,
+    ingest_file_and_admit,
+    ingest_text_and_admit,
+)
 
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures" / "external_catalog"
 
@@ -39,8 +44,8 @@ def _ingest_catalog(ctl: Skill) -> dict[str, tuple[str, str]]:
     ]
     out: dict[str, tuple[str, str]] = {}
     for provider, name in fixtures:
-        skill_id, version_hash, warnings = ctl.ingest_file(
-            _fixture_path(provider, name, "SKILL.md")
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl, _fixture_path(provider, name, "SKILL.md")
         )
         assert not any(item.startswith("lint.error:") for item in warnings)
         out[name] = (skill_id, version_hash)
@@ -50,8 +55,8 @@ def _ingest_catalog(ctl: Skill) -> dict[str, tuple[str, str]]:
 def test_linear_bundle_ingest_enriches_descriptor_fields(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path, known_tools=["http_request"]))
     try:
-        skill_id, version_hash, warnings = ctl.ingest_file(
-            _fixture_path("openai", "linear", "SKILL.md")
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl, _fixture_path("openai", "linear", "SKILL.md")
         )
 
         assert not any(item.startswith("lint.error:") for item in warnings)
@@ -93,7 +98,8 @@ def test_ingest_text_does_not_bundle_enrich(tmp_path: Path) -> None:
         markdown = _fixture_path("openai", "linear", "SKILL.md").read_text(
             encoding="utf-8"
         )
-        skill_id, version_hash, warnings = ctl.ingest_text(
+        skill_id, version_hash, warnings = ingest_text_and_admit(
+            ctl,
             name="linear",
             markdown=markdown,
         )
@@ -124,7 +130,8 @@ def test_ingest_artifact_does_not_bundle_enrich(tmp_path: Path) -> None:
         artifact_loader=lambda _ref: markdown,
     )
     try:
-        skill_id, version_hash, warnings = ctl.ingest_artifact(
+        skill_id, version_hash, warnings = ingest_artifact_and_admit(
+            ctl,
             "artifact://linear",
             name="linear",
         )
@@ -145,8 +152,8 @@ def test_ingest_artifact_does_not_bundle_enrich(tmp_path: Path) -> None:
 def test_short_description_precedence_uses_markdown_metadata(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path, known_tools=["file"]))
     try:
-        skill_id, version_hash, warnings = ctl.ingest_file(
-            _fixture_path("openai", "frontend-skill", "SKILL.md")
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl, _fixture_path("openai", "frontend-skill", "SKILL.md")
         )
 
         assert warnings == []
@@ -154,6 +161,69 @@ def test_short_description_precedence_uses_markdown_metadata(tmp_path: Path) -> 
         assert package.display_name == "Frontend Skill"
         assert package.short_description == "Implement frontend polish for UI tasks"
         assert package.default_prompt == "Help me refine this frontend experience."
+    finally:
+        ctl.close()
+
+
+def test_openai_bundle_preserves_companion_and_progressive_resource(
+    tmp_path: Path,
+) -> None:
+    ctl = Skill(_cfg(tmp_path))
+    try:
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl,
+            _fixture_path("openai", "swiftui-performance-audit", "SKILL.md"),
+        )
+
+        assert "parse.warning:companion_metadata_unavailable" not in warnings
+        package = ctl.get_skill(skill_id, version_hash)
+        assert package.display_name == "SwiftUI Performance Audit"
+        assert package.bundle_metadata["source"] == "openai"
+        assert package.recipe is None
+        assert [item["path"] for item in package.resources] == [
+            "references/ContentView.swift"
+        ]
+
+        resource = ctl.read_skill_resource(
+            skill_id=skill_id,
+            version_hash=version_hash,
+            resource_path="references/ContentView.swift",
+        )
+        assert "struct ContentView" in resource["content"]
+        assert resource["truncated"] is False
+    finally:
+        ctl.close()
+
+
+def test_hermes_bundle_keeps_supported_resources_and_reports_unknown_metadata(
+    tmp_path: Path,
+) -> None:
+    ctl = Skill(_cfg(tmp_path))
+    try:
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl,
+            _fixture_path("hermes", "system-inventory", "SKILL.md"),
+        )
+
+        assert "parse.warning:companion_metadata_unavailable" in warnings
+        assert {
+            warning
+            for warning in warnings
+            if warning.startswith("parse.warning:unknown_front_matter_key:")
+        } == {
+            "parse.warning:unknown_front_matter_key:author",
+            "parse.warning:unknown_front_matter_key:platforms",
+            "parse.warning:unknown_front_matter_key:prerequisites",
+        }
+        package = ctl.get_skill(skill_id, version_hash)
+        assert package.bundle_metadata["source"] == "none"
+        assert package.recipe is None
+        assert [item["path"] for item in package.resources] == [
+            "references/collection-guide.md",
+            "specifications/report-schema.md",
+        ]
+        assert package.resources[1]["kind"] == "supporting"
+        assert all("child/" not in item["path"] for item in package.resources)
     finally:
         ctl.close()
 
@@ -198,8 +268,8 @@ def test_short_description_queries_return_target_in_top3(tmp_path: Path) -> None
 def test_template_lint_omits_registry_unavailable_noise(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path, include_known_tools=False))
     try:
-        skill_id, version_hash, warnings = ctl.ingest_file(
-            _fixture_path("anthropic", "template-negative", "SKILL.md")
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl, _fixture_path("anthropic", "template-negative", "SKILL.md")
         )
         assert any("skill.procedure_missing" in item for item in warnings)
         assert not any("tool.registry_unavailable" in item for item in warnings)
@@ -216,8 +286,8 @@ def test_template_lint_omits_registry_unavailable_noise(tmp_path: Path) -> None:
 def test_explicit_empty_registry_still_warns_unknown_tools(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path, known_tools=[]))
     try:
-        skill_id, version_hash, warnings = ctl.ingest_file(
-            _fixture_path("anthropic", "template-negative", "SKILL.md")
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl, _fixture_path("anthropic", "template-negative", "SKILL.md")
         )
         assert any("lint.warning:tool.unknown" in item for item in warnings)
 
@@ -258,8 +328,8 @@ def _ingest_family(
 ) -> dict[str, tuple[str, str]]:
     out: dict[str, tuple[str, str]] = {}
     for provider, name in family:
-        skill_id, version_hash, warnings = ctl.ingest_file(
-            _fixture_path(provider, name, "SKILL.md")
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl, _fixture_path(provider, name, "SKILL.md")
         )
         assert not any(item.startswith("lint.error:") for item in warnings)
         out[name] = (skill_id, version_hash)
@@ -420,8 +490,8 @@ def test_anthropic_descriptor_scarce_render_snippet(tmp_path: Path) -> None:
 def test_suspicious_tools_claude_api_baseline(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path, known_tools=["http_request"]))
     try:
-        skill_id, version_hash, _warnings = ctl.ingest_file(
-            _fixture_path("anthropic", "claude-api", "SKILL.md")
+        skill_id, version_hash, _warnings = ingest_file_and_admit(
+            ctl, _fixture_path("anthropic", "claude-api", "SKILL.md")
         )
         package = ctl.get_skill(skill_id, version_hash)
         assert package.tools == ["http_request"]
@@ -442,8 +512,8 @@ def test_suspicious_tools_claude_api_baseline(tmp_path: Path) -> None:
 def test_suspicious_tools_figma_design_system_rules_baseline(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path, known_tools=["browser"]))
     try:
-        skill_id, version_hash, _warnings = ctl.ingest_file(
-            _fixture_path("openai", "figma_create_design_system_rules", "SKILL.md")
+        skill_id, version_hash, _warnings = ingest_file_and_admit(
+            ctl, _fixture_path("openai", "figma_create_design_system_rules", "SKILL.md")
         )
         package = ctl.get_skill(skill_id, version_hash)
         assert package.tools == ["browser"]
@@ -461,8 +531,8 @@ def test_suspicious_tools_figma_design_system_rules_baseline(tmp_path: Path) -> 
 def test_suspicious_tools_linear_baseline(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path, known_tools=["http_request"]))
     try:
-        skill_id, version_hash, _warnings = ctl.ingest_file(
-            _fixture_path("openai", "linear", "SKILL.md")
+        skill_id, version_hash, _warnings = ingest_file_and_admit(
+            ctl, _fixture_path("openai", "linear", "SKILL.md")
         )
         package = ctl.get_skill(skill_id, version_hash)
         assert package.tools == ["http_request"]

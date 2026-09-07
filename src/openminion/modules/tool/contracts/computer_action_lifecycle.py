@@ -366,8 +366,12 @@ def _apply_expiry(
             }
         )
     if record.phase in {"dispatched", "accepted"}:
-        cancellation = ActionCancellationV1(
-            **_identity_dict(record.invocation), reason="expired", requested_at=now
+        cancellation = ActionCancellationV1.model_validate(
+            {
+                **_identity_dict(record.invocation),
+                "reason": "expired",
+                "requested_at": now,
+            }
         )
         return record.model_copy(
             update={
@@ -509,7 +513,8 @@ def _validate_record_timestamps(record: ActionRecordV1) -> None:
             _validation_error("accepted acknowledgement is too late")
         acknowledged_expired = _instant(acknowledgement.acknowledged_at) >= expires
         if acknowledgement.state == "rejected" and (
-            (acknowledgement.error.code == "expired") != acknowledged_expired
+            acknowledgement.error is None
+            or (acknowledgement.error.code == "expired") != acknowledged_expired
         ):
             _validation_error("rejected acknowledgement time is invalid")
     cancellation = record.cancellation
@@ -596,12 +601,13 @@ def _validate_active_record(record: ActionRecordV1) -> None:
     ):
         _validation_error("accepted record coupling is invalid")
     if record.phase == "cancel_requested":
-        accepted = record.acknowledgement is not None
+        acknowledgement = record.acknowledgement
+        accepted = acknowledgement is not None
         valid = (
             record.dispatch
             and record.cancellation
             and record.pre_cancel_phase == ("accepted" if accepted else "dispatched")
-            and (not accepted or record.acknowledgement.state == "accepted")
+            and (acknowledgement is None or acknowledgement.state == "accepted")
         )
         if not valid:
             _validation_error("cancel-requested record coupling is invalid")

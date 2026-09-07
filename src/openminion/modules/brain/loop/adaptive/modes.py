@@ -64,11 +64,13 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_FILE_EDIT,
     MODEL_FILE_WRITE,
 )
+from openminion.modules.tool.diagnostics.events import is_structural_security_agent
 
-from ..services import runner_from_context
+from ..services import runner_from_context, runtime_allows_tool
 
 from .allowed_tools import (
     ACT_ADAPTIVE_ALLOWED_TOOLS,
+    _allows_general_decompose,
     _memory_consolidation_profile_overrides,
     _watch_profile_overrides,
     _with_exposed_runtime_tools,
@@ -82,6 +84,7 @@ from .context import (
 )
 from .tool_scope import (
     _adaptive_public_attr,
+    _prepare_entry_selected_tool_scope,
     _public_act_label,
     _public_act_tag,
     _with_requested_allowed_tools,
@@ -115,6 +118,10 @@ def _seed_requests_inactive_tool(seed_response: Any) -> bool:
         str(getattr(call, "name", "") or "").strip() == "tool.request"
         for call in list(getattr(seed_response, "tool_calls", []) or [])
     )
+
+
+def _tool_result_scratchpad(agent_id: str) -> dict[str, Any]:
+    return {"telemetry.structural_tool_results": is_structural_security_agent(agent_id)}
 
 
 from .finalization import ActLoopFinalizationMixin  # noqa: E402
@@ -275,7 +282,11 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
             mode_state="prepare",
             payload={
                 "act.profile": BRAIN_ACT_PROFILE_GENERAL,
-                "act.allowed_tools": sorted(ACT_ADAPTIVE_ALLOWED_TOOLS),
+                "act.allowed_tools": sorted(
+                    tool_name
+                    for tool_name in ACT_ADAPTIVE_ALLOWED_TOOLS
+                    if runtime_allows_tool(runner_from_context(ctx), tool_name)
+                ),
             },
         )
         return ModePreparation(mode_result=None, consume_user_input_for_command=False)
@@ -409,7 +420,6 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                     max(_effective_max_iterations, _approved_target_cap),
                     ADAPTIVE_BUDGET_HARD_CAP,
                 )
-
         profile_name = (
             "memory_consolidation_v1"
             if consolidation_overrides is not None
@@ -426,10 +436,10 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         )
         effective_allowed_tools = _with_general_decompose_allowed_tools(
             effective_allowed_tools,
+            runner,
             profile_name=profile_name,
             decision_reason_code=decision_reason_code,
         )
-
         profile = AdaptiveToolLoopProfile(
             profile_name=profile_name,
             mode_name=BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
@@ -454,13 +464,18 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
             adaptive_budget_config=_aib_config,
         )
         loop_ctx_adapter = _AdaptiveLoopContextAdapter(ctx)
-        shortlisting_scratchpad: dict[str, Any] = {}
+        shortlisting_scratchpad = _tool_result_scratchpad(ctx.state.agent_id)
         requestable_tool_specs = None
         tool_specs = full_tool_specs
+        tool_request_allowed = runtime_allows_tool(runner, "tool.request")
         runtime_tool_registry_available = (
             getattr(getattr(runner, "tool_api", None), "registry", None) is not None
         )
-        if _seed_requests_inactive_tool(seed_response):
+        if decision_reason_code == "entry_tool_call" and tool_request_allowed:
+            tool_specs, requestable_tool_specs = _prepare_entry_selected_tool_scope(
+                full_tool_specs, seed_response, shortlisting_scratchpad
+            )
+        elif tool_request_allowed and _seed_requests_inactive_tool(seed_response):
             tool_specs = []
             requestable_tool_specs = list(full_tool_specs)
             shortlisting_scratchpad.update(
@@ -501,9 +516,9 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 shortlisting_scratchpad["turn_progress_total_tokens_used"] = (
                     shortlisting_tokens
                 )
-        if (
-            str(profile.profile_name or "").strip() == "general_adaptive_v1"
-            and decision_reason_code != "research_iteration_fallback"
+        if "decompose" in effective_allowed_tools and _allows_general_decompose(
+            profile_name=profile.profile_name,
+            decision_reason_code=decision_reason_code,
         ):
             tool_specs = _with_decompose_tool_spec(list(tool_specs))
         if direct_tool_turn is not None and requestable_tool_specs is not None:

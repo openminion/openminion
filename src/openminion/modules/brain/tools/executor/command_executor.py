@@ -7,6 +7,7 @@ from ...constants import (
     BRAIN_COMMAND_KIND_ASK_USER,
     BRAIN_COMMAND_KIND_TOOL,
 )
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from ...execution.skill_binding import activate_skill_for_command
 from ...loop.tools.contracts import (
     CommandExecutionOutcome,
@@ -15,6 +16,7 @@ from ...loop.tools.contracts import (
     RawToolResult,
 )
 from ...schemas import (
+    ActionError,
     ActionResult,
     Command,
 )
@@ -188,12 +190,20 @@ class RunnerCommandExecutor:
         if approved.kind == BRAIN_COMMAND_KIND_ASK_USER:
             summary = approved.question or "Need clarification."
             disposition = _prepare_outcome_disposition(approved)
+            policy_approval_id = state.pending_policy_approval_id
+            action_error = None
+            if policy_approval_id:
+                action_error = ActionError(
+                    code=TOOL_ERROR_CONFIRM_REQUIRED,
+                    message=summary,
+                )
             action_result = ActionResult(
                 command_id=str(
                     getattr(approved, "command_id", "") or command.command_id
                 ),
                 status=BRAIN_ACTION_STATUS_NEEDS_USER,
                 summary=summary,
+                error=action_error,
             )
             if getattr(command, "kind", "") == BRAIN_COMMAND_KIND_TOOL:
                 self.stage_tool_outcome_candidate(
@@ -204,7 +214,7 @@ class RunnerCommandExecutor:
                     forced_outcome="policy_denied",
                 )
             return PrepareOutcome(
-                approved_command=approved,
+                approved_command=command if policy_approval_id else approved,
                 original_command=command,
                 command_id=str(
                     getattr(approved, "command_id", "") or command.command_id
@@ -212,6 +222,8 @@ class RunnerCommandExecutor:
                 tool_name=str(getattr(command, "tool_name", "") or "").strip(),
                 disposition=disposition,
                 action_result=action_result,
+                policy_approval_id=policy_approval_id,
+                policy_confirmation_preview=(state.pending_policy_confirmation_preview),
             )
         return prepare_tool_dispatch(
             self.runner,

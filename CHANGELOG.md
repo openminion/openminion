@@ -1,15 +1,115 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-07-12
+Last updated: 2026-09-06
 
 This file tracks package-facing release notes for `openminion`.
 
-## Unreleased
+## Unreleased - 2026-09-06
 
-- No unreleased package-facing changes yet.
+- Preserved room agent identity through interactive startup and kept
+  participant-attributed transcript styling consistent across streamed and
+  stored room messages.
+- Restored context recall and final-use attribution without duplicating memory
+  effects during replay.
 
-## Current package line - 2026-07-12
+## Current package line - 2026-09-05
+
+- Added restart-safe remote session event inspection, task activity links, and
+  typed approval resume while requiring authentication for non-loopback API
+  binds.
+- Added digest-pinned offline plugin installation with staged validation,
+  collision checks, explicit config declarations, and exact rollback of failed
+  installs.
+- Added approval-bound repository delivery across Git remotes, pull request
+  updates and merges, workflow dispatches, check inspection, and GitHub
+  releases, including preflight validation and uncertain-effect reconciliation.
+- Persisted project plans, repository lifecycle state, tool scopes, terminal
+  outcomes, and scheduled check continuations across pauses and resumed work.
+- Bound delegated review to artifact digests and durable child dispositions so
+  corrected artifacts retain auditable review evidence.
+- Added portable skill-bundle admission and authoring support plus a reviewed
+  repository-delivery procedure with explicit stop rules.
+- Consolidated interactive Focus onto the canonical terminal renderer, added
+  root `--version` and repeatable `--add-dir`, and made workspace trust and
+  transient grants explicit.
+- Strengthened memory retention, final-use attribution, replay suppression,
+  corrupt-shape rejection, and truthful recall paths.
+- Hardened tool, plugin, extension, and MCP ownership boundaries while adding
+  exact Python symbol ranges and clearer protocol and operator behavior.
+- Added typed social-signal watches with bounded fetching, durable scheduled
+  execution, and visible delivery outcomes.
+- Added read-only security audit reports and completed bounded blockchain
+  diagnostics and explicit approval flows while preserving the optional
+  dependency boundary for bare package installs.
+- Improved provider retry enforcement, pairing and session status, token and
+  provider telemetry, CPU measurement, and bounded Focus history.
+
+## Prior package line - 2026-09-02
+
+- Added durable human-agent Focus rooms with explicit participant roles,
+  multi-agent routing, direct addressing, participant controls, attributed
+  streaming, persisted transcripts, and interruption support.
+- Added agent-scoped model connection catalogs and model selection commands
+  while preserving configured defaults through setup and runtime handoffs.
+- Reduced CLI startup and renderer weight through lazy presentation imports,
+  optional Textual and figure dependencies, and packaged Textual styles.
+- Hardened delegated and A2A execution with idempotent concurrent starts,
+  cancellation safety, stale-work recovery, durable results, and isolated
+  per-turn tool and scope state.
+- Expanded correlated provider, HTTP, TUI, and request-response trace artifacts
+  and strengthened long-running smoke and verification reliability.
+- Restored formatter enforcement and aligned service typing and method-size
+  quality ratchets with the formatted release candidate.
+
+## Earlier package line - 2026-09-01
+
+- Generalized authenticated active-turn status and streaming contracts with
+  bounded history, redaction, terminal controls, and durable interruption
+  evidence across API, daemon, Focus, and autonomy surfaces.
+- Hardened deterministic deep-work execution with explicit evidence contracts,
+  resumable checkpoints, read-only review composition, and reliable tool,
+  verification, and complex-workflow closeout behavior.
+- Strengthened memory capture and recall with atomic capture bundles, explicit
+  retrieval eligibility, surfaced evidence, session continuity, and aligned
+  SQLite and PostgreSQL persistence paths.
+- Added scoped per-agent command grants, structured host inventory and
+  execution contracts, and validated external skill bundles while preserving
+  existing tool and skill ownership boundaries.
+- Added a bounded blockchain inspection, preparation, and transaction lifecycle
+  with explicit financial authorization, secret bridging, persistent
+  confirmations, and local certification coverage.
+
+## Earlier package line - 2026-08-29
+
+- Preserved typed project-turn and provider failures across CLI, runtime, cron,
+  checkpoint, and resume boundaries so verification cannot mask failed work.
+- Carried failed verifier output into later project cycles and resumed processes
+  so repair uses the durable failure evidence.
+- Preserved active plan-step progress when a running plan is redeclared and
+  aligned project-cycle claim windows with configured turn and verifier limits.
+- Preserved provider, service, and model identity in canonical LLM lifecycle
+  events, including native Ollama profiles.
+- Strengthened provider-session and sustained-autonomy certification harnesses
+  with effective identity, durable lineage, bounded redacted reports, and
+  restart evidence without claiming unfinished long-duration certification.
+
+## Earlier package line - 2026-08-27
+
+- Hardened agent-loop recovery with durable failed-turn outcomes, bounded tool
+  and finalization recovery, and clearer terminal evidence.
+- Strengthened delegated and A2A execution with explicit child contracts,
+  idempotent job ownership, normalized asynchronous lifecycle results, and
+  accurate child budget accounting.
+- Improved memory recall precision, weak-result abstention, capture assurance,
+  context disclosure, usage attribution, and connection lifecycle handling.
+- Added a shared public status-message catalog while preserving detailed
+  technical output and responsive Focus delegation flows.
+- Expanded resilience, autonomy, and package-quality certification across
+  runtime continuity, control-plane polling, release gates, and regression
+  coverage.
+
+## Historical package line - 2026-07-12
 
 - Added typed SophiaGraph namespace filters to existing `memctl` list/search
   commands and local memory-record HTTP routes.

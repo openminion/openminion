@@ -56,3 +56,35 @@ def test_duplicate_call_is_served_from_idempotency_cache(runtime: A2ARuntime) ->
     assert second.params["data"] == {"sum": 5}
     assert first.params["cached"] is False
     assert second.params["cached"] is True
+
+
+def test_identical_keys_do_not_replay_between_sessions(runtime: A2ARuntime) -> None:
+    calls = {"count": 0}
+
+    def handler(envelope: Envelope) -> dict:
+        calls["count"] += 1
+        return {"call": calls["count"]}
+
+    runtime.register_agent("calc", ["math."], handler)
+
+    def request(session_id: str) -> Envelope:
+        return Envelope.new(
+            from_agent="tester",
+            to_agent="calc",
+            to_capability=None,
+            type="call",
+            method="math.add",
+            params={"a": 2, "b": 3},
+            idempotency_key="call-1",
+            timeout_ms=1000,
+            meta={"session_id": session_id},
+        )
+
+    first = runtime.call(request("session-1"))
+    second = runtime.call(request("session-2"))
+
+    assert calls["count"] == 2
+    assert first.params["data"] == {"call": 1}
+    assert second.params["data"] == {"call": 2}
+    assert first.params["cached"] is False
+    assert second.params["cached"] is False

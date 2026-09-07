@@ -40,6 +40,43 @@ def _make_v2_memory(
 
 
 class GatewayServiceMemoryTests(GatewayServiceTestCase):
+    def test_assured_capture_result_bypasses_legacy_turn_parser(self) -> None:
+        class _Memory:
+            enabled = True
+
+            def record_turn(self, **_kwargs):
+                raise AssertionError("assured capture must not run the legacy parser")
+
+        metadata = {
+            "memory_capture_bundle_result": (
+                '{"capture_id":"capture-1","disposition":"succeeded",'
+                '"output_ids":["cand-1"]}'
+            )
+        }
+
+        record_memory_turn(
+            agent_memory=_Memory(),
+            logger=logging.getLogger(__name__),
+            agent_id="main",
+            memory_capsule_strategy="dynamic_turn",
+            memory_capsule_cache={},
+            session_id="sess-1",
+            run_id="run-1",
+            request_id="req-1",
+            channel="console",
+            target="local-user",
+            user_message="remember this",
+            assistant_message="ok",
+            conversation_id="",
+            thread_id="",
+            attach_id="",
+            emit_memory_event=lambda **_kwargs: None,
+            outbound_metadata=metadata,
+        )
+
+        self.assertEqual(metadata["memory_capture_state"], "succeeded")
+        self.assertEqual(metadata["memory_capture_output_count"], "1")
+
     def test_stale_memory_fence_does_not_enqueue_followup(self) -> None:
         class _Memory:
             def record_turn(self, **_kwargs):
@@ -832,6 +869,15 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         self.assertEqual(len(write_completed), 1)
         self.assertEqual(write_started[0].payload.get("patch_id"), patch_id)
         self.assertEqual(write_completed[0].payload.get("patch_id"), patch_id)
+        self.assertEqual(write_started[0].payload.get("capture_state"), "pending")
+        self.assertEqual(
+            write_started[0].payload.get("capture_evidence_id"),
+            write_completed[0].payload.get("capture_evidence_id"),
+        )
+        self.assertEqual(write_completed[0].payload.get("capture_state"), "processed")
+        self.assertEqual(
+            write_completed[0].payload.get("capture_reason"), "write_committed"
+        )
         # V2 generation counter starts at 0 and is incremented before return; first call = 1
         self.assertEqual(write_completed[0].payload.get("generation"), "1")
 
@@ -872,6 +918,14 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         ]
         self.assertEqual(len(write_started), 1)
         self.assertEqual(len(write_failed), 1)
+        self.assertEqual(write_started[0].payload.get("capture_state"), "pending")
+        self.assertEqual(
+            write_started[0].payload.get("capture_evidence_id"),
+            write_failed[0].payload.get("capture_evidence_id"),
+        )
+        self.assertEqual(
+            write_failed[0].payload.get("capture_state"), "failed_terminal"
+        )
         self.assertIn(
             "simulated memory write failure", write_failed[0].payload.get("error", "")
         )

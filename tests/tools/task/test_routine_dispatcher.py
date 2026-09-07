@@ -28,20 +28,6 @@ class _StubPreTurnContext:
         return self._response
 
 
-class _StubSink:
-    def __init__(self) -> None:
-        self.artifacts: list[tuple[str, str]] = []
-        self.announces: list[tuple[str, str]] = []
-
-    def write_artifact(self, *, routine_id: str, body: str) -> str:
-        artifact_id = f"artifact://{routine_id}/{len(self.artifacts)}"
-        self.artifacts.append((artifact_id, body))
-        return artifact_id
-
-    def announce(self, *, routine_id: str, summary: str) -> None:
-        self.announces.append((routine_id, summary))
-
-
 def _routine() -> RoutinePayloadV1:
     return RoutinePayloadV1(
         config=GitHubPrReviewConfigV1(owner="octocat", repo="hello-world"),
@@ -181,11 +167,10 @@ def _build_facts_for_post_turn(routine: RoutinePayloadV1):
     return handler.pre_turn(routine=routine, routine_id="job-1", ctx=ctx)
 
 
-def test_post_turn_success_writes_artifact_and_advances_cursor() -> None:
+def test_post_turn_success_requests_artifact_and_advances_cursor() -> None:
     handler = GitHubPrReviewHandler()
     routine = _routine()
     facts = _build_facts_for_post_turn(routine)
-    sink = _StubSink()
     outcome_text = (
         "<routine_outcome>"
         + json.dumps(
@@ -215,14 +200,15 @@ def test_post_turn_success_writes_artifact_and_advances_cursor() -> None:
         routine_id="job-1",
         facts=facts,
         outcome_text=outcome_text,
-        sink=sink,
     )
     assert result.ok is True
-    assert result.artifact_id is not None
-    assert len(sink.artifacts) == 1
-    assert len(sink.announces) == 1
-    assert result.kept_count == 1
-    assert result.new_findings_count == 1
+    assert result.artifact_body is not None
+    assert result.condition_value is True
+    assert result.metadata == {
+        "kept_count": 1,
+        "dropped_count": 0,
+        "new_findings_count": 1,
+    }
     assert result.updated_routine is not None
     cursor = result.updated_routine.cursor
     assert cursor.last_review_per_pr["1"].head_sha == "abc"
@@ -235,7 +221,6 @@ def test_post_turn_dedupes_identical_finding_on_second_run() -> None:
     handler = GitHubPrReviewHandler()
     routine = _routine()
     facts = _build_facts_for_post_turn(routine)
-    sink = _StubSink()
     outcome_payload = {
         "reviewed_prs": [
             {
@@ -255,11 +240,10 @@ def test_post_turn_dedupes_identical_finding_on_second_run() -> None:
         routine_id="job-1",
         facts=facts,
         outcome_text=text,
-        sink=sink,
     )
     assert first.ok is True
-    assert first.new_findings_count == 1
-    assert len(sink.artifacts) == 1
+    assert first.metadata["new_findings_count"] == 1
+    assert first.artifact_body is not None
 
     second_routine = first.updated_routine
     facts_2 = _build_facts_for_post_turn(second_routine)
@@ -268,29 +252,24 @@ def test_post_turn_dedupes_identical_finding_on_second_run() -> None:
         routine_id="job-1",
         facts=facts_2,
         outcome_text=text,
-        sink=sink,
     )
     assert second.ok is True
-    assert second.new_findings_count == 0
-    assert len(sink.artifacts) == 1  # unchanged
+    assert second.metadata["new_findings_count"] == 0
+    assert second.artifact_body is None
 
 
 def test_post_turn_trailer_missing_bumps_failure_counter() -> None:
     handler = GitHubPrReviewHandler()
     routine = _routine()
     facts = _build_facts_for_post_turn(routine)
-    sink = _StubSink()
     result = handler.post_turn(
         routine=routine,
         routine_id="job-1",
         facts=facts,
         outcome_text="model returned plain prose, no trailer here",
-        sink=sink,
     )
     assert result.ok is False
     assert result.reason_code == "trailer_missing"
-    assert sink.artifacts == []
-    assert sink.announces == []
     assert result.updated_routine.cursor.consecutive_failures == 1
 
 
@@ -298,7 +277,6 @@ def test_post_turn_outcome_validation_failed_records_distinct_code() -> None:
     handler = GitHubPrReviewHandler()
     routine = _routine()
     facts = _build_facts_for_post_turn(routine)
-    sink = _StubSink()
     bad_payload = {"reviewed_prs": [{"number": "not-an-int"}]}
     text = f"<routine_outcome>{json.dumps(bad_payload)}</routine_outcome>"
     result = handler.post_turn(
@@ -306,8 +284,6 @@ def test_post_turn_outcome_validation_failed_records_distinct_code() -> None:
         routine_id="job-1",
         facts=facts,
         outcome_text=text,
-        sink=sink,
     )
     assert result.ok is False
     assert result.reason_code == "outcome_validation_failed"
-    assert sink.artifacts == []

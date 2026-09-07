@@ -23,11 +23,9 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.schemas import (  # type: ignore[attr-defined]
     ActionError,
     ActionResult,
-    AgentCommand,
     JobHandle,
     WorkingState,
 )
-from openminion.modules.tool.contracts.model_ids import MODEL_TASK_DELEGATE
 from openminion.modules.brain.tools.lifecycle import (
     LIFECYCLE_EVENT_ON_SUBAGENT_STOP,
     LIFECYCLE_EVENT_POST_TOOL_USE,
@@ -245,64 +243,6 @@ def execute_action_dispatch(
                 ),
                 None,
             )
-        if tool_name == MODEL_TASK_DELEGATE:
-            args = dict(getattr(command, "args", {}) or {})
-            target_agent_id = str(args.get("agent_id", "") or "").strip()
-            instruction = str(args.get("instruction", "") or "").strip()
-            try:
-                timeout_seconds = int(args.get("timeout_seconds", 120) or 120)
-            except (TypeError, ValueError):
-                timeout_seconds = 120
-            if not target_agent_id or not instruction:
-                result = ActionResult(
-                    command_id=str(getattr(command, "command_id", "") or ""),
-                    status=BRAIN_ACTION_STATUS_FAILED,
-                    summary="Invalid task.delegate arguments",
-                    error=ActionError(
-                        code="TOOL_ARG_VALIDATION_FAILED",
-                        message="task.delegate requires agent_id and instruction.",
-                        details={
-                            "reason_code": "task_delegate_invalid_args",
-                            "missing_fields": [
-                                field
-                                for field, value in (
-                                    ("agent_id", target_agent_id),
-                                    ("instruction", instruction),
-                                )
-                                if not value
-                            ],
-                        },
-                    ),
-                )
-                runner._remember_idempotency(
-                    state=state, command=command, result=result
-                )
-                return result, None
-            command_id = (
-                str(getattr(command, "command_id", "") or "").strip() or "task-delegate"
-            )
-            delegated = AgentCommand(
-                command_id=command_id,
-                kind=BRAIN_COMMAND_KIND_AGENT,
-                title=f"Delegate task to {target_agent_id}",
-                target_agent_id=target_agent_id,
-                method="delegate",
-                params={
-                    "instruction": instruction,
-                    "timeout_seconds": timeout_seconds,
-                },
-                success_criteria={"status": "success"},
-                idempotency_key=str(getattr(command, "idempotency_key", "") or ""),
-                risk_level="med",
-            )
-            return execute_action_dispatch(
-                runner,
-                state=state,
-                command=delegated,
-                logger=logger,
-                sanitize_tool_command_args=sanitize_tool_command_args,
-                execute_action_fn=execute_action_fn,
-            )
         lineage = _command_lineage_payload(state=state, command=command)
         if state.budgets_remaining.tool_calls <= 0:
             return runner._budget_blocked_result(
@@ -437,7 +377,7 @@ def execute_action_dispatch(
         )
         _tool_duration_ms = int((time.monotonic() - _tool_started_at) * 1000)
         normalized, job = runner._normalize_execution_result(
-            command_id=command.command_id, raw=raw, provider="tool"
+            command_id=command.command_id, raw=raw, provider="tool", tool_name=tool_name
         )
         if job is None:
             logger.emit(
@@ -517,7 +457,9 @@ def execute_action_dispatch(
             {
                 "target_agent_id": command.target_agent_id,
                 "method": command.method,
-                "params": command.params,
+                "has_delegation_context": bool(
+                    command.params.get("delegation_context")
+                ),
                 **lineage,
             },
             trace_id=state.trace_id,
@@ -575,7 +517,11 @@ def execute_action_dispatch(
         if job is None:
             logger.emit(
                 "a2a.completed",
-                {"status": normalized.status, "summary": normalized.summary, **lineage},
+                {
+                    "status": normalized.status,
+                    "has_summary": bool(normalized.summary),
+                    **lineage,
+                },
                 trace_id=state.trace_id,
                 artifact_refs=[a.ref for a in normalized.artifact_refs],
                 memory_refs=normalized.memory_refs,

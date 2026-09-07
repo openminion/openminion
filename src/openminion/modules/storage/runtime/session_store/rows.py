@@ -5,6 +5,7 @@ from collections.abc import Mapping
 
 from .models import (
     EventRecord,
+    MemoryCaptureRetentionHoldRecord,
     MessageRecord,
     RoomParticipant,
     SessionContextRecord,
@@ -22,6 +23,12 @@ MESSAGE_COLUMNS = (
 PARTICIPANT_COLUMNS = (
     "id, session_id, participant_type, participant_id, channel, role, "
     "display_name, joined_at, left_at"
+)
+EVENT_COLUMNS = (
+    "id, session_id, event_type, payload_json, created_at, canonical_event_id"
+)
+RETENTION_HOLD_COLUMNS = (
+    "hold_id, session_id, reason, actor_id, created_at, released_at, schema_version"
 )
 
 
@@ -160,6 +167,21 @@ def row_to_event(row: Mapping[str, Any]) -> EventRecord:
         event_type=str(row["event_type"]),
         payload=parse_json_object(str(row["payload_json"])),
         created_at=str(row["created_at"]),
+        canonical_event_id=normalize_nullable_text(row.get("canonical_event_id")),
+    )
+
+
+def row_to_retention_hold(
+    row: Mapping[str, Any],
+) -> MemoryCaptureRetentionHoldRecord:
+    return MemoryCaptureRetentionHoldRecord(
+        hold_id=str(row["hold_id"]),
+        session_id=str(row["session_id"]),
+        reason=str(row["reason"]),
+        actor_id=str(row["actor_id"]),
+        created_at=str(row["created_at"]),
+        released_at=normalize_nullable_text(row["released_at"]),
+        schema_version=str(row["schema_version"]),
     )
 
 

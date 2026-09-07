@@ -15,6 +15,7 @@ from openminion.modules.context.service import (
     _apply_mode_budget_bias,
 )
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_text_and_admit
 
 
 _SKILL_MARKDOWN = """
@@ -42,9 +43,12 @@ Check deployment status on production.
 
 
 def _skill_cfg(tmp_path: Path) -> dict:
+    data_root = tmp_path / ".openminion"
     return {
         "skill": {
-            "sqlite_path": str(tmp_path / "skill-test.db"),
+            "sqlite_path": str(data_root / "skill-test.db"),
+            "blob_root": str(data_root / "blobs"),
+            "fallback_root": str(data_root / "fallback"),
             "wal": False,
             "default_status_filter": ["draft", "verified", "blessed"],
             "high_risk_status_filter": ["blessed", "verified", "draft"],
@@ -145,9 +149,10 @@ def test_act_mode_bias_bumps_skill_budget() -> None:
 def test_decide_build_pack_includes_skill_snippet_segment(tmp_path: Path) -> None:
     skillctl = Skill(_skill_cfg(tmp_path))
     try:
-        skill_id, version_hash, _ = skillctl.ingest_text(
-            name="Deploy Checker",
-            markdown=_SKILL_MARKDOWN,
+        skill_id, version_hash, _ = ingest_text_and_admit(
+            skillctl,
+            "Deploy Checker",
+            _SKILL_MARKDOWN,
         )
         service = ContextCtlService(
             identityctl=_DecideIdentityClient(),

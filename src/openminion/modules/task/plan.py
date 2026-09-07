@@ -103,7 +103,9 @@ class TaskPlan(BaseModel):
     plan_id: str = Field(min_length=1)
     objective: str = Field(min_length=1)
     workflow_id: str | None = None
+    workflow_version_hash: str | None = None
     root_goal_id: str | None = None
+    criterion_ids: list[str] = Field(default_factory=list)
     status: TaskPlanStatus = "active"
     steps: list[TaskPlanStep] = Field(min_length=1)
     continue_plan_autonomously: bool = False
@@ -113,7 +115,9 @@ class TaskPlan(BaseModel):
     def _strip_required_text(cls, value: Any) -> str:
         return _trimmed_non_empty(value)
 
-    @field_validator("workflow_id", "root_goal_id", mode="before")
+    @field_validator(
+        "workflow_id", "workflow_version_hash", "root_goal_id", mode="before"
+    )
     @classmethod
     def _optional_identifier(cls, value: Any) -> str | None:
         return _trimmed_non_empty(value) or None
@@ -193,10 +197,15 @@ class TaskPlanStepBlocked(BaseModel):
 
 class TaskPlanRevision(BaseModel):
     plan_id: str = Field(min_length=1)
+    revision_id: str | None = None
+    predecessor_revision_id: str | None = None
+    criterion_ids: list[str] = Field(default_factory=list)
+    verifier_refs: list[str] = Field(default_factory=list)
     reason: str = ""
     revised_steps: list[TaskPlanStep] = Field(min_length=1)
     objective: str | None = None
     workflow_id: str | None = None
+    workflow_version_hash: str | None = None
     continue_plan_autonomously: bool = False
 
     @field_validator("plan_id", mode="before")
@@ -209,7 +218,14 @@ class TaskPlanRevision(BaseModel):
     def _strip_reason(cls, value: Any) -> str:
         return _trimmed_non_empty(value)
 
-    @field_validator("objective", "workflow_id", mode="before")
+    @field_validator(
+        "revision_id",
+        "predecessor_revision_id",
+        "objective",
+        "workflow_id",
+        "workflow_version_hash",
+        mode="before",
+    )
     @classmethod
     def _optional_text(cls, value: Any) -> str | None:
         return _trimmed_non_empty(value) or None
@@ -219,12 +235,18 @@ class TaskPlanRevision(BaseModel):
         *,
         fallback_objective: str,
         fallback_workflow_id: str | None = None,
+        fallback_workflow_version_hash: str | None = None,
+        fallback_criterion_ids: list[str] | None = None,
     ) -> TaskPlan:
         return TaskPlan(
             plan_id=self.plan_id,
             objective=self.objective or fallback_objective,
             workflow_id=self.workflow_id or fallback_workflow_id,
+            workflow_version_hash=(
+                self.workflow_version_hash or fallback_workflow_version_hash
+            ),
             root_goal_id=None,
+            criterion_ids=self.criterion_ids or list(fallback_criterion_ids or []),
             status="active",
             steps=list(self.revised_steps),
             continue_plan_autonomously=self.continue_plan_autonomously,
@@ -246,7 +268,74 @@ class TaskPlanTerminalSignal(BaseModel):
         return _trimmed_non_empty(value)
 
 
+def apply_task_plan_signals(
+    plan: TaskPlan | None,
+    *,
+    step_completed: TaskPlanStepCompleted | None = None,
+    step_blocked: TaskPlanStepBlocked | None = None,
+    abandoned: TaskPlanTerminalSignal | None = None,
+    completed: TaskPlanTerminalSignal | None = None,
+) -> TaskPlan | None:
+    signals = tuple(
+        signal
+        for signal in (step_completed, step_blocked, abandoned, completed)
+        if signal is not None
+    )
+    if not signals:
+        return plan
+    if plan is None:
+        raise ValueError("task plan progress requires a checkpoint task plan")
+    if any(signal.plan_id != plan.plan_id for signal in signals):
+        raise ValueError("task plan progress must match the checkpoint task plan")
+
+    steps = list(plan.steps)
+    for signal, step_status in (
+        (step_completed, "completed"),
+        (step_blocked, "blocked"),
+    ):
+        if signal is None:
+            continue
+        matching = [step for step in steps if step.step_id == signal.step_id]
+        if not matching:
+            raise ValueError(f"unknown task plan step: {signal.step_id}")
+        steps = [
+            step.model_copy(
+                update={
+                    "status": step_status,
+                    "output_summary": (
+                        signal.output_summary
+                        if isinstance(signal, TaskPlanStepCompleted)
+                        else step.output_summary
+                    ),
+                    "blocker_type": (
+                        signal.blocker_type
+                        if isinstance(signal, TaskPlanStepBlocked)
+                        else None
+                    ),
+                    "blocker_details": (
+                        signal.blocker_details
+                        if isinstance(signal, TaskPlanStepBlocked)
+                        else None
+                    ),
+                }
+            )
+            if step.step_id == signal.step_id
+            else step
+            for step in steps
+        ]
+
+    status: TaskPlanStatus = plan.status
+    if abandoned is not None:
+        status = "abandoned"
+    if completed is not None:
+        if any(step.status != "completed" for step in steps):
+            raise ValueError("task plan completion requires every step to be completed")
+        status = "completed"
+    return plan.model_copy(update={"steps": steps, "status": status})
+
+
 __all__ = [
+    "apply_task_plan_signals",
     "TaskPlan",
     "TaskPlanDifficulty",
     "TaskPlanRevision",

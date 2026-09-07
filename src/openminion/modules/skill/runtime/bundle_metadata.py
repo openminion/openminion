@@ -1,5 +1,10 @@
+from __future__ import annotations
+
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
+
+from openminion.modules.skill.models import normalize_text_list
 
 try:
     import yaml  # type: ignore[import-untyped]
@@ -31,6 +36,59 @@ _BUNDLE_METADATA_TRUST_VALUES: frozenset[str] = frozenset(
 )
 
 _OPENAI_COMPANION_PATH = Path("agents/openai.yaml")
+
+
+def agent_skills_metadata(
+    front_matter: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    metadata: dict[str, Any] = {}
+    warnings: list[str] = []
+    for key in ("license", "compatibility"):
+        value = front_matter.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            warnings.append(f"parse.warning:agent_skills_invalid_type:{key}")
+            continue
+        text = value.strip()
+        if text:
+            metadata[key] = text
+    raw_metadata = front_matter.get("metadata")
+    if raw_metadata is not None:
+        if isinstance(raw_metadata, Mapping):
+            metadata["metadata"] = {
+                str(key): value for key, value in raw_metadata.items()
+            }
+        else:
+            warnings.append("parse.warning:agent_skills_invalid_type:metadata")
+    allowed_tools = front_matter.get("allowed-tools")
+    if allowed_tools is not None:
+        if isinstance(allowed_tools, str):
+            metadata["allowed_tools"] = allowed_tools.split()
+        elif isinstance(allowed_tools, list):
+            metadata["allowed_tools"] = normalize_text_list(allowed_tools)
+        else:
+            warnings.append("parse.warning:agent_skills_invalid_type:allowed-tools")
+    return metadata, warnings
+
+
+def agent_skills_conformance_warnings(
+    *,
+    name: str,
+    description: str,
+    metadata: Mapping[str, Any],
+    resources: list[dict[str, Any]],
+) -> list[str]:
+    if not metadata and not resources:
+        return []
+    warnings: list[str] = []
+    if len(name) > 64 or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+        warnings.append("parse.warning:agent_skills_name_nonconforming")
+    if len(description) > 1024:
+        warnings.append("parse.warning:agent_skills_description_too_long")
+    if len(str(metadata.get("compatibility", ""))) > 500:
+        warnings.append("parse.warning:agent_skills_compatibility_too_long")
+    return warnings
 
 
 def validate_bundle_metadata_trust(trust: str) -> str:

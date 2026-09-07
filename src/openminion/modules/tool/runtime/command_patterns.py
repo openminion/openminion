@@ -1,6 +1,8 @@
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from ..commands import is_bounded_read_only_command
+
 
 def effective_command_argv(argv: Sequence[str]) -> tuple[str, ...]:
     effective = tuple(str(arg) for arg in argv)
@@ -12,15 +14,20 @@ def effective_command_argv(argv: Sequence[str]) -> tuple[str, ...]:
 DISCOVERY_KNOWN_TOOLS = (
     "as",
     "clang",
+    "docker",
     "gcc",
     "ld",
     "make",
     "nasm",
     "objdump",
     "otool",
+    "open",
+    "ps",
     "python",
     "python3",
     "python3.11",
+    "ssh",
+    "systemctl",
 )
 
 COMMAND_ALLOW_PATTERNS = (
@@ -66,6 +73,8 @@ def command_action_class(argv: Sequence[str]) -> str:
     argv = effective_command_argv(argv)
     if not argv:
         return "unknown"
+    if is_bounded_read_only_command(argv):
+        return "inspect"
     exec_name = str(argv[0] or "").strip().lower()
     if exec_name in {"rm", "dd", "mkfs", "shutdown", "reboot", "poweroff", "halt"}:
         return "destructive"

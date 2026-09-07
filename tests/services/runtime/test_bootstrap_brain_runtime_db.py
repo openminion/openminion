@@ -6,12 +6,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
 from openminion.base.config import OpenMinionConfig
 from openminion.modules.brain.paths import (
     resolve_brain_runtime_db_path,
     resolve_brain_sessions_db_path,
 )
-from openminion.services.runtime.bootstrap import build_brain_runner_bundle
+from openminion.modules.memory.runtime.assembly import RuntimeMemoryAssembly
+from openminion.services.runtime.bootstrap import (
+    build_agent_runtime_service,
+    build_brain_runner_bundle,
+)
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -32,8 +38,49 @@ def test_brain_path_helpers_keep_session_and_runtime_dbs_separate(
     )
 
 
-def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
+def test_disabled_memory_does_not_install_terminal_capture_writer(
     tmp_path: Path,
+) -> None:
+    config = OpenMinionConfig()
+    sessions = SimpleNamespace()
+    disabled = RuntimeMemoryAssembly(gateway=object())
+    active = RuntimeMemoryAssembly(gateway=object(), memctl=object())
+
+    with mock.patch(
+        "openminion.services.brain.service.BrainBridgeService",
+        return_value=object(),
+    ) as bridge:
+        common = {
+            "config": config,
+            "plugins": object(),
+            "provider": object(),
+            "logger": logging.getLogger("test.bootstrap.capture_writer"),
+            "tools": object(),
+            "security_policy": None,
+            "self_improvement": object(),
+            "storage_path": tmp_path / "runtime.db",
+            "home_root": tmp_path,
+            "data_root": tmp_path,
+            "config_path": tmp_path / "config.yaml",
+            "sessions": sessions,
+        }
+        build_agent_runtime_service(
+            **common,
+            runtime_memory_assembly=disabled,
+        )
+        assert bridge.call_args.kwargs["terminal_capture_writer"] is None
+
+        build_agent_runtime_service(
+            **common,
+            runtime_memory_assembly=active,
+        )
+        assert bridge.call_args.kwargs["terminal_capture_writer"] is not None
+
+
+@pytest.mark.parametrize("mode", ["auto", "local"])
+def test_build_brain_runner_bundle_uses_brain_runtime_db_and_artifact_ownership(
+    tmp_path: Path,
+    mode: str,
 ) -> None:
     config = OpenMinionConfig()
     _csc_install_default_agent(config, provider="echo")
@@ -42,7 +89,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
 
     service = SimpleNamespace(
         _config=config,
-        mode="auto",
+        mode=mode,
         db_path=str(session_db_path),
         _telemetryctl=None,
         _runtime_handle=None,
@@ -54,8 +101,13 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
         _provider=None,
         _env=None,
         _vector_sync=None,
+        _terminal_capture_writer=None,
+        _runtime_memory_assembly=SimpleNamespace(
+            memctl=SimpleNamespace(),
+            vector_adapter=SimpleNamespace(),
+        ),
         _context=SimpleNamespace(
-            home_paths=SimpleNamespace(home_root=tmp_path),
+            home_paths=SimpleNamespace(home_root=tmp_path, data_root=tmp_path),
             workspace_root=str(tmp_path),
         ),
         _get_manager_config=lambda _name: None,
@@ -66,7 +118,9 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
         _resolve_llm_wrapper=lambda _llm_api: None,
     )
 
-    fake_runner = SimpleNamespace(task_manager=object())
+    shared_task_manager = object()
+    fake_runner = SimpleNamespace(task_manager=shared_task_manager)
+    shared_artifactctl = SimpleNamespace()
     captured: dict[str, object] = {}
 
     def _capture_goal_store(path: str, *args, **kwargs):
@@ -79,13 +133,22 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
         captured["mission_db_path"] = Path(path)
         return SimpleNamespace()
 
-    def _capture_goal_runtime(*, goal_store, mission_store, checkpoint_manager):
+    def _capture_goal_runtime(
+        *, goal_store, mission_store, checkpoint_manager, owns_stores
+    ):
         captured["goal_store"] = goal_store
         captured["mission_store"] = mission_store
         captured["checkpoint_manager"] = checkpoint_manager
+        captured["owns_stores"] = owns_stores
         return SimpleNamespace(goal_store=goal_store, mission_store=mission_store)
 
     with ExitStack() as stack:
+        artifact_factory = stack.enter_context(
+            mock.patch(
+                "openminion.services.runtime.bootstrap.create_default_artifactctl",
+                return_value=shared_artifactctl,
+            )
+        )
         stack.enter_context(
             mock.patch(
                 "openminion.services.brain.service.create_llm_adapter",
@@ -104,7 +167,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
                 return_value=SimpleNamespace(),
             )
         )
-        stack.enter_context(
+        context_factory = stack.enter_context(
             mock.patch(
                 "openminion.services.brain.service.create_context_api",
                 return_value=SimpleNamespace(),
@@ -152,7 +215,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
                 return_value=SimpleNamespace(),
             )
         )
-        stack.enter_context(
+        tool_api_factory = stack.enter_context(
             mock.patch(
                 "openminion.services.brain.service.create_tool_api",
                 return_value=SimpleNamespace(),
@@ -197,10 +260,10 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
         stack.enter_context(
             mock.patch(
                 "openminion.modules.task.TaskManager.from_cron_repository",
-                return_value=object(),
+                return_value=shared_task_manager,
             )
         )
-        stack.enter_context(
+        runner_factory = stack.enter_context(
             mock.patch(
                 "openminion.services.brain.service.BrainRunner",
                 return_value=fake_runner,
@@ -229,4 +292,12 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
     assert runner is fake_runner
     assert captured["goal_db_path"] == expected_runtime_db_path
     assert captured["mission_db_path"] == expected_runtime_db_path
+    assert captured["owns_stores"] is True
     assert captured["goal_db_path"] != session_db_path
+    assert tool_api_factory.call_args.kwargs["task_manager"] is shared_task_manager
+    assert runner_factory.call_args.kwargs["task_manager"] is shared_task_manager
+    expected_artifactctl = shared_artifactctl if mode == "auto" else None
+    assert artifact_factory.call_count == (1 if mode == "auto" else 0)
+    assert context_factory.call_args.kwargs["artifactctl"] is expected_artifactctl
+    assert context_factory.call_args.kwargs["owns_artifactctl"] is (mode == "auto")
+    assert tool_api_factory.call_args.kwargs["artifactctl"] is expected_artifactctl

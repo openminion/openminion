@@ -1,12 +1,7 @@
 from collections.abc import Mapping
 from typing import Any
 
-from openminion.modules.task import TaskManager
 from openminion.modules.tool.runtime.context import RuntimeContext
-from openminion.modules.task.scheduling.schedule import (
-    normalize_payload,
-    normalize_schedule,
-)
 
 from ..constants import (
     CONSOLIDATION_PAYLOAD_KEY,
@@ -52,6 +47,11 @@ def _background_write_authorization_allowed(ctx: RuntimeContext) -> bool:
 def _origin_delivery_context(ctx: RuntimeContext) -> dict[str, str]:
     metadata = _context_metadata(ctx)
     origin: dict[str, str] = {}
+    orchestration = metadata.get("orchestration")
+    if isinstance(orchestration, Mapping):
+        runtime_session_id = _safe_str(orchestration, "runtime_session_id")
+        if runtime_session_id:
+            origin["session_id"] = runtime_session_id
     for key in (
         "session_id",
         "channel",
@@ -63,6 +63,9 @@ def _origin_delivery_context(ctx: RuntimeContext) -> dict[str, str]:
         token = _safe_str(metadata, key)
         if token:
             origin[key] = token
+    session_id = str(ctx.session_id or "").strip()
+    if session_id:
+        origin.setdefault("session_id", session_id)
     return origin
 
 
@@ -169,43 +172,10 @@ def _consolidation_metadata_from_payload(
     }
 
 
-def _find_existing_scheduled_task(
-    manager: TaskManager,
-    *,
-    name: str,
-    schedule: Mapping[str, Any],
-    payload: Mapping[str, Any],
-    agent_id: str,
-    session_target: str,
-    delete_after_run: bool,
-) -> dict[str, Any] | None:
-    normalized_payload = normalize_payload(payload)
-    for job in manager.list_scheduled_jobs(limit=1000):
-        if not bool(job.get("enabled", False)):
-            continue
-        if _safe_str(job, "name") != name:
-            continue
-        if _safe_str(job, "agent_id") != agent_id:
-            continue
-        if _safe_str(job, "session_target") != session_target:
-            continue
-        if bool(job.get("delete_after_run", False)) != delete_after_run:
-            continue
-        try:
-            job_schedule = normalize_schedule(job.get("schedule") or {})
-            job_payload = normalize_payload(job.get("payload") or {})
-        except Exception:
-            continue
-        if job_schedule == dict(schedule) and job_payload == normalized_payload:
-            return dict(job)
-    return None
-
-
 __all__ = [
     "_background_write_authorization_allowed",
     "_consolidation_metadata_from_payload",
     "_context_metadata",
-    "_find_existing_scheduled_task",
     "_origin_delivery_context",
     "_safe_str",
     "_text",

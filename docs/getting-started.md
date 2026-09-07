@@ -1,7 +1,7 @@
 # OpenMinion Getting Started
 
 Status: active
-Last updated: 2026-08-16
+Last updated: 2026-09-06
 
 Purpose: give contributors and automation authors a package-local bootstrap and
 execution summary for work inside the `openminion` repo.
@@ -9,12 +9,16 @@ execution summary for work inside the `openminion` repo.
 ## Fast bootstrap
 
 ```bash
-cd openminion
 python3.11 -m venv .venv
 source .venv/bin/activate
 make dev-install
 make hooks-install
 ```
+
+On Windows PowerShell, use `.venv\Scripts\Activate.ps1`, then run the same
+`make` targets from an environment that provides GNU Make. For ordinary use,
+`pipx install openminion` or `uv tool install openminion` avoids checkout
+tooling entirely.
 
 If you are running the CLI locally, also set:
 
@@ -35,19 +39,75 @@ pipx install openminion
 Start with the bare command:
 
 ```bash
-openminion
+openminion --version
+openminion --dir "$PWD"
 ```
 
-When the normal default config already exists, this opens the Focus terminal
+When the normal default config already exists, this opens the default terminal
 directly. When the default config is missing and a terminal is available,
 OpenMinion launches setup, guides you through hosted, local, or import setup,
 writes the canonical config at
-`<OPENMINION_HOME>/.openminion/agents.json`, runs `doctor`, and then enters
-Focus. A useful first task is:
+`~/.openminion/agents.json` (or `<OPENMINION_HOME>/.openminion/agents.json`
+when that root is set), runs `doctor`, and then enters the interactive CLI.
+The hosted-provider connection check is recommended and selected by pressing
+Enter; it sends one short request that may consume quota. A useful first task
+is:
 
 ```text
-Give me one safe read-only command to inspect the current directory.
+List this workspace using the file tools.
 ```
+
+A later bare launch reuses the same config and opens the terminal directly.
+
+An explicit `--dir` trusts that workspace for the current process. Without it,
+an ordinary Git worktree is trusted, another directory starts Read only, and a
+launch from your home directory or a filesystem root stops with `--dir PATH`
+guidance. To use an existing sibling directory for the same interactive
+process, add it explicitly:
+
+```bash
+openminion --dir "$PWD" --add-dir ../shared
+```
+
+`--add-dir` is repeatable and is not saved with the session. Restart with the
+same option when you want the grant again. Default file access no longer
+includes `~/projects` or `~/Downloads`; choose an explicit workspace, use
+`--add-dir`, or configure the exact policy root you need.
+
+### Start a local human-plus-agents room
+
+Use explicit root flags so the room and its telemetry stay under one chosen
+runtime directory. Replace `writer` and `reviewer` with agent IDs from your
+config:
+
+```bash
+runtime_root="$PWD/.openminion-room"
+config_path="$HOME/.openminion/agents.json"
+room_output="$(openminion \
+  --home-root "$runtime_root/home" \
+  --data-root "$runtime_root/data" \
+  --config "$config_path" \
+  room create \
+  --name "Review room" \
+  --human owner-local \
+  --agent writer \
+  --agent reviewer \
+  --channel console \
+  --target focus)"
+room_id="$(printf '%s\n' "$room_output" | sed -n 's/^room=//p')"
+
+openminion \
+  --home-root "$runtime_root/home" \
+  --data-root "$runtime_root/data" \
+  --config "$config_path" \
+  --agent writer \
+  --session "$room_id" \
+  --dir "$PWD"
+```
+
+Use `/participants`, `/status`, and `/sessions` to inspect the room. The local
+owner can use `/invite`, `/kick`, `/activate`, and `/routing`; address one agent
+with `@reviewer`, or select `broadcast` or `sequential` routing for both agents.
 
 The first screen goes directly to the model provider. OpenAI, Anthropic,
 OpenRouter, Cortensor Portal, MiniMax, and local Ollama appear first; additional providers,
@@ -87,6 +147,8 @@ Built-in hosted presets currently include:
 | `openai` | OpenAI-compatible | `OPENAI_API_KEY` | `https://api.openai.com/v1` | live-optional, otherwise recommended |
 | `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1` | recommended |
 | `openrouter` | OpenAI-compatible | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | live-optional, otherwise recommended |
+| `cerebras` | OpenAI-compatible | `CEREBRAS_API_KEY` | `https://api.cerebras.ai/v1` | recommended |
+| `groq` | OpenAI-compatible | `GROQ_API_KEY` | `https://api.groq.com/openai/v1` | recommended |
 | `cortensor-portal` | OpenAI-compatible | `CORTENSOR_API_KEY` | `https://api.cortensor.app/v1` | recommended |
 | `minimax` | OpenAI-compatible | `MINIMAX_API_KEY` | `https://api.minimax.io/v1` | live-optional, otherwise recommended |
 | `kimi` | OpenAI-compatible | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | recommended |
@@ -104,8 +166,17 @@ OpenAI-compatible endpoints: Portal owns routing, quota, capacity, and its
 internal request lifecycle. OpenMinion defaults its existing provider timeout
 to 480 seconds because responses can be slow; a larger configured
 `timeout_seconds` value is preserved by the runtime. Current Portal support is
-text and text streaming. Tool-backed tasks require the Portal gateway contract
-and are not emulated from prose.
+text, text streaming, native OpenAI tool calls, tool-result continuation, and
+streamed tool-call deltas. OpenMinion preserves Portal tool-call IDs,
+arguments, finish reasons, usage, and `X-Request-ID` correlation facts. Portal
+requests are not automatically retried because resubmission is not yet
+idempotent. Portal currently omits `X-Request-ID` from FastAPI `422` request
+validation responses; OpenMinion cannot capture a header that is not present.
+
+Run initial Portal acceptance serially. Two simultaneous requests assigned to
+the same Cortensor session can currently surface
+`router_v4_correlation_mismatch` as a `502 router_error`; OpenMinion reports
+that failure without retrying it.
 
 ```bash
 export CORTENSOR_API_KEY="..."
@@ -113,11 +184,15 @@ openminion setup --provider cortensor-portal --agent cortensor-portal --no-focus
 ```
 
 The advanced direct Router path remains separate and keeps its Router session
-semantics. The legacy setup id `cortensor` resolves only to this direct path.
+semantics. Use the `cortensor-router` preset. The legacy setup ID `cortensor`
+resolves only to this direct path.
 
 ```bash
 openminion setup --provider cortensor-router --agent cortensor-router --no-focus
 ```
+
+The local `ollama` preset needs no credential and defaults to the local Ollama
+endpoint.
 
 `/v1/models` is useful for diagnostics, but it does not prove inference
 readiness. Add `--check-provider` only when a quota-consuming text request is
@@ -165,6 +240,27 @@ openminion setup \
   --no-focus
 ```
 
+Inside the interactive CLI, `/model` shows only models configured for the
+active agent. A connection is the service and credential/endpoint route, while
+the API format describes how OpenMinion talks to it. For example, MiniMax is
+the connection and OpenAI-compatible is the API format.
+
+```text
+/model
+/model use 2
+/model default 2
+/model add MiniMax-M2.7-highspeed
+/model setup
+```
+
+`/model use <#>` changes the current session and is restored when that session
+is resumed. `/model default <#>` updates the active agent's saved default.
+`/model add <model>` adds a model to the current connection and selects it for
+the session immediately; the agent default stays unchanged. `/model setup`
+uses the same provider presets and config writer inside terminal Focus to add a
+different connection, review it, save it, and use it without restarting.
+`openminion setup` remains available for first-run and scripted setup.
+
 For another OpenAI-compatible provider, choose the provider preset and model:
 
 ```bash
@@ -194,6 +290,39 @@ openminion setup \
   --agent custom-openai \
   --no-focus
 ```
+
+Custom endpoints use either `custom-openai-compatible` or
+`custom-anthropic-compatible`; both require an explicit API format, base URL,
+and model ID.
+
+## Per-agent command access
+
+Unsandboxed host execution remains disabled by default. A trusted local agent
+profile can allow specific executables and opt into host execution without
+changing other profiles:
+
+```json
+{
+  "agents": {
+    "local-docker": {
+      "provider": "minimax",
+      "command_policy": {
+        "allow": ["docker"],
+        "allow_host": true
+      }
+    }
+  }
+}
+```
+
+The executable must resolve from a trusted host directory. Existing dangerous
+command approval rules still apply; this profile setting does not bypass them.
+If no command sandbox is configured, `exec.run` returns
+`SANDBOX_UNAVAILABLE` and recommends structured file tools, a configured
+sandbox, or restarting with `--allow-unsandboxed-exec`. The flag runs commands
+with the OpenMinion process's OS permissions; commands are not confined to the
+workspace or added directories. Full access does not enable host execution.
+A native local sandbox and approval-free command parity remain future work.
 
 ## Read first
 

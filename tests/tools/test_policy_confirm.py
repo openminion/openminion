@@ -15,8 +15,8 @@ def policy(workspace_fixture):
 def test_required_tool_needs_confirm(policy):
     with pytest.raises(ToolRuntimeError) as excinfo:
         policy.ensure_confirm_if_required(
-            tool_name="file.delete",
-            args={"path": "file.txt"},
+            tool_name="proc.kill",
+            args={"pid": 123},
             confirm=False,
             dangerous_default=False,
         )
@@ -25,21 +25,30 @@ def test_required_tool_needs_confirm(policy):
 
     # Passing confirm should allow it
     policy.ensure_confirm_if_required(
-        tool_name="file.delete",
-        args={"path": "file.txt"},
+        tool_name="proc.kill",
+        args={"pid": 123},
         confirm=True,
         dangerous_default=False,
     )
 
 
-def test_recursive_delete_requires_confirm(policy):
-    with pytest.raises(ToolRuntimeError):
+def test_dangerous_file_trash_requires_confirm(policy):
+    with pytest.raises(ToolRuntimeError) as excinfo:
         policy.ensure_confirm_if_required(
-            tool_name="file.delete",
-            args={"path": "folder", "recursive": True},
+            tool_name="file.trash",
+            args={"path": "folder"},
             confirm=False,
-            dangerous_default=False,
+            dangerous_default=True,
         )
+
+    assert excinfo.value.code == "CONFIRM_REQUIRED"
+
+    policy.ensure_confirm_if_required(
+        tool_name="file.trash",
+        args={"path": "folder"},
+        confirm=True,
+        dangerous_default=True,
+    )
 
 
 def test_cmd_run_with_sudo_requires_confirm(policy):

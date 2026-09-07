@@ -7,10 +7,16 @@ from openminion.modules.tool.contracts import (
     RuntimeBindingDef,
     ToolBindingManifest,
 )
-from openminion.modules.tool.contracts.model_ids import MODEL_HOST_METRICS
-from openminion.modules.tool.contracts.runtime_ids import RUNTIME_HOST_METRICS
+from openminion.modules.tool.contracts.model_ids import (
+    MODEL_HOST_INVENTORY_REPORT,
+    MODEL_HOST_METRICS,
+)
+from openminion.modules.tool.contracts.runtime_ids import (
+    RUNTIME_HOST_INVENTORY_REPORT,
+    RUNTIME_HOST_METRICS,
+)
 
-from .interfaces import TOOL_HOST_METRICS
+from .interfaces import TOOL_HOST_INVENTORY_REPORT, TOOL_HOST_METRICS
 
 if TYPE_CHECKING:
     from openminion.modules.tool.registry import ToolRegistry
@@ -39,12 +45,25 @@ class HostRegistrar:
                     parameters={},
                     aliases=("system.status", "host.status"),
                 ),
+                ModelToolDef(
+                    model_tool_id=MODEL_HOST_INVENTORY_REPORT,
+                    description=(
+                        "Create matching local host inventory reports in JSON and "
+                        "Markdown without shell commands or network access."
+                    ),
+                    parameters={},
+                ),
             ),
             runtime_bindings=(
                 RuntimeBindingDef(
                     runtime_binding_id=RUNTIME_HOST_METRICS,
                     model_tool_id=MODEL_HOST_METRICS,
                     runtime_candidates=(TOOL_HOST_METRICS,),
+                ),
+                RuntimeBindingDef(
+                    runtime_binding_id=RUNTIME_HOST_INVENTORY_REPORT,
+                    model_tool_id=MODEL_HOST_INVENTORY_REPORT,
+                    runtime_candidates=(TOOL_HOST_INVENTORY_REPORT,),
                 ),
             ),
         )

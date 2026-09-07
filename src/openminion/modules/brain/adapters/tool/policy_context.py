@@ -1,11 +1,51 @@
 from collections.abc import Mapping
 from typing import Any
 
-from openminion.modules.tool import Policy, canonical_tool_name
-from openminion.modules.tool.contracts.model_ids import MODEL_TASK_WATCH
+from openminion.modules.tool import Policy, ToolSpec, canonical_tool_name
+from openminion.modules.tool.plugin_api import PolicyAdapter, PolicyDecision
+from openminion.modules.tool.contracts.model_ids import (
+    MODEL_FILE_WRITE,
+    MODEL_TASK_WATCH,
+)
+from openminion.tools.exec.command_parser import is_read_only_exec_command
+from openminion.tools.exec.process import resolve_shell_family
 
 _REACTIONS_SET_TOOL_NAME = "reactions.set"
 _REACTIONS_DEFAULT_POLICIES = frozenset({"allow", "deny", "confirm"})
+
+
+def _compose_policy_adapter(
+    *,
+    base_adapter: PolicyAdapter,
+    extra_adapter: PolicyAdapter | None,
+) -> PolicyAdapter:
+    if extra_adapter is None:
+        return base_adapter
+
+    class _CompositePolicyAdapter:
+        def __init__(self, adapters: list[PolicyAdapter]):
+            self._adapters = adapters
+
+        def evaluate(
+            self, *, tool_name: str, tool_spec: ToolSpec, args: dict[str, Any]
+        ) -> PolicyDecision:
+            current_args = dict(args)
+            for adapter in self._adapters:
+                decision = adapter.evaluate(
+                    tool_name=tool_name, tool_spec=tool_spec, args=current_args
+                )
+                if not decision.allowed:
+                    return decision
+                if decision.modified_args:
+                    current_args = dict(decision.modified_args)
+            return PolicyDecision(
+                allowed=True,
+                reason="policy passed",
+                code="OK",
+                modified_args=current_args,
+            )
+
+    return _CompositePolicyAdapter([base_adapter, extra_adapter])
 
 
 def _ensure_mutable_mapping(owner: dict[str, Any], key: str) -> dict[str, Any]:
@@ -44,7 +84,6 @@ def _normalize_reactions_default_policy(runtime_config: Any | None) -> str:
 
 
 def _apply_reactions_default_policy(
-    *,
     policy: Policy,
     runtime_config: Any | None,
 ) -> None:
@@ -66,6 +105,33 @@ def _apply_reactions_default_policy(
     confirm_cfg = _ensure_mutable_mapping(policy_raw, "confirm")
     required_tools = _ensure_mutable_str_list(confirm_cfg, "required_tools")
     _append_unique_tool_token(required_tools, _REACTIONS_SET_TOOL_NAME)
+
+
+def _apply_agent_command_policy(policy: Policy, agent_profile: Any | None) -> None:
+    command_policy = getattr(agent_profile, "command_policy", {})
+    allowed = [
+        str(item).strip()
+        for item in command_policy.get("allow", ())
+        if str(item).strip()
+    ]
+    allow_host = command_policy.get("allow_host") is True
+    if not allowed and not allow_host:
+        return
+
+    policy_raw = policy.raw
+    commands_cfg = _ensure_mutable_mapping(policy_raw, "commands")
+    command_allowlist = _ensure_mutable_str_list(commands_cfg, "allow")
+    for command in allowed:
+        if command not in command_allowlist:
+            command_allowlist.append(command)
+
+    if allow_host:
+        exec_cfg = _ensure_mutable_mapping(policy_raw, "exec")
+        exec_cfg["host_enabled"] = True
+        host_allowlist = _ensure_mutable_str_list(exec_cfg, "allowlist")
+        for command in allowed:
+            if command not in host_allowlist:
+                host_allowlist.append(command)
 
 
 def _runtime_env_from_policy(policy: Policy | None) -> dict[str, str]:
@@ -118,9 +184,50 @@ def _watch_write_authorization_requested(
     return tool_name == MODEL_TASK_WATCH and bool(args.get("write_authorized", False))
 
 
+def _background_write_authorized(inputs: Any) -> bool:
+    return (
+        isinstance(inputs, Mapping)
+        and bool(inputs.get("background_write_authorized"))
+        and str(inputs.get("background_write_authorization_source", "") or "")
+        == "watch_subscription"
+    )
+
+
+def _resolve_auto_confirm(
+    *,
+    tool_name: str,
+    args: Mapping[str, Any],
+    permission_mode: str,
+    replay_confirmed: bool,
+    background_write_authorized: bool,
+) -> bool:
+    if permission_mode == "bypass":
+        return True
+    if permission_mode == "auto":
+        return tool_name in {MODEL_FILE_WRITE, "file.copy", "file.move"}
+    if replay_confirmed or background_write_authorized:
+        return True
+    if tool_name == "blockchain.send_transaction":
+        return True
+    if tool_name in {"github.dispatch_workflow", "github.create_release"}:
+        return True
+    if tool_name == "exec.run":
+        return bool(
+            is_read_only_exec_command(
+                str(args.get("command", "") or ""),
+                shell_family=resolve_shell_family(),
+            )
+        )
+    return False
+
+
 __all__ = [
     "_agent_id_from_policy",
+    "_apply_agent_command_policy",
     "_apply_reactions_default_policy",
+    "_background_write_authorized",
+    "_compose_policy_adapter",
+    "_resolve_auto_confirm",
     "_runtime_background_write_authorization_enabled",
     "_runtime_env_from_policy",
     "_watch_write_authorization_requested",

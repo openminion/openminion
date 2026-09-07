@@ -3,6 +3,7 @@ from typing import Any
 
 from openminion.modules.task import TaskManager
 from openminion.modules.task.scheduling.schedule import normalize_schedule
+from openminion.modules.task.surface import build_task_surface
 
 from ..constants import FIRST_RUN_PENDING_NOTE, FIRST_RUN_PENDING_STATE
 from .runtime import (
@@ -63,11 +64,13 @@ def _recent_runs(
                 "run_id": _safe_str(run, "run_id"),
                 "state": state,
                 "due_at": run.get("due_at"),
+                "available_at": run.get("available_at"),
                 "started_at": run.get("started_at"),
                 "finished_at": run.get("finished_at"),
                 "summary": run.get("summary"),
                 "attempts": int(run.get("attempts", 0) or 0),
                 "error": run.get("error"),
+                "output": run.get("output"),
             }
         )
     return recent, failure_count
@@ -81,6 +84,14 @@ def _task_show_payload(
     pause_reason: str | None = None,
 ) -> dict[str, Any]:
     task_id = _safe_str(job, "job_id")
+    canonical = (
+        build_task_surface(
+            manager,
+            agent_id=_safe_str(job, "agent_id"),
+            limit=100,
+        ).show_task(task_id)
+        or {}
+    )
     schedule_obj = dict(job.get("schedule") or {})
     try:
         schedule_summary = _render_schedule_summary(schedule_obj)
@@ -91,15 +102,25 @@ def _task_show_payload(
     watch = _watch_metadata_from_payload(job.get("payload"))
     consolidation = _consolidation_metadata_from_payload(job.get("payload"))
     return {
+        "id": canonical.get("id", task_id),
         "task_id": task_id,
-        "name": _safe_str(job, "name"),
-        "enabled": bool(job.get("enabled", False)),
+        "name": canonical.get("title") or _safe_str(job, "name"),
+        "status": canonical.get("status"),
+        "lifecycle_state": canonical.get("lifecycle_state"),
+        "task_kind": canonical.get("task_kind"),
+        "valid_actions": list(canonical.get("valid_actions") or []),
+        "enabled": bool(canonical.get("enabled", job.get("enabled", False))),
         "agent_id": _safe_str(job, "agent_id") or None,
-        "schedule": schedule_obj,
-        "schedule_summary": schedule_summary,
-        "next_due_at": job.get("next_due_at"),
+        "schedule": canonical.get("schedule") or schedule_obj,
+        "schedule_summary": canonical.get("schedule_summary") or schedule_summary,
+        "next_due_at": canonical.get("due_at") or job.get("next_due_at"),
         "session_target": _safe_str(job, "session_target"),
         "delete_after_run": bool(job.get("delete_after_run", False)),
+        "concurrency_key": _safe_str(job, "concurrency_key") or None,
+        "retry_policy": {
+            "max_attempts": int(job.get("max_attempts", 3) or 3),
+            "retry_backoff_s": int(job.get("retry_backoff_s", 30) or 30),
+        },
         "latest_run_state": latest_run_state,
         "latest_run_at": latest_run_at,
         "failure_count": failure_count,
@@ -116,8 +137,24 @@ def _task_list_payload(
     jobs: list[dict[str, Any]],
     effective_limit: int,
 ) -> list[dict[str, Any]]:
+    canonical_by_id: dict[str, dict[str, Any]] = {}
+    for agent_id in {_safe_str(job, "agent_id") for job in jobs} - {""}:
+        surface = build_task_surface(
+            manager,
+            agent_id=agent_id,
+            limit=max(effective_limit, len(jobs)),
+        )
+        canonical_by_id.update(
+            {
+                _safe_str(task, "cron_job_id"): task
+                for task in surface.list_tasks()
+                if _safe_str(task, "cron_job_id")
+            }
+        )
     tasks: list[dict[str, Any]] = []
     for job in jobs:
+        task_id = _safe_str(job, "job_id")
+        canonical = canonical_by_id.get(task_id, {})
         schedule_obj = dict(job.get("schedule") or {})
         try:
             summary = _render_schedule_summary(schedule_obj)
@@ -126,17 +163,27 @@ def _task_list_payload(
 
         last_run_state, last_run_at, last_run_summary = _latest_run_fields(
             manager,
-            job_id=_safe_str(job, "job_id"),
+            job_id=task_id,
         )
         pending_first_run = last_run_state is None and last_run_at is None
         watch = _watch_metadata_from_payload(job.get("payload"))
         consolidation = _consolidation_metadata_from_payload(job.get("payload"))
         tasks.append(
             {
-                "task_id": _safe_str(job, "job_id"),
-                "name": _safe_str(job, "name"),
-                "enabled": bool(job.get("enabled", False)),
-                "next_due_at": job.get("next_due_at"),
+                "id": canonical.get("id", task_id),
+                "task_id": task_id,
+                "name": canonical.get("title") or _safe_str(job, "name"),
+                "status": canonical.get("status"),
+                "lifecycle_state": canonical.get("lifecycle_state"),
+                "task_kind": canonical.get("task_kind"),
+                "valid_actions": list(canonical.get("valid_actions") or []),
+                "enabled": bool(canonical.get("enabled", job.get("enabled", False))),
+                "next_due_at": canonical.get("due_at") or job.get("next_due_at"),
+                "concurrency_key": _safe_str(job, "concurrency_key") or None,
+                "retry_policy": {
+                    "max_attempts": int(job.get("max_attempts", 3) or 3),
+                    "retry_backoff_s": int(job.get("retry_backoff_s", 30) or 30),
+                },
                 "schedule": {
                     **schedule_obj,
                     "summary": summary,

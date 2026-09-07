@@ -1,5 +1,6 @@
 import sys
 from enum import Enum
+from typing import Literal
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.cli.constants import (
@@ -83,6 +84,16 @@ def get_active_theme_name() -> str:
 
 
 _COLOR_MODE: str | None = None
+
+
+def set_color_mode(mode: Literal["auto", "always", "never"] | None) -> None:
+    global _COLOR_MODE
+    if mode == "always":
+        _COLOR_MODE = "on"
+    elif mode == "never":
+        _COLOR_MODE = "off"
+    else:
+        _COLOR_MODE = mode
 
 
 def _detect_color_mode() -> str:

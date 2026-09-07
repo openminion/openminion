@@ -31,8 +31,10 @@ PYTHONDONTWRITEBYTECODE=1 \
 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py onboarding-live
 ```
 
-`onboarding-live` sends one bounded provider request. Do not run it with a
-production credential unless that request is explicitly authorized.
+`onboarding-live` is MiniMax-only and sends the provider check plus one bounded
+first task. Do not run it with a production credential unless those requests
+are explicitly authorized. The release workflow separately runs the Ollama
+fixture journey through the installed wheel rather than the source tree.
 
 List reusable suites:
 

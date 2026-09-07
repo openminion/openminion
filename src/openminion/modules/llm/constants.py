@@ -41,6 +41,7 @@ DEFAULT_FINISH_REASON_ALIASES: dict[str, str] = {
     "complete": "stop",
 }
 DEFAULT_HTTP_USER_AGENT = "OpenMinion/1.0"
+REQUESTABLE_TOOL_NAMES_METADATA_KEY = "requestable_tool_names"
 
 # Path Layout
 DEFAULT_CONFIG_FILENAME = "llmctl.yaml"

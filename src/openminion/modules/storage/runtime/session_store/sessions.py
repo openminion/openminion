@@ -31,7 +31,7 @@ class RuntimeSessionStoreSessions:
         backend: RuntimeSessionStoreBackend,
         *,
         list_participants: Callable[[str], list[RoomParticipant]],
-        assert_session_turn_fence: Callable[[str, int], None] | None = None,
+        assert_session_turn_fence: Callable[[str, int], None],
     ) -> None:
         self._backend = backend
         self._list_participants = list_participants
@@ -43,7 +43,7 @@ class RuntimeSessionStoreSessions:
         session_id: str,
         session_turn_fence_token: int | None,
     ) -> None:
-        if session_turn_fence_token is None or self._assert_session_turn_fence is None:
+        if session_turn_fence_token is None:
             return
         self._assert_session_turn_fence(session_id, session_turn_fence_token)
 
@@ -273,9 +273,20 @@ class RuntimeSessionStoreSessions:
         if normalized_agent:
             encoded_agent = quote(normalized_agent, safe="")
             clauses.append(
-                "(session_key LIKE ? OR LOWER(COALESCE(active_agent_id, '')) LIKE ?)"
+                "(session_key LIKE ? OR LOWER(COALESCE(active_agent_id, '')) LIKE ? "
+                "OR EXISTS (SELECT 1 FROM room_participants AS participant "
+                "WHERE participant.session_id = sessions.id "
+                "AND participant.participant_type = 'agent' "
+                "AND LOWER(participant.participant_id) = ? "
+                "AND participant.left_at IS NULL))"
             )
-            params.extend([f"agent:{encoded_agent}%|%", f"{normalized_agent}%"])
+            params.extend(
+                [
+                    f"agent:{encoded_agent}%|%",
+                    f"{normalized_agent}%",
+                    normalized_agent,
+                ]
+            )
         if normalized_status:
             clauses.append("status = ?")
             params.append(normalize_session_status(normalized_status))

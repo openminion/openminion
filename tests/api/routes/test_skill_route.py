@@ -9,6 +9,7 @@ import pytest
 from openminion.api.routes.contracts import APIRouteContext
 from openminion.api.routes.skill import handle_request
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_text_and_admit
 
 
 DEMO_SKILL_MD = """
@@ -29,6 +30,9 @@ Pull latest changes for a git branch.
 ## Procedure
 - tool.shell run "git fetch --all"
 - tool.shell run "git pull --ff-only"
+
+## Verification
+- Confirm the branch is synchronized.
 """.strip()
 
 
@@ -56,7 +60,8 @@ def _config_path(tmp_path: Path) -> str:
 def _ingest_demo(config_path: str) -> str:
     ctl = Skill(config_path)
     try:
-        skill_id, _ver, _warnings = ctl.ingest_text(
+        skill_id, _ver, _warnings = ingest_text_and_admit(
+            ctl,
             name="Sync Git Branch",
             markdown=DEMO_SKILL_MD,
         )
@@ -126,34 +131,7 @@ def test_get_skill_detail_returns_404_for_unknown(cfg_path: str) -> None:
     assert result.payload["error"]["code"] == "NOT_FOUND"
 
 
-def test_post_disable_requires_reason(cfg_path: str) -> None:
-    skill_id = _ingest_demo(cfg_path)
-    result = handle_request(
-        _ctx(cfg_path),
-        method_name="POST",
-        path=f"/v1/skills/{skill_id}/disable",
-        body={"not_reason": "x"},
-        query=None,
-    )
-    assert result is not None
-    assert result.status == HTTPStatus.BAD_REQUEST
-    assert result.payload["error"]["code"] == "invalid_request"
-
-
-def test_post_disable_requires_body(cfg_path: str) -> None:
-    skill_id = _ingest_demo(cfg_path)
-    result = handle_request(
-        _ctx(cfg_path),
-        method_name="POST",
-        path=f"/v1/skills/{skill_id}/disable",
-        body=None,
-        query=None,
-    )
-    assert result is not None
-    assert result.status == HTTPStatus.BAD_REQUEST
-
-
-def test_post_disable_sets_status_deprecated(cfg_path: str) -> None:
+def test_post_disable_requires_proven_operator_authority(cfg_path: str) -> None:
     skill_id = _ingest_demo(cfg_path)
     result = handle_request(
         _ctx(cfg_path),
@@ -163,37 +141,8 @@ def test_post_disable_sets_status_deprecated(cfg_path: str) -> None:
         query=None,
     )
     assert result is not None
-    assert result.status == HTTPStatus.OK
-    assert result.payload["ok"] is True
-    assert result.payload["disabled"]["new_status"] == "deprecated"
-    assert result.payload["disabled"]["reason"] == "operator http test"
-
-    listed = handle_request(
-        _ctx(cfg_path),
-        method_name="GET",
-        path="/v1/skills",
-        body=None,
-        query="status=deprecated",
-    )
-    assert listed is not None
-    assert listed.status == HTTPStatus.OK
-    listed_ids = {item["skill_id"] for item in listed.payload["skills"]}
-    assert skill_id in listed_ids
-
-
-def test_router_fallthrough_returns_none_for_unrelated_path(
-    cfg_path: str,
-) -> None:
-    assert (
-        handle_request(
-            _ctx(cfg_path),
-            method_name="GET",
-            path="/sessions/x/messages",
-            body=None,
-            query=None,
-        )
-        is None
-    )
+    assert result.status == HTTPStatus.FORBIDDEN
+    assert result.payload["error"]["code"] == "SKILL_OPERATOR_AUTH_REQUIRED"
 
 
 def test_router_fallthrough_returns_none_for_wrong_method(

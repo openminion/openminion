@@ -17,6 +17,7 @@ from openminion.modules.llm.providers.base import ProviderError, ProviderRespons
 from openminion.modules.llm.schemas import UsageInfo
 from openminion.services.agent.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
 from openminion.services.brain.post_execution import BrainBridgeTurnMixin
+from openminion.modules.brain.loop.services import turn_tool_allowlist
 from openminion.services.brain.post_execution.postprocess import (
     _tool_result_response_text,
 )
@@ -27,6 +28,30 @@ class DummyBridge(BrainBridgeTurnMixin):
     pass
 
 
+def test_turn_tool_allowlist_uses_restrictive_identity_posture() -> None:
+    identity_filter = {
+        "tool_use": "read_only",
+        "allowed_tools": ["file.read", "git.status"],
+    }
+
+    assert turn_tool_allowlist({}, identity_filter) == ("file.read", "git.status")
+    assert turn_tool_allowlist({}, {"tool_use": "allowed"}) is None
+    assert turn_tool_allowlist(
+        {
+            "turn_tool_allowlist_supplied": "true",
+            "turn_tool_allowlist": "time,file.read",
+        },
+        identity_filter,
+    ) == ("file.read",)
+    assert turn_tool_allowlist(
+        {
+            "subagent_context_id": "child-1",
+            "subagent_tool_allowlist": "git.status,web.fetch",
+        },
+        identity_filter,
+    ) == ("git.status",)
+
+
 class _DummySessionAPI:
     def __init__(self, state: dict) -> None:
         self._state = dict(state)
@@ -34,8 +59,19 @@ class _DummySessionAPI:
         self.events: list[dict] = []
         self.turns: list[dict[str, object]] = []
 
-    def get_latest_working_state(self, session_id: str) -> dict:
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict:
+        del agent_id
         return dict(self._state)
+
+    def get_active_task_plan(self, session_id: str) -> dict | None:
+        del session_id
+        plan = self._state.get("active_task_plan")
+        return dict(plan) if isinstance(plan, dict) else None
 
     def put_working_state(self, session_id: str, *, state_inline: dict) -> None:
         self.written = dict(state_inline)
@@ -59,8 +95,19 @@ class _DummySessionAPI:
         )
         return f"{session_id}-event-{len(self.events)}"
 
-    def list_events(self, session_id: str) -> list[dict]:
-        return [item for item in self.events if item.get("session_id") == session_id]
+    def list_events(
+        self,
+        session_id: str,
+        *,
+        event_type: str | None = None,
+        trace_id: str | None = None,
+    ) -> list[dict]:
+        events = [item for item in self.events if item.get("session_id") == session_id]
+        if event_type is not None:
+            events = [item for item in events if item.get("type") == event_type]
+        if trace_id is not None:
+            events = [item for item in events if item.get("trace_id") == trace_id]
+        return events
 
     def append_turn(
         self,
@@ -92,13 +139,14 @@ class _DummyRunner:
     def __init__(self, state: dict) -> None:
         self.session_api = _DummySessionAPI(state)
         self.profile = SimpleNamespace(
+            agent_id="test-agent",
             budgets=SimpleNamespace(
                 max_ticks_per_user_turn=8,
                 max_tool_calls=8,
                 max_a2a_calls=0,
                 max_total_llm_tokens=100000,
                 max_elapsed_ms=45000,
-            )
+            ),
         )
 
 
@@ -426,6 +474,93 @@ def test_build_turn_response_metadata_includes_turn_progress_summary() -> None:
     assert metadata["total_output_tokens_used"] == "800"
     assert metadata["total_tokens_used"] == "1500"
     assert metadata["tool_calls_count"] == "2"
+
+
+def test_build_turn_response_metadata_projects_session_plan_facts() -> None:
+    bridge = DummyBridge()
+    bridge._config = SimpleNamespace(
+        agent=SimpleNamespace(name="agent-1"),
+        agents={"agent-1": SimpleNamespace(name="agent-1")},
+        default_agent="agent-1",
+    )
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    plan = {
+        "plan_id": "plan-1",
+        "objective": "Repair the fixture",
+        "steps": [{"step_id": "repair", "description": "Repair it"}],
+    }
+    revision = {
+        "plan_id": "plan-1",
+        "revision_id": "revision-1",
+        "verifier_refs": ["verify:failed-1"],
+        "revised_steps": [
+            {"step_id": "repair", "description": "Repair the failed check"}
+        ],
+    }
+    runner = _DummyRunner({"active_task_plan": plan})
+    runner.session_api.append_event(
+        "sess-plan",
+        "task_plan.revised",
+        {"plan": plan, "revision": revision},
+        trace_id="trace-plan",
+    )
+
+    metadata = bridge._build_turn_response_metadata(
+        runner=runner,
+        step_out=SimpleNamespace(
+            status="done",
+            action_result=SimpleNamespace(outputs={}),
+        ),
+        session_id="sess-plan",
+        request_id="trace-plan",
+        elapsed_ms=100.0,
+        llm_steps=1,
+        termination_reason="model_final",
+    )
+
+    assert json.loads(metadata["task_plan"])["plan_id"] == "plan-1"
+    assert json.loads(metadata["task_plan.revision"])["revision_id"] == ("revision-1")
+
+
+def test_build_turn_response_metadata_captures_provider_error_facts() -> None:
+    bridge = DummyBridge()
+    bridge._config = SimpleNamespace(
+        agent=SimpleNamespace(name="agent-1"),
+        agents={"agent-1": SimpleNamespace(name="agent-1")},
+        default_agent="agent-1",
+    )
+    bridge._provider = SimpleNamespace(name="fake-provider")
+
+    metadata = bridge._build_turn_response_metadata(
+        runner=_DummyRunner({}),
+        step_out=SimpleNamespace(
+            status="error",
+            action_result=SimpleNamespace(
+                outputs={},
+                error=SimpleNamespace(
+                    code="PROVIDER_ERROR",
+                    message="unsupported tool",
+                    details={
+                        "tool_name": "get_weather",
+                        "request_id": "portal-request-1",
+                    },
+                ),
+            ),
+        ),
+        session_id="sess-error",
+        request_id="trace-error",
+        elapsed_ms=100.0,
+        llm_steps=1,
+        termination_reason="model_final",
+    )
+
+    assert metadata["error_code"] == "PROVIDER_ERROR"
+    assert metadata["error_message"] == "unsupported tool"
+    assert json.loads(metadata["error_details"]) == {
+        "tool_name": "get_weather",
+        "request_id": "portal-request-1",
+    }
+    assert metadata["provider_request_id"] == "portal-request-1"
 
 
 def test_build_turn_response_metadata_falls_back_to_llm_event_usage() -> None:
@@ -826,6 +961,7 @@ def test_prepare_turn_appends_pending_turn_context_block_when_present() -> None:
     bridge = DummyBridge()
     runner = SimpleNamespace(
         context_api=_DummyContextAdapter(),
+        profile=SimpleNamespace(agent_id="test-agent"),
         session_api=_DummySessionAPI(
             {
                 "pending_turn_context": {
@@ -1207,6 +1343,7 @@ def test_prepare_turn_keeps_prior_turn_context_when_pending_context_exists() -> 
     bridge = DummyBridge()
     runner = SimpleNamespace(
         context_api=_DummyContextAdapter(),
+        profile=SimpleNamespace(agent_id="test-agent"),
         session_api=_DummySessionAPI(
             {
                 "pending_turn_context": {
@@ -2787,6 +2924,24 @@ def test_postprocess_turn_attaches_structured_action_output_metadata() -> None:
                     "response_preferences": {},
                 },
                 "session_work_summary": "Compared uv and pipx using official docs.",
+                "task_plan": {
+                    "plan_id": "plan-1",
+                    "objective": "Compare tools",
+                    "criterion_ids": ["criterion-table"],
+                    "steps": [{"step_id": "compare", "description": "Compare"}],
+                },
+                "task_plan.revision": {
+                    "plan_id": "plan-1",
+                    "revision_id": "revision-1",
+                    "criterion_ids": ["criterion-table"],
+                    "verifier_refs": ["verify:failed-1"],
+                    "revised_steps": [
+                        {"step_id": "compare", "description": "Recompare"}
+                    ],
+                },
+                "memory_consolidation.target_scope": "agent:agent-a",
+                "memory_consolidation.candidate_ids": ["cand-1"],
+                "memory_consolidation.state_hash": "hash-123",
             },
         ),
         working_state=SimpleNamespace(
@@ -2823,6 +2978,11 @@ def test_postprocess_turn_attaches_structured_action_output_metadata() -> None:
         response.metadata["session_work_summary"]
         == "Compared uv and pipx using official docs."
     )
+    assert response.metadata["memory_consolidation.target_scope"] == "agent:agent-a"
+    assert response.metadata["memory_consolidation.candidate_ids"] == '["cand-1"]'
+    assert response.metadata["memory_consolidation.state_hash"] == "hash-123"
+    assert '"criterion_ids": ["criterion-table"]' in response.metadata["task_plan"]
+    assert '"revision_id": "revision-1"' in response.metadata["task_plan.revision"]
 
 
 def test_postprocess_turn_salvages_finalization_status_trailer_from_message() -> None:
@@ -3100,7 +3260,12 @@ def test_postprocess_turn_emits_mode_aware_tool_and_tick_telemetry() -> None:
         "kind": "tool",
         "tool_name": "weather",
     }
-    runner = SimpleNamespace(session_api=SimpleNamespace(list_events=lambda _sid: []))
+    runner = SimpleNamespace(
+        session_api=SimpleNamespace(
+            get_active_task_plan=lambda _sid: None,
+            list_events=lambda _sid, **_filters: [],
+        )
+    )
     step_out = SimpleNamespace(
         status="done",
         message="completed.",

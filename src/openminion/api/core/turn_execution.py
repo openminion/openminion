@@ -8,7 +8,7 @@ from openminion.api.runtime import APIRuntime
 from openminion.services.runtime.daemon import turn_chunk_to_dict, turn_response_to_dict
 
 if TYPE_CHECKING:
-    from openminion.services.runtime.manager import DesktopApprovalRequester
+    from openminion.services.runtime.interfaces import DesktopApprovalRequester
 
 
 @dataclass
@@ -42,10 +42,14 @@ def open_turn_submission(
         runtime=runtime,
     )
     try:
+        submit_options: dict[str, Any] = {}
+        if desktop_approval_requester is not None:
+            submit_options["desktop_approval_requester"] = desktop_approval_requester
+        if resolved_attachment_refs:
+            submit_options["resolved_attachment_refs"] = resolved_attachment_refs
         runtime_handle = active_runtime.submit_turn(
             payload=body,
-            desktop_approval_requester=desktop_approval_requester,
-            resolved_attachment_refs=resolved_attachment_refs,
+            **submit_options,
         )
         return TurnSubmission(
             active_runtime=active_runtime,

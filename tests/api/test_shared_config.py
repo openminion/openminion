@@ -48,8 +48,30 @@ def test_bootstrap_api_runtime_returns_runtime_and_error() -> None:
     assert second.runtime_bootstrap_error == "boom"
 
 
+def test_bootstrap_preserves_ipc_token_when_runtime_startup_fails() -> None:
+    config = mock.Mock()
+    config.runtime.ipc_token = "degraded-secret"
+    manager = mock.Mock(base_config=config)
+    with (
+        mock.patch(
+            "openminion.api.config.APIRuntime.from_config_path",
+            side_effect=RuntimeError("boom"),
+        ),
+        mock.patch(
+            "openminion.api.config.ConfigManager.load",
+            return_value=manager,
+        ),
+    ):
+        bootstrap = bootstrap_api_runtime("config.json")
+
+    assert bootstrap.runtime is None
+    assert bootstrap.runtime_bootstrap_error == "boom"
+    assert bootstrap.ipc_token == "degraded-secret"
+
+
 def test_build_api_handler_class_attaches_runtime_state() -> None:
     runtime = mock.Mock()
+    runtime.config.runtime.ipc_token = "local-secret"
     handler_cls = build_api_handler_class(
         _OpenMinionAPIHandler,
         config_path="config.json",
@@ -63,6 +85,7 @@ def test_build_api_handler_class_attaches_runtime_state() -> None:
     assert handler_cls.config_path == "config.json"
     assert handler_cls.runtime is runtime
     assert handler_cls.runtime_bootstrap_error == "boom"
+    assert handler_cls.ipc_token == "local-secret"
 
 
 def test_resolve_and_close_api_runtime_if_owned() -> None:

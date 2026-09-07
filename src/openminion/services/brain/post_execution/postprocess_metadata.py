@@ -4,6 +4,7 @@ from typing import Any
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
+from openminion.modules.session.capture import capture_response_metadata
 from openminion.services.brain.post_execution.usage import (
     collect_llm_usage_summary_from_events,
 )
@@ -21,6 +22,9 @@ _STRUCTURED_ACTION_OUTPUT_METADATA_KEYS: tuple[str, ...] = (
     "task_plan.revision",
     "task_plan.abandoned",
     "task_plan.completed",
+    "memory_consolidation.target_scope",
+    "memory_consolidation.candidate_ids",
+    "memory_consolidation.state_hash",
 )
 
 
@@ -67,7 +71,7 @@ def _build_turn_response_metadata(
         total_tokens_used = event_total_tokens
     tool_calls_count = int(action_outputs.get("tool_calls_count", 0) or 0)
     _default_agent_id = resolve_default_agent_id(self._config)
-    return {
+    metadata = {
         "agent": self._config.agents[_default_agent_id].name or _default_agent_id,
         "provider": str(getattr(self._provider, "name", "brain-orchestrator")),
         "model": "brain-orchestrator",
@@ -87,6 +91,58 @@ def _build_turn_response_metadata(
         "max_single_call_output_tokens": str(max_single_call_output_tokens),
         "max_single_call_total_tokens": str(max_single_call_total_tokens),
     }
+    metadata.update(capture_response_metadata(step_out))
+    _attach_session_task_plan_metadata(
+        metadata=metadata,
+        runner=runner,
+        session_id=session_id,
+        request_id=request_id,
+    )
+    action_error = getattr(getattr(step_out, "action_result", None), "error", None)
+    if action_error is not None:
+        metadata["error_code"] = str(getattr(action_error, "code", "") or "")
+        metadata["error_message"] = str(getattr(action_error, "message", "") or "")
+        error_details = getattr(action_error, "details", None)
+        if isinstance(error_details, dict) and error_details:
+            metadata["error_details"] = json.dumps(error_details, sort_keys=True)
+            provider_request_id = str(error_details.get("request_id") or "").strip()
+            if provider_request_id:
+                metadata["provider_request_id"] = provider_request_id
+    return metadata
+
+
+def _attach_session_task_plan_metadata(
+    *,
+    metadata: dict[str, str],
+    runner: BrainRunner,
+    session_id: str,
+    request_id: str | None,
+) -> None:
+    session_api = runner.session_api
+    active_plan = session_api.get_active_task_plan(session_id)
+    if active_plan:
+        metadata["task_plan"] = json.dumps(active_plan, sort_keys=True)
+
+    if not request_id:
+        return
+    for event in reversed(session_api.list_events(session_id, trace_id=request_id)):
+        event_type = str(event.get("type") or "")
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if event_type == "task_plan.revised":
+            revision = payload.get("revision")
+            if isinstance(revision, dict):
+                metadata["task_plan.revision"] = json.dumps(
+                    revision,
+                    sort_keys=True,
+                )
+        elif event_type == "task_plan.declared" and "task_plan" not in metadata:
+            plan = payload.get("plan")
+            if isinstance(plan, dict):
+                metadata["task_plan"] = json.dumps(plan, sort_keys=True)
+        if "task_plan" in metadata and "task_plan.revision" in metadata:
+            break
 
 
 def _security_events_from_tool_results(

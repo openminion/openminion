@@ -17,6 +17,8 @@ def create_context_adapter(
     telemetryctl: Any | None = None,
     skill_config: Any | None = None,
     skill_home_root: Any | None = None,
+    artifactctl: Any | None = None,
+    owns_artifactctl: bool = False,
 ) -> Any:
     from openminion.modules.brain.adapters.context import LocalContextAdapter
 
@@ -33,21 +35,32 @@ def create_context_adapter(
             BridgeSkillClient,
             BridgeCompressClient,
         )
+        from openminion.modules.artifact.refs import create_default_artifactctl
 
         feature_flags = context_feature_flags()
+        identity_client = BridgeIdentityClient(
+            backing_store=session_store,
+            system_prompt=identity_system_prompt,
+        )
+        memory_client = BridgeMemoryClient(backing_store=session_store)
+        runtime_artifactctl = (
+            artifactctl if artifactctl is not None else create_default_artifactctl()
+        )
+        artifact_client = BridgeArtifactClient(
+            artifact_ctl=runtime_artifactctl,
+            owns_artifactctl=owns_artifactctl or artifactctl is None,
+        )
+        skill_client = BridgeSkillClient(
+            backing_store=session_store,
+            skill_config=skill_config,
+            skill_home_root=skill_home_root,
+        )
         service = ContextCtlService(
-            identityctl=BridgeIdentityClient(
-                backing_store=session_store,
-                system_prompt=identity_system_prompt,
-            ),
+            identityctl=identity_client,
             sessctl=BridgeSessionClient(backing_store=session_store),
-            memctl=BridgeMemoryClient(backing_store=session_store),
-            artifactctl=BridgeArtifactClient(backing_store=session_store),
-            skillctl=BridgeSkillClient(
-                backing_store=session_store,
-                skill_config=skill_config,
-                skill_home_root=skill_home_root,
-            ),
+            memctl=memory_client,
+            artifactctl=artifact_client,
+            skillctl=skill_client,
             compressctl=BridgeCompressClient(backing_store=session_store),
             rlmctl=rlmctl,
             vectorctl=vectorctl,
@@ -62,6 +75,10 @@ def create_context_adapter(
             service=service,
             session_store=session_store,
             runtime_token_budget=runtime_token_budget,
+            owned_identity_client=identity_client,
+            owned_memory_client=memory_client,
+            owned_artifact_client=artifact_client,
+            owned_skill_client=skill_client,
         )
     except ImportError:
         raise_if_strict(mode)

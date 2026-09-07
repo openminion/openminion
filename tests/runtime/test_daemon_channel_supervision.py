@@ -100,6 +100,7 @@ def test_agent_runtime_eviction_closes_its_provider_client() -> None:
         _agent_runtime_lock=RLock(),
         _gateways={"alpha||default": object()},
         _agent_services={"alpha||default": service},
+        _memory_assemblies={},
         logger=logging.getLogger("test.runtime"),
     )
 

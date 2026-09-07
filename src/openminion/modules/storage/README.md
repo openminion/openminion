@@ -35,7 +35,9 @@ that wrap those backends for consumer modules.
 - Integrity hashes: optional SHA-256 record hashes and verification
   outcomes for stores that opt into row integrity checks
 - Runtime helpers (`runtime/`): SQLite path resolution, idempotency
-  store, memory-record store, session store
+  store, memory-record store, session store, runtime-store construction,
+  vector synchronization, and room-session identity normalization
+- Telemetry hooks: `StorageTelemetryHook`, `NoopStorageTelemetryHook`
 
 ## Non-goals
 
@@ -57,6 +59,9 @@ Re-exported from `openminion.modules.storage`:
 - Vectors: `VectorStoreInterface`, `ZvecVectorStore`, `NoopVectorStore`
 - Backends: `BackendDescriptor`, `BackendRegistry`,
   `default_backend_registry`, `resolve_storage_provider`
+- Runtime: `build_runtime_storage`, `VectorSyncScheduler`, room-session key and
+  participant normalization helpers
+- Telemetry: `StorageTelemetryHook`, `NoopStorageTelemetryHook`
 - Migrations / integrity: `MigrationRunner`, `verify_module_integrity`,
   `repair_module_db`, `backup_module_db`, `restore_module_db`,
   `ReindexReport`
@@ -69,13 +74,12 @@ Re-exported from `openminion.modules.storage`:
 ## Dependencies
 
 - `base/` — config, paths, errors
-- `services/cron.*` (approved per CTCR-05) for cron-driven store
-  background tasks
+- `services/cron.*` for cron-driven store background tasks
 
 ## Canonical shape
 
 Canonical with `interfaces.py`, `engine.py`, `record_store.py`,
 `backends/` subpackage, `runtime/` subpackage, `migrations/` subpackage,
-`cli.py`. The module's deliberate complexity (38 public symbols) is
-load-bearing — every other module's persistence delegates here, so the
-public surface intentionally exposes every primitive consumers need.
+`cli.py`. The module's broad public surface is load-bearing: other modules
+delegate persistence here, so the package facade exposes the shared primitives
+they need. The exact export list lives in `__init__.py`.

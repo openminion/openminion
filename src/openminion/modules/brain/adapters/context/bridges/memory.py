@@ -83,7 +83,16 @@ class BridgeMemoryClient:
         if db_path is None:
             return None
         memory_db = db_path.parent / DEFAULT_MEMORY_DB_FILENAME
-        return memory_service_cls(store=sqlite_memory_store_cls(memory_db))
+        return memory_service_cls(
+            store=sqlite_memory_store_cls(memory_db),
+            owns_store=True,
+        )
+
+    def close(self) -> None:
+        memory_ctl = self._memory_ctl
+        self._memory_ctl = None
+        if memory_ctl is not None:
+            memory_ctl.close()
 
     def _scope_candidates(self, *, session_id: str, agent_id: str) -> list[str]:
         if agent_id and session_id:

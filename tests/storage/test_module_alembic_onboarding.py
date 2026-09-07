@@ -63,4 +63,4 @@ def test_module_run_migrations_bootstraps_alembic_baseline(
     assert "0001_baseline" in declared
     assert declared[-1] == schema_head
     if module_id == "session":
-        assert schema_head == "0003_session_detached_artifacts"
+        assert schema_head == "0004_session_detached_artifacts"

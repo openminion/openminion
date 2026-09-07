@@ -29,12 +29,40 @@ from .contracts import (
 from .runtime import (
     _extract_visible_response_text,
     _normalize_finalization_status_response,
+    _normalize_submit_output_final_answer_response,
 )
 from .status import emit_adaptive_status
 
 
 class _FinalizedAnswer(FinalizationStatus):
     final_answer: str = Field(min_length=1)
+
+
+def _budget_finalization_original_request(loop_ctx: AdaptiveToolLoopContext) -> str:
+    state = getattr(loop_ctx, "state", None)
+    candidates = (
+        getattr(state, "goal", "") if state is not None else "",
+        getattr(state, "last_user_input", "") if state is not None else "",
+        getattr(loop_ctx, "user_input", ""),
+        getattr(state, "pending_confirmation_last_user_input", "")
+        if state is not None
+        else "",
+    )
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _last_user_message_text(messages: list[Message]) -> str:
+    for message in reversed(messages):
+        if str(getattr(message, "role", "") or "").strip().lower() != "user":
+            continue
+        text = str(getattr(message, "content", "") or "").strip()
+        if text:
+            return text
+    return ""
 
 
 def _retry_answer_only_completion_if_needed(
@@ -44,6 +72,7 @@ def _retry_answer_only_completion_if_needed(
     profile: AdaptiveToolLoopProfile,
     loop_state: AdaptiveToolLoopState,
     runtime: Any,
+    messages: list[Message],
     complete_kwargs: dict[str, Any],
     public_mode_tag: str,
     allowed_tools: list[str],
@@ -63,15 +92,16 @@ def _retry_answer_only_completion_if_needed(
     loop_state.scratchpad[retry_key] = True
     _debit_llm_usage(loop_ctx, response)
     loop_state.llm_calls += 1
-    retry_messages = list(loop_state.messages)
+    retry_messages = list(messages)
     retry_messages.extend(list(getattr(response, "assistant_messages", []) or []))
     retry_messages.append(
         Message(
             role="system",
             content=(
-                "Do not call tools. The budget finalization step is answer-only. "
-                "Use the successful tool results already in context and return only "
-                "the final user-facing answer now."
+                "The budget finalization step is answer-only. Call submit_output "
+                "once with the complete user-facing answer in final_answer and its "
+                "truthful typed status. Preserve the original request's exact "
+                "labels, headings, and ordering."
             ),
         )
     )
@@ -83,9 +113,15 @@ def _retry_answer_only_completion_if_needed(
         mode_state="budget_answer_only_retry",
     )
     try:
+        retry_kwargs = dict(complete_kwargs)
+        retry_kwargs["tools"] = [_finalized_answer_tool()]
+        retry_kwargs["tool_choice"] = {
+            "type": "function",
+            "function": {"name": "submit_output"},
+        }
         retried_response = runtime.complete(
             messages=retry_messages,
-            **complete_kwargs,
+            **retry_kwargs,
         )
     except Exception as exc:  # noqa: BLE001
         loop_state.scratchpad["budget_answer_only_finalization_error"] = str(exc)
@@ -97,6 +133,7 @@ def _retry_answer_only_completion_if_needed(
             public_mode_tag=public_mode_tag,
             reason="answer_only_finalization_retry_failed",
         )
+    retried_response = _normalize_submit_output_final_answer_response(retried_response)
     return _normalize_finalization_status_response(retried_response), None
 
 

@@ -12,10 +12,10 @@ and boundary adapter behavior live in `modules/policy`.
 ## Public surface
 
 `openminion.services.security` re-exports the policy contracts still consumed
-by API, AECR, BPPD, CLI, and service callers. `blast_radius/wiring.py` remains
-service-owned composition, while `policy.py` and `tool_execution.py` are
-identity-preserving compatibility imports. `validate.py` is the
-operator-facing diagnostic surface.
+by API, CLI, runtime, and service callers. `blast_radius/wiring.py` remains
+service-owned composition, while `policy.py` and `tool_execution.py` preserve
+compatibility imports. `validate.py` is the operator-facing diagnostic
+surface.
 
 ## Non-goals
 

@@ -298,6 +298,7 @@ def test_symbol_find_returns_definition_lines(tmp_path: Path) -> None:
     assert result["count"] == 1
     assert result["matches"][0]["file"] == str(target)
     assert result["matches"][0]["start_line"] == 1
+    assert result["matches"][0]["end_line"] == 2
     assert result["matches"][0]["kind"] == "class"
 
 

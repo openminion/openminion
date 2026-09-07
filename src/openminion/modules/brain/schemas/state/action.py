@@ -1,4 +1,6 @@
 # ruff: noqa: F403,F405
+from openminion.modules.tool.plugin_api import BlockchainSendConfirmationPreview
+
 from .common import *
 
 
@@ -18,6 +20,15 @@ class ActionMetrics(BaseModel):
     cost_estimate: float | None = Field(default=None, ge=0)
 
 
+class MemoryUseRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    record_id: str = Field(..., min_length=1)
+    use_kind: Literal["used", "cited"]
+    producer_kind: Literal["model", "tool", "action"]
+    producer_id: str = Field(..., min_length=1)
+
+
 class ActionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -27,6 +38,7 @@ class ActionResult(BaseModel):
     outputs: dict[str, Any] = Field(default_factory=dict)
     artifact_refs: list[ArtifactRef] = Field(default_factory=list)
     memory_refs: list[str] = Field(default_factory=list)
+    memory_use_refs: list[MemoryUseRef] = Field(default_factory=list)
     error: ActionError | None = None
     metrics: ActionMetrics | None = None
 
@@ -37,6 +49,7 @@ class JobHandle(BaseModel):
     task_id: str = Field(..., min_length=1)
     command_id: str = Field(..., min_length=1)
     provider: Literal["tool", "a2actl"]
+    producer_id: str = ""
     status: Literal["pending", "running", "done", "failed"]
     poll_after_ms: int = Field(default=1000, ge=1)
     created_at: str = Field(default_factory=iso_now)
@@ -69,3 +82,5 @@ class PolicyDecision(BaseModel):
     patched_command: Command | None = None
     require_clarification: bool = False
     clarification_question: str | None = None
+    approval_id: str | None = None
+    confirmation_preview: BlockchainSendConfirmationPreview | None = None

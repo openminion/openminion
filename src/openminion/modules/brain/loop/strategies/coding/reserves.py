@@ -14,6 +14,7 @@ from openminion.modules.brain.loop.tools import (
     AdaptiveToolLoopOutcome,
 )
 from openminion.modules.brain.loop.tools.iteration.helpers import _MUTATING_FILE_TOOLS
+from openminion.modules.brain.schemas import ArtifactRef
 from openminion.modules.llm.schemas import Message
 
 from .contracts import CODING_TERM_FINAL_TEXT, CODING_TERM_TOOL_FAILURE
@@ -202,6 +203,13 @@ class CodingReserveMixin:
         )
 
     def _has_verifier_candidate(self: Any) -> bool:
+        if self._loop_state.scratchpad.get("coding.pending_verifier_sessions"):
+            return False
+        if (
+            self._coding_plan is not None
+            and getattr(self._coding_plan, "verifier_goal", None) is not None
+        ):
+            return bool(self._bound_verifier_candidates())
         candidate = (
             self._last_verifier_candidate_payload
             or self._loop_state.scratchpad.get("coding.last_verifier_candidate")
@@ -230,6 +238,25 @@ class CodingReserveMixin:
         if not roots:
             return True
         return any((root / path).exists() for root in roots)
+
+    def _successful_mutating_artifact_refs(self: Any) -> list[ArtifactRef]:
+        refs: list[ArtifactRef] = []
+        seen: set[str] = set()
+        for item in self._loop_state.scratchpad.get("adaptive.tool_results", []) or []:
+            if not isinstance(item, dict) or not bool(item.get("ok")):
+                continue
+            if str(item.get("tool_name", "") or "").strip() not in _MUTATING_FILE_TOOLS:
+                continue
+            path = _mutating_result_path(item)
+            if (
+                not path
+                or path in seen
+                or not self._mutating_result_has_durable_path(item)
+            ):
+                continue
+            seen.add(path)
+            refs.append(ArtifactRef(ref=path))
+        return refs
 
     def _allowed_tools_for_current_phase(
         self: Any,
@@ -264,17 +291,37 @@ class CodingReserveMixin:
         self._loop_state.seen_signatures = []
         self._loop_state.termination_reason = ""
         self._loop_state.scratchpad["coding.verification_reserve_used"] = True
+        pending_sessions = tuple(
+            str(session_id)
+            for session_id in dict(
+                self._loop_state.scratchpad.get("coding.pending_verifier_sessions", {})
+                or {}
+            )
+        )
+        if ensure_tool_budget and budgets is not None and pending_sessions:
+            budgets.tool_calls = max(
+                int(getattr(budgets, "tool_calls", 0) or 0),
+                len(pending_sessions),
+            )
+        instruction = (
+            "Poll each pending verification process now with `exec.poll` using "
+            f"these session IDs: {', '.join(pending_sessions)}. Do not start "
+            "another command. Each poll inherits its original verification target. "
+            "Then continue with the terminal verification results."
+            if pending_sessions
+            else (
+                "Use the reserved final tool step for verification only. "
+                "Verification is read-only. Run exactly one verification "
+                "readback step now, preferring `file.read` when a structured "
+                "reader can prove the change and using `exec.run` only when "
+                "shell verification is actually needed. Bind the call to one "
+                "listed verification target, then continue with the verified answer."
+            )
+        )
         self._loop_state.messages.append(
             Message(
                 role="user",
-                content=(
-                    "Use the reserved final tool step for verification only. "
-                    "Verification is read-only. Run exactly one verification "
-                    "readback step now, preferring `file.read` when a structured "
-                    "reader can prove the change and using `exec.run` only when "
-                    "shell verification is actually needed. Then continue with "
-                    "the verified answer."
-                ),
+                content=instruction,
             )
         )
         ctx.emit_status(
@@ -300,6 +347,9 @@ class CodingReserveMixin:
         self._loop_state.seen_signatures = []
         self._loop_state.termination_reason = ""
         self._loop_state.scratchpad["coding.final_answer_reserve_used"] = True
+        original_request = str(
+            getattr(ctx.state, "goal", "") or getattr(ctx, "user_input", "") or ""
+        ).strip()
         self._loop_state.messages.append(
             Message(
                 role="user",
@@ -308,7 +358,8 @@ class CodingReserveMixin:
                     "Base the answer on the files already written and the most recent "
                     "verification/readback evidence. Satisfy any explicit final-output "
                     "labels or result markers the user requested, include validation "
-                    "status, and return only the final answer."
+                    "status, and return only the final answer.\n\n"
+                    f"Original request:\n{original_request}"
                 ),
             )
         )

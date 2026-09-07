@@ -111,12 +111,12 @@ def test_multichannel_daemon_degrades_one_failed_channel_without_stopping_peer(
     supervisor.start()
     try:
         _wait_until(lambda: supervisor.status().state == "degraded")
+        _wait_until(lambda: telegram_api.get_updates_calls > 0)
         status = supervisor.status().to_dict()
 
         assert status["channels"]["telegram"]["state"] == "running"
         assert status["channels"]["slack"]["state"] == "failed"
         assert status["last_error"] == "<redacted>"
-        assert telegram_api.get_updates_calls > 0
     finally:
         supervisor.stop()
 

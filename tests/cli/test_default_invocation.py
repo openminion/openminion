@@ -28,6 +28,8 @@ def _stub_route(
         status="ok",
         should_launch_setup=should_launch_setup,
         should_fail_fast=should_fail_fast,
+        home_root=Path("/tmp/openminion-home"),
+        data_root=Path("/tmp/openminion-home/.openminion"),
     )
 
 
@@ -53,31 +55,13 @@ def test_no_subcommand_with_tty_and_config_launches_interactive(monkeypatch) -> 
     assert rc == 0
     interactive_args = called.get("interactive")
     assert interactive_args is not None
-    assert interactive_args.rich is False
 
 
-def test_no_subcommand_can_opt_into_rich_interactive(monkeypatch) -> None:
-    called = {}
+def test_retired_rich_flag_is_rejected() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main(["--rich"])
 
-    def _fake_run_interactive(args):
-        called["interactive"] = args
-        return 0
-
-    monkeypatch.setattr(
-        "openminion.cli.commands.interactive.run_interactive",
-        _fake_run_interactive,
-    )
-    monkeypatch.setattr(
-        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
-        lambda **kw: _stub_route(),
-    )
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
-
-    assert cli_main(["--rich"]) == 0
-    interactive_args = called.get("interactive")
-    assert interactive_args is not None
-    assert interactive_args.rich is True
+    assert excinfo.value.code == 2
 
 
 def test_no_subcommand_forwards_canonical_interactive_options(monkeypatch) -> None:
@@ -109,6 +93,8 @@ def test_no_subcommand_forwards_canonical_interactive_options(monkeypatch) -> No
                 "/tmp/demo-workspace",
                 "--theme",
                 "light",
+                "--color",
+                "always",
                 "--no-context",
                 "--no-update-check",
                 "--verbosity",
@@ -122,6 +108,7 @@ def test_no_subcommand_forwards_canonical_interactive_options(monkeypatch) -> No
     assert interactive_args.session == "demo-session"
     assert interactive_args.dir == "/tmp/demo-workspace"
     assert interactive_args.theme == "light"
+    assert interactive_args.color == "always"
     assert interactive_args.no_context is True
     assert interactive_args.no_update_check is True
     assert interactive_args.verbosity == "quiet"

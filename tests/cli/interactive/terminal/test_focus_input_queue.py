@@ -10,10 +10,12 @@ from openminion.cli.presentation.models import MessageKind
 from openminion.cli.interactive.terminal import shell as terminal_shell
 from openminion.cli.interactive.terminal.shell.approval import (
     build_terminal_approval_callback,
+    format_terminal_approval_prompt,
 )
 from openminion.cli.interactive.terminal.transcript import (
     TerminalTranscript as _BaseTranscript,
 )
+from openminion.modules.llm import ProviderError
 
 
 class _QueueRuntime:
@@ -48,6 +50,14 @@ class _CapturedTranscript(_BaseTranscript):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         type(self).last_instance = self
+
+
+class _StubOverlay:
+    last_kwargs: dict[str, object] = {}
+
+    def __init__(self, *args, **kwargs) -> None:
+        del args
+        type(self).last_kwargs = dict(kwargs)
 
 
 class _ScriptedComposer:
@@ -257,11 +267,24 @@ class _SingleTurnRuntime:
         yield "answer"
 
 
-class _PromptGapComposer:
-    prompt_session = object()
+class _TypedFailureThenResumeRuntime:
+    agent_id = "alpha"
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    permission_mode = "default"
 
-    async def read_line(self) -> str:
-        raise EOFError
+    def __init__(self) -> None:
+        self.sent_texts: list[str] = []
+
+    async def send_message(self, text: str, **kwargs):
+        del kwargs
+        self.sent_texts.append(text)
+        if len(self.sent_texts) == 1:
+            raise ProviderError(
+                "empty after recovery",
+                code="EMPTY_PROVIDER_RESPONSE",
+            )
+        yield "resumed answer"
 
 
 class _TTYInput:
@@ -336,6 +359,7 @@ async def test_terminal_focus_keeps_accepting_input_while_turn_streams(
     output = io.StringIO()
 
     monkeypatch.setattr(terminal_shell, "TerminalComposer", _ScriptedComposer)
+    monkeypatch.setattr(terminal_shell, "TerminalOverlayPresenter", _StubOverlay)
     monkeypatch.setattr(terminal_shell, "TerminalTranscript", _CapturedTranscript)
     monkeypatch.setattr(
         terminal_shell,
@@ -363,6 +387,7 @@ async def test_terminal_focus_keeps_accepting_input_while_turn_streams(
     )
 
     assert result == 0
+    assert "prompt_session" not in _StubOverlay.last_kwargs
     assert runtime.sent_texts == ["first", "second"]
 
     transcript = _CapturedTranscript.last_instance
@@ -391,6 +416,7 @@ async def test_terminal_focus_drains_multiple_queued_inputs_fifo(
     output = io.StringIO()
 
     monkeypatch.setattr(terminal_shell, "TerminalComposer", _MultiQueueComposer)
+    monkeypatch.setattr(terminal_shell, "TerminalOverlayPresenter", _StubOverlay)
     monkeypatch.setattr(terminal_shell, "TerminalTranscript", _CapturedTranscript)
     monkeypatch.setattr(
         terminal_shell,
@@ -456,6 +482,7 @@ async def test_terminal_focus_runs_safe_busy_commands_and_blocks_shell_escape(
     output = io.StringIO()
 
     monkeypatch.setattr(terminal_shell, "TerminalComposer", _BusyCommandComposer)
+    monkeypatch.setattr(terminal_shell, "TerminalOverlayPresenter", _StubOverlay)
     monkeypatch.setattr(terminal_shell, "TerminalTranscript", _CapturedTranscript)
     monkeypatch.setattr(
         terminal_shell,
@@ -512,6 +539,7 @@ async def test_terminal_focus_queue_commands_work_while_turn_streams(
     output = io.StringIO()
 
     monkeypatch.setattr(terminal_shell, "TerminalComposer", _QueueCommandComposer)
+    monkeypatch.setattr(terminal_shell, "TerminalOverlayPresenter", _StubOverlay)
     monkeypatch.setattr(terminal_shell, "TerminalTranscript", _CapturedTranscript)
     monkeypatch.setattr(
         terminal_shell,
@@ -598,7 +626,7 @@ async def test_terminal_focus_interrupt_preserves_queue_until_run_next() -> None
 
 
 @pytest.mark.asyncio
-async def test_terminal_focus_adds_one_gap_before_typeahead_prompt() -> None:
+async def test_terminal_focus_typeahead_prompt_does_not_add_turn_spacing() -> None:
     runtime = _QueueCommandRuntime()
     output = io.StringIO()
     console = Console(file=output, force_terminal=False, width=120)
@@ -608,24 +636,24 @@ async def test_terminal_focus_adds_one_gap_before_typeahead_prompt() -> None:
         console=console,
         transcript=transcript,
         status_line=terminal_shell.TerminalStatusLine(),
-        composer=_PromptGapComposer(),
+        composer=_LoopComposer(),
         overlay=object(),
         working_dir="/tmp/focus-terminal-prompt-gap",
         custom_commands={},
         approval_grants=set(),
     )
 
-    loop.start_read_task(leading_blank_lines=1)
+    loop.start_read_task(delay_seconds=0.001)
 
     assert loop.read_task is not None
     with pytest.raises(EOFError):
         await loop.read_task
 
-    assert output.getvalue() == "\n"
+    assert output.getvalue() == ""
 
 
 @pytest.mark.asyncio
-async def test_terminal_focus_adds_one_gap_after_idle_answer() -> None:
+async def test_terminal_focus_frames_idle_answer_with_one_gap() -> None:
     output = io.StringIO()
     console = Console(file=output, force_terminal=False, width=120)
     transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
@@ -647,8 +675,49 @@ async def test_terminal_focus_adds_one_gap_after_idle_answer() -> None:
     await loop.cancel_read_task()
 
     rendered = output.getvalue()
-    assert rendered.startswith("⏺ answer")
+    assert rendered.startswith("\n⏺ answer")
     assert rendered.endswith("\n\n")
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_releases_prompt_after_typed_failure_and_resumes() -> None:
+    runtime = _TypedFailureThenResumeRuntime()
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
+    composer = _LoopComposer()
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=runtime,
+        console=console,
+        transcript=transcript,
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=composer,
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-provider-recovery",
+        custom_commands={},
+        approval_grants=set(),
+    )
+
+    await loop.start_turn("continue")
+    await loop.handle_turn_completion()
+    await loop.cancel_read_task()
+
+    assert loop.active_turn_task is None
+    assert composer.busy_events[-1] is False
+    assert any(
+        message.kind == MessageKind.ERROR
+        and message.body == "EMPTY_PROVIDER_RESPONSE: empty after recovery"
+        for message in transcript._messages
+    )
+
+    await loop.start_turn("resume")
+    await loop.handle_turn_completion()
+    await loop.cancel_read_task()
+
+    assert runtime.sent_texts == ["continue", "resume"]
+    assert loop.active_turn_task is None
+    assert composer.busy_events[-1] is False
+    assert "resumed answer" in output.getvalue()
 
 
 @pytest.mark.asyncio
@@ -660,6 +729,7 @@ async def test_terminal_focus_ignores_immediate_prompt_replay_duplicate(
     output = io.StringIO()
 
     monkeypatch.setattr(terminal_shell, "TerminalComposer", _ReplayComposer)
+    monkeypatch.setattr(terminal_shell, "TerminalOverlayPresenter", _StubOverlay)
     monkeypatch.setattr(terminal_shell, "TerminalTranscript", _CapturedTranscript)
     monkeypatch.setattr(
         terminal_shell,
@@ -713,14 +783,64 @@ async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() 
         resume_prompt=_resume_prompt,
     )
 
-    approved = await callback("file.write", {"path": "scratch.txt"}, "call-1")
+    approved = await callback("exec.run", {"command": "docker desktop start"}, "call-1")
 
     assert approved is True
     assert events[0] == "pause"
     assert events[-1] == "resume"
     assert len(events) == 3
-    assert events[1].startswith("prompt:Approval required: file.write(")
-    assert "scratch.txt" in events[1]
+    assert events[1].startswith("prompt:Approval required: exec.run(")
+    assert "docker desktop start" in events[1]
+
+
+def test_terminal_approval_prompt_preserves_full_exec_command() -> None:
+    command = (
+        "ssh -o BatchMode=yes -o ConnectTimeout=3 "
+        "-o StrictHostKeyChecking=yes localhost true"
+    )
+
+    prompt = format_terminal_approval_prompt("exec.run", {"command": command})
+
+    assert command in prompt
+    assert "…" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_terminal_slash_approval_resumes_after_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _build_callback(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    async def _handle_slash_input(*_args: object, **kwargs: object) -> bool:
+        captured["approval_callback"] = kwargs["approval_callback"]
+        return False
+
+    monkeypatch.setattr(terminal_shell, "_build_approval_callback", _build_callback)
+    monkeypatch.setattr(terminal_shell, "_handle_slash_input", _handle_slash_input)
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=_QueueCommandRuntime(),
+        console=console,
+        transcript=terminal_shell.TerminalTranscript(console, plain_spinner=True),
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=_LoopComposer(),
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-slash-approval",
+        custom_commands={},
+        approval_grants=set(),
+    )
+
+    await loop.handle_idle_input("/delegate worker write file")
+
+    assert captured["pause_prompt"] == loop.cancel_read_task
+    assert "resume_prompt" not in captured
+    assert captured["approval_callback"] is not None
+    await loop.cancel_read_task()
 
 
 @pytest.mark.asyncio

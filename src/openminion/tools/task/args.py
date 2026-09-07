@@ -138,7 +138,11 @@ class TaskWatchArgs(BaseModel):
     )
     stop_on_condition: bool = Field(
         default=True,
-        description="Stop after the first true condition; false enables monitoring mode",
+        description=(
+            "Whether the first true condition ends the watch. Set false for "
+            "continuous monitoring; max_checks controls stopping after a "
+            "fixed number of checks."
+        ),
     )
     delivery_cooldown_minutes: int = Field(
         default=0,
@@ -186,9 +190,11 @@ class TaskWatchArgs(BaseModel):
     routine: RoutinePayloadV1 | None = Field(
         default=None,
         description=(
-            "Optional typed routine binding. V1 supports "
-            '`routine_kind = "github_pr_review"`. Unknown routine_kind values '
-            "fail validation deterministically (no silent degradation)."
+            "Optional typed routine object. For a social "
+            "signal watch, set routine_kind='social_signal', provide "
+            "config.sources and config.topics, and set stop_on_condition=false "
+            "for continuous monitoring. Unknown routine_kind values fail "
+            "validation deterministically (no silent degradation)."
         ),
     )
 
@@ -199,10 +205,30 @@ class TaskWatchArgs(BaseModel):
                 raise ValueError(
                     "routine_kind='github_pr_review' requires interval_minutes >= 5"
                 )
+        social_routine = (
+            self.routine is not None and self.routine.routine_kind == "social_signal"
+        )
+        if social_routine:
+            if self.interval_minutes < 15:
+                raise ValueError(
+                    "routine_kind='social_signal' requires interval_minutes >= 15"
+                )
+            if self.stop_on_condition:
+                raise ValueError(
+                    "routine_kind='social_signal' requires stop_on_condition=false"
+                )
+            if self.check_profile_id or self.target_id:
+                raise ValueError(
+                    "social_signal does not use infrastructure profiles or targets"
+                )
+            if self.write_authorized or self.on_condition_action:
+                raise ValueError(
+                    "social_signal does not allow writes or on-condition actions"
+                )
         profile_bound = self.check_profile_id is not None or self.target_id is not None
         if profile_bound and not (self.check_profile_id and self.target_id):
             raise ValueError("check_profile_id and target_id must be provided together")
-        if not self.stop_on_condition and not profile_bound:
+        if not self.stop_on_condition and not profile_bound and not social_routine:
             raise ValueError(
                 "continuous monitoring requires check_profile_id and target_id"
             )

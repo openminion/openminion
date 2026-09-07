@@ -31,7 +31,8 @@ Re-exported from `openminion.modules.a2a`:
 
 - `A2ARuntime`, `A2ARuntimeInterface`, `A2A_INTERFACE_VERSION`,
   `ensure_a2a_compatibility`
-- Wire types: `AgentDescriptor`, `ArtifactRef`, `Envelope`, `JobRecord`
+- Wire types: `A2AObservabilityContext`, `AgentDescriptor`, `ArtifactRef`,
+  `Envelope`, `JobRecord`
 - Config: `RuntimeConfig`, `load_config`
 
 ## Current maturity
@@ -47,13 +48,10 @@ bounded external v1 route through the API server:
 - Task streaming is not enabled in v1; the task-events route fails closed with a
   typed unsupported response and the Agent Card reports `streaming=false`.
 
-External endpoint scope and validation evidence are tracked in
-`docs/trackers/wip/openminion-external-a2a-network-endpoint-2026-07-24-tracker.md`.
 The turn bridge, synchronized runtime cache, and APIRuntime-owned close path are
-implemented. Independent QA keeps the endpoint in hardening until bounded
-request/auth handling, concurrent lifecycle proof, and a terminal-result local
-HTTP matrix pass. Public readiness claims should say "authenticated local
-external A2A v1 preview" until that tracker closes; third-party peer
+implemented. Package-owned conformance, request/auth, concurrent lifecycle,
+and local HTTP tests cover the bounded endpoint. Public readiness claims should
+still say "authenticated local external A2A v1 preview"; third-party peer
 certification remains separate.
 
 ## Dependencies

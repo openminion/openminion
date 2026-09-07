@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 import sqlite3
 import tempfile
@@ -22,7 +21,10 @@ from ..artifact_lifecycle import (
     apply_artifact_decision as _apply_artifact_decision,
     get_detached_artifact_refs as _get_detached_artifact_refs,
 )
-from ..interfaces import SESSION_INTERFACE_VERSION
+from ..interfaces import (
+    SESSION_INTERFACE_VERSION,
+    SESSION_REPOSITORY_INTERFACE_VERSION,
+)
 from openminion.modules.storage.migrations.module_ids import module_id_from_package
 from openminion.modules.storage.runtime.module_integrity import (
     verify_module_integrity,
@@ -30,7 +32,7 @@ from openminion.modules.storage.runtime.module_integrity import (
 from .base import SessionStore
 from .component_wiring import build_store_components
 from .context import RunStore
-from .json_utils import to_json
+from .json_utils import stable_hash as _stable_hash
 from .migrations import MIGRATIONS, list_migrations
 from .queries import (
     _CLOSED_TASK_STATUSES as _SLICE_CLOSED_TASK_STATUSES,
@@ -52,6 +54,7 @@ from .components import (
     enqueue_due_cron_runs as _enqueue_due_cron_runs_facade,
     enforce_context_manifest as _enforce_context_manifest_facade,
     finish_cron_run as _finish_cron_run_facade,
+    get_cron_scope_state as _get_cron_scope_state_facade,
     finish_run_record as _finish_run_record_facade,
     get_active_prompt_context as _get_active_prompt_context_facade,
     get_cron_job as _get_cron_job_facade,
@@ -70,8 +73,10 @@ from .components import (
     mark_cron_delivery_target as _mark_cron_delivery_target_facade,
     reindex_sidecars as _reindex_sidecars_facade,
     renew_cron_run_lease as _renew_cron_run_lease_facade,
+    recover_expired_cron_runs as _recover_expired_cron_runs_facade,
     renew_session_turn_lease as _renew_session_turn_lease_facade,
     replace_cron_job_payload as _replace_cron_job_payload_facade,
+    retry_cron_run as _retry_cron_run_facade,
     release_session_turn_lease as _release_session_turn_lease_facade,
     save_compression_checkpoint as _save_compression_checkpoint_facade,
     save_seed_bundle as _save_seed_bundle_facade,
@@ -133,10 +138,6 @@ def _resolve_session_storage_roots(
             else:
                 return (resolved_data_root / "storage").resolve(), resolved_data_root
     return (db_path.parent / "storage").resolve(), db_path.parent.resolve()
-
-
-def _stable_hash(value: Any) -> str:
-    return hashlib.sha256(to_json(value).encode()).hexdigest()
 
 
 _MODULE_ID = module_id_from_package(__package__)
@@ -240,6 +241,7 @@ class SQLiteSessionStore(SessionStore):
     """SQLite-backed session store for openminion-session."""
 
     contract_version = SESSION_INTERFACE_VERSION
+    repository_contract_version = SESSION_REPOSITORY_INTERFACE_VERSION
 
     def __init__(
         self,
@@ -291,6 +293,7 @@ class SQLiteSessionStore(SessionStore):
     ) -> bool:
         self._env = resolve_environment_config_with_explicit_env(env)
         self._artifactctl = artifactctl
+        self._owns_artifactctl = artifactctl is _ARTIFACTCTL_UNSET
         raw_db_path = str(database_path).strip()
         is_memory = raw_db_path == ":memory:"
         self._path = Path(":memory:") if is_memory else _resolve_db_path(database_path)
@@ -385,6 +388,9 @@ class SQLiteSessionStore(SessionStore):
     enqueue_due_cron_runs = _enqueue_due_cron_runs_facade
     acquire_cron_runs = _acquire_cron_runs_facade
     renew_cron_run_lease = _renew_cron_run_lease_facade
+    recover_expired_cron_runs = _recover_expired_cron_runs_facade
+    retry_cron_run = _retry_cron_run_facade
+    get_cron_scope_state = _get_cron_scope_state_facade
     acquire_session_turn_lease = _acquire_session_turn_lease_facade
     renew_session_turn_lease = _renew_session_turn_lease_facade
     release_session_turn_lease = _release_session_turn_lease_facade
@@ -443,6 +449,11 @@ class SQLiteSessionStore(SessionStore):
             close_fn = getattr(self._record_store, "close", None)
             if callable(close_fn):
                 close_fn()
+            if self._owns_artifactctl and self._artifactctl is not _ARTIFACTCTL_UNSET:
+                self._owns_artifactctl = False
+                artifactctl = self._artifactctl
+                self._artifactctl = None
+                artifactctl.close()
 
     def _configure_connection(self) -> None:
         if self._conn is None:
@@ -521,24 +532,17 @@ class SQLiteSessionStore(SessionStore):
             for migration in MIGRATIONS:
                 for statement in migration.statements:
                     self._record_store.execute_count(statement)
-            _ensure_store_column(
-                self._record_store,
-                table_name="sessions",
-                column_name="active_profile_version",
-                ddl_tail="TEXT",
-            )
-            _ensure_store_column(
-                self._record_store,
-                table_name="run_records",
-                column_name="invocation_id",
-                ddl_tail="TEXT",
-            )
-            _ensure_store_column(
-                self._record_store,
-                table_name="run_records",
-                column_name="thread_id",
-                ddl_tail="TEXT",
-            )
+            for table_name, column_name in (
+                ("sessions", "active_profile_version"),
+                ("run_records", "invocation_id"),
+                ("run_records", "thread_id"),
+            ):
+                _ensure_store_column(
+                    self._record_store,
+                    table_name=table_name,
+                    column_name=column_name,
+                    ddl_tail="TEXT",
+                )
 
     def create_session(
         self,
@@ -566,8 +570,13 @@ class SQLiteSessionStore(SessionStore):
         *,
         filters: Mapping[str, Any] | None = None,
         limit: int = 100,
+        agent_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._session_helper.list_sessions(filters=filters, limit=limit)
+        return self._session_helper.list_sessions(
+            filters=filters,
+            limit=limit,
+            agent_id=agent_id,
+        )
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         return self._session_helper.get_session(session_id)
@@ -842,8 +851,16 @@ class SQLiteSessionStore(SessionStore):
             state_inline=state_inline,
         )
 
-    def get_latest_working_state(self, session_id: str) -> dict[str, Any] | None:
-        return self._state_store.get_latest_working_state(session_id)
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        return self._state_store.get_latest_working_state(
+            session_id,
+            agent_id=agent_id,
+        )
 
     def get_active_state(self, session_id: str) -> dict[str, Any]:
         return self._state_store.get_active_state(session_id)

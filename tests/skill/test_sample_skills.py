@@ -5,6 +5,7 @@ from pathlib import Path
 
 from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_file_and_admit
 
 SAMPLES_ROOT = Path(__file__).resolve().parents[2] / "examples" / "skills"
 EXTERNAL_CATALOG_TOOLS = {"http_request"}
@@ -37,8 +38,8 @@ def test_ingest_all_sample_skills_without_lint_errors(tmp_path: Path) -> None:
         assert samples, "expected sample SKILL.md files"
 
         for path in samples:
-            skill_id, version_hash, warnings = ctl.ingest_file(
-                path, name=path.parent.name
+            skill_id, version_hash, warnings = ingest_file_and_admit(
+                ctl, path, name=path.parent.name
             )
             assert skill_id
             assert len(version_hash) == 64
@@ -54,7 +55,7 @@ def test_plan_sample_matches_plan_intent(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
         for path in sorted(SAMPLES_ROOT.glob("*/SKILL.md")):
-            ctl.ingest_file(path, name=path.parent.name)
+            ingest_file_and_admit(ctl, path, name=path.parent.name)
 
         matches = ctl.match(
             intent_text="Create an implementation plan with checkpoints and verification",
@@ -82,8 +83,8 @@ def test_api_account_create_post_share_ingest(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
         path = SAMPLES_ROOT / "api-account-create-post-share" / "SKILL.md"
-        skill_id, version_hash, warnings = ctl.ingest_file(
-            path, name="api-account-create-post-share"
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl, path, name="api-account-create-post-share"
         )
 
         assert skill_id == "api-account-create-post-share"
@@ -97,8 +98,8 @@ def test_api_account_publish_share_ingest(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
         path = SAMPLES_ROOT / "api-account-publish-share" / "SKILL.md"
-        skill_id, version_hash, warnings = ctl.ingest_file(
-            path, name="api-account-publish-share"
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl, path, name="api-account-publish-share"
         )
 
         assert skill_id == "api-account-publish-share"
@@ -112,7 +113,7 @@ def test_api_skills_match_intents(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
         for path in sorted(SAMPLES_ROOT.glob("*/SKILL.md")):
-            ctl.ingest_file(path, name=path.parent.name)
+            ingest_file_and_admit(ctl, path, name=path.parent.name)
 
         matches = ctl.match(
             intent_text="Create account and publish a post",
@@ -140,8 +141,8 @@ def test_api_skills_have_required_sections(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
         path = SAMPLES_ROOT / "api-account-create-post-share" / "SKILL.md"
-        skill_id, version_hash, warnings = ctl.ingest_file(
-            path, name="api-account-create-post-share"
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl, path, name="api-account-create-post-share"
         )
 
         snippet, _ = ctl.render_snippet(

@@ -9,26 +9,42 @@ from urllib.parse import urlparse
 
 from openminion.api.responses.serialization import error_response, normalize_request_id
 from openminion.api.runtime import APIRuntime
-from openminion.api.server.client_auth import ClientAuthHTTPMixin, ClientAuthService
 from openminion.api.server import client_approvals, client_artifacts, client_media
+from openminion.api.server.client_auth import ClientAuthHTTPMixin
 from openminion.api.server.dispatch import dispatch_request
-from openminion.api.server import observability as _observability
-from openminion.api.server.observability import get_api_metrics_consistency_stamp, get_api_metrics_snapshot, reset_api_metrics  # fmt: skip
+from openminion.api.server.observability import (
+    finalize_api_response,
+    get_api_metrics_consistency_stamp,
+    get_api_metrics_snapshot,
+    reset_api_metrics,
+)
+from openminion.api.server.streaming import (
+    handle_http_turn_stream_request,
+    try_handle_turn_stream_attach,
+    write_sse_event,
+)
 
 
-class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
+class _OpenMinionAPIHandler(
+    ClientAuthHTTPMixin,  # type: ignore[misc]
+    BaseHTTPRequestHandler,
+):
     config_path: str | None = None
     runtime: APIRuntime | None = None
     runtime_bootstrap_error: str | None = None
-    client_auth: ClientAuthService | None = None
-    client_artifacts: Any = None
-    client_approvals: Any = None
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         parsed = urlparse(self.path)
         path = parsed.path
         request_id = self.headers.get("X-Request-ID")
-        if not self._authenticate_request("GET", path, request_id, query=parsed.query):
+        started_at = perf_counter()
+        if not self._authorize_request(
+            "GET", path, request_id, started_at=started_at, query=parsed.query
+        ):
+            return
+        if self.client_identity is None and try_handle_turn_stream_attach(
+            self, parsed=parsed, request_id=request_id
+        ):
             return
         status, payload = dispatch_request(
             "GET",
@@ -48,7 +64,9 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
         path = parsed.path
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
-        if not self._authenticate_request("POST", path, request_id, query=parsed.query):
+        if not self._authorize_request(
+            "POST", path, request_id, started_at=started_at, query=parsed.query
+        ):
             return
         try:
             payload = self._read_optional_json_body(path=path)
@@ -57,7 +75,12 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             return
 
         if path == "/v1/turn/stream" and self._accepts_event_stream():
-            self._handle_turn_stream(body=payload, request_id=request_id)
+            if self.client_identity is None:
+                handle_http_turn_stream_request(
+                    self, body=payload, request_id=request_id
+                )
+            else:
+                self._handle_client_turn_stream(body=payload, request_id=request_id)
             return
 
         status, response_payload = dispatch_request(
@@ -79,8 +102,8 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
         path = parsed.path
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
-        if not self._authenticate_request(
-            "DELETE", path, request_id, query=parsed.query
+        if not self._authorize_request(
+            "DELETE", path, request_id, started_at=started_at, query=parsed.query
         ):
             return
         try:
@@ -102,26 +125,6 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
         )
         self._write_json(status, response_payload)
 
-    def _handle_turn_stream(
-        self, *, body: dict[str, Any], request_id: str | None
-    ) -> None:
-        from openminion.api.server.streaming import handle_turn_stream_request
-
-        handle_turn_stream_request(
-            body=body,
-            request_id=request_id,
-            config_path=self.config_path,
-            runtime=self.runtime,
-            start_sse_response=lambda: _start_sse_stream_response(self, request_id),
-            write_sse_event=self._write_sse_event,
-            write_json=self._write_json,
-            observe_request_metrics=_observability.observe_request_metrics,
-            log_request_done=_observability.log_request_done,
-            perf_counter=perf_counter,
-            desktop_client=self.client_identity is not None,
-            **self._client_stream_context(),
-        )
-
     def _write_invalid_json(
         self,
         method: str,
@@ -138,7 +141,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             details={"path": path},
             retryable=False,
         )
-        response = _observability.finalize_api_response(
+        response = finalize_api_response(
             payload=payload,
             status=status,
             method=method,
@@ -149,11 +152,19 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
         )
         self._write_json(status, response)
 
-    def _write_sse_event(self, *, event: str, data: object) -> None:
-        self.wfile.write(
-            f"event: {event}\ndata: {_json_dumps(data)}\n\n".encode("utf-8")
+    def _write_sse_event(
+        self,
+        *,
+        event: str,
+        data: object,
+        event_id: str | None = None,
+    ) -> None:
+        write_sse_event(
+            self.wfile,
+            event=event,
+            data=data,
+            event_id=event_id,
         )
-        self.wfile.flush()
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         status, encoded = self._bounded_json_response(status, payload)
@@ -169,7 +180,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
         if meta.get("path") == "/metrics":
             self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(encoded)))
-        if self.close_connection:
+        if getattr(self, "close_connection", False):
             self.send_header("Connection", "close")
         response_headers = meta.get("response_headers")
         if isinstance(response_headers, dict):
@@ -217,17 +228,6 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
                 self._runtime.close()
         finally:
             super().server_close()
-
-
-def _start_sse_stream_response(
-    handler: _OpenMinionAPIHandler, request_id: str | None
-) -> None:
-    handler.send_response(int(HTTPStatus.OK))
-    handler.send_header("Content-Type", "text/event-stream")
-    handler.send_header("Cache-Control", "no-cache")
-    handler.send_header("Connection", "keep-alive")
-    handler.send_header("X-Request-ID", normalize_request_id(request_id))
-    handler.end_headers()
 
 
 __all__ = [

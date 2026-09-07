@@ -18,8 +18,21 @@ scope	max_python_files	max_loc
 # composition that invokes the same worker for one fenced cycle per wake.
 # ODG-01 (2026-08-20) adds the bounded session-artifact facade used by the
 # authenticated desktop catalog, content, detach, and restore routes.
-services	207	40190
+# Client contract work (2026-08-30) adds bounded active-turn replay and
+# versioned terminal status facts to the existing runtime manager.
+# MCRR (2026-09-01) adds terminal capture assurance, policy-bound recovery,
+# shared runtime memory assembly, and semantic recall wiring to existing owners.
+# Focus parity (2026-09-04) types the existing per-turn gateway override contract.
+# Tool/plugin foundation hardening (2026-09-05) adds bounded activation facts,
+# hook timeouts, checksum verification, and provider status to existing owners.
+# PMFO retry correction (2026-09-05) propagates the provider-owned attempt cap
+# through the existing brain and legacy agent service adapters.
+# Trusted plugin acquisition (2026-09-06) adds one stable staged-bundle digest
+# and excludes rollback backups from installed-plugin discovery.
+# Scheduled-task lifecycle convergence (2026-09-07) composes one existing
+# task-outcome callback and one shared schedule operation.
+services	207	40902
 services/security	6	187
 services/stats	1	25
 services/tool	3	50
-services/runtime/plugins	8	913
+services/runtime/plugins	8	1040

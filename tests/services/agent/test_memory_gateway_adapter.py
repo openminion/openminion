@@ -6,9 +6,13 @@ from pathlib import Path
 import tempfile
 from unittest.mock import Mock
 
+from openminion.modules.context.contracts import MemoryClient
+from openminion.modules.context.memory_client import ContextMemoryClientAdapter
 from openminion.modules.memory.models import MemoryPatchResult, MemoryRecord
 from openminion.modules.memory.service import MemoryService
+from openminion.modules.memory.storage.base import ListQueryOptions
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
+from openminion.modules.retrieve.errors import RetrieveCtlError
 from openminion.services.agent.memory.gateway_adapter import (
     DisabledMemoryGatewayAdapter,
     MemoryServiceGatewayAdapter,
@@ -219,6 +223,40 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         self.assertIn("User email address", context)
         self.assertIn("value-visible@example.com", context)
 
+    def test_contextctl_memory_contract_uses_existing_recall_pipeline(self) -> None:
+        adapter = _make_adapter(agent_id="minimax-m2-7")
+        now = datetime.now(timezone.utc).isoformat()
+        adapter._service._store.put(  # noqa: SLF001
+            MemoryRecord(
+                id="contextctl-fact",
+                created_at=now,
+                updated_at=now,
+                key="fact:project",
+                source="user_said",
+                confidence=0.8,
+                scope="agent:minimax-m2-7",
+                type="fact",
+                title="Project name",
+                content={"text": "The project is Helios."},
+                tags=["project"],
+            )
+        )
+
+        memory_client = ContextMemoryClientAdapter(adapter)
+        facts = memory_client.query_facts(
+            session_id="session-1",
+            agent_id="minimax-m2-7",
+            query="Helios",
+            limit=5,
+        )
+
+        self.assertIsInstance(memory_client, MemoryClient)
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0].record_id, "contextctl-fact")
+        self.assertEqual(facts[0].text, "The project is Helios.")
+        self.assertEqual(facts[0].confidence, 0.8)
+        self.assertEqual(facts[0].tags, ["project"])
+
     def test_build_retrieval_context_returns_string(self) -> None:
         adapter = _make_adapter()
         content = adapter.build_retrieval_context(
@@ -366,6 +404,7 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
 
         self.assertIn("## Agent Memory", context)
         self.assertIn("copy remembered values verbatim", context)
+        self.assertIn("[key=fact:user_email]", context)
         self.assertIn("new@example.com", context)
         self.assertIn("old@example.com", context)
         self.assertLess(
@@ -515,10 +554,6 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         store = InMemoryMemoryStore()
         service = MemoryService(store=store)
         retrieve_ctl = Mock(name="retrieve_ctl")
-        retrieve_ctl.retrieve.return_value = [
-            {"text": "project uses python 312"},
-            {"text": "project uses fastapi"},
-        ]
         adapter = MemoryServiceGatewayAdapter(
             service,
             agent_id="query-agent",
@@ -533,6 +568,16 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
             user_message="fact: project uses python 312",
             assistant_message="",
         )
+        memory_record = service.list(
+            ListQueryOptions(scopes=["session:s-dedup"], limit=1)
+        )[0]
+        retrieve_ctl.retrieve.return_value = [
+            {
+                "text": "project uses python 312",
+                "meta": {"memory_id": memory_record.id},
+            },
+            {"text": "project uses fastapi", "meta": {"unit_id": "fastapi"}},
+        ]
         content, _meta = adapter.build_retrieval_context_with_metadata(
             session_id="s-dedup",
             user_message="what does the project use?",
@@ -544,7 +589,9 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         store = InMemoryMemoryStore()
         service = MemoryService(store=store)
         retrieve_ctl = Mock(name="retrieve_ctl")
-        retrieve_ctl.retrieve.side_effect = RuntimeError("retrieve down")
+        retrieve_ctl.retrieve.side_effect = RetrieveCtlError(
+            "UPSTREAM_UNAVAILABLE", "retrieve down"
+        )
         adapter = MemoryServiceGatewayAdapter(
             service,
             agent_id="query-agent",
@@ -563,7 +610,7 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
             session_id="s-fallback",
             user_message="fallback",
         )
-        self.assertIn("fallback memory value", content)
+        self.assertEqual(content, "")
 
     def test_retrieval_context_prefers_structured_facts_over_session_summaries(
         self,
@@ -646,7 +693,9 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         store = InMemoryMemoryStore()
         service = MemoryService(store=store)
         retrieve_ctl = Mock(name="retrieve_ctl")
-        retrieve_ctl.retrieve.side_effect = RuntimeError("retrieve boom")
+        retrieve_ctl.retrieve.side_effect = RetrieveCtlError(
+            "UPSTREAM_UNAVAILABLE", "retrieve boom"
+        )
         adapter = MemoryServiceGatewayAdapter(
             service,
             agent_id="query-agent",
@@ -674,7 +723,7 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         service = MemoryService(store=store)
         retrieve_ctl = Mock(name="retrieve_ctl")
         retrieve_ctl.retrieve.return_value = [
-            {"text": "secondary retrieve hit"},
+            {"text": "secondary retrieve hit", "meta": {"unit_id": "secondary"}},
         ]
         adapter = MemoryServiceGatewayAdapter(
             service,

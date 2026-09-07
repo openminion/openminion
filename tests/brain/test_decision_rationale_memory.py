@@ -14,6 +14,7 @@ from openminion.modules.brain.schemas.decisions import (
     FinalizationStatus,
     RespondDecision,
 )
+from openminion.modules.tool import MemoryAccessContext
 
 
 class _MemoryAPI:
@@ -42,6 +43,25 @@ class _FailingMemoryAPI:
         del kwargs
         self.write_attempts += 1
         raise RuntimeError("memory unavailable")
+
+
+class _AccessBoundMemoryAPI:
+    def __init__(self) -> None:
+        self.access_context: MemoryAccessContext | None = None
+        self.records: list[dict[str, Any]] = []
+
+    def for_access_context(self, access_context: MemoryAccessContext):
+        self.access_context = access_context
+        return _MemoryAPIView(self.records)
+
+
+class _MemoryAPIView:
+    def __init__(self, records: list[dict[str, Any]]) -> None:
+        self.records = records
+
+    def write_record(self, **kwargs: Any) -> str:
+        self.records.append(dict(kwargs))
+        return f"mem_bound_decision_{len(self.records)}"
 
 
 class _Logger:
@@ -157,6 +177,29 @@ def test_write_decision_memory_supports_brain_put_record_adapter() -> None:
     assert result == ["mem_put_decision_1"]
     assert memory.records[0]["record_type"] == "decision"
     assert "confidence" not in memory.records[0]
+
+
+def test_write_decision_memory_binds_active_memory_access_context() -> None:
+    memory = _AccessBoundMemoryAPI()
+    runner = SimpleNamespace(
+        memory_api=memory,
+        profile=SimpleNamespace(agent_id="agent-drm"),
+    )
+    decision = RespondDecision(
+        respond_kind="answer",
+        reason_code="entry_text_response",
+        rationale="model-authored rationale",
+        answer="done",
+    )
+
+    result = write_decision_memory(runner, state=_state(), decision=decision)
+
+    assert result == ["mem_bound_decision_1"]
+    assert memory.access_context == MemoryAccessContext(
+        agent_id="agent-drm",
+        session_id="s-drm-01",
+    )
+    assert memory.records[0]["scope"] == "session:s-drm-01"
 
 
 def test_write_decision_memory_writes_empty_rationale_without_filtering() -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from ...constants import (
     BRAIN_STATE_ACTIVE,
     BRAIN_STATE_DONE,
@@ -32,6 +34,16 @@ from ...tools.parser import normalize_tool_name_for_brain
 from .context import TickRunContext, _runner_delegate
 
 
+def _append_replay_turn(runner: Any, tick_ctx: TickRunContext) -> None:
+    runner.session_api.append_turn(
+        tick_ctx.session_id,
+        "user",
+        tick_ctx.user_input,
+        attachments=tick_ctx.attachments,
+        meta={"ts": iso_now()},
+    )
+
+
 def handle_pending_replay(
     *,
     runner,
@@ -46,13 +58,7 @@ def handle_pending_replay(
     ):
         if state.trace_id is None:
             state.trace_id = tick_ctx.trace_id or new_uuid()
-        runner.session_api.append_turn(
-            tick_ctx.session_id,
-            "user",
-            tick_ctx.user_input,
-            attachments=tick_ctx.attachments,
-            meta={"ts": iso_now()},
-        )
+        _append_replay_turn(runner, tick_ctx)
         tick_ctx.skip_initial_append = True
         tick_ctx.skip_initial_interpret = True
         choice = parse_feasibility_choice(tick_ctx.user_input)
@@ -125,13 +131,7 @@ def handle_pending_replay(
     ):
         if state.trace_id is None:
             state.trace_id = tick_ctx.trace_id or new_uuid()
-        runner.session_api.append_turn(
-            tick_ctx.session_id,
-            "user",
-            tick_ctx.user_input,
-            attachments=tick_ctx.attachments,
-            meta={"ts": iso_now()},
-        )
+        _append_replay_turn(runner, tick_ctx)
         tick_ctx.skip_initial_append = True
         tick_ctx.skip_initial_interpret = True
         choice = parse_continuation_choice(tick_ctx.user_input)
@@ -197,13 +197,7 @@ def handle_pending_replay(
     ):
         if state.trace_id is None:
             state.trace_id = tick_ctx.trace_id or new_uuid()
-        runner.session_api.append_turn(
-            tick_ctx.session_id,
-            "user",
-            tick_ctx.user_input,
-            attachments=tick_ctx.attachments,
-            meta={"ts": iso_now()},
-        )
+        _append_replay_turn(runner, tick_ctx)
         tick_ctx.skip_initial_append = True
         tick_ctx.skip_initial_interpret = True
         tick_ctx.masked_resume_cursor = int(getattr(state, "cursor", 0) or 0)
@@ -248,6 +242,12 @@ def _interpret_user_input(*, runner, state, logger, tick_ctx, user_input: str) -
         state.goal = resumed_goal
 
 
+def _capture_user_message(runner: Any, raw_user_message: str) -> bool:
+    return not _is_explicit_tool_command(raw_user_message) and not bool(
+        getattr(runner, "_capture_excluded_for_turn", False)
+    )
+
+
 def process_user_input(*, runner, state, logger, tick_ctx: TickRunContext):
     user_input = tick_ctx.user_input
     if user_input is not None and user_input.strip():
@@ -274,7 +274,7 @@ def process_user_input(*, runner, state, logger, tick_ctx: TickRunContext):
                 meta={"ts": iso_now()},
             )
             raw_user_message = str(tick_ctx.original_user_input or user_input)
-            if not _is_explicit_tool_command(raw_user_message):
+            if _capture_user_message(runner, raw_user_message):
                 try:
                     from ...execution import extract_user_message_candidates
 

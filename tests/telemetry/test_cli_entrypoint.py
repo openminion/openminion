@@ -61,6 +61,11 @@ def test_debug_routes_and_existing_invocation_routes_accept_opaque_ids(
     assert main(["debug", "latest", "--db", str(path)]) == 0
     latest = json.loads(capsys.readouterr().out)
     assert latest["invocation"]["invocation_id"] == "invocation-1"
+    assert latest["links"]["commands"] == [
+        "telemetryctl invocation show invocation-1",
+        "telemetryctl invocation graph invocation-1",
+        "telemetryctl debug bundle invocation-1",
+    ]
     assert main(["debug", "invocation", "invocation-1", "--db", str(path)]) == 0
     explicit = json.loads(capsys.readouterr().out)
     assert explicit["selection"]["source"] == "explicit"

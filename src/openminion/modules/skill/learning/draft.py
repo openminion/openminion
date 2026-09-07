@@ -8,27 +8,9 @@ from openminion.modules.skill.models import slugify
 
 from .shapes import WorkflowShape
 
-_FORBIDDEN_DEFAULTS = (
-    "approval bypass",
-    "bypass approval",
-    "skip validation",
-    "waive validation",
-    "no validation required",
-    "trusted_for_low_risk",
-    "has permission",
-    "all providers",
-)
-
 
 class SkillDraftError(ValueError):
     """Raised when a learned-skill draft violates runtime-owned constraints."""
-
-
-def _ensure_safe_prose(prose: str, forbidden_claims: Iterable[str]) -> None:
-    lowered = str(prose or "").lower()
-    for claim in (*_FORBIDDEN_DEFAULTS, *tuple(forbidden_claims or ())):
-        if claim and str(claim).lower() in lowered:
-            raise SkillDraftError(f"forbidden_claim:{claim}")
 
 
 def _bullet_lines(items: Iterable[str]) -> str:
@@ -44,7 +26,6 @@ def render_skill_markdown(
     steps: list[str],
     validation_rules: list[str],
     risk_notes: list[str] | None = None,
-    forbidden_claims: list[str] | None = None,
     source_changing: bool = False,
 ) -> str:
     """Render deterministic SKILL.md-compatible content for operator review."""
@@ -53,7 +34,6 @@ def render_skill_markdown(
         raise SkillDraftError("source_changing_workflow_requires_validation")
     if not steps:
         raise SkillDraftError("steps_required")
-    _ensure_safe_prose(description, forbidden_claims or [])
     name = slugify(title, fallback=shape.shape_id)
     evidence_refs = shape.evidence_refs or [shape.task_shape_ref]
     return "\n".join(

@@ -26,6 +26,8 @@ from openminion.tools.exec.plugin import (
 )
 from openminion.tools.exec.process import PROCESS_MANAGER
 from openminion.tools.exec.process import ShellFamily
+from openminion.tools.exec.schemas import ExecRunArgs
+from openminion.tools.exec.sessions import _prepare_exec_run
 
 
 @pytest.fixture(autouse=True)
@@ -174,6 +176,45 @@ def test_exec_run_invokes_system_ssh_client(tmp_path):
     assert result["status"] == "ok"
     assert result["exit_code"] == 0
     assert result["stdout_preview"] or result["stderr_preview"]
+
+
+def test_exec_run_never_forwards_ambient_ssh_agent_socket(
+    tmp_path,
+):
+    socket_path = str(tmp_path / "agent.sock")
+    ctx = _ctx(
+        tmp_path,
+        env=EnvironmentConfig.from_sources(
+            process_env={
+                "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
+                "SSH_AUTH_SOCK": socket_path,
+            }
+        ),
+    )
+
+    def prepare(command: str):
+        return _prepare_exec_run(
+            params=ExecRunArgs(
+                command=command,
+                host="gateway",
+                security="full",
+                ask="off",
+            ),
+            ctx=ctx,
+            started=time.monotonic(),
+            tool_name="exec.run",
+            request_payload={},
+        )
+
+    ssh_prep, ssh_error = prepare("ssh example.test")
+    other_prep, other_error = prepare('printf "%s" "$SSH_AUTH_SOCK"')
+
+    assert ssh_error is None
+    assert ssh_prep is not None
+    assert "SSH_AUTH_SOCK" not in ssh_prep.env
+    assert other_error is None
+    assert other_prep is not None
+    assert "SSH_AUTH_SOCK" not in other_prep.env
 
 
 def test_exec_run_missing_toolchain_discovery_result_stops_retry_loop(tmp_path):
@@ -797,6 +838,37 @@ def test_unsandboxed_exec_denied_by_default_uses_typed_error(tmp_path):
     assert result["status"] == "denied"
     assert result["error"]["code"] == "UNSANDBOXED_EXEC_DISABLED"
     assert "Unsandboxed execution is disabled" in result["summary"]
+
+
+def test_profile_policy_can_enable_host_exec_without_process_flag(tmp_path):
+    ctx = _ctx(tmp_path)
+    ctx.policy.raw["exec"] = {
+        "host_enabled": True,
+        "allowlist": ["echo"],
+    }
+
+    result = _h_exec_run(
+        {"command": "echo hi", "host": "gateway", "security": "full", "ask": "off"},
+        ctx,
+    )
+
+    assert result["status"] == "ok"
+    assert result["exit_code"] == 0
+
+
+def test_host_allowlist_accepts_profile_policy_binary(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path)
+    ctx.policy.raw["exec"] = {"allowlist": ["custom-tool"]}
+    monkeypatch.setattr(
+        "openminion.tools.exec.policy.shutil.which",
+        lambda _command: "/usr/local/bin/custom-tool",
+    )
+
+    allowed, message, details = _validate_host_allowlist("custom-tool", ctx)
+
+    assert allowed is True
+    assert message == ""
+    assert details["checked"][0]["exec"] == "custom-tool"
 
 
 def test_host_security_allowlist(tmp_path, monkeypatch):

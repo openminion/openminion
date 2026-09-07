@@ -4,7 +4,9 @@ Owner: `openminion-memory`
 Shape: `template-aligned`
 Runtime peer: standalone (no `services/` peer)
 
-This module Owns memory records, contracts, promotion/scoring runtime logic, and memory service surfaces. Primary contracts: `interfaces.py`, `contracts/*`, `models.py`, `service.py`. Typed memory records live in `models.py` and `contracts/types.py`.
+This module owns memory records, contracts, promotion/scoring runtime logic,
+and memory service surfaces. Primary contracts live in `interfaces.py`,
+`contracts/`, `models.py`, and `service/`.
 
 The `standalone` runtime-peer label means this module does not have a
 same-shaped peer module under `services/`. Adjacent orchestration surfaces such
@@ -12,15 +14,15 @@ as `openminion.services.agent.memory` still exist and remain the owners for
 agent-turn extraction, learning, retrieval pipeline assembly, and gateway
 integration.
 
-## sophiagraph sibling package
+## Sophiagraph dependency
 
-The reusable durable wisdom graph substrate lives in the sibling package at
-`sophiagraph`.
+The reusable durable wisdom graph substrate is provided by the `sophiagraph`
+package dependency.
 
-Current KCE boundary rules:
+Current package boundary rules:
 
-- OpenMinion may consume `sophiagraph` through an editable install or sibling
-  source root during local development and CI.
+- OpenMinion consumes `sophiagraph>=0.0.10` through its declared package
+  dependency. An editable install is also supported for local development.
 - `sophiagraph` must never import from `openminion`.
 - `openminion.modules.memory` remains the orchestrator; the extraction moves
   reusable primitives first and leaves runtime/gateway policy here.
@@ -40,16 +42,10 @@ the parent submits it to the canonical candidate review and promotion flow.
 Cancellation and revocation block subsequent operations but cannot retract
 context already delivered to a running model.
 
-Standalone package release docs:
-
-- package README
-- package release runbook
-- monorepo release reference
-
 ## Backend options
 
-Under the MDCG-owned top-level `runtime.memory_provider=memory_v2` seam,
-OpenMinion now supports lower durable-memory backend selection via
+Under the top-level `runtime.memory_provider=memory_v2` seam, OpenMinion
+supports lower durable-memory backend selection through
 `memory.backend.provider`:
 
 - `sophiagraph` — default built-in backend
@@ -104,7 +100,7 @@ If `runtime.memory_provider` changes away from `memory_v2`, the lower
 
 ### Implementing an external backend
 
-External backends register underneath the lower KCE seam:
+External backends register through the memory backend seam:
 
 - contract: `openminion.modules.memory.backends.interfaces.KnowledgeBackend`
 - registry: `openminion.modules.memory.backends.external.register_external_backend`
@@ -115,12 +111,9 @@ relation, portability, and tier-history contracts. It must not redefine those
 models. Required capability checks run through the external registry before the
 runtime accepts the adapter on the default bootstrap path.
 
-Reference artifacts:
-
-- capability matrix
-- reference-sqlite current state
-- default-path convergence discussion
-- reference adapter: `openminion.modules.memory.backends.external.reference_sqlite`
+The reference adapter is
+`openminion.modules.memory.backends.external.reference_sqlite`; capability
+validation remains owned by the external backend registry.
 
 ## CLI portability
 
@@ -137,27 +130,17 @@ whole-store backup and restore.
   records as new candidates; bundle `candidates`, `relations`, and
   `tier_transitions` are skipped in that mode and reported back to the operator.
 
-For the executable contract and rollout details, see:
-
-- the memory export/import spec
-- the memory export/import tracker
-
 ## Write-time poisoning defense (shipped)
 
-Write-time defense against MINJA-class memory-injection attacks is implemented
-at the `promote_candidate` seam through
-`runtime/candidate_readiness.py:compute_promotion_readiness`. The design is
-**LOSG-aligned by construction**: the writing path authors a typed `claim_key`
-+ `polarity` and a closed-set `source_class`; the runtime transports and
-counts exact-key matches with no embedding-similarity or LLM-judge comparison.
+Write-time defense against contradictory memory injection is implemented at
+the `promote_candidate` seam through
+`runtime/candidate_readiness.py:compute_promotion_readiness`. The writing path
+authors a typed `claim_key`, `polarity`, and closed-set `source_class`; the
+runtime transports and counts exact-key matches without embedding similarity
+or an LLM judge.
 
-The lane closed with an integration smoke above the closeout threshold and the
-contradiction-penalty follow-on now uses BTI temporal validity semantics.
-
-For the design contract and execution plan, see:
-
-- the memory poisoning defense spec
-- the memory poisoning defense tracker
+The contradiction penalty uses the same temporal-validity semantics as durable
+memory retrieval.
 
 ## Bi-temporal invalidation (shipped)
 
@@ -168,19 +151,8 @@ Bi-temporal invalidation adds an explicit truth window to durable records:
 
 This is intentionally different from operator soft-delete provenance (`is_deleted`, `deleted_at`, `deleted_reason`). Default retrieval remains current-only; audit callers can opt into invalidated rows.
 
-For the contract and execution plan, see:
-
-- the bi-temporal memory invalidation spec
-- the bi-temporal memory invalidation tracker
-
 ## Current health gate
 
-The current memory-area stewardship gate lives in:
-
-- the current-state assessment
-- the stabilization and gap-closure spec
-- the stabilization and gap-closure tracker
-
-That gate validates the standalone `sophiagraph` package, the focused
-OpenMinion memory/Sophiagraph integration slice, documentation and tracker state, repo-wide
-Ruff, and `make lint`.
+Focused memory tests live under `tests/memory/` and
+`tests/services/agent/memory/`. Package closeout also runs repository Ruff and
+`make lint`; provider-backed usefulness remains a separate live-evidence claim.

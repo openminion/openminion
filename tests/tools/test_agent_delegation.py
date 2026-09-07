@@ -6,9 +6,12 @@ from typing import Any, cast
 
 import pytest
 
+from openminion.api.core.profiles import _build_agent_discovery_record
+from openminion.base.config import AgentProfileConfig
 from openminion.modules.brain.adapters.tool.permission_mode import (
     is_tool_blocked_by_readonly,
 )
+from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_AGENT_GET,
@@ -94,7 +97,10 @@ def test_task_delegate_schema_makes_lifecycle_order_explicit() -> None:
 
     assert "Use sync or async to start child work" in mode_description
     assert "There is no create mode" in mode_description
-    assert "required for accept/reject" in artifact_description
+    assert "required for review/accept/reject" in artifact_description
+    agent_description = TaskDelegateArgs.model_fields["agent_id"].description or ""
+    assert "Call agent.list first" in agent_description
+    assert "never invent" in agent_description
 
 
 def test_readonly_blocks_task_delegate() -> None:
@@ -216,6 +222,56 @@ def test_agent_list_prefers_runtime_discovery_snapshot() -> None:
     assert out["count"] == 1
     assert out["agents"][0]["agent_id"] == "heartbeat-active"
     assert out["agents"][0]["heartbeat_active"] is True
+
+
+def test_agent_discovery_exposes_configured_role_and_skills() -> None:
+    record = _build_agent_discovery_record(
+        agent_id="researcher",
+        configured_profile=AgentProfileConfig(
+            name="Researcher",
+            role="evidence auditor",
+            skill=["web-research", "source-review"],
+            skill_catalog=["source-review", "security-scan"],
+        ),
+        registry_record=None,
+        heartbeat_record=None,
+        hot=False,
+    )
+
+    payload = record.as_payload()
+    assert payload["role"] == "evidence auditor"
+    assert payload["skills"] == [
+        "web-research",
+        "source-review",
+        "security-scan",
+    ]
+    assert payload["capabilities"] == ["delegate.sync"]
+
+
+def test_brain_tool_adapter_threads_runtime_agent_discovery(tmp_path: Path) -> None:
+    adapter = ToolAdapter(
+        workspace_root=tmp_path,
+        agent_query=lambda: [
+            {
+                "agent_id": "researcher",
+                "display_name": "Researcher",
+                "role": "evidence researcher",
+                "skills": ["source-review"],
+                "state": "configured",
+                "configured": True,
+            }
+        ],
+    )
+
+    result = adapter.execute(
+        command={"tool_name": "agent.list", "args": {}},
+        session_id="session-agent-discovery",
+        trace_id="trace-agent-discovery",
+    )
+
+    assert result["status"] == "success"
+    assert result["outputs"]["agents"][0]["role"] == "evidence researcher"
+    assert result["outputs"]["agents"][0]["skills"] == ["source-review"]
 
 
 def test_agent_get_prefers_runtime_discovery_snapshot() -> None:
@@ -505,55 +561,25 @@ def test_task_delegate_status_resume_and_cancel_use_lifecycle_methods() -> None:
     ]
 
 
-def test_task_delegate_accept_and_reject_use_child_artifact_helpers(
-    monkeypatch,
-) -> None:
-    import openminion.tools.agent.plugin as plugin_mod
-
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    def _accept(*, repo_root, record, artifactctl):
-        del artifactctl
-        calls.append(("accept", {"repo_root": repo_root, "record": record}))
-        return {"ok": True, "status": "accepted", "touched_paths": ["seed.py"]}
-
-    def _reject(*, record, artifactctl):
-        del artifactctl
-        calls.append(("reject", {"record": record}))
-        return {"ok": True, "status": "rejected"}
-
-    monkeypatch.setattr(plugin_mod, "accept_child_worktree_artifact", _accept)
-    monkeypatch.setattr(plugin_mod, "reject_child_worktree_artifact", _reject)
+def test_task_delegate_reject_requires_durable_record_alias() -> None:
     ctx = cast(
         RuntimeContext,
         SimpleNamespace(policy=SimpleNamespace(raw={}), env={}, artifactctl=object()),
     )
-    child_record = {
-        "subtask_id": "child-1",
-        "artifact": {"status": "stored", "bundle_ref": "artifact://sha256/a"},
-    }
 
-    accepted = _h_task_delegate(
-        {
-            "mode": "accept",
-            "workspace_root": "/repo",
-            "child_artifact": child_record,
-        },
-        ctx,
-    )
-    rejected = _h_task_delegate(
-        {"mode": "reject", "child_artifact": child_record},
-        ctx,
-    )
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_task_delegate(
+            {
+                "mode": "reject",
+                "child_artifact": {
+                    "artifact": {"status": "stored", "bundle_ref": "artifact://a"}
+                },
+            },
+            ctx,
+        )
 
-    assert accepted["status"] == "accepted"
-    assert accepted["mode"] == "accept"
-    assert rejected["status"] == "rejected"
-    assert rejected["mode"] == "reject"
-    assert calls == [
-        ("accept", {"repo_root": "/repo", "record": child_record}),
-        ("reject", {"record": child_record}),
-    ]
+    assert exc_info.value.code == "POLICY_DENIED"
+    assert exc_info.value.details["reason_code"] == "missing_record_alias"
 
 
 def test_task_delegate_unknown_target_maps_not_found() -> None:
@@ -588,6 +614,31 @@ def test_task_delegate_unknown_target_maps_not_found() -> None:
     assert details["reason_code"] == "task_delegate_failed"
     assert details["delegate_error_code"] == "AGENT_NOT_FOUND"
     assert details["target_agent_id"] == "ghost"
+
+
+def test_task_delegate_rejects_invented_agent_with_visible_exact_ids() -> None:
+    class _Seam:
+        def delegate(self, **_kwargs):
+            raise AssertionError("invalid target must fail before delegation")
+
+    ctx = _ctx_with_seam(_Seam())
+    ctx.agent_query = lambda: [
+        {"agent_id": "minimax-reviewer", "state": "configured"},
+        {"agent_id": "minimax-validator", "state": "configured"},
+    ]
+
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_task_delegate(
+            {"agent_id": "spec-reviewer", "instruction": "review"},
+            ctx,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.code == "NOT_FOUND"
+    assert exc_info.value.details["reason_code"] == "agent_not_found"
+    assert exc_info.value.details["available_agent_ids"] == [
+        "minimax-reviewer",
+        "minimax-validator",
+    ]
 
 
 def test_task_delegate_failure_maps_upstream_error() -> None:

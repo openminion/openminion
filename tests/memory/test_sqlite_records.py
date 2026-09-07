@@ -33,6 +33,10 @@ class _RecordingArtifactCtl:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str, str]] = []
         self.active_refs: set[tuple[str, str, str]] = set()
+        self.close_count = 0
+
+    def close(self) -> None:
+        self.close_count += 1
 
     def ref_add(self, owner_type: str, owner_id: str, ref_or_sha: str) -> None:
         self.calls.append(("add", owner_type, owner_id, ref_or_sha))
@@ -287,3 +291,27 @@ class TestSQLiteRecords(unittest.TestCase):
         self.assertIsNotNone(old)
         self.assertIsNotNone(new)
         self.assertEqual(old.valid_to, new.created_at)
+
+
+def test_sqlite_memory_store_closes_only_its_default_artifactctl(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    default_artifactctl = _RecordingArtifactCtl()
+    monkeypatch.setattr(
+        "openminion.modules.memory.storage.sqlite.store.create_default_artifactctl",
+        lambda: default_artifactctl,
+    )
+    store = SQLiteMemoryStore(tmp_path / "default.db")
+    store._resolve_artifactctl()
+    store.close()
+    store.close()
+    assert default_artifactctl.close_count == 1
+
+    injected_artifactctl = _RecordingArtifactCtl()
+    store = SQLiteMemoryStore(
+        tmp_path / "injected.db",
+        artifactctl=injected_artifactctl,
+    )
+    store.close()
+    assert injected_artifactctl.close_count == 0

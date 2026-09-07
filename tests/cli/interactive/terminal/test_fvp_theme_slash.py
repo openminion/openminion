@@ -6,8 +6,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from rich.console import Console
+from rich.text import Text
 
-from openminion.cli.interactive.terminal.shell import _SLASH_COMMANDS, _handle_slash
+from openminion.cli.interactive.terminal.shell import (
+    _SLASH_COMMANDS,
+    _build_terminal_console,
+    _handle_slash,
+)
 
 
 def _dispatch(text: str) -> str:
@@ -29,6 +34,34 @@ def _dispatch(text: str) -> str:
 
 def test_theme_in_slash_catalog() -> None:
     assert "/theme" in _SLASH_COMMANDS
+
+
+def test_explicit_color_on_forces_console_color_with_dumb_term(monkeypatch) -> None:
+    from openminion.cli.presentation import styles
+
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("TERM", "dumb")
+    styles.set_color_mode("always")
+    try:
+        console = _build_terminal_console()
+        assert console.is_terminal is True
+        assert console.color_system == "standard"
+        buffer = io.StringIO()
+        console.file = buffer
+        console.print(Text("running", style="yellow"))
+        assert "\x1b[33m" in buffer.getvalue()
+    finally:
+        styles.set_color_mode(None)
+
+
+def test_explicit_color_never_disables_console_color() -> None:
+    from openminion.cli.presentation import styles
+
+    styles.set_color_mode("never")
+    try:
+        assert _build_terminal_console().no_color is True
+    finally:
+        styles.set_color_mode(None)
 
 
 def test_bare_theme_shows_active_and_available() -> None:

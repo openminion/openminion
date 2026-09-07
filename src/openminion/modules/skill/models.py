@@ -316,6 +316,7 @@ class SkillPackage:
     safe_for_domains: list[str] = field(default_factory=list)
     forbidden_claims: list[str] = field(default_factory=list)
     evidence_expectations: list[str] = field(default_factory=list)
+    resources: list[dict[str, Any]] = field(default_factory=list)
 
     def to_catalog_summary(self) -> dict[str, Any]:
         title = str(self.display_name or self.name or "").strip() or self.name
@@ -414,6 +415,7 @@ class SkillPackage:
             "safe_for_domains": list(self.safe_for_domains),
             "forbidden_claims": list(self.forbidden_claims),
             "evidence_expectations": list(self.evidence_expectations),
+            "resources": [dict(item) for item in self.resources],
         }
 
     @classmethod
@@ -470,11 +472,35 @@ class SkillPackage:
             safe_for_domains=normalize_text_list(raw.get("safe_for_domains")),
             forbidden_claims=normalize_text_list(raw.get("forbidden_claims")),
             evidence_expectations=normalize_text_list(raw.get("evidence_expectations")),
+            resources=[
+                dict(item)
+                for item in _list_or_empty(raw.get("resources"))
+                if isinstance(item, dict)
+            ],
         )
 
     def to_version_hash(self) -> str:
         payload = self.to_dict()
         payload["version_hash"] = ""
+        return stable_hash(payload)
+
+    def to_content_fingerprint(self) -> str:
+        """Identify stable authored content without admission or storage metadata."""
+
+        payload = self.to_dict()
+        for key in (
+            "version_hash",
+            "created_at",
+            "updated_at",
+            "status",
+            "source_artifact_ref",
+            "source",
+        ):
+            payload.pop(key, None)
+        bundle_metadata = dict(payload.get("bundle_metadata") or {})
+        bundle_metadata.pop("source", None)
+        bundle_metadata.pop("trust", None)
+        payload["bundle_metadata"] = bundle_metadata
         return stable_hash(payload)
 
     def keyword_candidates(self) -> list[str]:

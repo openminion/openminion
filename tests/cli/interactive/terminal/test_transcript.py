@@ -4,6 +4,7 @@ import io
 
 from rich.console import Console
 
+from openminion.cli.presentation import styles
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.presentation.contracts import TranscriptSink
 from openminion.cli.presentation.models import (
@@ -36,6 +37,50 @@ def test_push_agent_message_plain_text() -> None:
     t, buf = _make_transcript()
     t.push_message(ChatMessage(kind=MessageKind.AGENT, sender="agent", body="reply"))
     assert "reply" in buf.getvalue()
+
+
+def test_push_attributed_agent_message_renders_author() -> None:
+    buf = io.StringIO()
+    styles.set_color_mode("always")
+    try:
+        t = TerminalTranscript(
+            Console(
+                file=buf,
+                force_terminal=True,
+                color_system="standard",
+                no_color=False,
+                width=80,
+            )
+        )
+        t.push_message(
+            ChatMessage(
+                kind=MessageKind.AGENT,
+                sender="review-agent",
+                body="reply",
+                show_header=True,
+            )
+        )
+    finally:
+        styles.set_color_mode(None)
+    output = buf.getvalue()
+    assert "review-agent" in output
+    assert "reply" in output
+    assert "\x1b[1;32mreview-agent" in output
+
+
+def test_push_non_room_agent_message_omits_author_header() -> None:
+    t, buf = _make_transcript()
+    t.push_message(
+        ChatMessage(
+            kind=MessageKind.AGENT,
+            sender="configured-agent",
+            body="reply",
+            show_header=False,
+        )
+    )
+    output = buf.getvalue()
+    assert "configured-agent" not in output
+    assert "reply" in output
 
 
 def test_push_agent_markdown_renders_via_markdown() -> None:
@@ -74,7 +119,8 @@ def test_push_tool_message_renders_block() -> None:
         ChatMessage(kind=MessageKind.TOOL, sender="bash", body="", tool_event=event)
     )
     output = buf.getvalue()
-    assert "bash" in output
+    assert "Finished using a tool." in output
+    assert "bash" not in output.lower()
     assert "file1" in output
 
 
@@ -119,23 +165,6 @@ def test_reset_session_state_clears_live_render_state() -> None:
     assert t._hidden_failed_count == 0
 
 
-def test_filter_messages_is_no_op_with_hint() -> None:
-    t, buf = _make_transcript()
-    t.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body="x"))
-    pre = buf.getvalue()
-    t.filter_messages("query")
-    post = buf.getvalue()
-    # Filter prints a hint; in-memory list unchanged.
-    assert len(t._messages) == 1
-    assert "filter" in post.lower() or post == pre
-
-
-def test_copy_selected_message_returns_body() -> None:
-    t, _ = _make_transcript()
-    t.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body="copy me"))
-    assert t.copy_selected_message() == "copy me"
-
-
 def test_copy_last_copyable_message_falls_back() -> None:
     t, _ = _make_transcript()
     t.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body="first"))
@@ -166,5 +195,4 @@ def test_retained_messages_are_bounded_without_losing_latest_copyable() -> None:
     t.push_message(ChatMessage(kind=MessageKind.AGENT, sender="agent", body="third"))
 
     assert [msg.body for msg in t._messages] == ["second", "third"]
-    assert t.copy_selected_message() == "third"
     assert t.copy_last_copyable_message() == "third"

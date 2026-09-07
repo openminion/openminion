@@ -40,7 +40,7 @@ def _record_content_text(raw_content: str) -> str:
     return str(parsed)
 
 
-def _email_rows(memory_db: Path, *, agent_id: str) -> list[dict[str, object]]:
+def _keyed_fact_rows(memory_db: Path, *, agent_id: str) -> list[dict[str, object]]:
     with sqlite3.connect(str(memory_db)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
@@ -50,7 +50,7 @@ def _email_rows(memory_db: Path, *, agent_id: str) -> list[dict[str, object]]:
             FROM memory_records
             WHERE scope = ?
               AND type = 'fact'
-              AND key = 'fact:user_email'
+              AND key IS NOT NULL
             ORDER BY updated_at ASC
             """,
             (f"agent:{agent_id}",),
@@ -114,7 +114,7 @@ def test_live_minimax_official_conversational_fact_supersession() -> None:
         f"assistant_text={assistant_text}"
     )
 
-    rows = _email_rows(data_root / "memory" / "memory.db", agent_id=agent_id)
+    rows = _keyed_fact_rows(data_root / "memory" / "memory.db", agent_id=agent_id)
     live_rows = [row for row in rows if int(row["is_deleted"] or 0) == 0]
     superseded_rows = [
         row
@@ -124,10 +124,13 @@ def test_live_minimax_official_conversational_fact_supersession() -> None:
     ]
 
     assert len(live_rows) == 1, (
-        "expected exactly one live normalized-key email record\n"
+        "expected exactly one live keyed email record\n"
         f"data_root={data_root}\n"
         f"rows={rows!r}"
     )
+    assert {str(row.get("key") or "") for row in rows} == {
+        str(live_rows[0].get("key") or "")
+    }
     live_content = _record_content_text(str(live_rows[0].get("content_json") or ""))
     assert new_email.lower() in live_content.lower()
     assert old_email.lower() not in live_content.lower()

@@ -1,5 +1,7 @@
 """MCP fleet manager."""
 
+from __future__ import annotations
+
 import atexit
 import threading
 import time
@@ -7,15 +9,18 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openminion.base.config.mcp import MCPServerConfig
+from openminion.base.config.runtime import RuntimeConfig
 
+from .auth import MCPTokenStore, build_runtime_mcp_token_store
 from .elicitation import OpenMinionElicitationHandler
 from .interfaces import (
     MCPCapabilityChangeListener,
     MCPClientCapabilityState,
     MCPProgressListener,
+    MCPServerFailure,
 )
 from .sampling import sampling_handler_from_runtime_config
 from .schemas import (
@@ -32,11 +37,8 @@ from .schemas import (
     build_mcp_runtime_resource_template_name,
     build_mcp_runtime_tool_name,
 )
-from .session import (
-    MCPCallError,
-    MCPManagerError,
-    MCPServerSession,
-)
+from .results import MCPCallError, MCPManagerError
+from .session import MCPServerSession
 from .risk import resolve_mcp_tool_posture as _resolve_mcp_tool_posture
 from .transport import (
     MCPAuthorizationError,
@@ -44,14 +46,12 @@ from .transport import (
     MCPRemoteTransportError,
     MCPServerUnavailableError,
     MCPTimeoutError,
+    MCPTransportError,
 )
 
 
-@dataclass(frozen=True)
-class MCPServerError:
-    server_name: str
-    reason_code: str
-    message: str
+if TYPE_CHECKING:
+    from openminion.modules.tool.registry import ToolRegistry
 
 
 @dataclass(frozen=True)
@@ -82,6 +82,7 @@ class MCPFleetManager:
         progress_listener: MCPProgressListener | None = None,
         discovery_cache_ttl_seconds: float = 0.0,
         deferred_discovery_enabled: bool = False,
+        token_store: MCPTokenStore | None = None,
     ) -> None:
         self._client_capability_state = (
             client_capability_state or _default_client_capability_state(servers)
@@ -89,28 +90,41 @@ class MCPFleetManager:
         self._capability_change_listener = capability_change_listener
         self._progress_listener = progress_listener
         self._state_lock = threading.RLock()
-        self._failed_servers: dict[str, MCPServerError] = {}
+        self._failed_servers: dict[str, MCPServerFailure] = {}
         self._capability_change_events: list[dict[str, Any]] = []
         self._tool_catalog_by_server: dict[str, tuple[str, ...]] = {}
         self._prompt_catalog_by_server: dict[str, tuple[str, ...]] = {}
         self._resource_catalog_by_server: dict[str, tuple[str, ...]] = {}
+        self._resource_template_catalog_by_server: dict[str, tuple[str, ...]] = {}
         self._metrics_by_server: dict[str, dict[str, Any]] = {}
-        self._live_registry: Any | None = None
+        self._live_registry: ToolRegistry | None = None
         self._discovery_cache_ttl_seconds = max(
             0.0,
             float(discovery_cache_ttl_seconds or 0.0),
         )
         self._deferred_discovery_enabled = bool(deferred_discovery_enabled)
+        self._token_store = token_store
         self._discovery_cache: dict[str, _DiscoveryCacheEntry] = {}
+        enabled_servers = [server for server in servers if server.enabled]
         self._sessions = {
             server.name: MCPServerSession(
                 server,
                 client_capability_state=self._client_capability_state,
                 capability_change_handler=self._on_capability_change,
                 progress_listener=self._progress_listener,
+                token_store=token_store,
             )
-            for server in servers
+            for server in enabled_servers
         }
+        self._refresh_pending: set[tuple[str, str]] = set()
+        self._refresh_executor = (
+            ThreadPoolExecutor(
+                max_workers=min(len(self._sessions), 4),
+                thread_name_prefix="mcp-refresh",
+            )
+            if self._sessions
+            else None
+        )
         self._registered_atexit = False
         if self._sessions:
             atexit.register(self.close)
@@ -120,9 +134,9 @@ class MCPFleetManager:
         session = self._sessions.get(str(server_name or "").strip())
         if session is None:
             return None
-        return session._server
+        return session.server_config
 
-    def attach_registry(self, registry: Any) -> None:
+    def attach_registry(self, registry: ToolRegistry) -> None:
         with self._state_lock:
             self._live_registry = registry
 
@@ -131,13 +145,17 @@ class MCPFleetManager:
         return self._client_capability_state
 
     @property
-    def failed_servers(self) -> dict[str, MCPServerError]:
+    def failed_servers(self) -> dict[str, MCPServerFailure]:
         with self._state_lock:
             return dict(self._failed_servers)
 
     @classmethod
-    def from_runtime_config(cls, runtime_config: Any | None) -> "MCPFleetManager":
-        servers = list(getattr(runtime_config, "mcp_servers", []) or [])
+    def from_runtime_config(
+        cls, runtime_config: RuntimeConfig | None
+    ) -> "MCPFleetManager":
+        if runtime_config is None:
+            return cls(servers=[])
+        servers = list(runtime_config.mcp_servers)
         sampling_handler = sampling_handler_from_runtime_config(runtime_config)
         default_state = _default_client_capability_state(servers)
         client_capability_state = (
@@ -153,12 +171,9 @@ class MCPFleetManager:
         return cls(
             servers=servers,
             client_capability_state=client_capability_state,
-            discovery_cache_ttl_seconds=float(
-                getattr(runtime_config, "mcp_discovery_cache_ttl_seconds", 0.0) or 0.0
-            ),
-            deferred_discovery_enabled=bool(
-                getattr(runtime_config, "mcp_deferred_discovery_enabled", False)
-            ),
+            discovery_cache_ttl_seconds=runtime_config.mcp_discovery_cache_ttl_seconds,
+            deferred_discovery_enabled=runtime_config.mcp_deferred_discovery_enabled,
+            token_store=build_runtime_mcp_token_store(runtime_config),
         )
 
     def bind_sampling_executor(self, executor: Any) -> None:
@@ -274,15 +289,16 @@ class MCPFleetManager:
                 server_name=session.server_name,
                 started=started,
                 ok=False,
-                restart_total=session._restart_total,
+                restart_total=session.restart_total,
             )
             raise
         self._record_call_metric(
             server_name=session.server_name,
             started=started,
             ok=True,
-            restart_total=session._restart_total,
+            restart_total=session.restart_total,
         )
+        self._clear_failed_server(session.server_name)
         return result
 
     def get_prompt(
@@ -403,6 +419,42 @@ class MCPFleetManager:
                 for primitive, entry in self._discovery_cache.items()
             }
 
+    def server_status_snapshot(self) -> dict[str, dict[str, Any]]:
+        metrics = self.mcp_server_metrics()
+        logs = self.mcp_server_logs(limit=1)
+        failures = self.failed_servers
+        with self._state_lock:
+            return {
+                name: {
+                    "transport": session.server_config.transport,
+                    "trusted": session.server_config.trusted,
+                    "tool_names": self._tool_catalog_by_server.get(name, ()),
+                    "prompt_names": self._prompt_catalog_by_server.get(name, ()),
+                    "resource_uris": self._resource_catalog_by_server.get(name, ()),
+                    "resource_template_uris": (
+                        self._resource_template_catalog_by_server.get(name, ())
+                    ),
+                    "metrics": dict(metrics.get(name, {})),
+                    "recent_log": logs.get(name, [])[-1] if logs.get(name) else None,
+                    "failure": failures.get(name),
+                    "sandbox": session.server_config.stdio_sandbox,
+                }
+                for name, session in self._sessions.items()
+            }
+
+    def browse_snapshot(self) -> dict[str, dict[str, tuple[str, ...]]]:
+        with self._state_lock:
+            return {
+                name: {
+                    "prompts": self._prompt_catalog_by_server.get(name, ()),
+                    "resources": self._resource_catalog_by_server.get(name, ()),
+                    "resource_templates": (
+                        self._resource_template_catalog_by_server.get(name, ())
+                    ),
+                }
+                for name in self._sessions
+            }
+
     def close_server(self, server_name: str) -> None:
         session = self._sessions.get(str(server_name or "").strip())
         if session is None:
@@ -410,8 +462,15 @@ class MCPFleetManager:
         session.close(reset_initialized=False)
 
     def close(self) -> None:
+        with self._state_lock:
+            refresh_executor = self._refresh_executor
+            self._refresh_executor = None
+        if refresh_executor is not None:
+            refresh_executor.shutdown(wait=True, cancel_futures=True)
         for session in self._sessions.values():
             session.close(reset_initialized=True)
+        if self._token_store is not None:
+            self._token_store.close()
 
     def _require_session(self, server_name: str) -> MCPServerSession:
         session = self._sessions.get(str(server_name or "").strip())
@@ -432,11 +491,12 @@ class MCPFleetManager:
         if cached is not None:
             return list(cached)
 
+        discovered: list[Any] = []
         if not parallel:
-            discovered: list[Any] = []
             for server_name, session in self._sessions.items():
                 items = self._discover_for_session(primitive=primitive, session=session)
                 discovered.extend(items)
+                self._clear_failed_server(server_name, primitive=primitive)
                 self._update_catalog(
                     primitive=primitive,
                     server_name=server_name,
@@ -445,7 +505,6 @@ class MCPFleetManager:
             self._store_discovery_cache(primitive=primitive, items=discovered)
             return discovered
 
-        discovered: list[Any] = []
         max_workers = min(max(len(self._sessions), 1), 8)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_map = {
@@ -470,6 +529,7 @@ class MCPFleetManager:
                     )
                     continue
                 discovered.extend(items)
+                self._clear_failed_server(server_name, primitive=primitive)
                 self._update_catalog(
                     primitive=primitive,
                     server_name=server_name,
@@ -541,18 +601,33 @@ class MCPFleetManager:
                 )
                 return
             if primitive == "resource_templates":
-                self._resource_catalog_by_server[server_name] = tuple(
+                self._resource_template_catalog_by_server[server_name] = tuple(
                     sorted(str(item.uri_template or "").strip() for item in items)
                 )
                 return
 
     def _on_capability_change(self, *, server_name: str, primitive: str) -> None:
-        thread = threading.Thread(
-            target=self._refresh_capability_change,
-            kwargs={"server_name": server_name, "primitive": primitive},
-            daemon=True,
-        )
-        thread.start()
+        key = (server_name, primitive)
+        with self._state_lock:
+            executor = self._refresh_executor
+            if executor is None or key in self._refresh_pending:
+                return
+            self._refresh_pending.add(key)
+            executor.submit(
+                self._run_capability_refresh,
+                server_name=server_name,
+                primitive=primitive,
+            )
+
+    def _run_capability_refresh(self, *, server_name: str, primitive: str) -> None:
+        try:
+            self._refresh_capability_change(
+                server_name=server_name,
+                primitive=primitive,
+            )
+        finally:
+            with self._state_lock:
+                self._refresh_pending.discard((server_name, primitive))
 
     def _refresh_capability_change(self, *, server_name: str, primitive: str) -> None:
         session = self._sessions.get(server_name)
@@ -570,10 +645,11 @@ class MCPFleetManager:
             )
             return
         self._update_catalog(primitive=primitive, server_name=server_name, items=items)
+        self._clear_failed_server(server_name, primitive=primitive)
         new_catalog = set(self._catalog_for(primitive, server_name))
         added = tuple(sorted(new_catalog - old_catalog))
         removed = tuple(sorted(old_catalog - new_catalog))
-        self._apply_live_registry_delta(
+        registration_errors = self._apply_live_registry_delta(
             primitive=primitive,
             server_name=server_name,
             items=items,
@@ -585,6 +661,7 @@ class MCPFleetManager:
             "primitive": primitive,
             "added": list(added),
             "removed": list(removed),
+            "registration_errors": list(registration_errors),
         }
         with self._state_lock:
             self._capability_change_events.append(event)
@@ -605,15 +682,11 @@ class MCPFleetManager:
         items: list[Any],
         added: tuple[str, ...],
         removed: tuple[str, ...],
-    ) -> None:
+    ) -> tuple[str, ...]:
         with self._state_lock:
             registry = self._live_registry
         if registry is None:
-            return
-        register = getattr(registry, "register", None)
-        unregister = getattr(registry, "unregister", None)
-        if not callable(register) or not callable(unregister):
-            return
+            return ()
 
         live_items = {
             _mcp_catalog_key_for_item(primitive=primitive, item=item): item
@@ -627,7 +700,8 @@ class MCPFleetManager:
                 item=None,
             )
             if runtime_name:
-                unregister(runtime_name)
+                registry.unregister(runtime_name)
+        errors: list[str] = []
         for token in added:
             item = live_items.get(token)
             if item is None:
@@ -636,9 +710,10 @@ class MCPFleetManager:
             if spec is None:
                 continue
             try:
-                register(spec)
-            except Exception:
-                continue
+                registry.register(spec)
+            except Exception as exc:
+                errors.append(f"{spec.name}:{type(exc).__name__}:{exc}")
+        return tuple(errors)
 
     def _catalog_for(self, primitive: str, server_name: str) -> tuple[str, ...]:
         with self._state_lock:
@@ -649,7 +724,7 @@ class MCPFleetManager:
             if primitive == "resources":
                 return self._resource_catalog_by_server.get(server_name, ())
             if primitive == "resource_templates":
-                return self._resource_catalog_by_server.get(server_name, ())
+                return self._resource_template_catalog_by_server.get(server_name, ())
             return ()
 
     def _record_failed_server(
@@ -657,14 +732,22 @@ class MCPFleetManager:
         *,
         server_name: str,
         primitive: str,
-        exc: Exception,
+        exc: MCPTransportError,
     ) -> None:
         with self._state_lock:
-            self._failed_servers[server_name] = MCPServerError(
+            self._failed_servers[server_name] = MCPServerFailure(
                 server_name=server_name,
-                reason_code=str(getattr(exc, "reason_code", "") or primitive),
+                reason_code=exc.reason_code or primitive,
                 message=str(exc),
+                primitive=primitive,
             )
+
+    def _clear_failed_server(self, server_name: str, *, primitive: str = "") -> None:
+        with self._state_lock:
+            failure = self._failed_servers.get(server_name)
+            if primitive and failure is not None and failure.primitive != primitive:
+                return
+            self._failed_servers.pop(server_name, None)
 
     def _record_call_metric(
         self,
@@ -761,32 +844,30 @@ def _mcp_runtime_name_for_catalog_token(
     item: Any | None,
 ) -> str:
     if primitive == "tools":
-        remote_name = str(getattr(item, "remote_name", "") or token).strip()
+        listed = item if isinstance(item, MCPListedTool) else None
         return build_mcp_runtime_tool_name(
-            server_name=server_name or str(getattr(item, "server_name", "") or ""),
-            remote_name=remote_name,
+            server_name=server_name or (listed.server_name if listed else ""),
+            remote_name=listed.remote_name if listed else token,
         )
     if primitive == "prompts":
-        remote_name = str(getattr(item, "remote_name", "") or token).strip()
+        listed = item if isinstance(item, MCPListedPrompt) else None
         return build_mcp_runtime_prompt_name(
-            server_name=server_name or str(getattr(item, "server_name", "") or ""),
-            remote_name=remote_name,
+            server_name=server_name or (listed.server_name if listed else ""),
+            remote_name=listed.remote_name if listed else token,
         )
     if primitive == "resources":
-        resource_uri = str(getattr(item, "resource_uri", "") or token).strip()
-        resource_name = str(getattr(item, "resource_name", "") or "").strip()
+        listed = item if isinstance(item, MCPListedResource) else None
         return build_mcp_runtime_resource_name(
-            server_name=server_name or str(getattr(item, "server_name", "") or ""),
-            resource_uri=resource_uri,
-            resource_name=resource_name,
+            server_name=server_name or (listed.server_name if listed else ""),
+            resource_uri=listed.resource_uri if listed else token,
+            resource_name=listed.resource_name if listed else "",
         )
     if primitive == "resource_templates":
-        uri_template = str(getattr(item, "uri_template", "") or token).strip()
-        template_name = str(getattr(item, "template_name", "") or "").strip()
+        listed = item if isinstance(item, MCPListedResourceTemplate) else None
         return build_mcp_runtime_resource_template_name(
-            server_name=server_name or str(getattr(item, "server_name", "") or ""),
-            uri_template=uri_template,
-            template_name=template_name,
+            server_name=server_name or (listed.server_name if listed else ""),
+            uri_template=listed.uri_template if listed else token,
+            template_name=listed.template_name if listed else "",
         )
     return ""
 

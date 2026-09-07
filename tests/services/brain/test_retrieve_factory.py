@@ -22,7 +22,6 @@ def test_build_retrieve_service_returns_retrievectl(tmp_path) -> None:
     cfg = load_retrieve_config(home_root=tmp_path)
     service = build_retrieve_service(
         home_root=tmp_path,
-        vector_adapter=None,
         config=cfg,
         logger=DummyLogger(),
     )
@@ -37,7 +36,6 @@ def test_retrieve_factory_shares_single_service_instance(tmp_path) -> None:
     cfg = load_retrieve_config(home_root=tmp_path)
     service = build_retrieve_service(
         home_root=tmp_path,
-        vector_adapter=None,
         config=cfg,
         logger=DummyLogger(),
     )
@@ -46,7 +44,6 @@ def test_retrieve_factory_shares_single_service_instance(tmp_path) -> None:
         retrieve_api = init_retrieve_adapter(
             mode="auto",
             home_root=tmp_path,
-            vector_adapter=None,
             config=cfg,
             logger=DummyLogger(),
             retrieve_service=service,

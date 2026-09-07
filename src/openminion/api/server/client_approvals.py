@@ -15,9 +15,11 @@ from openminion.modules.telemetry.events.catalog import (
     DESKTOP_APPROVAL_REQUESTED,
     DESKTOP_APPROVAL_RESOLVED,
 )
-from openminion.services.runtime.manager import (
+from openminion.services.runtime.interfaces import (
     DesktopApprovalRequest,
     DesktopApprovalRequester,
+)
+from openminion.services.runtime.manager import (
     TurnChunk,
 )
 

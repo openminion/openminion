@@ -19,6 +19,9 @@ class _StubRuntime:
         service_vendor_name: str = "openai",
         transport_adapter_name: str = "",
         project_context: ProjectContextInfo | None = None,
+        permission_mode: str = "",
+        action_policy_mode_override: str = "",
+        added_workspace_root_count: int = 0,
     ) -> None:
         self.agent_id = agent_id
         self.provider_name = provider_name
@@ -26,6 +29,9 @@ class _StubRuntime:
         self.service_vendor_name = service_vendor_name
         self.transport_adapter_name = transport_adapter_name
         self.project_context = project_context
+        self.permission_mode = permission_mode
+        self.action_policy_mode_override = action_policy_mode_override
+        self.added_workspace_root_count = added_workspace_root_count
 
 
 def _capture_greeter(*, working_dir: str = "/test/cwd") -> str:
@@ -81,6 +87,24 @@ def test_greeter_contains_cwd() -> None:
     assert "/my/special/dir" in out
 
 
+def test_greeter_shows_default_permissions_and_workspace_scope() -> None:
+    out = _capture_greeter()
+    assert "permissions: default" in out
+
+
+def test_greeter_shows_read_only_and_added_directories() -> None:
+    runtime = _StubRuntime(
+        permission_mode="readonly",
+        added_workspace_root_count=2,
+    )
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+    _push_greeter(console, runtime=runtime, working_dir="/tmp/project")
+    out = buf.getvalue()
+    assert "permissions: read-only" in out
+    assert "permissions: read-only · 2 added directories" in out
+
+
 def test_greeter_contains_project_context_when_present() -> None:
     runtime = _StubRuntime(
         project_context=ProjectContextInfo(
@@ -99,7 +123,7 @@ def test_greeter_contains_project_context_when_present() -> None:
     assert "123 bytes" in out
 
 
-def test_greeter_warns_for_legacy_context_name() -> None:
+def test_greeter_describes_loaded_noncanonical_context_neutrally() -> None:
     runtime = _StubRuntime(
         project_context=ProjectContextInfo(
             path=Path("/tmp/project/AGENTS.md"),
@@ -112,7 +136,9 @@ def test_greeter_warns_for_legacy_context_name() -> None:
     console = Console(file=buf, force_terminal=False, width=120)
     _push_greeter(console, runtime=runtime, working_dir="/tmp/project")
     out = buf.getvalue()
-    assert "consider renaming to OPENMINION.md" in out
+    assert "loaded project context from AGENTS.md" in out
+    assert "OpenMinion-native filename: OPENMINION.md" in out
+    assert "consider renaming" not in out
 
 
 def test_greeter_renders_panel_border() -> None:

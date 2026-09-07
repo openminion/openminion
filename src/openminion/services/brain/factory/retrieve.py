@@ -7,7 +7,6 @@ from openminion.modules.brain.adapters.factory import create_retrieve_adapter
 def build_retrieve_service(
     *,
     home_root: Path,
-    vector_adapter: Any | None,
     config: Any | None,
     logger: Any,
     telemetryctl: Any | None = None,
@@ -40,7 +39,6 @@ def build_retrieve_service(
                     "defaults": retrieve_cfg.defaults.model_dump(),
                 },
             },
-            vector_adapter=vector_adapter,
             telemetryctl=telemetryctl,
         )
     except Exception as exc:  # noqa: BLE001
@@ -55,7 +53,6 @@ def init_retrieve_adapter(
     *,
     mode: str,
     home_root: Path,
-    vector_adapter: Any | None,
     config: Any | None,
     logger: Any,
     retrieve_service: Any | None = None,
@@ -65,7 +62,6 @@ def init_retrieve_adapter(
     if service is None:
         service = build_retrieve_service(
             home_root=home_root,
-            vector_adapter=vector_adapter,
             config=config,
             logger=logger,
             telemetryctl=telemetryctl,

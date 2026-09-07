@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -97,6 +98,27 @@ def _load_cortensor_e2e_suite_module():
         "runners",
         "run_cortensor_e2e_suite.py",
     )
+
+
+def test_autonomy_smoke_executable_entrypoint() -> None:
+    runner_path = (
+        _repo_root()
+        / "openminion"
+        / "tests"
+        / "e2e"
+        / "runners"
+        / "run_autonomy_smoke.py"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(runner_path), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert "OpenMinion autonomy smoke suite" in completed.stdout
 
 
 def test_live_cli_chat_helper_artifacts_use_isolated_generated_root(

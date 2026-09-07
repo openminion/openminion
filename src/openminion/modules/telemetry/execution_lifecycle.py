@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from openminion.base.errors import error_info_from_exception
+
 
 def build_execution_traceparent(invocation_id: str, execution_id: str) -> str:
     trace_id = hashlib.sha256(str(invocation_id).encode("utf-8")).hexdigest()[:32]
@@ -157,7 +159,13 @@ class AgentExecutionTelemetry:
         if not self._active:
             return
         duration_ms = self._duration_ms()
-        error = {"type": type(exc).__name__}
+        error = {
+            "code": error_info_from_exception(
+                exc,
+                default_code=type(exc).__name__,
+            ).code,
+            "type": type(exc).__name__,
+        }
         terminal = "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed"
         for event_type, payload in (
             (
@@ -254,6 +262,7 @@ class AgentExecutionTelemetry:
                         "thread_id": self._inbound.metadata.get("thread_id") or None,
                         "provider": provider or None,
                         "model": model or None,
+                        **({"error": error} if error else {}),
                     },
                 )
             )

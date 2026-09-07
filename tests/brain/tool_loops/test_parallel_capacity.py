@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextvars import ContextVar
 from typing import Any
 
 from openminion.modules.brain.loop.tools.parallel import execute_parallel_tool_batch
@@ -21,6 +22,7 @@ from openminion.modules.brain.schemas import ActionResult, ToolCommand
 class _FakeTool:
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+    id: str | None = None
 
 
 @dataclass
@@ -33,6 +35,7 @@ class _FakeOutcome:
 @dataclass
 class _FakeCtx:
     call_order: list[str] = field(default_factory=list)
+    command_ids: list[str] = field(default_factory=list)
     state: Any = None
 
     def execute_command(
@@ -40,6 +43,7 @@ class _FakeCtx:
     ) -> _FakeOutcome:
         tool_name = str(getattr(command, "tool_name", "") or "")
         self.call_order.append(tool_name)
+        self.command_ids.append(command.command_id)
         return _FakeOutcome(summary=f"result of {tool_name}")
 
     def emit_status(self, **_: Any) -> None:
@@ -130,7 +134,7 @@ class _PreparedCtx:
 
 
 def _read_tool(path: str) -> _FakeTool:
-    return _FakeTool(name="file.read", arguments={"path": path})
+    return _FakeTool(name="file.read", arguments={"path": path}, id=f"call:{path}")
 
 
 def _independent_reads(count: int) -> list[_FakeTool]:
@@ -156,6 +160,7 @@ def test_capacity_1_serializes_all() -> None:
     assert result.tool_calls_sequential == 3
     assert result.tool_calls_parallel == 0
     assert len(result.ordered_results) == 3
+    assert ctx.command_ids == [f"call:/src/file{index}.py" for index in range(3)]
 
 
 # Test 2: Capacity=2 sub-batches a group of 4 into two parallel runs of 2
@@ -310,3 +315,34 @@ def test_prepare_outcome_bypasses_worker_pool_and_preserves_order() -> None:
     assert ctx.immediate_calls == ["weather"]
     assert ctx.finalized_calls == ["file.read"]
     assert [tc.name for tc, _ in result.ordered_results] == ["weather", "file.read"]
+
+
+def test_parallel_workers_receive_distinct_copied_contexts() -> None:
+    marker: ContextVar[str] = ContextVar("parallel_marker", default="missing")
+
+    @dataclass
+    class _ContextCtx(_FakeCtx):
+        seen: list[str] = field(default_factory=list)
+
+        def execute_command(
+            self, *, command, include_reflect: bool = False
+        ) -> _FakeOutcome:
+            self.seen.append(marker.get())
+            return super().execute_command(
+                command=command,
+                include_reflect=include_reflect,
+            )
+
+    ctx = _ContextCtx()
+    token = marker.set("turn-a")
+    try:
+        execute_parallel_tool_batch(
+            loop_ctx=ctx,
+            tool_calls=_independent_reads(2),
+            include_reflect=False,
+            provider_parallel_tool_capacity=2,
+        )
+    finally:
+        marker.reset(token)
+
+    assert ctx.seen == ["turn-a", "turn-a"]

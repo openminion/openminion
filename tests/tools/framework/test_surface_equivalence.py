@@ -6,8 +6,12 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.tool.registry import ToolRegistry
+
+pytestmark = pytest.mark.package_integration
 
 SNAPSHOT_FILE = (
     Path(__file__).resolve().parents[4]

@@ -181,6 +181,7 @@ def _budget_confirmation_state() -> SimpleNamespace:
         pending_confirmation_success_criteria={},
         pending_confirmation_feasibility_state={},
         pending_confirmation_feasibility_report=None,
+        pending_policy_approval_id=None,
         post_action_user_message="Continue for more iterations?",
     )
     mark_pending_extension(

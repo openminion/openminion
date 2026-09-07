@@ -329,18 +329,28 @@ def run_with_autonomous_continuation(
     progress_callback: Any | None = None,
     approval_callback: Any | None = None,
     initial_trigger: str = "user_input",
+    runtime_session_id: str | None = None,
+    root_turn_id: str | None = None,
+    capture_event_id: str | None = None,
+    capture_id: str | None = None,
 ) -> Any:
+    attachment_options = {"attachments": attachments} if attachments is not None else {}
     result = runner.run(
         session_id=session_id,
         user_input=user_input,
-        attachments=attachments,
+        **attachment_options,
         trace_id=trace_id,
         forced_tools=forced_tools,
         capability_category=capability_category,
         trigger=initial_trigger,
         progress_callback=progress_callback,
         approval_callback=approval_callback,
+        runtime_session_id=runtime_session_id,
+        root_turn_id=root_turn_id,
+        capture_event_id=capture_event_id,
+        capture_id=capture_id,
     )
+    initial_capture = _capture_result_payload(result)
 
     session_api = getattr(runner, "session_api", None)
     agent_id = getattr(getattr(runner, "profile", None), "agent_id", "") or ""
@@ -398,14 +408,30 @@ def run_with_autonomous_continuation(
         result = runner.run(
             session_id=session_id,
             user_input=None,
-            attachments=None,
             trace_id=None,  # fresh trace per autonomous turn
             forced_tools=None,
             capability_category=None,
             trigger="plan_continuation",
             progress_callback=progress_callback,
             approval_callback=approval_callback,
+            runtime_session_id=runtime_session_id,
         )
+    return _restore_capture_result_payload(result, initial_capture)
+
+
+def _capture_result_payload(result: Any) -> tuple[Any, Any]:
+    return (
+        getattr(result, "terminal_capture_intent_receipt", None),
+        getattr(result, "memory_capture_bundle_result", None),
+    )
+
+
+def _restore_capture_result_payload(result: Any, capture: tuple[Any, Any]) -> Any:
+    receipt, bundle_result = capture
+    if receipt is not None:
+        result.terminal_capture_intent_receipt = receipt
+    if bundle_result is not None:
+        result.memory_capture_bundle_result = bundle_result
     return result
 
 
@@ -425,6 +451,7 @@ def _emit_continuation_stopped(
             session_api=getattr(runner, "session_api", None),
             session_id=session_id,
             agent_id=getattr(getattr(runner, "profile", None), "agent_id", "") or "",
+            llm_api=getattr(runner, "llm_api", None),
         )
         payload: dict[str, Any] = {
             "reason": str(decision.get("reason") or "unknown"),

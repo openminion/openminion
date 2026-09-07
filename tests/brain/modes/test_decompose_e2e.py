@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_GIT_ADD,
@@ -141,7 +142,6 @@ def test_general_entry_exposes_git_and_plan_runtime_tools_when_registered(
         "openminion.modules.brain.loop.tools.runtime.collect_runtime_tool_schemas",
         lambda _runner: registered,
     )
-
     tool_specs, supports_seed = build_entry_tool_specs(
         object(),
         act_profile="general",
@@ -177,6 +177,37 @@ def test_general_entry_exposes_git_and_plan_runtime_tools_when_registered(
     assert registered_names.issubset({tool.name for tool in requestable})
 
 
+def test_entry_exposes_only_direct_tools_when_runtime_scope_denies_controls(
+    monkeypatch,
+) -> None:
+    registered = [
+        {"name": "git.status", "description": "Show repository status."},
+        {"name": "security.scan_code", "description": "Scan source code."},
+    ]
+    monkeypatch.setattr(
+        "openminion.modules.brain.loop.tools.runtime.collect_runtime_tool_schemas",
+        lambda _runner: registered,
+    )
+    monkeypatch.setattr(
+        "openminion.modules.brain.loop.entry.collect_runtime_tool_names",
+        lambda _runner: frozenset({"git.status", "security.scan_code"}),
+    )
+    runner = SimpleNamespace(
+        tool_api=SimpleNamespace(
+            is_tool_allowed=lambda name: name in {"git.status", "security.scan_code"},
+        )
+    )
+
+    tool_specs, supports_seed = build_entry_tool_specs(
+        runner,
+        act_profile="general",
+        execution_target_kind="local",
+    )
+
+    assert supports_seed is True
+    assert {tool.name for tool in tool_specs} == {"git.status", "security.scan_code"}
+
+
 def test_forced_dynamic_runtime_tool_specs_are_added_before_entry_filter(
     monkeypatch,
 ) -> None:
@@ -198,6 +229,27 @@ def test_forced_dynamic_runtime_tool_specs_are_added_before_entry_filter(
     assert orchestration._explicit_direct_tool_names_from_user_input(
         'tool mcp.fixture.echo_text {"text":"hi"}'
     ) == ["mcp.fixture.echo_text"]
+
+
+def test_general_entry_makes_dynamic_runtime_tools_requestable(monkeypatch) -> None:
+    dynamic_name = "mcp.fixture.echo_text"
+    registered = [{"name": dynamic_name, "description": "Echo text."}]
+    monkeypatch.setattr(
+        "openminion.modules.brain.loop.entry.collect_runtime_tool_names",
+        lambda _runner: frozenset({dynamic_name}),
+    )
+    monkeypatch.setattr(
+        "openminion.modules.brain.loop.tools.runtime.collect_runtime_tool_schemas",
+        lambda _runner: registered,
+    )
+
+    requestable = build_entry_requestable_tool_specs(
+        object(),
+        act_profile="general",
+        execution_target_kind="local",
+    )
+
+    assert dynamic_name in {tool.name for tool in requestable}
 
 
 def test_decompose_prose_without_tool_call_does_not_auto_invoke() -> None:

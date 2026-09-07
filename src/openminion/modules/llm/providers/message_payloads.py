@@ -18,7 +18,10 @@ from openminion.modules.artifact.refs import (
 from ..errors import LLMCtlError
 from ..schemas import ImageContentPart, LLMRequest, Message, ToolCall, UsageInfo
 from ..schemas import TextContentPart
-from ..constants import LLM_TOOL_CALL_STATUS_PARSED
+from ..constants import (
+    LLM_TOOL_CALL_STATUS_PARSED,
+    REQUESTABLE_TOOL_NAMES_METADATA_KEY,
+)
 from .tool_calling import (
     build_fallback_tool_call_instruction,
     is_schema_only_submit_output_tools,
@@ -393,6 +396,7 @@ def _append_openai_like_message(
     enable_vision_input: bool,
     supports_vision_input: bool,
     tool_name_overrides: Mapping[str, str] | None,
+    preserve_tool_call_raw_arguments: bool,
 ) -> None:
     content = _openai_like_content(
         msg,
@@ -417,7 +421,12 @@ def _append_openai_like_message(
                                 if tool_name_overrides
                                 else call.name
                             ),
-                            "arguments": json.dumps(call.arguments, sort_keys=True),
+                            "arguments": (
+                                call.raw_arguments
+                                if preserve_tool_call_raw_arguments
+                                and call.raw_arguments is not None
+                                else json.dumps(call.arguments, sort_keys=True)
+                            ),
                         },
                     }
                     for call in msg.tool_calls
@@ -544,6 +553,7 @@ def _messages_openai_like(
     extra_system_instruction: str = "",
     enable_vision_input: bool = False,
     supports_vision_input: bool = False,
+    preserve_tool_call_raw_arguments: bool = False,
 ) -> list[dict[str, Any]]:
     _validate_artifact_image_aggregate(request)
     messages: list[dict[str, Any]] = []
@@ -563,6 +573,7 @@ def _messages_openai_like(
             enable_vision_input=enable_vision_input,
             supports_vision_input=supports_vision_input,
             tool_name_overrides=tool_name_overrides,
+            preserve_tool_call_raw_arguments=preserve_tool_call_raw_arguments,
         )
 
     if fallback_instruction:
@@ -642,6 +653,9 @@ def _http_json_post(
     trace_metadata: Dict[str, Any] | None = None,
     env: Mapping[str, object] | None = None,
     http_client: ProviderHTTPClient | None = None,
+    response_metadata: Dict[str, str] | None = None,
+    allow_curl_fallback: bool = True,
+    telemetryctl: Any | None = None,
 ) -> Dict[str, Any]:
     return http_json_post(
         url=url,
@@ -652,6 +666,9 @@ def _http_json_post(
         trace_metadata=trace_metadata,
         env=env,
         http_client=http_client,
+        response_metadata=response_metadata,
+        allow_curl_fallback=allow_curl_fallback,
+        telemetryctl=telemetryctl,
     )
 
 
@@ -664,6 +681,8 @@ def _http_json_get(
     trace_metadata: Dict[str, Any] | None = None,
     env: Mapping[str, object] | None = None,
     http_client: ProviderHTTPClient | None = None,
+    response_metadata: Dict[str, str] | None = None,
+    telemetryctl: Any | None = None,
 ) -> Dict[str, Any]:
     return http_json_get(
         url=url,
@@ -673,6 +692,8 @@ def _http_json_get(
         trace_metadata=trace_metadata,
         env=env,
         http_client=http_client,
+        response_metadata=response_metadata,
+        telemetryctl=telemetryctl,
     )
 
 
@@ -701,7 +722,16 @@ def _resolve_model(
 
 
 def _resolve_tool_names(request: LLMRequest) -> List[str]:
-    return [tool.name for tool in request.tools or [] if tool.name.strip()]
+    names = [tool.name for tool in request.tools or [] if tool.name.strip()]
+    requestable = request.metadata.get(REQUESTABLE_TOOL_NAMES_METADATA_KEY, [])
+    if isinstance(requestable, str):
+        try:
+            requestable = json.loads(requestable)
+        except json.JSONDecodeError:
+            requestable = []
+    if isinstance(requestable, list | tuple):
+        names.extend(str(name).strip() for name in requestable if str(name).strip())
+    return list(dict.fromkeys(names))
 
 
 def _decode_nested_json_object(raw_value: Any) -> dict[str, Any] | None:

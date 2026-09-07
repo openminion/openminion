@@ -187,7 +187,7 @@ def test_respond_policy_confirmation_kind_writes_event_even_for_broad_tools() ->
 
     for tool_name, args_preview in (
         ("file.write", "path=hello.txt"),
-        ("file.delete", "path=/tmp/x"),
+        ("file.trash", "path=/tmp/x"),
         ("exec.run", "cmd=rm -rf .cache"),
     ):
         prose = (

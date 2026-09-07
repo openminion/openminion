@@ -10,6 +10,9 @@ class RetrievectlAdapter:
     def __init__(self, service: RetrieveCtl) -> None:
         self._svc = service
 
+    def close(self) -> None:
+        self._svc.close()
+
     def set_telemetry_context(
         self,
         *,

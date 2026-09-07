@@ -17,6 +17,7 @@ from ..contracts import (
     AdaptiveToolLoopProfile,
     semantic_batch_signature,
 )
+from ..evidence import _has_unresolved_tool_failure
 from .evidence_closeout import (
     MUTATING_FILE_CLOSEOUT_KEY,
     MUTATING_FILE_PATH_COUNTS_KEY,
@@ -96,7 +97,8 @@ def _record_mutating_file_repetition(
             closeout_paths.append(path)
     scratchpad[MUTATING_FILE_PATH_COUNTS_KEY] = counts
     if closeout_paths:
-        scratchpad[MUTATING_FILE_CLOSEOUT_KEY] = True
+        if not _has_unresolved_tool_failure(loop_state, tool_name="exec.run"):
+            scratchpad[MUTATING_FILE_CLOSEOUT_KEY] = True
         scratchpad["mutating_file_repeated_paths"] = closeout_paths[-5:]
     loop_state.scratchpad = scratchpad
     return bool(closeout_paths)
@@ -112,14 +114,23 @@ def _mutating_file_closeout_message(loop_state: Any) -> Message:
         if str(path or "").strip()
     ]
     rendered_paths = ", ".join(paths[-3:]) if paths else "the same file path"
+    if _has_unresolved_tool_failure(loop_state, tool_name="exec.run"):
+        instruction = (
+            "Stop calling file mutation tools and rerun the failed exec.run "
+            "verifier. Do not report success until a later exec.run result passes."
+        )
+    else:
+        instruction = (
+            "Stop calling file mutation tools. Use the existing successful tool "
+            "evidence and return the final user-facing answer now, preserving "
+            "requested result labels, files-changed summaries, validation status, "
+            "and follow-up labels."
+        )
     return Message(
         role="system",
         content=(
             "The same mutating file path has already been successfully updated "
-            f"multiple times in this loop ({rendered_paths}). Stop calling file "
-            "mutation tools. Use the existing successful tool evidence and return "
-            "the final user-facing answer now, preserving requested result labels, "
-            "files-changed summaries, validation status, and follow-up labels."
+            f"multiple times in this loop ({rendered_paths}). {instruction}"
         ),
     )
 

@@ -1,6 +1,7 @@
+import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .constants import FETCH_BACKEND_AUTO
 
@@ -18,7 +19,10 @@ class FetchGetArgs(BaseModel):
     url: str = Field(..., min_length=1, max_length=4096)
     method: Literal["GET", "HEAD"] = "GET"
     headers: dict[str, str] = Field(default_factory=dict)
-    accept: str = Field(default="text/html,text/plain,application/json", max_length=512)
+    accept: str = Field(
+        default="text/html,text/plain,application/json,application/xml,text/xml",
+        max_length=512,
+    )
     timeout_ms: int = Field(default=8000, ge=100, le=30000)
     max_bytes: int = Field(default=2_000_000, ge=1_024, le=10_000_000)
     max_redirects: int = Field(default=5, ge=0, le=10)
@@ -30,6 +34,17 @@ class FetchGetArgs(BaseModel):
     provider_options: dict[str, Any] = Field(default_factory=dict)
     max_response_chars: int = Field(default=1200, ge=200, le=500_000)
 
+    @field_validator("extract", mode="before")
+    @classmethod
+    def _decode_json_extract(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        return decoded if isinstance(decoded, dict) else value
+
 
 class FetchHeadArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -37,7 +52,10 @@ class FetchHeadArgs(BaseModel):
     url: str = Field(..., min_length=1, max_length=4096)
     method: Literal["HEAD"] = "HEAD"
     headers: dict[str, str] = Field(default_factory=dict)
-    accept: str = Field(default="text/html,text/plain,application/json", max_length=512)
+    accept: str = Field(
+        default="text/html,text/plain,application/json,application/xml,text/xml",
+        max_length=512,
+    )
     timeout_ms: int = Field(default=8000, ge=100, le=30000)
     max_bytes: int = Field(default=2_000_000, ge=1_024, le=10_000_000)
     max_redirects: int = Field(default=5, ge=0, le=10)

@@ -35,6 +35,12 @@ class BridgeSkillClient:
             home_root=self._skill_home_root,
         )
 
+    def close(self) -> None:
+        skill_svc = self._skill_svc
+        self._skill_svc = None
+        if skill_svc is not None:
+            skill_svc.close()
+
     def match(
         self,
         intent_text: str,

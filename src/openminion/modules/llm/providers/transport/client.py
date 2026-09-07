@@ -14,6 +14,7 @@ class _ProviderHTTPResponse:
     def __init__(self, response: httpx.Response) -> None:
         self._response = response
         self.status = response.status_code
+        self.headers = response.headers
 
     def read(self) -> bytes:
         return self._response.read()

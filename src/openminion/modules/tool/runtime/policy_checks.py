@@ -71,7 +71,7 @@ def run_policy_preflight(
         policy.ensure_path_allowed(str(args.get(key, ".")), workspace, "read")
         return
 
-    if canonical_name in ("file.write", "file.delete"):
+    if canonical_name in ("file.write", "file.trash"):
         policy.ensure_path_allowed(str(args.get("path", ".")), workspace, "write")
         return
 

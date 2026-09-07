@@ -170,9 +170,9 @@ def test_debug_report_selects_latest_and_aggregates_direct_facts(
     }
     assert payload["invocation"]["trace_count"] == 1
     assert payload["links"]["commands"] == [
-        "telemetryctl debug bundle invocation-b",
-        "telemetryctl invocation graph invocation-b",
         "telemetryctl invocation show invocation-b",
+        "telemetryctl invocation graph invocation-b",
+        "telemetryctl debug bundle invocation-b",
     ]
     assert payload["links"]["trace_paths"] == ["llm/agent/run/step01-call01.json"]
 

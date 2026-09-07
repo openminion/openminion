@@ -11,7 +11,11 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
-from openminion.base.config import AgentProfileConfig, OpenMinionConfig
+from openminion.base.config import (
+    AgentProfileConfig,
+    OpenMinionConfig,
+    RunProfileOverrides,
+)
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.config.io import resolve_config_path
 from openminion.base.config.runtime.profile import build_runtime_config
@@ -22,6 +26,12 @@ from openminion.modules.llm.setup_catalog import (
     resolve_model_choice,
 )
 from openminion.modules.llm.config import resolve_provider_identity_translation
+from openminion.modules.llm.model_connections import (
+    add_model_connection,
+    canonical_provider_name,
+    configured_model,
+    legacy_model_connection,
+)
 
 
 _MANAGED_PROVIDER_OVERRIDE_KEYS = frozenset(
@@ -34,13 +44,32 @@ _MANAGED_PROVIDER_OVERRIDE_KEYS = frozenset(
         "timeout_seconds",
     }
 )
-_PROVIDER_ALIASES = {
-    "claude": "anthropic",
-}
 
 
 class ProviderSetupError(ValueError):
     """Raised when first-run setup cannot safely produce a config."""
+
+
+class ProviderSetupConnectionConflict(ProviderSetupError):
+    """Raised when setup would retarget an existing model connection."""
+
+    def __init__(self, connection_id: str) -> None:
+        self.connection_id = connection_id
+        super().__init__(
+            f"Connection {connection_id!r} already has different settings. "
+            "Choose a different connection id."
+        )
+
+
+class ProviderSetupMissingCredential(ProviderSetupError):
+    """Raised when setup requires a credential that was not supplied."""
+
+    def __init__(self, display_label: str, env_var: str) -> None:
+        self.env_var = env_var
+        super().__init__(
+            f"Missing credential for {display_label}. Export {env_var} or "
+            "confirm local config storage interactively."
+        )
 
 
 @dataclass(frozen=True)
@@ -66,12 +95,15 @@ class ProviderSetupRequest:
     home_root: Path | None = None
     data_root: Path | None = None
     env: Mapping[str, str] | None = None
+    add_model: bool = False
+    connection_id: str = ""
 
 
 @dataclass(frozen=True)
 class ProviderSetupPreview:
     config_path: Path
     agent_id: str
+    connection_id: str
     preset_id: str
     display_label: str
     runtime_adapter: str
@@ -81,12 +113,15 @@ class ProviderSetupPreview:
     base_url: str
     credential: str
     shared_adapter_isolated: bool
+    changes_agent_default: bool
 
 
 @dataclass(frozen=True)
 class ProviderSetupResult:
     config: OpenMinionConfig
     config_path: Path
+    home_root: Path | None
+    data_root: Path
     preset: ProviderSetupPreset
     model_choice: ModelChoiceResult
     preview: ProviderSetupPreview
@@ -123,10 +158,7 @@ def resolve_setup_credential(
             "Refusing to store a local API key without explicit local-config consent."
         )
     if preset.requires_credential:
-        raise ProviderSetupError(
-            f"Missing credential for {preset.display_label}. Export {env_var} or "
-            "confirm local config storage interactively."
-        )
+        raise ProviderSetupMissingCredential(preset.display_label, env_var)
     return CredentialResolution(env_var=env_var, source="not_required")
 
 
@@ -153,14 +185,14 @@ def build_provider_setup(
         raise ProviderSetupError(
             f"{preset.display_label} requires an explicit model id."
         )
-    configured_model = _configured_model(
+    current_model = configured_model(
         base_config,
         preset=preset,
         agent_id=agent_id,
     )
     model_choice = resolve_model_choice(
         preset=preset,
-        configured_model=configured_model if config_exists else "",
+        configured_model=current_model if config_exists else "",
         manual_model=request.model,
     )
     model = model_choice.selected_model
@@ -172,6 +204,13 @@ def build_provider_setup(
         model=model,
         base_url=base_url,
     )
+    existing_profile = base_config.agents.get(agent_id)
+    changes_agent_default = (
+        not request.add_model
+        or existing_profile is None
+        or not existing_profile.provider
+    )
+    connection_id = _normalize_connection_id(request.connection_id or preset.preset_id)
     config, shared_isolated, changed_sections = _apply_setup_selection(
         base_config,
         preset=preset,
@@ -182,10 +221,13 @@ def build_provider_setup(
         provider_identity=provider_identity,
         data_root=data_root,
         config_exists=config_exists,
+        add_model=request.add_model,
+        connection_id=connection_id,
     )
     preview = ProviderSetupPreview(
         config_path=config_path,
         agent_id=agent_id,
+        connection_id=connection_id,
         preset_id=preset.preset_id,
         display_label=preset.display_label,
         runtime_adapter=preset.runtime_adapter,
@@ -195,10 +237,17 @@ def build_provider_setup(
         base_url=base_url,
         credential=_credential_preview(credential),
         shared_adapter_isolated=shared_isolated,
+        changes_agent_default=changes_agent_default,
     )
     return ProviderSetupResult(
         config=config,
         config_path=config_path,
+        home_root=(
+            Path(request.home_root).expanduser().resolve(strict=False)
+            if request.home_root is not None
+            else None
+        ),
+        data_root=data_root.resolve(strict=False),
         preset=preset,
         model_choice=model_choice,
         preview=preview,
@@ -310,67 +359,6 @@ def _resolve_base_url(*, preset: ProviderSetupPreset, base_url: str) -> str:
     return value
 
 
-def _configured_model(
-    config: OpenMinionConfig,
-    *,
-    preset: ProviderSetupPreset,
-    agent_id: str,
-) -> str:
-    provider_cfg = getattr(config.providers, preset.runtime_adapter, None)
-    if provider_cfg is None:
-        return ""
-
-    model = str(getattr(provider_cfg, "model", "") or "").strip()
-    base_url = str(getattr(provider_cfg, "base_url", "") or "").strip()
-    provider_identity = dict(getattr(provider_cfg, "provider_identity", {}) or {})
-    profile = config.agents.get(agent_id)
-    if profile is not None:
-        if _canonical_provider_name(profile.provider) != _canonical_provider_name(
-            preset.runtime_adapter
-        ):
-            return ""
-        overrides = dict(profile.provider_config_overrides or {})
-        model = str(overrides.get("model", model) or "").strip()
-        base_url = str(overrides.get("base_url", base_url) or "").strip()
-        provider_identity = dict(
-            overrides.get("provider_identity", provider_identity) or {}
-        )
-
-    if not model or preset.requires_base_url:
-        return ""
-    if preset.runtime_adapter != "openai":
-        return model
-
-    configured_identity = provider_identity or resolve_provider_identity_translation(
-        "openai",
-        model=model,
-        base_url=base_url,
-    )
-    expected_identity = resolve_provider_identity_translation(
-        "openai",
-        model=preset.recommended_models[0],
-        base_url=preset.default_base_url,
-    )
-    configured_vendor = configured_identity.get("service_vendor", "")
-    expected_vendor = expected_identity.get("service_vendor", "")
-    if configured_vendor != expected_vendor:
-        return ""
-    if expected_vendor == "openai" and not _same_endpoint(
-        base_url, preset.default_base_url
-    ):
-        return ""
-    return model
-
-
-def _same_endpoint(left: str, right: str) -> bool:
-    return left.rstrip("/").lower() == right.rstrip("/").lower()
-
-
-def _canonical_provider_name(provider_name: str) -> str:
-    normalized = provider_name.strip().lower()
-    return _PROVIDER_ALIASES.get(normalized, normalized)
-
-
 def _apply_setup_selection(
     config: OpenMinionConfig,
     *,
@@ -382,17 +370,19 @@ def _apply_setup_selection(
     provider_identity: Mapping[str, str],
     data_root: Path,
     config_exists: bool,
+    add_model: bool,
+    connection_id: str,
 ) -> tuple[OpenMinionConfig, bool, list[str]]:
-    changed = ["agents", "default_agent"]
+    changed = ["agents"]
     adapter = preset.runtime_adapter
-    canonical_adapter = _canonical_provider_name(adapter)
+    canonical_adapter = canonical_provider_name(adapter)
     config.runtime.demo_mode = False
     if not config_exists or not str(config.storage.path or "").strip():
         config.storage.path = default_storage_path(data_root)
         changed.append("storage")
     shared_adapter = any(
         existing_id != agent_id
-        and _canonical_provider_name(profile.provider) == canonical_adapter
+        and canonical_provider_name(profile.provider) == canonical_adapter
         for existing_id, profile in config.agents.items()
     )
     provider_patch = _provider_patch(
@@ -404,8 +394,43 @@ def _apply_setup_selection(
     )
     profile = config.agents.get(agent_id) or AgentProfileConfig(name=agent_id)
     profile.name = profile.name or agent_id
-    profile.provider = adapter
     profile.default_channel = profile.default_channel or "console"
+    preserve_default = add_model and bool(profile.provider)
+    if preserve_default and not profile.model_connections:
+        legacy = legacy_model_connection(config, profile)
+        if legacy is not None:
+            legacy_id, legacy_route = legacy
+            profile.model_connections[legacy_id] = legacy_route
+    _validate_connection_target(
+        profile=profile,
+        connection_id=connection_id,
+        provider=adapter,
+        provider_patch=provider_patch,
+        preserve_default=preserve_default,
+    )
+    add_model_connection(
+        profile,
+        connection_id=connection_id,
+        display_name=preset.display_label,
+        provider=adapter,
+        model=model,
+        provider_patch=provider_patch,
+        default=not preserve_default,
+    )
+    changed.append(f"agents.{agent_id}.model_connections")
+    if preserve_default:
+        config.agents[agent_id] = profile
+        build_runtime_config(
+            config,
+            agent_id=agent_id,
+            overrides=RunProfileOverrides(
+                provider=connection_id,
+                model=model,
+            ),
+        )
+        return config, shared_adapter, changed
+
+    profile.provider = adapter
     unmanaged_overrides = _unmanaged_provider_overrides(
         profile.provider_config_overrides
     )
@@ -426,8 +451,18 @@ def _apply_setup_selection(
         changed.append(f"providers.{adapter}")
     config.agents[agent_id] = profile
     config.default_agent = agent_id
+    changed.append("default_agent")
     build_runtime_config(config, agent_id=agent_id)
     return config, shared_adapter, changed
+
+
+def _normalize_connection_id(value: str) -> str:
+    normalized = "-".join(str(value or "").strip().lower().split())
+    if not normalized:
+        raise ProviderSetupError("Model connection id is required.")
+    if "/" in normalized:
+        raise ProviderSetupError("Model connection id must not contain '/'.")
+    return normalized
 
 
 def _provider_patch(
@@ -461,6 +496,58 @@ def _unmanaged_provider_overrides(
         for key, value in dict(overrides or {}).items()
         if key not in _MANAGED_PROVIDER_OVERRIDE_KEYS
     }
+
+
+def _connection_route_matches(
+    connection: Mapping[str, Any],
+    *,
+    provider: str,
+    provider_patch: Mapping[str, Any],
+) -> bool:
+    if canonical_provider_name(str(connection.get("provider", ""))) != (
+        canonical_provider_name(provider)
+    ):
+        return False
+
+    existing = dict(connection.get("provider_config_overrides", {}))
+    for key in ("api_key", "api_key_env", "base_url", "timeout_seconds"):
+        proposed = provider_patch.get(key)
+        if proposed not in (None, "") and (existing.get(key) or "") != proposed:
+            return False
+    existing_identity = dict(existing.get("provider_identity", {}) or {})
+    if not existing_identity:
+        models = list(connection.get("models", ()))
+        existing_identity = resolve_provider_identity_translation(
+            str(connection.get("provider", "")),
+            model=str(models[0]) if models else "",
+            base_url=str(existing.get("base_url", "") or ""),
+        )
+    proposed_identity = dict(provider_patch.get("provider_identity", {}) or {})
+    return all(
+        existing_identity.get(key) == proposed_identity.get(key)
+        for key in ("service_vendor", "transport_adapter")
+    )
+
+
+def _validate_connection_target(
+    *,
+    profile: AgentProfileConfig,
+    connection_id: str,
+    provider: str,
+    provider_patch: Mapping[str, Any],
+    preserve_default: bool,
+) -> None:
+    existing = profile.model_connections.get(connection_id)
+    if (
+        preserve_default
+        and existing is not None
+        and not _connection_route_matches(
+            existing,
+            provider=provider,
+            provider_patch=provider_patch,
+        )
+    ):
+        raise ProviderSetupConnectionConflict(connection_id)
 
 
 def _credential_preview(credential: CredentialResolution) -> str:
@@ -519,7 +606,9 @@ def _remove_temp(path: Path) -> None:
 
 __all__ = [
     "CredentialResolution",
+    "ProviderSetupConnectionConflict",
     "ProviderSetupError",
+    "ProviderSetupMissingCredential",
     "ProviderSetupPreview",
     "ProviderSetupRequest",
     "ProviderSetupResult",

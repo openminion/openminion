@@ -17,6 +17,7 @@ from ..constants import (
     TOOL_EXEC_SECURITY_DENY,
 )
 from ..contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
+from ..contracts.model_ids import MODEL_FILE_TRASH
 from ..errors import ToolRuntimeError
 from .command_patterns import (
     command_action_class,
@@ -136,10 +137,21 @@ class PolicyExecMixin:
         commands = cast(dict[str, Any], self.raw.get("commands", {}))
         deny_exact = set(commands.get("deny_exact", []))
         if exec_name in deny_exact:
+            details: dict[str, Any] = {
+                "rule": "commands.deny_exact",
+                "command": exec_name,
+            }
+            if exec_name == "rm":
+                details.update(
+                    {
+                        "suggested_tool": MODEL_FILE_TRASH,
+                        "suggested_fix": "Use file.trash with the exact path.",
+                    }
+                )
             raise ToolRuntimeError(
                 "POLICY_DENIED",
                 f"Denied by policy: command '{exec_name}' is denylisted",
-                {"rule": "commands.deny_exact", "command": exec_name},
+                details,
             )
 
         for expr in commands.get("deny_regex", []):

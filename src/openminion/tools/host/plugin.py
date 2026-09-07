@@ -1,3 +1,4 @@
+import json
 import os
 import platform
 import re
@@ -7,11 +8,14 @@ from pathlib import Path
 from typing import Any
 
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
+from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.tools.config import resolve_tool_workspace_root
 
-from .interfaces import TOOL_HOST_METRICS
-from .schemas import HostMetricsArgs
+from .interfaces import TOOL_HOST_INVENTORY_REPORT, TOOL_HOST_METRICS
+from .schemas import HostInventoryReportArgs, HostMetricsArgs
 
 _BYTE_UNITS = ("B", "KiB", "MiB", "GiB", "TiB", "PiB")
+_INVENTORY_SCHEMA_VERSION = "openminion.local-system-inventory.v1"
 
 
 def _format_bytes(value: int | None) -> str:
@@ -269,6 +273,108 @@ def _h_metrics(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     }
 
 
+def _inventory_markdown(report: dict[str, Any]) -> str:
+    def display(value: Any) -> str:
+        return "unknown" if value is None or value == "" else str(value)
+
+    lines = ["# Local System Inventory", "", "## Platform"]
+    for key, value in report["platform"].items():
+        lines.append(f"- {key}: {display(value)}")
+
+    lines.extend(["", "## Memory"])
+    memory = report["memory"] or {}
+    if memory:
+        for key, value in memory.items():
+            lines.append(f"- {key}: {display(value)}")
+    else:
+        lines.append("- unknown")
+
+    lines.extend(["", "## Disk"])
+    disks = report["disk"]
+    if disks:
+        for index, disk in enumerate(disks, start=1):
+            lines.append(f"### Disk {index}")
+            for key, value in disk.items():
+                lines.append(f"- {key}: {display(value)}")
+    else:
+        lines.append("- unknown")
+
+    lines.extend(["", "## Warnings"])
+    warnings = report["warnings"]
+    lines.extend(f"- {warning}" for warning in warnings)
+    if not warnings:
+        lines.append("- None")
+    return "\n".join(lines) + "\n"
+
+
+def _inventory_output_dir(ctx: Any, raw_output_dir: str) -> tuple[Path, Path]:
+    workspace = resolve_tool_workspace_root(context=ctx, fallback=_workspace_path(ctx))
+    candidate = Path(raw_output_dir).expanduser()
+    if not candidate.is_absolute():
+        candidate = workspace / candidate
+    output_dir = candidate.resolve(strict=False)
+    try:
+        output_dir.relative_to(workspace)
+    except ValueError as exc:
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            f"output directory escapes workspace root: {raw_output_dir}",
+        ) from exc
+    ctx.policy.ensure_path_allowed(
+        str(output_dir),
+        workspace=workspace,
+        operation="write",
+    )
+    return workspace, output_dir
+
+
+def _h_inventory_report(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    parsed = HostInventoryReportArgs.model_validate(args)
+    workspace, output_dir = _inventory_output_dir(ctx, parsed.output_dir)
+    json_path = output_dir / "system-inventory.json"
+    markdown_path = output_dir / "system-inventory.md"
+    if not parsed.overwrite and (json_path.exists() or markdown_path.exists()):
+        raise ToolRuntimeError(
+            "ALREADY_EXISTS",
+            "inventory report already exists; set overwrite=true to replace it",
+        )
+
+    data, warnings = collect_host_metrics(_workspace_path(ctx))
+    disk = []
+    for item in data.get("disk", []):
+        report_item = dict(item)
+        measured_path = Path(str(report_item.get("path", ""))).resolve(strict=False)
+        report_item["path"] = (
+            "workspace" if measured_path == workspace else measured_path.anchor
+        )
+        disk.append(report_item)
+
+    report = {
+        "schema_version": _INVENTORY_SCHEMA_VERSION,
+        "source": data["source"],
+        "platform": data["platform"],
+        "memory": data.get("memory"),
+        "disk": disk,
+        "warnings": warnings,
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    markdown_path.write_text(_inventory_markdown(report), encoding="utf-8")
+    return {
+        "ok": True,
+        "content": f"Wrote and verified local inventory reports in {parsed.output_dir}.",
+        "data": {
+            "method": TOOL_HOST_INVENTORY_REPORT,
+            "schema_version": _INVENTORY_SCHEMA_VERSION,
+            "json_path": str(json_path.relative_to(workspace)),
+            "markdown_path": str(markdown_path.relative_to(workspace)),
+            "platform_system": data["platform"].get("system"),
+        },
+        "warnings": warnings,
+        "verified": True,
+    }
+
+
 def register(registry: ToolRegistry) -> None:
     registry.add(
         ToolSpec(
@@ -280,6 +386,19 @@ def register(registry: ToolRegistry) -> None:
             idempotent=True,
             tags=("plugin", "host"),
             capabilities=("read_only", "host", "metrics", "system", "resources"),
+        )
+    )
+    registry.add(
+        ToolSpec(
+            name=TOOL_HOST_INVENTORY_REPORT,
+            args_model=HostInventoryReportArgs,
+            min_scope="WRITE_SAFE",
+            handler=_h_inventory_report,
+            dangerous=True,
+            idempotent=False,
+            block_under_readonly=True,
+            tags=("plugin", "host"),
+            capabilities=("host", "metrics", "system", "resources", "file.write"),
         )
     )
 

@@ -2,6 +2,8 @@ import json
 import pathlib
 from unittest.mock import patch
 
+import pytest
+
 from openminion.modules.llm.providers.adapters import (
     CortensorProvider,
     OpenRouterProvider,
@@ -16,6 +18,8 @@ from openminion.services.tool.selection import (
 )
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.llm.schemas import LLMRequest
+
+pytestmark = pytest.mark.package_integration
 
 _TEST_CONFIGS_DIR = (
     pathlib.Path(__file__).resolve().parent.parent.parent / "test-configs"

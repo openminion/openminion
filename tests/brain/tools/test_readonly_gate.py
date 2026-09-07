@@ -25,6 +25,10 @@ from openminion.modules.brain.schemas import (
 from openminion.modules.brain.tools.action_dispatch import (
     execute_action_dispatch,
 )
+from openminion.modules.brain.tools.executor.dispatch import (
+    _command_lineage_payload,
+    _inject_runtime_tool_metadata,
+)
 from openminion.modules.brain.tools.lifecycle import (
     LIFECYCLE_EVENT_ON_SUBAGENT_STOP,
     get_default_lifecycle_registry,
@@ -70,6 +74,20 @@ def _make_runner() -> SimpleNamespace:
         _budget_blocked_result=lambda **kwargs: None,
         _normalize_execution_result=lambda **kwargs: (None, None),
     )
+
+
+def test_tool_lineage_carries_runtime_session_into_tool_metadata() -> None:
+    state = _make_state()
+    state.runtime_session_id = "focus-session"
+    state.task_backed_task_id = "project-task-1"
+    command = _make_command(tool_name="task.schedule")
+    payload: dict[str, Any] = {}
+
+    lineage = _command_lineage_payload(state=state, command=command)
+    _inject_runtime_tool_metadata(payload, state=state, lineage=lineage)
+
+    assert payload["meta"]["orchestration"]["runtime_session_id"] == "focus-session"
+    assert payload["meta"]["orchestration"]["task_backed_task_id"] == "project-task-1"
 
 
 # ── readonly mode blocks write-capable tools ───────────────────────
@@ -220,29 +238,42 @@ def test_plan_only_allows_session_plan_control_exception() -> None:
         )
 
 
-def test_task_delegate_tool_dispatches_through_a2a_path() -> None:
-
+@pytest.mark.parametrize(
+    ("mode", "args"),
+    [
+        ("sync", {"agent_id": "researcher", "instruction": "map the codebase"}),
+        ("async", {"agent_id": "researcher", "instruction": "map the codebase"}),
+        ("status", {"task_id": "task-1"}),
+        ("resume", {"task_id": "task-1"}),
+        ("cancel", {"task_id": "task-1"}),
+        (
+            "accept",
+            {"child_artifact": {"artifact_id": "a1"}, "workspace_root": "/repo"},
+        ),
+        ("reject", {"child_artifact": {"artifact_id": "a1"}}),
+    ],
+)
+def test_task_delegate_tool_dispatches_through_canonical_tool_path(
+    mode: str, args: dict[str, object]
+) -> None:
     state = _make_state(permission_mode="default")
+    delegate_args = {"mode": mode, **args}
     command = ToolCommand(
         kind=BRAIN_COMMAND_KIND_TOOL,
         command_id="delegate-1",
         title="Tool call: task.delegate",
         tool_name="task.delegate",
-        args={
-            "agent_id": "researcher",
-            "instruction": "map the codebase",
-            "timeout_seconds": 60,
-        },
+        args=delegate_args,
         idempotency_key="idem-delegate-1",
     )
     calls: dict[str, object] = {}
 
-    def _call(**kwargs):
+    def _execute(**kwargs):
         calls.update(kwargs)
         return {"status": BRAIN_ACTION_STATUS_SUCCESS, "summary": "delegated ok"}
 
     runner = _make_runner()
-    runner.a2a_api = SimpleNamespace(call=_call)
+    runner.tool_api = SimpleNamespace(execute=_execute)
     runner._normalize_execution_result = lambda **kwargs: (
         ActionResult(
             command_id=kwargs["command_id"],
@@ -266,11 +297,9 @@ def test_task_delegate_tool_dispatches_through_a2a_path() -> None:
     assert result.status == BRAIN_ACTION_STATUS_SUCCESS
     assert calls["session_id"] == state.session_id
     payload = calls["command"]
-    assert payload["kind"] == "agent"
-    assert payload["target_agent_id"] == "researcher"
-    assert payload["method"] == "delegate"
-    assert payload["params"]["instruction"] == "map the codebase"
-    assert payload["params"]["timeout_seconds"] == 60
+    assert payload["kind"] == "tool"
+    assert payload["tool_name"] == "task.delegate"
+    assert payload["args"] == delegate_args
 
 
 def test_per_tool_readonly_override_blocks_write_when_global_default() -> None:
@@ -512,6 +541,8 @@ def test_a2a_completion_events_include_typed_parent_child_lineage() -> None:
     )
     assert request_payload["target_agent_id"] == "reviewer"
     assert request_payload["method"] == "delegate"
+    assert "params" not in request_payload
+    assert request_payload["has_delegation_context"] is False
     assert request_payload["command_id"] == "agent-lineage-1"
     assert request_payload["command_kind"] == BRAIN_COMMAND_KIND_AGENT
     assert request_payload["mode_name"] == "act"
@@ -519,7 +550,8 @@ def test_a2a_completion_events_include_typed_parent_child_lineage() -> None:
     assert request_payload["act_profile"] == "orchestrate"
     assert request_payload["workflow_name"] == "repo-review"
     assert request_payload["workflow_kind"] == "orchestrate"
-    assert completed_payload["summary"] == "review complete"
+    assert completed_payload["has_summary"] is True
+    assert "summary" not in completed_payload
     assert completed_payload["command_id"] == request_payload["command_id"]
     assert completed_kwargs["trace_id"] == "trace-lineage"
     assert completed_kwargs["artifact_refs"] == ["artifact://delegate/review"]

@@ -25,7 +25,13 @@ class _DummySessionApi:
         self.state = {}
         self.events: dict[str, list[dict[str, object]]] = {}
 
-    def get_latest_working_state(self, session_id: str):
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ):
+        del agent_id
         return self.state.get(session_id, {"status": "waiting_user"})
 
     def put_working_state(self, session_id: str, state_inline=None):
@@ -52,8 +58,15 @@ class _DummySessionApi:
         )
         return f"{session_id}-event-{len(self.events[session_id])}"
 
-    def list_events(self, session_id: str):
-        return list(self.events.get(session_id, []))
+    def list_events(self, session_id: str, *, trace_id=None):
+        events = self.events.get(session_id, [])
+        if trace_id is not None:
+            events = [event for event in events if event["trace_id"] == trace_id]
+        return list(events)
+
+    def get_active_task_plan(self, session_id: str):
+        del session_id
+        return None
 
 
 class _CaptureSessionApi(_DummySessionApi):
@@ -85,13 +98,14 @@ class _DummyRunner:
         self.session_api = _DummySessionApi()
         self.last_run: dict[str, object] | None = None
         self.profile = SimpleNamespace(
+            agent_id="test-agent",
             budgets=SimpleNamespace(
                 max_ticks_per_user_turn=40,
                 max_tool_calls=16,
                 max_a2a_calls=5,
                 max_total_llm_tokens=100000,
                 max_elapsed_ms=120000,
-            )
+            ),
         )
 
     def run(
@@ -105,6 +119,10 @@ class _DummyRunner:
         trigger=None,
         progress_callback=None,
         approval_callback=None,
+        runtime_session_id=None,
+        root_turn_id=None,
+        capture_event_id=None,
+        capture_id=None,
     ):
         self.last_run = {
             "session_id": session_id,
@@ -115,6 +133,10 @@ class _DummyRunner:
             "trigger": trigger,
             "progress_callback": progress_callback,
             "approval_callback": approval_callback,
+            "runtime_session_id": runtime_session_id,
+            "root_turn_id": root_turn_id,
+            "capture_event_id": capture_event_id,
+            "capture_id": capture_id,
         }
         return self.step_out
 
@@ -1619,6 +1641,8 @@ def test_brain_bridge_profile_uses_config_defaults_and_env_overrides():
             "os.environ",
             {
                 "OPENMINION_BRAIN_DECIDE_MODEL": "env-decide-model",
+                "OPENMINION_BRAIN_MAX_TICKS": "",
+                "OPENMINION_BRAIN_MAX_TOTAL_LLM_TOKENS": "",
                 "OPENMINION_BRAIN_MAX_TOOL_CALLS": "11",
                 "OPENMINION_BRAIN_REFLECTION_ENABLED": "1",
                 "OPENMINION_PLAN_AUTO_SCALE_MAX_LLM_CALLS": "33",
@@ -2468,6 +2492,101 @@ def test_brain_bridge_consumes_canonical_bootstrap_handles() -> None:
         "Bridge must store action_policy_service from canonical bootstrap."
     )
     assert service._config is config
+
+
+def test_brain_bridge_close_closes_owned_runner_graph_before_provider() -> None:
+    close_order: list[str] = []
+
+    def closer(name: str) -> SimpleNamespace:
+        return SimpleNamespace(close=lambda: close_order.append(name))
+
+    service = object.__new__(BrainBridgeService)
+    service._runner = SimpleNamespace(
+        a2a_api=closer("a2a.close"),
+        context_api=closer("context.close"),
+        tool_api=closer("tool.close"),
+        memory_api=closer("memory.close"),
+        skill_api=closer("skill.close"),
+        policy_api=closer("policy.close"),
+        retrieve_api=closer("retrieve.close"),
+        goal_runtime=closer("goal.close"),
+        task_manager=closer("task.close"),
+        cron_api=closer("cron.close"),
+        session_api=closer("session.close"),
+    )
+    service._retrieve_service = None
+    service._action_policy_service = None
+    service._identityctl = None
+    service._closed = False
+    service._llm_runtime = None
+    service._provider = SimpleNamespace(
+        close=lambda: close_order.append("provider.close")
+    )
+
+    service.close()
+    service.close()
+
+    assert close_order == [
+        "a2a.close",
+        "context.close",
+        "tool.close",
+        "memory.close",
+        "skill.close",
+        "policy.close",
+        "retrieve.close",
+        "goal.close",
+        "task.close",
+        "cron.close",
+        "session.close",
+        "provider.close",
+    ]
+
+
+def test_brain_bridge_close_does_not_construct_runner() -> None:
+    service = object.__new__(BrainBridgeService)
+    service._runner = None
+    service._identityctl = None
+    service._closed = False
+    service._llm_runtime = None
+    service._provider = SimpleNamespace(close=lambda: None)
+
+    with patch.object(service, "_get_runner") as get_runner:
+        service.close()
+
+    get_runner.assert_not_called()
+
+
+def test_brain_bridge_close_preserves_injected_policy_and_retrieve() -> None:
+    close_order: list[str] = []
+    policy_api = SimpleNamespace(close=lambda: close_order.append("policy.close"))
+    retrieve_api = SimpleNamespace(close=lambda: close_order.append("retrieve.close"))
+    service = object.__new__(BrainBridgeService)
+    service._runner = SimpleNamespace(
+        a2a_api=None,
+        context_api=None,
+        tool_api=None,
+        memory_api=None,
+        skill_api=None,
+        policy_api=policy_api,
+        retrieve_api=retrieve_api,
+        goal_runtime=None,
+        task_manager=None,
+        cron_api=None,
+        session_api=SimpleNamespace(close=lambda: close_order.append("session.close")),
+    )
+    service._vector_sync = None
+    service._retrieve_service = object()
+    service._action_policy_service = object()
+    service._identityctl = None
+    service._closed = False
+    service._llm_runtime = None
+    service._provider = SimpleNamespace(
+        close=lambda: close_order.append("provider.close")
+    )
+
+    service.close()
+
+    assert close_order == ["session.close", "provider.close"]
 
 
 def test_brain_bridge_source_has_no_runner_monkey_patches() -> None:

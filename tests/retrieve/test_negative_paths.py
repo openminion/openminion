@@ -4,6 +4,7 @@ import pytest
 from pathlib import Path
 
 from openminion.modules.retrieve.runtime.retrieve import RetrieveCtl
+from openminion.modules.retrieve.errors import RetrieveCtlError
 
 
 def _config(tmp_path: Path, **overrides) -> dict:
@@ -18,7 +19,6 @@ def _config(tmp_path: Path, **overrides) -> dict:
             "defaults": {
                 "strategy": "contextual",
                 "contextual_enabled": True,
-                "embeddings_enabled": False,
                 "lexical_candidate_count": 25,
                 "snippet_tokens": 120,
                 "chunk_target_tokens": 30,
@@ -51,6 +51,94 @@ def test_retrieve_returns_empty_for_no_indexed_content(tmp_path: Path) -> None:
             strategy="contextual",
         )
         assert rows == [] or isinstance(rows, list)
+    finally:
+        service.close()
+
+
+def test_public_reads_report_corrupt_stored_json(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    try:
+        result = service.ingest_source(
+            source_type="doc",
+            source_ref="doc://corrupt-json",
+            text="corrupt json boundary record",
+            scope="project",
+            tags=["boundary"],
+            title="corrupt json",
+            unit_kind="chunk",
+        )
+        row = service.store.execute(
+            "SELECT unit_id FROM retrievectl_units WHERE doc_id = ?",
+            (result.doc_id,),
+        ).fetchone()
+        unit_id = str(row["unit_id"])
+        service.store.execute(
+            "UPDATE retrievectl_docs SET tags_json = ? WHERE doc_id = ?",
+            ("{bad", result.doc_id),
+        )
+        service.store.commit()
+
+        for read in (
+            lambda: service.retrieve(
+                query="corrupt",
+                purpose="act",
+                scope={"project": True},
+                k=2,
+                strategy="contextual",
+            ),
+            lambda: service.diagnose_retrieval(
+                query="corrupt",
+                purpose="act",
+                scope={"project": True},
+                k=2,
+                strategy="contextual",
+            ),
+            lambda: service.explain({"meta": {"unit_id": unit_id}}),
+        ):
+            with pytest.raises(RetrieveCtlError) as exc_info:
+                read()
+            assert exc_info.value.code == "CORRUPT_RETRIEVAL_DATA"
+            assert exc_info.value.message == "persisted retrieval data is invalid"
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize(
+    ("statement", "value"),
+    [
+        ("UPDATE retrievectl_docs SET tags_json = ? WHERE doc_id = ?", "{}"),
+        ("UPDATE retrievectl_units SET offsets_json = ? WHERE doc_id = ?", "[]"),
+    ],
+)
+def test_public_reads_reject_wrong_stored_json_shapes(
+    tmp_path: Path,
+    statement: str,
+    value: str,
+) -> None:
+    service = _service(tmp_path)
+    try:
+        result = service.ingest_source(
+            source_type="doc",
+            source_ref="doc://wrong-json-shape",
+            text="wrong json shape boundary record",
+            scope="project",
+            tags=["boundary"],
+            title="wrong json shape",
+            unit_kind="chunk",
+        )
+        service.store.execute(statement, (value, result.doc_id))
+        service.store.commit()
+
+        with pytest.raises(RetrieveCtlError) as exc_info:
+            service.retrieve(
+                query="wrong",
+                purpose="act",
+                scope={"project": True},
+                k=2,
+                strategy="contextual",
+            )
+        assert exc_info.value.code == "CORRUPT_RETRIEVAL_DATA"
+        assert exc_info.value.message == "persisted retrieval data is invalid"
     finally:
         service.close()
 

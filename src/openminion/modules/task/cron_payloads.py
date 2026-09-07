@@ -1,7 +1,8 @@
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+import json
 from sqlite3 import Error as SQLiteError
-from typing import Any
+from typing import Any, Mapping
 
 from openminion.tools.task.constants import (
     DEFAULT_CONSOLIDATION_BATCH_LIMIT,
@@ -21,6 +22,59 @@ MetadataResolver = Callable[[dict[str, Any]], dict[str, Any] | None]
 WatchOutputBuilder = Callable[..., dict[str, Any]]
 WatchTerminalSummaryBuilder = Callable[..., str]
 WatchTtlChecker = Callable[..., bool]
+WatchActionExecutor = Callable[
+    ...,
+    tuple[bool, str, tuple[dict[str, Any], ...], str],
+]
+
+
+def build_cron_turn_result(
+    *,
+    result: Any,
+    session_id: str,
+    consolidation: Mapping[str, Any] | None,
+    completed_at: str,
+) -> dict[str, Any]:
+    errors = getattr(result, "errors", None)
+    if errors:
+        first_error = errors[0]
+        raise RuntimeError(
+            str(
+                getattr(first_error, "message", "cron turn failed")
+                or "cron turn failed"
+            )
+        )
+    metadata = getattr(result, "metadata", {}) or {}
+    metadata_dict = dict(metadata) if isinstance(metadata, dict) else {}
+    response: dict[str, Any] = {
+        "summary": str(getattr(result, "final_text", "") or "").strip()
+        or "Agent turn completed.",
+        "isolated_session_id": session_id,
+        "metadata": metadata_dict,
+    }
+    if consolidation is None:
+        return response
+
+    raw_candidate_ids = metadata_dict.get("memory_consolidation.candidate_ids", "[]")
+    try:
+        decoded_candidate_ids = json.loads(str(raw_candidate_ids))
+    except (TypeError, ValueError):
+        decoded_candidate_ids = []
+    response["output"] = {
+        "coordination_watermark": {
+            "target_scope": str(consolidation.get("target_scope", "") or "").strip(),
+            "candidate_ids": (
+                [str(item) for item in decoded_candidate_ids]
+                if isinstance(decoded_candidate_ids, list)
+                else []
+            ),
+            "state_hash": str(
+                metadata_dict.get("memory_consolidation.state_hash", "") or ""
+            ).strip(),
+            "completed_at": completed_at,
+        }
+    }
+    return response
 
 
 def build_expired_watch_result(
@@ -108,6 +162,93 @@ def monitoring_delivery_state(
     return False, "", None
 
 
+def finalize_watch_turn(
+    *,
+    cron_store: Any,
+    watch_output_builder: WatchOutputBuilder,
+    watch_terminal_summary: WatchTerminalSummaryBuilder,
+    watch_ttl_expired: WatchTtlChecker,
+    job: dict[str, Any],
+    payload: dict[str, Any],
+    watch: dict[str, Any],
+    result: dict[str, Any],
+    condition_value: bool | None,
+    summary: str,
+    routine: dict[str, Any] | None = None,
+    action_executor: WatchActionExecutor | None = None,
+) -> dict[str, Any]:
+    checks_completed = int(watch.get("checks_completed", 0) or 0) + 1
+    previous_condition = bool(watch.get("last_condition_met", False))
+    effective_condition = (
+        previous_condition if condition_value is None else condition_value
+    )
+    checked_at = datetime.now(timezone.utc)
+    terminal_state = watch_terminal_state(
+        watch_terminal_summary=watch_terminal_summary,
+        watch_ttl_expired=watch_ttl_expired,
+        job=job,
+        watch=watch,
+        checks_completed=checks_completed,
+        condition_met=condition_value,
+        summary=summary,
+    )
+    terminal = bool(terminal_state["terminal"])
+    deliver = bool(terminal_state["deliver"])
+    terminal_reason = str(terminal_state["terminal_reason"])
+    summary = str(terminal_state["summary"])
+    deliver, delivery_transition, alert_requested_at = monitoring_delivery_state(
+        watch=watch,
+        condition_value=condition_value,
+        checked_at=checked_at,
+        terminal=terminal,
+        terminal_delivery=deliver,
+    )
+    action_executed = False
+    action_summary = ""
+    write_audit_entries: tuple[dict[str, Any], ...] = ()
+    if action_executor is not None:
+        action_executed, action_summary, write_audit_entries, summary = action_executor(
+            terminal_reason=terminal_reason,
+            summary=summary,
+        )
+    persisted = persist_watch_progress(
+        cron_store=cron_store,
+        job=job,
+        payload=payload,
+        watch=watch,
+        checks_completed=checks_completed,
+        summary=summary,
+        condition_met=effective_condition,
+        condition_valid=condition_value is not None,
+        terminal_reason=terminal_reason,
+        checked_at=checked_at,
+        alert_requested_at=alert_requested_at,
+        routine=routine,
+        write_audit_entries=(
+            write_audit_entries if bool(watch.get("write_authorized", False)) else ()
+        ),
+    )
+    if not persisted:
+        deliver = False
+        delivery_transition = ""
+        result["error"] = True
+        summary = f"{summary} | watch progress was not persisted".strip(" |")
+    result["summary"] = summary
+    result["output"] = watch_output_builder(
+        condition_met=effective_condition,
+        condition_valid=condition_value is not None,
+        terminal=terminal,
+        deliver=deliver,
+        checks_completed=checks_completed,
+        terminal_reason=terminal_reason,
+        summary=summary,
+        delivery_transition=delivery_transition,
+        action_executed=action_executed,
+        action_summary=action_summary,
+    )
+    return result
+
+
 def persist_watch_progress(
     *,
     cron_store: Any,
@@ -121,11 +262,12 @@ def persist_watch_progress(
     terminal_reason: str,
     checked_at: datetime,
     alert_requested_at: str | None,
+    routine: dict[str, Any] | None = None,
     write_audit_entries: tuple[dict[str, Any], ...] = (),
-) -> None:
+) -> bool:
     replacer = getattr(cron_store, "replace_cron_job_payload", None)
     if not callable(replacer):
-        return
+        return False
     updated_watch = dict(watch)
     updated_watch["checks_completed"] = checks_completed
     updated_watch["last_check_at"] = checked_at.isoformat()
@@ -142,12 +284,15 @@ def persist_watch_progress(
             if isinstance(item, dict)
         ]
         updated_watch["write_audit"] = [*existing_audit, *write_audit_entries]
+    if routine is not None:
+        updated_watch["routine"] = routine
     updated_payload = dict(payload)
     updated_payload[WATCH_PAYLOAD_KEY] = updated_watch
     try:
         replacer(str(job.get("job_id", "") or "").strip(), updated_payload)
     except (NotImplementedError, OSError, SQLiteError, ValueError):
-        return
+        return False
+    return True
 
 
 def watch_output(
@@ -380,10 +525,7 @@ def _add_watch_cron_meta(cron_meta: dict[str, str], watch: dict[str, Any]) -> No
 
 
 def _watch_allowed_tools_text(watch: dict[str, Any]) -> str:
-    items = (
-        watch.get("allowed_tools", WATCH_DEFAULT_ALLOWED_TOOLS)
-        or WATCH_DEFAULT_ALLOWED_TOOLS
-    )
+    items = watch.get("allowed_tools", WATCH_DEFAULT_ALLOWED_TOOLS)
     return ",".join(str(item).strip() for item in items if str(item).strip())
 
 

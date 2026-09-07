@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.config import resolve_data_root, resolve_home_root
+from openminion.base.config.runtime import resolve_identity_db_from_env
 from openminion.modules.cli_common import (
     DATA_ROOT_OPTION_HELP,
     HOME_ROOT_OPTION_HELP,
@@ -16,10 +17,7 @@ from openminion.modules.cli_common import (
 )
 from openminion.base.constants import OPENMINION_DATA_ROOT_ENV, OPENMINION_HOME_ENV
 from openminion.modules.identity.config import load_config, load_yaml_file, resolve_path
-from openminion.modules.identity.constants import (
-    DEFAULT_CONFIG_FILENAME,
-    DEFAULT_INTEGRATED_STORAGE_SUBPATH,
-)
+from openminion.modules.identity.constants import DEFAULT_CONFIG_FILENAME
 from openminion.modules.identity.models import AgentProfile
 from openminion.modules.identity.runtime.service import IdentityCtl
 from openminion.modules.identity.storage import (
@@ -85,9 +83,11 @@ def _resolve_storage_db_path(config_path: Path, db: Optional[Path]) -> Path:
     data_root = resolve_data_root(
         home_root, data_root=env_owner.get(OPENMINION_DATA_ROOT_ENV, "")
     )
-    default_path = (data_root / DEFAULT_INTEGRATED_STORAGE_SUBPATH).resolve()
-    if env_owner.get(OPENMINION_DATA_ROOT_ENV, "").strip():
-        return default_path
+    default_path = resolve_identity_db_from_env(
+        env=env_owner,
+        home_root=home_root,
+        data_root=data_root,
+    )
     try:
         cfg = load_config(config_path, env=dict(os.environ))
     except FileNotFoundError:

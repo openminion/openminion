@@ -7,6 +7,7 @@ from openminion.modules.brain.execution.child_tasks import (
     DecomposeControlPayload,
 )
 from openminion.modules.brain.schemas import ActionResult, new_uuid
+from openminion.modules.llm.schemas import Message
 
 from .contracts import (
     ADAPTIVE_TERM_DECOMPOSE_INVALID,
@@ -16,6 +17,8 @@ from .contracts import (
     AdaptiveToolLoopState,
 )
 from .status import emit_adaptive_status
+from .messages import action_result_to_tool_message
+from .transcript import persist_blocked_tool_calls
 
 
 _DECOMPOSE_TOOL_NAME = "decompose"
@@ -78,6 +81,59 @@ def _decompose_invalid_outcome(
         error_message=message,
         tool_name=_DECOMPOSE_TOOL_NAME,
     )
+
+
+def _handle_invalid_decompose_payload(
+    loop_ctx: AdaptiveToolLoopContext,
+    *,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    decompose_calls: list[Any],
+    allowed_tools: frozenset[str],
+    public_mode_tag: str,
+    error_message: str,
+) -> AdaptiveToolLoopOutcome | None:
+    blocked_results = persist_blocked_tool_calls(
+        loop_ctx,
+        loop_state=loop_state,
+        turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+        tool_calls=decompose_calls,
+        code="INVALID_DECOMPOSE_PAYLOAD",
+        message=error_message,
+    )
+    loop_state.messages.extend(
+        action_result_to_tool_message(call.id, call.name, result)
+        for call, result in zip(decompose_calls, blocked_results, strict=True)
+    )
+    if bool(loop_state.scratchpad.get("decompose_invalid_retry_used")):
+        return _decompose_invalid_outcome(
+            loop_ctx=loop_ctx,
+            profile=profile,
+            loop_state=loop_state,
+            allowed_tools=allowed_tools,
+            public_mode_tag=public_mode_tag,
+            reason="invalid_payload",
+            message=error_message,
+        )
+    loop_state.scratchpad["decompose_invalid_retry_used"] = True
+    loop_state.messages.append(
+        Message(
+            role="system",
+            content=(
+                "The decompose payload was invalid. Retry decompose once with "
+                "either zero subtasks or at least two valid subtasks. "
+                f"Validation error: {error_message}"
+            ),
+        )
+    )
+    emit_adaptive_status(
+        loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        detail_text=f"{public_mode_tag} decompose payload retry",
+        mode_state="decompose_payload_retry",
+    )
+    return None
 
 
 def _decompose_decline_result() -> ActionResult:

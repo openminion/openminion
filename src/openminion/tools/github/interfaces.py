@@ -9,6 +9,11 @@ TOOL_GITHUB_FETCH_COMMENTS = "github.fetch_comments"
 TOOL_GITHUB_FETCH_CHECKS = "github.fetch_checks"
 TOOL_GITHUB_COMMIT_FILES = "github.commit_files"
 TOOL_GITHUB_OPEN_PR = "github.open_pr"
+TOOL_GITHUB_UPDATE_PR = "github.update_pr"
+TOOL_GITHUB_MERGE_PR = "github.merge_pr"
+TOOL_GITHUB_DISPATCH_WORKFLOW = "github.dispatch_workflow"
+TOOL_GITHUB_LIST_WORKFLOW_RUNS = "github.list_workflow_runs"
+TOOL_GITHUB_CREATE_RELEASE = "github.create_release"
 TOOL_GITHUB_POST_PR_REVIEW = "github.post_pr_review"
 TOOL_GITHUB_POST_PR_COMMENT = "github.post_pr_comment"
 
@@ -21,6 +26,11 @@ __all__ = [
     "TOOL_GITHUB_FETCH_CHECKS",
     "TOOL_GITHUB_COMMIT_FILES",
     "TOOL_GITHUB_OPEN_PR",
+    "TOOL_GITHUB_UPDATE_PR",
+    "TOOL_GITHUB_MERGE_PR",
+    "TOOL_GITHUB_DISPATCH_WORKFLOW",
+    "TOOL_GITHUB_LIST_WORKFLOW_RUNS",
+    "TOOL_GITHUB_CREATE_RELEASE",
     "TOOL_GITHUB_POST_PR_REVIEW",
     "TOOL_GITHUB_POST_PR_COMMENT",
 ]

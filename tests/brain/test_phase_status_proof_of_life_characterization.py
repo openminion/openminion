@@ -8,7 +8,9 @@ import unittest
 from openminion.modules.brain.diagnostics.status import (
     PhaseStatus,
     format_phase_status_text,
+    normalize_phase_status,
 )
+from openminion.modules.brain.loop.tools.contracts import loop_turn_progress_payload
 
 
 class GapAPreCallEmitAlwaysFiresTests(unittest.TestCase):
@@ -244,6 +246,88 @@ class GapDPrepareTurnProgressCallbackTests(unittest.TestCase):
         self.assertEqual(emitted.label, "Analyzing request...")
         self.assertEqual(emitted.detail_text, "Preparing turn...")
         self.assertEqual(emitted.source_phase, "DECIDE")
+
+    def test_prep_statuses_preserve_structured_detail_codes(self) -> None:
+        from openminion.services.brain.post_execution.mixin import _emit_prep_status
+
+        for detail_code in (
+            "preparing_turn",
+            "loading_memory_context",
+            "loading_session_history",
+        ):
+            with self.subTest(detail_code=detail_code):
+                captured: list[PhaseStatus] = []
+                _emit_prep_status(
+                    captured.append,
+                    trace_id=f"prep-{detail_code}",
+                    detail_text="technical detail",
+                    detail_code=detail_code,
+                )
+                self.assertEqual(captured[0].detail_code, detail_code)
+
+    def test_adaptive_progress_emits_thinking_and_composition_codes(self) -> None:
+        from openminion.modules.brain.loop.tools.contracts import (
+            AdaptiveToolLoopState,
+        )
+        from openminion.modules.brain.loop.tools.iteration.helpers import (
+            _set_turn_progress,
+        )
+
+        state = AdaptiveToolLoopState()
+        for detail_code in ("thinking", "composing_answer"):
+            with self.subTest(detail_code=detail_code):
+                _set_turn_progress(
+                    state,
+                    progress_phase=detail_code,
+                    detail_code=detail_code,
+                )
+                status = normalize_phase_status(
+                    trace_id=detail_code,
+                    source_phase="ACT",
+                    payload=loop_turn_progress_payload(state.scratchpad),
+                )
+                self.assertEqual(status.detail_code, detail_code)
+
+        _set_turn_progress(
+            state,
+            progress_phase="tool",
+            tool_name="web.search",
+            detail_code="",
+        )
+        tool_status = normalize_phase_status(
+            trace_id="tool",
+            source_phase="ACT",
+            payload=loop_turn_progress_payload(state.scratchpad),
+        )
+        self.assertIsNone(tool_status.detail_code)
+
+    def test_event_owned_detail_codes_take_precedence(self) -> None:
+        plan = normalize_phase_status(
+            trace_id="plan",
+            source_phase="ACT",
+            source_event="brain.plan_checkpoint",
+            payload={
+                "cursor": 1,
+                "total_steps": 2,
+                "detail_code": "opaque_payload_code",
+            },
+        )
+        closure = normalize_phase_status(
+            trace_id="closure",
+            source_phase="ACT",
+            source_event="brain.closure_gate.started",
+            payload={"detail_code": "opaque_payload_code"},
+        )
+        self.assertEqual(plan.detail_code, "plan_checkpoint")
+        self.assertEqual(closure.detail_code, "closure_gate")
+
+    def test_opaque_payload_detail_code_remains_compatible(self) -> None:
+        status = normalize_phase_status(
+            trace_id="opaque",
+            source_phase="ACT",
+            payload={"detail_code": "future_detail_code"},
+        )
+        self.assertEqual(status.detail_code, "future_detail_code")
 
     def test_emit_prep_status_with_none_callback_is_noop(self) -> None:
         from openminion.services.brain.post_execution.mixin import _emit_prep_status

@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import asyncio
+import io
 import itertools
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from rich.console import Console
 
 from openminion.base.types import Message
 from openminion.cli.parser.contracts import ensure_cli_component_compatibility
 from openminion.cli.interactive.project_context import ProjectContextInfo
 from openminion.cli.interactive.runtime import OpenMinionRuntime
+from openminion.cli.interactive.runtime.messages import room_result_chat_messages
+from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.presentation.models import MessageKind
+from openminion.modules.context.trace_inspection import ContextTraceLookupError
 from openminion.base.config.core import OpenMinionConfig
 
 
@@ -22,6 +29,9 @@ class _SessionRecord:
     target: str
     status: str = "active"
     updated_at: str = "2026-03-21T00:00:00Z"
+    session_key: str = ""
+    metadata: dict[str, object] | None = None
+    active_agent_id: str = ""
 
 
 @dataclass
@@ -41,6 +51,7 @@ class _FakeSessions:
         self._metadata: dict[str, dict[str, object]] = {}
         self._counter = 0
         self._events: dict[str, list[SimpleNamespace]] = {}
+        self._participants: dict[tuple[str, str, str], SimpleNamespace] = {}
 
     def resolve_session(
         self,
@@ -76,16 +87,95 @@ class _FakeSessions:
 
     def update_session_metadata(
         self, *, session_id: str, patch: dict[str, object]
-    ) -> None:
+    ) -> _SessionRecord:
         self._metadata.setdefault(session_id, {}).update(dict(patch))
+        record = self._by_id[session_id]
+        record.metadata = {**dict(record.metadata or {}), **dict(patch)}
+        return record
 
     def get_session(self, session_id: str) -> _SessionRecord | None:
         return self._by_id.get(session_id)
 
+    def add_participant(
+        self,
+        *,
+        session_id: str,
+        participant_type: str,
+        participant_id: str,
+        channel: str,
+        role: str,
+        display_name: str,
+    ) -> SimpleNamespace:
+        participant = SimpleNamespace(
+            participant_type=participant_type,
+            participant_id=participant_id,
+            channel=channel,
+            role=role,
+            display_name=display_name,
+            left_at=None,
+        )
+        self._participants[(session_id, participant_type, participant_id)] = participant
+        return participant
+
+    def get_participant(
+        self, session_id: str, participant_type: str, participant_id: str
+    ) -> SimpleNamespace | None:
+        participant = self._participants.get(
+            (session_id, participant_type, participant_id)
+        )
+        if participant is not None and participant.left_at is None:
+            return participant
+        return None
+
+    def list_participants(self, session_id: str) -> list[SimpleNamespace]:
+        return [
+            participant
+            for (
+                stored_session_id,
+                _type,
+                _id,
+            ), participant in self._participants.items()
+            if stored_session_id == session_id and participant.left_at is None
+        ]
+
+    def remove_participant(
+        self, *, session_id: str, participant_type: str, participant_id: str
+    ) -> bool:
+        participant = self.get_participant(session_id, participant_type, participant_id)
+        if participant is None:
+            return False
+        participant.left_at = "left"
+        return True
+
+    def set_active_agent(self, *, session_id: str, agent_id: str) -> _SessionRecord:
+        if self.get_participant(session_id, "agent", agent_id) is None:
+            raise ValueError(f"Agent {agent_id!r} is not an active participant")
+        record = self._by_id[session_id]
+        record.active_agent_id = agent_id
+        return record
+
     def list_sessions(
-        self, *, limit: int = 100, newest_first: bool = True
+        self,
+        *,
+        limit: int = 100,
+        newest_first: bool = True,
+        agent_id: str | None = None,
+        target: str | None = None,
+        metadata_filter: dict[str, object] | None = None,
     ) -> list[_SessionRecord]:
+        del newest_first, agent_id
         items = list(self._by_id.values())
+        if target:
+            items = [item for item in items if item.target == target]
+        if metadata_filter:
+            items = [
+                item
+                for item in items
+                if all(
+                    (item.metadata or {}).get(key) == value
+                    for key, value in metadata_filter.items()
+                )
+            ]
         return items[:limit]
 
     def list_messages(
@@ -224,7 +314,12 @@ class _FakeRuntime:
             raise ValueError(name)
         return SimpleNamespace(name=name)
 
-    def resolve_gateway(self, agent_id: str | None = None) -> _FakeGateway:
+    def resolve_gateway(
+        self,
+        agent_id: str | None = None,
+        *,
+        overrides: object | None = None,
+    ) -> _FakeGateway:
         name = str(agent_id or "").strip() or "alpha"
         return self._gateways[name]
 
@@ -249,6 +344,34 @@ class _FakeRuntimeNoConfigAgent(_FakeRuntime):
         )
 
 
+def _make_bound_room_runtime(
+    *, role: str = "owner"
+) -> tuple[_FakeRuntime, OpenMinionRuntime, SimpleNamespace]:
+    rt = _FakeRuntime()
+    room = rt.sessions.resolve_session(
+        agent_id="alpha",
+        channel="cli",
+        target="focus",
+        session_id=f"room-{role}",
+    )
+    room.session_key = f"room:{role}"
+    room.metadata = {"local_human_id": "local-human"}
+    actor = rt.sessions.add_participant(
+        session_id=room.id,
+        participant_type="human",
+        participant_id="local-human",
+        channel="cli",
+        role=role,
+        display_name="local-human",
+    )
+    focus_rt = OpenMinionRuntime(
+        rt,
+        target="focus",
+        session_id=room.id,
+    )
+    return rt, focus_rt, actor
+
+
 @pytest.mark.asyncio
 async def test_openminion_runtime_chat_contract_and_send_message() -> None:
     rt = _FakeRuntime()
@@ -266,6 +389,238 @@ async def test_openminion_runtime_chat_contract_and_send_message() -> None:
     assert chunks == ["ping"]  # sender prefix stripped by _strip_sender_prefix
     assert rt.resolve_gateway("alpha").calls[-1]["session_id"] == tui_rt.session_id
     assert tui_rt.transport == "gateway"
+
+
+@pytest.mark.asyncio
+async def test_openminion_runtime_room_turn_uses_canonical_off_loop_payload() -> None:
+    rt = _FakeRuntime()
+    room = rt.sessions.resolve_session(
+        agent_id="alpha",
+        channel="cli",
+        target="focus",
+        session_id="custom-room-id",
+    )
+    room.session_key = "room:custom-room-id"
+    room.metadata = {"local_human_id": "owner-local"}
+    rt.sessions.add_participant(
+        session_id=room.id,
+        participant_type="human",
+        participant_id="owner-local",
+        channel="cli",
+        role="owner",
+        display_name="owner-local",
+    )
+    expected = {
+        "agent_id": "beta",
+        "body": "reviewed",
+        "metadata": {"persisted_outbound_message_id": "out-2"},
+    }
+    calls: list[dict[str, object]] = []
+    worker_threads: list[int] = []
+    progress_threads: list[int] = []
+    approval_threads: list[int] = []
+    ui_thread = threading.get_ident()
+
+    def run_turn(**kwargs):  # noqa: ANN003, ANN202
+        calls.append(dict(kwargs))
+        worker_threads.append(threading.get_ident())
+        kwargs["progress_callback"]({"kind": "status", "label": "routing"})
+        assert kwargs["approval_callback"]("file.write", {"path": "a"}, "call-1")
+        return expected
+
+    rt.run_turn = run_turn
+    focus_rt = OpenMinionRuntime(
+        rt,
+        target="focus",
+        working_dir="/tmp/focus-room",
+        session_id=room.id,
+    )
+
+    async def approve(_tool: str, _args: dict, _call_id: object) -> bool:
+        approval_threads.append(threading.get_ident())
+        return True
+
+    result = await focus_rt.run_room_turn(
+        "review this",
+        progress_callback=lambda _payload: progress_threads.append(
+            threading.get_ident()
+        ),
+        approval_callback=approve,
+        cancel_event=threading.Event(),
+    )
+    await asyncio.sleep(0)
+
+    assert result is expected
+    assert len(worker_threads) == 1
+    assert worker_threads[0] != ui_thread
+    assert progress_threads == [ui_thread]
+    assert approval_threads == [ui_thread]
+    payload = calls[0]["payload"]
+    assert payload["session_id"] == room.id
+    assert payload["deliver"] is False
+    assert payload["inbound_metadata"]["participant_id"] == "owner-local"
+    assert payload["inbound_metadata"]["caller_handles_delivery"] == "true"
+    assert "conversation_id" not in payload["inbound_metadata"]
+
+
+def test_room_result_uses_top_level_addressed_agent_and_persisted_id() -> None:
+    messages = room_result_chat_messages(
+        {
+            "agent_id": "beta",
+            "body": "Note: keep this exact text",
+            "metadata": {"persisted_outbound_message_id": "out-beta"},
+        }
+    )
+
+    assert [(item.sender, item.body, item.msg_id) for item in messages] == [
+        ("beta", "Note: keep this exact text", "out-beta")
+    ]
+
+
+def test_room_result_removes_repeated_agent_prefix() -> None:
+    messages = room_result_chat_messages(
+        {
+            "metadata": {
+                "room_responses": [
+                    {
+                        "agent_id": "beta",
+                        "body": "beta: reviewed",
+                        "persisted_outbound_message_id": "out-beta",
+                    }
+                ]
+            }
+        }
+    )
+
+    assert [(item.sender, item.body, item.msg_id) for item in messages] == [
+        ("beta", "reviewed", "out-beta")
+    ]
+
+
+def test_room_history_reloads_persisted_agent_attribution() -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    rt.sessions.add_message(
+        focus_rt.session_id,
+        role="outbound",
+        body="reviewed",
+        metadata={"participant_id": "beta", "display_name": "Beta Reviewer"},
+    )
+
+    history = focus_rt.get_current_history()
+
+    assert [(item.sender, item.body, item.show_header) for item in history] == [
+        ("Beta Reviewer", "reviewed", True)
+    ]
+    output = io.StringIO()
+    TerminalTranscript(
+        Console(file=output, force_terminal=False, width=80)
+    ).set_messages(history)
+    assert "Beta Reviewer" in output.getvalue()
+
+
+def test_room_session_lists_by_exact_agent_membership_and_exposes_facts() -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    session = rt.sessions.get_session(focus_rt.session_id)
+    assert session is not None
+    session.metadata = {
+        "local_human_id": "local-human",
+        "name": "Review room",
+        "room_routing_mode": "sequential",
+        "working_dir": "/tmp/room-work",
+    }
+    session.active_agent_id = "alpha"
+    rt.sessions.add_participant(
+        session_id=session.id,
+        participant_type="agent",
+        participant_id="alpha",
+        channel="cli",
+        role="participant",
+        display_name="alpha",
+    )
+    focus_rt._working_dir = "/tmp/room-work"
+
+    listed = focus_rt.list_sessions(scope="current_agent")
+    directory = focus_rt.list_directory_sessions()
+
+    assert [item.id for item in listed] == [session.id]
+    assert listed[0].label == "Review room"
+    assert listed[0].meta["room_routing_mode"] == "sequential"
+    assert listed[0].meta["local_human_id"] == "local-human"
+    assert listed[0].meta["participant_count"] == 2
+    assert listed[0].meta["active_agent_id"] == "alpha"
+    assert [item.id for item in directory] == [session.id]
+    assert focus_rt.room_participants_report().startswith("Room: Review room\n")
+
+
+def test_room_session_is_hidden_from_uninvited_agent_surface() -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt._agent_id = "beta"
+
+    assert focus_rt.list_sessions(scope="current_agent") == []
+
+
+def test_room_owner_mutations_use_configured_agents_and_bounded_roles() -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+
+    invited = focus_rt.room_invite_agent("beta")
+    assert invited.role == "participant"
+    assert invited.channel == "cli"
+    focus_rt.room_activate("beta")
+    assert rt.sessions.get_session(focus_rt.session_id).active_agent_id == "beta"
+
+    before = list(rt.sessions.list_participants(focus_rt.session_id))
+    with pytest.raises(ValueError, match="Unknown configured agent"):
+        focus_rt.room_invite_agent("missing")
+    with pytest.raises(ValueError, match="Invalid participant role"):
+        focus_rt.room_invite_human("reviewer", role="admin")
+    assert rt.sessions.list_participants(focus_rt.session_id) == before
+
+
+@pytest.mark.asyncio
+async def test_room_participant_can_post_but_cannot_mutate() -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime(role="participant")
+    calls: list[dict[str, object]] = []
+
+    def run_turn(**kwargs):  # noqa: ANN003, ANN202
+        calls.append(dict(kwargs))
+        return {"agent_id": "alpha", "body": "ok", "metadata": {}}
+
+    rt.run_turn = run_turn
+
+    result = await focus_rt.run_room_turn(
+        "hello",
+        cancel_event=threading.Event(),
+    )
+    assert result["body"] == "ok"
+    assert len(calls) == 1
+    with pytest.raises(RuntimeError, match="require.*owner"):
+        focus_rt.room_invite_agent("beta")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["observer", "legacy-admin"])
+async def test_room_non_posting_roles_stop_before_runtime_call(role: str) -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime(role=role)
+    calls: list[dict[str, object]] = []
+    rt.run_turn = lambda **kwargs: calls.append(kwargs)
+
+    with pytest.raises(RuntimeError):
+        await focus_rt.run_room_turn("hello", cancel_event=threading.Event())
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_departed_local_human_stops_before_runtime_call() -> None:
+    rt, focus_rt, actor = _make_bound_room_runtime()
+    actor.left_at = "left"
+    calls: list[dict[str, object]] = []
+    rt.run_turn = lambda **kwargs: calls.append(kwargs)
+
+    with pytest.raises(RuntimeError, match="not an active room participant"):
+        await focus_rt.run_room_turn("hello", cancel_event=threading.Event())
+
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -559,16 +914,28 @@ async def test_openminion_runtime_rearms_project_context_on_new_session() -> Non
     assert gateway.calls[1]["session_id"] == new_session_id
 
 
+def _mcp_status_manager(
+    *,
+    tools: tuple[str, ...] = ("echo-text",),
+    prompts: tuple[str, ...] = (),
+    failure: object | None = None,
+    metrics: dict[str, int] | None = None,
+) -> SimpleNamespace:
+    snapshot = {
+        "fixture": {
+            "tool_names": tools,
+            "prompt_names": prompts,
+            "resource_uris": (),
+            "resource_template_uris": (),
+            "failure": failure,
+            "recent_log": None,
+            "metrics": metrics or {},
+        }
+    }
+    return SimpleNamespace(server_status_snapshot=lambda: snapshot)
+
+
 def test_openminion_runtime_reports_mcp_status_from_existing_subsystem() -> None:
-    class _LiveSession:
-        def list_tools(self):
-            return [object()]
-
-        def list_prompts(self):
-            return [object()]
-
-        def list_resources(self):
-            return []
 
     rt = _FakeRuntime()
     rt.config.runtime.mcp_servers = [SimpleNamespace(name="fixture", transport="stdio")]
@@ -577,7 +944,14 @@ def test_openminion_runtime_reports_mcp_status_from_existing_subsystem() -> None
             "mcp.fixture.echo_text": SimpleNamespace(enabled=True),
             "mcp.fixture.prompt.greet_user": SimpleNamespace(enabled=True),
         },
-        mcp_manager=SimpleNamespace(_sessions={"fixture": _LiveSession()}),
+        mcp_manager=_mcp_status_manager(
+            prompts=("greet-user",),
+            metrics={
+                "call_total": 2,
+                "call_error_total": 1,
+                "restart_total": 0,
+            },
+        ),
     )
     tui_rt = OpenMinionRuntime(rt)
 
@@ -588,28 +962,21 @@ def test_openminion_runtime_reports_mcp_status_from_existing_subsystem() -> None
     assert "[ready]" in body
     assert "tools=1" in body
     assert "prompts=1" in body
+    assert "activity: calls=2 errors=1 restarts=0" in body
 
 
 def test_openminion_runtime_reports_mcp_errors_without_hiding_registered_tools() -> (
     None
 ):
-    class _BrokenSession:
-        def list_tools(self):
-            raise RuntimeError("server unavailable")
-
-        def list_prompts(self):
-            raise AssertionError("unreachable")
-
-        def list_resources(self):
-            raise AssertionError("unreachable")
-
     rt = _FakeRuntime()
     rt.config.runtime.mcp_servers = [SimpleNamespace(name="fixture", transport="stdio")]
     rt.tools = SimpleNamespace(
         list=lambda: {
             "mcp.fixture.echo_text": SimpleNamespace(enabled=True),
         },
-        mcp_manager=SimpleNamespace(_sessions={"fixture": _BrokenSession()}),
+        mcp_manager=_mcp_status_manager(
+            failure=SimpleNamespace(message="server unavailable")
+        ),
     )
     tui_rt = OpenMinionRuntime(rt)
 
@@ -617,7 +984,45 @@ def test_openminion_runtime_reports_mcp_errors_without_hiding_registered_tools()
 
     assert "[error]" in body
     assert "server unavailable" in body
-    assert "mcp.fixture.echo_text" in body
+    assert "echo-text" in body
+
+
+def test_openminion_runtime_keeps_tool_only_mcp_server_ready() -> None:
+    rt = _FakeRuntime()
+    rt.config.runtime.mcp_servers = [SimpleNamespace(name="fixture", transport="stdio")]
+    rt.tools = SimpleNamespace(
+        list=lambda: {"mcp.fixture.echo_text": SimpleNamespace(enabled=True)},
+        mcp_manager=_mcp_status_manager(),
+    )
+    tui_rt = OpenMinionRuntime(rt)
+
+    body = tui_rt.mcp_status_report()
+
+    assert "[ready]" in body
+    assert "tools=1" in body
+    assert "Method not found" not in body
+
+
+@pytest.mark.parametrize(
+    "failure_message",
+    ["malformed prompts payload", "authorization failed"],
+)
+def test_openminion_runtime_reports_optional_mcp_failures(
+    failure_message: str,
+) -> None:
+    rt = _FakeRuntime()
+    rt.config.runtime.mcp_servers = [SimpleNamespace(name="fixture", transport="stdio")]
+    rt.tools = SimpleNamespace(
+        list=lambda: {"mcp.fixture.echo_text": SimpleNamespace(enabled=True)},
+        mcp_manager=_mcp_status_manager(
+            failure=SimpleNamespace(message=failure_message)
+        ),
+    )
+
+    body = OpenMinionRuntime(rt).mcp_status_report()
+
+    assert "[error]" in body
+    assert failure_message in body
 
 
 @pytest.mark.asyncio
@@ -783,6 +1188,54 @@ def test_openminion_runtime_reports_latest_context_budget_and_compaction() -> No
     assert snapshot["selected_recent_count"] == 10
     assert snapshot["compacted_count"] == 3
     assert snapshot["compaction_reason"] == "token_pressure"
+
+
+def test_openminion_runtime_context_trace_payload_uses_session_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rt = _FakeRuntime()
+    tui_rt = OpenMinionRuntime(rt)
+    observed: dict[str, object] = {}
+
+    def _list_context_traces(sessions: object, *, session_id: str) -> dict[str, object]:
+        observed.update(sessions=sessions, session_id=session_id)
+        return {
+            "session_id": session_id,
+            "traces": [{"decision_trace": {}}],
+            "count": 1,
+        }
+
+    from openminion.cli.interactive.runtime import messages as runtime_messages
+
+    monkeypatch.setattr(runtime_messages, "list_context_traces", _list_context_traces)
+
+    payload = tui_rt.context_trace_payload(session_id=tui_rt.session_id)
+
+    assert payload["count"] == 1
+    assert observed == {"sessions": rt.sessions, "session_id": tui_rt.session_id}
+
+
+def test_openminion_runtime_context_trace_payload_reports_lookup_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rt = _FakeRuntime()
+    tui_rt = OpenMinionRuntime(rt)
+
+    def _list_context_traces(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise ContextTraceLookupError("trace unavailable", code="trace_unavailable")
+
+    from openminion.cli.interactive.runtime import messages as runtime_messages
+
+    monkeypatch.setattr(runtime_messages, "list_context_traces", _list_context_traces)
+
+    payload = tui_rt.context_trace_payload(session_id=tui_rt.session_id)
+
+    assert payload == {
+        "session_id": tui_rt.session_id,
+        "traces": [],
+        "count": 0,
+        "degraded": "trace_unavailable",
+    }
 
 
 def test_openminion_runtime_renders_durable_token_usage() -> None:

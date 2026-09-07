@@ -51,11 +51,8 @@ class RuntimeMCPMixin:
 
         tool_specs = dict(self._rt.tools.list())
         manager = getattr(self._rt.tools, "mcp_manager", None)
-        sessions = getattr(manager, "_sessions", {}) if manager is not None else {}
-        log_snapshot = (
-            manager.mcp_server_logs(limit=1)
-            if manager is not None and hasattr(manager, "mcp_server_logs")
-            else {}
+        status_snapshot = (
+            manager.server_status_snapshot() if manager is not None else {}
         )
         rows: list[MCPServerStatusRow] = []
         for server in configured_servers:
@@ -74,42 +71,26 @@ class RuntimeMCPMixin:
                 else "configured"
             )
             error = ""
-            live_session = (
-                sessions.get(server_name) if isinstance(sessions, dict) else None
-            )
-            if live_session is not None:
-                try:
-                    tool_count = len(live_session.list_tools())
-                    prompt_count = len(live_session.list_prompts())
-                    resources = live_session.list_resources()
-                    resource_count = len(resources)
-                    list_templates = getattr(
-                        live_session,
-                        "list_resource_templates",
-                        None,
-                    )
-                    resource_template_count = (
-                        len(list_templates()) if callable(list_templates) else 0
-                    )
-                    app_resource_count = sum(
-                        1
-                        for resource in resources
-                        if str(getattr(resource, "resource_uri", "") or "").startswith(
-                            "ui://"
-                        )
-                    )
-                    status = "ready"
-                except Exception as exc:
-                    tool_count = max(tool_count, len(tool_names))
-                    status = "error"
-                    error = str(exc).strip() or exc.__class__.__name__
+            live = status_snapshot.get(server_name)
+            if live is not None:
+                tool_names = list(live["tool_names"])
+                tool_count = len(tool_names)
+                prompt_count = len(live["prompt_names"])
+                resource_count = len(live["resource_uris"])
+                resource_template_count = len(live["resource_template_uris"])
+                app_resource_count = sum(
+                    uri.startswith("ui://") for uri in live["resource_uris"]
+                )
+                failure = live["failure"]
+                status = "error" if failure is not None else "ready"
+                error = failure.message if failure is not None else ""
             recent_log = ""
-            server_logs = log_snapshot.get(server_name, []) if log_snapshot else []
-            if server_logs:
-                latest_log = server_logs[-1]
+            latest_log = live["recent_log"] if live is not None else None
+            if latest_log is not None:
                 recent_log = (
                     f"{latest_log.level or 'info'}: {latest_log.message}".strip()
                 )
+            server_metrics = live["metrics"] if live is not None else {}
             sandbox = getattr(server, "stdio_sandbox", None)
             trust_state = (
                 "trusted" if bool(getattr(server, "trusted", False)) else "untrusted"
@@ -119,6 +100,7 @@ class RuntimeMCPMixin:
                 if bool(getattr(sandbox, "require_trust", False))
                 or bool(getattr(sandbox, "cwd_allowlist", ()))
                 or bool(getattr(sandbox, "env_allowlist", ()))
+                or bool(getattr(sandbox, "inherit_env_allowlist", ()))
                 else "default"
             )
             rows.append(
@@ -131,6 +113,11 @@ class RuntimeMCPMixin:
                     resource_count=resource_count,
                     resource_template_count=resource_template_count,
                     app_resource_count=app_resource_count,
+                    call_total=int(server_metrics.get("call_total", 0) or 0),
+                    call_error_total=int(
+                        server_metrics.get("call_error_total", 0) or 0
+                    ),
+                    restart_total=int(server_metrics.get("restart_total", 0) or 0),
                     tool_names=tuple(tool_names),
                     error=error,
                     recent_log=recent_log,
@@ -146,19 +133,11 @@ class RuntimeMCPMixin:
 
     def mcp_browse_entries(self) -> list[MCPBrowseEntry]:
         manager = getattr(self._rt.tools, "mcp_manager", None)
-        sessions = getattr(manager, "_sessions", {}) if manager is not None else {}
-        if not isinstance(sessions, dict):
+        if manager is None:
             return []
         entries: list[MCPBrowseEntry] = []
-        for server_name, session in sorted(sessions.items()):
-            try:
-                prompts = session.list_prompts()
-                resources = session.list_resources()
-                templates = session.list_resource_templates()
-            except Exception:
-                continue
-            for prompt in prompts:
-                name = str(getattr(prompt, "remote_name", "") or "").strip()
+        for server_name, catalog in sorted(manager.browse_snapshot().items()):
+            for name in catalog["prompts"]:
                 entries.append(
                     MCPBrowseEntry(
                         kind="prompt",
@@ -169,8 +148,7 @@ class RuntimeMCPMixin:
                         ),
                     )
                 )
-            for resource in resources:
-                uri = str(getattr(resource, "resource_uri", "") or "").strip()
+            for uri in catalog["resources"]:
                 is_ui = uri.startswith("ui://")
                 entries.append(
                     MCPBrowseEntry(
@@ -184,8 +162,7 @@ class RuntimeMCPMixin:
                         fallback="text-only" if is_ui else "",
                     )
                 )
-            for template in templates:
-                uri_template = str(getattr(template, "uri_template", "") or "").strip()
+            for uri_template in catalog["resource_templates"]:
                 entries.append(
                     MCPBrowseEntry(
                         kind="resource_template",

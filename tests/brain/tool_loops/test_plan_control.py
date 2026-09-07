@@ -4,9 +4,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from openminion.modules.brain.loop.tools.plan_control import (
+    PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY,
+    append_plan_closeout_guidance,
     build_plan_tool_spec,
+    complete_active_plan_if_ready,
+    completable_active_plan_id,
     handle_plan_tool_call,
 )
+from openminion.modules.brain.schemas import ActionResult
+from openminion.modules.brain.loop.tools.contracts import AdaptiveToolLoopState
+from openminion.modules.llm.schemas import Message
 from openminion.modules.brain.loop.tools.task_ops import (
     PLAN_TASK_OPS_OUTPUT_KEY,
     PLAN_TASK_OPS_TOUCHED_TASK_IDS_OUTPUT_KEY,
@@ -124,6 +131,27 @@ def test_plan_tool_spec_advertises_bounded_step_schema() -> None:
     assert tool_family_enum == sorted(tool_family_enum)
     assert spec.input_schema["properties"]["revised_steps"]["items"] == step_schema
     assert "workflow_id" in spec.input_schema["properties"]
+    assert "criterion_ids" in spec.input_schema["properties"]
+    assert "revision_id" in spec.input_schema["properties"]
+    assert "predecessor_revision_id" in spec.input_schema["properties"]
+    assert "verifier_refs" in spec.input_schema["properties"]
+
+
+def test_plan_closeout_guidance_repeats_the_original_request() -> None:
+    loop_state = AdaptiveToolLoopState(
+        messages=[
+            Message(role="user", content="Return exactly DONE."),
+            Message(role="user", content="continue"),
+        ]
+    )
+
+    append_plan_closeout_guidance(
+        loop_state,
+        {"action": "complete"},
+        ActionResult(command_id="cmd-plan", status="success", summary="complete"),
+    )
+
+    assert "Original request:\nReturn exactly DONE." in loop_state.messages[-1].content
 
 
 def test_plan_control_declare_records_task_plan_event() -> None:
@@ -138,6 +166,7 @@ def test_plan_control_declare_records_task_plan_event() -> None:
             "plan_id": "plan-1",
             "objective": "Research and summarize",
             "workflow_id": "workflow.skill.research",
+            "criterion_ids": ["criterion-source", "criterion-summary"],
             "steps": _active_plan()["steps"],
         },
     )
@@ -152,6 +181,10 @@ def test_plan_control_declare_records_task_plan_event() -> None:
         == "workflow.skill.research"
     )
     assert session_api.events[0]["kwargs"]["actor_type"] == "agent"
+    assert result.outputs["task_plan"]["criterion_ids"] == [
+        "criterion-source",
+        "criterion-summary",
+    ]
 
 
 def test_plan_control_declare_rejects_stringified_steps() -> None:
@@ -346,6 +379,30 @@ def test_plan_control_declare_replaces_prior_active_plan() -> None:
     assert session_api.events[0]["payload"]["plan_id"] == "old-plan"
 
 
+def test_plan_control_redeclare_preserves_in_progress_step() -> None:
+    active_plan = _active_plan()
+    active_plan["steps"][0].update(
+        status="in_progress",
+        output_summary="Inspection underway.",
+    )
+    session_api = _FakeSessionAPI(active_plan=active_plan)
+
+    result = handle_plan_tool_call(
+        loop_ctx=_Ctx(session_api=session_api),
+        arguments={
+            "action": "declare",
+            "plan_id": "plan-1",
+            "objective": "Research and summarize",
+            "steps": _active_plan()["steps"],
+        },
+    )
+
+    assert result.status == "success"
+    entry = session_api.events[0]["payload"]["plan"]["steps"][0]
+    assert entry["status"] == "in_progress"
+    assert entry["output_summary"] == "Inspection underway."
+
+
 def test_plan_control_step_completed_records_active_step() -> None:
     session_api = _FakeSessionAPI(active_plan=_active_plan())
     result = handle_plan_tool_call(
@@ -362,6 +419,70 @@ def test_plan_control_step_completed_records_active_step() -> None:
     assert result.status == "success"
     assert session_api.events[0]["event_type"] == "task_plan.step_completed"
     assert session_api.events[0]["payload"]["step_id"] == "entry"
+
+
+def test_plan_control_final_step_does_not_request_another_autonomous_turn() -> None:
+    plan = {
+        **_active_plan(),
+        "continue_plan_autonomously": True,
+        "steps": [
+            {
+                **_active_plan()["steps"][0],
+                "status": "in_progress",
+            }
+        ],
+    }
+    session_api = _FakeSessionAPI(active_plan=plan)
+
+    result = handle_plan_tool_call(
+        loop_ctx=_Ctx(session_api=session_api),
+        arguments={
+            "action": "step_completed",
+            "plan_id": "plan-1",
+            "step_id": "entry",
+            "outcome": "success",
+            "continue_plan_autonomously": True,
+        },
+    )
+
+    assert result.status == "success"
+    assert PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY not in result.outputs
+    assert [event["event_type"] for event in session_api.events] == [
+        "task_plan.step_completed"
+    ]
+
+
+def test_plan_control_identifies_plan_ready_for_explicit_completion() -> None:
+    plan = _active_plan()
+    for step in plan["steps"]:
+        step["status"] = "completed"
+
+    assert completable_active_plan_id(_Ctx(session_api=_FakeSessionAPI(plan))) == (
+        "plan-1"
+    )
+    assert (
+        completable_active_plan_id(_Ctx(session_api=_FakeSessionAPI(_active_plan())))
+        == ""
+    )
+
+
+def test_plan_control_reconciles_completed_steps_at_success() -> None:
+    plan = _active_plan()
+    for step in plan["steps"]:
+        step["status"] = "completed"
+    session_api = _FakeSessionAPI(plan)
+
+    payload = complete_active_plan_if_ready(_Ctx(session_api=session_api))
+
+    assert payload == {
+        "plan_id": "plan-1",
+        "reason": "all_steps_completed_at_success",
+    }
+    assert session_api.events[-1]["event_type"] == "task_plan.completed"
+    assert session_api.events[-1]["payload"] == {
+        **payload,
+        "source": "plan_tool",
+    }
 
 
 def test_plan_control_step_completed_maps_to_durable_step_update() -> None:
@@ -435,6 +556,9 @@ def test_plan_control_revise_records_full_plan_payload() -> None:
             "action": "revise",
             "plan_id": "plan-1",
             "reason": "Transport is no longer needed.",
+            "revision_id": "revision-1",
+            "criterion_ids": ["criterion-source"],
+            "verifier_refs": ["verify:failed-1"],
             "revised_steps": revised_steps,
         },
     )
@@ -442,6 +566,9 @@ def test_plan_control_revise_records_full_plan_payload() -> None:
     assert result.status == "success"
     assert session_api.events[0]["event_type"] == "task_plan.revised"
     assert session_api.events[0]["payload"]["plan"]["steps"][0]["step_id"] == "entry"
+    assert session_api.events[0]["payload"]["revision"]["revision_id"] == ("revision-1")
+    assert result.outputs["task_plan.revision"]["revision_id"] == "revision-1"
+    assert result.outputs["task_plan.revision"]["verifier_refs"] == ["verify:failed-1"]
 
 
 def test_plan_control_terminal_actions_record_canonical_events() -> None:
@@ -460,7 +587,7 @@ def test_plan_control_terminal_actions_record_canonical_events() -> None:
         assert session_api.events[0]["event_type"] == event_type
 
 
-def test_plan_control_complete_materializes_remaining_steps() -> None:
+def test_plan_control_complete_rejects_unresolved_steps() -> None:
     session_api = _FakeSessionAPI(active_plan=_active_plan())
     result = handle_plan_tool_call(
         loop_ctx=_Ctx(session_api=session_api),
@@ -471,22 +598,14 @@ def test_plan_control_complete_materializes_remaining_steps() -> None:
         },
     )
 
-    assert result.status == "success"
-    assert [event["event_type"] for event in session_api.events] == [
-        "task_plan.step_completed",
-        "task_plan.step_completed",
-        "task_plan.completed",
-    ]
-    assert [
-        event["payload"].get("step_id")
-        for event in session_api.events
-        if event["event_type"] == "task_plan.step_completed"
-    ] == ["entry", "transport"]
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.code == "PLAN_STEPS_UNRESOLVED"
+    assert result.error.details["step_ids"] == ["entry", "transport"]
+    assert session_api.events == []
 
 
-def test_plan_control_same_turn_declare_then_complete_uses_active_plan_override() -> (
-    None
-):
+def test_plan_control_same_turn_declare_then_complete_preserves_active_plan() -> None:
     session_api = _FakeSessionAPI()
     loop_ctx = _Ctx(session_api=session_api)
 
@@ -509,13 +628,13 @@ def test_plan_control_same_turn_declare_then_complete_uses_active_plan_override(
     )
 
     assert declared.status == "success"
-    assert completed.status == "success"
+    assert completed.status == "failed"
+    assert completed.error is not None
+    assert completed.error.code == "PLAN_STEPS_UNRESOLVED"
     assert [event["event_type"] for event in session_api.events] == [
-        "task_plan.declared",
-        "task_plan.step_completed",
-        "task_plan.step_completed",
-        "task_plan.completed",
+        "task_plan.declared"
     ]
+    assert loop_ctx._plan_tool_active_plan_override is not None
 
 
 def test_plan_control_rejects_unknown_step_with_invalid_event() -> None:

@@ -5,6 +5,7 @@ from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
 
 from .interfaces import (
     ALL_SECURITY_TOOLS,
+    TOOL_SECURITY_PUBLISH_REPORT,
     TOOL_SECURITY_SCAN_ARTIFACT,
     TOOL_SECURITY_SCAN_CODE,
     TOOL_SECURITY_SCAN_DEPENDENCIES,
@@ -16,8 +17,9 @@ from .plugin import (
     _h_scan_code,
     _h_scan_dependencies,
     _h_scan_secrets,
+    _h_publish_report,
 )
-from .schemas import LocalScanArgs
+from .schemas import LocalScanArgs, SecurityAuditPublishArgs
 
 SECURITY_FAMILY = ToolFamilySpec(
     module_id="security",
@@ -69,6 +71,12 @@ SECURITY_FAMILY = ToolFamilySpec(
             "Scan approved local files for secret findings with Trivy.",
             idempotent=True,
             dependencies=(TRIVY_DEPENDENCY,),
+        ),
+        ToolDecl(
+            TOOL_SECURITY_PUBLISH_REPORT,
+            SecurityAuditPublishArgs,
+            _h_publish_report,
+            "Publish one canonical unreviewed candidate security-audit report.",
         ),
     ),
 )

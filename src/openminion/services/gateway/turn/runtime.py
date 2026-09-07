@@ -237,12 +237,17 @@ def _extract_ephemeral_prompt_metadata(
     allowed_keys = {
         "cwd",
         "workspace_root",
+        "openminion_ephemeral_workspace_roots",
         "project_context_body",
         "project_context_name",
         "project_context_path",
         "project_context_truncated",
         "permission_mode",
         "permission_overrides",
+        "subagent_context_id",
+        "subagent_tool_allowlist",
+        "turn_tool_allowlist",
+        "turn_tool_allowlist_supplied",
         # scheduled turns expose cron execution context via inbound metadata.
         "cron_job_id",
         "cron_run_id",

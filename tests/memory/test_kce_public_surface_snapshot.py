@@ -8,6 +8,8 @@ from typing import Any, Literal, TypedDict, get_args, get_origin
 import types
 import unittest
 
+import pytest
+
 from openminion.modules.memory.audit.trust_gate import (
     TrustGateDecision,
     TrustGateEvent,
@@ -51,13 +53,10 @@ from openminion.modules.memory.storage.base import (
 )
 from openminion.modules.memory.trust.types import ClaimKeyPolarity, MemorySourceClass
 
+pytestmark = pytest.mark.package_integration
+
 SNAPSHOT_FILE = (
-    Path(__file__).resolve().parents[3]
-    / "docs"
-    / "trackers"
-    / "artifacts"
-    / "memory-snapshots"
-    / "kce00_public_surface_v1.json"
+    Path(__file__).resolve().parent / "snapshots" / "kce00_public_surface_v1.json"
 )
 UPDATE_ENV_VAR = "OPENMINION_KCE_SURFACE_UPDATE"
 SNAPSHOT_SCHEMA_VERSION = "1"

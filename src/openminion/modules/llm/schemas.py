@@ -16,6 +16,7 @@ ToolResultStatus = Literal["success", "error", "blocked", "timeout"]
 ImageSourceType = Literal["path", "url", "base64", "artifact"]
 ImageDetailLevel = Literal["auto", "low", "high"]
 TotalTokensSource = Literal["provider", "derived"]
+CostSource = Literal["provider", "estimated"]
 PromptBlockKind = Literal[
     "static_prefix",
     "mission_snapshot",
@@ -175,6 +176,7 @@ class LLMResponse(BaseModel):
     usage: UsageInfo = Field(default_factory=UsageInfo)
     latency_ms: int = 0
     cost_usd: Optional[float] = None
+    cost_source: Optional[CostSource] = None
     finish_reason: str = ""
     empty_payload_recovered: bool = False
     provider_raw: Optional[dict[str, Any]] = None
@@ -206,4 +208,9 @@ class LLMStreamEvent(BaseModel):
     type: Literal["delta", "done", "error"]
     delta_text: Optional[str] = None
     tool_call: Optional[ToolCall] = None
+    tool_call_deltas: list[dict[str, Any]] = Field(default_factory=list)
+    finish_reason: Optional[str] = None
+    usage: Optional[UsageInfo] = None
+    request_id: Optional[str] = None
+    provider_raw: Optional[dict[str, Any]] = None
     error: Optional[ResponseError] = None

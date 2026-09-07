@@ -213,7 +213,12 @@ def _validate_artifact_alignment(
         return
     current_index = selected_indexes[-1]
     current_key = _turn_key(turns, current_index)
-    if current_key.startswith("index:") or not _turn_fields(turns[current_index])[0]:
+    current_fields = _turn_fields(turns[current_index])
+    if (
+        current_key.startswith("index:")
+        or not current_fields[0]
+        or not any(is_canonical_artifact_ref(ref) for ref in current_fields[3])
+    ):
         current_key = ""
     retained: list[tuple[int, str]] = []
     for index in selected_indexes[:-1]:
@@ -294,18 +299,13 @@ def _merge_selected_turn_images(
     return messages
 
 
-def _messages_from_context(
-    context: dict[str, Any], *, include_images: bool = True
-) -> list[Any]:
-    from openminion.modules.llm.schemas import Message
-    from openminion.modules.llm.schemas import ImageContentPart, TextContentPart
+def _normalized_pack_messages(context: dict[str, Any]) -> list[Any]:
+    from openminion.modules.llm.schemas import TextContentPart
 
-    turns = context.get("turns", []) if isinstance(context.get("turns"), list) else []
-    pack_messages = context.get("messages", [])
-    normalized_pack_messages: list[Any] = []
-    for message in pack_messages:
+    normalized: list[Any] = []
+    for message in context.get("messages", []):
         if not isinstance(message, dict):
-            normalized_pack_messages.append(message)
+            normalized.append(message)
             continue
         raw_message = dict(message)
         raw_meta = raw_message.get("meta")
@@ -332,9 +332,18 @@ def _messages_from_context(
                     ],
                 ).model_dump()
             ]
-        normalized_pack_messages.append(raw_message)
+        normalized.append(raw_message)
+    return normalized
 
-    messages = [Message.model_validate(m) for m in normalized_pack_messages]
+
+def _messages_from_context(
+    context: dict[str, Any], *, include_images: bool = True
+) -> list[Any]:
+    from openminion.modules.llm.schemas import Message
+    from openminion.modules.llm.schemas import ImageContentPart, TextContentPart
+
+    turns = context.get("turns", []) if isinstance(context.get("turns"), list) else []
+    messages = [Message.model_validate(m) for m in _normalized_pack_messages(context)]
     selected_turn_ids = _message_turn_ids(messages)
     if not include_images:
         messages = [

@@ -12,6 +12,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_SKILL_REMOVE,
 )
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
+from openminion.modules.skill.interfaces import SkillIngestAuthority
 
 from .inspect import scan
 from .schemas import (
@@ -26,6 +27,9 @@ from .url_ingest import ingest_skill_url
 
 _LOG = logging.getLogger(__name__)
 _SKILL_UNAVAILABLE_MESSAGE = "Skill service is not available in this runtime context."
+_INGEST_AUTHORITY_FIELDS = frozenset(
+    {"enforce_safety", "trust", "reviewer_id", "promotion_path"}
+)
 
 
 def _error(code: str, message: str) -> dict[str, Any]:
@@ -34,6 +38,26 @@ def _error(code: str, message: str) -> dict[str, Any]:
 
 def _invalid_args_error(exc: ValidationError) -> dict[str, Any]:
     return _error("INVALID_ARGS", str(exc))
+
+
+def _authority_override_error(
+    args: dict[str, Any], *, surface: str, source_kind: str
+) -> dict[str, Any] | None:
+    field_names = sorted(_INGEST_AUTHORITY_FIELDS.intersection(args))
+    if not field_names:
+        return None
+    return {
+        "ok": False,
+        "error": {
+            "code": "SKILL_INGEST_AUTHORITY_OVERRIDE_REJECTED",
+            "message": "Skill ingest authority is derived from the caller boundary.",
+            "details": {
+                "surface": surface,
+                "field_names": field_names,
+                "source_kind": source_kind,
+            },
+        },
+    }
 
 
 def _h_skill_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
@@ -57,6 +81,11 @@ def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     if skill is None:
         return _error("SKILL_UNAVAILABLE", _SKILL_UNAVAILABLE_MESSAGE)
 
+    override_error = _authority_override_error(
+        args, surface="model.skill.ingest", source_kind="local"
+    )
+    if override_error is not None:
+        return override_error
     try:
         parsed_args = SkillIngestArgs.model_validate(args)
     except ValidationError as exc:
@@ -65,7 +94,7 @@ def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     markdown = parsed_args.markdown
     risk_level, issues = scan(markdown)
     safe = risk_level != "critical"
-    if parsed_args.enforce_safety and not safe:
+    if not safe:
         return {
             "ok": False,
             "error": {
@@ -82,11 +111,12 @@ def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             name=parsed_args.name,
             markdown=markdown,
             scope=parsed_args.scope,
-            trust=parsed_args.trust,
-            promotion_path="runtime",
+            authority=SkillIngestAuthority.runtime(
+                surface="model.skill.ingest", source_kind="local"
+            ),
         )
     except Exception as exc:
-        return _error("INGEST_FAILED", str(exc))
+        return _error(str(getattr(exc, "code", "INGEST_FAILED")), str(exc))
 
     snippet = ""
     snippet_hash = ""
@@ -116,7 +146,7 @@ def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         "risk_level": risk_level,
         "safe": safe,
         "issues": issues,
-        "safety_enforced": parsed_args.enforce_safety,
+        "safety_enforced": True,
     }
 
 
@@ -125,6 +155,11 @@ def _h_skill_ingest_url(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     if skill is None:
         return _error("SKILL_UNAVAILABLE", _SKILL_UNAVAILABLE_MESSAGE)
 
+    override_error = _authority_override_error(
+        args, surface="model.skill.ingest_url", source_kind="remote"
+    )
+    if override_error is not None:
+        return override_error
     try:
         parsed_args = SkillIngestUrlArgs.model_validate(args)
     except ValidationError as exc:
@@ -136,8 +171,9 @@ def _h_skill_ingest_url(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         name=parsed_args.name,
         scope=parsed_args.scope,
         max_snippet_tokens=parsed_args.max_snippet_tokens,
-        enforce_safety=parsed_args.enforce_safety,
-        trust=parsed_args.trust,
+        authority=SkillIngestAuthority.runtime(
+            surface="model.skill.ingest_url", source_kind="remote"
+        ),
     )
 
 
@@ -183,6 +219,16 @@ def _h_skill_get(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     version_hash = parsed_args.version_hash
 
     try:
+        if parsed_args.resource_path:
+            return {
+                "ok": True,
+                **skill.read_skill_resource(
+                    skill_id=skill_id,
+                    version_hash=version_hash,
+                    resource_path=parsed_args.resource_path,
+                    max_chars=parsed_args.max_chars,
+                ),
+            }
         package = skill.get_skill(skill_id=skill_id, version_hash=version_hash)
     except Exception as exc:
         return _error(str(getattr(exc, "code", "SKILL_GET_FAILED")), str(exc))

@@ -139,7 +139,15 @@ def response_cost_payload(response: Any) -> dict[str, Any]:
         return {}
     if cost < 0 or not math.isfinite(cost):
         return {}
-    return {"cost_usd": cost, "cost_source": "provider"}
+    raw_source = (
+        response.get("cost_source")
+        if isinstance(response, dict)
+        else getattr(response, "cost_source", None)
+    )
+    source = str(raw_source or "provider").strip()
+    if source not in {"provider", "estimated"}:
+        return {}
+    return {"cost_usd": cost, "cost_source": source}
 
 
 def optional_int(value: Any) -> int | None:
@@ -288,6 +296,19 @@ def provider_history_payload(message: ProviderHistoryMessage) -> dict[str, Any] 
                 "tool_error": message.tool_error,
             }
         )
+    return payload
+
+
+def response_telemetry_event_fields(response: Any) -> dict[str, Any]:
+    telemetry = response.telemetry
+    trace_context = telemetry.get("trace_context", {})
+    payload = {
+        "trace_artifact_paths": trace_context.get("trace_artifact_paths", []),
+        "trace_artifacts_complete": trace_context.get("trace_artifacts_complete", True),
+    }
+    request_id = str(telemetry.get("request_id") or "").strip()
+    if request_id:
+        payload["request_id"] = request_id
     return payload
 
 
@@ -492,7 +513,7 @@ def llm_response_kwargs(
     )
     tool_calls = [
         ToolCall(
-            id=tc.id or "call_1",
+            id=tc.id or f"call_{index + 1}",
             name=tc.name,
             arguments=tc.arguments,
             batch_index=index,
@@ -550,6 +571,7 @@ __all__ = [
     "request_mode_name",
     "request_purpose",
     "response_cost_payload",
+    "response_telemetry_event_fields",
     "split_system_and_conversation",
     "token_usage_values",
     "trim_submit_output_history",

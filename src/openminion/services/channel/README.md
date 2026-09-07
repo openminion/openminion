@@ -2,7 +2,7 @@
 
 Owner: services-layer
 Pairs with: standalone (no single `modules/` peer; consumed by
-controlplane channels in `openminion.controlplane.channels.*`)
+controlplane channels in `openminion.modules.controlplane.channels.*`)
 Canonical builder: `build_channel_authenticity_policy`
 
 ## Purpose
@@ -30,7 +30,7 @@ Re-exported from `openminion.services.channel`:
 ## Non-goals
 
 - Specific transport adapters (Telegram, HTTP, CLI) — those live
-  in `controlplane/channels/*`.
+  in `modules/controlplane/channels/*`.
 - Identity verification — handled by `modules/identity/` and
   `services/identity/`.
 - Tool-execution authorization — that lives in `services/security/`.
@@ -49,5 +49,5 @@ Re-exported from `openminion.services.channel`:
 There is no `modules/channel/`. The runtime channel concern (gate
 inbound messages, decide whether an authenticated actor can post on a
 channel) is a pure-services concern; the transport-specific channel
-implementations live under `openminion.controlplane.channels.*`.
+implementations live under `openminion.modules.controlplane.channels.*`.
 This package owns the cross-transport policy fabric only.

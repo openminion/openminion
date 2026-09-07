@@ -4,26 +4,19 @@ from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
 import re
+import shlex
 import sqlite3
 import subprocess
 import time
-from types import SimpleNamespace
 
 import pytest
 
 from openminion.api.handoff import SubagentRunContext
-from openminion.modules.artifact.control import ArtifactCtl
-from openminion.modules.artifact.config import (
-    ArtifactCtlConfig,
-    BlobStoreConfig,
-    IndexConfig,
-)
 from openminion.modules.brain.schemas import WorkingState
 from openminion.modules.memory.adapters import OpenMinionDelegationMemoryGrantResolver
 from openminion.modules.policy.models import PolicyConfig, PolicyGrantInput
 from openminion.modules.policy.runtime.service import PolicyCtl
 from openminion.modules.session.storage import SQLiteSessionStore
-from openminion.tools.agent.plugin import _h_task_delegate
 from sophiagraph import MemoryRecord
 from sophiagraph.access import (
     AccessConstraint,
@@ -186,7 +179,7 @@ def _create_disposable_repo(root: Path) -> Path:
     return repo
 
 
-def _latest_public_child_artifacts(probe: FocusProbe) -> list[dict]:
+def _latest_working_state(probe: FocusProbe) -> WorkingState:
     store = SQLiteSessionStore(probe.data_root / "state" / "brain" / "sessions.db")
     try:
         brain_session_id = f"{probe.session_id}::conv:focus-{probe.session_id}"
@@ -194,7 +187,11 @@ def _latest_public_child_artifacts(probe: FocusProbe) -> list[dict]:
     finally:
         store.close()
     assert latest is not None
-    state = WorkingState.model_validate(latest["state_inline"])
+    return WorkingState.model_validate(latest["state_inline"])
+
+
+def _latest_public_child_artifacts(probe: FocusProbe) -> list[dict]:
+    state = _latest_working_state(probe)
     assert state.last_result is not None
     subtask_results = list(state.last_result.outputs.get("subtask_results", []))
     artifacts = [
@@ -204,16 +201,6 @@ def _latest_public_child_artifacts(probe: FocusProbe) -> list[dict]:
     ]
     assert artifacts, "orchestration result did not expose child artifacts"
     return artifacts
-
-
-def _artifactctl_for_probe(probe: FocusProbe) -> ArtifactCtl:
-    artifact_root = probe.data_root / "artifact"
-    return ArtifactCtl(
-        ArtifactCtlConfig(
-            blob_store=BlobStoreConfig(root_dir=str(artifact_root)),
-            index=IndexConfig(sqlite_path=str(artifact_root / "index.db")),
-        )
-    )
 
 
 def _wait_for_a2a_delegate_success(
@@ -231,8 +218,7 @@ def _wait_for_a2a_delegate_success(
                         """
                         SELECT COUNT(*)
                         FROM audit_records
-                        WHERE type = 'result'
-                          AND method = 'delegate'
+                        WHERE method = 'delegate'
                           AND status = 'SUCCESS'
                         """
                     ).fetchone()[0]
@@ -245,6 +231,35 @@ def _wait_for_a2a_delegate_success(
     raise AssertionError(
         "timed out waiting for delegated child SUCCESS audit row"
         f" under {audit_dir}; last_error={last_error}"
+    )
+
+
+def _wait_for_a2a_job_state(
+    probe: FocusProbe,
+    task_id: str,
+    expected_state: str,
+    *,
+    timeout: float = 60.0,
+) -> None:
+    database = probe.data_root / "a2a" / "state.db"
+    deadline = time.monotonic() + timeout
+    last_state = ""
+    while time.monotonic() < deadline:
+        try:
+            with sqlite3.connect(database) as connection:
+                row = connection.execute(
+                    "SELECT state FROM jobs WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+        except sqlite3.Error:
+            row = None
+        if row is not None:
+            last_state = str(row[0])
+            if last_state == expected_state:
+                return
+        time.sleep(0.1)
+    raise AssertionError(
+        f"task {task_id} did not reach {expected_state}; last_state={last_state}"
     )
 
 
@@ -262,6 +277,19 @@ def _latest_delegated_child_answer(probe: FocusProbe) -> str:
         ).fetchone()
     assert row is not None, "delegated child result was not persisted"
     return str(row[0])
+
+
+def _delegated_child_answer_count(probe: FocusProbe) -> int:
+    database = probe.data_root / "state" / "brain" / "sessions.db"
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM turns
+            WHERE role = 'assistant' AND session_id LIKE 'task-delegate::%'
+            """
+        ).fetchone()
+    return int(row[0]) if row is not None else 0
 
 
 def test_live_focus_delegate_exact_target(
@@ -334,6 +362,7 @@ def test_live_focus_delegate_uses_bounded_sophiagraph_context(
     )
 
 
+@pytest.mark.timeout(660)
 def test_live_focus_delegate_code_child_writes_in_scratch(
     focus_probe: FocusProbe,
     tmp_path,
@@ -381,16 +410,14 @@ def test_live_focus_delegate_async_lifecycle(
 ) -> None:
     """Prove the live Focus surface preserves one async task handle."""
     require_live_focus()
+    marker = "SDUC_ASYNC_RESULT_OK"
     target_agent = "minimax-m2-7-highspeed"
     root = artifact_root(tmp_path)
     with focus_probe.session(rows=50, cols=160) as session:
         focus_probe.wait_ready(session)
         started = focus_probe.run_slash(
             session,
-            (
-                f"/delegate async {target_agent} Analyze three independent "
-                "ways to verify a Python package release, then return a short list."
-            ),
+            (f"/delegate async {target_agent} Reply with exactly `{marker}`."),
             marker="Delegation:",
         )
         task_match = _TASK_ID_RE.search(started)
@@ -400,23 +427,133 @@ def test_live_focus_delegate_async_lifecycle(
         status = focus_probe.run_slash(
             session, f"/delegate status {task_id}", marker="Delegation:"
         )
-        result = focus_probe.run_slash(
-            session, f"/delegate result {task_id}", marker="Delegation:"
+        _wait_for_a2a_delegate_success(
+            root,
+            "test_live_focus_delegate_async_lifecycle",
+            timeout=120,
         )
-        canceled = focus_probe.run_slash(
-            session, f"/delegate cancel {task_id}", marker="Delegation:"
+        result = focus_probe.run_slash_turn(
+            session,
+            f"/delegate result {task_id}",
+            marker=marker,
         )
         write_transcript(
             root,
             "sduc-live-async-lifecycle",
-            "\n\n--- status ---\n".join((started, status, result, canceled)),
+            "\n\n--- status ---\n".join((started, status, result)),
         )
 
-    for transcript in (status, result, canceled):
+    for transcript in (status, result):
         assert task_id in transcript
         assert "Delegation:" in transcript
+    assert "status    completed" in result
+    assert "Delegation failed" not in result
 
 
+def test_live_focus_cancel_stops_active_child_turn(
+    focus_probe: FocusProbe,
+    tmp_path: Path,
+) -> None:
+    """Prove Focus cancellation stops an active configured child turn."""
+    require_live_focus()
+    root = artifact_root(tmp_path)
+    target_agent = "minimax-m2-7-highspeed"
+    with focus_probe.session(rows=50, cols=160) as session:
+        focus_probe.wait_ready(session)
+        started = focus_probe.run_slash(
+            session,
+            (
+                f"/delegate async {target_agent} Use web.search for three distinct "
+                "current technology queries one after another, summarize the results, "
+                "and then reply exactly CANCEL_CHILD_FINISHED."
+            ),
+            marker="Delegation:",
+        )
+        task_match = _TASK_ID_RE.search(started)
+        assert task_match is not None, started
+        task_id = task_match.group(1)
+        _wait_for_a2a_job_state(focus_probe, task_id, "RUNNING")
+
+        canceled = focus_probe.run_slash(
+            session,
+            f"/delegate cancel {task_id}",
+            marker="status    cancelled",
+        )
+        _wait_for_a2a_job_state(focus_probe, task_id, "CANCELED")
+        time.sleep(5)
+        status = focus_probe.run_slash(
+            session,
+            f"/delegate status {task_id}",
+            marker="status    cancelled",
+        )
+        write_transcript(
+            root,
+            "sduc-live-active-cancellation",
+            f"{started}\n\n--- cancel ---\n{canceled}"
+            f"\n\n--- final status ---\n{status}\n",
+        )
+
+    assert _delegated_child_answer_count(focus_probe) == 0
+    assert "CANCEL_CHILD_FINISHED" not in status
+
+
+@pytest.mark.timeout(660)
+def test_live_focus_reassigns_failed_child_to_exact_available_agent(
+    focus_probe: FocusProbe,
+    tmp_path: Path,
+) -> None:
+    """Prove MiniMax can recover one failed child through exact reassignment."""
+    require_live_focus()
+    root = artifact_root(tmp_path)
+    prompt = (
+        "Use the decompose tool exactly once with exactly two sequential subtasks. "
+        "Do not bypass the deliberately missing initial target and do not answer "
+        "the task directly. Subtask id recover-child must have suggested_mode "
+        "execution_target_delegated, no dependencies, and inputs "
+        '{"target_agent_id":"missing-live-cert-agent","goal":"Reply exactly '
+        "REASSIGNED_CHILD_OK. This initial target is deliberately missing; if this "
+        "child fails, choose reassign_exact with exact target_agent_id "
+        'minimax-m2-7-highspeed.","constraints":"Return only the marker."}. '
+        "Its description must repeat that recovery instruction. Subtask id "
+        "validate-child must depend_on [recover-child], use suggested_mode respond, "
+        "inspect the dependency result, and reply exactly REASSIGN_VALIDATED_OK only "
+        "when the recovered output contains REASSIGNED_CHILD_OK; otherwise report "
+        "validation failure."
+    )
+    from tests.e2e.cli.focus.harness.scenarios import FocusScenario
+
+    scenario = FocusScenario(
+        scenario_id="maer-live-exact-reassignment",
+        prompt=prompt,
+        expected_markers=(),
+        timeout=600,
+    )
+    with focus_probe.session(rows=55, cols=180) as session:
+        focus_probe.wait_ready(session)
+        transcript = focus_probe.run_turn(session, scenario)
+        write_transcript(root, scenario.scenario_id, transcript)
+
+    state = _latest_working_state(focus_probe)
+    assert state.last_result is not None
+    outputs = state.last_result.outputs
+    recovery = dict(outputs.get("child_recovery", {}))
+    subtask_results = {
+        str(item.get("subtask_id")): item
+        for item in outputs.get("subtask_results", [])
+        if isinstance(item, dict)
+    }
+
+    assert recovery == {
+        "disposition": "reassign_exact",
+        "failed_subtask_id": "recover-child",
+        "target_agent_id": "minimax-m2-7-highspeed",
+        "outcome": "completed",
+    }
+    assert "REASSIGNED_CHILD_OK" in str(subtask_results["recover-child"]["output"])
+    assert "REASSIGN_VALIDATED_OK" in str(subtask_results["validate-child"]["output"])
+
+
+@pytest.mark.timeout(660)
 def test_live_focus_code_children_store_and_disposition_artifacts(
     focus_probe: FocusProbe,
     tmp_path: Path,
@@ -450,33 +587,33 @@ def test_live_focus_code_children_store_and_disposition_artifacts(
     with active_probe.session(rows=55, cols=180) as session:
         active_probe.wait_ready(session)
         transcript = active_probe.run_turn(session, scenario)
-        write_transcript(root, scenario.scenario_id, transcript)
+        assert not (repo / "accepted.txt").exists()
+        assert not (repo / "rejected.txt").exists()
+        artifacts = _latest_public_child_artifacts(active_probe)
+        by_id = {str(item.get("subtask_id")): item for item in artifacts}
+        assert {"accept-child", "reject-child"}.issubset(by_id)
 
-    assert not (repo / "accepted.txt").exists()
-    assert not (repo / "rejected.txt").exists()
-    artifacts = _latest_public_child_artifacts(active_probe)
-    by_id = {str(item.get("subtask_id")): item for item in artifacts}
-    assert {"accept-child", "reject-child"}.issubset(by_id)
-
-    with _artifactctl_for_probe(active_probe) as artifactctl:
-        accepted = _h_task_delegate(
-            {
-                "mode": "accept",
-                "workspace_root": str(repo),
-                "child_artifact": by_id["accept-child"],
-            },
-            SimpleNamespace(artifactctl=artifactctl),
+        accepted = active_probe.run_slash(
+            session,
+            "/delegate accept "
+            + shlex.quote(json.dumps(by_id["accept-child"], separators=(",", ":"))),
+            marker="status    accepted",
         )
-        rejected = _h_task_delegate(
-            {
-                "mode": "reject",
-                "child_artifact": by_id["reject-child"],
-            },
-            SimpleNamespace(artifactctl=artifactctl),
+        rejected = active_probe.run_slash(
+            session,
+            "/delegate reject "
+            + shlex.quote(json.dumps(by_id["reject-child"], separators=(",", ":"))),
+            marker="status    rejected",
+        )
+        write_transcript(
+            root,
+            scenario.scenario_id,
+            f"{transcript}\n\n--- accept ---\n{accepted}"
+            f"\n\n--- reject ---\n{rejected}\n",
         )
 
-    assert accepted["status"] == "accepted"
-    assert rejected["status"] == "rejected"
+    assert "Delegation failed" not in accepted
+    assert "Delegation failed" not in rejected
     assert (repo / "accepted.txt").read_text(encoding="utf-8").strip() == (
         "ACCEPTED_CHILD"
     )

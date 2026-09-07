@@ -50,6 +50,16 @@ def _single_operation(
     return operation, extra
 
 
+def _trace_metadata() -> dict[str, str]:
+    return {
+        "session_id": "session-1",
+        "turn_id": "turn-1",
+        "invocation_id": "invocation-1",
+        "execution_id": "execution-1",
+        "trace_id": "trace-1",
+    }
+
+
 def test_http_json_post_timeout_emits_transport_counter(monkeypatch) -> None:
     telemetry = _RecordingTelemetryCtl()
 
@@ -67,17 +77,20 @@ def test_http_json_post_timeout_emits_transport_counter(monkeypatch) -> None:
             timeout_seconds=1,
             provider_name="provider",
             telemetryctl=telemetry,
+            trace_metadata=_trace_metadata(),
         )
 
     assert excinfo.value.code == "TIMEOUT"
     assert len(telemetry.counters) == 1
     assert telemetry.counters[0]["args"][3] == "llm_transport_timeout"
+    assert telemetry.counters[0]["args"][:2] == ("session-1", "turn-1")
     assert telemetry.counters[0]["kwargs"]["extra"]["method"] == "POST"
     operation, extra = _single_operation(telemetry)
     assert operation["args"][3] == "http_json_post"
     assert operation["kwargs"]["status"] == "error"
     assert extra["provider_round_trip_ms"] is None
     assert extra["method"] == "POST"
+    assert extra["invocation_id"] == "invocation-1"
 
 
 def test_http_json_get_timeout_emits_transport_counter(monkeypatch) -> None:
@@ -96,6 +109,7 @@ def test_http_json_get_timeout_emits_transport_counter(monkeypatch) -> None:
             timeout_seconds=1,
             provider_name="provider",
             telemetryctl=telemetry,
+            trace_metadata=_trace_metadata(),
         )
 
     assert excinfo.value.code == "TIMEOUT"
@@ -124,6 +138,7 @@ def test_http_json_post_success_emits_transport_timing(monkeypatch) -> None:
         timeout_seconds=1,
         provider_name="provider",
         telemetryctl=telemetry,
+        trace_metadata=_trace_metadata(),
     )
 
     assert response == {"ok": True}
@@ -137,6 +152,7 @@ def test_http_json_post_success_emits_transport_timing(monkeypatch) -> None:
     assert extra["response_bytes"] > 0
     assert extra["request_build_ms"] >= 0
     assert extra["provider_round_trip_ms"] >= 0
+    assert extra["response_open_ms"] >= 0
     assert extra["parse_ms"] >= 0
     assert extra["total_ms"] >= 0
 
@@ -168,3 +184,90 @@ def test_http_json_post_reuses_single_serialized_request_body(monkeypatch) -> No
     assert response == {"ok": True}
     assert seen["data"] == seen["trace_body_json"].encode("utf-8")
     assert seen["trace_payload"] is payload
+
+
+def test_transport_telemetry_is_omitted_without_session_and_turn(monkeypatch) -> None:
+    telemetry = _RecordingTelemetryCtl()
+
+    monkeypatch.setattr(
+        http_transport.urllib_request,
+        "urlopen",
+        lambda *_args, **_kwargs: _FakeHTTPResponse({"ok": True}),
+    )
+
+    assert http_transport.http_json_post(
+        url="https://provider.example/v1",
+        payload={"messages": []},
+        headers={},
+        timeout_seconds=1,
+        provider_name="provider",
+        telemetryctl=telemetry,
+        trace_metadata={"session_id": "session-1"},
+    ) == {"ok": True}
+    assert telemetry.operations == []
+    assert telemetry.counters == []
+
+
+def test_curl_fallback_emits_one_final_success_operation(monkeypatch) -> None:
+    telemetry = _RecordingTelemetryCtl()
+
+    monkeypatch.setattr(
+        http_transport.urllib_request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            urllib_error.URLError("temporary failure in name resolution")
+        ),
+    )
+    monkeypatch.setattr(
+        http_transport,
+        "curl_json_post",
+        lambda **_kwargs: {"ok": True},
+    )
+
+    assert http_transport.http_json_post(
+        url="https://provider.example/v1",
+        payload={"messages": []},
+        headers={},
+        timeout_seconds=1,
+        provider_name="provider",
+        telemetryctl=telemetry,
+        trace_metadata=_trace_metadata(),
+    ) == {"ok": True}
+    operation, extra = _single_operation(telemetry)
+    assert operation["kwargs"]["status"] == "ok"
+    assert extra["transport"] == "curl"
+    assert extra["retry_count"] == 1
+    assert extra["response_bytes"] is None
+
+
+def test_curl_fallback_emits_one_final_failure_operation(monkeypatch) -> None:
+    telemetry = _RecordingTelemetryCtl()
+
+    monkeypatch.setattr(
+        http_transport.urllib_request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            urllib_error.URLError("temporary failure in name resolution")
+        ),
+    )
+
+    def fail_curl(**_kwargs):
+        raise LLMCtlError("PROVIDER_ERROR", "curl failed")
+
+    monkeypatch.setattr(http_transport, "curl_json_post", fail_curl)
+
+    with pytest.raises(LLMCtlError, match="curl failed"):
+        http_transport.http_json_post(
+            url="https://provider.example/v1",
+            payload={"messages": []},
+            headers={},
+            timeout_seconds=1,
+            provider_name="provider",
+            telemetryctl=telemetry,
+            trace_metadata=_trace_metadata(),
+        )
+    operation, extra = _single_operation(telemetry)
+    assert operation["kwargs"]["status"] == "error"
+    assert extra["transport"] == "curl"
+    assert extra["retry_count"] == 1
+    assert extra["reason"] == "PROVIDER_ERROR"

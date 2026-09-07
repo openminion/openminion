@@ -122,6 +122,8 @@ def project_tool_output(
     )
     if not valid:
         raise ArtifactQueryError("event_invalid", "Tool event is invalid.")
+    assert isinstance(parent_payload, dict)
+    assert isinstance(status, str)
     tool_name = project_text(str(parent_payload["canonical_name"]))
     tool_status = project_text(status)
     created_at = project_text(str(event["timestamp"]))
@@ -140,6 +142,7 @@ def project_tool_output(
         message = error.get("message") if isinstance(error, dict) else None
         if not isinstance(message, str):
             return _unavailable(tool_name, tool_status, created_at)
+        assert isinstance(error, dict)
         projected_summary = project_text(message)
         projection = _project_blocked_error(error)
     if projection is None or _contains_disallowed_controls(projected_summary):

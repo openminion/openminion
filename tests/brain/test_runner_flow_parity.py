@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 
 from openminion.modules.brain.adapters.a2a import LocalA2AAdapter
 from openminion.modules.brain.adapters.context import LocalContextAdapter
@@ -14,6 +15,7 @@ from openminion.modules.brain.adapters.policy import LocalPolicyAdapter
 from openminion.modules.brain.adapters.session import LocalSessionStore
 from openminion.modules.brain.adapters.tool import LocalToolAdapter
 from openminion.modules.brain.runner import RunnerOptions, BrainRunner
+from openminion.modules.llm import ProviderError
 from openminion.modules.brain.schemas import (
     AgentBudgets,
     AgentDefaults,
@@ -243,6 +245,142 @@ def test_new_user_turn_gets_fresh_trace_and_outcome_counts() -> None:
         assert outcomes[0]["payload"]["tool_completed_count"] >= 1
         assert outcomes[1]["payload"]["tool_request_count"] == 0
         assert outcomes[1]["payload"]["tool_completed_count"] == 0
+
+
+def test_failed_provider_turn_persists_typed_outcome() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, session = _build_runner(Path(tmp))
+        failure = ProviderError(
+            "empty after recovery",
+            code="EMPTY_PROVIDER_RESPONSE",
+            details={"api_key": "secret-provider-key", "retry_eligible": False},
+        )
+
+        with (
+            patch(
+                "openminion.modules.brain.runner.coordinator."
+                "run_until_idle_runner_lifecycle",
+                side_effect=failure,
+            ),
+            pytest.raises(ProviderError) as raised,
+        ):
+            runner.run(
+                session_id="s-provider-failure",
+                user_input="continue",
+                trace_id="t-provider-failure",
+            )
+
+        assert raised.value is failure
+        outcomes = [
+            event
+            for event in session.list_events("s-provider-failure")
+            if event["type"] == "turn.outcome"
+        ]
+        assert len(outcomes) == 1
+        assert outcomes[0]["status"] == "error"
+        assert outcomes[0]["payload"]["status"] == "error"
+        assert outcomes[0]["payload"]["error"] == {
+            "code": "EMPTY_PROVIDER_RESPONSE",
+            "message": "empty after recovery",
+            "details": {"api_key": "[REDACTED]", "retry_eligible": False},
+        }
+        assert outcomes[0]["redaction"] == "bounded"
+
+
+def test_failed_turn_evidence_failure_does_not_mask_provider_error() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, session = _build_runner(Path(tmp))
+        failure = ProviderError("provider failed", code="PROVIDER_ERROR")
+
+        with (
+            patch(
+                "openminion.modules.brain.runner.coordinator."
+                "run_until_idle_runner_lifecycle",
+                side_effect=failure,
+            ),
+            patch.object(
+                session,
+                "append_event",
+                side_effect=OSError("storage unavailable"),
+            ),
+            pytest.raises(ProviderError) as raised,
+        ):
+            runner.run(
+                session_id="s-provider-storage-failure",
+                user_input="continue",
+            )
+
+        assert raised.value is failure
+
+
+def test_failed_standalone_step_uses_its_trace() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, session = _build_runner(Path(tmp))
+        failure = ProviderError("provider failed", code="PROVIDER_ERROR")
+
+        with (
+            patch(
+                "openminion.modules.brain.runner.coordinator.run_step",
+                side_effect=failure,
+            ),
+            pytest.raises(ProviderError),
+        ):
+            runner.step(
+                session_id="s-step-failure",
+                trace_id="t-step-failure",
+            )
+
+        outcomes = [
+            event
+            for event in session.list_events("s-step-failure")
+            if event["type"] == "turn.outcome"
+        ]
+        assert len(outcomes) == 1
+        assert outcomes[0]["trace_id"] == "t-step-failure"
+
+
+def test_failed_later_tick_uses_enclosing_run_trace() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, session = _build_runner(Path(tmp))
+        state = WorkingState(
+            session_id="s-later-failure",
+            agent_id="test-agent",
+            trace_id="t-run-failure",
+            status="continue",
+            budgets_remaining=BudgetCounters(
+                ticks=2,
+                tool_calls=1,
+                a2a_calls=0,
+                tokens=100,
+                time_ms=1000,
+            ),
+        )
+        active = StepOutput(
+            session_id="s-later-failure",
+            status="continue",
+            working_state=state,
+        )
+        failure = ProviderError("provider failed", code="PROVIDER_ERROR")
+
+        with (
+            patch(
+                "openminion.modules.brain.runner.coordinator.run_step",
+                side_effect=(active, failure),
+            ),
+            pytest.raises(ProviderError),
+        ):
+            runner.run(
+                session_id="s-later-failure",
+                trace_id="t-run-failure",
+            )
+
+        outcomes = [
+            event
+            for event in session.list_events("s-later-failure")
+            if event["type"] == "turn.outcome"
+        ]
+        assert len(outcomes) == 1
+        assert outcomes[0]["trace_id"] == "t-run-failure"
 
 
 def test_seeded_act_flow_emits_public_act_outcome() -> None:

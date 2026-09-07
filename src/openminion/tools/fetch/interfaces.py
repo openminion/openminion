@@ -34,6 +34,8 @@ class FetchResponse(TypedDict, total=False):
     warnings: list[str]
     verified: bool
     artifacts: FetchArtifactRefs
+    validators: dict[str, str]
+    rate_limit: dict[str, str]
     error: dict[str, Any]
 
 

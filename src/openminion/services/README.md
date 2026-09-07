@@ -6,6 +6,9 @@
 integration, supervision, and long-running orchestration that stitches the
 module layer into runnable system behavior.
 
+The package facade lazily exports `AgentService` and `GatewayService`. Other
+service entry points belong to their named subpackages.
+
 ## Ownership split with `modules/`
 
 ## Canonical package archetypes
@@ -22,9 +25,8 @@ Three service subpackages pair with a same-named feature area in
 Changes in these paired owners must keep the module/service split explicit:
 `modules/<name>/` owns domain contracts, schemas, storage-facing engines, and
 provider adapters; `services/<name>/` owns runtime assembly, lifecycle, policy
-composition, and cross-module wiring. A source move across the boundary needs an
-owner tracker row, focused behavior tests, and an import-boundary validator note
-before it lands.
+composition, and cross-module wiring. A source move across the boundary needs
+focused behavior tests and an import-boundary validator update before it lands.
 
 ### Runtime concern packages
 
@@ -69,7 +71,7 @@ Only `config.py` and `constants.py` remain as root-level `.py` files.
 
 - `runtime/` here means cross-owner system orchestration, distinct from
   `openminion.base.runtime` and from `<module>/runtime/`; see
-  `openminion/src/openminion/modules/README.md` for the canonical module-local
+  `src/openminion/modules/README.md` for the canonical module-local
   rule.
 
 ## What belongs here

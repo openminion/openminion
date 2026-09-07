@@ -107,6 +107,42 @@ def test_client_cost_budget_prefers_provider_supplied_cost_over_estimate() -> No
     response = client.complete(messages=[{"role": "user", "content": "hello"}])
 
     assert response.ok is True
+    assert response.cost_source == "provider"
+
+
+def test_client_records_estimated_cost_without_a_cost_budget() -> None:
+    runtime = LLMCTL.from_config(
+        {
+            "version": 1,
+            "llmctl": {
+                "default_provider": "budget_provider",
+                "default_model": "budget-model",
+            },
+            "providers": {
+                "budget_provider": {
+                    "cost_hint": {
+                        "input_per_1k": 0.01,
+                        "output_per_1k": 0.02,
+                    }
+                }
+            },
+            "agents": {
+                "default": {
+                    "default_provider": "budget_provider",
+                    "default_model": "budget-model",
+                }
+            },
+        }
+    )
+    runtime.registry.add(_BudgetProvider(cost_usd=None))
+
+    response = runtime.client(agent_name="default").complete(
+        messages=[{"role": "user", "content": "hello"}]
+    )
+
+    assert response.ok is True
+    assert response.cost_usd == 0.02
+    assert response.cost_source == "estimated"
 
 
 def test_client_cost_budget_logs_warning_when_cost_unassessable(caplog: Any) -> None:

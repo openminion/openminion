@@ -6,10 +6,9 @@ from openminion.base.config import combine_run_profile_overrides
 from openminion.base.config.core import resolve_default_agent_id
 from .execution import (
     _build_turn_context,
-    execute_gateway_turn_impl,
     execute_runtime_turn as _execute_runtime_turn_impl,
 )
-from .gateway_call import run_gateway_once_impl
+from .gateway_call import run_gateway_once_impl as _run_gateway_once
 from .payloads import (
     apply_inbound_overrides,
     mutable_inbound_metadata as _mutable_inbound_metadata,
@@ -29,14 +28,13 @@ from .types import (
     RuntimeTurnHandle,
     RuntimeTurnRequest,
     RuntimeTurnResult,
-    TurnContext,
     TurnRequestError,
     TurnTimeoutError,
 )
 
 if TYPE_CHECKING:
     from openminion.services.runtime.interfaces import RuntimeFacade
-    from openminion.services.runtime.manager import DesktopApprovalRequester
+    from openminion.services.runtime.interfaces import DesktopApprovalRequester
 
 __all__ = [
     "RuntimeTurnHandle", "RuntimeTurnRequest",
@@ -65,6 +63,7 @@ def run_turn_payload(
     request_id: str | None = None,
     progress_callback: Callable[[object], None] | None = None,
     approval_callback: Any | None = None,
+    cancel_event: Any | None = None,
 ) -> dict[str, Any]:
     from openminion.modules.telemetry.trace.phase_timing import (
         ChatPhaseTimer,
@@ -74,13 +73,12 @@ def run_turn_payload(
 
     cold_start = bool(payload.get("__crtl_cold_start__", False))
     timer = ChatPhaseTimer(cold_start=cold_start)
-    with use_chat_phase_timer(timer):
-        with active_chat_phase("provider_request_build"):
-            request = runtime_turn_request_from_payload(
-                runtime=runtime,
-                payload=payload,
-                request_id=request_id,
-            )
+    with use_chat_phase_timer(timer), active_chat_phase("provider_request_build"):
+        request = runtime_turn_request_from_payload(
+            runtime=runtime,
+            payload=payload,
+            request_id=request_id,
+        )
     try:
         with use_chat_phase_timer(timer):
             result = execute_runtime_turn(
@@ -88,6 +86,7 @@ def run_turn_payload(
                 request=request,
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
+                cancel_event=cancel_event,
             )
             with active_chat_phase("response_normalization"):
                 return result.as_payload()
@@ -122,9 +121,7 @@ def submit_turn_payload(
         ),
     )
     return RuntimeTurnHandle(
-        request=request,
-        handle=manager.submit_turn(request),
-        timeout_s=timeout_s,
+        request=request, handle=manager.submit_turn(request), timeout_s=timeout_s
     )
 
 
@@ -134,6 +131,7 @@ def execute_runtime_turn(
     request: RuntimeTurnRequest,
     progress_callback: Callable[[object], None] | None = None,
     approval_callback: Any | None = None,
+    cancel_event: Any | None = None,
 ) -> RuntimeTurnResult:
     return _execute_runtime_turn_impl(
         runtime=runtime,
@@ -141,43 +139,5 @@ def execute_runtime_turn(
         run_gateway_once=_run_gateway_once,
         progress_callback=progress_callback,
         approval_callback=approval_callback,
+        cancel_event=cancel_event,
     )
-
-
-def _execute_gateway_turn(
-    *,
-    runtime: Any,
-    agent_name: str,
-    channel: str,
-    target: str,
-    context: TurnContext,
-    session_id: str | None,
-    idempotency_key: str | None,
-    request_id: str | None,
-    deliver: bool,
-    capability_category: str | None,
-    timeout_seconds: float,
-    run_profile_overrides: Any,
-    progress_callback: Callable[[object], None] | None,
-    approval_callback: Any | None = None,
-) -> Any:
-    return execute_gateway_turn_impl(
-        runtime=runtime,
-        agent_name=agent_name,
-        channel=channel,
-        target=target,
-        context=context,
-        session_id=session_id,
-        idempotency_key=idempotency_key,
-        request_id=request_id,
-        deliver=deliver,
-        capability_category=capability_category,
-        timeout_seconds=timeout_seconds,
-        run_profile_overrides=run_profile_overrides,
-        run_gateway_once=_run_gateway_once,
-        progress_callback=progress_callback,
-        approval_callback=approval_callback,
-    )
-
-
-_run_gateway_once = run_gateway_once_impl

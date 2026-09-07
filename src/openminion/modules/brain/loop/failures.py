@@ -61,33 +61,38 @@ def _provider_failure_answer(
     detail_excerpt = _provider_failure_detail(message=message, details=details)
     normalized_code = str(code or "").strip().upper()
     if normalized_code == "RATE_LIMITED":
-        return (
+        answer = (
             "The configured model provider could not continue this turn because it "
             "reported a quota, billing, or rate-limit block"
             + (f" ({detail_excerpt})" if detail_excerpt else "")
             + ". Please retry shortly or check the provider quota/billing state and "
             "try again."
         )
-    if normalized_code == "AUTH_ERROR":
-        return (
+    elif normalized_code == "AUTH_ERROR":
+        answer = (
             "The configured model provider rejected authentication for this turn"
             + (f" ({detail_excerpt})" if detail_excerpt else "")
             + ". Check the provider credentials or model access and try again."
         )
-    if normalized_code == "TIMEOUT":
-        return (
+    elif normalized_code == "TIMEOUT":
+        answer = (
             "The configured model provider timed out before it could return a "
             "decision"
             + (f" ({detail_excerpt})" if detail_excerpt else "")
             + ". Please retry."
         )
-    if normalized_code in {"PROVIDER_ERROR", "INVALID_ARGUMENT"}:
-        return (
+    elif normalized_code in {"PROVIDER_ERROR", "INVALID_ARGUMENT"}:
+        answer = (
             "The configured model provider failed before it could return a decision"
             + (f" ({detail_excerpt})" if detail_excerpt else "")
             + ". Please retry or switch models."
         )
-    return ""
+    else:
+        return ""
+    request_id = str(details.get("request_id") or "").strip()
+    if request_id:
+        answer += f" Provider request ID: {request_id}."
+    return answer
 
 
 def _provider_failure_detail(*, message: str, details: dict[str, Any]) -> str:

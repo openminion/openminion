@@ -9,10 +9,16 @@ from ...execution.entry import build_execution_entry_request, dispatch as dispat
 from ...diagnostics.events import CanonicalEventLogger
 from ...execution.mission import (
     MissionInputRoute,
+    allocate_mission_turn_budget,
     mission_enabled,
+    mission_is_active,
+    refresh_ordinary_turn_budget,
     resolve_mission_input_route,
 )
-from ...loop.tools.confirmation import is_session_confirmation_response
+from ...loop.tools.confirmation import (
+    is_session_confirmation_response,
+    requires_individual_confirmation,
+)
 from ...runner.transitions import guard_waiting_state
 from ...runtime.mrdd.hook import maybe_run_mrdd_pre_dispatch_hook
 from ...schemas import BrainMode, new_uuid
@@ -29,11 +35,13 @@ from .context import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from openminion.modules.session.capture import CaptureIdentity
+
     from ..core import BrainRunner
     from ...schemas import StepOutput
 
 
-def _stamp_pending_run_context(runner: "BrainRunner", state) -> None:
+def _stamp_pending_run_context(runner: "BrainRunner", state) -> str | None:
     pending_trigger = runner._pending_run_trigger
     if pending_trigger:
         state.run_trigger = pending_trigger
@@ -43,6 +51,18 @@ def _stamp_pending_run_context(runner: "BrainRunner", state) -> None:
     if pending_gateway_context:
         state.gateway_system_context = pending_gateway_context
         runner._pending_gateway_system_context = None
+    return pending_trigger
+
+
+def _refresh_budget_for_new_trigger(
+    runner: "BrainRunner", state, trigger: str | None
+) -> None:
+    if trigger not in {"plan_continuation", "idle_tick"}:
+        return
+    if mission_is_active(state):
+        allocate_mission_turn_budget(runner=runner, state=state)
+        return
+    refresh_ordinary_turn_budget(runner=runner, state=state)
 
 
 def _mission_route_for_tick(runner: "BrainRunner", state, user_input: str | None):
@@ -56,9 +76,15 @@ def _capture_new_user_input(
 ) -> None:
     state.trace_id = trace_id or new_uuid()
     if state.pending_confirmation_command is not None:
-        reply = confirmation._parse_confirmation_response(runner, user_input)  # noqa: SLF001
-        if reply in {"affirm", "deny"} or is_session_confirmation_response(
-            str(user_input or "")
+        reply = confirmation._parse_confirmation_response(  # noqa: SLF001
+            runner,
+            user_input,
+            state.pending_confirmation_command,
+        )
+        session_reply = is_session_confirmation_response(str(user_input or ""))
+        if reply in {"affirm", "deny"} or (
+            session_reply
+            and not requires_individual_confirmation(state.pending_confirmation_command)
         ):
             return
     state.last_user_input = str(user_input or "").strip()
@@ -211,15 +237,20 @@ def run_step(
     trace_id: str | None = None,
     forced_tools: list[str] | None = None,
     capability_category: str | None = None,
+    capture_identity: "CaptureIdentity | None" = None,
 ) -> "StepOutput":
     started = _runner_delegate("_now_ms", runner)
     with active_chat_phase("brain_state_load"):
-        state = _runner_delegate("_load_or_init_state", runner, session_id)
-    _stamp_pending_run_context(runner, state)
+        state = _runner_delegate(
+            "_load_or_init_state", runner, session_id, capture_identity
+        )
+    pending_trigger = _stamp_pending_run_context(runner, state)
+    _refresh_budget_for_new_trigger(runner, state, pending_trigger)
     logger = CanonicalEventLogger(
         session_api=runner.session_api,
         session_id=session_id,
         agent_id=runner.profile.agent_id,
+        llm_api=runner.llm_api,
     )
     tick_ctx = build_tick_run_context(
         session_id=session_id,

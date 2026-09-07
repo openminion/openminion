@@ -2,6 +2,7 @@ import argparse
 from collections.abc import Callable
 import logging
 from pathlib import Path
+import subprocess
 from typing import Any
 
 from openminion.base.config import resolve_config_path
@@ -10,7 +11,6 @@ from openminion.modules.cli_common import has_tty
 from openminion.services.bootstrap.onboarding import (
     OnboardingRequestedMode,
     OnboardingStatus,
-    build_inline_setup_args,
     resolve_surface_onboarding_route,
 )
 
@@ -64,22 +64,9 @@ def _inspect_interactive_onboarding(args: Any) -> OnboardingStatus:
 def _run_inline_setup(args: Any) -> int:
     from openminion.cli.commands.setup import run_setup
 
-    return int(
-        run_setup(
-            build_inline_setup_args(
-                config=getattr(args, "config", None),
-                home_root=getattr(args, "home_root", None),
-                data_root=getattr(args, "data_root", None),
-                no_chat=True,
-                agent=getattr(args, "agent", None),
-            )
-        )
-        or 0
-    )
-
-
-def _resolve_interactive_backend(args: argparse.Namespace) -> str:
-    return "textual" if bool(getattr(args, "rich", False)) else "terminal"
+    setup_args = argparse.Namespace(**vars(args))
+    setup_args.no_chat = True
+    return int(run_setup(setup_args) or 0)
 
 
 def _resolve_focus_verbosity(args: argparse.Namespace) -> str:
@@ -92,6 +79,39 @@ def _resolve_focus_progress(args: argparse.Namespace) -> str:
     from openminion.cli.ux.verbosity import resolve_progress
 
     return resolve_progress(args, default="full")
+
+
+def _resolve_workspace_access(
+    args: argparse.Namespace,
+) -> tuple[str, bool, tuple[str, ...]]:
+    explicit = getattr(args, "dir", None) is not None
+    workspace = Path(getattr(args, "dir", None) or ".").expanduser().resolve()
+    if not workspace.is_dir():
+        raise ValueError(f"workspace directory does not exist: {workspace}")
+    if not explicit and workspace in {Path.home().resolve(), Path(workspace.anchor)}:
+        raise ValueError("choose a project workspace with --dir PATH")
+
+    read_only = False
+    if not explicit:
+        try:
+            probe = subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "--is-inside-work-tree"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            read_only = probe.returncode != 0 or probe.stdout.strip() != "true"
+        except OSError:
+            read_only = True
+
+    added_roots: list[str] = []
+    for value in getattr(args, "add_dir", []) or []:
+        root = Path(value).expanduser().resolve()
+        if not root.is_dir():
+            raise ValueError(f"added directory does not exist: {value}")
+        if str(root) not in added_roots:
+            added_roots.append(str(root))
+    return str(workspace), read_only, tuple(added_roots)
 
 
 def _handle_focus_onboarding_gate(
@@ -121,26 +141,13 @@ def _handle_focus_onboarding_gate(
     return None, args
 
 
-def _enforce_textual_tty_requirement() -> int | None:
-    import sys as _sys
-
-    stdin_tty = bool(getattr(_sys.stdin, "isatty", lambda: False)())
-    stdout_tty = bool(getattr(_sys.stdout, "isatty", lambda: False)())
-    if stdin_tty and stdout_tty:
-        return None
-    print(
-        "openminion --rich: the Textual shell "
-        "requires an interactive terminal (TTY) on both "
-        "stdin and stdout. Run from an interactive shell, use the default "
-        "terminal renderer, or pipe a prompt to bare `openminion` for "
-        "one-shot execution.",
-        file=_sys.stderr,
-    )
-    return 2
-
-
 def _launch_terminal_focus(
-    args: argparse.Namespace, runtime, *, working_dir: str
+    args: argparse.Namespace,
+    runtime,
+    *,
+    working_dir: str,
+    read_only: bool = False,
+    added_roots: tuple[str, ...] = (),
 ) -> int:
     from openminion.cli.interactive.project_context import resolve_project_context
     from openminion.cli.interactive.runtime import OpenMinionRuntime
@@ -149,14 +156,18 @@ def _launch_terminal_focus(
 
     requested_agent = str(getattr(args, "agent", "") or "").strip() or None
     requested_session = str(getattr(args, "session", "") or "").strip() or None
-    terminal_runtime = OpenMinionRuntime(
-        runtime,
-        target="focus",
-        agent_id=requested_agent,
-        working_dir=working_dir,
-        bind_immediately=False,
-        session_id=requested_session,
-    )
+    runtime_kwargs: dict[str, Any] = {
+        "target": "focus",
+        "agent_id": requested_agent,
+        "working_dir": working_dir,
+        "bind_immediately": False,
+        "session_id": requested_session,
+    }
+    if added_roots:
+        runtime_kwargs["added_workspace_roots"] = added_roots
+    terminal_runtime = OpenMinionRuntime(runtime, **runtime_kwargs)
+    if read_only:
+        terminal_runtime.set_read_only_mode(True)
     if requested_session is None:
         terminal_runtime.create_new_session()
     if not bool(getattr(args, "no_context", False)):
@@ -218,97 +229,38 @@ def _build_update_notice_resolver(
     return lambda: _resolve_update_notice(args)
 
 
-def _maybe_print_update_notice(args: argparse.Namespace) -> None:
-    notice = _resolve_update_notice(args)
-    if not notice:
-        return
-    print(notice)
-    print()
-
-
-def _resolve_focus_theme(args: argparse.Namespace):
-    from openminion.cli.config import resolve_cli_roots
-    from openminion.cli.theme import resolve_theme
-
-    cli_theme = str(getattr(args, "theme", "") or "").strip() or None
-    try:
-        cli_roots = resolve_cli_roots(
-            config_path=getattr(args, "config", None),
-            home_root=getattr(args, "home_root", None),
-            data_root=getattr(args, "data_root", None),
-        )
-        return resolve_theme(
-            cli_flag=cli_theme,
-            data_root=Path(cli_roots.data_root),
-        )
-    except Exception:
-        return resolve_theme(cli_flag=cli_theme)
-
-
-def _launch_textual_focus(
-    args: argparse.Namespace, runtime, *, working_dir: str
-) -> int:
-    from openminion.cli.interactive import FocusApp
-    from openminion.cli.interactive.project_context import resolve_project_context
-    from openminion.cli.interactive.runtime import OpenMinionRuntime
-    from openminion.cli.presentation.animation import resolve_focus_animation
-
-    focus_runtime = OpenMinionRuntime(
-        runtime,
-        target="focus",
-        agent_id=str(getattr(args, "agent", "") or "").strip() or None,
-        working_dir=working_dir,
-        bind_immediately=False,
-        session_id=str(getattr(args, "session", "") or "").strip() or None,
-    )
-    if not bool(getattr(args, "no_context", False)):
-        focus_runtime.set_project_context(resolve_project_context(working_dir))
-    resolved_theme = _resolve_focus_theme(args)
-    animation = resolve_focus_animation(args)
-    FocusApp(
-        runtime=focus_runtime,
-        working_dir=working_dir,
-        agent=str(getattr(args, "agent", "") or "").strip() or None,
-        session=str(getattr(args, "session", "") or "").strip() or None,
-        theme=resolved_theme,
-        verbosity=_resolve_focus_verbosity(args),
-        progress=_resolve_focus_progress(args),
-        animation=animation,
-    ).run()
-    return 0
-
-
 def run_interactive(args: argparse.Namespace) -> int:
-    from openminion.api.runtime import APIRuntime
-    from openminion.cli.status.surface import record_surface_event
+    from openminion.cli.presentation.styles import set_color_mode
+
+    set_color_mode(getattr(args, "color", None))
 
     gate_exit, args = _handle_focus_onboarding_gate(args)
     if gate_exit is not None:
         return gate_exit
 
-    backend = _resolve_interactive_backend(args)
     _silence_logging_for_interactive(args)
-    if backend == "textual":
-        tty_exit = _enforce_textual_tty_requirement()
-        if tty_exit is not None:
-            return tty_exit
 
     runtime = None
     try:
+        working_dir, read_only, added_roots = _resolve_workspace_access(args)
+
+        from openminion.api.runtime import APIRuntime
+        from openminion.cli.status.surface import record_surface_event
+
         runtime = APIRuntime.from_config_path(
             getattr(args, "config", None),
             home_root=getattr(args, "home_root", None),
             data_root=getattr(args, "data_root", None),
             logging_mode="interactive",
         )
-        working_dir = str(
-            Path(getattr(args, "dir", None) or ".").expanduser().resolve(strict=False)
-        )
         record_surface_event(runtime)
-        if backend == "terminal":
-            return _launch_terminal_focus(args, runtime, working_dir=working_dir)
-        _maybe_print_update_notice(args)
-        return _launch_textual_focus(args, runtime, working_dir=working_dir)
+        return _launch_terminal_focus(
+            args,
+            runtime,
+            working_dir=working_dir,
+            read_only=read_only,
+            added_roots=added_roots,
+        )
     except Exception as exc:
         import sys
 

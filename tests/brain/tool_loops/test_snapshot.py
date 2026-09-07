@@ -229,6 +229,24 @@ def test_oversized_transcript_compressed() -> None:
     assert any("compressed" in str(m.get("content", "")) for m in result)
 
 
+def test_compressed_transcript_preserves_recent_message_order() -> None:
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "request"},
+        *[
+            {"role": "tool", "content": f"result-{index}-" + "x" * 500}
+            for index in range(30)
+        ],
+    ]
+
+    result = compress_transcript(messages, max_chars=3000)
+
+    retained = [item for item in result if str(item["content"]).startswith("result-")]
+    retained_indexes = [int(item["content"].split("-", 2)[1]) for item in retained]
+    assert retained_indexes == sorted(retained_indexes)
+    assert retained_indexes[-1] == 29
+
+
 # Resume semantics
 
 

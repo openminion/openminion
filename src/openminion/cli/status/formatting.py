@@ -7,7 +7,6 @@ from openminion.modules.brain.diagnostics.status import (
     format_phase_status_text,
 )
 
-
 DEFAULT_FALLBACK_LABEL = "Working..."
 
 

@@ -80,6 +80,112 @@ def test_text_view_respects_redaction_toggle(tmp_path):
         assert "[REDACTED_EMAIL]" in text
 
 
+def test_text_view_cache_changes_with_redaction_setting(tmp_path):
+    data = b"contact user@example.com"
+    unredacted = {
+        "artifactctl": {
+            "views": {"auto_generate": ["text"]},
+            "security": {"redaction_enabled": False},
+        }
+    }
+    with artifact_ctl(tmp_path, unredacted) as ctl:
+        ref = ctl.ingest_bytes(data, original_name="note.txt")
+        first_view = ctl.ensure_view(ref.sha256, "text")
+        assert "user@example.com" in ctl.read_view(ref.sha256, "text")
+
+    with artifact_ctl(tmp_path) as ctl:
+        second_view = ctl.ensure_view(ref.sha256, "text")
+        assert second_view.sha256 != first_view.sha256
+        assert "[REDACTED_EMAIL]" in ctl.read_view(ref.sha256, "text")
+
+
+def test_digest_view_cache_changes_with_limits(tmp_path):
+    initial = {
+        "artifactctl": {"views": {"auto_generate": ["text"], "digest_max_chars": 30}}
+    }
+    with artifact_ctl(tmp_path, initial) as ctl:
+        ref = ctl.ingest_bytes(b"abcdefghijklmnopqrstuvwxyz", mime="text/plain")
+        first_view = ctl.ensure_digest(ref.sha256)
+        assert ctl.read_digest(ref.sha256)["excerpt"] == "abcdefghijklmnopqrstuvwxyz"
+
+    changed = {
+        "artifactctl": {"views": {"auto_generate": ["text"], "digest_max_chars": 5}}
+    }
+    with artifact_ctl(tmp_path, changed) as ctl:
+        second_view = ctl.ensure_digest(ref.sha256)
+        assert second_view.sha256 != first_view.sha256
+        assert ctl.read_digest(ref.sha256)["excerpt"] == "abcde"
+
+
+def test_digest_view_cache_changes_with_table_row_limit(tmp_path):
+    data = b"name,value\na,1\nb,2\n"
+    initial = {"artifactctl": {"views": {"table_max_rows": 2}}}
+    with artifact_ctl(tmp_path, initial) as ctl:
+        ref = ctl.ingest_bytes(data, mime="text/csv")
+        first_view = ctl.ensure_digest(ref.sha256)
+        assert ctl.read_digest(ref.sha256)["stats"]["table_rows_sampled"] == 2
+
+    changed = {"artifactctl": {"views": {"table_max_rows": 1}}}
+    with artifact_ctl(tmp_path, changed) as ctl:
+        second_view = ctl.ensure_digest(ref.sha256)
+        assert second_view.sha256 != first_view.sha256
+        assert ctl.read_digest(ref.sha256)["stats"]["table_rows_sampled"] == 1
+
+
+def test_json_view_cache_changes_with_limit(tmp_path):
+    data = json.dumps({"message": "long enough"}).encode()
+    initial = {
+        "artifactctl": {"views": {"auto_generate": ["text"], "json_max_chars": 100}}
+    }
+    with artifact_ctl(tmp_path, initial) as ctl:
+        ref = ctl.ingest_bytes(data, mime="application/json")
+        ctl.ensure_view(ref.sha256, "json")
+
+    changed = {
+        "artifactctl": {"views": {"auto_generate": ["text"], "json_max_chars": 5}}
+    }
+    with artifact_ctl(tmp_path, changed) as ctl:
+        with pytest.raises(ArtifactCtlError) as exc:
+            ctl.ensure_view(ref.sha256, "json")
+        assert exc.value.code == "VIEW_TOO_LARGE"
+
+
+def test_table_view_cache_changes_with_row_limit(tmp_path):
+    data = b"name,value\na,1\nb,2\n"
+    initial = {
+        "artifactctl": {"views": {"auto_generate": ["text"], "table_max_rows": 2}}
+    }
+    with artifact_ctl(tmp_path, initial) as ctl:
+        ref = ctl.ingest_bytes(data, mime="text/csv")
+        first_view = ctl.ensure_view(ref.sha256, "table")
+        assert ctl.read_view(ref.sha256, "table")["sampled_rows"] == 2
+
+    changed = {
+        "artifactctl": {"views": {"auto_generate": ["text"], "table_max_rows": 1}}
+    }
+    with artifact_ctl(tmp_path, changed) as ctl:
+        second_view = ctl.ensure_view(ref.sha256, "table")
+        assert second_view.sha256 != first_view.sha256
+        assert ctl.read_view(ref.sha256, "table")["sampled_rows"] == 1
+
+
+def test_text_view_cache_ignores_unrelated_table_limit(tmp_path):
+    initial = {
+        "artifactctl": {"views": {"auto_generate": ["text"], "table_max_rows": 2}}
+    }
+    with artifact_ctl(tmp_path, initial) as ctl:
+        ref = ctl.ingest_bytes(b"plain text", mime="text/plain")
+        ctl.ensure_view(ref.sha256, "text")
+        assert len(ctl.list_views(ref.sha256)) == 1
+
+    changed = {
+        "artifactctl": {"views": {"auto_generate": ["text"], "table_max_rows": 1}}
+    }
+    with artifact_ctl(tmp_path, changed) as ctl:
+        ctl.ensure_view(ref.sha256, "text")
+        assert len(ctl.list_views(ref.sha256)) == 1
+
+
 def test_json_view_rejects_large_payload(tmp_path):
     large_json = "{" + ",".join(f'"k{i}":{i}' for i in range(1000)) + "}"
     overrides = {"artifactctl": {"views": {"json_max_chars": 100}}}

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from openminion.base.types import Message
 from openminion.modules.context.knowledge import (
@@ -24,6 +27,11 @@ from openminion.modules.context.knowledge.constants import (
 )
 from openminion.modules.context.knowledge.errors import (
     UnsupportedCapabilityError,
+)
+from openminion.modules.context.service import ContextCtlService
+from openminion.modules.memory.surfacing.evidence import (
+    MemoryRetrievalEvidenceItem,
+    MemoryRetrievalEvidenceSelection,
 )
 from openminion.services.constants import (
     MEMORY_CAPSULE_STRATEGY_DYNAMIC_TURN,
@@ -56,6 +64,40 @@ class _SilentMemory:
         del session_id, user_message
         self.retrieval_calls += 1
         return "", {}
+
+
+class _TypedMemory(_SilentMemory):
+    def __init__(self) -> None:
+        super().__init__()
+        self.selection_calls = 0
+
+    def build_retrieval_evidence_items(
+        self,
+        *,
+        session_id: str,
+        user_message: str,
+    ) -> MemoryRetrievalEvidenceSelection:
+        del session_id, user_message
+        self.selection_calls += 1
+        rendered = "  • remembered fact"
+        return MemoryRetrievalEvidenceSelection(
+            items=(
+                MemoryRetrievalEvidenceItem(
+                    item_id="shared-provenance",
+                    provenance_ids=("shared-provenance",),
+                    citation_ids=("shared-provenance",),
+                    rendered_text=rendered,
+                    estimated_tokens=max(1, len(rendered) // 4),
+                    source_rank=0,
+                    eligibility_facts=("current",),
+                ),
+            ),
+            metadata=(("memory_lane", "retrieval"),),
+        )
+
+    def build_retrieval_context_with_metadata(self, **kwargs: Any):
+        del kwargs
+        raise AssertionError("gateway must not render or parse memory strings")
 
 
 class _FakeKnowledgeGraphs:
@@ -209,6 +251,11 @@ def test_third_brain_context_appends_static_graph_facts_when_memory_is_off() -> 
     assert events[-1]["payload"]["knowledge_graph_results"] == "1"
     assert events[-1]["payload"]["knowledge_graph_omitted"] == "1"
     assert events[-1]["payload"]["knowledge_graph_providers"] == "repo_graph"
+    assert context.evidence_pack is not None
+    assert any(
+        omission.source_kind == "knowledge" and omission.reason == "source_budget"
+        for omission in context.evidence_pack.omissions
+    )
 
 
 def test_third_brain_context_composes_after_second_brain_memory_context() -> None:
@@ -302,3 +349,79 @@ def test_third_brain_failure_emits_typed_event_without_context_injection() -> No
     ]
     assert events[-1]["payload"]["error_code"] == "UNSUPPORTED_CAPABILITY"
     assert events[-1]["payload"]["reason_code"] == "unsupported_capability"
+
+
+@pytest.mark.parametrize("full_build_enabled", [False, True])
+def test_shared_evidence_packing_runs_once_independent_of_full_build_flag(
+    full_build_enabled: bool,
+) -> None:
+    memory = _TypedMemory()
+    graph_item = GraphContextItem(
+        provider="repo_graph",
+        source_graph_id="repo",
+        node_or_edge_id="shared-provenance",
+        snippet="duplicate graph fact",
+    )
+    graph = _FakeKnowledgeGraphs(
+        (
+            GraphQueryResult(
+                provider="repo_graph",
+                layer=LAYER_THIRD_BRAIN,
+                items=(graph_item,),
+            ),
+        )
+    )
+    env = MagicMock()
+    env.get_bool.return_value = full_build_enabled
+    adapter = MagicMock()
+    adapter.is_enabled = True
+    adapter.build_ctxctl_messages.return_value = [object()]
+    adapter.select_history.return_value = []
+    original = ContextCtlService.pack_evidence_items
+
+    with (
+        patch("openminion.services.config.resolve_services_env", return_value=env),
+        patch(
+            "openminion.services.context.adapter.ContextCtlGatewayAdapter.from_env",
+            return_value=adapter,
+        ),
+        patch.object(
+            ContextCtlService,
+            "pack_evidence_items",
+            wraps=original,
+        ) as pack_items,
+    ):
+        context = _build_context(
+            knowledge_graphs=graph,
+            memory_strategy=MEMORY_CAPSULE_STRATEGY_DYNAMIC_TURN,
+            memory_dynamic_retrieval_enabled=True,
+            memory=memory,
+        )
+
+    assert memory.selection_calls == 1
+    pack_items.assert_called_once()
+    assert "remembered fact" in context.memory_retrieval_context
+    assert context.knowledge_graph_context == ""
+    assert context.evidence_pack is not None
+    assert [
+        (item.source_kind, item.item_id) for item in context.evidence_pack.items
+    ] == [("memory", "shared-provenance")]
+    assert any(
+        omission.source_kind == "knowledge" and omission.reason == "duplicate"
+        for omission in context.evidence_pack.omissions
+    )
+
+
+def test_typed_memory_evidence_remains_available_without_knowledge_source() -> None:
+    memory = _TypedMemory()
+
+    context = _build_context(
+        knowledge_graphs=None,
+        memory_strategy=MEMORY_CAPSULE_STRATEGY_DYNAMIC_TURN,
+        memory_dynamic_retrieval_enabled=True,
+        memory=memory,
+    )
+
+    assert memory.selection_calls == 1
+    assert "remembered fact" in context.memory_retrieval_context
+    assert context.knowledge_graph_context == ""

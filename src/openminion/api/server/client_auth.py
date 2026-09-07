@@ -17,7 +17,7 @@ from http import HTTPStatus
 from os import PathLike
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 from openminion.api.core.validation import parse_json_request_body
 from openminion.api.responses.serialization import error_response, normalize_request_id
@@ -370,12 +370,15 @@ def _handle_authenticated_media(
 ) -> bool:
     from openminion.api.server.client_media import handle_media_http
 
-    return handle_media_http(
-        handler,
-        method=method.upper(),
-        path=path,
-        query=query or "",
-        request_id=request_id,
+    return cast(
+        bool,
+        handle_media_http(
+            handler,
+            method=method.upper(),
+            path=path,
+            query=query or "",
+            request_id=request_id,
+        ),
     )
 
 
@@ -392,8 +395,13 @@ class ClientAuthHTTPMixin:
     client_response_limited: bool = False
     client_body_limited: bool = False
     close_connection: bool
+    config_path: str | None
+    runtime: Any
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    def _write_sse_event(self, *, event: str, data: object) -> None:
         raise NotImplementedError
 
     def _client_dispatch_context(self) -> dict[str, Any]:
@@ -417,6 +425,49 @@ class ClientAuthHTTPMixin:
             "client_media": getattr(self, "client_media", None),
             "client_identity": self.client_identity,
         }
+
+    def _authorize_request(
+        self,
+        method: str,
+        path: str,
+        request_id: str | None,
+        *,
+        started_at: float,
+        query: str | None = None,
+    ) -> bool:
+        from openminion.api.server.auth import authorize_ipc_request
+
+        if not self.headers.get(CLIENT_TOKEN_HEADER) and not authorize_ipc_request(
+            self,
+            method=method,
+            path=path,
+            request_id=request_id,
+            started_at=started_at,
+        ):
+            return False
+        return self._authenticate_request(method, path, request_id, query=query)
+
+    def _handle_client_turn_stream(
+        self, *, body: dict[str, Any], request_id: str | None
+    ) -> None:
+        from openminion.api.server import observability
+        from openminion.api.server.client_streaming import handle_turn_stream_request
+        from openminion.api.server.streaming import start_sse_stream_response
+
+        handle_turn_stream_request(
+            body=body,
+            request_id=request_id,
+            config_path=self.config_path,
+            runtime=self.runtime,
+            start_sse_response=lambda: start_sse_stream_response(self, request_id),
+            write_sse_event=self._write_sse_event,
+            write_json=self._write_json,
+            observe_request_metrics=observability.observe_request_metrics,
+            log_request_done=observability.log_request_done,
+            perf_counter=perf_counter,
+            desktop_client=self.client_identity is not None,
+            **self._client_stream_context(),
+        )
 
     def _authenticate_request(
         self,
@@ -564,9 +615,12 @@ class ClientAuthHTTPMixin:
             raw_body = self.rfile.read(content_length).decode("utf-8")
         except UnicodeDecodeError as exc:
             raise ValueError("Request body must be valid UTF-8.") from exc
-        return parse_json_request_body(
-            content_length_raw=content_length_raw,
-            raw_body=raw_body,
+        return cast(
+            dict[str, Any],
+            parse_json_request_body(
+                content_length_raw=content_length_raw,
+                raw_body=raw_body,
+            ),
         )
 
 

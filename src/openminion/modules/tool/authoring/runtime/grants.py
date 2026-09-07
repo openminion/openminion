@@ -19,6 +19,7 @@ class _PolicyGrantPayload:
     reason: str | None = None
     created_trace_id: str | None = None
     risk_floor: str | None = None
+    approval_id: str | None = None
 
 
 def issue_power_user_grant(

@@ -6,6 +6,29 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from openminion.modules.tool.contracts.display_names import (
+    display_name_for_tool_name,
+)
+from openminion.modules.tool.contracts.model_ids import (
+    MODEL_CODE_GREP,
+    MODEL_CODE_PATCH,
+    MODEL_CODE_SYMBOL_FIND,
+    MODEL_EXEC_RUN,
+    MODEL_FILE_EDIT,
+    MODEL_FILE_READ,
+    MODEL_FILE_READ_RANGE,
+    MODEL_FILE_SEARCH,
+    MODEL_FILE_WRITE,
+    MODEL_MEMORY_SEARCH,
+    MODEL_OPS_COMMAND_RUN,
+    MODEL_OPS_FILE_READ,
+    MODEL_WEB_FETCH,
+    MODEL_WEB_SEARCH,
+)
+from openminion.modules.tool.contracts.normalization import (
+    normalize_raw_model_tool_name,
+)
+
 MARKER_OK = "●"
 MARKER_FAIL = "✗"
 MARKER_RUNNING = "⏳"
@@ -13,6 +36,34 @@ MARKER_RUNNING = "⏳"
 _COMMAND_PREVIEW_MAX = 80
 _QUERY_PREVIEW_MAX = 80
 _FALLBACK_PREVIEW_MAX = 80
+
+_PUBLIC_TOOL_ACTIVITY: dict[str, tuple[str, str]] = {
+    MODEL_WEB_SEARCH: ("Searching the web...", "Searched the web."),
+    MODEL_WEB_FETCH: ("Reading a source...", "Read a source."),
+    MODEL_EXEC_RUN: ("Running a command...", "Ran a command."),
+    MODEL_OPS_COMMAND_RUN: ("Running a command...", "Ran a command."),
+    MODEL_FILE_READ: ("Reading a file...", "Read a file."),
+    MODEL_FILE_READ_RANGE: ("Reading a file...", "Read a file."),
+    MODEL_OPS_FILE_READ: ("Reading a file...", "Read a file."),
+    MODEL_FILE_EDIT: ("Editing a file...", "Edited a file."),
+    MODEL_CODE_PATCH: ("Editing a file...", "Edited a file."),
+    MODEL_FILE_WRITE: ("Writing a file...", "Wrote a file."),
+    MODEL_FILE_SEARCH: ("Searching files...", "Searched files."),
+    MODEL_CODE_GREP: ("Searching files...", "Searched files."),
+    MODEL_CODE_SYMBOL_FIND: ("Searching files...", "Searched files."),
+    MODEL_MEMORY_SEARCH: ("Searching memory...", "Searched memory."),
+}
+
+
+def format_public_tool_activity(tool_name: str, *, pending: bool) -> str:
+    canonical = normalize_raw_model_tool_name(tool_name)
+    if canonical is None:
+        return "Using a tool..." if pending else "Finished using a tool."
+    specialized = _PUBLIC_TOOL_ACTIVITY.get(canonical)
+    if specialized is not None:
+        return specialized[0] if pending else specialized[1]
+    display_name = display_name_for_tool_name(canonical)
+    return f"{display_name} in progress..." if pending else f"{display_name} finished."
 
 
 def format_tool_call_line(
@@ -57,10 +108,17 @@ def format_tool_call_line(
     return f"{line} {duration_suffix}" if duration_suffix else line
 
 
-def format_tool_args_preview(tool_name: str, args: Mapping[str, Any] | None) -> str:
+def format_tool_args_preview(
+    tool_name: str,
+    args: Mapping[str, Any] | None,
+    *,
+    compact: bool = True,
+) -> str:
     """Render an args preview per spec §7.2.
 
     Empty / missing args -> `""` (caller wraps with parentheses).
+    Security-sensitive callers may set ``compact=False`` when complete values
+    are required.
     """
     args_dict = dict(args or {})
     if not args_dict:
@@ -75,7 +133,10 @@ def format_tool_args_preview(tool_name: str, args: Mapping[str, Any] | None) -> 
             or _join_args_string(args_dict.get("args"))
         )
         if command:
-            return _quote(_truncate_middle(command, _COMMAND_PREVIEW_MAX))
+            rendered = (
+                _truncate_middle(command, _COMMAND_PREVIEW_MAX) if compact else command
+            )
+            return _quote(rendered)
 
     if name in {"web.search", "code.grep", "code.symbol_find"}:
         query = (
@@ -84,7 +145,8 @@ def format_tool_args_preview(tool_name: str, args: Mapping[str, Any] | None) -> 
             or str(args_dict.get("pattern", "") or "")
         )
         if query:
-            return _quote(_truncate_middle(query, _QUERY_PREVIEW_MAX))
+            rendered = _truncate_middle(query, _QUERY_PREVIEW_MAX) if compact else query
+            return _quote(rendered)
 
     path = (
         str(args_dict.get("path", "") or "")
@@ -94,15 +156,15 @@ def format_tool_args_preview(tool_name: str, args: Mapping[str, Any] | None) -> 
     if path and (
         name.startswith("file.") or name.startswith("code.") or name == "web.fetch"
     ):
-        return _quote(_short_path(path))
+        return _quote(_short_path(path) if compact else path)
 
     try:
-        compact = json.dumps(
+        serialized = json.dumps(
             args_dict, sort_keys=True, default=str, separators=(",", ":")
         )
     except (TypeError, ValueError):
-        compact = str(args_dict)
-    return _truncate_middle(compact, _COMMAND_PREVIEW_MAX)
+        serialized = str(args_dict)
+    return _truncate_middle(serialized, _COMMAND_PREVIEW_MAX) if compact else serialized
 
 
 def format_tool_provenance_marker(
@@ -222,6 +284,7 @@ __all__ = [
     "MARKER_OK",
     "MARKER_FAIL",
     "MARKER_RUNNING",
+    "format_public_tool_activity",
     "format_tool_call_line",
     "format_tool_args_preview",
     "format_tool_provenance_marker",

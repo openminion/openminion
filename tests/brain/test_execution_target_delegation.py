@@ -74,7 +74,8 @@ def test_build_delegated_decision_uses_structured_execution_target() -> None:
     internal = build_delegated_decision(decision=decision, goal="research events")
 
     assert not hasattr(internal, "mode")
-    assert getattr(internal, "target_capability") == "research"
+    assert getattr(internal, "target_agent_id") == "research-specialist"
+    assert not hasattr(internal, "target_capability")
 
 
 def test_build_delegated_decision_preserves_raw_goal_without_structured_delegate_goal() -> (

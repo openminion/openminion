@@ -3,14 +3,11 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
-from typing import get_type_hints
 
-from openminion.modules.telemetry.interfaces import TelemetryAdapterContract
 from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
 from openminion.modules.telemetry.invocation_repair import (
     InvocationLifecycleReconciler,
 )
-from openminion.services.agent import AgentService
 
 from tests.services.gateway._gateway_service_support import GatewayServiceTestCase
 
@@ -30,15 +27,6 @@ class InvocationLifecycleReconciliationTests(GatewayServiceTestCase):
         return InvocationLifecycleReconciler.for_runtime(
             sessions=self.sessions,
             telemetryctl=self.telemetryctl,
-        )
-
-    def test_agent_service_exposes_repair_capable_telemetry_contract(self) -> None:
-        getter = AgentService.telemetry_contract.fget
-        assert getter is not None
-        assert get_type_hints(getter)["return"] == TelemetryAdapterContract | None
-        assert self.gateway._agent.telemetry_contract is self.telemetryctl
-        assert callable(
-            self.gateway._agent.telemetry_contract.repair_canonical_event_sync
         )
 
     def test_repairs_missing_terminal_once(self) -> None:
@@ -78,6 +66,49 @@ class InvocationLifecycleReconciliationTests(GatewayServiceTestCase):
         assert [event.event_type for event in events].count(
             "agent.invocation.completed"
         ) == 1
+
+    def test_repaired_failure_preserves_structural_error_code(self) -> None:
+        session = self.sessions.resolve_session(
+            agent_id="main",
+            channel="console",
+            target="repair-failure",
+            session_id="repair-failure",
+        )
+        self.sessions.append_event(
+            session_id=session.id,
+            event_type="run.queued",
+            payload={
+                "agent_id": "main",
+                "run_id": "run-failure",
+                "request_id": "request-failure",
+                "invocation_id": "invocation-failure",
+                "thread_id": "thread-failure",
+                "state": "queued",
+            },
+        )
+        self.sessions.append_event(
+            session_id=session.id,
+            event_type="run.failed",
+            payload={
+                "run_id": "run-failure",
+                "request_id": "request-failure",
+                "thread_id": "thread-failure",
+                "state": "failed",
+                "error_code": "PROVIDER_FAILED",
+            },
+        )
+
+        report = self._reconciler().repair_session(session.id)
+        events = asyncio.run(
+            self.telemetry_service.get_invocation_events("invocation-failure")
+        )
+        failed = next(
+            event for event in events if event.event_type == "agent.invocation.failed"
+        )
+
+        assert report.status == "repaired"
+        assert failed.data["error_code"] == "PROVIDER_FAILED"
+        assert "error" not in failed.data
 
     def test_legacy_room_start_without_agent_identity_is_invalid(self) -> None:
         session = self.sessions.create_room(

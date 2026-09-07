@@ -1,6 +1,6 @@
 # Agent Examples
 
-`openminion/examples/agents/` holds small bundle-style agent examples.
+`examples/agents/` holds small bundle-style agent examples.
 
 Start with:
 

@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
+from openminion.modules.brain.loop.constants import (
+    RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY,
+    RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY,
+)
 from openminion.modules.brain.schemas import FinalizationStatus
 from openminion.modules.llm.schemas import Message
 from openminion.modules.llm import ProviderError
@@ -16,13 +20,17 @@ from .budget_finalization import (
 from .contracts import (
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
     ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
+    ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
     AdaptiveToolLoopOutcome,
 )
 from .direct_tool import (
     _direct_tool_turn_active,
     _remaining_direct_tool_name_sequence,
 )
-from .evidence import _successful_substantive_tool_results
+from .evidence import (
+    _has_unresolved_tool_failure,
+    _successful_substantive_tool_results,
+)
 from .postprocess.rules import (
     _final_answer_references_unbacked_source_urls,
     _looks_like_unexecutable_tool_payload_text,
@@ -32,6 +40,11 @@ from .postprocess.evidence_closeout import (
     MUTATING_FILE_CLOSEOUT_KEY,
     mutating_file_evidence_fallback_text,
     tool_evidence_closeout_text,
+)
+from .plan_control import (
+    PLAN_CLOSEOUT_SALVAGE_TEXT_SCRATCHPAD_KEY,
+    completable_active_plan_id,
+    unresolved_active_plan_step_ids,
 )
 from .iteration.helpers import (
     _count_substantive_non_control_tool_results,
@@ -131,6 +144,82 @@ def _retry_empty_typed_finalization_after_tool_results(
     )
 
 
+def _argument_retry(
+    runner: Any,
+    finalization_status: Any,
+    normalized_final_text: str,
+) -> tuple[bool, None] | None:
+    scratchpad = runner.loop_state.scratchpad
+    pending = scratchpad.get(RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY)
+    if not isinstance(pending, str) or not pending.strip():
+        return None
+    if isinstance(finalization_status, dict) and finalization_status.get("status") == (
+        "blocked"
+    ):
+        return None
+    if bool(scratchpad.get(RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY, False)):
+        return None
+    scratchpad[RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY] = True
+    tool_name = pending.strip()
+    return runner._retry_with_system_message(
+        f"The prior {tool_name} call failed because its structured arguments were "
+        "invalid, and the correction guidance is already in context. Make one "
+        "corrected tool call now. Do not repeat the same arguments and do not "
+        "guess or rewrite paths in prose. If no valid correction is possible, "
+        "return a truthful finalization_status with status=blocked.",
+        discard_assistant_text=normalized_final_text,
+    )
+
+
+def _failed_exec_retry(
+    runner: Any,
+    finalization_status: Any,
+    normalized_final_text: str,
+) -> tuple[bool, AdaptiveToolLoopOutcome | None] | None:
+    if str(getattr(runner.profile, "profile_name", "") or "").strip() != (
+        "general_adaptive_v1"
+    ):
+        return None
+    if not _has_unresolved_tool_failure(runner.loop_state, tool_name="exec.run"):
+        return None
+    status = str(getattr(finalization_status, "status", "") or "").strip()
+    if isinstance(finalization_status, dict):
+        status = str(finalization_status.get("status", "") or "").strip()
+    if status in {"blocked", "incomplete"}:
+        return None
+    scratchpad = runner.loop_state.scratchpad
+    retry_key = "unresolved_exec_failure_retry_used"
+    if not bool(scratchpad.get(retry_key, False)):
+        scratchpad[retry_key] = True
+        return runner._retry_with_system_message(
+            "A prior exec.run call failed and no later exec.run call has succeeded. "
+            "Use the failure facts already in context, make any needed correction, "
+            "and rerun the verifier. Do not return finalization_status "
+            "status=final_answer while that failure remains unresolved. If the work "
+            "cannot continue, return status=incomplete or status=blocked instead.",
+            discard_assistant_text=normalized_final_text,
+        )
+    runner.loop_state.termination_reason = ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
+    emit_adaptive_status(
+        runner.loop_ctx,
+        profile=runner.profile,
+        loop_state=runner.loop_state,
+        detail_text=f"{runner.public_mode_tag} unresolved exec failure",
+        mode_state="tool_failure_no_recovery",
+        termination_reason=ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
+    )
+    return False, AdaptiveToolLoopOutcome(
+        profile_name=runner.profile.profile_name,
+        mode_name=runner.profile.mode_name,
+        termination_reason=ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
+        state=runner.loop_state,
+        allowed_tools=runner.allowed_tools,
+        error_message=(
+            "General act work ended while the latest exec.run result was still failed."
+        ),
+    )
+
+
 def _requested_direct_tool_not_executed_outcome(
     runner: Any,
 ) -> tuple[bool, AdaptiveToolLoopOutcome | None]:
@@ -169,6 +258,56 @@ def _retry_confident_complete_without_answer(
     return runner._retry_with_system_message(
         "You emitted confident_complete without a final answer. Provide "
         "the user-visible final answer text before the trailer."
+    )
+
+
+def _unresolved_plan_retry(
+    runner: Any,
+    *,
+    finalization_status: Any,
+    normalized_final_text: str,
+) -> tuple[bool, None] | None:
+    status = str(getattr(finalization_status, "status", "") or "").strip()
+    if isinstance(finalization_status, dict):
+        status = str(finalization_status.get("status", "") or "").strip()
+    if status in {"blocked", "incomplete"} or not normalized_final_text:
+        return None
+    unresolved_step_ids = unresolved_active_plan_step_ids(runner.loop_ctx)
+    if unresolved_step_ids:
+        return runner._retry_with_system_message(
+            "The active task plan still has unresolved typed steps: "
+            f"{', '.join(unresolved_step_ids)}. Continue the work and update those "
+            "steps through the plan tool before returning a success answer. If the "
+            "work cannot continue, return typed status=incomplete or status=blocked.",
+            discard_assistant_text=normalized_final_text,
+        )
+    plan_id = completable_active_plan_id(runner.loop_ctx)
+    if not plan_id:
+        return None
+    runner.loop_state.scratchpad[PLAN_CLOSEOUT_SALVAGE_TEXT_SCRATCHPAD_KEY] = (
+        normalized_final_text
+    )
+    return runner._retry_with_system_message(
+        "Every typed step in the active task plan is completed, but the plan is "
+        f"still active. Call the plan tool with action=complete and plan_id={plan_id} "
+        "before returning the success answer.",
+        discard_assistant_text=normalized_final_text,
+    )
+
+
+def _no_tool_retry(
+    runner: Any,
+    finalization_status: Any,
+    normalized_final_text: str,
+) -> tuple[bool, AdaptiveToolLoopOutcome | None] | None:
+    return (
+        _argument_retry(runner, finalization_status, normalized_final_text)
+        or _failed_exec_retry(runner, finalization_status, normalized_final_text)
+        or _unresolved_plan_retry(
+            runner,
+            finalization_status=finalization_status,
+            normalized_final_text=normalized_final_text,
+        )
     )
 
 
@@ -307,14 +446,16 @@ class AdaptiveLoopRunnerNoToolMixin:
             loop_state=self.loop_state,
         )
         finalization_status = payloads[STATE_KEY_FINALIZATION_STATUS]
-        final_text = payloads["final_text"]
         salvage_text = payloads["salvage_text"]
         confident_complete = payloads["confident_complete"]
+        final_text = payloads["final_text"]
         normalized_final_text = str(final_text or "").strip()
         if getattr(prepared.response, "empty_payload_recovered", False) is True:
-            retry_key = "empty_payload_recovery_retry_used"
-            if not bool(self.loop_state.scratchpad.get(retry_key, False)):
-                self.loop_state.scratchpad[retry_key] = True
+            retry_key = "empty_payload_recovery_retry_count"
+            retry_count = int(self.loop_state.scratchpad.get(retry_key, 0) or 0)
+            max_retries = self.loop_ctx.provider_retry_max_attempts - 1
+            if retry_count < max_retries:
+                self.loop_state.scratchpad[retry_key] = retry_count + 1
                 return self._retry_with_system_message(
                     "The previous provider response contained no usable answer or "
                     "tool call. Continue from the structured context already "
@@ -322,9 +463,13 @@ class AdaptiveLoopRunnerNoToolMixin:
                     discard_assistant_text=normalized_final_text,
                 )
             raise ProviderError(
-                "Provider returned no usable response after one recovery retry",
+                "Provider returned no usable response after configured retries",
                 code="EMPTY_PROVIDER_RESPONSE",
             )
+        self.loop_state.scratchpad.pop("empty_payload_recovery_retry_count", None)
+        retry = _no_tool_retry(self, finalization_status, normalized_final_text)
+        if retry is not None:
+            return retry
         raw_payload_repair = self._repair_raw_tool_payload_final_text(
             normalized_final_text
         )

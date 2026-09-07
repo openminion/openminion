@@ -11,10 +11,18 @@ import uuid
 
 OPENMINION_ROOT = Path(__file__).resolve().parents[3]
 OPENMINION_SRC = OPENMINION_ROOT / "src"
+OPENMINION_EVAL_SRC = OPENMINION_ROOT.parent / "openminion-eval" / "src"
 if str(OPENMINION_ROOT) not in sys.path:
     sys.path.insert(0, str(OPENMINION_ROOT))
 if str(OPENMINION_SRC) not in sys.path:
     sys.path.insert(0, str(OPENMINION_SRC))
+if OPENMINION_EVAL_SRC.is_dir() and str(OPENMINION_EVAL_SRC) not in sys.path:
+    sys.path.insert(0, str(OPENMINION_EVAL_SRC))
+
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
+if __name__ == "__main__":
+    isolate_runtime_roots(prefix="openminion-nl-skill-baseline-")
 
 from openminion.base.generated_paths import resolve_generated_root  # noqa: E402
 from openminion.modules.session.storage.sqlite_store import (  # noqa: E402
@@ -43,7 +51,6 @@ from tests.helpers.live_skill_targets import (  # noqa: E402
     representative_skill_dense_targets,
     validate_skill_live_target,
 )
-from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -236,7 +243,6 @@ def _load_session_events(*, data_root: Path, event_session_id: str) -> list[dict
 
 
 def main() -> int:
-    isolate_runtime_roots(prefix="openminion-nl-skill-baseline-")
     args = parse_args()
     manifest_version, scenarios = load_nl_named_skill_manifest()
     prompt_variant_version, prompt_variants = load_nl_named_skill_prompt_variants()

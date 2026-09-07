@@ -1,7 +1,7 @@
 # CLI Chat Smoke Test Fixtures Index
 
 **Purpose**: Canonical skill example fixtures for CLI chat smoke testing.
-**Location**: `openminion/examples/skills/cli-chat-smoke/`
+**Location**: `examples/skills/cli-chat-smoke/`
 
 ## Valid Fixtures
 
@@ -16,7 +16,7 @@
 
 Ingest a skill:
 ```
-/skill ingest openminion/examples/skills/cli-chat-smoke/plan/SKILL.md
+/skill ingest examples/skills/cli-chat-smoke/plan/SKILL.md
 ```
 
 Use the skill:

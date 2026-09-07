@@ -781,6 +781,7 @@ class PlanToolPaeIntegrationTests(unittest.TestCase):
         from openminion.modules.brain.loop.tools.plan_control import (
             PLAN_ACTION_COMPLETE,
             PLAN_ACTION_DECLARE,
+            PLAN_ACTION_STEP_COMPLETED,
             handle_plan_tool_call,
         )
 
@@ -797,6 +798,15 @@ class PlanToolPaeIntegrationTests(unittest.TestCase):
             },
         )
         self.assertEqual(len(cron.jobs), 1)
+        handle_plan_tool_call(
+            loop_ctx=loop_ctx,
+            arguments={
+                "action": PLAN_ACTION_STEP_COMPLETED,
+                "plan_id": "p1",
+                "step_id": "s1",
+                "outcome": "success",
+            },
+        )
         handle_plan_tool_call(
             loop_ctx=loop_ctx,
             arguments={

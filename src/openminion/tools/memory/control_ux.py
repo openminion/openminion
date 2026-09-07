@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from openminion.modules.memory import build_normalized_key
 from openminion.modules.tool.contracts import ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.registry import ToolRegistry
@@ -73,6 +74,10 @@ def run_memory_control_scenario(
         arguments={
             "scope": scenario.scope,
             "record_type": scenario.record_type,
+            "key": build_normalized_key(
+                kind=scenario.record_type,
+                slug="memory_control_original",
+            ),
             "title": scenario.title,
             "content": scenario.content,
             "tags": list(scenario.tags),
@@ -103,6 +108,10 @@ def run_memory_control_scenario(
         arguments={
             "scope": scenario.scope,
             "record_type": scenario.record_type,
+            "key": build_normalized_key(
+                kind=scenario.record_type,
+                slug="memory_control_correction",
+            ),
             "title": scenario.correction_title,
             "content": correction_content,
             "tags": [*scenario.tags, "correction"],

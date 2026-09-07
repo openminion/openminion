@@ -28,9 +28,8 @@ Internal modules of note:
 
 - `session.py` — `SessionContextService`
 - `adapter.py` — `ContextCtlGatewayAdapter`
-- `budget.py`, `pack/semantics.py` — budget config and budget rules
-- `cleanup.py` — `SessionCleanupUtility`
-- `slices.py` — session → segment translation
+- `openminion.modules.context.budget` — budget config and assembly
+- `openminion.modules.session.diagnostics.cleanup` — `SessionCleanupUtility`
 - `constants.py` — fixed internal names shared across the package
 
 ## Owned objects
@@ -51,7 +50,7 @@ Internal modules of note:
 - `modules/context/` — segment assembly, ranking, capsule primitives.
 - `modules/session/` — session record shape.
 - `modules/storage/` — capsule + summary persistence.
-- `base/paths.py` — archive-root layout.
+- `services/bootstrap/paths.py` — archive-root layout.
 
 ## How this differs from `modules/`
 

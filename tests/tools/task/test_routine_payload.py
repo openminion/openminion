@@ -74,6 +74,29 @@ def test_task_watch_args_accepts_routine_field() -> None:
     assert parsed.routine.config.repo == "hello-world"
 
 
+def test_task_watch_args_accepts_json_encoded_typed_routine() -> None:
+    args_dict = _baseline_watch_args()
+    args_dict["routine"] = (
+        '{"routine_kind":"github_pr_review",'
+        '"config":{"owner":"octocat","repo":"hello-world"}}'
+    )
+
+    parsed = TaskWatchArgs.model_validate(args_dict)
+
+    assert parsed.routine is not None
+    assert parsed.routine.routine_kind == "github_pr_review"
+
+
+def test_task_watch_schema_guides_typed_social_routine_creation() -> None:
+    description = TaskWatchArgs.model_json_schema()["properties"]["routine"][
+        "description"
+    ]
+
+    assert "typed routine object" in description
+    assert "routine_kind='social_signal'" in description
+    assert "stop_on_condition=false" in description
+
+
 def test_task_watch_args_routine_unknown_kind_fails() -> None:
     args_dict = _baseline_watch_args()
     args_dict["routine"] = {
@@ -130,3 +153,26 @@ def test_plain_watch_still_accepts_interval_below_5_minutes() -> None:
     parsed = TaskWatchArgs.model_validate(args_dict)
     assert parsed.interval_minutes == 1
     assert parsed.routine is None
+
+
+def test_social_routine_requires_continuous_monitoring() -> None:
+    args_dict = _baseline_watch_args()
+    args_dict["interval_minutes"] = 15
+    args_dict["routine"] = {
+        "routine_kind": "social_signal",
+        "config": {
+            "sources": [
+                {
+                    "source_kind": "rss_atom",
+                    "source_id": "releases",
+                    "label": "Releases",
+                    "url": "https://example.com/releases.atom",
+                    "allowed_final_origins": ["example.com"],
+                }
+            ],
+            "topics": ["releases"],
+        },
+    }
+
+    with pytest.raises(ValidationError, match="stop_on_condition=false"):
+        TaskWatchArgs.model_validate(args_dict)

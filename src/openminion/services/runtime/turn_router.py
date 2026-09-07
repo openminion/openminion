@@ -21,6 +21,7 @@ class TurnRouter:
         message: str,
         participants: Iterable[RoomParticipant],
         requested_agent_id: str,
+        configured_agent_ids: Iterable[str] = (),
     ) -> TurnRoutingDecision:
         active_agents = [
             participant
@@ -56,14 +57,30 @@ class TurnRouter:
             for match in _MENTION_PATTERN.finditer(str(message or ""))
             if match.group(1).strip()
         }
-        if mentions:
-            addressed = [
-                item.participant_id
+        configured_by_key = {
+            str(agent_id).strip().lower(): str(agent_id).strip()
+            for agent_id in configured_agent_ids
+            if str(agent_id).strip()
+        }
+        addressed_keys = mentions.intersection(configured_by_key)
+        if len(addressed_keys) > 1:
+            raise ValueError(
+                "Address one agent per turn; use broadcast or sequential routing."
+            )
+        if addressed_keys:
+            addressed_key = next(iter(addressed_keys))
+            active_by_key = {
+                item.participant_id.lower(): item.participant_id
                 for item in active_agents
-                if item.participant_id.lower() in mentions
-            ]
-            if addressed:
-                return TurnRoutingDecision(mode=mode, agent_ids=tuple(addressed))
+            }
+            if addressed_key not in active_by_key:
+                agent_id = configured_by_key[addressed_key]
+                raise ValueError(
+                    f"Agent '{agent_id}' is not an active room participant."
+                )
+            return TurnRoutingDecision(
+                mode=mode, agent_ids=(active_by_key[addressed_key],)
+            )
 
         active_agent_id = str(getattr(session, "active_agent_id", "") or "").strip()
         if active_agent_id:

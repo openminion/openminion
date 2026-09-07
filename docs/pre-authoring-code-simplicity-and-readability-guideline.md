@@ -1,7 +1,7 @@
 # OpenMinion Pre-Authoring Code Simplicity and Readability
 
 Status: active
-Last updated: 2026-06-30
+Last updated: 2026-09-06
 
 Purpose: give contributors a package-local summary of how to write simpler,
 more readable OpenMinion code from the start so less cleanup is needed later.
@@ -86,5 +86,5 @@ Read this doc together with:
 2. [`code-quality-enforcement.md`](code-quality-enforcement.md)
 3. [`testing-and-validation.md`](testing-and-validation.md)
 
-The broader workspace reference goes deeper, but this package-local summary is
+The maintainer reference goes deeper, but this package-local summary is
 the contributor-facing rulebook for writing simpler OpenMinion code up front.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 from types import SimpleNamespace
 
@@ -12,8 +13,12 @@ from openminion.cli.presentation.contracts import OverlayPresenter
 class _StubSession:
     def __init__(self, replies: list[str | Exception]) -> None:
         self._replies = list(replies)
+        self.prompts: list[str] = []
+        self.prompt_options: list[dict[str, object]] = []
 
     async def prompt_async(self, *args, **kwargs):
+        self.prompts.append(str(args[0]) if args else "")
+        self.prompt_options.append(dict(kwargs))
         if not self._replies:
             raise EOFError()
         next_reply = self._replies.pop(0)
@@ -72,11 +77,32 @@ def test_resume_picker_no_sessions_returns_none() -> None:
 
 
 def test_approval_yes_returns_allow() -> None:
-    console, _ = _make_console()
-    overlay = TerminalOverlayPresenter(
-        console=console, prompt_session=_StubSession(["y"])
-    )
+    console, output = _make_console()
+    session = _StubSession(["y"])
+    overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
     assert overlay.present_approval("Run dangerous command?") == "allow"
+    assert output.getvalue() == "Run dangerous command?\n"
+    assert session.prompts == ["[y]es / [N]o / [a]lways: "]
+
+
+def test_approval_prints_full_long_command_outside_input_prompt() -> None:
+    console, output = _make_console()
+    session = _StubSession(["n"])
+    overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
+    command = (
+        'Approval required: exec.run("ssh -o BatchMode=yes '
+        '-o ConnectTimeout=3 -o StrictHostKeyChecking=yes localhost true")'
+    )
+
+    assert overlay.present_approval(command) == "deny"
+
+    rendered = output.getvalue()
+    assert "BatchMode=yes" in rendered
+    assert "ConnectTimeout=3" in rendered
+    assert "StrictHostKeyChecking=yes" in rendered
+    assert 'localhost true")' in rendered
+    assert "…" not in rendered
+    assert session.prompts == ["[y]es / [N]o / [a]lways: "]
 
 
 def test_approval_always_returns_always() -> None:
@@ -128,3 +154,24 @@ def test_confirm_keyboard_interrupt_returns_false() -> None:
         prompt_session=_StubSession([KeyboardInterrupt()]),
     )
     assert overlay.present_confirm("Exit focus mode?") is False
+
+
+def test_prompt_masks_secret_input() -> None:
+    console, _ = _make_console()
+    session = _StubSession(["secret"])
+    overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
+
+    result = asyncio.run(overlay.present_prompt_async("API key: ", secret=True))
+
+    assert result == "secret"
+    assert session.prompt_options == [{"is_password": True}]
+
+
+def test_prompt_eof_returns_none() -> None:
+    console, _ = _make_console()
+    overlay = TerminalOverlayPresenter(
+        console=console,
+        prompt_session=_StubSession([EOFError()]),
+    )
+
+    assert asyncio.run(overlay.present_prompt_async("Model: ")) is None

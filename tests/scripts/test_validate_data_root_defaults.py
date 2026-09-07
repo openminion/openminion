@@ -109,3 +109,50 @@ def test_test_runtime_root_validation_reports_missing_shared_helper(
     assert data_root_defaults.main() == 1
     captured = capsys.readouterr()
     assert "missing shared runtime-root helper" in captured.err
+
+
+def test_test_runtime_root_validation_rejects_late_runner_isolation(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    tests_dir = _configure_validator(monkeypatch, tmp_path)
+    (tests_dir / "conftest.py").write_text(
+        'monkeypatch.setenv("OPENMINION_HOME", "tmp")\n'
+        'monkeypatch.setenv("OPENMINION_DATA_ROOT", "tmp/data")\n'
+        'monkeypatch.delenv("OPENMINION_GENERATED_ROOT", raising=False)\n',
+        encoding="utf-8",
+    )
+    runners_dir = tests_dir / "e2e" / "runners"
+    runners_dir.mkdir(parents=True)
+    (runners_dir / "run_late.py").write_text(
+        "from openminion.base.config import ConfigManager\n"
+        "isolate_runtime_roots(prefix='late-')\n",
+        encoding="utf-8",
+    )
+
+    assert data_root_defaults.main() == 1
+    captured = capsys.readouterr()
+    assert "runtime-root isolation must precede OpenMinion imports" in captured.err
+
+
+def test_test_runtime_root_validation_rejects_unmanaged_direct_test(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    tests_dir = _configure_validator(monkeypatch, tmp_path)
+    (tests_dir / "conftest.py").write_text(
+        'monkeypatch.setenv("OPENMINION_HOME", "tmp")\n'
+        'monkeypatch.setenv("OPENMINION_DATA_ROOT", "tmp/data")\n'
+        'monkeypatch.delenv("OPENMINION_GENERATED_ROOT", raising=False)\n',
+        encoding="utf-8",
+    )
+    direct_test = tests_dir / "memory" / "test_direct.py"
+    direct_test.parent.mkdir()
+    direct_test.write_text(
+        "from openminion.base.config import ConfigManager\n"
+        "if __name__ == '__main__':\n"
+        "    print(ConfigManager)\n",
+        encoding="utf-8",
+    )
+
+    assert data_root_defaults.main() == 1
+    captured = capsys.readouterr()
+    assert "unmanaged executable test runtime roots" in captured.err

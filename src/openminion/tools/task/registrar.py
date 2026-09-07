@@ -31,6 +31,17 @@ if TYPE_CHECKING:
     from openminion.modules.tool.registry import ToolRegistry
 
 
+_WATCH_DESCRIPTION = (
+    "Create a proactive monitoring watch backed by the cron scheduler. RSS, Atom, "
+    "YouTube-feed, and GitHub PR requests require the matching typed routine object; "
+    "do not create a plain watch for them. Use the declared schema fields rather than "
+    "shorthand arguments. A continuous social feed sets description, "
+    "check_instruction, alert_condition, interval_minutes, delivery='none', "
+    'stop_on_condition=false, and routine={"routine_kind":"social_signal",'
+    '"config":{"sources":[...],"topics":[...]}}.'
+)
+
+
 class TaskRegistrar:
     module_id = "task"
     is_provider_only = False
@@ -62,7 +73,7 @@ class TaskRegistrar:
                 ),
                 ModelToolDef(
                     model_tool_id=MODEL_TASK_WATCH,
-                    description="Create a proactive monitoring watch backed by the cron scheduler",
+                    description=_WATCH_DESCRIPTION,
                     parameters={},
                     aliases=(),
                 ),

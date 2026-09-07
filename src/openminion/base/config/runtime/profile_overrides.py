@@ -159,8 +159,6 @@ def run_profile_overrides_from_mapping(
         (payload[key] for key in permission_keys if payload.get(key)),
         None,
     )
-    if provider:
-        _provider_config_field_name(provider)
     return RunProfileOverrides(
         provider=provider,
         model=_override(payload, "override_model", "override-model"),

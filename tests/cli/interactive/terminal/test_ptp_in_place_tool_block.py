@@ -94,8 +94,9 @@ def test_transcript_routes_tool_started_to_active_handle() -> None:
         )
         assert handle.has_active_tool() is True
         out = buf.getvalue()
-        assert "Running" in out
-        assert "bash(ls)" in out
+        assert "Using a tool..." in out
+        assert "bash" not in out.lower()
+        assert "ls" not in out
     finally:
         handle.complete(final_text="done")
 
@@ -132,7 +133,7 @@ def test_transcript_no_active_handle_falls_back_to_legacy_print() -> None:
         {"call_id": "c2", "tool_name": "bash", "args": {"command": "ls"}}
     )
     out = buf.getvalue()
-    assert "Running" in out and "bash" in out.lower() or "ls" in out
+    assert "Using a tool..." in out
 
 
 def test_transcript_quiet_mode_skips_handle_and_scrollback() -> None:
@@ -157,7 +158,7 @@ def test_render_in_progress_block_shows_elapsed_when_positive() -> None:
     )
     console.print(block)
     out = buf.getvalue()
-    assert "Running" in out
+    assert "Using a tool..." in out
     assert "1s" in out or "0m01s" in out
 
 
@@ -170,7 +171,7 @@ def test_render_in_progress_block_omits_elapsed_when_zero() -> None:
     console.print(block)
     out = buf.getvalue()
     # Elapsed only renders when > 0 per FLE-deferred design.
-    assert "Running" in out
+    assert "Using a tool..." in out
     # No leading "·" separator since elapsed is zero.
     assert " · " not in out or "0.0s" not in out
 
@@ -193,8 +194,8 @@ def test_handle_render_elapsed_grows_over_time() -> None:
     Console(file=buf2, force_terminal=False, width=120, no_color=True).print(
         handle._render(force_no_status=True)
     )
-    assert "Running" in buf1.getvalue()
-    assert "Running" in buf2.getvalue()
+    assert "Using a tool..." in buf1.getvalue()
+    assert "Using a tool..." in buf2.getvalue()
 
 
 def test_handle_tool_started_idempotent_on_duplicate_call_id() -> None:

@@ -24,3 +24,7 @@ def main() -> int:
     print(json.dumps(results, indent=2, sort_keys=True))
     print(f"\nWrote benchmark baseline to {module.BASELINE_PATH}")
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

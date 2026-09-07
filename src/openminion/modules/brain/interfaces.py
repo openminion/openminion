@@ -101,13 +101,26 @@ class SessionAPI(Protocol):
         state_inline: dict[str, Any] | None = None,
     ) -> int: ...
 
-    def get_latest_working_state(self, session_id: str) -> dict[str, Any] | None: ...
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict[str, Any] | None: ...
 
     def update_session_status(self, session_id: str, status: str) -> None: ...
 
     def list_turns(self, session_id: str) -> list[dict[str, Any]]: ...
 
-    def list_events(self, session_id: str) -> list[dict[str, Any]]: ...
+    def list_events(
+        self,
+        session_id: str,
+        *,
+        event_type: str | None = None,
+        trace_id: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def get_active_task_plan(self, session_id: str) -> dict[str, Any] | None: ...
 
     def get_slice(
         self,
@@ -250,6 +263,16 @@ class MemoryAPI(Protocol):
         observed_at: str,
         feedback_delta: float,
     ) -> int: ...
+
+    def apply_capture_bundle(
+        self,
+        *,
+        capture_id: str,
+        root_turn_id: str,
+        session_id: str,
+        agent_id: str,
+        candidates: list[dict[str, Any]],
+    ) -> dict[str, Any]: ...
 
 
 @runtime_checkable

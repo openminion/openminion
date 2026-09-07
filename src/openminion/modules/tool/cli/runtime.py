@@ -12,8 +12,8 @@ from pydantic import ValidationError
 
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.modules.telemetry.adapter import create_telemetry_adapter
+from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 from openminion.tools.config import resolve_tool_env
-from openminion.tools.exec.plugin import register as register_exec_tools
 from ..adapters import AllowAllSafetyAdapter, LocalPolicyAdapter
 from ..constants import (
     DEFAULT_TOOL_RUNS_DIRNAME,
@@ -30,7 +30,7 @@ from .runtime_invocation import (
     pinchtab_daemon_config as pinchtab_daemon_config_invocation,
 )
 from ..errors import ToolRuntimeError
-from ..runtime.plugins import load_plugins
+from ..runtime.plugins import discover_plugin_registrars
 from ..runtime.policy import Policy
 from ..registry import ToolRegistry
 from ..registry.catalog import Scope as RegistryScope, ToolSpec
@@ -47,38 +47,11 @@ from ..contracts.schemas import (
     TOOL_ERROR_CONFIRM_REQUIRED,
     Artifact,
     CallRequest,
-    CmdRunArgs,
-    CmdWhichArgs,
     ErrorCode,
-    FsCopyMoveArgs,
-    FsDeleteArgs,
-    FsListDirArgs,
-    FsReadFileArgs,
-    FsSearchArgs,
-    FsWriteFileArgs,
-    ProcDetailsArgs,
-    ProcKillArgs,
-    ProcListArgs,
     LogEntry,
     ResultEnvelope,
-    SysInfoArgs,
 )
 from ..diagnostics.events import emit_tool_exec_operation_for_context
-from ..runtime.tools_core import (
-    h_cmd_run,
-    h_cmd_which,
-    h_fs_copy,
-    h_fs_delete,
-    h_fs_list_dir,
-    h_fs_move,
-    h_fs_read_file,
-    h_fs_search,
-    h_fs_write_file,
-    h_proc_details,
-    h_proc_kill,
-    h_proc_list,
-    h_sys_info,
-)
 
 
 def print_obj(obj: Dict[str, Any], json_out: bool = True) -> None:
@@ -132,97 +105,10 @@ def _resolve_policy_env(policy: Policy) -> Any:
     return resolve_tool_env(runtime_env=_runtime_env_from_policy(policy))
 
 
-_FILE_TOOL_SPECS: tuple[tuple[str, Any, RegistryScope, Any, bool, bool], ...] = (
-    ("list_dir", FsListDirArgs, "READ_ONLY", h_fs_list_dir, False, True),
-    ("read_file", FsReadFileArgs, "READ_ONLY", h_fs_read_file, False, True),
-    ("write_file", FsWriteFileArgs, "WRITE_SAFE", h_fs_write_file, False, True),
-    ("copy", FsCopyMoveArgs, "WRITE_SAFE", h_fs_copy, False, True),
-    ("move", FsCopyMoveArgs, "WRITE_SAFE", h_fs_move, False, True),
-    ("delete", FsDeleteArgs, "WRITE_SAFE", h_fs_delete, True, False),
-    ("search", FsSearchArgs, "READ_ONLY", h_fs_search, False, True),
-)
-
-
-def _register_file_tools(reg: ToolRegistry) -> None:
-    for name, args_model, min_scope, handler, dangerous, idempotent in _FILE_TOOL_SPECS:
-        reg.add(
-            ToolSpec(
-                f"file.{name}",
-                args_model,
-                min_scope,
-                handler,
-                dangerous=dangerous,
-                idempotent=idempotent,
-                tags=("core", "file"),
-            )
-        )
-
-
-def _register_cmd_tools(reg: ToolRegistry) -> None:
-    reg.add(
-        ToolSpec(
-            "cmd.run",
-            CmdRunArgs,
-            "WRITE_SAFE",
-            h_cmd_run,
-            idempotent=False,
-            tags=("core", "cmd"),
-        )
-    )
-    reg.add(
-        ToolSpec(
-            "cmd.which",
-            CmdWhichArgs,
-            "READ_ONLY",
-            h_cmd_which,
-            tags=("core", "cmd"),
-        )
-    )
-
-
-def _register_proc_tools(reg: ToolRegistry) -> None:
-    reg.add(
-        ToolSpec(
-            "proc.list",
-            ProcListArgs,
-            "READ_ONLY",
-            h_proc_list,
-            tags=("core", "proc"),
-        )
-    )
-    reg.add(
-        ToolSpec(
-            "proc.details",
-            ProcDetailsArgs,
-            "READ_ONLY",
-            h_proc_details,
-            tags=("core", "proc"),
-        )
-    )
-    reg.add(
-        ToolSpec(
-            "proc.kill",
-            ProcKillArgs,
-            "POWER_USER",
-            h_proc_kill,
-            dangerous=True,
-            idempotent=False,
-            tags=("core", "proc"),
-        )
-    )
-
-
 def build_registry(policy: Policy) -> tuple[ToolRegistry, list[Dict[str, Any]]]:
-    reg = ToolRegistry()
-    _register_file_tools(reg)
-    _register_cmd_tools(reg)
-    _register_proc_tools(reg)
-    register_exec_tools(reg)
-    reg.add(
-        ToolSpec("sys.info", SysInfoArgs, "READ_ONLY", h_sys_info, tags=("core", "sys"))
-    )
-    plugin_statuses = load_plugins(reg, policy)
-    return reg, plugin_statuses
+    registrars, plugin_statuses = discover_plugin_registrars(policy)
+    bootstrap = build_runtime_bootstrap(plugin_registrars=tuple(registrars))
+    return bootstrap.registry, plugin_statuses
 
 
 def effective_scope(policy: Policy, scope: Optional[str]) -> RegistryScope:

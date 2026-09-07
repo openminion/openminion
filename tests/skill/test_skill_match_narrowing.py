@@ -5,6 +5,7 @@ from typing import Any
 
 from openminion.modules.skill.config import SkillConfig, load_config
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_text_and_admit
 
 
 _SKILL_TEMPLATE = """
@@ -74,7 +75,8 @@ def _ingest_many(
 ) -> None:
     for i in range(count):
         skill_id = f"generic_skill_{i:02d}"
-        ctl.ingest_text(
+        ingest_text_and_admit(
+            ctl,
             name=f"Generic Skill {i:02d}",
             markdown=_build_skill_markdown(
                 skill_id=skill_id,
@@ -84,7 +86,8 @@ def _ingest_many(
             ),
         )
     if distinguished_id is not None:
-        ctl.ingest_text(
+        ingest_text_and_admit(
+            ctl,
             name="Distinguished Linear Sync",
             markdown=_build_skill_markdown(
                 skill_id=distinguished_id,
@@ -190,7 +193,8 @@ def test_skill_match_narrowing_preserves_score_match_ordering(
         )
         # Second distinguished skill: weaker text overlap but matches the
         # tool_id hint that _score_match boosts hard.
-        ctl.ingest_text(
+        ingest_text_and_admit(
+            ctl,
             name="Ferret SSH Helper",
             markdown=_build_skill_markdown(
                 skill_id="tool_matched",

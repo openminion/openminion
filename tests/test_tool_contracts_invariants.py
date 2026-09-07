@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import importlib
 
+from openminion.base.config import OpenMinionConfig
+from openminion.base.config.runtime.tools import (
+    BlockchainToolRuntimeConfig,
+)
 from openminion.modules.tool.contracts import (
     ALL_MODEL_TOOL_IDS,
     ALL_MODEL_TOOL_IDS_SET,
@@ -9,13 +13,31 @@ from openminion.modules.tool.contracts import (
     ALL_RUNTIME_BINDING_IDS_SET,
     normalize_raw_model_tool_name,
 )
-from openminion.modules.tool.bootstrap import _TOOL_BOOTSTRAP_ENTRIES
+from openminion.modules.tool.bootstrap import (
+    _TOOL_BOOTSTRAP_ENTRIES,
+    build_runtime_bootstrap,
+)
 from openminion.modules.tool.runtime.registrar import ToolRegisterContext
 from openminion.modules.tool.runtime.registry_categories import (
     mapped_category_for_tool_name,
 )
 from openminion.modules.tool import build_default_tool_registry
 from tests.test_tool_registry_manager import _get_bootstrap_manager
+
+
+def _get_complete_bootstrap_manager():
+    config = OpenMinionConfig()
+    config.runtime.tools.blockchain = BlockchainToolRuntimeConfig(
+        enabled=True,
+        rpc_url="http://127.0.0.1:8545",
+        chain_id=31337,
+    )
+    return build_runtime_bootstrap(
+        config=config,
+        workspace_root=None,
+        run_root=None,
+        strict=False,
+    ).manager
 
 
 def test_normalize_raw_model_tool_name_handles_wrapper_prefixes() -> None:
@@ -57,7 +79,7 @@ def test_registry_categories_are_canonical_only() -> None:
 
 
 def test_contract_constants_match_compiled_manifest_ids() -> None:
-    mgr = _get_bootstrap_manager()
+    mgr = _get_complete_bootstrap_manager()
     model_to_binding = mgr.model_to_runtime_binding_map()
 
     compiled_model_ids = set(model_to_binding.keys())
@@ -117,7 +139,7 @@ def test_provider_only_registrars_do_not_own_runtime_binding_anchors() -> None:
 
 
 def test_all_model_tool_ids_resolve_to_runtime_binding() -> None:
-    mgr = _get_bootstrap_manager()
+    mgr = _get_complete_bootstrap_manager()
     missing = [mid for mid in ALL_MODEL_TOOL_IDS if not mgr.resolve_binding(mid)]
     assert not missing, (
         f"model tool IDs with no runtime binding after bootstrap: {missing}"
@@ -125,7 +147,7 @@ def test_all_model_tool_ids_resolve_to_runtime_binding() -> None:
 
 
 def test_all_runtime_binding_ids_have_at_least_one_candidate() -> None:
-    mgr = _get_bootstrap_manager()
+    mgr = _get_complete_bootstrap_manager()
     empty = [rid for rid in ALL_RUNTIME_BINDING_IDS if not mgr.runtime_candidates(rid)]
     assert not empty, f"runtime binding IDs with no candidates after bootstrap: {empty}"
 

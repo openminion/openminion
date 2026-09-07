@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from dataclasses import replace
 from typing import Any
 
 from openminion.modules.context.input_boundaries import (
@@ -10,8 +11,13 @@ from openminion.modules.context.input_boundaries import (
 )
 from openminion.modules.skill.constants import RISK_CLASS_LOW
 from openminion.modules.skill.errors import SkillError
+from openminion.modules.skill.interfaces import (
+    SkillIngestAuthority,
+    SkillVerificationEvidence,
+)
 from openminion.base.time import utc_now_iso as iso_now
 from openminion.modules.skill.models import (
+    LintIssue,
     SkillPackage,
     ToolRecipe,
     WorkflowCatalog,
@@ -33,11 +39,9 @@ class SkillCatalogMixin:
     store: Any
     _blob_store: Any
     _record_store: Any
-    _assert_trust_promotion_allowed: Any
     _emit_event: Any
     _emit_skill_counter: Any
     _emit_skill_operation: Any
-    _emit_untrusted_promotion_audit: Any
     _lint_package: Any
     _persist_package: Any
     _resolve_status_filter: Any
@@ -65,6 +69,41 @@ class SkillCatalogMixin:
             )
         return SkillPackage.from_dict(payload)
 
+    def read_skill_resource(
+        self,
+        *,
+        skill_id: str,
+        resource_path: str,
+        version_hash: str | None = None,
+        max_chars: int = 50_000,
+    ) -> dict[str, Any]:
+        package = self.get_skill(skill_id=skill_id, version_hash=version_hash)
+        normalized_path = str(resource_path or "").strip()
+        resource = next(
+            (
+                item
+                for item in package.resources
+                if str(item.get("path") or "") == normalized_path
+            ),
+            None,
+        )
+        if resource is None:
+            raise SkillError(
+                "NOT_FOUND",
+                "Skill resource not found",
+                {"skill_id": skill_id, "resource_path": normalized_path},
+            )
+        limit = max(1, min(int(max_chars), 1_000_000))
+        with self._blob_store.open(str(resource["sha256"])) as handle:
+            content = handle.read().decode("utf-8", errors="replace")
+        return {
+            "skill_id": skill_id,
+            "version_hash": package.version_hash,
+            "resource": dict(resource),
+            "content": content[:limit],
+            "truncated": len(content) > limit,
+        }
+
     def set_skill_status(
         self,
         *,
@@ -73,35 +112,220 @@ class SkillCatalogMixin:
         version_hash: str | None = None,
         promotion_path: str = "runtime",
         reviewer_id: str | None = None,
+        authority: SkillIngestAuthority | None = None,
     ) -> SkillPackage:
         package = self.get_skill(skill_id=skill_id, version_hash=version_hash)
-        previous_status = package.status
         normalized_new_status = normalize_status(new_status)
-        reviewer = str(reviewer_id or "").strip()
-        self._assert_trust_promotion_allowed(
-            package=package,
-            previous_status=previous_status,
-            new_status=normalized_new_status,
-            promotion_path=promotion_path,
-            reviewer_id=reviewer,
+        resolved_authority = authority or SkillIngestAuthority.runtime(
+            surface="python.skill.set_skill_status", source_kind="local"
         )
-        if previous_status == normalized_new_status:
-            return package
+        self.admit_skill_version(
+            skill_id=skill_id,
+            version_hash=package.version_hash,
+            expected_active_version_hash=package.version_hash,
+            target_status=normalized_new_status,
+            reason="status change",
+            authority=resolved_authority,
+        )
+        return self.get_skill(skill_id=skill_id, version_hash=None)
 
-        package.status = normalized_new_status
-        package.updated_at = iso_now()
-        package.version_hash = package.to_version_hash()
-        self._persist_package(
-            package=package,
-            index_keywords=package.keyword_candidates(),
+    def admit_skill_version(
+        self,
+        *,
+        skill_id: str,
+        version_hash: str,
+        expected_active_version_hash: str | None,
+        target_status: str,
+        reason: str,
+        authority: SkillIngestAuthority,
+        verification_evidence: SkillVerificationEvidence | None = None,
+    ) -> dict[str, Any]:
+        if (
+            verification_evidence is not None
+            and authority.authority_class != "local_operator"
+        ):
+            raise SkillError(
+                "SKILL_OPERATOR_AUTH_REQUIRED",
+                "Verification evidence requires local operator authority.",
+            )
+        return self._admit_skill_version(
+            skill_id=skill_id,
+            version_hash=version_hash,
+            expected_active_version_hash=expected_active_version_hash,
+            target_status=target_status,
+            reason=reason,
+            authority=authority,
+            verification_evidence=verification_evidence,
+            verification_reviewer_id=(
+                authority.principal_id if verification_evidence is not None else None
+            ),
         )
-        self._emit_untrusted_promotion_audit(
-            package=package,
-            previous_status=previous_status,
-            new_status=normalized_new_status,
-            promotion_path=promotion_path,
+
+    def _admit_skill_version(
+        self,
+        *,
+        skill_id: str,
+        version_hash: str,
+        expected_active_version_hash: str | None,
+        target_status: str,
+        reason: str,
+        authority: SkillIngestAuthority,
+        verification_evidence: SkillVerificationEvidence | None,
+        verification_reviewer_id: str | None,
+    ) -> dict[str, Any]:
+        if not authority.can_admit or not authority.principal_id:
+            raise SkillError(
+                "SKILL_OPERATOR_AUTH_REQUIRED",
+                "Skill admission requires a proven operator authority.",
+            )
+        normalized_status = normalize_status(target_status)
+        if normalized_status not in {"verified", "blessed", "deprecated"}:
+            raise SkillError(
+                "INVALID_ARGUMENT",
+                "target_status must be verified, blessed, or deprecated",
+            )
+        reason_text = str(reason or "").strip()
+        if not reason_text:
+            raise SkillError("INVALID_ARGUMENT", "reason must be non-empty")
+        candidate = self.get_skill(skill_id=skill_id, version_hash=version_hash)
+        lint_errors = self._admission_lint_errors(
+            candidate=candidate,
+            normalized_status=normalized_status,
+            verification_evidence=verification_evidence,
         )
-        return package
+        if lint_errors and normalized_status in {"verified", "blessed"}:
+            raise SkillError(
+                "SKILL_ADMISSION_VALIDATION_FAILED",
+                "Skill version is not ready for admission.",
+                {
+                    "skill_id": skill_id,
+                    "version_hash": version_hash,
+                    "blockers": [issue.code for issue in lint_errors],
+                },
+            )
+        previous_active = self.store.get_active_skill_version_hash(skill_id=skill_id)
+        updated_at = iso_now()
+        changed = self.store.activate_skill_version(
+            skill_id=skill_id,
+            version_hash=version_hash,
+            expected_active_version_hash=expected_active_version_hash,
+            target_status=normalized_status,
+            authority_class=authority.authority_class,
+            reviewer_id=authority.principal_id,
+            reason=reason_text,
+            decided_at=updated_at,
+            verification_check=(
+                verification_evidence.check if verification_evidence else None
+            ),
+            verification_result=(
+                verification_evidence.result if verification_evidence else None
+            ),
+            verification_evidence_ref=(
+                verification_evidence.evidence_ref if verification_evidence else None
+            ),
+            verification_reviewer_id=verification_reviewer_id,
+        )
+        if not changed:
+            raise SkillError(
+                "SKILL_ACTIVE_VERSION_CONFLICT",
+                "The active skill version changed before this admission completed.",
+                {
+                    "skill_id": skill_id,
+                    "expected_active_version_hash": expected_active_version_hash,
+                },
+            )
+        result = {
+            "ok": True,
+            "skill_id": skill_id,
+            "previous_active_version_hash": previous_active,
+            "active_version_hash": version_hash,
+            "target_status": normalized_status,
+            "admission_state": "admitted",
+            "reviewer_id": authority.principal_id,
+            "reason": reason_text,
+            "updated_at": updated_at,
+            "verification_check": (
+                verification_evidence.check if verification_evidence else None
+            ),
+            "verification_result": (
+                verification_evidence.result if verification_evidence else None
+            ),
+            "verification_evidence_ref": (
+                verification_evidence.evidence_ref if verification_evidence else None
+            ),
+            "verification_reviewer_id": verification_reviewer_id,
+        }
+        self._emit_event("skill.version_admitted", dict(result))
+        return result
+
+    def _admission_lint_errors(
+        self,
+        *,
+        candidate: SkillPackage,
+        normalized_status: str,
+        verification_evidence: SkillVerificationEvidence | None,
+    ) -> list[LintIssue]:
+        return [
+            issue
+            for issue in self._lint_package(
+                replace(candidate, status=normalized_status)
+            )
+            if issue.severity == "error"
+            and not (
+                verification_evidence is not None
+                and issue.code == "status.requires_verification"
+            )
+        ]
+
+    def rollback_skill_version(
+        self,
+        *,
+        skill_id: str,
+        to_version_hash: str,
+        expected_active_version_hash: str,
+        reason: str,
+        authority: SkillIngestAuthority,
+    ) -> dict[str, Any]:
+        admission = self.store.get_skill_admission(
+            skill_id=skill_id,
+            version_hash=to_version_hash,
+        )
+        if admission is None or str(admission.get("state")) not in {
+            "admitted",
+            "legacy_grandfathered",
+        }:
+            raise SkillError(
+                "INVALID_ARGUMENT",
+                "Rollback target must be a previously admitted skill version.",
+                {"skill_id": skill_id, "version_hash": to_version_hash},
+            )
+        evidence = None
+        if all(
+            admission.get(key)
+            for key in (
+                "verification_check",
+                "verification_result",
+                "verification_evidence_ref",
+                "verification_reviewer_id",
+            )
+        ):
+            evidence = SkillVerificationEvidence(
+                check=str(admission["verification_check"]),
+                result="passed",
+                evidence_ref=str(admission["verification_evidence_ref"]),
+            )
+        return self._admit_skill_version(
+            skill_id=skill_id,
+            version_hash=to_version_hash,
+            expected_active_version_hash=expected_active_version_hash,
+            target_status=str(admission.get("target_status") or "verified"),
+            reason=reason,
+            authority=authority,
+            verification_evidence=evidence,
+            verification_reviewer_id=(
+                str(admission["verification_reviewer_id"]) if evidence else None
+            ),
+        )
 
     def list_skills(
         self, filters: dict[str, Any] | None = None
@@ -376,9 +600,15 @@ class SkillCatalogMixin:
         return entry
 
     def lint(
-        self, skill_id: str, version_hash: str | None = None
+        self,
+        skill_id: str,
+        version_hash: str | None = None,
+        *,
+        target_status: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         package = self.get_skill(skill_id=skill_id, version_hash=version_hash)
+        if target_status is not None:
+            package = replace(package, status=normalize_status(target_status))
         issues = self._lint_package(package)
         warnings = [item.to_dict() for item in issues if item.severity != "error"]
         errors = [item.to_dict() for item in issues if item.severity == "error"]

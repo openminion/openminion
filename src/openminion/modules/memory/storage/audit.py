@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -87,6 +88,13 @@ class SQLiteMemoryAuditSink:
             )
             conn.commit()
 
+    def close(self) -> None:
+        with self._lock:
+            if self._conn is None:
+                return
+            self._conn.close()
+            self._conn = None
+
     def list_events(self) -> list[dict[str, Any]]:
         conn = self._connect()
         rows = conn.execute(
@@ -124,9 +132,19 @@ def default_memory_audit_db_path(db_path: str | Path) -> Path:
 class AuditedMemoryStore:
     """MemoryStore wrapper that emits append-only audit events on mutation."""
 
-    def __init__(self, store: Any, sink: MemoryAuditSink | None = None) -> None:
+    def __init__(
+        self,
+        store: Any,
+        sink: MemoryAuditSink | None = None,
+        *,
+        owns_store: bool = False,
+        owns_sink: bool = False,
+    ) -> None:
         self._store = store
         self._sink = sink
+        self._owns_store = owns_store
+        self._owns_sink = owns_sink
+        self._audited_capture_ids: set[str] = set()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._store, name)
@@ -144,6 +162,14 @@ class AuditedMemoryStore:
 
         self._append(event)
 
+    def close(self) -> None:
+        if self._owns_sink and self._sink is not None:
+            self._owns_sink = False
+            self._sink.close()
+        if self._owns_store:
+            self._owns_store = False
+            self._store.close()
+
     def put(self, record: Any) -> str:
         record_id = self._store.put(record)
         self._append(
@@ -158,6 +184,30 @@ class AuditedMemoryStore:
             )
         )
         return record_id
+
+    def apply_capture_bundle(self, bundle: Any) -> Any:
+        receipt = self._store.apply_capture_bundle(bundle)
+        if receipt.capture_id in self._audited_capture_ids:
+            return receipt
+        self._audited_capture_ids.add(receipt.capture_id)
+        event_token = hashlib.sha256(receipt.capture_id.encode()).hexdigest()
+        self._append(
+            MemoryAuditEvent(
+                event_type="memory.capture_bundle.commit",
+                target_kind="capture_bundle",
+                target_id=receipt.capture_id,
+                session_id=str(getattr(bundle, "session_id", "") or "") or None,
+                details={
+                    "report_hash": receipt.report_hash,
+                    "result_hash": receipt.result_hash,
+                    "disposition": receipt.disposition,
+                    "output_count": len(receipt.output_ids),
+                },
+                event_id=f"memory_capture_{event_token[:32]}",
+                timestamp=receipt.committed_at,
+            )
+        )
+        return receipt
 
     def upsert(
         self, scope: str, type: str, key: str, record_patch: dict[str, Any]

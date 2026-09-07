@@ -17,6 +17,11 @@ from openminion.modules.brain.runtime.improvement.contracts import (
     SelfImprovementPolicy,
 )
 from openminion.modules.llm.schemas import LLMResponse, Message, ToolCall, ToolSpec
+from openminion.modules.tool.plugin_api import BlockchainSendConfirmationPreview
+from openminion.modules.tool.diagnostics.events import (
+    structural_security_tool_results,
+    structural_tool_results,
+)
 
 
 ADAPTIVE_TOOL_EXPOSURE_EXPLICIT_ALLOWLIST = "explicit_allowlist"
@@ -116,6 +121,8 @@ class CommandExecutionOutcome:
     job: JobHandle | None = None
     reflect_report: ReflectReport | None = None
     tool_budget_debited: bool = False
+    policy_approval_id: str | None = None
+    policy_confirmation_preview: BlockchainSendConfirmationPreview | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +159,8 @@ class PrepareOutcome:
     disposition: str
     action_result: ActionResult
     tool_budget_debited: bool = False
+    policy_approval_id: str | None = None
+    policy_confirmation_preview: BlockchainSendConfirmationPreview | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +189,7 @@ class AdaptiveToolLoopLLMRuntime(Protocol):
 class AdaptiveToolLoopContext(Protocol):
     state: WorkingState
     session_api: Any | None
+    provider_retry_max_attempts: int
 
     def execute_command(
         self,
@@ -333,6 +343,8 @@ class AdaptiveToolLoopState:
     total_tool_calls: int = 0
     termination_reason: str = ""
     scratchpad: dict[str, Any] = field(default_factory=dict)
+    task_plan: dict[str, Any] | None = None
+    task_plan_revision: dict[str, Any] | None = None
     seen_signatures: list[str] = field(default_factory=list)
     direct_tool_turn: DirectToolTurnContext | None = None
     direct_tool_requested_batch_satisfied: bool = False
@@ -341,6 +353,27 @@ class AdaptiveToolLoopState:
     extensions_used: int = 0
     # Safety kill reset on progress.
     consecutive_noops: int = 0
+
+
+def _tool_result_telemetry(state: AdaptiveToolLoopState) -> dict[str, Any]:
+    results = [
+        item
+        for item in list(state.scratchpad.get("adaptive.tool_results", []) or [])
+        if isinstance(item, dict)
+    ]
+    if not results:
+        return {}
+    formatter = (
+        structural_tool_results
+        if state.scratchpad.get("telemetry.structural_tool_results")
+        else structural_security_tool_results
+    )
+    return {
+        "tool_results": formatter(results),
+        "tool_calls_count": len(results),
+        "tool_execution_count": len(results),
+        "tool_verified": all(bool(item.get("verified")) for item in results),
+    }
 
 
 @dataclass(slots=True)
@@ -418,8 +451,9 @@ class AdaptiveToolLoopOutcome:
             and self.delegation_result_summary
         ):
             payload["delegation_result_summary"] = dict(self.delegation_result_summary)
-        if isinstance(self.task_plan, dict) and self.task_plan:
-            payload["task_plan"] = dict(self.task_plan)
+        task_plan = self.task_plan or self.state.task_plan
+        if isinstance(task_plan, dict) and task_plan:
+            payload["task_plan"] = dict(task_plan)
         if (
             isinstance(self.task_plan_step_completed, dict)
             and self.task_plan_step_completed
@@ -430,8 +464,9 @@ class AdaptiveToolLoopOutcome:
             and self.task_plan_step_blocked
         ):
             payload["task_plan.step_blocked"] = dict(self.task_plan_step_blocked)
-        if isinstance(self.task_plan_revision, dict) and self.task_plan_revision:
-            payload["task_plan.revision"] = dict(self.task_plan_revision)
+        task_plan_revision = self.task_plan_revision or self.state.task_plan_revision
+        if isinstance(task_plan_revision, dict) and task_plan_revision:
+            payload["task_plan.revision"] = dict(task_plan_revision)
         if isinstance(self.task_plan_abandoned, dict) and self.task_plan_abandoned:
             payload["task_plan.abandoned"] = dict(self.task_plan_abandoned)
         if isinstance(self.task_plan_completed, dict) and self.task_plan_completed:
@@ -459,20 +494,7 @@ class AdaptiveToolLoopOutcome:
             and self.self_improvement_decision
         ):
             payload["self_improvement.decision"] = dict(self.self_improvement_decision)
-        tool_results = [
-            item
-            for item in list(
-                self.state.scratchpad.get("adaptive.tool_results", []) or []
-            )
-            if isinstance(item, dict)
-        ]
-        if tool_results:
-            payload["tool_results"] = tool_results
-            payload["tool_calls_count"] = len(tool_results)
-            payload["tool_execution_count"] = len(tool_results)
-            payload["tool_verified"] = all(
-                bool(item.get("verified")) for item in tool_results
-            )
+        payload.update(_tool_result_telemetry(self.state))
         payload.update(loop_parallel_payload(self.state.scratchpad))
         payload.update(loop_turn_progress_payload(self.state.scratchpad))
         return payload
@@ -510,6 +532,9 @@ def loop_turn_progress_payload(scratchpad: Mapping[str, Any] | None) -> dict[str
     tool_name = str(data.get("turn_progress_tool_name", "") or "").strip()
     if tool_name:
         payload["turn.tool_name"] = tool_name
+    detail_code = str(data.get("turn_progress_detail_code", "") or "").strip()
+    if detail_code:
+        return {**payload, "detail_code": detail_code}
     return payload
 
 

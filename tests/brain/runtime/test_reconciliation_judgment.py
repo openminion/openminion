@@ -78,16 +78,16 @@ def test_attaches_incomplete_fact_and_overrides_when_budget_remains() -> None:
     assert judgment.reason.startswith("ok; ")
 
 
-def test_attaches_incomplete_fact_but_finalizes_when_budget_exhausted() -> None:
+def test_incomplete_fact_denies_close_when_budget_exhausted() -> None:
     judgment = _close_judgment()
     apply_plan_reconciliation_to_judgment(
         judgment, _incomplete_fact(), state=_state_with_budget(tool_calls=0)
     )
     assert judgment.plan_reconciliation is not None
     assert judgment.plan_reconciliation.state == "incomplete"
-    assert judgment.satisfied is True
-    assert judgment.next_action == "close"
-    assert judgment.final_answer == "done."
+    assert judgment.satisfied is False
+    assert judgment.next_action == "continue"
+    assert judgment.final_answer is None
     assert PLAN_RECONCILIATION_INCOMPLETE_REASON in judgment.reason
 
 
@@ -162,7 +162,9 @@ def test_zero_tokens_treated_as_no_budget() -> None:
     apply_plan_reconciliation_to_judgment(
         judgment, _incomplete_fact(), state=_state_with_budget(tokens=0)
     )
-    assert judgment.next_action == "close"
+    assert judgment.next_action == "continue"
+    assert judgment.satisfied is False
+    assert judgment.final_answer is None
     assert PLAN_RECONCILIATION_INCOMPLETE_REASON in judgment.reason
 
 
@@ -171,7 +173,9 @@ def test_zero_time_ms_treated_as_no_budget() -> None:
     apply_plan_reconciliation_to_judgment(
         judgment, _incomplete_fact(), state=_state_with_budget(time_ms=0)
     )
-    assert judgment.next_action == "close"
+    assert judgment.next_action == "continue"
+    assert judgment.satisfied is False
+    assert judgment.final_answer is None
     assert PLAN_RECONCILIATION_INCOMPLETE_REASON in judgment.reason
 
 
@@ -184,7 +188,9 @@ def test_missing_budgets_attribute_treated_as_no_budget() -> None:
     apply_plan_reconciliation_to_judgment(
         judgment, _incomplete_fact(), state=_BareState()
     )
-    assert judgment.next_action == "close"
+    assert judgment.next_action == "continue"
+    assert judgment.satisfied is False
+    assert judgment.final_answer is None
     assert PLAN_RECONCILIATION_INCOMPLETE_REASON in judgment.reason
 
 

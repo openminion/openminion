@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -10,7 +10,6 @@ from openminion.base.config import (
     bootstrap_home_paths,
     resolve_module_storage_path,
 )
-from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.config.env import EnvironmentConfig
 from openminion.services.runtime.plugins import PluginRegistry
 from openminion.services.agent import AgentService
@@ -22,6 +21,7 @@ from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
 from openminion.modules.tool import ToolRegistry
 
 from openminion.modules.brain.runner import BrainRunner
+from openminion.modules.brain.runner.lifecycle import close_owned_runner_bundle
 from openminion.modules.brain.interfaces import (
     SessionArtifactAPI,
     ensure_adapter_compatibility,
@@ -45,9 +45,9 @@ from openminion.services.brain.post_execution import BrainBridgeTurnMixin
 from openminion.services.brain.factory.retrieve import init_retrieve_adapter  # noqa: F401  (re-export for test patches + bootstrap helper)
 from openminion.services.brain.factory.rlm import init_rlm_adapter
 from openminion.services.config import resolve_services_env
-from openminion.modules.brain.schemas.agent import ModeProfileConfig
 from openminion.modules.brain.config import (
     from_base_config as derive_brain_runtime_config,
+    runtime_mode_config_from_agent as _runtime_mode_config_from_agent,  # noqa: F401  (compatibility import for runtime bootstrap and tests)
 )
 
 if TYPE_CHECKING:
@@ -99,41 +99,6 @@ create_safety_adapter = create_safety_api
 create_skill_adapter = create_skill_api
 create_rlm_adapter = init_rlm_adapter  # kept distinct source name by intent
 create_compress_adapter = create_compress_api
-
-
-def _runtime_mode_config_from_agent(
-    config: OpenMinionConfig,
-) -> dict[str, ModeProfileConfig]:
-    default_agent_id = resolve_default_agent_id(config)
-    profile = config.agents.get(default_agent_id)
-    if profile is None:
-        return {}
-    mode_config: dict[str, ModeProfileConfig] = {}
-    for mode_name, entry in profile.modes.items():
-        normalized_name = mode_name.strip().lower()
-        if not normalized_name:
-            continue
-        mode_config[normalized_name] = ModeProfileConfig(
-            enabled=entry.enabled,
-            parallel_enabled=entry.parallel_enabled,
-            parallel_writes_enabled=entry.parallel_writes_enabled,
-            max_parallel_workers=entry.max_parallel_workers,
-            checkpoint_interval=entry.checkpoint_interval,
-            max_resume_count=entry.max_resume_count,
-            max_depth=entry.max_depth,
-            priority_hint=entry.priority_hint,
-            max_commands_per_turn=entry.max_commands_per_turn,
-            max_adaptive_iterations=entry.max_adaptive_iterations,
-            max_adaptive_tool_calls_per_loop=entry.max_adaptive_tool_calls_per_loop,
-            max_adaptive_llm_calls_per_loop=entry.max_adaptive_llm_calls_per_loop,
-            adaptive_include_reflect=entry.adaptive_include_reflect,
-            max_self_corrections=entry.max_self_corrections,
-            max_subtasks=entry.max_subtasks,
-            max_decompose_depth=entry.max_decompose_depth,
-            max_research_iterations=entry.max_research_iterations,
-            tool_schema_shortlisting_enabled=entry.tool_schema_shortlisting_enabled,
-        )
-    return mode_config
 
 
 def _bootstrap_bridge_home_paths(
@@ -256,11 +221,19 @@ class _RuntimeProviderAdapter:
     def __init__(self, service: "BrainBridgeService") -> None:
         self._service = service
         self.name = str(getattr(service, "_provider_name", lambda: "provider")())
+        runtime = getattr(service, "_llm_runtime", None)
+        provider = getattr(service, "_provider", None)
+        self.service_vendor = str(
+            getattr(runtime, "service_vendor", "")
+            or getattr(provider, "service_vendor", "")
+            or self.name
+        )
+        self.provider_retry_max_attempts = getattr(
+            runtime, "provider_retry_max_attempts", None
+        ) or getattr(provider, "provider_retry_max_attempts", None)
         self.tool_call_strategy = str(
-            getattr(getattr(service, "_provider", object()), "tool_call_strategy", "")
-            or getattr(
-                getattr(service, "_llm_runtime", object()), "tool_call_strategy", ""
-            )
+            getattr(provider, "tool_call_strategy", "")
+            or getattr(runtime, "tool_call_strategy", "")
             or "hybrid"
         )
 
@@ -292,6 +265,8 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         retrieve_service: Any | None = None,
         action_policy_service: Any | None = None,
         telemetryctl: TelemetryCtl | None = None,
+        terminal_capture_writer: Any | None = None,
+        runtime_memory_assembly: Any | None = None,
     ) -> None:
         super().__init__(
             config=config,
@@ -315,6 +290,8 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             config_manager=config_manager,
             retrieve_service=retrieve_service,
             action_policy_service=action_policy_service,
+            terminal_capture_writer=terminal_capture_writer,
+            runtime_memory_assembly=runtime_memory_assembly,
         )
         self._init_bridge_telemetry(config=config, telemetryctl=telemetryctl)
         self._context = BrainBridgeContext(
@@ -338,12 +315,16 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         config_manager: ConfigManager | None,
         retrieve_service: Any | None,
         action_policy_service: Any | None,
+        terminal_capture_writer: Any | None,
+        runtime_memory_assembly: Any | None,
     ) -> None:
         self.mode = mode
         self.db_path = db_path
         self._config_manager = config_manager
         self._retrieve_service = retrieve_service
         self._action_policy_service = action_policy_service
+        self._terminal_capture_writer = terminal_capture_writer
+        self._runtime_memory_assembly = runtime_memory_assembly
         runtime_env = config.runtime.env
         self._env = (
             config_manager.env
@@ -370,6 +351,21 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         self._runner: BrainRunner | None = None
         self._runtime_handle: Any | None = None
         self._llm_wrapper: Any | None = None
+        self._closed = False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._runner is not None:
+            close_owned_runner_bundle(
+                self._runner,
+                vector_sync=None,
+                close_policy=self._action_policy_service is None,
+                close_retrieve=self._retrieve_service is None,
+            )
+        self._runner = None
+        super().close()
 
     def _init_bridge_telemetry(
         self,
@@ -396,15 +392,13 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
 
     def _resolve_telemetry_db_path(self, config: OpenMinionConfig) -> str | None:
         explicit_path = str(config.runtime.telemetry_db_path).strip()
+        if explicit_path and Path(explicit_path).is_absolute():
+            return explicit_path
         if explicit_path:
-            if Path(explicit_path).is_absolute():
-                return explicit_path
             return str(self._home_paths.home_root / explicit_path)
         return str(
             resolve_module_storage_path(
-                self._home_paths.home_root,
-                "telemetry",
-                filename="telemetry.db",
+                self._home_paths.home_root, "telemetry", filename="telemetry.db"
             )
         )
 
@@ -414,11 +408,7 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         try:
             return self._context.config_manager.get(name)
         except Exception as exc:  # noqa: BLE001
-            self._logger.warning(
-                "ConfigManager lookup failed for %s; falling back: %s",
-                name,
-                exc,
-            )
+            self._logger.warning("ConfigManager lookup failed for %s: %s", name, exc)
             return None
 
     def bind_runtime_handle(self, runtime_handle: Any) -> None:
@@ -435,14 +425,16 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             "mode": self.mode,
         }
 
+    @property
+    def artifactctl(self) -> Any | None:
+        return getattr(self._get_runner().tool_api, "artifactctl", None)
+
     def _resolve_llm_wrapper(self, llm_api: Any) -> Any | None:
         direct = getattr(llm_api, "llm", None)
         if direct is not None:
             return direct
         client = getattr(llm_api, "client", None)
-        if client is not None and hasattr(client, "_set_context"):
-            return client
-        return None
+        return client if hasattr(client, "_set_context") else None
 
     def _runtime_env_value(self, key: str) -> str:
         runtime_env = getattr(getattr(self, "_config", object()), "runtime", object())
@@ -535,6 +527,28 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             )
         return SessionArtifactFacade(session_api)
 
+    def extract_memory_capture_candidates(
+        self,
+        *,
+        session_api: Any,
+        session_id: str,
+        root_turn_id: str,
+        user_message: str,
+    ) -> list[dict[str, Any]]:
+        return cast(
+            list[dict[str, Any]],
+            self._get_runner().extract_memory_capture_candidates(
+                session_api=session_api,
+                session_id=session_id,
+                root_turn_id=root_turn_id,
+                user_message=user_message,
+            ),
+        )
+
+    @property
+    def memory_capture_assurance_enabled(self) -> bool:
+        return self._terminal_capture_writer is not None
+
     def _resolve_brain_config(self) -> Any | None:
         try:
             runtime_config = derive_brain_runtime_config(
@@ -587,10 +601,11 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             ("llm", llm_api),
             ("tool", tool_api),
             ("a2a", a2a_api),
-            ("memory", memory_api),
             ("policy", policy_api),
             ("safety", safety_api),
         ]
+        if memory_api is not None:
+            checks.append(("memory", memory_api))
         if rlm_api is not None:
             checks.append(("rlm", rlm_api))
         if retrieve_api is not None:

@@ -37,9 +37,9 @@ class _FakeSessionApi:
         self.events: list[tuple[str, dict[str, object]]] = []
 
     def append_event(
-        self, session_id: str, event_type: str, payload: dict[str, object], **_: object
+        self, session_id: str, type: str, payload: dict[str, object], **_: object
     ):
-        self.events.append((event_type, dict(payload)))
+        self.events.append((type, dict(payload)))
         return SimpleNamespace(id=f"evt-{len(self.events)}", session_id=session_id)
 
     def list_events(self, session_id: str):  # noqa: ARG002

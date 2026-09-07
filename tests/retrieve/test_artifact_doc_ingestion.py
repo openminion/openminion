@@ -40,7 +40,6 @@ def _retrieve_config(tmp_path: Path) -> dict[str, object]:
             "defaults": {
                 "strategy": "contextual",
                 "contextual_enabled": True,
-                "embeddings_enabled": False,
                 "lexical_candidate_count": 25,
                 "snippet_tokens": 120,
                 "chunk_target_tokens": 30,
@@ -76,6 +75,7 @@ def test_artifact_creation_fires_ingest_event(tmp_path: Path) -> None:
         assert payload["scope"] == "agent:test"
         assert payload["title"] == "artifact.txt"
         assert payload["tags"] == ["artifact"]
+        assert ctl.list_views(ref.sha256) == []
     finally:
         ctl.close()
 

@@ -27,17 +27,6 @@ class SkillIngestArgs(BaseModel):
         le=4000,
         description="Max tokens for the rendered snippet returned inline",
     )
-    enforce_safety: bool = Field(
-        default=True,
-        description="When true, reject ingest for critical safety findings.",
-    )
-    trust: str | None = Field(
-        default=None,
-        description=(
-            "Optional trust declaration: trusted_local, trusted_remote, "
-            "untrusted_local, or untrusted_remote."
-        ),
-    )
 
 
 class SkillIngestUrlArgs(BaseModel):
@@ -65,17 +54,6 @@ class SkillIngestUrlArgs(BaseModel):
         ge=40,
         le=4000,
         description="Max tokens for the rendered snippet returned inline.",
-    )
-    enforce_safety: bool = Field(
-        default=True,
-        description="When true, reject ingest for critical safety findings.",
-    )
-    trust: str | None = Field(
-        default=None,
-        description=(
-            "Optional trust declaration: trusted_local, trusted_remote, "
-            "untrusted_local, or untrusted_remote."
-        ),
     )
 
 
@@ -124,8 +102,31 @@ class SkillListArgs(BaseModel):
 class SkillGetArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    skill_id: str = Field(..., min_length=1, max_length=256)
-    version_hash: str | None = Field(default=None, max_length=256)
+    skill_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=256,
+        description="Exact stored skill ID.",
+    )
+    version_hash: str | None = Field(
+        default=None,
+        max_length=256,
+        description="Optional exact skill version; reuse it when reading resources.",
+    )
+    resource_path: str | None = Field(
+        default=None,
+        max_length=1024,
+        description=(
+            "Optional relative path from the skill's resources list, such as "
+            "references/guide.md. When set, returns that resource instead of the package."
+        ),
+    )
+    max_chars: int = Field(
+        default=50_000,
+        ge=1,
+        le=1_000_000,
+        description="Maximum resource characters returned when resource_path is set.",
+    )
 
 
 class SkillRemoveArgs(BaseModel):

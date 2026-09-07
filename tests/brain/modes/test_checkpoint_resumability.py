@@ -7,7 +7,10 @@ import tempfile
 from types import SimpleNamespace
 from typing import Any
 
-from openminion.modules.brain.loop.strategies.coding import CodingMode
+from openminion.modules.brain.loop.strategies.coding import (
+    CodingMode,
+    CodingProfileRunner,
+)
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.loop.tools.phases.eval import EvalMode
 from openminion.modules.brain.loop.tools.phases.observe import OBSERVE_MODE, ObserveMode
@@ -19,6 +22,7 @@ from openminion.modules.brain.checkpoint.contracts import (
 from openminion.modules.brain.schemas import (
     ActionResult,
     BudgetCounters,
+    ToolCommand,
     WorkingState,
     new_uuid,
 )
@@ -188,6 +192,22 @@ class _FakeLLMClient:
         response = self.responses[self._index]
         self._index += 1
         return response
+
+
+def _read_only_coding_plan_response() -> LLMResponse:
+    return LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text=json.dumps(
+            {
+                "goal": "inspect the workspace",
+                "phases": [{"name": "implement", "status": "active"}],
+                "current_phase": "implement",
+                "requires_file_change": False,
+            }
+        ),
+    )
 
 
 @dataclass
@@ -421,6 +441,7 @@ def test_coding_mode_resumes_after_budget_exit() -> None:
         task_manager = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         llm_client = _FakeLLMClient(
             responses=[
+                _read_only_coding_plan_response(),
                 LLMResponse(
                     ok=True,
                     provider="fake",
@@ -434,7 +455,7 @@ def test_coding_mode_resumes_after_budget_exit() -> None:
                         )
                     ],
                     usage=UsageInfo(input_tokens=1, output_tokens=1),
-                )
+                ),
             ]
         )
         executor = _FakeCommandExecutor(
@@ -512,11 +533,58 @@ def test_coding_mode_resumes_after_budget_exit() -> None:
         assert "app.py" in str(finished.message or "")
 
 
+def test_coding_verification_bindings_survive_snapshot_restore() -> None:
+    runner = CodingProfileRunner()
+    runner._record_verifier_candidate(
+        ToolCommand(
+            title="run tests",
+            tool_name="exec.run",
+            args={"argv": ["pytest", "-q"]},
+            verification_target_kind="criterion",
+            verification_target_id="criterion-tests",
+        ),
+        ActionResult(
+            command_id="cmd-run",
+            status="success",
+            summary="tests running",
+            outputs={"status": "running", "session_id": "execproc-1"},
+        ),
+    )
+    runner._record_verifier_candidate(
+        ToolCommand(
+            title="read report",
+            tool_name="file.read",
+            args={"path": "report.txt"},
+            verification_target_kind="deliverable",
+            verification_target_id="deliverable-report",
+        ),
+        ActionResult(
+            command_id="cmd-read",
+            status="success",
+            summary="report read",
+        ),
+    )
+
+    restored = CodingProfileRunner()
+    restored.restore_state(runner.snapshot_state())
+
+    assert restored._loop_state.scratchpad["coding.pending_verifier_sessions"] == {
+        "execproc-1": {
+            "verification_target_kind": "criterion",
+            "verification_target_id": "criterion-tests",
+        }
+    }
+    command, _result = restored._bound_verifier_candidates()[0]
+    assert command.verification_target_kind == "deliverable"
+    assert command.verification_target_id == "deliverable-report"
+
+
 def test_coding_mode_closes_from_tool_evidence_when_budget_is_exhausted() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         task_manager = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         llm_client = _FakeLLMClient(
             responses=[
+                _read_only_coding_plan_response(),
                 LLMResponse(
                     ok=True,
                     provider="fake",
@@ -530,7 +598,7 @@ def test_coding_mode_closes_from_tool_evidence_when_budget_is_exhausted() -> Non
                         )
                     ],
                     usage=UsageInfo(input_tokens=1, output_tokens=1),
-                )
+                ),
             ]
         )
         executor = _FakeCommandExecutor(
@@ -589,6 +657,7 @@ def test_coding_mode_resumes_after_needs_user_without_duplicate_batch_stop() -> 
         task_manager = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         llm_client = _FakeLLMClient(
             responses=[
+                _read_only_coding_plan_response(),
                 LLMResponse(
                     ok=True,
                     provider="fake",
@@ -602,7 +671,7 @@ def test_coding_mode_resumes_after_needs_user_without_duplicate_batch_stop() -> 
                         )
                     ],
                     usage=UsageInfo(input_tokens=1, output_tokens=1),
-                )
+                ),
             ]
         )
         executor = _FakeCommandExecutor(

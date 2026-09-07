@@ -121,6 +121,14 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
+On Windows PowerShell, activate the same environment with:
+
+```powershell
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
 For isolated local data during development:
 
 ```bash
@@ -133,15 +141,36 @@ export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
 For a real model-backed session, start with the bare command:
 
 ```bash
-openminion
+openminion --version
+openminion --dir "$PWD"
 ```
 
 Setup asks for a provider, model, and credential. For built-in providers,
 OpenMinion selects the API adapter automatically. For example, MiniMax remains
-the provider when it uses an OpenAI-compatible API.
+the provider when it uses an OpenAI-compatible API. Press Enter at the hosted
+provider check to send one recommended test request before Focus opens; the
+request may consume a small amount of quota.
 
-When setup finishes and Focus opens, ask: `Give me one safe read-only command
-to inspect the current directory.`
+An explicit `--dir` trusts that workspace for the current process. A bare
+launch also trusts an ordinary Git worktree; another implicit directory starts
+Read only. Launching from your home directory or a filesystem root requires an
+explicit `--dir PATH`. Add another existing directory for the current process
+with repeatable `--add-dir PATH` options:
+
+```bash
+openminion --dir "$PWD" --add-dir ../shared
+```
+
+Structured file tools remain confined to the workspace, explicitly added
+directories, and configured policy roots. Host commands remain disabled when
+no sandbox is configured. `--allow-unsandboxed-exec` is an explicit opt-in:
+commands then use the OpenMinion process's OS permissions and are not confined
+to workspace roots; command policy and approvals still apply. A native local
+sandbox and approval-free command parity are not provided yet.
+
+When setup finishes and the interactive CLI opens, ask: `List this workspace
+using the file tools.` The default config is saved at
+`~/.openminion/agents.json`, so the next bare launch reuses it.
 
 For a credential-free product tour, create an explicit echo/demo config:
 
@@ -158,8 +187,40 @@ label this state `demo`, not `ready`.
 Open the interactive CLI:
 
 ```bash
-openminion
+openminion --dir "$PWD"
 ```
+
+Run two configured agents in one Focus room with explicit runtime roots:
+
+```bash
+runtime_root="$PWD/.openminion-room"
+config_path="$HOME/.openminion/agents.json"
+room_output="$(openminion \
+  --home-root "$runtime_root/home" \
+  --data-root "$runtime_root/data" \
+  --config "$config_path" \
+  room create \
+  --name "Review room" \
+  --human owner-local \
+  --agent writer \
+  --agent reviewer \
+  --channel console \
+  --target focus)"
+room_id="$(printf '%s\n' "$room_output" | sed -n 's/^room=//p')"
+
+openminion \
+  --home-root "$runtime_root/home" \
+  --data-root "$runtime_root/data" \
+  --config "$config_path" \
+  --agent writer \
+  --session "$room_id" \
+  --dir "$PWD"
+```
+
+Inside Focus, use `/participants` to inspect the room, `/routing broadcast` or
+`/routing sequential` to change its mode, and address one agent with
+`@reviewer`. Room mutations require the local owner; participants can post and
+observers cannot.
 
 Embed the same runtime from Python:
 
@@ -212,8 +273,8 @@ complete runnable example and
 | Operator CLIs | You need focused session, memory, policy, runtime, or artifact control |
 
 The root package exports the supported Python facade: `APIRuntime`, `Agent`,
-`AgentRunResult`, `Handoff`, `MemoryBundle`, `OpenMinionConfig`, `subagent`,
-`tool`, and `__version__`. See
+`AgentOutputValidationError`, `AgentRunResult`, `Handoff`, `MemoryBundle`,
+`OpenMinionConfig`, `subagent`, `tool`, and `__version__`. See
 [`API_COMPATIBILITY.md`](API_COMPATIBILITY.md) before depending on deeper
 package internals.
 

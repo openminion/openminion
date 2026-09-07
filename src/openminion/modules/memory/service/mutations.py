@@ -88,11 +88,24 @@ def _resolve_explicit_namespace(
 
 
 class MemoryServiceMutationMixin:
+    def apply_capture_bundle(self, bundle: Any) -> Any:
+        handler = getattr(self._store, "apply_capture_bundle", None)
+        if not callable(handler):
+            from openminion.modules.memory.runtime.capture_bundle import (
+                CaptureRecoveryUnsupportedError,
+            )
+
+            raise CaptureRecoveryUnsupportedError(
+                "configured memory backend does not support atomic capture bundles"
+            )
+        return handler(bundle)
+
     def write_record(
         self,
         *,
         scope: str,
         record_type: str,
+        key: str | None = None,
         title: str,
         content: dict[str, Any] | str,
         tags: list[str] | None = None,
@@ -128,24 +141,42 @@ class MemoryServiceMutationMixin:
             graph_id=graph_id,
         )
         now_iso = datetime.now(timezone.utc).isoformat()
+        artifact_refs = [
+            ArtifactRef(
+                ref=str(ref),
+                mime="application/octet-stream",
+                sha256="unknown",
+                size_bytes=0,
+                label=f"evidence-{ref}",
+            )
+            for ref in evidence_refs or []
+        ]
+        if key is not None:
+            return self._store.upsert(
+                normalized_scope,
+                _as_memory_type(record_type),
+                key,
+                {
+                    "title": title,
+                    "content": content,
+                    "tags": list(tags or []),
+                    "confidence": (
+                        float(confidence) if confidence is not None else 0.5
+                    ),
+                    "evidence_refs": artifact_refs,
+                    "namespace": resolved_namespace,
+                },
+            ).id
         record = MemoryRecord(
             id=f"mem_{uuid.uuid4().hex[:12]}",
             scope=normalized_scope,
             type=_as_memory_type(record_type),
+            key=key,
             title=title,
             content=content,
             tags=list(tags or []),
             confidence=float(confidence) if confidence is not None else 0.5,
-            evidence_refs=[
-                ArtifactRef(
-                    ref=str(ref),
-                    mime="application/octet-stream",
-                    sha256="unknown",
-                    size_bytes=0,
-                    label=f"evidence-{ref}",
-                )
-                for ref in evidence_refs or []
-            ],
+            evidence_refs=artifact_refs,
             namespace=resolved_namespace,
             created_at=now_iso,
             updated_at=now_iso,

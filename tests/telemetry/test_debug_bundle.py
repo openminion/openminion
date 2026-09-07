@@ -15,7 +15,7 @@ from openminion.modules.telemetry.service import TelemetryService
 
 def _seed(data_root: Path, invocation_id: str = "invocation-1") -> Path:
     db_path = data_root / "telemetry" / "telemetry.db"
-    service = TelemetryService(db_path)
+    service = TelemetryService(db_path, include_local_content=True)
 
     async def record() -> None:
         for event in (
@@ -41,10 +41,75 @@ def _seed(data_root: Path, invocation_id: str = "invocation-1") -> Path:
                 timestamp=2.0,
                 data={
                     "status": "failed",
+                    "operation": "agent_turn",
+                    "tool_name": "exec.run",
+                    "duration_ms": 1000,
                     "error": {
+                        "code": "TEST_CODE",
                         "type": "TEST_FAILURE",
                         "message": "private free-form failure",
                     },
+                },
+            ),
+            TelemetryEvent(
+                session_id="private-session",
+                turn_id="private-turn",
+                invocation_id=invocation_id,
+                execution_id="private-execution",
+                agent_id="private-agent",
+                event_id="private-report",
+                event_type="tool.execution.completed",
+                timestamp=1.5,
+                data={
+                    "status": "ok",
+                    "assessment_id": "b" * 32,
+                    "result_status": "partial",
+                    "tool_name": "security.publish_report",
+                    "duration_ms": 25,
+                    "check_count": 4,
+                    "finding_count": 1,
+                    "candidate_count": 1,
+                    "rejected_count": 0,
+                    "artifact_count": 1,
+                    "artifact_refs": ["artifact://sha256/" + ("a" * 64)],
+                    "report_body": "private report prose",
+                    "source_body": "private source body",
+                    "scanner_output": "private scanner output",
+                    "credential": "private credential",
+                },
+            ),
+            TelemetryEvent(
+                session_id="private-session",
+                turn_id="private-turn",
+                invocation_id=invocation_id,
+                execution_id="private-execution",
+                agent_id="private-agent",
+                event_id="private-brain-status",
+                event_type="brain.execution_status",
+                timestamp=1.75,
+                data={
+                    "status": "completed",
+                    "tool_results": [
+                        {
+                            "structural_only": True,
+                            "tool_name": "security.scan_code",
+                            "ok": True,
+                            "verified": True,
+                            "data": {
+                                "assessment_id": "b" * 32,
+                                "result_status": "partial",
+                                "finding_count": 1,
+                                "artifact_refs": ["artifact://sha256/" + ("c" * 64)],
+                                "source_body": "private nested source body",
+                            },
+                            "source": "adaptive",
+                            "private_result": "private nested result prose",
+                        },
+                        {
+                            "tool_name": "file.read",
+                            "data": {"content": "private file content"},
+                        },
+                    ],
                 },
             ),
         ):
@@ -110,10 +175,58 @@ def test_bundle_cli_writes_private_atomic_sanitized_artifact(
         "private-agent",
         "never bundle this",
         "private free-form failure",
+        "private report prose",
+        "private source body",
+        "private scanner output",
+        "private credential",
+        "private nested source body",
+        "private nested result prose",
+        "private file content",
         str(tmp_path),
     ):
         assert excluded not in combined
     assert "id-001" in combined
+    summary = json.loads((destination / "invocation-summary.json").read_text())
+    graph = json.loads((destination / "invocation-graph.json").read_text())
+    assert summary["failure_code"] == "TEST_CODE"
+    terminal = next(
+        row for row in graph["events"] if row["event_type"] == "agent.invocation.failed"
+    )
+    assert terminal["error_code"] == "TEST_CODE"
+    assert terminal["operation"] == "agent_turn"
+    assert terminal["tool_name"] == "exec.run"
+    assert terminal["duration_ms"] == 1000
+    report_event = next(
+        row
+        for row in graph["events"]
+        if row.get("tool_name") == "security.publish_report"
+    )
+    assert report_event["result_status"] == "partial"
+    assert report_event["assessment_id"] == "b" * 32
+    assert report_event["check_count"] == 4
+    assert report_event["finding_count"] == 1
+    assert report_event["candidate_count"] == 1
+    assert report_event["artifact_count"] == 1
+    assert report_event["artifact_refs"] == ["artifact://sha256/" + ("a" * 64)]
+    brain_event = next(
+        row for row in graph["events"] if row["event_type"] == "brain.execution_status"
+    )
+    assert brain_event["tool_results"] == [
+        {
+            "tool_name": "security.scan_code",
+            "ok": True,
+            "verified": True,
+            "data": {
+                "result_status": "partial",
+                "assessment_id": "b" * 32,
+                "finding_count": 1,
+                "artifact_refs": ["artifact://sha256/" + ("c" * 64)],
+            },
+            "error_code": "",
+            "call_id": "",
+            "source": "adaptive",
+        }
+    ]
 
 
 @pytest.mark.parametrize(

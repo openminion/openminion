@@ -25,6 +25,7 @@ from openminion.modules.context.schemas import (
 )
 from openminion.modules.context.service import ContextCtlService
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_file_and_admit
 
 
 FIXTURES_ROOT = (
@@ -51,9 +52,12 @@ _COMPLEX_FIXTURES: tuple[tuple[str, str], ...] = (
 
 
 def _skill_cfg(tmp_path: Path, *, known_tools: list[str]) -> dict[str, Any]:
+    data_root = tmp_path / ".openminion"
     return {
         "skill": {
-            "sqlite_path": str(tmp_path / "skill.db"),
+            "sqlite_path": str(data_root / "skill.db"),
+            "blob_root": str(data_root / "skill-blobs"),
+            "fallback_root": str(data_root / "skill-fallback"),
             "wal": False,
             "default_status_filter": ["draft", "verified", "blessed"],
             "high_risk_status_filter": ["draft", "verified", "blessed"],
@@ -68,8 +72,8 @@ def _ingest_fixture_bundle(
 ) -> dict[str, tuple[str, str, list[str]]]:
     out: dict[str, tuple[str, str, list[str]]] = {}
     for provider, name in fixtures:
-        skill_id, version_hash, warnings = skillctl.ingest_file(
-            _fixture_path(provider, name, "SKILL.md")
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            skillctl, _fixture_path(provider, name, "SKILL.md")
         )
         out[name] = (skill_id, version_hash, warnings)
     return out
@@ -225,8 +229,8 @@ def _message_contents(messages: list[Any]) -> list[str]:
 def test_context_pack_with_real_skill_includes_snippet(tmp_path: Path) -> None:
     skillctl = Skill(_skill_cfg(tmp_path, known_tools=["http_request"]))
     try:
-        skill_id, version_hash, warnings = skillctl.ingest_file(
-            _fixture_path("openai", "linear", "SKILL.md")
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            skillctl, _fixture_path("openai", "linear", "SKILL.md")
         )
         assert not any(item.startswith("lint.error:") for item in warnings)
 
@@ -270,8 +274,8 @@ def test_runner_step_with_real_skill_selects_skill_at_bootstrap_and_hydrates_ent
 ) -> None:
     skillctl = Skill(_skill_cfg(tmp_path, known_tools=["http_request"]))
     try:
-        skill_id, version_hash, warnings = skillctl.ingest_file(
-            _fixture_path("openai", "linear", "SKILL.md")
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            skillctl, _fixture_path("openai", "linear", "SKILL.md")
         )
         assert not any(item.startswith("lint.error:") for item in warnings)
 
@@ -343,8 +347,8 @@ def test_runner_step_with_real_skill_selects_skill_at_bootstrap_and_hydrates_ent
         _skill_cfg(tmp_path, known_tools=["file", "browser", "http_request"])
     )
     try:
-        skill_id, version_hash, warnings = skillctl.ingest_file(
-            _fixture_path("anthropic", "mcp_builder", "SKILL.md")
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            skillctl, _fixture_path("anthropic", "mcp_builder", "SKILL.md")
         )
         assert not any(item.startswith("lint.error:") for item in warnings)
 

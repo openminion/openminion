@@ -1,9 +1,12 @@
 from openminion.base.time import utc_now_iso  # noqa: F401
 
-import hashlib
-import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, Optional, cast
+
+from openminion.modules.tool.plugin_api import (
+    BlockchainSendConfirmationPreview,
+    stable_invocation_hash as stable_invocation_hash,
+)
 
 from .constants import (
     POLICY_DECISION_REQUIRE_CONFIRM,
@@ -34,23 +37,6 @@ def normalize_mode(value: str) -> PolicyMode:
     if mode in POLICY_MODE_CHOICES:
         return cast(PolicyMode, mode)
     raise ValueError(f"Invalid policy mode: {value}")
-
-
-def stable_invocation_hash(*, tool: str, method: str, args: dict[str, Any]) -> str:
-    filtered_args = {
-        key: value
-        for key, value in (args or {}).items()
-        if not str(key).startswith("_")
-    }
-    payload = {
-        "tool": str(tool),
-        "method": str(method),
-        "args": filtered_args,
-    }
-    encoded = json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def sanitize_args(args: dict[str, Any]) -> dict[str, Any]:
@@ -154,6 +140,7 @@ class PolicyGrantInput:
     reason: Optional[str] = None
     created_trace_id: Optional[str] = None
     risk_floor: Optional[RiskClass] = None
+    approval_id: Optional[str] = None
 
 
 @dataclass
@@ -176,6 +163,7 @@ class PolicyGrant:
     reason: Optional[str]
     created_trace_id: Optional[str]
     risk_floor: Optional[RiskClass]
+    approval_id: Optional[str] = None
 
     @property
     def active(self) -> bool:
@@ -209,6 +197,9 @@ class PolicyDecision:
     matched_grant_id: Optional[str] = None
     confirm_request: Optional[dict[str, Any]] = None
     details: dict[str, Any] = field(default_factory=dict)
+    approval_id: Optional[str] = None
+    invocation_hash: Optional[str] = None
+    confirmation_preview: BlockchainSendConfirmationPreview | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -219,4 +210,39 @@ class PolicyDecision:
             "matched_grant_id": self.matched_grant_id,
             "confirm_request": self.confirm_request,
             "details": dict(self.details),
+            "approval_id": self.approval_id,
+            "invocation_hash": self.invocation_hash,
+            "confirmation_preview": (
+                None
+                if self.confirmation_preview is None
+                else asdict(self.confirmation_preview)
+            ),
         }
+
+
+@dataclass(frozen=True)
+class PendingPolicyConfirmation:
+    approval_id: str
+    subject_id: str
+    tool: str
+    method: str
+    invocation_hash: str
+    invocation_id: str
+    trace_id: Optional[str]
+    session_id: Optional[str]
+    preview: dict[str, Any]
+    state: str
+    resolution_action: Optional[str]
+    grant_id: Optional[str]
+    created_at: str
+    expires_at: str
+    resolved_at: Optional[str]
+
+
+class PolicyControlError(RuntimeError):
+    def __init__(
+        self, code: str, message: str, details: dict[str, Any] | None = None
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.details = details or {}

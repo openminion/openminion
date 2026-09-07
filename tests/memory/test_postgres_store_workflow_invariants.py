@@ -176,3 +176,43 @@ def test_transaction_scoped_helpers_reuse_caller_connection() -> None:
     assert all(
         "memory_records" in sql or "memory_entities" in sql for sql, _ in executed
     )
+
+
+def test_outcome_feedback_locks_records_before_updating() -> None:
+    events: list[str] = []
+    txn_connection = object()
+    fetched: list[tuple[str, object | None]] = []
+    store = _new_store_shell()
+    store._lock = _RecordingLock(events)
+    store._engine = _RecordingEngine(events, txn_connection)
+
+    def fetchone(sql, _params=None, *, connection=None):
+        fetched.append((str(sql), connection))
+        return None
+
+    store._fetchone = fetchone
+
+    assert (
+        store.apply_outcome_feedback(
+            ["record-1"],
+            outcome="success",
+            command_id="command-1",
+            observed_at="2026-04-03T00:00:00+00:00",
+            feedback_delta=0.2,
+        )
+        == 0
+    )
+
+    assert fetched == [
+        (
+            "SELECT * FROM memory_records WHERE id = :id FOR UPDATE",
+            txn_connection,
+        )
+    ]
+    assert events == [
+        "lock_enter",
+        "engine_begin",
+        "txn_enter",
+        "txn_exit",
+        "lock_exit",
+    ]

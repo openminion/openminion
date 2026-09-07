@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from openminion.modules.llm.providers.base import ProviderToolCall
+from openminion.modules.brain.adapters.memory.runtime import MemctlAdapter
+from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 from openminion.modules.memory.runtime.promotion import PromotionPolicy
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage import (
@@ -46,6 +48,7 @@ def test_memory_tools_write_search_and_forget_round_trip(tmp_path: Path) -> None
                 arguments={
                     "scope": "session:sess-memory-tools",
                     "record_type": "fact",
+                    "key": "preferred_database",
                     "title": "Preferred database",
                     "content": {"value": "sqlite"},
                     "tags": ["db"],
@@ -82,6 +85,36 @@ def test_memory_tools_write_search_and_forget_round_trip(tmp_path: Path) -> None
     assert search_result.data["records"][0]["id"] == record_id
     assert search_result.data["records"][0]["content"] == {"value": "sqlite"}
 
+    correction_result = registry.execute_calls(
+        [
+            ProviderToolCall(
+                name="memory.write",
+                arguments={
+                    "scope": "session:sess-memory-tools",
+                    "record_type": "fact",
+                    "key": "fact:preferred_database",
+                    "title": "Preferred database",
+                    "content": {"value": "postgres"},
+                },
+                id="write-2",
+                source="test",
+            )
+        ],
+        context=context,
+    ).results[0]
+
+    assert correction_result.ok
+    corrected = service.search(
+        SearchQueryOptions(
+            query="postgres",
+            scopes=["session:sess-memory-tools"],
+            types=["fact"],
+            limit=5,
+        )
+    )
+    assert len(corrected) == 1
+    assert corrected[0].key == "fact:preferred_database"
+
     forget_result = registry.execute_calls(
         [
             ProviderToolCall(
@@ -107,6 +140,43 @@ def test_memory_tools_write_search_and_forget_round_trip(tmp_path: Path) -> None
         )
         == []
     )
+
+
+def test_brain_tool_adapter_preserves_memory_service(tmp_path: Path) -> None:
+    service = _memory_service(tmp_path)
+    adapter = ToolAdapter(
+        workspace_root=tmp_path,
+        runtime_registry=_registry(),
+        memory_service=MemctlAdapter(service, agent_id="memory-agent"),
+        agent_id="memory-agent",
+    )
+
+    result = adapter.execute(
+        command={
+            "tool_name": "memory.write",
+            "args": {
+                "scope": "agent:memory-agent",
+                "record_type": "fact",
+                "key": "fact:preferred_database",
+                "title": "Preferred database",
+                "content": "sqlite",
+            },
+            "inputs": {"permission_mode": "bypass"},
+        },
+        session_id="memory-session",
+        trace_id="memory-trace",
+    )
+
+    assert result["status"] == "success"
+    records = service.search(
+        SearchQueryOptions(
+            query="sqlite",
+            scopes=["agent:memory-agent"],
+            types=["fact"],
+            limit=1,
+        )
+    )
+    assert len(records) == 1
 
 
 def test_memory_tools_require_explicit_runtime_service(tmp_path: Path) -> None:
@@ -142,6 +212,7 @@ def test_memory_tools_do_not_accept_metadata_smuggled_service(tmp_path: Path) ->
                 arguments={
                     "scope": "session:sess-memory-tools",
                     "record_type": "fact",
+                    "key": "fact:ignored_smuggle",
                     "title": "Ignored smuggle",
                     "content": "value",
                 },

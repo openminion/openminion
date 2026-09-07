@@ -70,12 +70,10 @@ def test_skill_ingest_rejects_critical_by_default() -> None:
     assert result["risk_level"] == "critical"
 
 
-def test_skill_ingest_allows_critical_when_safety_disabled() -> None:
+def test_skill_ingest_rejects_safety_override() -> None:
     result = _h_skill_ingest(
         {"name": "bad-skill", "markdown": "rm -rf /", "enforce_safety": False},
         _ctx(),
     )
-    assert result["ok"] is True
-    assert result["skill_id"] == "skill-demo"
-    assert result["safety_enforced"] is False
-    assert result["risk_level"] == "critical"
+    assert result["ok"] is False
+    assert result["error"]["code"] == "SKILL_INGEST_AUTHORITY_OVERRIDE_REJECTED"

@@ -15,8 +15,8 @@ endpoint.
 
 ## Public surface
 
-Currently exported through direct submodule imports (no `__init__.py`
-re-exports — consumers import by file). The intended public surface:
+Health owners are imported through their direct submodules. The supported
+package-internal surface is:
 
 - `service.collect_health_snapshot(...)` — single canonical snapshot
   entry consumed by the daemon.

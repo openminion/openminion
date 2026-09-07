@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 
 from rich.console import Console
+from rich.text import Text
 
 from openminion.cli.interactive.terminal.streaming import (
     _format_elapsed_seconds,
@@ -40,7 +41,7 @@ def test_format_elapsed_negative_clamps_to_zero() -> None:
 
 def test_render_in_progress_contains_running_prefix() -> None:
     out = _render(_render_in_progress_tool_block("Bash", {"cmd": "ls"}))
-    assert "Running" in out
+    assert "Using a tool..." in out
 
 
 def test_render_in_progress_contains_marker_glyph() -> None:
@@ -54,29 +55,51 @@ def test_render_in_progress_renders_yellow_in_color_mode() -> None:
     assert "●" in out
 
 
+def test_render_in_progress_colors_the_full_status_heading(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "openminion.cli.presentation.markers.is_color_enabled", lambda: True
+    )
+    block = _render_in_progress_tool_block("Bash", {"cmd": "ls"})
+    title = block.renderables[0]
+
+    assert isinstance(title, Text)
+    assert any(
+        span.start == 2 and span.end == len(title.plain) and span.style == "bold yellow"
+        for span in title.spans
+    )
+
+
 def test_render_in_progress_contains_verb_form_title() -> None:
-    out = _render(_render_in_progress_tool_block("Bash", {"cmd": "ls -la"}))
+    out = _render(
+        _render_in_progress_tool_block("Bash", {"cmd": "ls -la"}, public_title=False)
+    )
     assert "Bash(ls -la)" in out
 
 
 def test_render_in_progress_uses_path_arg_for_read_edit() -> None:
-    out = _render(_render_in_progress_tool_block("Read", {"path": "/etc/hosts"}))
+    out = _render(
+        _render_in_progress_tool_block(
+            "Read", {"path": "/etc/hosts"}, public_title=False
+        )
+    )
     assert "Read(/etc/hosts)" in out
 
 
 def test_render_in_progress_uses_query_arg_for_grep() -> None:
-    out = _render(_render_in_progress_tool_block("Grep", {"query": "TODO"}))
+    out = _render(
+        _render_in_progress_tool_block("Grep", {"query": "TODO"}, public_title=False)
+    )
     assert "Grep(TODO)" in out
 
 
 def test_render_in_progress_handles_empty_args() -> None:
-    out = _render(_render_in_progress_tool_block("Bash", {}))
+    out = _render(_render_in_progress_tool_block("Bash", {}, public_title=False))
     assert "Bash" in out
     assert "Bash(" not in out
 
 
 def test_render_in_progress_handles_none_args() -> None:
-    out = _render(_render_in_progress_tool_block("Bash", None))
+    out = _render(_render_in_progress_tool_block("Bash", None, public_title=False))
     assert "Bash" in out
 
 
@@ -98,7 +121,7 @@ def test_render_in_progress_omits_elapsed_when_negative() -> None:
     out = _render(
         _render_in_progress_tool_block("Bash", {"cmd": "ls"}, elapsed_seconds=-1.0)
     )
-    assert "Running" in out
+    assert "Using a tool..." in out
 
 
 def test_render_in_progress_no_body_row() -> None:
@@ -109,13 +132,15 @@ def test_render_in_progress_no_body_row() -> None:
 
 def test_render_in_progress_with_long_arg_truncates() -> None:
     long_cmd = "echo " + "x" * 100
-    out = _render(_render_in_progress_tool_block("Bash", {"cmd": long_cmd}))
+    out = _render(
+        _render_in_progress_tool_block("Bash", {"cmd": long_cmd}, public_title=False)
+    )
     assert "..." in out
 
 
 def test_render_in_progress_falls_back_to_tool_label() -> None:
     out = _render(_render_in_progress_tool_block("", {"cmd": "ls"}))
-    assert "Running tool" in out or "Running" in out
+    assert "Using a tool..." in out
 
 
 def test_render_in_progress_returns_group() -> None:

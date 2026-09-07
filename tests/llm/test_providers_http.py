@@ -1255,6 +1255,59 @@ class ProviderHTTPTests(unittest.TestCase):
             "minimax_bracket",
         )
 
+    def test_openai_accepts_native_call_from_requestable_tool_directory(self) -> None:
+        provider = OpenAIProvider()
+        request = LLMRequest.model_validate(
+            {
+                "model": "MiniMax-M2.7",
+                "messages": [{"role": "user", "content": "remember this"}],
+                "tools": [
+                    {
+                        "name": "tool.request",
+                        "description": "Activate an inactive tool.",
+                        "input_schema": {"type": "object"},
+                    }
+                ],
+                "metadata": {"requestable_tool_names": '["memory.write"]'},
+            }
+        )
+        payload = {
+            "model": "MiniMax-M2.7",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call-memory",
+                                "type": "function",
+                                "function": {
+                                    "name": "memory.write",
+                                    "arguments": '{"content":"remember this"}',
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+
+        with patch(
+            "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+            return_value=_FakeHTTPResponse(payload),
+        ):
+            response = provider.complete(
+                request,
+                {
+                    "api_key": "test-key",
+                    "base_url": "https://api.minimax.io/v1",
+                    "tool_call_strategy": "hybrid",
+                },
+            )
+
+        self.assertEqual([call.name for call in response.tool_calls], ["memory.write"])
+
     def test_openai_official_minimax_hides_think_blocks_from_visible_output(
         self,
     ) -> None:
@@ -1822,20 +1875,107 @@ class ProviderHTTPTests(unittest.TestCase):
         self.assertEqual(response.output_text, "visible answer")
         self.assertEqual(len(captured), 2)
         retry_messages = captured[1].get("messages") or []
-        self.assertTrue(
-            any(
-                isinstance(item, dict)
-                and str(item.get("role", "")).strip() == "system"
-                and "Never leave the assistant message empty"
-                in str(item.get("content", ""))
-                for item in retry_messages
-            )
+        system_messages = [
+            item
+            for item in retry_messages
+            if isinstance(item, dict) and str(item.get("role", "")).strip() == "system"
+        ]
+        self.assertEqual(len(system_messages), 1)
+        self.assertEqual(retry_messages[0], system_messages[0])
+        self.assertIn(
+            "Native tool-calling contract",
+            str(system_messages[0].get("content", "")),
+        )
+        self.assertIn(
+            "Never leave the assistant message empty",
+            str(system_messages[0].get("content", "")),
         )
         normalization = dict(response.telemetry or {}).get("normalization", {})
         self.assertEqual(
             normalization.get("request_compat_profile"), "minimax_openai_compat"
         )
         self.assertIs(normalization.get("empty_payload_retry_used"), True)
+
+    def test_openai_minimax_empty_tool_retry_names_visible_activation_control(
+        self,
+    ) -> None:
+        provider = OpenAIProvider()
+        request = LLMRequest.model_validate(
+            {
+                "model": "MiniMax-M2.7",
+                "messages": [{"role": "user", "content": "write the file"}],
+                "tools": [
+                    {
+                        "name": "file.read",
+                        "description": "read",
+                        "input_schema": {"type": "object"},
+                    },
+                    {
+                        "name": "tool.request",
+                        "description": "activate",
+                        "input_schema": {"type": "object"},
+                    },
+                ],
+            }
+        )
+        captured: list[dict[str, object]] = []
+
+        def _fake_urlopen(http_request, timeout=None):
+            del timeout
+            captured.append(json.loads(http_request.data.decode("utf-8")))
+            tool_name = "file_write" if len(captured) == 1 else "tool_request"
+            arguments = (
+                {"path": "result.txt", "content": "done"}
+                if len(captured) == 1
+                else {"tool_name": "file.write"}
+            )
+            return _FakeHTTPResponse(
+                {
+                    "model": "MiniMax-M2.7",
+                    "choices": [
+                        {
+                            "finish_reason": "tool_calls",
+                            "message": {
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": f"call-{len(captured)}",
+                                        "type": "function",
+                                        "function": {
+                                            "name": tool_name,
+                                            "arguments": json.dumps(arguments),
+                                        },
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 3,
+                        "completion_tokens": 2,
+                        "total_tokens": 5,
+                    },
+                }
+            )
+
+        with patch(
+            "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+            side_effect=_fake_urlopen,
+        ):
+            response = provider.complete(
+                request,
+                {
+                    "api_key": "test-key",
+                    "base_url": "https://api.minimax.io/v1",
+                    "tool_call_strategy": "hybrid",
+                },
+            )
+
+        self.assertTrue(response.ok)
+        self.assertEqual([call.name for call in response.tool_calls], ["tool.request"])
+        retry_system = str(captured[1]["messages"][0]["content"])
+        self.assertIn("visible tools: file.read, tool.request", retry_system)
+        self.assertIn("provider-safe tool_request", retry_system)
 
     def test_openrouter_does_not_parse_fallback_tool_calls(self) -> None:
         provider = OpenRouterProvider()
@@ -2530,6 +2670,64 @@ class ProviderHTTPTests(unittest.TestCase):
         self.assertEqual(
             response.telemetry.get("normalization", {}).get("tool_call_source"),
             "native",
+        )
+
+    def test_ollama_sends_tool_history_arguments_as_objects(self) -> None:
+        provider = OllamaProvider()
+        request = LLMRequest.model_validate(
+            {
+                "messages": [
+                    {"role": "user", "content": "List files"},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "name": "file.list_dir",
+                                "arguments": {"path": "/"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "content": "README.md",
+                        "tool_call_id": "call-1",
+                    },
+                    {"role": "user", "content": "Continue"},
+                ]
+            }
+        )
+        captured: dict[str, Any] = {}
+
+        def _fake_urlopen(http_request, timeout=None):
+            del timeout
+            captured["body"] = json.loads(http_request.data.decode("utf-8"))
+            return _FakeHTTPResponse(
+                {
+                    "model": "gpt-oss:20b",
+                    "message": {"role": "assistant", "content": "Done"},
+                }
+            )
+
+        with patch(
+            "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+            side_effect=_fake_urlopen,
+        ):
+            response = provider.complete(
+                request,
+                {"base_url": "http://127.0.0.1:11434"},
+            )
+
+        self.assertTrue(response.ok)
+        assistant = captured["body"]["messages"][1]
+        self.assertEqual(
+            assistant["tool_calls"][0]["function"]["arguments"],
+            {"path": "/"},
+        )
+        self.assertEqual(
+            captured["body"]["messages"][2]["tool_call_id"],
+            "call-1",
         )
 
     def test_ollama_preserves_native_tool_calls_from_minimax_trace_fixtures(

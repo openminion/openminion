@@ -25,6 +25,7 @@ class SessionStore(ABC):
         *,
         filters: Mapping[str, Any] | None = None,
         limit: int = 100,
+        agent_id: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
@@ -137,7 +138,12 @@ class SessionStore(ABC):
     ) -> int: ...
 
     @abstractmethod
-    def get_latest_working_state(self, session_id: str) -> dict[str, Any] | None: ...
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict[str, Any] | None: ...
 
     @abstractmethod
     def get_active_state(self, session_id: str) -> dict[str, Any]: ...
@@ -200,6 +206,9 @@ class SessionStore(ABC):
         misfire_policy: str | Mapping[str, Any] | None = None,
         max_lateness_s: int = 600,
         max_concurrency: int = 1,
+        concurrency_key: str | None = None,
+        max_attempts: int = 3,
+        retry_backoff_s: int = 30,
         job_id: str | None = None,
     ) -> str: ...
 
@@ -212,7 +221,13 @@ class SessionStore(ABC):
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
-    def set_cron_job_enabled(self, job_id: str, enabled: bool) -> None: ...
+    def set_cron_job_enabled(
+        self,
+        job_id: str,
+        enabled: bool,
+        *,
+        cancel_queued: bool = False,
+    ) -> None: ...
 
     @abstractmethod
     def replace_cron_job_payload(
@@ -272,6 +287,26 @@ class SessionStore(ABC):
     ) -> bool: ...
 
     @abstractmethod
+    def recover_expired_cron_runs(
+        self,
+        *,
+        now_iso: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]: ...
+
+    @abstractmethod
+    def retry_cron_run(
+        self,
+        run_id: str,
+        *,
+        error: dict[str, Any],
+        now_iso: str | None = None,
+    ) -> dict[str, Any] | None: ...
+
+    @abstractmethod
+    def get_cron_scope_state(self, concurrency_key: str) -> dict[str, Any] | None: ...
+
+    @abstractmethod
     def acquire_session_turn_lease(
         self,
         session_id: str,
@@ -320,6 +355,7 @@ class SessionStore(ABC):
         summary: str | None = None,
         artifact_refs: list[dict[str, Any]] | None = None,
         error: dict[str, Any] | None = None,
+        output: dict[str, Any] | None = None,
         isolated_session_id: str | None = None,
         now_iso: str | None = None,
     ) -> dict[str, Any] | None: ...

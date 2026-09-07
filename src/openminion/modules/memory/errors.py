@@ -59,3 +59,23 @@ class MemoryQueryUnavailableError(MemctlError):
 
 class MigrationRequiredError(MemctlError):
     code = "MIGRATION_REQUIRED"
+
+
+class CaptureBundleIntegrityError(RuntimeError):
+    code = "CAPTURE_BUNDLE_INTEGRITY_CONFLICT"
+
+
+class CaptureRecoveryUnsupportedError(RuntimeError):
+    code = "CAPTURE_RECOVERY_UNSUPPORTED"
+
+
+class CaptureSourceUnavailableError(MemctlError):
+    code = "CAPTURE_SOURCE_UNAVAILABLE"
+
+
+class CaptureIdentityMismatchError(MemctlError):
+    code = "CAPTURE_IDENTITY_MISMATCH"
+
+
+class CaptureRecoveryUnauthorizedError(MemctlError):
+    code = "CAPTURE_RECOVERY_UNAUTHORIZED"

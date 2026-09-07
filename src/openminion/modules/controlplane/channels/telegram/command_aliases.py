@@ -31,12 +31,12 @@ def normalize_command_aliases(text: str, *, bot_username: str | None) -> str:
         return _DIRECT_ALIASES[cmd]
     if cmd == "new":
         return "/session new"
-    if cmd in {"stop", "cancel"}:
+    if cmd == "stop":
         return "/profile stop"
     if cmd == "run":
-        if args and args[0].lower() == "status":
-            return "/job ls"
-        return "/run " + " ".join(args)
+        return " ".join(["/run", *args])
+    if cmd == "cancel":
+        return " ".join(["/cancel", *args])
 
     if cmd in {"agent", "profile"}:
         if not args:

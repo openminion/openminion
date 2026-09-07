@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 import io
 from collections.abc import Callable
 from typing import Any
 
-from prompt_toolkit import print_formatted_text
+from prompt_toolkit.application import run_in_terminal
+from prompt_toolkit.application.current import get_app_or_none, set_app
 from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.renderer import print_formatted_text
+from prompt_toolkit.styles import Style
 from rich.console import Console
 
 
@@ -15,8 +16,6 @@ def write_console_render_via_prompt_output(
     prompt_output: Any,
     render: Callable[[], None],
 ) -> None:
-    """Route a Rich render through prompt-toolkit's output adapter."""
-
     buffer = io.StringIO()
     original_file = console.file
     original_force_terminal = getattr(console, "_force_terminal", None)
@@ -30,14 +29,12 @@ def write_console_render_via_prompt_output(
     payload = buffer.getvalue()
     if not payload:
         return
-    print_formatted_text(ANSI(payload), output=prompt_output, end="", flush=True)
+    print_formatted_text(prompt_output, ANSI(payload), Style([]))
 
 
 def write_terminal_control_via_prompt_output(
     *, prompt_output: Any, payload: str
 ) -> None:
-    """Write raw terminal control bytes through prompt-toolkit's output."""
-
     writer = getattr(prompt_output, "write_raw", None)
     if not callable(writer):
         return
@@ -54,9 +51,11 @@ def build_prompt_safe_terminal_writer(
 ) -> Callable[[Callable[[], None]], Any]:
     def _run_with_prompt(render: Callable[[], None]) -> Any:
         app = getattr(prompt_session, "app", None)
-        runner = getattr(app, "run_in_terminal", None)
-        if callable(runner):
-            return runner(render, render_cli_done=False)
+        if bool(getattr(app, "is_running", False)):
+            if get_app_or_none() is app:
+                return run_in_terminal(render, render_cli_done=False)
+            with set_app(app):
+                return run_in_terminal(render, render_cli_done=False)
         render()
         return None
 

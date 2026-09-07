@@ -18,6 +18,14 @@ from openminion.cli.constants import (
 )
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
+from openminion.cli.identity.operator import local_operator_id
+from openminion.cli.commands.skill_admission import (
+    register_skill_admission_subcommands,
+    skill_verification_evidence_from_args,
+)
+from openminion.cli.commands.skill_authoring import (
+    register_skill_authoring_subcommands,
+)
 
 _CLI_DEFAULT_SKILL_CONFIG_PATH = "skill.yaml"
 
@@ -38,6 +46,7 @@ def _skill_force_disabled() -> bool:
 try:
     from openminion.modules.skill import Skill
     from openminion.modules.skill.errors import SkillError
+    from openminion.modules.skill.interfaces import SkillIngestAuthority
 except ModuleNotFoundError:
     _SKILL_IMPORT_FAILED = True
     _SKILL_ERROR_MSG = (
@@ -61,6 +70,7 @@ except ModuleNotFoundError:
                 try:
                     from openminion.modules.skill import Skill
                     from openminion.modules.skill.errors import SkillError
+                    from openminion.modules.skill.interfaces import SkillIngestAuthority
 
                     _SKILL_IMPORT_FAILED = False
                     _SKILL_ERROR_MSG = None
@@ -187,7 +197,10 @@ def _run_skill_ingest(args, app: Any | None = None) -> int:
                 scope=args.scope,
                 agent_id=args.agent_id,
                 trust=getattr(args, "trust", None),
-                promotion_path="operator",
+                authority=SkillIngestAuthority.local_operator(
+                    surface="cli.skill.ingest",
+                    principal_id=local_operator_id(),
+                ),
             )
             result = {
                 "ok": True,
@@ -218,6 +231,59 @@ def _run_skill_ingest(args, app: Any | None = None) -> int:
             sort_keys=False,
         )
         return 1
+
+
+def _run_skill_admission(args, app: Any | None = None) -> int:
+    _attach_app(args, app)
+    if not _check_skill_available():
+        print_json_payload(
+            {
+                "ok": False,
+                "error": _error_payload(
+                    code="SKILL_NOT_AVAILABLE", message=_get_skill_error()
+                ),
+            },
+            sort_keys=False,
+        )
+        return 1
+    ctl = Skill(args.config)
+    try:
+        authority = SkillIngestAuthority.local_operator(
+            surface=f"cli.skill.{args.skill_action}",
+            principal_id=local_operator_id(),
+        )
+        expected = str(args.expected_active_version_hash).strip()
+        if args.skill_action == "admit":
+            result = ctl.admit_skill_version(
+                skill_id=args.skill_id,
+                version_hash=args.version_hash,
+                expected_active_version_hash=None if expected == "none" else expected,
+                target_status=args.target_status,
+                reason=args.reason,
+                authority=authority,
+                verification_evidence=skill_verification_evidence_from_args(args),
+            )
+        else:
+            result = ctl.rollback_skill_version(
+                skill_id=args.skill_id,
+                to_version_hash=args.to_version_hash,
+                expected_active_version_hash=expected,
+                reason=args.reason,
+                authority=authority,
+            )
+        print_json_payload(result, sort_keys=False)
+        return 0
+    except SkillError as exc:
+        print_json_payload(
+            {
+                "ok": False,
+                "error": _error_payload_from_exception(exc, include_empty_details=True),
+            },
+            sort_keys=False,
+        )
+        return 1
+    finally:
+        ctl.close()
 
 
 def _run_skill_list(args, app: Any | None = None) -> int:
@@ -630,6 +696,9 @@ def _run_skill_validate(args, app: Any | None = None) -> int:
         try:
             package = ctl.get_skill(args.skill_id, args.version)
             lint_report = ctl.lint(args.skill_id, args.version)
+            verified_lint_report = ctl.lint(
+                args.skill_id, args.version, target_status="verified"
+            )
             harness_report = run_skill_harness(args.project_root)
             harness_result = None
             harness_results = tuple(harness_report.results)
@@ -642,13 +711,20 @@ def _run_skill_validate(args, app: Any | None = None) -> int:
             report = build_skill_validation_report(
                 package,
                 lint_report=lint_report,
+                verified_lint_report=verified_lint_report,
                 harness_result=harness_result,
+                admission=ctl.store.get_skill_admission(
+                    skill_id=package.skill_id, version_hash=package.version_hash
+                ),
+            )
+            ok = bool(harness_result and harness_result.ok) and bool(
+                report.readiness["verified_admission"]["ready"]
             )
             print_json_payload(
-                {"ok": True, "report": report.to_dict()},
+                {"ok": ok, "report": report.to_dict()},
                 sort_keys=False,
             )
-            return 0
+            return 0 if ok else 1
         finally:
             ctl.close()
     except SkillError as exc:
@@ -695,11 +771,18 @@ def _run_skill_test(args, app: Any | None = None) -> int:
             harness_report=harness_report,
             regression_refs=tuple(args.regression_ref or ()),
         )
+        portable_ok = all(
+            bool(result.portable_conformance.get("ok"))
+            for result in harness_report.results
+        )
+        ok = report.outcome == "passed" and (
+            portable_ok or not bool(getattr(args, "require_portable", False))
+        )
         print_json_payload(
-            {"ok": True, "report": report.to_dict()},
+            {"ok": ok, "report": report.to_dict()},
             sort_keys=False,
         )
-        return 0 if report.outcome != "failed" else 1
+        return 0 if ok else 1
     except Exception as exc:
         print_json_payload(
             {
@@ -868,58 +951,25 @@ def _register_skill_remove_subcommand(skill_subcommands) -> None:
     parser.set_defaults(handler=_run_skill_remove, needs_app=False)
 
 
-def _register_skill_validate_subcommand(skill_subcommands) -> None:
-    parser = skill_subcommands.add_parser(
-        "validate",
-        help="Emit typed SkillValidationReport (composes typed lint + harness summary)",
-    )
-    parser.add_argument("skill_id", help="Skill ID to validate")
-    parser.add_argument("--version", default=None, help="Specific version to validate")
-    parser.add_argument(
-        "--project-root",
-        default=".",
-        help="Project root for harness skill discovery (defaults to cwd).",
-    )
-    _add_skill_config_arg(parser)
-    parser.set_defaults(handler=_run_skill_validate, needs_app=False)
-
-
-def _register_skill_test_subcommand(skill_subcommands) -> None:
-    parser = skill_subcommands.add_parser(
-        "test",
-        help="Emit typed SkillTestReport over the skill harness for a skill root",
-    )
-    parser.add_argument("skill_root", help="Filesystem skill root containing SKILL.md")
-    parser.add_argument(
-        "--regression-ref",
-        action="append",
-        default=[],
-        help="Regression reference (repeatable).",
-    )
-    _add_skill_config_arg(parser)
-    parser.set_defaults(handler=_run_skill_test, needs_app=False)
-
-
-def _register_skill_debug_subcommand(skill_subcommands) -> None:
-    parser = skill_subcommands.add_parser(
-        "debug", help="Emit typed SkillAuthoringDebugView"
-    )
-    parser.add_argument("skill_id", help="Skill ID to inspect")
-    parser.add_argument("--version", default=None, help="Specific version to inspect")
-    _add_skill_config_arg(parser)
-    parser.set_defaults(handler=_run_skill_debug, needs_app=False)
-
-
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     skill = subparsers.add_parser("skill", help="Skill management operations")
     skill_subcommands = skill.add_subparsers(dest="skill_command", required=True)
 
     _register_skill_ingest_subcommand(skill_subcommands)
+    register_skill_admission_subcommands(
+        skill_subcommands,
+        handler=_run_skill_admission,
+        add_config_arg=_add_skill_config_arg,
+    )
     _register_skill_list_subcommand(skill_subcommands)
     _register_skill_refresh_subcommand(skill_subcommands)
     _register_skill_reingest_all_subcommand(skill_subcommands)
     _register_skill_show_subcommand(skill_subcommands)
     _register_skill_remove_subcommand(skill_subcommands)
-    _register_skill_validate_subcommand(skill_subcommands)
-    _register_skill_test_subcommand(skill_subcommands)
-    _register_skill_debug_subcommand(skill_subcommands)
+    register_skill_authoring_subcommands(
+        skill_subcommands,
+        validate_handler=_run_skill_validate,
+        test_handler=_run_skill_test,
+        debug_handler=_run_skill_debug,
+        add_config_arg=_add_skill_config_arg,
+    )

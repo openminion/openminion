@@ -17,9 +17,14 @@ from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_TERM_NEEDS_USER,
     CODING_TERM_TOOL_FAILURE,
     CODING_V1_ALLOWED_TOOLS,
+    PROJECT_CODING_ALLOWED_TOOLS,
+    PROJECT_CORE_ADDITIONAL_TOOLS,
+    PROJECT_RELEASE_ADDITIONAL_TOOLS,
+    PROJECT_RELEASE_ALLOWED_TOOLS,
     CodingLLMRuntime,
     CodingModeError,
     CodingRuntimeUnavailableError,
+    select_coding_allowed_tools,
 )
 from openminion.modules.brain.loop.strategies.coding.loop_state import (
     CodingLoopState,
@@ -48,16 +53,114 @@ def test_v1_allowlist_contains_expected_tools() -> None:
         "file.read",
         "file.read_range",
         "file.find",
+        "file.trash",
         "file.write",
         "web.fetch",
         "exec.run",
         "exec.poll",
         "exec.list",
         "exec.kill",
+        "agent.list",
+        "agent.get",
         "task.delegate",
     }
     assert expected == CODING_ALLOWED_TOOLS
     assert CODING_V1_ALLOWED_TOOLS == CODING_ALLOWED_TOOLS
+
+
+def test_project_allowlists_match_the_accepted_repository_sets() -> None:
+    expected_core = {
+        "git.status",
+        "git.diff",
+        "git.log",
+        "git.show",
+        "git.branch",
+        "git.checkout",
+        "git.add",
+        "git.commit",
+        "git.fetch",
+        "git.push",
+        "git.tag",
+        "github.list_prs",
+        "github.fetch_pr",
+        "github.fetch_diff",
+        "github.fetch_comments",
+        "github.fetch_checks",
+        "github.open_pr",
+        "github.update_pr",
+        "github.merge_pr",
+        "task.delegate",
+        "task.schedule",
+        "task.cancel",
+        "task.list",
+        "task.pause",
+        "task.resume",
+        "task.show",
+    }
+    expected_release = {
+        "github.dispatch_workflow",
+        "github.list_workflow_runs",
+        "github.create_release",
+    }
+
+    assert PROJECT_CORE_ADDITIONAL_TOOLS == expected_core
+    assert PROJECT_RELEASE_ADDITIONAL_TOOLS == expected_release
+    assert PROJECT_CODING_ALLOWED_TOOLS == CODING_ALLOWED_TOOLS | expected_core
+    assert PROJECT_RELEASE_ALLOWED_TOOLS == (
+        PROJECT_CODING_ALLOWED_TOOLS | expected_release
+    )
+
+
+def test_project_tool_selection_requires_explicit_approval_paths() -> None:
+    assert (
+        select_coding_allowed_tools(project_launch_approved=False)
+        is CODING_ALLOWED_TOOLS
+    )
+    assert (
+        select_coding_allowed_tools(project_launch_approved=True)
+        == PROJECT_CODING_ALLOWED_TOOLS
+    )
+    assert (
+        select_coding_allowed_tools(
+            project_launch_approved=True,
+            release_approved=True,
+        )
+        == PROJECT_RELEASE_ALLOWED_TOOLS
+    )
+    assert (
+        select_coding_allowed_tools(
+            project_launch_approved=False,
+            release_approved=True,
+        )
+        == CODING_ALLOWED_TOOLS
+    )
+
+
+def test_core_project_set_excludes_legacy_and_release_tools() -> None:
+    excluded = {
+        "plan.set",
+        "plan.add",
+        "plan.update",
+        "plan.complete",
+        "plan.list",
+        "plan.clear",
+        "todo.write",
+        "git.reset",
+        "git.stash",
+        "git.blame",
+        "git.reflog",
+        "github.commit_files",
+        "github.post_pr_review",
+        "github.post_pr_comment",
+        "task.watch",
+        "task.consolidate_memory",
+        "memory.write",
+        "memory.search",
+        "memory.forget",
+        *PROJECT_RELEASE_ADDITIONAL_TOOLS,
+    }
+
+    assert PROJECT_CODING_ALLOWED_TOOLS.isdisjoint(excluded)
 
 
 def test_v1_allowlist_excludes_pty_tools() -> None:
@@ -154,6 +257,42 @@ def test_loop_state_telemetry_payload_structure() -> None:
     assert set(payload["coding.allowed_tools"]) == set(CODING_ALLOWED_TOOLS)
 
 
+def test_loop_state_telemetry_keeps_security_results_structural() -> None:
+    report_ref = "artifact://sha256/" + ("a" * 64)
+    state = CodingLoopState(
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "security.publish_report",
+                    "ok": True,
+                    "verified": True,
+                    "data": {
+                        "assessment_id": "b" * 32,
+                        "execution_status": "completed",
+                        "duration_ms": 25,
+                        "artifact_refs": [report_ref],
+                        "summary": "private report prose",
+                    },
+                    "call_id": "call-security",
+                    "source": "native",
+                }
+            ]
+        }
+    )
+
+    payload = state.telemetry_payload(CODING_ALLOWED_TOOLS)
+
+    result = payload["tool_results"][0]
+    assert result["data"] == {
+        "assessment_id": "b" * 32,
+        "result_status": "completed",
+        "duration_ms": 25,
+        "artifact_refs": [report_ref],
+        "artifact_count": 1,
+    }
+    assert "private report prose" not in str(payload)
+
+
 def test_coding_tool_specs_describe_delegate_artifact_disposition() -> None:
     from openminion.modules.brain.loop.strategies.coding.runtime import (
         _build_tool_specs,
@@ -161,6 +300,7 @@ def test_coding_tool_specs_describe_delegate_artifact_disposition() -> None:
 
     specs = {spec.name: spec for spec in _build_tool_specs(CODING_ALLOWED_TOOLS)}
 
+    assert {"agent.list", "agent.get", "task.delegate"} <= specs.keys()
     description = specs["task.delegate"].description
     assert "exact named agent" in description
     assert "child artifact" in description
@@ -282,7 +422,11 @@ def test_action_result_to_tool_message_error() -> None:
         command_id=new_uuid(),
         status="failed",
         summary="file not found",
-        error=ActionError(code="FILE_NOT_FOUND", message="file not found"),
+        error=ActionError(
+            code="FILE_NOT_FOUND",
+            message="file not found",
+            details={"path": "missing.txt", "schema": {"required": ["path"]}},
+        ),
     )
     msg = action_result_to_tool_message(
         tool_call_id=None, tool_name="file.read", action_result=result
@@ -292,6 +436,11 @@ def test_action_result_to_tool_message_error() -> None:
     payload = json.loads(msg.content)
     assert payload["status"] == "failed"
     assert payload["error"]["code"] == "FILE_NOT_FOUND"
+    assert payload["error"]["details"] == {
+        "path": "missing.txt",
+        "schema": {"required": ["path"]},
+    }
+    assert msg.tool_error == payload["error"]
     assert "tool_call_id" not in msg.meta
 
 

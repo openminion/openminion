@@ -13,7 +13,6 @@ from ..schemas.closure import (
     ClosureJudgment,
     PlanReconciliationFact,
 )
-from .budget.continuation import has_continuation_budget
 
 
 def evaluate_plan_reconciliation(
@@ -62,10 +61,9 @@ def apply_plan_reconciliation_to_judgment(
         return judgment
     if not (judgment.satisfied and judgment.next_action == BRAIN_DISPOSITION_CLOSE):
         return judgment
-    if has_continuation_budget(state):
-        judgment.satisfied = False
-        judgment.next_action = BRAIN_DISPOSITION_CONTINUE
-        judgment.final_answer = None
+    judgment.satisfied = False
+    judgment.next_action = BRAIN_DISPOSITION_CONTINUE
+    judgment.final_answer = None
     judgment.reason = (
         f"{judgment.reason}; {PLAN_RECONCILIATION_INCOMPLETE_REASON}"
         if judgment.reason

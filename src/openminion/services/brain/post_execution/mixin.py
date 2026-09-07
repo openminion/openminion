@@ -1,10 +1,10 @@
 import asyncio
 import inspect
 import json
-import sys
 import time
 import uuid
 from collections.abc import Mapping
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Callable
 
@@ -14,9 +14,16 @@ from openminion.base.config.action_policy import (
 )
 from openminion.base.types import AgentResponse, Message
 from openminion.modules.brain.runner import BrainRunner
+from openminion.modules.brain.loop.services import turn_tool_scope
 from openminion.modules.brain.diagnostics.status import (
     PhaseStatus,
+    StatusDetailCode,
     normalize_phase_status,
+)
+from openminion.modules.session.capture import (
+    capture_is_excluded,
+    capture_run_kwargs,
+    terminal_capture_is_enabled,
 )
 from openminion.services.security.policy import (
     SecurityPolicyContext,
@@ -39,6 +46,7 @@ def _emit_prep_status(
     *,
     trace_id: str,
     detail_text: str,
+    detail_code: StatusDetailCode = "preparing_turn",
 ) -> None:
     if callback is None:
         return
@@ -46,6 +54,7 @@ def _emit_prep_status(
         status = normalize_phase_status(
             trace_id=trace_id,
             source_phase="DECIDE",
+            payload={"detail_code": detail_code},
             detail_text=detail_text,
         )
         callback(status)
@@ -54,35 +63,24 @@ def _emit_prep_status(
 
 
 def _bind_tool_workspace_root(
-    tool_api: Any, metadata_source: Mapping[str, Any]
-) -> None:
+    tool_api: Any | None,
+    metadata_source: Mapping[str, Any],
+    added_roots: tuple[Path, ...],
+) -> Any:
+    if tool_api is None:
+        return nullcontext()
     workspace_root = str(
         metadata_source.get("workspace_root") or metadata_source.get("cwd") or ""
     ).strip()
-    if not workspace_root:
-        return
+    workspace_path = (
+        Path(workspace_root).expanduser() if workspace_root else tool_api.workspace_root
+    )
+    return tool_api.workspace_override(workspace_path, added_roots=added_roots)
 
-    workspace_path = Path(workspace_root).expanduser()
-    if hasattr(tool_api, "workspace_root"):
-        tool_api.workspace_root = workspace_path
 
-    policy = getattr(tool_api, "policy", None)
-    policy_raw = getattr(policy, "raw", None)
-    if isinstance(policy_raw, dict):
-        policy_raw["workspace_root"] = str(workspace_path)
-        context_metadata = policy_raw.get("context_metadata")
-        if not isinstance(context_metadata, dict):
-            context_metadata = {}
-            policy_raw["context_metadata"] = context_metadata
-        context_metadata["workspace_root"] = str(workspace_path)
-        raw_cwd = str(metadata_source.get("cwd") or "").strip()
-        cwd_path = Path(raw_cwd).expanduser() if raw_cwd else workspace_path
-        if not cwd_path.is_absolute():
-            cwd_path = workspace_path / cwd_path
-        if cwd_path.resolve(strict=False).is_relative_to(
-            workspace_path.resolve(strict=False)
-        ):
-            context_metadata["cwd"] = str(cwd_path)
+def _take_added_workspace_roots(metadata: dict[str, Any]) -> tuple[Path, ...]:
+    raw = metadata.pop("openminion_ephemeral_workspace_roots", "[]")
+    return tuple(Path(value) for value in json.loads(str(raw or "[]")))
 
 
 def _parse_permission_overrides(metadata_source: dict[str, Any]) -> dict[str, str]:
@@ -117,6 +115,7 @@ class BrainBridgeTurnMixin:
         _emit_prep_status(
             progress_callback,
             trace_id=prep_trace_id,
+            detail_code="preparing_turn",
             detail_text="Preparing turn...",
         )
         self._refresh_prep_identity_state()
@@ -126,6 +125,7 @@ class BrainBridgeTurnMixin:
         _emit_prep_status(
             progress_callback,
             trace_id=prep_trace_id,
+            detail_code="loading_memory_context",
             detail_text="Loading memory context...",
         )
         runtime_system_prompt, gateway_system_context = self._prepare_runtime_contexts(
@@ -147,6 +147,7 @@ class BrainBridgeTurnMixin:
         _emit_prep_status(
             progress_callback,
             trace_id=prep_trace_id,
+            detail_code="loading_session_history",
             detail_text="Loading session history...",
         )
         self._hydrate_runner_session_context(
@@ -159,6 +160,10 @@ class BrainBridgeTurnMixin:
             runner=runner,
             session_id=session_id,
             user_input=message.body,
+        )
+        runner._capture_excluded_for_turn = capture_is_excluded(message.metadata or {})
+        runner._terminal_capture_enabled_for_turn = terminal_capture_is_enabled(
+            message.metadata or {}
         )
         self._inject_gateway_system_context(
             runner=runner,
@@ -284,7 +289,6 @@ class BrainBridgeTurnMixin:
         tool_api = getattr(runner, "tool_api", None)
         if tool_api is None:
             return
-        _bind_tool_workspace_root(tool_api, message.metadata or {})
         if self._security_policy is None:
             return
         tool_policy_lookup = None
@@ -345,8 +349,9 @@ class BrainBridgeTurnMixin:
         progress_callback=None,
         approval_callback=None,
     ) -> Any:
-        # cron-scheduled idle ticks arrive with a `pae_idle_tick`
         metadata_source = getattr(message, "metadata", {}) or {}
+        capture_kwargs = capture_run_kwargs(metadata_source)
+        attachments = list(getattr(message, "attachments", ()) or ()) or None
         self._bind_inbound_permission_metadata(
             runner=runner,
             metadata_source=metadata_source,
@@ -364,7 +369,6 @@ class BrainBridgeTurnMixin:
                 runner,
                 session_id=session_id,
                 user_input=None,
-                attachments=None,
                 trace_id=request_id,
                 forced_tools=forced_tools,
                 capability_category=capability_category,
@@ -387,6 +391,7 @@ class BrainBridgeTurnMixin:
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
                 initial_trigger="idle_tick",
+                **capture_kwargs,
             )
         options = getattr(runner, "options", None)
         ctgp_enabled = bool(getattr(options, "autonomous_continuation_enabled", True))
@@ -399,7 +404,7 @@ class BrainBridgeTurnMixin:
                 runner,
                 session_id=session_id,
                 user_input=message.body,
-                attachments=list(message.attachments),
+                attachments=attachments,
                 trace_id=request_id,
                 forced_tools=forced_tools,
                 capability_category=capability_category,
@@ -421,16 +426,18 @@ class BrainBridgeTurnMixin:
                 ),
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
+                **capture_kwargs,
             )
         return runner.run(
             session_id=session_id,
             user_input=message.body,
-            attachments=list(message.attachments),
+            **({"attachments": attachments} if attachments else {}),
             trace_id=request_id,
             forced_tools=forced_tools,
             capability_category=capability_category,
             progress_callback=progress_callback,
             approval_callback=approval_callback,
+            **capture_kwargs,
         )
 
     async def run_turn(
@@ -442,6 +449,7 @@ class BrainBridgeTurnMixin:
         progress_callback=None,
         approval_callback=None,
     ) -> AgentResponse:
+        added_roots = _take_added_workspace_roots(message.metadata)
         runtime_session_id, brain_session_id = self._resolve_turn_session_ids(
             message=message
         )
@@ -473,6 +481,9 @@ class BrainBridgeTurnMixin:
             brain_session_id=brain_session_id,
             progress_callback=progress_callback,
         )
+        workspace_scope = _bind_tool_workspace_root(
+            getattr(runner, "tool_api", None), message.metadata, added_roots
+        )
         message.metadata["session_id"] = session_id
         message.metadata["turn_id"] = turn_id
         telemetry = AgentExecutionTelemetry(self, inbound=message)
@@ -492,17 +503,23 @@ class BrainBridgeTurnMixin:
 
             approval_callback = _sync_approval_callback
         try:
-            step_out = await asyncio.to_thread(
-                self._execute_turn,
-                runner=runner,
-                session_id=session_id,
-                request_id=request_id,
-                message=message,
-                forced_tools=forced_tools,
-                capability_category=resolved_capability_category,
-                progress_callback=progress_callback,
-                approval_callback=approval_callback,
+            tool_scope = turn_tool_scope(
+                runner,
+                message.metadata or {},
+                getattr(self, "_identity_tool_filter", None),
             )
+            with tool_scope, workspace_scope:
+                step_out = await asyncio.to_thread(
+                    self._execute_turn,
+                    runner=runner,
+                    session_id=session_id,
+                    request_id=request_id,
+                    message=message,
+                    forced_tools=forced_tools,
+                    capability_category=resolved_capability_category,
+                    progress_callback=progress_callback,
+                    approval_callback=approval_callback,
+                )
 
             response = await self._postprocess_turn(
                 runner=runner,
@@ -514,9 +531,9 @@ class BrainBridgeTurnMixin:
                 turn_id=turn_id,
                 turn_start_time=turn_start_time,
             )
-        finally:
-            if exc := sys.exception():
-                await telemetry.fail(exc)
+        except BaseException as exc:  # noqa: BLE001 - preserve cancellation lifecycle
+            await telemetry.fail(exc)
+            raise
         response.metadata.setdefault("invocation_id", invocation_id)
         response.metadata.setdefault("execution_id", execution_id)
         response.metadata.setdefault("invocation_scope", invocation_scope)

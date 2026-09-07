@@ -131,6 +131,8 @@ class RuntimeSessionStoreMessages:
         limit: int = 100,
         conversation_id: str | None = None,
         thread_id: str | None = None,
+        exclude_message_ids: tuple[str, ...] = (),
+        after_rowid: int = 0,
     ) -> list[MessageRecord]:
         safe_limit = max(0, int(limit))
         if safe_limit == 0:
@@ -144,11 +146,16 @@ class RuntimeSessionStoreMessages:
             where_clause=where_clause,
             params=params,
             newest_first=True,
-            limit=safe_limit,
+            limit=safe_limit + len(exclude_message_ids),
         )
         records = [row_to_message(row) for row in rows]
         records.reverse()
-        return records
+        excluded = set(exclude_message_ids)
+        return [
+            record
+            for record in records
+            if record.id not in excluded and record.rowid > after_rowid
+        ][-safe_limit:]
 
     def latest_conversation_id(self, *, session_id: str) -> str | None:
         normalized_session_id = session_id.strip()

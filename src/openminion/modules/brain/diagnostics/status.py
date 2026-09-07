@@ -17,6 +17,7 @@ from ..constants import (
     BRAIN_STATE_STOPPED,
     BRAIN_STATE_WAITING_USER,
 )
+from .contracts import PHASE_STATUS_SCHEMA_VERSION
 
 StatusKey = Literal[
     "clarifying",
@@ -32,9 +33,22 @@ StatusKey = Literal[
     "saving_context",
     "waiting_for_user",
     "completed",
+    "stopped",
     "blocked",
     "error",
     "working",
+]
+
+StatusDetailCode = Literal[
+    "plan_checkpoint",
+    "request_readiness",
+    "closure_gate",
+    "preparing_turn",
+    "loading_memory_context",
+    "loading_session_history",
+    "thinking",
+    "composing_answer",
+    "waiting_for_checks",
 ]
 
 _STATUS_LABELS: dict[StatusKey, str] = {
@@ -51,6 +65,7 @@ _STATUS_LABELS: dict[StatusKey, str] = {
     "saving_context": "Saving context...",
     "waiting_for_user": "Waiting for your reply...",
     "completed": "Completed.",
+    "stopped": "Stopped.",
     "blocked": "Blocked.",
     "error": "Turn failed.",
     "working": "Working...",
@@ -72,6 +87,8 @@ _PHASE_STATUS_MAP: dict[str, StatusKey] = {
 
 _EVENT_STATUS_MAP: dict[str, StatusKey] = {
     "brain.plan_checkpoint": "executing",
+    "project.checks.cancelled": "stopped",
+    "project.checks.expired": "error",
 }
 
 _EVENT_PREFIX_STATUS_MAP: tuple[tuple[str, StatusKey], ...] = (
@@ -83,10 +100,13 @@ _EVENT_PREFIX_STATUS_MAP: tuple[tuple[str, StatusKey], ...] = (
 _RUNTIME_STATUS_MAP: dict[str, StatusKey] = {
     "started": "working",
     "working": "working",
+    "cancelled": "error",
+    "completed": "completed",
+    "failed": "error",
     BRAIN_STATE_WAITING_USER: "waiting_for_user",
     BRAIN_STATE_JOB_PENDING: "working",
     BRAIN_STATE_ACTIVE: "working",
-    BRAIN_STATE_STOPPED: "error",
+    BRAIN_STATE_STOPPED: "stopped",
     BRAIN_STATE_DONE: "completed",
     BRAIN_STATE_ERROR: "error",
 }
@@ -97,6 +117,7 @@ class PhaseStatus(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    schema_version: Literal["openminion.phase-status.v1"] = PHASE_STATUS_SCHEMA_VERSION
     trace_id: str = Field(..., min_length=1)
     status_key: StatusKey
     label: str = ""
@@ -140,18 +161,19 @@ def coerce_phase_status(status: PhaseStatus | Mapping[str, Any] | None) -> Phase
     if isinstance(status, PhaseStatus):
         return status
     if isinstance(status, Mapping):
+        payload = dict(status)
+        trace_id = str(payload.get("trace_id", "") or "phase-status").strip()
+        payload["trace_id"] = trace_id or "phase-status"
+        raw_status_key = str(payload.get("status_key", "") or "").strip()
+        if raw_status_key not in _STATUS_LABELS:
+            payload["status_key"] = "working"
         try:
-            return PhaseStatus.model_validate(dict(status))
+            return PhaseStatus.model_validate(payload)
         except ValidationError:
-            trace_id = str(status.get("trace_id", "") or "phase-status").strip()
             label = str(status.get("label", "") or "").strip() or "Working..."
-            raw_status_key = str(status.get("status_key", "") or "").strip()
-            status_key = (
-                raw_status_key if raw_status_key in _STATUS_LABELS else "working"
-            )
             return PhaseStatus(
                 trace_id=trace_id or "phase-status",
-                status_key=status_key,
+                status_key="working",
                 label=label,
                 route=str(status.get("route", "") or status.get("mode", "") or "")
                 .strip()
@@ -175,6 +197,45 @@ def coerce_phase_status(status: PhaseStatus | Mapping[str, Any] | None) -> Phase
         status_key="working",
         label="Working...",
     )
+
+
+def phase_status_client_facts(
+    status: PhaseStatus | Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Return the language-neutral status facts shared by non-CLI clients."""
+
+    phase_status = coerce_phase_status(status)
+    return {
+        "schema_version": phase_status.schema_version,
+        "trace_id": phase_status.trace_id,
+        "status_key": phase_status.status_key,
+        "source_phase": phase_status.source_phase,
+        "source_event": phase_status.source_event,
+        "route": phase_status.route,
+        "mode_state": phase_status.mode_state,
+        "step_index": phase_status.step_index,
+        "step_total": phase_status.step_total,
+        "mode_step_index": phase_status.mode_step_index,
+        "mode_step_total": phase_status.mode_step_total,
+        "llm_call_count": phase_status.llm_call_count,
+        "llm_call_limit": phase_status.llm_call_limit,
+        "total_input_tokens_used": phase_status.total_input_tokens_used,
+        "total_output_tokens_used": phase_status.total_output_tokens_used,
+        "total_tokens_used": phase_status.total_tokens_used,
+        "token_usage_estimated": phase_status.token_usage_estimated,
+        "tool_name": phase_status.tool_name,
+        "detail_code": phase_status.detail_code,
+        "terminal": phase_status.terminal,
+    }
+
+
+def phase_status_payload(
+    status: PhaseStatus | Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    phase_status = coerce_phase_status(status)
+    payload = phase_status.model_dump()
+    payload["facts"] = phase_status_client_facts(phase_status)
+    return payload
 
 
 def _phase_status_mode_text(status: PhaseStatus) -> str:
@@ -407,6 +468,8 @@ def _step_progress_for_event(
     detail_code = (
         "closure_gate" if normalized_event.startswith("brain.closure_gate.") else None
     )
+    if detail_code is None:
+        detail_code = str(payload.get("detail_code", "") or "").strip() or None
     return (
         _coerce_int(payload.get("step_index")),
         _coerce_int(payload.get("step_total")),
@@ -496,7 +559,7 @@ def normalize_phase_status(
         step_total=step_total,
     )
     if terminal is None:
-        terminal = status_key in {"completed", "error"}
+        terminal = status_key in {"completed", "stopped", "error"}
 
     normalized_route = _normalized_route_for_phase(
         normalized_event=normalized_event,
@@ -602,11 +665,15 @@ def phase_status_from_runtime(
 
 
 __all__ = [
+    "PHASE_STATUS_SCHEMA_VERSION",
     "PhaseStatus",
+    "StatusDetailCode",
     "StatusKey",
     "coerce_phase_status",
     "format_phase_status_text",
     "normalize_phase_status",
+    "phase_status_client_facts",
+    "phase_status_payload",
     "phase_status_from_event",
     "phase_status_from_phase",
     "phase_status_from_request_readiness",

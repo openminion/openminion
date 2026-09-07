@@ -3,7 +3,7 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 from collections.abc import Callable
 
 
-CRON_INTERFACE_VERSION = "v1"
+CRON_INTERFACE_VERSION = "v2"
 
 
 class CronError(Exception):
@@ -32,6 +32,7 @@ class CronSchedulerInterface(Protocol):
         execute_agent_turn: Callable[..., Any] | None = None,
         delivery_handler: Callable[..., Any] | None = None,
         on_event: Callable[..., Any] | None = None,
+        can_start_background_work: Callable[[], bool] | None = None,
     ) -> None: ...
 
     @property
@@ -67,6 +68,9 @@ class CronStoreProtocol(Protocol):
         misfire_policy: str | Mapping[str, Any] | None = None,
         max_lateness_s: int = 600,
         max_concurrency: int = 1,
+        concurrency_key: str | None = None,
+        max_attempts: int = 3,
+        retry_backoff_s: int = 30,
         job_id: str | None = None,
     ) -> str: ...
 
@@ -97,6 +101,23 @@ class CronStoreProtocol(Protocol):
         now_iso: str | None = None,
     ) -> bool: ...
 
+    def recover_expired_cron_runs(
+        self,
+        *,
+        now_iso: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]: ...
+
+    def retry_cron_run(
+        self,
+        run_id: str,
+        *,
+        error: dict[str, Any],
+        now_iso: str | None = None,
+    ) -> dict[str, Any] | None: ...
+
+    def get_cron_scope_state(self, concurrency_key: str) -> dict[str, Any] | None: ...
+
     def get_cron_job(self, job_id: str) -> dict[str, Any] | None: ...
 
     def list_cron_jobs(
@@ -116,6 +137,7 @@ class CronStoreProtocol(Protocol):
         summary: str | None = None,
         artifact_refs: list[dict[str, Any]] | None = None,
         error: dict[str, Any] | None = None,
+        output: dict[str, Any] | None = None,
         isolated_session_id: str | None = None,
         now_iso: str | None = None,
     ) -> dict[str, Any] | None: ...
@@ -140,6 +162,9 @@ _REQUIRED_CRON_STORE_METHODS = (
     "enqueue_due_cron_runs",
     "acquire_cron_runs",
     "renew_cron_run_lease",
+    "recover_expired_cron_runs",
+    "retry_cron_run",
+    "get_cron_scope_state",
     "finish_cron_run",
 )
 

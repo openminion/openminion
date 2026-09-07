@@ -10,7 +10,7 @@ from openminion.modules.artifact.control import ArtifactCtl
 
 
 def _cfg(tmp_path: Path) -> dict:
-    root = tmp_path / "artifact-store"
+    root = tmp_path / ".openminion" / "artifact-store"
     return {
         "artifactctl": {
             "blob_store": {

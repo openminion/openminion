@@ -11,7 +11,12 @@ from openminion.modules.controlplane.contracts.models import (
 )
 from openminion.modules.controlplane.runtime.audit import emit_audit_event
 
-from .builtin_specs import COMMAND_HELP, SCOPE_DESCRIPTIONS, builtin_command_specs
+from .builtin_specs import (
+    COMMAND_HELP,
+    HELP_HIDDEN_COMMANDS,
+    SCOPE_DESCRIPTIONS,
+    builtin_command_specs,
+)
 from .module import AuthRequirement, CommandSpec
 
 _LOGGER = get_logger("modules.controlplane.commands.registry")
@@ -148,6 +153,8 @@ class CommandRegistryBaseMixin:
             "Use /profile use <profile_id> to switch runtime profile; use /session new for fresh context.",
         ]
         for name, desc in sorted(COMMAND_HELP.items()):
+            if name in HELP_HIDDEN_COMMANDS:
+                continue
             if "[admin]" in desc and not is_admin:
                 continue
             if not self._command_is_available(name):
@@ -179,9 +186,7 @@ class CommandRegistryBaseMixin:
         )
 
     def _list_turns(self, session_id: str) -> list[object]:
-        if hasattr(self.store, "list_turns"):
-            return self.store.list_turns(session_id)
-        return []
+        return self.store.list_turns(session_id)
 
     def _current_channel_subject(
         self, ctx: ResolvedContext
@@ -200,11 +205,7 @@ class CommandRegistryBaseMixin:
         channel, subject_id = self._current_channel_subject(ctx)
         if channel is None or subject_id is None:
             return None
-        get_pairing = getattr(self.store, "get_pairing", None)
-        if not callable(get_pairing):
-            return None
-        pairing = get_pairing(channel=channel, chat_id=subject_id)
-        return dict(pairing) if isinstance(pairing, dict) else None
+        return self.store.get_pairing(channel=channel, chat_id=subject_id)
 
     def _describe_scopes(self, scopes: object) -> str:
         if not isinstance(scopes, (list, tuple, set)):

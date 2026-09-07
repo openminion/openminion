@@ -19,6 +19,7 @@ class TurnRuntimeContext:
     approval_callback: Callable[[str, dict[str, Any], Any], Awaitable[bool]] | None = (
         None
     )
+    runtime_handle: Any = None
     self_improvement_metadata: dict[str, str] = field(default_factory=dict)
     tool_call_signature_counts: dict[str, int] = field(default_factory=dict)
     tool_loop_observations: list[dict[str, str]] = field(default_factory=list)

@@ -30,7 +30,8 @@ _COMPACT_INLINE_APPROVAL_RE = re.compile(
 )
 _DONE_RE = re.compile(r"\bDone in \d+(?:m\d{2}s|s)\b")
 _APPROVAL_PROMPT_PATTERN = (
-    r"Policy confirmation required|Reply exactly yes to (?:allow once|confirm)"
+    r"Policy confirmation required|High-risk action requires confirmation|"
+    r"Reply exactly yes to (?:allow once|confirm)"
 )
 _SIDECAR_CONSENT_RE = re.compile(
     r"(?:Allow auto-start for PinchTab|Allow [a-z_ -]+ for sidecar '[^']+')\? "
@@ -41,6 +42,14 @@ _APPROVAL_PATTERN = rf"{_APPROVAL_PROMPT_PATTERN}|Waiting for your reply"
 _APPROVAL_PROMPT_RE = re.compile(_APPROVAL_PROMPT_PATTERN)
 _APPROVAL_RE = re.compile(_APPROVAL_PATTERN)
 _TURN_EVENT_RE = re.compile(rf"{_APPROVAL_PATTERN}|\bDone in \d+(?:m\d{{2}}s|s)\b")
+_TERMINAL_FAILURE_RE = re.compile(
+    r"EMPTY_PROVIDER_RESPONSE:|\bLLM error:\s*(?:PROVIDER_ERROR|EMPTY_PROVIDER_RESPONSE)",
+    re.IGNORECASE,
+)
+_CONTINUATION_CUE_RE = re.compile(
+    r"Continue\s+in\s+a\s+new\s+turn\s+to\s+resume\.",
+    re.IGNORECASE,
+)
 _APPROVAL_RESOLVED_RE = re.compile(
     r"(?:^|\n)\s*(?:[❯>]\s*)?(?:yes|session|a|always|no)\s*(?:\n|$)|"
     r"(?:Approved\.|Approval denied\.)"
@@ -91,6 +100,29 @@ def latest_done_event(transcript: str, *, offset: int) -> re.Match[str] | None:
     return match
 
 
+def latest_done_after_submission(
+    transcript: str,
+    submission_probe: str,
+) -> re.Match[str] | None:
+    """Return completion rendered after the latest submitted composer input."""
+    trailing = screen_after_submission(transcript, submission_probe)
+    if trailing is None:
+        return None
+    match: re.Match[str] | None = None
+    for match in _DONE_RE.finditer(trailing):
+        pass
+    return match
+
+
+def latest_terminal_failure(transcript: str, *, offset: int) -> re.Match[str] | None:
+    visible_offset = _visible_offset(transcript, offset=offset)
+    return _TERMINAL_FAILURE_RE.search(visible_text(transcript), visible_offset)
+
+
+def continuation_cue_present(transcript: str) -> bool:
+    return _CONTINUATION_CUE_RE.search(visible_text(transcript)) is not None
+
+
 def latest_approval_prompt(transcript: str, *, offset: int) -> re.Match[str] | None:
     visible_offset = _visible_offset(transcript, offset=offset)
     transcript = visible_text(transcript)
@@ -132,10 +164,19 @@ def inline_approval_menu(screen_text: str) -> str | None:
     ]
     if compact_matches:
         latest_compact = compact_matches[-1]
-        if _compact_approval_inline_status_follows(
-            screen_text,
-            match=latest_compact,
-        ) or not _interactive_surface_follows(screen_text, offset=latest_compact.end()):
+        if (
+            _compact_approval_inline_status_follows(
+                screen_text,
+                match=latest_compact,
+            )
+            or _compact_approval_active_tool_follows(
+                screen_text,
+                match=latest_compact,
+            )
+            or not _interactive_surface_follows(
+                screen_text, offset=latest_compact.end()
+            )
+        ):
             return "compact"
     legacy_matches = list(_LEGACY_INLINE_APPROVAL_RE.finditer(screen_text))
     if legacy_matches and not _interactive_surface_follows(
@@ -152,9 +193,8 @@ def _compact_approval_answered(
 ) -> bool:
     trailing = screen_text[match.end() :]
     return (
-        re.match(
-            r"[ \t]*(?:(?:●|•)\s+Running[^\r\n]*\r?\n[ \t]*)?"
-            r"(?:y|yes|a|always|n|no)(?:[ \t]*\r?\n|[ \t]*$)",
+        re.search(
+            r"(?:^|\r?\n)[ \t]*(?:y|yes|a|always|n|no)(?:[ \t]*\r?\n|[ \t]*$)",
             trailing,
             re.IGNORECASE,
         )
@@ -169,9 +209,8 @@ def _compact_approval_submitted(
 ) -> bool:
     trailing = screen_text[match.end() :]
     return (
-        re.match(
-            r"[ \t]*(?:(?:●|•)\s+Running[^\r\n]*\r?\n[ \t]*)?"
-            r"(?:y|yes|a|always|n|no)[ \t]*\r?\n",
+        re.search(
+            r"(?:^|\r?\n)[ \t]*(?:y|yes|a|always|n|no)[ \t]*\r?\n",
             trailing,
             re.IGNORECASE,
         )
@@ -186,6 +225,21 @@ def _compact_approval_inline_status_follows(
 ) -> bool:
     trailing = screen_text[match.end() :]
     return re.match(r"[ \t]+(?:●|•)\s+Running\b", trailing) is not None
+
+
+def _compact_approval_active_tool_follows(
+    screen_text: str,
+    *,
+    match: re.Match[str],
+) -> bool:
+    trailing = screen_text[match.end() :]
+    tool_statuses = list(
+        re.finditer(
+            r"(?:^|\n)\s*(?:❯\s*)?(?:●|•)\s+(?P<running>Running\b)?",
+            trailing,
+        )
+    )
+    return bool(tool_statuses and tool_statuses[-1].group("running"))
 
 
 def inline_approval_fingerprint(screen_text: str) -> str | None:
@@ -273,6 +327,8 @@ class FocusProbe:
         workdir: Path,
         session_id: str,
         include_project_context: bool = True,
+        allow_unsandboxed_exec: bool = True,
+        added_dirs: tuple[Path, ...] = (),
     ) -> None:
         self.python_bin = python_bin
         self.openminion_root = openminion_root
@@ -283,6 +339,8 @@ class FocusProbe:
         self.workdir = workdir
         self.session_id = session_id
         self.include_project_context = include_project_context
+        self.allow_unsandboxed_exec = allow_unsandboxed_exec
+        self.added_dirs = tuple(added_dirs)
 
     def for_workdir(
         self,
@@ -304,6 +362,23 @@ class FocusProbe:
                 if include_project_context is None
                 else include_project_context
             ),
+            allow_unsandboxed_exec=self.allow_unsandboxed_exec,
+            added_dirs=self.added_dirs,
+        )
+
+    def for_session(self, session_id: str) -> "FocusProbe":
+        return FocusProbe(
+            python_bin=self.python_bin,
+            openminion_root=self.openminion_root,
+            framework_root=self.framework_root,
+            data_root=self.data_root,
+            config_path=self.config_path,
+            agent_id=self.agent_id,
+            workdir=self.workdir,
+            session_id=session_id,
+            include_project_context=self.include_project_context,
+            allow_unsandboxed_exec=self.allow_unsandboxed_exec,
+            added_dirs=self.added_dirs,
         )
 
     def uses_echo_agent(self) -> bool:
@@ -323,10 +398,13 @@ class FocusProbe:
             "--dir",
             str(self.workdir),
             "--no-update-check",
-            "--allow-unsandboxed-exec",
             "--progress",
             "minimal",
         )
+        if self.allow_unsandboxed_exec:
+            command += ("--allow-unsandboxed-exec",)
+        for path in self.added_dirs:
+            command += ("--add-dir", str(path))
         if self.uses_echo_agent():
             command += ("--demo",)
         if not self.include_project_context:
@@ -472,7 +550,7 @@ class FocusProbe:
 
     @classmethod
     def _submit_composer_line(cls, session: PtySession, text: str) -> str:
-        """Submit through the composer only after Textual exposes an input state."""
+        """Submit through the composer only after its input state is visible."""
         cls._wait_for_composer(session)
         if "\n" in text or "\r" in text:
             session.send_bracketed_paste(text)
@@ -536,9 +614,7 @@ class FocusProbe:
             menu = inline_approval_menu(approval_screen)
         key = inline_approval_key(approval_screen, reply)
         if menu == "compact":
-            session.send(key)
-            time.sleep(0.05)
-            session.send("\n")
+            session.send(f"{key}\r")
         else:
             session.send(key)
         deadline = time.monotonic() + 5.0
@@ -547,6 +623,12 @@ class FocusProbe:
             screen_text = session.screen_text
             visible_transcript = session.visible_transcript
             if menu == "compact":
+                screen_matches = list(_COMPACT_INLINE_APPROVAL_RE.finditer(screen_text))
+                if screen_matches and _compact_approval_answered(
+                    screen_text,
+                    match=screen_matches[-1],
+                ):
+                    return
                 compact_matches = list(
                     _COMPACT_INLINE_APPROVAL_RE.finditer(visible_transcript)
                 )
@@ -613,12 +695,18 @@ class FocusProbe:
         event_offset = len(session.visible_transcript)
         approvals = 0
         continuations = 0
+        completion_probe: str | None = None
         deadline = time.monotonic() + scenario.timeout
         while time.monotonic() < deadline:
             time.sleep(0.1)
             transcript = session.visible_transcript
             screen_text = session.screen_text
-            done_match = latest_done_event(transcript, offset=event_offset)
+            done_match = (
+                latest_done_after_submission(transcript, completion_probe)
+                if completion_probe is not None
+                else latest_done_event(transcript, offset=event_offset)
+            )
+            failure_match = latest_terminal_failure(transcript, offset=event_offset)
             approval_needs_reply = approval_prompt_needs_reply(
                 transcript,
                 offset=event_offset,
@@ -638,23 +726,46 @@ class FocusProbe:
                 approvals += 1
                 assert approvals <= scenario.max_auto_approvals, transcript[-2000:]
                 self._submit_inline_approval(session, scenario.approval_reply)
+                approval_probe = composer_echo_probe(scenario.approval_reply)
+                completion_probe = (
+                    approval_probe
+                    if screen_after_submission(session.screen_text, approval_probe)
+                    is not None
+                    else None
+                )
                 event_offset = len(session.visible_transcript)
                 continue
             if approval_needs_reply or approval_visible:
                 assert scenario.requires_approval, transcript[-2000:]
                 approvals += 1
                 assert approvals <= scenario.max_auto_approvals, transcript[-2000:]
-                self._submit_composer_line(session, scenario.approval_reply)
+                completion_probe = self._submit_composer_line(
+                    session, scenario.approval_reply
+                )
                 event_offset = len(session.visible_transcript)
                 continue
+            if failure_match is not None:
+                failure_slice = visible_text(transcript)[failure_match.start() :]
+                raise AssertionError(
+                    "Focus turn ended with a terminal provider failure\n"
+                    f"{failure_slice[-2000:]}"
+                )
             if done_match is not None and not approval_visible:
                 completed_segment = transcript[event_offset:]
+                if completion_probe is not None:
+                    completed_segment = (
+                        screen_after_submission(transcript, completion_probe)
+                        or completed_segment
+                    )
                 if (
-                    "Continue in a new turn to resume." in completed_segment
+                    continuation_cue_present(completed_segment)
                     and continuations < scenario.max_auto_continuations
                 ):
                     continuations += 1
-                    session.send("continue\r")
+                    completion_probe = self._submit_composer_line(
+                        session,
+                        "continue",
+                    )
                     event_offset = len(session.visible_transcript)
                     deadline = time.monotonic() + scenario.timeout
                     continue

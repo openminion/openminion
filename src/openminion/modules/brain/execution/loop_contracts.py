@@ -56,7 +56,7 @@ class ExecutionResult:
     def to_step_output(self) -> StepOutput:
         return StepOutput(
             session_id=self.working_state.session_id,
-            status=self.status,
+            status="error" if self.status == "failed" else self.status,
             message=self.message,
             working_state=self.working_state,
             action_result=self.action_result,

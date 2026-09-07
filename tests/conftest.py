@@ -17,10 +17,9 @@ _COLLECTION_RUNTIME_TMP = tempfile.TemporaryDirectory(
     prefix="openminion-pytest-collection-"
 )
 _COLLECTION_HOME = Path(_COLLECTION_RUNTIME_TMP.name).resolve()
-_COLLECTION_DATA_ROOT = _COLLECTION_HOME / ".openminion"
-os.environ["OPENMINION_HOME"] = str(_COLLECTION_HOME)
-os.environ["OPENMINION_DATA_ROOT"] = str(_COLLECTION_DATA_ROOT)
-os.environ["OPENMINION_GENERATED_ROOT"] = str(_COLLECTION_DATA_ROOT / "runtime")
+from tests.helpers.runtime_roots import configure_runtime_roots
+
+configure_runtime_roots(_COLLECTION_HOME)
 os.environ["OPENMINION_DATA_ROOT_ENFORCEMENT"] = "soft"
 
 from openminion.base.config import ConfigManager, OpenMinionConfig
@@ -29,14 +28,6 @@ from openminion.services.bootstrap.config import bootstrap_config_manager
 
 def pytest_sessionfinish() -> None:
     _COLLECTION_RUNTIME_TMP.cleanup()
-
-
-@pytest.fixture(autouse=True)
-def _isolate_openminion_runtime_roots(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
-    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path))
-    monkeypatch.setenv("OPENMINION_GENERATED_ROOT", str(tmp_path / "runtime"))
-    monkeypatch.setenv("OPENMINION_DATA_ROOT_ENFORCEMENT", "soft")
 
 
 @pytest.fixture(autouse=True)

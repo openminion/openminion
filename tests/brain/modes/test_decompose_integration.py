@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -20,17 +21,25 @@ from openminion.modules.brain.execution.orchestrate.handler import (
     ORCHESTRATE_MODE,
     OrchestrateMode,
 )
+from openminion.modules.brain.execution.orchestrate.parallel import (
+    EvenSplitBudgetAllocator,
+    ParallelExecutionStrategy,
+)
+from openminion.modules.brain.execution.orchestrate.strategies import LLMSynthesizer
+from openminion.modules.brain.execution.orchestrate.strategies import build_child_state
 from openminion.modules.brain.execution.worktree_children import (
     accept_child_worktree_artifact,
     allocate_child_worktree,
     finalize_child_worktree,
-    reject_child_worktree_artifact,
+    load_child_worktree_record,
 )
 from openminion.modules.brain.execution.child_tasks import (
     DecomposePayload,
+    SubtaskResult,
     SubtaskSpec,
 )
 from openminion.modules.brain.schemas import (
+    ActionMetrics,
     ActionResult,
     ActDecision,
     AdaptiveRevisionCheckpoint,
@@ -45,6 +54,9 @@ from openminion.modules.brain.schemas import (
 )
 from openminion.modules.brain.schemas.decisions import DecisionAdapter
 from openminion.modules.task import TaskManager
+from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.services.runtime.a2a_delegate import A2aRuntimeDelegateAdapter
+from openminion.tools.agent.plugin import _h_task_delegate
 from tests.brain.runner_test_support import _profile
 from tests.artifact.utils import artifact_ctl
 
@@ -74,6 +86,45 @@ def _git_repo(tmp_path: Path) -> Path:
     return repo
 
 
+def _record_adapter_review(
+    record: dict[str, Any],
+    *,
+    reviewer_agent_id: str = "readonly-reviewer",
+    verifier_refs: list[str] | None = None,
+) -> None:
+    refs = list(verifier_refs or ["pytest:child-artifact"])
+
+    def _review_call(**_kwargs):
+        return {
+            "status": "success",
+            "outputs": {
+                "child_agent_id": reviewer_agent_id,
+                "findings": [],
+                "passed": True,
+                "target_digest": record["target_digest"],
+                "verifier_refs": refs,
+            },
+        }
+
+    result = A2aRuntimeDelegateAdapter(
+        a2a_call=_review_call,
+        parent_agent_id="parent",
+    ).review_readonly(
+        reviewer_agent_id=reviewer_agent_id,
+        objective="review child artifact",
+        criteria=["no blocking findings"],
+        readable_base_repository=record["repository"],
+        bundle_ref=record["artifact"]["bundle_ref"],
+        target_digest=record["target_digest"],
+        diff=record["diff"],
+        verifier_refs=refs,
+        repository_instructions="AGENTS.md",
+        timeout_seconds=30,
+    )
+    assert result.ok is True
+    record["review_receipt"] = result.outputs["review_receipt"]
+
+
 def _patch_orchestrate_child_invoke(monkeypatch, fake_invoke) -> None:
     monkeypatch.setattr(
         "openminion.modules.brain.execution.orchestrate.handler.invoke_decision_direct",
@@ -89,8 +140,13 @@ def _patch_orchestrate_child_invoke(monkeypatch, fake_invoke) -> None:
 
 
 class _FakeLLMAPI:
-    def __init__(self, answer: str = "synthesized summary") -> None:
+    def __init__(
+        self,
+        answer: str = "synthesized summary",
+        failure_decisions: list[dict[str, str]] | None = None,
+    ) -> None:
         self.answer = answer
+        self.failure_decisions = list(failure_decisions or [])
         self.calls: list[dict[str, Any]] = []
 
     def call_structured(
@@ -104,6 +160,10 @@ class _FakeLLMAPI:
                 "schema": getattr(schema, "__name__", str(schema)),
             }
         )
+        if getattr(schema, "__name__", "") == "ChildFailureDecision":
+            if self.failure_decisions:
+                return self.failure_decisions.pop(0)
+            return {"disposition": "stop"}
         return {"answer": self.answer}
 
 
@@ -111,6 +171,16 @@ class _FakeSessionAPI:
     def has_pending_user_input(self, *args, **kwargs) -> bool:
         del args, kwargs
         return False
+
+
+@dataclass
+class _RecordingTelemetry:
+    events: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+
+    def emit_canonical_event(
+        self, _session, _turn, event_type, payload, **_kwargs
+    ) -> None:
+        self.events.append((event_type, dict(payload)))
 
 
 class _WorkspaceWritingToolAPI:
@@ -380,7 +450,12 @@ def _state() -> WorkingState:
     )
 
 
-def _ctx(*, subtasks: list[dict[str, Any]], decisions: list[Any] | None = None):
+def _ctx(
+    *,
+    subtasks: list[dict[str, Any]],
+    decisions: list[Any] | None = None,
+    failure_decisions: list[dict[str, str]] | None = None,
+):
     runner = _FakeRunner(
         profile=_profile().model_copy(
             update={
@@ -391,7 +466,7 @@ def _ctx(*, subtasks: list[dict[str, Any]], decisions: list[Any] | None = None):
                 }
             }
         ),
-        llm_api=_FakeLLMAPI(),
+        llm_api=_FakeLLMAPI(failure_decisions=failure_decisions),
         decisions=list(decisions or []),
     )
     services = _FakeServices(runner=runner, statuses=[])
@@ -423,12 +498,19 @@ def _ctx(*, subtasks: list[dict[str, Any]], decisions: list[Any] | None = None):
 
 
 def _mode_result(
-    state: WorkingState, message: str, *, failed: bool = False
+    state: WorkingState,
+    message: str,
+    *,
+    failed: bool = False,
+    tokens_used: int = 0,
+    outputs: dict[str, Any] | None = None,
 ) -> ExecutionResult:
     action_result = ActionResult(
         command_id=f"cmd-{message}",
         status="failed" if failed else "success",
         summary=message,
+        metrics=ActionMetrics(tokens_used=tokens_used),
+        outputs=dict(outputs or {}),
     )
     return ExecutionResult(
         status="error" if failed else "done",
@@ -436,6 +518,38 @@ def _mode_result(
         message=message,
         action_result=action_result,
     )
+
+
+def test_decompose_debits_child_a2a_and_token_usage(monkeypatch) -> None:
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            {"subtask_id": "a", "goal": "A", "suggested_mode": "act"},
+            {"subtask_id": "b", "goal": "B", "suggested_mode": "act"},
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code=label.lower(),
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=[label.lower()],
+            )
+            for label in ("A", "B")
+        ],
+    )
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, decision, user_input, logger, depth
+        state.budgets_remaining.a2a_calls -= 1
+        return _mode_result(state, "child", tokens_used=781)
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+
+    result = OrchestrateMode().execute(ctx)
+
+    assert ctx.state.budgets_remaining.a2a_calls == 4
+    assert ctx.state.budgets_remaining.tokens == 4_438
+    assert result.action_result.metrics.tokens_used == 1_562
 
 
 def test_decompose_handler_collects_results_and_synthesizes(monkeypatch) -> None:
@@ -515,6 +629,51 @@ def test_decompose_handler_collects_results_and_synthesizes(monkeypatch) -> None
     assert aggregation["completed_required"] is True
 
 
+def test_decompose_synthesis_receives_child_artifact() -> None:
+    ctx, runner, _services = _ctx(subtasks=[])
+
+    LLMSynthesizer().synthesize(
+        ctx=ctx,
+        results=[
+            SubtaskResult(
+                subtask_id="implement",
+                goal="Implement the approved change",
+                status="completed",
+                mode_used="act",
+                output="Implementation ready",
+                child_artifact={
+                    "status": "completed",
+                    "integration_status": "pending_parent_review",
+                    "record_alias": "a2a-child:session:trace:implement",
+                    "target_digest": "digest-781",
+                    "workspace": "/private/child-worktree",
+                    "diff": "secret diff" * 1_000,
+                    "touched_paths": ["src/change.py"],
+                    "artifact": {
+                        "status": "stored",
+                        "manifest_ref": "artifact://manifest-781",
+                        "bundle_sha256": "abc781",
+                    },
+                },
+            )
+        ],
+    )
+
+    synthesized_child = runner.llm_api.calls[-1]["context"]["subtasks"][0]
+    assert synthesized_child["child_artifact"] == {
+        "status": "completed",
+        "integration_status": "pending_parent_review",
+        "record_alias": "a2a-child:session:trace:implement",
+        "target_digest": "digest-781",
+        "touched_paths": ["src/change.py"],
+        "artifact": {
+            "status": "stored",
+            "manifest_ref": "artifact://manifest-781",
+            "bundle_sha256": "abc781",
+        },
+    }
+
+
 def test_orchestrate_validation_does_not_fail_before_execution() -> None:
     ctx, _runner, _services = _ctx(
         subtasks=[
@@ -579,10 +738,13 @@ def test_decompose_child_state_does_not_inherit_parent_adaptive_plan_state() -> 
 
     mode = OrchestrateMode()
     ctx.decision.subtasks = [SubtaskSpec.model_validate(ctx.decision.subtasks[0])]
-    child_state = mode._build_child_state(
+    child_state = build_child_state(
         parent_state=ctx.state,
         child_budget=ctx.state.budgets_remaining.model_copy(deep=True),
-        subtask=ctx.decision.subtasks[0],
+        child_context=mode._inheritance.build_child_context(
+            parent_state=ctx.state,
+            subtask=ctx.decision.subtasks[0],
+        ),
     )
 
     assert child_state.adaptive_satisfied_intent_ids == []
@@ -600,13 +762,45 @@ def test_decompose_child_state_resets_llm_call_usage() -> None:
 
     mode = OrchestrateMode()
     ctx.decision.subtasks = [SubtaskSpec.model_validate(ctx.decision.subtasks[0])]
-    child_state = mode._build_child_state(
+    child_state = build_child_state(
         parent_state=ctx.state,
         child_budget=ctx.state.budgets_remaining.model_copy(deep=True),
-        subtask=ctx.decision.subtasks[0],
+        child_context=mode._inheritance.build_child_context(
+            parent_state=ctx.state,
+            subtask=ctx.decision.subtasks[0],
+        ),
     )
 
     assert child_state.llm_calls_used == 0
+
+
+def test_decompose_children_receive_distinct_turn_scopes() -> None:
+    ctx, _runner, _services = _ctx(
+        subtasks=[{"goal": "Research AWS pricing", "suggested_mode": "act"}]
+    )
+    parent_trace_id = ctx.state.trace_id
+    mode = OrchestrateMode()
+    subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
+    child_context = mode._inheritance.build_child_context(
+        parent_state=ctx.state,
+        subtask=subtask,
+    )
+
+    first = build_child_state(
+        parent_state=ctx.state,
+        child_budget=ctx.state.budgets_remaining.model_copy(deep=True),
+        child_context=child_context,
+    )
+    second = build_child_state(
+        parent_state=ctx.state,
+        child_budget=ctx.state.budgets_remaining.model_copy(deep=True),
+        child_context=child_context,
+    )
+
+    assert first.trace_id != parent_trace_id
+    assert second.trace_id != parent_trace_id
+    assert first.trace_id != second.trace_id
+    assert ctx.state.trace_id == parent_trace_id
 
 
 def test_orchestrate_rejects_recursive_child_decision() -> None:
@@ -729,6 +923,212 @@ def test_decompose_handler_fails_fast_and_preserves_partial_results(
     assert aggregation["completed_required"] is False
 
 
+def test_orchestrate_final_child_cancellation_is_not_success(monkeypatch) -> None:
+    ctx, _runner, services = _ctx(
+        subtasks=[
+            {"subtask_id": "first", "goal": "First", "suggested_mode": "act"},
+            {"subtask_id": "second", "goal": "Second", "suggested_mode": "act"},
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code="first",
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=["first"],
+            )
+        ],
+    )
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, decision, user_input, logger, depth
+        return _mode_result(state, "first complete")
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+    mode = OrchestrateMode(
+        cancellation_policy=SimpleNamespace(
+            should_cancel=lambda *, ctx, results, attempts: attempts == 2
+        )
+    )
+
+    result = mode.execute(ctx)
+    validation = mode.validate(ctx)
+
+    assert result.status == "failed"
+    assert result.action_result.status == "failed"
+    assert [
+        item["status"] for item in result.action_result.outputs["subtask_results"]
+    ] == ["completed", "cancelled"]
+    assert validation is not None
+    assert validation.passed is False
+    assert validation.code == "orchestrate_subtask_failed"
+    assert services.statuses[-1]["mode_state"] == "failed"
+    assert "failed: 1/2" in services.statuses[-1]["mode_label"]
+
+
+@pytest.mark.parametrize(
+    ("disposition", "expected_invocations", "expected_statuses"),
+    [
+        ("continue", ["x", "y"], ["failed", "completed"]),
+        ("retry_once", ["x", "retry", "y"], ["completed", "completed"]),
+        ("stop", ["x"], ["failed"]),
+    ],
+)
+def test_orchestrate_child_failure_dispositions_are_bounded(
+    monkeypatch,
+    disposition: str,
+    expected_invocations: list[str],
+    expected_statuses: list[str],
+) -> None:
+    reasons = {
+        "continue": ["x", "y"],
+        "retry_once": ["x", "retry", "y"],
+        "stop": ["x"],
+    }[disposition]
+    decisions = [
+        ActDecision(
+            confidence=0.8,
+            reason_code=reason,
+            act_profile="general",
+            execution_target=ExecutionTargetPayload(kind="local"),
+            sub_intents=[reason],
+        )
+        for reason in reasons
+    ]
+    ctx, runner, _services = _ctx(
+        subtasks=[
+            {"subtask_id": "x", "goal": "Research X", "suggested_mode": "act"},
+            {"subtask_id": "y", "goal": "Research Y", "suggested_mode": "act"},
+        ],
+        decisions=decisions,
+        failure_decisions=[{"disposition": disposition}],
+    )
+    invoked: list[str] = []
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, user_input, logger, depth
+        label = str(getattr(decision, "reason_code", "") or "child")
+        invoked.append(label)
+        return _mode_result(state, label, failed=label == "x")
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+
+    result = OrchestrateMode().execute(ctx)
+
+    assert invoked == expected_invocations
+    assert [
+        item["status"] for item in result.action_result.outputs["subtask_results"]
+    ] == expected_statuses
+    recovery = result.action_result.outputs["child_recovery"]
+    assert recovery["disposition"] == disposition
+    assert (
+        sum(call["schema"] == "ChildFailureDecision" for call in runner.llm_api.calls)
+        == 1
+    )
+
+
+def test_parallel_retry_runs_unexecuted_dependent(monkeypatch) -> None:
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            {"subtask_id": "x", "goal": "Research X", "suggested_mode": "act"},
+            {
+                "subtask_id": "y",
+                "goal": "Use X",
+                "suggested_mode": "act",
+                "depends_on": ["x"],
+            },
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code=reason,
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=[reason],
+            )
+            for reason in ("x", "retry", "y")
+        ],
+        failure_decisions=[{"disposition": "retry_once"}],
+    )
+    invoked: list[str] = []
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, user_input, logger, depth
+        label = str(getattr(decision, "reason_code", "") or "child")
+        invoked.append(label)
+        return _mode_result(state, label, failed=label == "x")
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+    mode = OrchestrateMode(
+        strategy=ParallelExecutionStrategy(),
+        allocator=EvenSplitBudgetAllocator(),
+    )
+
+    result = mode.execute(ctx)
+
+    assert invoked == ["x", "retry", "y"]
+    assert [
+        item["status"] for item in result.action_result.outputs["subtask_results"]
+    ] == ["completed", "completed"]
+
+
+def test_orchestrate_reassigns_failed_child_to_one_exact_target(monkeypatch) -> None:
+    ctx, runner, _services = _ctx(
+        subtasks=[
+            {"subtask_id": "x", "goal": "Research X", "suggested_mode": "act"},
+            {"subtask_id": "y", "goal": "Research Y", "suggested_mode": "act"},
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code="x",
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=["x"],
+            ),
+            ActDecision(
+                confidence=0.8,
+                reason_code="y",
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=["y"],
+            ),
+        ],
+        failure_decisions=[
+            {"disposition": "reassign_exact", "target_agent_id": "agent.research"}
+        ],
+    )
+    runner.agent_registry = {"agent.research": {"state": "healthy"}}
+    invoked: list[str] = []
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, user_input, logger, depth
+        target = str(getattr(decision, "target_agent_id", "") or "")
+        label = target or str(getattr(decision, "reason_code", "") or "child")
+        invoked.append(label)
+        return _mode_result(state, label, failed=label == "x")
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+
+    result = OrchestrateMode().execute(ctx)
+
+    assert invoked == ["x", "agent.research", "y"]
+    assert result.action_result.outputs["child_recovery"] == {
+        "disposition": "reassign_exact",
+        "failed_subtask_id": "x",
+        "target_agent_id": "agent.research",
+        "outcome": "completed",
+    }
+    recovery_call = next(
+        call
+        for call in runner.llm_api.calls
+        if call["schema"] == "ChildFailureDecision"
+    )
+    recovery_facts = json.loads(recovery_call["context"]["messages"][1]["content"])
+    assert recovery_facts["available_agent_ids"] == ["agent.research"]
+    assert recovery_facts["failed_subtask"]["subtask_id"] == "x"
+
+
 def test_orchestrate_exact_delegate_assignment_runs_existing_delegate_path() -> None:
     ctx, runner, services = _ctx(
         subtasks=[
@@ -790,6 +1190,7 @@ def test_orchestrate_unknown_delegate_assignment_fails_structurally() -> None:
 
     result = OrchestrateMode().execute(ctx)
 
+    assert result.status == "failed"
     assert result.action_result.status == "failed"
     assert services.command_calls == []
     subtask_results = result.action_result.outputs["subtask_results"]
@@ -804,6 +1205,9 @@ def test_orchestrate_unknown_delegate_assignment_fails_structurally() -> None:
             "tokens_used": 0,
         }
     ]
+    validation = OrchestrateMode().validate(ctx)
+    assert validation is not None
+    assert validation.passed is False
 
 
 def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
@@ -854,7 +1258,15 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
             session_id="s-decompose",
             trace_id="trace-decompose",
         )
-        return _mode_result(state, f"patched:{value}")
+        return _mode_result(
+            state,
+            f"patched:{value}",
+            outputs={
+                "coding.verifier_verdict": "verified_complete",
+                "coding.verifier_goal_id": f"goal-{value}",
+                "coding.verifier_result_count": 1,
+            },
+        )
 
     _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
 
@@ -886,6 +1298,10 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
     ]
     assert all(child["touched_paths"] == ["seed.py"] for child in bucket["children"])
     assert all(child["cleaned_up"] is True for child in bucket["children"])
+    assert [child["validation"]["verifier_refs"] for child in bucket["children"]] == [
+        ["coding-verifier:goal-1"],
+        ["coding-verifier:goal-2"],
+    ]
     assert all(not Path(path).exists() for path in seen_worktrees)
     assert bucket["conflicts"] == [
         {"path": "seed.py", "subtask_ids": ["patch-a", "patch-b"]}
@@ -901,7 +1317,9 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
     )
 
 
-def test_child_worktree_artifact_accept_applies_complete_change_set(tmp_path) -> None:
+def test_child_worktree_artifact_accept_applies_complete_change_set_after_restart(
+    tmp_path,
+) -> None:
     repo = _git_repo(tmp_path)
     ctx, runner, _services = _ctx(
         subtasks=[
@@ -915,50 +1333,301 @@ def test_child_worktree_artifact_accept_applies_complete_change_set(tmp_path) ->
     )
     subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
     child_state = _state()
-    with artifact_ctl(tmp_path / ".openminion") as ctl:
+    artifact_root = tmp_path / ".openminion"
+    with artifact_ctl(artifact_root) as ctl:
         runner.artifactctl = ctl
         lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
         assert lease is not None
         (lease.worktree / "seed.py").write_text("VALUE = 9\n", encoding="utf-8")
-        (lease.worktree / "new.txt").write_text("new file\n", encoding="utf-8")
-        (lease.worktree / "image.bin").write_bytes(b"\x00\x01openminion")
-        (lease.worktree / "delete_me.txt").unlink()
-        (lease.worktree / "rename_me.txt").rename(lease.worktree / "renamed.txt")
 
-        finalize_child_worktree(ctx, lease=lease, status="done")
+        finalize_child_worktree(
+            ctx,
+            lease=lease,
+            status="done",
+            validation={
+                "passed": True,
+                "verifier_refs": ["pytest:child-artifact"],
+            },
+        )
 
         record = ctx.state.module_state["worktree_children"]["children"][0]
         artifact = record["artifact"]
         assert artifact["status"] == "stored"
         assert artifact["bundle_ref"].startswith("artifact://sha256/")
         assert artifact["manifest_ref"].startswith("artifact://sha256/")
-        assert set(record["touched_paths"]) == {
-            "delete_me.txt",
-            "image.bin",
-            "new.txt",
-            "renamed.txt",
-            "rename_me.txt",
-            "seed.py",
-        }
+        assert record["diff"]
+        assert record["target_digest"] == artifact["target_digest"]
+        manifest = json.loads(ctl.read_bytes(artifact["manifest_ref"]))
+        assert manifest["target_digest"] == record["target_digest"]
+        assert record["touched_paths"] == ["seed.py"]
         assert not Path(record["workspace"]).exists()
         assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
 
-        accepted = accept_child_worktree_artifact(
-            repo_root=repo, record=record, artifactctl=ctl
-        )
+        corrected_record: dict[str, Any] | None = None
+        delegate_calls: list[tuple[str, str]] = []
 
-        assert accepted == {
-            "ok": True,
-            "status": "accepted",
-            "touched_paths": record["touched_paths"],
-        }
-        assert record["integration_status"] == "accepted"
-        assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 9\n"
+        def _review_call(*, command, session_id, trace_id):
+            nonlocal corrected_record
+            del session_id, trace_id
+            target = command["target_agent_id"]
+            permission_mode = command["params"]["permission_mode"]
+            delegate_calls.append((target, permission_mode))
+            if target == "correction-agent":
+                assert "Set VALUE to 10" in command["params"]["goal"]
+                assert record["target_digest"] in command["params"]["goal"]
+                corrected_subtask = subtask.model_copy(
+                    update={
+                        "subtask_id": "corrected-artifact-child",
+                        "goal": "Correct reviewed child artifact",
+                    }
+                )
+                corrected_lease = allocate_child_worktree(
+                    subtask=corrected_subtask,
+                    child_state=_state(),
+                )
+                assert corrected_lease is not None
+                (corrected_lease.worktree / "seed.py").write_text(
+                    "VALUE = 10\n", encoding="utf-8"
+                )
+                (corrected_lease.worktree / "new.txt").write_text(
+                    "new file\n", encoding="utf-8"
+                )
+                (corrected_lease.worktree / "image.bin").write_bytes(
+                    b"\x00\x01openminion"
+                )
+                (corrected_lease.worktree / "delete_me.txt").unlink()
+                (corrected_lease.worktree / "rename_me.txt").rename(
+                    corrected_lease.worktree / "renamed.txt"
+                )
+                finalize_child_worktree(
+                    ctx,
+                    lease=corrected_lease,
+                    status="done",
+                    validation={
+                        "passed": True,
+                        "verifier_refs": ["pytest:corrected-child"],
+                    },
+                )
+                corrected_record = ctx.state.module_state["worktree_children"][
+                    "children"
+                ][-1]
+                return {
+                    "status": "success",
+                    "summary": "correction complete",
+                    "outputs": {
+                        "child_artifact": {
+                            "record_alias": corrected_record["record_alias"],
+                            "target_digest": corrected_record["target_digest"],
+                        }
+                    },
+                }
+
+            reviewed_record = (
+                corrected_record if target == "readonly-reviewer" else record
+            )
+            assert reviewed_record is not None
+            passed = target == "readonly-reviewer"
+            return {
+                "status": "success",
+                "summary": "review complete",
+                "outputs": {
+                    "child_agent_id": target,
+                    "findings": []
+                    if passed
+                    else [
+                        {
+                            "priority": "P1",
+                            "owner": "child patch",
+                            "message": (
+                                "Set VALUE to 10 and preserve the required file changes."
+                            ),
+                        }
+                    ],
+                    "passed": passed,
+                    "target_digest": reviewed_record["target_digest"],
+                    "verifier_refs": reviewed_record["validation"]["verifier_refs"],
+                },
+            }
+
+        telemetry = _RecordingTelemetry()
+        seam = A2aRuntimeDelegateAdapter(
+            a2a_call=_review_call,
+            parent_agent_id="parent",
+            telemetryctl=telemetry,
+        )
+        review_ctx = SimpleNamespace(
+            a2a_delegate_api=seam,
+            artifactctl=ctl,
+            policy=SimpleNamespace(raw={}),
+            workspace=repo,
+            session_id=ctx.state.session_id,
+            telemetry_session_id=ctx.state.session_id,
+            telemetry_turn_id="turn-review",
+            telemetryctl=telemetry,
+        )
+        with pytest.raises(ToolRuntimeError) as denied:
+            _h_task_delegate(
+                {
+                    "mode": "accept",
+                    "child_artifact": {
+                        "record_alias": record["record_alias"],
+                        "review_receipt": {"passed": True},
+                    },
+                },
+                review_ctx,
+            )
+        assert denied.value.details["reason_code"] == "missing_review"
+        assert [event for event, _payload in telemetry.events] == [
+            "agent.handoff.started",
+            "agent.handoff.failed",
+        ]
+        assert telemetry.events[-1][1]["target_digest"] == record["target_digest"]
+        assert telemetry.events[-1][1]["disposition_outcome"] == "denied"
+        telemetry.events.clear()
+
+        def _review_with(agent_id: str, record_alias: str) -> dict[str, Any]:
+            return _h_task_delegate(
+                {
+                    "mode": "review",
+                    "agent_id": agent_id,
+                    "instruction": "review child artifact",
+                    "review_criteria": ["no blocking findings"],
+                    "repository_instructions": "AGENTS.md",
+                    "child_artifact": {"record_alias": record_alias},
+                },
+                review_ctx,
+            )
+
+        first_review = _review_with("initial-reviewer", record["record_alias"])
+        assert first_review["status"] == "correction_required"
+        finding = first_review["review_receipt"]["findings"][0]["message"]
+        correction = _h_task_delegate(
+            {
+                "mode": "sync",
+                "agent_id": "correction-agent",
+                "instruction": (
+                    f"{finding} Correct child artifact {record['target_digest']}."
+                ),
+            },
+            review_ctx,
+        )
+        assert correction["status"] == "success"
+        assert corrected_record is not None
+        corrected_alias = correction["outputs"]["child_artifact"]["record_alias"]
+        assert corrected_alias == corrected_record["record_alias"]
+        assert corrected_record["target_digest"] != record["target_digest"]
+        assert corrected_record["validation"]["verifier_refs"] == [
+            "pytest:corrected-child"
+        ]
+        assert (
+            corrected_record["validation"]["target_digest"]
+            == corrected_record["target_digest"]
+        )
+        review = _review_with("readonly-reviewer", corrected_alias)
+        assert review["status"] == "passed"
+        assert delegate_calls == [
+            ("initial-reviewer", "readonly"),
+            ("correction-agent", "ask"),
+            ("readonly-reviewer", "readonly"),
+        ]
+        assert [
+            payload["review_outcome"]
+            for event, payload in telemetry.events
+            if event == "agent.handoff.completed" and "review_outcome" in payload
+        ] == ["correction_required", "passed"]
+
+    with artifact_ctl(artifact_root) as ctl:
+        telemetry.events.clear()
+        accepted = _h_task_delegate(
+            {
+                "mode": "accept",
+                "workspace_root": str(tmp_path / "model-supplied-repo"),
+                "child_artifact": {
+                    "record_alias": corrected_alias,
+                    "review_receipt": {"passed": True},
+                    "validation": {"passed": True},
+                },
+            },
+            SimpleNamespace(
+                artifactctl=ctl,
+                session_id=ctx.state.session_id,
+                telemetry_session_id=ctx.state.session_id,
+                telemetry_turn_id="turn-accept",
+                telemetryctl=telemetry,
+            ),
+        )
+        assert accepted["ok"] is True
+        assert accepted["status"] == "accepted"
+        assert accepted["target_digest"] == corrected_record["target_digest"]
+        assert accepted["reviewer_agent_id"] == "readonly-reviewer"
+        assert accepted["verifier_refs"] == ["pytest:corrected-child"]
+        assert accepted["touched_paths"] == corrected_record["touched_paths"]
+        assert [event for event, _payload in telemetry.events] == [
+            "agent.handoff.started",
+            "agent.handoff.completed",
+        ]
+        assert telemetry.events[-1][1]["disposition_outcome"] == "accept"
+        assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 10\n"
         assert (repo / "new.txt").read_text(encoding="utf-8") == "new file\n"
         assert (repo / "image.bin").read_bytes() == b"\x00\x01openminion"
         assert not (repo / "delete_me.txt").exists()
         assert not (repo / "rename_me.txt").exists()
         assert (repo / "renamed.txt").read_text(encoding="utf-8") == "rename me\n"
+
+    with artifact_ctl(artifact_root) as ctl:
+        persisted = load_child_worktree_record(ctl, corrected_alias)
+        assert persisted["integration_status"] == "accepted"
+        with pytest.raises(ToolRuntimeError) as duplicate:
+            _h_task_delegate(
+                {
+                    "mode": "accept",
+                    "child_artifact": {"record_alias": corrected_alias},
+                },
+                SimpleNamespace(
+                    artifactctl=ctl,
+                    session_id=ctx.state.session_id,
+                    telemetry_session_id=ctx.state.session_id,
+                    telemetry_turn_id="turn-duplicate-accept",
+                    telemetryctl=telemetry,
+                ),
+            )
+        assert duplicate.value.details["reason_code"] == "artifact_already_disposed"
+
+
+def test_child_worktree_artifact_failure_preserves_recoverable_worktree(
+    tmp_path, monkeypatch
+) -> None:
+    repo = _git_repo(tmp_path)
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            {
+                "subtask_id": "artifact-failure-child",
+                "goal": "Preserve failed artifact work",
+                "suggested_mode": "act",
+                "inputs": {"code_bearing": True, "workspace_root": str(repo)},
+            }
+        ]
+    )
+    subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
+    lease = allocate_child_worktree(subtask=subtask, child_state=_state())
+    assert lease is not None
+    marker = lease.worktree / "new.txt"
+    marker.write_text("recover me\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "openminion.modules.brain.execution.worktree_children._artifactctl_from_context",
+        lambda ctx: (None, False),
+    )
+    try:
+        record = finalize_child_worktree(ctx, lease=lease, status="done")
+
+        assert record is not None
+        assert record["artifact"]["status"] == "artifact_unavailable"
+        assert record["integration_status"] == "artifact_failed"
+        assert record["cleaned_up"] is False
+        assert Path(record["workspace"]).exists()
+        assert marker.read_text(encoding="utf-8") == "recover me\n"
+    finally:
+        lease.isolator.release()
 
 
 def test_child_worktree_artifact_reject_leaves_parent_unchanged(tmp_path) -> None:
@@ -975,7 +1644,8 @@ def test_child_worktree_artifact_reject_leaves_parent_unchanged(tmp_path) -> Non
     )
     subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
     child_state = _state()
-    with artifact_ctl(tmp_path / ".openminion") as ctl:
+    artifact_root = tmp_path / ".openminion"
+    with artifact_ctl(artifact_root) as ctl:
         runner.artifactctl = ctl
         lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
         assert lease is not None
@@ -983,11 +1653,58 @@ def test_child_worktree_artifact_reject_leaves_parent_unchanged(tmp_path) -> Non
 
         finalize_child_worktree(ctx, lease=lease, status="done")
         record = ctx.state.module_state["worktree_children"]["children"][0]
-        rejected = reject_child_worktree_artifact(record=record, artifactctl=ctl)
+        bundle_ref = record["artifact"]["bundle_ref"]
+        record_alias = record["record_alias"]
 
-    assert rejected == {"ok": True, "status": "rejected"}
-    assert record["integration_status"] == "rejected"
+    telemetry = _RecordingTelemetry()
+    with artifact_ctl(artifact_root) as ctl:
+        rejected = _h_task_delegate(
+            {
+                "mode": "reject",
+                "child_artifact": {"record_alias": record_alias},
+            },
+            SimpleNamespace(
+                artifactctl=ctl,
+                session_id=ctx.state.session_id,
+                telemetryctl=telemetry,
+                telemetry_session_id=ctx.state.session_id,
+                telemetry_turn_id="turn-reject",
+            ),
+        )
+
+    assert rejected == {
+        "ok": True,
+        "mode": "reject",
+        "status": "rejected",
+        "target_digest": record["target_digest"],
+        "bundle_ref": bundle_ref,
+    }
+    assert [event for event, _payload in telemetry.events] == [
+        "agent.handoff.started",
+        "agent.handoff.completed",
+    ]
+    assert telemetry.events[-1][1]["disposition_outcome"] == "reject"
     assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+
+    with artifact_ctl(artifact_root) as ctl:
+        persisted = load_child_worktree_record(ctl, record_alias)
+        assert persisted["integration_status"] == "rejected"
+        assert ctl.read_bytes(bundle_ref)
+        with pytest.raises(ToolRuntimeError) as duplicate:
+            _h_task_delegate(
+                {
+                    "mode": "reject",
+                    "child_artifact": {"record_alias": record_alias},
+                },
+                SimpleNamespace(
+                    artifactctl=ctl,
+                    session_id=ctx.state.session_id,
+                    telemetry_session_id=ctx.state.session_id,
+                    telemetry_turn_id="turn-duplicate-reject",
+                    telemetryctl=telemetry,
+                ),
+            )
+        assert duplicate.value.details["reason_code"] == "artifact_already_disposed"
 
 
 def test_child_worktree_accept_blocks_stale_base_and_dirty_paths(tmp_path) -> None:
@@ -1009,8 +1726,17 @@ def test_child_worktree_accept_blocks_stale_base_and_dirty_paths(tmp_path) -> No
         lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
         assert lease is not None
         (lease.worktree / "seed.py").write_text("VALUE = 7\n", encoding="utf-8")
-        finalize_child_worktree(ctx, lease=lease, status="done")
+        finalize_child_worktree(
+            ctx,
+            lease=lease,
+            status="done",
+            validation={
+                "passed": True,
+                "verifier_refs": ["pytest:child-artifact"],
+            },
+        )
         record = ctx.state.module_state["worktree_children"]["children"][0]
+        _record_adapter_review(record)
 
         (repo / "seed.py").write_text("dirty\n", encoding="utf-8")
         dirty = accept_child_worktree_artifact(
@@ -1028,6 +1754,68 @@ def test_child_worktree_accept_blocks_stale_base_and_dirty_paths(tmp_path) -> No
 
     assert stale["status"] == "stale_base"
     assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+
+
+def test_child_worktree_accept_requires_current_review_and_passing_verifier(
+    tmp_path,
+) -> None:
+    repo = _git_repo(tmp_path)
+    ctx, runner, _services = _ctx(
+        subtasks=[
+            {
+                "subtask_id": "reviewed-child",
+                "goal": "Review exact artifact",
+                "suggested_mode": "act",
+                "inputs": {"code_bearing": True, "workspace_root": str(repo)},
+            }
+        ]
+    )
+    subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
+    with artifact_ctl(tmp_path / ".openminion") as ctl:
+        runner.artifactctl = ctl
+        lease = allocate_child_worktree(subtask=subtask, child_state=_state())
+        assert lease is not None
+        (lease.worktree / "seed.py").write_text("VALUE = 11\n", encoding="utf-8")
+        finalize_child_worktree(
+            ctx,
+            lease=lease,
+            status="done",
+            validation={
+                "passed": True,
+                "verifier_refs": ["pytest:child-artifact"],
+            },
+        )
+        record = ctx.state.module_state["worktree_children"]["children"][0]
+        _record_adapter_review(record, reviewer_agent_id="reviewer-1")
+
+        record["review_receipt"]["passed"] = False
+        requested_correction = accept_child_worktree_artifact(
+            repo_root=repo, record=record, artifactctl=ctl
+        )
+        assert requested_correction["status"] == "review_failed"
+
+        record["review_receipt"]["passed"] = True
+        record["review_receipt"]["target_digest"] = "stale-digest"
+        stale = accept_child_worktree_artifact(
+            repo_root=repo, record=record, artifactctl=ctl
+        )
+        assert stale["status"] == "stale_review"
+
+        _record_adapter_review(record, reviewer_agent_id="reviewer-2")
+        record["validation"]["passed"] = False
+        failed = accept_child_worktree_artifact(
+            repo_root=repo, record=record, artifactctl=ctl
+        )
+        assert failed["status"] == "verification_failed"
+
+        record["validation"]["passed"] = True
+        accepted = accept_child_worktree_artifact(
+            repo_root=repo, record=record, artifactctl=ctl
+        )
+
+    assert accepted["status"] == "accepted"
+    assert accepted["reviewer_agent_id"] == "reviewer-2"
+    assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 11\n"
 
 
 def test_orchestrate_read_only_child_does_not_allocate_worktree(monkeypatch) -> None:
@@ -1076,6 +1864,31 @@ def test_decompose_prepare_rejects_subtask_count_over_limit() -> None:
 
     assert preparation.mode_result is not None
     assert "at most 5 subtasks" in str(preparation.mode_result.message)
+
+
+def test_decompose_prepare_rejects_unrepresentable_dependency_fan_in() -> None:
+    predecessors = [
+        {"subtask_id": f"dependency-{index}", "goal": f"Task {index}"}
+        for index in range(19)
+    ]
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            *predecessors,
+            {
+                "subtask_id": "final",
+                "goal": "Combine dependencies",
+                "depends_on": [item["subtask_id"] for item in predecessors],
+            },
+        ]
+    )
+    mode = OrchestrateMode()
+    mode._max_subtasks = 20
+
+    preparation = mode.prepare(ctx)
+
+    assert preparation.mode_result is not None
+    assert "dependency identifiers exceed" in str(preparation.mode_result.message)
+    assert ctx.state.child_task_order == []
 
 
 def test_decompose_prepare_falls_back_from_decompose_suggested_mode() -> None:

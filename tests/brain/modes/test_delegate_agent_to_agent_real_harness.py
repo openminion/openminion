@@ -324,7 +324,9 @@ def test_delegate_mode_async_uses_real_a2a_job_lifecycle(tmp_path: Path) -> None
             assert linked.metadata["target_agent_id"] == "ops-safe"
             assert linked.metadata["kind"] == "delegation"
 
-            completed = harness.wait_for_job(str(ctx.state.delegation_job_id))
+            completed = harness.wait_for_job(
+                str(ctx.state.delegation_job_id), session_id=ctx.state.session_id
+            )
             assert completed["status"] == "completed"
             resumed = mode.resume(ctx)
 

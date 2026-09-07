@@ -3,6 +3,7 @@ from urllib.parse import quote, unquote
 
 VALID_SESSION_STATUSES = {"active", "idle", "paused", "stale", "closed"}
 VALID_PARTICIPANT_TYPES = {"agent", "human"}
+VALID_PARTICIPANT_ROLES = {"owner", "participant", "observer"}
 ROOM_SESSION_KEY_PREFIX = "room:"
 
 
@@ -26,7 +27,10 @@ def normalize_participant_type(raw: str) -> str:
 
 
 def normalize_participant_role(raw: str) -> str:
-    return raw.strip().lower() or "participant"
+    value = raw.strip().lower() or "participant"
+    if value not in VALID_PARTICIPANT_ROLES:
+        raise ValueError(f"Invalid participant role: {raw!r}")
+    return value
 
 
 def is_room_session_key(session_key: str) -> bool:

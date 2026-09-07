@@ -251,6 +251,95 @@ def test_slice_v15_reconstructs_active_task_plan(
     assert after_completion["active_task_plan"] is None
 
 
+def test_failed_tool_and_next_turn_preserve_active_plan_steps(
+    store: SQLiteSessionStore,
+) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="pv1"
+    )
+    store.append_event(
+        session_id,
+        event_type="task_plan.declared",
+        payload={
+            "plan": {
+                "plan_id": "plan-closeout",
+                "objective": "Finish and validate the change",
+                "steps": [
+                    {
+                        "step_id": "edit",
+                        "description": "Apply the edit",
+                        "status": "completed",
+                    },
+                    {
+                        "step_id": "validate",
+                        "description": "Run validation",
+                        "depends_on": ["edit"],
+                        "status": "in_progress",
+                    },
+                ],
+            }
+        },
+    )
+    request_event_id = store.append_event(
+        session_id,
+        event_type="tool.call.requested",
+        payload={
+            "schema_version": 1,
+            "turn_scope_id": "turn-1",
+            "call_id": "call-validate",
+            "canonical_name": "exec.run",
+            "sanitized_normalized_arguments": {"command": "pytest"},
+            "batch_index": 0,
+            "depends_on": [],
+        },
+    )
+    store.append_event(
+        session_id,
+        event_type="tool.call.blocked",
+        parent_event_id=request_event_id,
+        payload={
+            "schema_version": 1,
+            "turn_scope_id": "turn-1",
+            "call_id": "call-validate",
+            "status": "error",
+            "error": {
+                "code": "TOOL_ARG_VALIDATION_FAILED",
+                "message": "command must be a string",
+                "details": {"validation_path": ["command"]},
+            },
+        },
+    )
+    store.append_turn(session_id, role="user", content="Continue the validation.")
+
+    next_decide_slice = store.get_slice(
+        session_id,
+        purpose="decide",
+        limits={"max_turns": 2, "max_tool_events": 2},
+    )
+
+    steps = next_decide_slice["active_task_plan"]["steps"]
+    assert [(step["step_id"], step["status"]) for step in steps] == [
+        ("edit", "completed"),
+        ("validate", "in_progress"),
+    ]
+    assert next_decide_slice["recent_tool_events"][-1]["event_type"] == (
+        "tool.call.blocked"
+    )
+
+
+def test_ordinary_chat_has_no_active_plan(store: SQLiteSessionStore) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="pv1"
+    )
+    store.append_turn(session_id, role="user", content="Hello")
+
+    next_decide_slice = store.get_slice(
+        session_id, purpose="decide", limits={"max_turns": 2}
+    )
+
+    assert next_decide_slice["active_task_plan"] is None
+
+
 def test_recent_tool_events_are_distilled_for_slice_consumers(
     store: SQLiteSessionStore,
 ) -> None:

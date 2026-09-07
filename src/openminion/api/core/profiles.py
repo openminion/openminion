@@ -17,9 +17,15 @@ from openminion.base.config import (
     build_capability_runtime_diagnostics,
     build_runtime_config,
     combine_run_profile_overrides,
+    resolve_agent_config,
     resolve_runtime_profile,
 )
 from openminion.modules.llm import RuntimeLLMHandle
+from openminion.modules.llm.config import resolve_provider_identity_translation
+from openminion.modules.llm.model_connections import (
+    add_model_connection,
+    legacy_model_connection,
+)
 from openminion.modules.memory.interfaces import MemoryNamespaceQueryInterface
 from openminion.modules.storage.runtime import (
     IdempotencyStore,
@@ -35,7 +41,10 @@ from openminion.services.gateway import GatewayService
 from openminion.services.runtime.bootstrap import (
     build_agent_runtime_service,
     build_gateway_service,
+    build_session_context_service,
 )
+from openminion.services.runtime.memory import build_runtime_memory_assembly
+from openminion.services.brain.factory.vector import init_vector_adapter
 from openminion.services.runtime.plugins import PluginRegistry
 from openminion.services.runtime.turn_input import TurnInputQueue
 from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
@@ -53,6 +62,8 @@ from .lifecycle import RuntimeFinalizer
 class AgentDiscoveryRecord:
     agent_id: str
     display_name: str = ""
+    role: str = ""
+    skills: tuple[str, ...] = ()
     configured: bool = False
     registry_present: bool = False
     hot: bool = False
@@ -95,6 +106,8 @@ class AgentDiscoveryRecord:
         return {
             "agent_id": self.agent_id,
             "display_name": self.display_name,
+            "role": self.role,
+            "skills": list(self.skills),
             "configured": self.configured,
             "registry_present": self.registry_present,
             "hot": self.hot,
@@ -112,6 +125,10 @@ class AgentDiscoveryRecord:
             "active_run_id": self.active_run_id,
             "capabilities": list(self.capabilities),
         }
+
+
+class AgentConfigActivationError(RuntimeError):
+    """The config was saved, but the active agent runtime did not refresh."""
 
 
 def _load_agent_registry_facts(
@@ -154,9 +171,24 @@ def _build_agent_discovery_record(
         if configured_profile is not None or registry_record is not None
         else ()
     )
+    selected_skills = getattr(configured_profile, "skill", None) or []
+    if isinstance(selected_skills, str):
+        selected_skills = [selected_skills]
+    skills = tuple(
+        dict.fromkeys(
+            str(item).strip()
+            for item in [
+                *selected_skills,
+                *list(getattr(configured_profile, "skill_catalog", []) or []),
+            ]
+            if str(item).strip()
+        )
+    )
     return AgentDiscoveryRecord(
         agent_id=agent_id,
         display_name=display_name,
+        role=str(getattr(configured_profile, "role", "") or "").strip(),
+        skills=skills,
         configured=configured_profile is not None,
         registry_present=registry_record is not None,
         hot=hot,
@@ -198,6 +230,7 @@ class RuntimeProfilesMixin:
     agent: AgentService
     gateway: GatewayService
     memory_queries: MemoryNamespaceQueryInterface
+    runtime_memory_assembly: Any
     action_policy: object | None
     retrieve_ctl: object | None
     knowledge_graphs: object | None
@@ -208,6 +241,7 @@ class RuntimeProfilesMixin:
     config_manager: ConfigManager | None
     _agent_services: dict[str, AgentService]
     _gateways: dict[str, GatewayService]
+    _memory_assemblies: dict[str, Any]
     turn_input_queue: TurnInputQueue = field(default_factory=TurnInputQueue)
     run_profile_overrides: RunProfileOverrides = field(
         default_factory=RunProfileOverrides
@@ -256,6 +290,191 @@ class RuntimeProfilesMixin:
             overrides=self._combined_run_profile_overrides(overrides),
         )
 
+    def model_connection_catalog(
+        self,
+        agent_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Return configured model routes for one agent without UI formatting."""
+
+        profile = resolve_agent_config(self.config, agent_id)
+        connections = profile.model_connections
+        configured_connections = bool(connections)
+        if not connections:
+            legacy = legacy_model_connection(self.config, profile)
+            connections = {legacy[0]: legacy[1]} if legacy is not None else {}
+        default_provider = self._model_provider_config(profile.provider)
+        default_model = str(
+            profile.provider_config_overrides.get(
+                "model", getattr(default_provider, "model", "")
+            )
+            or ""
+        ).strip()
+
+        rows: list[dict[str, object]] = []
+        for connection_id, connection in connections.items():
+            provider = str(connection.get("provider", "") or "").strip().lower()
+            provider_config = self._model_provider_config(provider)
+            route = dict(connection.get("provider_config_overrides", {}))
+            identity = route.get("provider_identity") or getattr(
+                provider_config,
+                "provider_identity",
+                None,
+            )
+            base_url = str(
+                route.get("base_url", getattr(provider_config, "base_url", "")) or ""
+            ).strip()
+            for model in connection.get("models", []):
+                resolved_identity = identity or resolve_provider_identity_translation(
+                    provider,
+                    model=model,
+                    base_url=base_url,
+                )
+                rows.append(
+                    {
+                        "connection_id": connection_id,
+                        "connection_name": connection.get("display_name")
+                        or str(resolved_identity.get("service_vendor") or provider),
+                        "provider": provider,
+                        "transport_adapter": str(
+                            resolved_identity.get("transport_adapter") or provider
+                        ),
+                        "model": model,
+                        "configured_connection": configured_connections,
+                        "is_default": bool(connection.get("default"))
+                        and model == default_model,
+                    }
+                )
+        if rows and not any(bool(row["is_default"]) for row in rows):
+            rows[0]["is_default"] = True
+        return rows
+
+    def _model_provider_config(self, provider: str) -> object | None:
+        provider_key = "anthropic" if provider == "claude" else provider
+        return getattr(self.config.providers, provider_key, None)
+
+    def set_agent_default_model(
+        self,
+        *,
+        agent_id: str,
+        connection_id: str,
+        model: str,
+    ) -> None:
+        updated = OpenMinionConfig.from_dict(self.config.to_dict())
+        resolve_agent_config(updated, agent_id)
+        profile = updated.agents[agent_id]
+        selected = next(
+            (
+                row
+                for row in self.model_connection_catalog(agent_id)
+                if row["connection_id"] == connection_id and row["model"] == model
+            ),
+            None,
+        )
+        if selected is None:
+            raise ValueError(
+                f"Model {model!r} is not configured on connection {connection_id!r}."
+            )
+        if connection_id not in profile.model_connections:
+            legacy = legacy_model_connection(updated, profile)
+            if legacy is not None:
+                profile.model_connections[legacy[0]] = legacy[1]
+        connection = profile.model_connections[connection_id]
+        for candidate in profile.model_connections.values():
+            candidate["default"] = candidate is connection
+        profile.provider = str(connection["provider"])
+        profile.provider_config_overrides = {
+            **dict(connection.get("provider_config_overrides", {})),
+            "model": model,
+        }
+        self._save_and_activate_agent_config(
+            updated,
+            agent_id=agent_id,
+            reason="model_default_changed",
+        )
+
+    def add_agent_model(
+        self,
+        *,
+        agent_id: str,
+        connection_id: str,
+        model: str,
+    ) -> None:
+        updated = OpenMinionConfig.from_dict(self.config.to_dict())
+        profile = resolve_agent_config(updated, agent_id)
+        model_id = model.strip()
+        if not model_id:
+            raise ValueError("model id is required")
+        if not profile.model_connections:
+            legacy = legacy_model_connection(updated, profile)
+            if legacy is not None:
+                profile.model_connections[legacy[0]] = legacy[1]
+        connection = profile.model_connections.get(connection_id)
+        if connection is None:
+            raise ValueError(f"connection {connection_id!r} is not configured")
+        add_model_connection(
+            profile,
+            connection_id=connection_id,
+            display_name=str(connection.get("display_name") or connection_id),
+            provider=str(connection["provider"]),
+            model=model_id,
+            provider_patch=dict(connection.get("provider_config_overrides", {})),
+            default=False,
+        )
+        self._save_and_activate_agent_config(
+            updated,
+            agent_id=agent_id,
+            reason="model_added",
+        )
+
+    def apply_provider_setup(self, result: Any, *, agent_id: str) -> None:
+        if self.config_path is None:
+            raise ValueError("runtime config path is unavailable")
+        if Path(result.config_path).resolve(strict=False) != Path(
+            self.config_path
+        ).resolve(strict=False):
+            raise ValueError("provider setup targets a different config path")
+        if str(result.preview.agent_id) != agent_id:
+            raise ValueError("provider setup targets a different agent")
+        if result.home_root is None or Path(result.home_root).resolve(
+            strict=False
+        ) != Path(self.home_root).resolve(strict=False):
+            raise ValueError("provider setup targets a different home root")
+        if Path(result.data_root).resolve(strict=False) != Path(self.data_root).resolve(
+            strict=False
+        ):
+            raise ValueError("provider setup targets a different data root")
+        self._save_and_activate_agent_config(
+            result.config,
+            agent_id=agent_id,
+            reason="provider_setup_applied",
+        )
+
+    def _save_and_activate_agent_config(
+        self,
+        config: OpenMinionConfig,
+        *,
+        agent_id: str,
+        reason: str,
+    ) -> None:
+        if self.config_path is None:
+            raise ValueError("runtime config path is unavailable")
+        from openminion.services.bootstrap.provider_setup import (
+            atomic_save_setup_config,
+        )
+
+        atomic_save_setup_config(config, self.config_path)
+        if self.config_manager is not None:
+            self.config_manager.base_config = config
+            self.config_manager.reset()
+        self.config = config
+        try:
+            self.evict_agent_runtime(agent_id=agent_id, reason=reason)
+        except Exception as exc:  # noqa: BLE001 - boundary after durable save
+            raise AgentConfigActivationError(
+                "Configuration was saved, but activating it failed; restart "
+                "OpenMinion before using the new model connection."
+            ) from exc
+
     def capability_runtime_diagnostics(
         self,
         agent_id: str | None = None,
@@ -296,6 +515,36 @@ class RuntimeProfilesMixin:
                 model=llm_runtime.model,
                 tool_call_strategy=llm_runtime.tool_call_strategy,
             )
+            session_context = build_session_context_service(
+                config=runtime_config,
+                sessions=self.sessions,
+                logger=self.logger.getChild(f"gateway.{profile.name}.session_context"),
+                config_path=self.config_path,
+                storage_path=self.storage_path,
+                memory_root=self.memory_root,
+                data_root=self.data_root,
+                retrieve_ctl=self.retrieve_ctl,
+            )
+            vector_adapter, vector_scheduler = init_vector_adapter(
+                config=runtime_config,
+                db_dir=self.memory_root,
+                logger=self.logger.getChild(f"memory.{profile.name}.vector"),
+            )
+            memory_assembly = build_runtime_memory_assembly(
+                config=runtime_config,
+                agent_id=profile.name,
+                memory_root=self.memory_root,
+                logger=self.logger.getChild(f"memory.{profile.name}"),
+                config_manager=self.config_manager,
+                home_root=self.home_root,
+                data_root=self.data_root,
+                session_context=session_context,
+                retrieve_ctl=self.retrieve_ctl,
+                storage_path=self.storage_path,
+                vector_adapter=vector_adapter,
+                scheduler=vector_scheduler,
+            )
+            memory_assembly.start()
             service, runtime_mode, fallback_reason = build_agent_runtime_service(
                 config=runtime_config,
                 plugins=self.plugins,
@@ -313,11 +562,14 @@ class RuntimeProfilesMixin:
                 retrieve_service=self.retrieve_ctl,
                 action_policy_service=self.action_policy,
                 telemetryctl=self.telemetryctl,
+                sessions=self.sessions,
+                runtime_memory_assembly=memory_assembly,
             )
             agent_service = cast(AgentService, service)
             self._bind_runtime_handle(agent_service, self)
             bind_mcp_sampling_executor(self.tools, agent_service)
             self._agent_services[cache_key] = agent_service
+            self._memory_assemblies[cache_key] = memory_assembly
             self._agent_runtime_modes[cache_key] = runtime_mode
             self._agent_runtime_fallback_reasons[cache_key] = fallback_reason
             return agent_service
@@ -339,6 +591,20 @@ class RuntimeProfilesMixin:
             "fallback_reason": self._agent_runtime_fallback_reasons.get(cache_key, ""),
             "brain_bridge_active": runtime_mode == "brain",
         }
+
+    def resolve_memory_assembly(
+        self,
+        agent_id: str | None = None,
+        overrides: RunProfileOverrides | None = None,
+    ) -> Any:
+        effective_overrides = self._combined_run_profile_overrides(overrides)
+        profile = self.resolve_agent_profile(agent_id, overrides=overrides)
+        cache_key = self._runtime_cache_key(
+            agent_name=profile.name,
+            overrides=effective_overrides,
+        )
+        self.resolve_agent_service(agent_id, overrides=overrides)
+        return self._memory_assemblies[cache_key]
 
     def resolve_gateway(
         self,
@@ -382,6 +648,7 @@ class RuntimeProfilesMixin:
                 config_manager=self.config_manager,
                 knowledge_graphs=self.knowledge_graphs,
                 retrieve_ctl=self.retrieve_ctl,
+                agent_memory=self._memory_assemblies[cache_key].gateway,
             )
             self._gateways[cache_key] = gateway
             return gateway
@@ -391,6 +658,7 @@ class RuntimeProfilesMixin:
         if not normalized:
             return
         evicted_services: list[AgentService] = []
+        evicted_memory: list[Any] = []
         with self._agent_runtime_lock:
             for cache_key in tuple(self._gateways):
                 if cache_key == normalized or cache_key.startswith(f"{normalized}||"):
@@ -400,8 +668,15 @@ class RuntimeProfilesMixin:
                     service = self._agent_services.pop(cache_key, None)
                     if service is not None:
                         evicted_services.append(service)
+            for cache_key in tuple(self._memory_assemblies):
+                if cache_key == normalized or cache_key.startswith(f"{normalized}||"):
+                    assembly = self._memory_assemblies.pop(cache_key, None)
+                    if assembly is not None:
+                        evicted_memory.append(assembly)
         for service in evicted_services:
             service.close()
+        for assembly in evicted_memory:
+            assembly.close()
         self.logger.getChild("runtime").info(
             "evicted agent runtime cache agent_id=%s reason=%s",
             normalized,

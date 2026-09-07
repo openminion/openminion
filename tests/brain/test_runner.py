@@ -61,7 +61,13 @@ class RunnerTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.saved = None
 
-            def get_latest_working_state(self, _session_id: str):
+            def get_latest_working_state(
+                self,
+                _session_id: str,
+                *,
+                agent_id: str | None = None,
+            ):
+                del agent_id
                 return None
 
             def put_working_state(self, _session_id: str, *, state_inline):
@@ -95,6 +101,23 @@ class RunnerTests(unittest.TestCase):
         runner._interpret(state=state, user_input="new request", logger=MagicMock())
         self.assertEqual(state.goal, "new request")
         self.assertEqual(state.open_questions, [])
+
+    def test_interpret_preserves_goal_for_resume_input(self) -> None:
+        runner = BrainRunner(profile=_profile(), session_api=MagicMock())
+        state = WorkingState(
+            session_id="s-resume",
+            agent_id="router-agent",
+            budgets_remaining=BudgetCounters(
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+            ),
+            goal="finish the original coding task",
+            status="waiting_user",
+        )
+
+        runner._interpret(state=state, user_input="continue", logger=MagicMock())
+
+        self.assertEqual(state.goal, "finish the original coding task")
+        self.assertEqual(state.last_user_input, "continue")
 
     def test_direct_response_prefers_decision_answer(self) -> None:
         runner = BrainRunner(profile=_profile(), session_api=MagicMock())
@@ -225,6 +248,7 @@ class RunnerTests(unittest.TestCase):
         output = SimpleNamespace(
             status="done",
             response="ok",
+            action_result=None,
             working_state=WorkingState(
                 session_id="sess-lgmh",
                 agent_id="router-agent",

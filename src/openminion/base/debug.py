@@ -72,7 +72,7 @@ def create_path_debug_payload(
         status=status,
         mode=path_mode,
         wiring_source=WiringSource.REAL,
-        resolved_path=resolved_path,
+        resolved_path=str(resolved_path) if resolved_path is not None else None,
         path_mode=path_mode,
         path_source=path_source,
         details=details,

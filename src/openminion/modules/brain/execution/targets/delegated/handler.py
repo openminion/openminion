@@ -205,7 +205,6 @@ class DelegateMode:
     default_config = {"max_depth": 1}
     decision_payload_fields = {
         "target_agent_id": (str, Field(..., min_length=1)),
-        "target_capability": (str | None, Field(default=None)),
         "goal": (str, Field(..., min_length=1)),
         "constraints": (str, Field(default="")),
         "synthesize_result": (bool, Field(default=False)),
@@ -258,7 +257,6 @@ class DelegateMode:
                 or getattr(ctx.state, "delegation_target_agent_id", "")
                 or ""
             ),
-            target_capability=getattr(ctx.decision, "target_capability", None),
             goal=str(
                 getattr(ctx.decision, "goal", "")
                 or getattr(ctx.state, "delegation_goal", "")
@@ -334,7 +332,6 @@ class DelegateMode:
         registry = self._discovery.get_registry(ctx=ctx)
         return self._resolver.resolve(
             target_agent_id=payload.target_agent_id,
-            target_capability=payload.target_capability,
             registry=registry,
         )
 
@@ -652,6 +649,13 @@ class DelegateMode:
                 message="No async delegation job is available to resume.",
                 code="DELEGATE_RESUME_MISSING_JOB",
             )
+        task_id = str(getattr(ctx.state, "delegation_task_id", "") or "").strip()
+        if self._cancellation.should_cancel(ctx=ctx, results=[], attempts=0):
+            return self._cancellation.cancel_async(
+                ctx=ctx,
+                job_id=job_id,
+                task_id=task_id or None,
+            )
         self._observer.emit(
             ctx=ctx,
             mode_state="polling",
@@ -665,7 +669,6 @@ class DelegateMode:
             job_id=job_id,
         )
         if mapped_result.status == "pending":
-            task_id = str(getattr(ctx.state, "delegation_task_id", "") or "").strip()
             if task_id:
                 ctx.transition_task(task_id=task_id, to_state="paused")
                 if not self._schedule_async_resume_poll(
@@ -697,7 +700,6 @@ class DelegateMode:
             )
             synthesized.action_result = mapped_result.action_result
             mapped_result = synthesized
-        task_id = str(getattr(ctx.state, "delegation_task_id", "") or "").strip()
         if mapped_result.status == "done":
             self._task_tracker.mark_done(task_id=task_id)
         elif mapped_result.status == "stopped":

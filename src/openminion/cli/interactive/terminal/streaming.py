@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import time
 from collections.abc import Callable
 from threading import Event, Thread
@@ -14,6 +13,7 @@ from rich.text import Text
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.messages import looks_like_markdown
 from openminion.cli.status.tool_calls import (
+    format_public_tool_activity,
     format_tool_fallback_marker,
     format_tool_provenance_marker,
 )
@@ -26,6 +26,10 @@ from openminion.cli.presentation.markers import (
     token_rich_style,
 )
 from openminion.cli.presentation.models import ToolEvent
+from openminion.cli.presentation.tool.formatting import (
+    format_tool_duration,
+    is_diff_result,
+)
 
 from .spinner import (
     THINKING_VERB,
@@ -35,32 +39,6 @@ from .spinner import (
 )
 
 _looks_like_markdown = looks_like_markdown
-
-
-def _looks_like_unified_diff(text: str) -> bool:
-    if not text:
-        return False
-    lines = text.split("\n")
-    for line in lines[:3]:
-        if line.startswith("$ "):
-            return False
-    has_hunk = any(_HUNK_HEADER_RE.match(line) for line in lines)
-    if not has_hunk:
-        return False
-    has_plus = False
-    has_minus = False
-    for line in lines:
-        if line.startswith("+++"):
-            continue
-        if line.startswith("---"):
-            continue
-        if line.startswith("+"):
-            has_plus = True
-        elif line.startswith("-"):
-            has_minus = True
-        if has_plus and has_minus:
-            break
-    return has_plus and has_minus
 
 
 _STREAM_CURSOR = "▍"
@@ -73,8 +51,6 @@ _TOOL_BLOCK_VERBOSE_MAX_LINES = 200
 
 _ASSISTANT_MARKER = "⏺"
 _TOOL_MARKER = "●"
-_DIFF_RENDER_TOOL_NAMES = frozenset({"Edit", "Write"})
-_HUNK_HEADER_RE = re.compile(r"^@@\s+-\d+(,\d+)?\s+\+\d+(,\d+)?\s+@@")
 
 
 class TerminalTurnHandle:
@@ -166,7 +142,9 @@ class TerminalTurnHandle:
         # Focus mode owns live status through the prompt toolbar. Other terminal
         # flows use Rich Live; avoid the old raw-ANSI inline writer because it
         # leaks escape bytes into prompt/PTY buffers.
-        if not self._prompt_safe_mode:
+        if self._prompt_safe_mode:
+            self._write_render(self._console.print)
+        else:
             self._live = Live(
                 self._render(),
                 console=self._console,
@@ -396,29 +374,32 @@ class TerminalTurnHandle:
 
 def _render_tool_block(event: ToolEvent) -> Group:
     body_for_detection = event.full_content or event.content or ""
-    if event.tool_name in _DIFF_RENDER_TOOL_NAMES and _looks_like_unified_diff(
-        body_for_detection
-    ):
-        return _render_diff_block(event)
+    if is_diff_result(event.tool_name, body_for_detection):
+        return _render_diff_block(event, public_title=True)
     return _render_plain_tool_block(
         event,
         cap=_TOOL_BLOCK_TRUNCATE_LINES,
         include_event_markers=True,
         hint_style="dim italic",
+        public_title=True,
     )
 
 
 def _render_full_tool_block(event: ToolEvent, *, cap: int | None = None) -> Group:
     body_for_detection = event.full_content or event.content or ""
-    if event.tool_name in _DIFF_RENDER_TOOL_NAMES and _looks_like_unified_diff(
-        body_for_detection
-    ):
-        return _render_diff_block(event, cap=cap)
+    if is_diff_result(event.tool_name, body_for_detection):
+        return _render_diff_block(
+            event,
+            cap=cap,
+            public_title=False,
+            include_event_markers=False,
+        )
     return _render_plain_tool_block(
         event,
         cap=cap,
         include_event_markers=False,
         hint_style="dim",
+        public_title=False,
     )
 
 
@@ -428,10 +409,15 @@ def _render_plain_tool_block(
     cap: int | None,
     include_event_markers: bool,
     hint_style: str,
+    public_title: bool,
 ) -> Group:
     body_text = event.full_content or event.content or ""
     return Group(
-        _tool_title_row(event, include_event_markers=include_event_markers),
+        _tool_title_row(
+            event,
+            include_event_markers=include_event_markers,
+            public_title=public_title,
+        ),
         _collapsed_body_row(body_text, cap=cap, hint_style=hint_style),
     )
 
@@ -451,9 +437,17 @@ def _diff_line_style(line: str) -> str:
 
 
 def _render_diff_block(
-    event: ToolEvent, *, cap: int | None = _TOOL_BLOCK_TRUNCATE_LINES
+    event: ToolEvent,
+    *,
+    cap: int | None = _TOOL_BLOCK_TRUNCATE_LINES,
+    public_title: bool = True,
+    include_event_markers: bool = True,
 ) -> Group:
-    title_row = _tool_title_row(event, include_event_markers=False)
+    title_row = _tool_title_row(
+        event,
+        include_event_markers=include_event_markers,
+        public_title=public_title,
+    )
     body_text = (event.full_content or event.content or "").rstrip()
     if not body_text:
         body_text = "(no output)"
@@ -477,17 +471,40 @@ def _render_diff_block(
     return Group(title_row, body_row)
 
 
-def _tool_title_row(event: ToolEvent, *, include_event_markers: bool) -> Text:
+def _tool_title_row(
+    event: ToolEvent,
+    *,
+    include_event_markers: bool,
+    public_title: bool,
+) -> Text:
     exit_code = event.exit_code
     is_ok = exit_code in (None, 0)
+    state_token = StyleToken.SUCCESS if is_ok else StyleToken.ERROR
     title_row = Text()
     title_row.append_text(
         marker_text(MARKER_TOOL_OK if is_ok else MARKER_TOOL_FAIL, bold=True)
     )
     title_row.append(" ")
-    title_row.append(_verb_form_title(event), style="bold")
+    title = (
+        format_public_tool_activity(
+            event.model_tool_name or event.tool_name,
+            pending=False,
+        )
+        if public_title
+        else _verb_form_title(event)
+    )
+    title_row.append(title, style=token_rich_style(state_token, bold=True))
     if include_event_markers:
-        title_row.append(_tool_event_markers(event))
+        title_row.append(
+            _tool_event_markers(event),
+            style=token_rich_style(StyleToken.MUTED),
+        )
+    duration = format_tool_duration(event.duration_ms)
+    if duration:
+        title_row.append(
+            f" · {duration}",
+            style=token_rich_style(StyleToken.MUTED),
+        )
     if exit_code is not None and exit_code != 0:
         title_row.append(
             f" ✗ (exit {exit_code})",
@@ -504,9 +521,10 @@ def _collapsed_body_row(body_text: str, *, cap: int | None, hint_style: str) -> 
         max_lines=cap if cap is not None else 10**9,
     )
     body_row = Text()
+    body_style = token_rich_style(StyleToken.MUTED)
     for index, line in enumerate(collapsed.visible_lines):
         prefix = "  └ " if index == 0 else "    "
-        body_row.append(f"{prefix}{line}\n")
+        body_row.append(f"{prefix}{line}\n", style=body_style)
     if collapsed.truncated:
         body_row.append(f"    {collapsed.expand_hint}\n", style=hint_style)
     return body_row
@@ -566,6 +584,8 @@ def _render_in_progress_tool_block(
     tool_name: str,
     args: dict[str, Any] | None = None,
     elapsed_seconds: float = 0.0,
+    *,
+    public_title: bool = True,
 ) -> Group:
     synthetic = ToolEvent(
         tool_name=tool_name,
@@ -573,13 +593,19 @@ def _render_in_progress_tool_block(
         content="",
         full_content="",
     )
-    verb = _verb_form_title(synthetic)
+    title = (
+        format_public_tool_activity(tool_name, pending=True)
+        if public_title
+        else f"Running {_verb_form_title(synthetic)}"
+    )
 
     title_row = Text()
     title_row.append_text(marker_text(MARKER_TOOL_RUNNING, bold=True))
     title_row.append(" ")
-    title_row.append("Running ", style="bold")
-    title_row.append(verb, style="bold")
+    title_row.append(
+        title,
+        style=token_rich_style(StyleToken.WARNING, bold=True),
+    )
     if int(max(0.0, elapsed_seconds)) > 0:
         title_row.append(
             f" · {_format_elapsed_seconds(elapsed_seconds)}",

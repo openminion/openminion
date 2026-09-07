@@ -145,6 +145,9 @@ def test_turn_executor_injects_memory_service_into_tool_execution_context(
         _security_policy=None,
         _logger=logging.getLogger("tests.executor.memory"),
         _home_root=tmp_path,
+        _runtime_memory_assembly=SimpleNamespace(
+            memctl=SimpleNamespace(write_record=lambda **_: None)
+        ),
     )
     runtime = SimpleNamespace(
         inbound=Message(channel="console", target="user", body="hello", metadata={})
@@ -390,6 +393,7 @@ def test_os_adapter_runtime_tool_builder_injects_runtime_env():
         }
     )
     adapter.agent_id = "agent-os"
+    adapter.memory_service = None
 
     outcome = ToolAdapter._execute_openminion_runtime_tool(
         adapter,
@@ -423,6 +427,7 @@ def test_os_adapter_runtime_tool_builder_injects_agent_id():
     adapter = object.__new__(ToolAdapter)
     adapter.policy = Policy(raw={})
     adapter.agent_id = "agent-os"
+    adapter.memory_service = None
 
     outcome = ToolAdapter._execute_openminion_runtime_tool(
         adapter,
@@ -454,6 +459,7 @@ def test_os_adapter_runtime_tool_builder_injects_policy_replay_confirmation():
     adapter = object.__new__(ToolAdapter)
     adapter.policy = Policy(raw={})
     adapter.agent_id = "agent-os"
+    adapter.memory_service = None
 
     outcome = ToolAdapter._execute_openminion_runtime_tool(
         adapter,
@@ -523,4 +529,7 @@ def test_os_adapter_task_cancel_respects_configured_agent_id(tmp_path, monkeypat
         )
 
     assert result["status"] == "success"
-    assert repo.get_cron_job(task.task_id) is None
+    cancelled = repo.get_cron_job(task.task_id)
+    assert cancelled is not None
+    assert cancelled["enabled"] is False
+    assert manager.get_task(task.task_id).state.value == "cancelled"

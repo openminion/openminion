@@ -40,6 +40,10 @@ def _bucket(ctx: ExecutionContext) -> dict[str, Any]:
     return bucket
 
 
+def initialize_policy_facts(ctx: ExecutionContext) -> None:
+    _bucket(ctx)
+
+
 def _parent_budget(ctx: ExecutionContext) -> ParentBudget:
     budget = ctx.state.budgets_remaining
     return ParentBudget(
@@ -217,6 +221,7 @@ def clear_policy_facts(state: WorkingState) -> None:
 
 __all__ = [
     "clear_policy_facts",
+    "initialize_policy_facts",
     "merge_child_policy_facts",
     "record_child_policy_projection",
     "record_result_aggregation",

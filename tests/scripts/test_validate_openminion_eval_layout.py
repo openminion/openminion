@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
 
 SCRIPT_PATH = (
     Path(__file__).resolve().parents[2]
@@ -24,12 +25,14 @@ def _write_clean_root(root: Path) -> None:
         (root / filename).write_text("", encoding="utf-8")
 
 
+@pytest.mark.package_integration
 def test_live_eval_layout_is_admitted() -> None:
     assert MODULE.validate_root_layout() == []
     assert "boundary_artifacts.py" in MODULE.ALLOWED_ROOT_FILES
     assert "reports.py" in MODULE.ALLOWED_ROOT_FILES
     assert "subject_adapters.py" in MODULE.ALLOWED_ROOT_FILES
     assert "suite_selection.py" in MODULE.ALLOWED_ROOT_FILES
+    assert "runtime_reliability" in MODULE.REQUIRED_TOP_LEVEL_DIRS
 
 
 def test_eval_layout_rejects_unexpected_root_file(tmp_path: Path) -> None:

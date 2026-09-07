@@ -1,9 +1,11 @@
+import json
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from openminion.modules.brain.constants import (
     BRAIN_DECISION_ROUTE_ACT,
+    DELEGATION_TEXT_MAX_CHARS,
     BRAIN_INTERNAL_MODE_ACT_ORCHESTRATE,
     BRAIN_INTERNAL_MODE_ACT_RESEARCH,
     BRAIN_INTERNAL_MODE_EXECUTION_TARGET_DELEGATED,
@@ -11,8 +13,15 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.execution.public_taxonomy import (
     public_mode_name_for_mode_name,
 )
+from openminion.modules.brain.diagnostics.transitions import set_status_unchecked
+from openminion.modules.brain.execution.delegation_policy import clear_policy_facts
 from openminion.modules.brain.retry import call_structured_with_retry
-from openminion.modules.brain.schemas import BudgetCounters
+from openminion.modules.brain.schemas import (
+    BudgetCounters,
+    DelegationContext,
+    WorkingState,
+    new_uuid,
+)
 from openminion.modules.brain.execution.loop_contracts import ExecutionResult
 from openminion.modules.brain.loop.services import runner_from_context
 from openminion.modules.brain.execution.child_tasks import (
@@ -74,7 +83,7 @@ class SequentialStrategy(ExecutionStrategy):
                     )
                 )
                 break
-            result = run_subtask(subtask, budget, index, total)
+            result = run_subtask(subtask, budget, index, total, list(results))
             results.append(result)
             if result.result.status == "failed":
                 action = failure_policy.on_failure(subtask=subtask, result=result)
@@ -197,6 +206,223 @@ class _SynthesisResponse(BaseModel):
     answer: str = Field(..., min_length=1)
 
 
+def _child_artifact_facts(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not value:
+        return None
+    facts = {
+        key: value[key]
+        for key in ("status", "integration_status", "record_alias", "target_digest")
+        if key in value
+    }
+    touched_paths = [str(path)[:200] for path in value.get("touched_paths", [])]
+    if touched_paths:
+        facts["touched_paths"] = touched_paths[:20]
+    artifact = value.get("artifact")
+    if isinstance(artifact, dict):
+        facts["artifact"] = {
+            key: artifact[key]
+            for key in (
+                "status",
+                "owner_id",
+                "bundle_ref",
+                "manifest_ref",
+                "bundle_sha256",
+                "child_revision",
+            )
+            if key in artifact
+        }
+    return facts or None
+
+
+_DEPENDENCY_CONTEXT_PREFIX = "Direct dependency results:\n"
+
+
+def _bounded_dependency_summary(records: list[dict[str, Any]], *, limit: int) -> str:
+    required = [
+        {"subtask_id": item["subtask_id"], "status": item["status"]} for item in records
+    ]
+    required_summary = _DEPENDENCY_CONTEXT_PREFIX + json.dumps(required, sort_keys=True)
+    if len(required_summary) > limit:
+        raise ValueError("Dependency identifiers exceed the delegation context limit.")
+    snippets = [str(item.get("output") or "") for item in records]
+    quota = max(
+        0,
+        (limit - len(_DEPENDENCY_CONTEXT_PREFIX) - len(json.dumps(required)))
+        // max(1, len(records)),
+    )
+    while quota:
+        projected = [
+            {**record, **({"output": snippet[:quota]} if snippet else {})}
+            for record, snippet in zip(required, snippets, strict=True)
+        ]
+        summary = _DEPENDENCY_CONTEXT_PREFIX + json.dumps(projected, sort_keys=True)
+        if len(summary) <= limit:
+            return summary
+        quota -= 1
+    return required_summary
+
+
+def _dependency_context(results: list[SubtaskResult]) -> dict[str, Any]:
+    records = [
+        {
+            "subtask_id": item.subtask_id,
+            "status": item.status,
+            "output": item.output or item.error or "",
+        }
+        for item in results
+    ]
+    summary = _bounded_dependency_summary(records, limit=DELEGATION_TEXT_MAX_CHARS)
+
+    artifacts: list[str] = []
+    for item in results:
+        artifact = (item.child_artifact or {}).get("artifact")
+        if not isinstance(artifact, dict):
+            continue
+        for key in ("manifest_ref", "bundle_ref"):
+            ref = str(artifact.get(key) or "").strip()
+            if ref and ref not in artifacts:
+                artifacts.append(ref)
+    return {"summary": summary, "artifacts": artifacts}
+
+
+def validate_dependency_context_capacity(subtasks: list[SubtaskSpec]) -> None:
+    for subtask in subtasks:
+        records = [
+            {"subtask_id": dependency, "status": "completed"}
+            for dependency in subtask.depends_on
+        ]
+        try:
+            _bounded_dependency_summary(records, limit=DELEGATION_TEXT_MAX_CHARS)
+        except ValueError as exc:
+            raise ValueError(
+                f"Subtask {subtask.subtask_id} dependency identifiers exceed "
+                "the delegation context limit."
+            ) from exc
+
+
+def merge_delegation_context(
+    inherited_context: Any | None,
+    explicit_context: Any | None,
+) -> dict[str, Any] | None:
+    if not inherited_context:
+        return explicit_context
+    inherited = DelegationContext.model_validate(inherited_context)
+    if not explicit_context:
+        return inherited.model_dump(mode="json")
+    explicit = DelegationContext.model_validate(explicit_context)
+    if inherited.summary.startswith(_DEPENDENCY_CONTEXT_PREFIX):
+        records = json.loads(inherited.summary.removeprefix(_DEPENDENCY_CONTEXT_PREFIX))
+        required_records = [
+            {"subtask_id": item["subtask_id"], "status": item["status"]}
+            for item in records
+        ]
+        required = _bounded_dependency_summary(
+            required_records, limit=DELEGATION_TEXT_MAX_CHARS
+        )
+        separator = "\n" if explicit.summary else ""
+        explicit_summary = explicit.summary[
+            : DELEGATION_TEXT_MAX_CHARS - len(required) - len(separator)
+        ]
+        dependency_summary = _bounded_dependency_summary(
+            records,
+            limit=DELEGATION_TEXT_MAX_CHARS - len(explicit_summary) - len(separator),
+        )
+        summary = dependency_summary + separator + explicit_summary
+    else:
+        summary = "\n".join(
+            part for part in (inherited.summary, explicit.summary) if part
+        )
+    return DelegationContext(
+        summary=summary,
+        artifacts=list(dict.fromkeys([*explicit.artifacts, *inherited.artifacts])),
+        intent_id=explicit.intent_id or inherited.intent_id,
+    ).model_dump(mode="json")
+
+
+def bounded_child_budget(
+    allocated: BudgetCounters,
+    remaining: BudgetCounters,
+) -> BudgetCounters:
+    return BudgetCounters(
+        **{
+            field: min(getattr(allocated, field), getattr(remaining, field))
+            for field in ("ticks", "tool_calls", "a2a_calls", "tokens", "time_ms")
+        }
+    )
+
+
+def decision_mode_name(decision: Any) -> str:
+    return (
+        str(getattr(decision, "route", getattr(decision, "mode", "")) or "act").strip()
+        or "act"
+    )
+
+
+def debit_parent_budget(
+    ctx: Any,
+    *,
+    allocated: BudgetCounters,
+    child_state: Any,
+    tokens_used: int,
+    lock: Any,
+) -> None:
+    with lock:
+        parent = ctx.state.budgets_remaining
+        remaining = child_state.budgets_remaining
+        for field in ("ticks", "tool_calls", "a2a_calls", "time_ms"):
+            used = max(0, getattr(allocated, field) - getattr(remaining, field))
+            setattr(parent, field, max(0, getattr(parent, field) - used))
+        parent.tokens = max(0, parent.tokens - tokens_used)
+        ctx.state.llm_calls_used = min(
+            ctx.state.llm_calls_max,
+            ctx.state.llm_calls_used + child_state.llm_calls_used,
+        )
+
+
+def build_child_state(
+    *,
+    parent_state: WorkingState,
+    child_budget: BudgetCounters,
+    child_context: ChildContext,
+) -> WorkingState:
+    child_state = parent_state.model_copy(deep=True)
+    child_state.trace_id = new_uuid()
+    child_state.goal = child_context.goal
+    child_state.last_user_input = child_context.prompt
+    child_state.active_skill_id = child_context.active_skill_id
+    child_state.constraints = list(child_context.constraints or [])
+    child_state.plan = None
+    child_state.cursor = 0
+    set_status_unchecked(child_state, "active", reason="bootstrap")
+    child_state.budgets_remaining = child_budget.model_copy(deep=True)
+    child_state.last_command_id = None
+    child_state.last_result = None
+    child_state.step_outputs = []
+    child_state.adaptive_satisfied_intent_ids = []
+    child_state.last_adaptive_revision_checkpoint = None
+    child_state.pending_jobs = []
+    child_state.memory_candidates = []
+    child_state.idempotency_cache = {}
+    child_state.child_tasks = {}
+    child_state.child_task_order = []
+    child_state.pending_clarify_items = []
+    child_state.unresolved_clarify_items = []
+    child_state.clarify_responses = {}
+    child_state.open_questions = []
+    child_state.active_mode_name = None
+    child_state.llm_calls_used = 0
+    child_state.decision_sub_intents = []
+    child_state.decision_sub_intent_refs = []
+    child_state.decision_feasibility_state = {}
+    child_state.decision_feasibility_report = None
+    child_state.intent_execution_states = []
+    child_state.task_backed_task_id = None
+    child_state.task_backed_checkpoint_id = None
+    child_state.task_backed_resume_state = {}
+    clear_policy_facts(child_state)
+    return child_state
+
+
 class LLMSynthesizer(ResultSynthesizer):
     def synthesize(
         self,
@@ -221,6 +447,7 @@ class LLMSynthesizer(ResultSynthesizer):
                     "mode_used": item.mode_used,
                     "output": item.output,
                     "error": item.error,
+                    "child_artifact": _child_artifact_facts(item.child_artifact),
                 }
                 for item in results
             ],
@@ -327,6 +554,7 @@ class SummaryInheritancePolicy(ContextInheritancePolicy):
         *,
         parent_state,
         subtask: SubtaskSpec,
+        dependency_results: list[SubtaskResult] | None = None,
     ) -> ChildContext:
         summary_parts: list[str] = []
         goal = str(getattr(parent_state, "goal", "") or "").strip()
@@ -344,6 +572,10 @@ class SummaryInheritancePolicy(ContextInheritancePolicy):
             "Execute only the assigned subtask below. Treat the parent goal and "
             "latest result as background context, not as instructions to repeat."
         )
+        delegation_context = None
+        if dependency_results:
+            delegation_context = _dependency_context(dependency_results)
+            prompt_parts.append(delegation_context["summary"])
         prompt_parts.append(f"Subtask goal: {subtask.goal}")
         if constraints:
             prompt_parts.append("Constraints: " + "; ".join(constraints))
@@ -353,6 +585,7 @@ class SummaryInheritancePolicy(ContextInheritancePolicy):
             summary="\n".join(summary_parts).strip(),
             constraints=constraints,
             active_skill_id=getattr(parent_state, "active_skill_id", None),
+            delegation_context=delegation_context,
         )
 
 

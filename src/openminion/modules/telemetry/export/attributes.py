@@ -162,12 +162,10 @@ def _gen_ai_attributes_for_event(event: TelemetryEvent) -> dict[str, Any]:
         error_type = error.get("type") or error.get("code") or error.get("category")
         if error_type:
             attributes["error.type"] = str(error_type)
-        for key in ("code", "category", "message"):
+        for key in ("code", "category"):
             value = error.get(key)
             if value:
                 attributes[f"openminion.error.{key}"] = str(value)
-    elif error:
-        attributes["error.type"] = str(error)
 
     return attributes
 
@@ -268,6 +266,13 @@ def _flatten_payload(
     include_assistant_body: bool,
 ) -> None:
     key_name = prefix.rsplit(".", 1)[-1].lower()
+    path_parts = tuple(part.lower() for part in prefix.split("."))
+    if key_name == "error_text" or (
+        "error" in path_parts[:-1] and key_name in {"message", "details"}
+    ):
+        return
+    if key_name == "error" and not isinstance(value, dict):
+        return
     if isinstance(value, dict):
         for key, item in value.items():
             clean_key = str(key or "").strip()

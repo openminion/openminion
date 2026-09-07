@@ -182,22 +182,31 @@ def infer_categories_from_index(
     )
 
 
-def register_tool(registry: "ToolRegistry", tool: Any) -> None:
+def _registration_key(registry: "ToolRegistry", tool: Any) -> str:
     key = str(tool.name).strip()
     if not key:
         raise ToolRuntimeError(
             "INVALID_ARGUMENT",
             "Tool name cannot be empty",
         )
+    if key in registry._tools:
+        raise ToolRuntimeError(
+            "INVALID_ARGUMENT",
+            f"Tool already registered: {key}",
+            {"tool": key},
+        )
+    return key
+
+
+def _commit_tool(registry: "ToolRegistry", key: str, tool: Any) -> None:
     if isinstance(tool, ToolSpec):
-        if tool.name in registry._tools:
-            raise ToolRuntimeError(
-                "INVALID_ARGUMENT",
-                f"Tool already registered: {tool.name}",
-                {"tool": tool.name},
-            )
         tool.handler = _wrap_runtime_handler(tool.handler)
     registry._tools[key] = tool
+
+
+def register_tool(registry: "ToolRegistry", tool: Any) -> None:
+    key = _registration_key(registry, tool)
+    _commit_tool(registry, key, tool)
     index_tool_category(registry, key, tool)
 
 
@@ -212,14 +221,9 @@ def unregister_tool(registry: "ToolRegistry", tool_name: str) -> None:
 
 def add_tool_spec(registry: "ToolRegistry", spec: Any) -> None:
     if isinstance(spec, ToolSpec):
-        if spec.name in registry._tools:
-            raise ToolRuntimeError(
-                "INVALID_ARGUMENT",
-                f"Tool already registered: {spec.name}",
-                {"tool": spec.name},
-            )
-        spec.handler = _wrap_runtime_handler(spec.handler)
-        registry._tools[spec.name] = spec
+        key = _registration_key(registry, spec)
+        spec.name = key
+        _commit_tool(registry, key, spec)
         primary = str(getattr(spec, "primary_category", "") or "").strip()
         if primary.lower() in {"uncategorized", "general_assistance"}:
             primary = ""

@@ -1,4 +1,5 @@
 import random
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -45,6 +46,13 @@ def is_retryable(exc: Exception) -> bool:
     return classify_retryable(exc)[1]
 
 
+def provider_request_id_payload(
+    metadata: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    request_id = str((metadata or {}).get("request_id") or "").strip()
+    return {"request_id": request_id} if request_id else {}
+
+
 def compute_backoff_ms(
     policy: ProviderRetryPolicy,
     attempt: int,
@@ -59,8 +67,11 @@ def compute_backoff_ms(
     return max(0.0, capped + jitter)
 
 
-def build_provider_retry_policy(config: Any = None) -> ProviderRetryPolicy:
-    runtime = getattr(config, "runtime", None)
+def build_provider_retry_policy(
+    config: Any = None,
+    llm_api: Any | None = None,
+) -> ProviderRetryPolicy:
+    runtime = getattr(config, "runtime", config)
     raw = getattr(
         runtime, "provider_retry_max_attempts", PROVIDER_RETRY_DEFAULT_MAX_ATTEMPTS
     )
@@ -68,6 +79,12 @@ def build_provider_retry_policy(config: Any = None) -> ProviderRetryPolicy:
         max_attempts = int(raw)
     except (TypeError, ValueError):
         max_attempts = PROVIDER_RETRY_DEFAULT_MAX_ATTEMPTS
+    provider_limit_getter = getattr(llm_api, "get_provider_retry_max_attempts", None)
+    provider_limit = (
+        provider_limit_getter() if callable(provider_limit_getter) else None
+    )
+    if provider_limit is not None:
+        max_attempts = min(max_attempts, int(provider_limit))
     return ProviderRetryPolicy(max_attempts=max(1, min(6, max_attempts)))
 
 
@@ -78,4 +95,5 @@ __all__ = [
     "classify_retryable",
     "compute_backoff_ms",
     "is_retryable",
+    "provider_request_id_payload",
 ]

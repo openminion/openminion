@@ -4,7 +4,9 @@ import logging
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler
 from os import PathLike
+from pathlib import Path
 
+from openminion.base.config import ConfigManager
 from openminion.api.runtime import APIRuntime
 
 
@@ -12,6 +14,30 @@ from openminion.api.runtime import APIRuntime
 class APIRuntimeBootstrap:
     runtime: APIRuntime | None
     runtime_bootstrap_error: str | None
+    ipc_token: str = ""
+
+
+def _configured_ipc_token(
+    config_path: str | None,
+    *,
+    home_root: str | PathLike[str] | None,
+    data_root: str | PathLike[str] | None,
+) -> str:
+    try:
+        manager = ConfigManager.load(
+            config_path,
+            home_root=Path(home_root).expanduser().resolve() if home_root else None,
+            data_root=Path(data_root).expanduser().resolve() if data_root else None,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return ""
+    token = manager.base_config.runtime.ipc_token
+    return token.strip() if isinstance(token, str) else ""
+
+
+def _runtime_ipc_token(runtime: APIRuntime) -> str:
+    token = getattr(getattr(runtime.config, "runtime", None), "ipc_token", "")
+    return token.strip() if isinstance(token, str) else ""
 
 
 def bootstrap_api_runtime(
@@ -21,13 +47,15 @@ def bootstrap_api_runtime(
     data_root: str | PathLike[str] | None = None,
 ) -> APIRuntimeBootstrap:
     try:
+        runtime = APIRuntime.from_config_path(
+            config_path,
+            home_root=home_root,
+            data_root=data_root,
+        )
         return APIRuntimeBootstrap(
-            APIRuntime.from_config_path(
-                config_path,
-                home_root=home_root,
-                data_root=data_root,
-            ),
+            runtime,
             None,
+            _runtime_ipc_token(runtime),
         )
     except Exception as exc:  # noqa: BLE001
         runtime_bootstrap_error = str(exc)
@@ -35,7 +63,15 @@ def bootstrap_api_runtime(
             "api runtime bootstrap failed; starting degraded mode error=%s",
             runtime_bootstrap_error,
         )
-        return APIRuntimeBootstrap(None, runtime_bootstrap_error)
+        return APIRuntimeBootstrap(
+            None,
+            runtime_bootstrap_error,
+            _configured_ipc_token(
+                config_path,
+                home_root=home_root,
+                data_root=data_root,
+            ),
+        )
 
 
 def build_api_handler_class(
@@ -45,6 +81,9 @@ def build_api_handler_class(
     bootstrap: APIRuntimeBootstrap,
     class_name: str = "ConfiguredOpenMinionAPIHandler",
 ) -> type[BaseHTTPRequestHandler]:
+    ipc_token = bootstrap.ipc_token
+    if not ipc_token and bootstrap.runtime is not None:
+        ipc_token = _runtime_ipc_token(bootstrap.runtime)
     return type(
         class_name,
         (base_handler,),
@@ -52,6 +91,7 @@ def build_api_handler_class(
             "config_path": config_path,
             "runtime": bootstrap.runtime,
             "runtime_bootstrap_error": bootstrap.runtime_bootstrap_error,
+            "ipc_token": ipc_token,
         },
     )
 

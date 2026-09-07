@@ -15,7 +15,6 @@ from openminion.base.config import (
     resolve_config_path,
     run_profile_overrides_from_mapping,
 )
-from openminion.services.bootstrap.onboarding import OnboardingRequestedMode
 
 
 def resolve_surface_onboarding_route(**kwargs: Any) -> Any:
@@ -89,26 +88,18 @@ def _prepare_runtime_roots(
 
 def _run_setup_from_default_route(args: object, home_root: str, data_root: str) -> int:
     from openminion.cli.commands.setup import run_setup
-    from openminion.services.bootstrap.onboarding import build_inline_setup_args
 
-    return int(
-        run_setup(
-            build_inline_setup_args(
-                config=getattr(args, "config", None),
-                home_root=home_root or None,
-                data_root=data_root or None,
-                no_chat=False,
-                agent=None,
-            )
-        )
-        or 0
-    )
+    setup_args = SimpleNamespace(**vars(args))
+    setup_args.home_root = home_root or None
+    setup_args.data_root = data_root or None
+    setup_args.no_chat = False
+    return int(run_setup(setup_args) or 0)
 
 
 def _default_route_home_root(effective_home_root: str) -> Path:
     if effective_home_root:
         return Path(effective_home_root).expanduser().resolve()
-    return Path.cwd().resolve()
+    return Path.home().resolve()
 
 
 def _default_route_data_root(
@@ -147,7 +138,9 @@ def _run_default_interactive(
                 agent=getattr(args, "agent", None),
                 session=getattr(args, "session", None),
                 dir=getattr(args, "dir", None),
+                add_dir=list(getattr(args, "add_dir", []) or []),
                 theme=getattr(args, "theme", None),
+                color=getattr(args, "color", None),
                 demo=bool(getattr(args, "demo", False)),
                 no_context=bool(getattr(args, "no_context", False)),
                 no_update_check=bool(getattr(args, "no_update_check", False)),
@@ -155,7 +148,6 @@ def _run_default_interactive(
                 animation=getattr(args, "animation", None),
                 verbosity=getattr(args, "verbosity", None),
                 progress=getattr(args, "progress", None),
-                rich=bool(getattr(args, "rich", False)),
             )
         )
         or 0
@@ -192,14 +184,16 @@ def _run_no_handler(
     effective_home_root: str,
     effective_data_root: str,
 ) -> int:
+    from openminion.services.bootstrap.onboarding import OnboardingRequestedMode
+
     has_tty = bool(getattr(sys.stdin, "isatty", lambda: False)()) and bool(
         getattr(sys.stdout, "isatty", lambda: False)()
     )
+    if getattr(args, "add_dir", None) and not has_tty:
+        parser.error("--add-dir requires a TTY bare interactive launch")
     config_path = resolve_config_path(
         getattr(args, "config", None),
-        home_root=_default_route_home_root(effective_home_root)
-        if effective_home_root
-        else None,
+        home_root=_default_route_home_root(effective_home_root),
     )
     route = resolve_surface_onboarding_route(
         config_path=config_path,
@@ -217,7 +211,11 @@ def _run_no_handler(
     )
     status = route.status
     if route.should_launch_setup:
-        return _run_setup_from_default_route(args, home_root, data_root)
+        return _run_setup_from_default_route(
+            args,
+            str(route.home_root),
+            str(route.data_root),
+        )
     if route.should_fail_fast:
         parser.exit(
             status=2,
@@ -230,8 +228,8 @@ def _run_no_handler(
     if has_tty:
         return _run_default_interactive(
             args,
-            home_root,
-            data_root,
+            str(route.home_root),
+            str(route.data_root),
             no_interactive=bool(getattr(args, "no_interactive", False)),
         )
     if not sys.stdin.isatty():
@@ -250,6 +248,8 @@ def _run_no_handler(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "command", None) and getattr(args, "add_dir", None):
+        parser.error("--add-dir is only valid with a bare interactive launch")
     if bool(getattr(args, "allow_unsandboxed_exec", False)):
         from openminion.services.runtime.env import apply_runtime_environment
         from openminion.tools.exec.constants import EXEC_ENABLE_HOST_EXEC_ENV

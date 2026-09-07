@@ -83,6 +83,22 @@ from ..tools.iteration.helpers import (  # noqa: E402
 from ..tools.evidence import (  # noqa: E402
     _successful_substantive_tool_results,
 )
+from ..tools.plan_control import (  # noqa: E402
+    complete_active_plan_if_ready,
+    unresolved_active_plan_step_ids,
+)
+
+
+def _reconcile_successful_task_plan(
+    ctx: ExecutionContext,
+    loop_outcome: AdaptiveToolLoopOutcome,
+    telemetry_payload: dict[str, Any],
+) -> None:
+    if not isinstance(loop_outcome.task_plan_completed, dict):
+        completed_plan = complete_active_plan_if_ready(ctx)
+        if completed_plan is not None:
+            telemetry_payload["task_plan.completed"] = completed_plan
+    _stage_task_plan_events(ctx, loop_outcome)
 
 
 def _finalization_contract_missing_result(
@@ -131,6 +147,30 @@ def _maybe_close_contract_missing_with_tool_evidence(
         profile_name=BRAIN_ACT_PROFILE_GENERAL,
     )
     return closed_result
+
+
+def _missing_typed_finalization(
+    outcome: AdaptiveToolLoopOutcome,
+    ctx: ExecutionContext,
+    required: bool,
+) -> bool:
+    return (
+        outcome.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
+        and required
+        and not unresolved_active_plan_step_ids(ctx)
+    )
+
+
+def _budget_exhausted_message(ctx: ExecutionContext) -> str:
+    if unresolved_active_plan_step_ids(ctx):
+        return (
+            f"{_public_act_tag()} budget exhausted with an incomplete active plan. "
+            "Continue in a new turn to resume."
+        )
+    return (
+        f"{_public_act_tag()} budget exhausted before a final answer. "
+        "Continue in a new turn or narrow the scope."
+    )
 
 
 class ActLoopFinalizationMixin:
@@ -261,7 +301,7 @@ class ActLoopFinalizationMixin:
                 "remaining_intent_ids": list(remaining_ids),
             }
         )
-        _stage_task_plan_events(ctx, loop_outcome)
+        _reconcile_successful_task_plan(ctx, loop_outcome, telemetry_payload)
         _postprocess_adaptive_response_trailers(
             ctx,
             loop_outcome,
@@ -391,16 +431,37 @@ class ActLoopFinalizationMixin:
                 telemetry_payload["goal_revision.skipped_reason"] = (
                     "memory_api_unavailable"
                 )
+        module_state = dict(getattr(ctx.state, STATE_KEY_MODULE_STATE, {}) or {})
+        raw_consolidation = module_state.get(MEMORY_CONSOLIDATION_MODULE_STATE_KEY)
+        target_scope = ""
+        if isinstance(raw_consolidation, dict):
+            from openminion.modules.memory.runtime.consolidation.eligibility import (
+                candidate_state_hash,
+            )
+
+            target_scope = str(raw_consolidation.get("target_scope", "") or "").strip()
+            raw_candidates = raw_consolidation.get("candidates", [])
+            candidates = raw_candidates if isinstance(raw_candidates, list) else []
+            candidate_ids = [
+                str(item.get("candidate_id", "") or "").strip()
+                for item in candidates
+                if isinstance(item, dict)
+                and str(item.get("candidate_id", "") or "").strip()
+            ]
+            telemetry_payload.update(
+                {
+                    "memory_consolidation.target_scope": target_scope,
+                    "memory_consolidation.candidate_ids": candidate_ids,
+                    "memory_consolidation.state_hash": candidate_state_hash(
+                        candidate_ids
+                    ),
+                }
+            )
         if loop_outcome.memory_consolidation_decisions:
             runner = runner_from_context(ctx)
             memory_api = (
                 getattr(runner, "memory_api", None) if runner is not None else None
             )
-            target_scope = ""
-            module_state = dict(getattr(ctx.state, STATE_KEY_MODULE_STATE, {}) or {})
-            raw = module_state.get(MEMORY_CONSOLIDATION_MODULE_STATE_KEY)
-            if isinstance(raw, dict):
-                target_scope = str(raw.get("target_scope", "") or "").strip()
             consolidation_result = adaptive_modes.apply_memory_consolidation_decisions(
                 memory_api,
                 decisions=list(loop_outcome.memory_consolidation_decisions),
@@ -610,10 +671,7 @@ class ActLoopFinalizationMixin:
                 profile=SimpleNamespace(profile_name=outcome.profile_name),
                 loop_state=outcome.state,
             )
-            if (
-                outcome.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
-                and requires_typed_finalization
-            ):
+            if _missing_typed_finalization(outcome, ctx, requires_typed_finalization):
                 message = (
                     "General act work ended without the required typed "
                     "finalization_status contract."
@@ -621,10 +679,7 @@ class ActLoopFinalizationMixin:
                 return _finalization_contract_missing_result(ctx, message=message)
             adaptive_modes._extract_failure_memories_for_outcome(ctx, outcome=outcome)
             if outcome.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED:
-                message = (
-                    f"{_public_act_tag()} budget exhausted before a final answer. "
-                    "Continue in a new turn or narrow the scope."
-                )
+                message = _budget_exhausted_message(ctx)
                 code = "act_adaptive_budget_exhausted"
             elif (
                 outcome.termination_reason == ADAPTIVE_TERM_CORRECTION_BUDGET_EXHAUSTED

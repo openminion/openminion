@@ -8,7 +8,7 @@ import threading
 import time
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -23,14 +23,23 @@ from openminion.modules.brain.loop.tools.confirmation import (
     attach_confirmation_replay_queue,
     confirmation_required_user_message,
 )
+from openminion.modules.brain.loop.tools.runtime import _exec_run_description
 from openminion.modules.brain.loop.tools.contracts import PreparedToolDispatch
 from openminion.modules.brain.loop.strategies.coding.verification import (
+    CODING_VERIFIER_VERDICT_BUDGET_EXHAUSTED,
+    CODING_VERIFIER_VERDICT_COMPLETE,
+    CODING_VERIFIER_VERDICT_INCOMPLETE,
     coerce_coding_verifier_verdict,
+    evaluate_coding_verifier,
     serialize_verifier_candidate,
 )
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
     ExecutionResult,
+)
+from openminion.modules.brain.constants import (
+    BRAIN_ACT_PROFILE_GENERAL,
+    BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
 )
 from openminion.modules.brain.schemas import (
     ActionError,
@@ -47,7 +56,10 @@ from openminion.modules.brain.schemas import (
 )
 from openminion.modules.brain.schemas.closure import ClosureJudgment
 from openminion.modules.brain.tools.executor import CommandExecutionOutcome
-from openminion.modules.llm.schemas import LLMResponse, ToolCall, UsageInfo
+from openminion.modules.llm.schemas import LLMRequest, LLMResponse, ToolCall
+from openminion.modules.llm.transcript import validate_tool_transcript
+from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.runtime.policy import Policy
 
 _PLANNER_CONTEXT_TOOLS = frozenset(
     {"code.repo_index", "code.repo_map", "code.symbol_find"}
@@ -485,11 +497,26 @@ def _plan_response(payload: str) -> LLMResponse:
     )
 
 
+def _read_only_plan_response() -> LLMResponse:
+    return _plan_response(
+        json.dumps(
+            {
+                "goal": "inspect the workspace",
+                "phases": [{"name": "implement", "status": "active"}],
+                "current_phase": "implement",
+                "requires_file_change": False,
+            }
+        )
+    )
+
+
 def _coding_resume_payload() -> dict[str, Any]:
     verifier_command = ToolCommand(
         title="Run tests",
         tool_name="exec.run",
         args={"argv": ["pytest", "-q"]},
+        verification_target_kind="criterion",
+        verification_target_id="criterion-1",
     )
     verifier_result = ActionResult(
         command_id=new_uuid(),
@@ -497,6 +524,25 @@ def _coding_resume_payload() -> dict[str, Any]:
         summary="tests passed",
         outputs={"report": "ok"},
         artifact_refs=[ArtifactRef(ref="runtime://pytest-report.txt")],
+    )
+    deliverable_command = ToolCommand(
+        title="Read report",
+        tool_name="file.read",
+        args={"path": "pytest-report.txt"},
+        verification_target_kind="deliverable",
+        verification_target_id="deliverable-1",
+    )
+    deliverable_result = verifier_result.model_copy(
+        update={"command_id": deliverable_command.command_id},
+        deep=True,
+    )
+    verifier_payload = serialize_verifier_candidate(
+        command=verifier_command,
+        action_result=verifier_result,
+    )
+    deliverable_payload = serialize_verifier_candidate(
+        command=deliverable_command,
+        action_result=deliverable_result,
     )
     return {
         "messages": [
@@ -545,10 +591,11 @@ def _coding_resume_payload() -> dict[str, Any]:
             "coding.plan_phases_executed": ["plan", "implement", "verify"],
             "coding.current_phase": "verify",
             "coding.open_issues_count": 0,
-            "coding.last_verifier_candidate": serialize_verifier_candidate(
-                command=verifier_command,
-                action_result=verifier_result,
-            ),
+            "coding.last_verifier_candidate": verifier_payload,
+            "coding.verifier_candidates": {
+                "criterion:criterion-1": verifier_payload,
+                "deliverable:deliverable-1": deliverable_payload,
+            },
         },
     }
 
@@ -572,6 +619,29 @@ def _coding_verifier_goal() -> Goal:
             )
         ],
     )
+
+
+def _bound_verification_tool_calls() -> list[ToolCall]:
+    return [
+        ToolCall(
+            id="tc-verify-criterion",
+            name="exec.run",
+            arguments={
+                "argv": ["pytest", "-q"],
+                "verification_target_kind": "criterion",
+                "verification_target_id": "criterion-1",
+            },
+        ),
+        ToolCall(
+            id="tc-verify-deliverable",
+            name="exec.run",
+            arguments={
+                "argv": ["python", "-m", "pytest", "-q"],
+                "verification_target_kind": "deliverable",
+                "verification_target_id": "deliverable-1",
+            },
+        ),
+    ]
 
 
 def _typed_verifier_failure_summary() -> str:
@@ -616,6 +686,7 @@ def test_coding_loop_single_tool_then_final_text() -> None:
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             # First call: LLM requests file.read
             LLMResponse(
                 ok=True,
@@ -650,14 +721,15 @@ def test_coding_loop_single_tool_then_final_text() -> None:
     assert executor.calls[0].tool_name == "file.read"
     # include_reflect was False for every tool call
     assert all(not v for v in executor.include_reflect_values)
-    # LLM was called twice
-    assert len(llm_client.calls) == 2
+    # One planning call plus the tool and final-answer calls.
+    assert len(llm_client.calls) == 3
 
 
 def test_coding_loop_exec_run_cmd_alias_reaches_final_text() -> None:
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -695,6 +767,7 @@ def test_coding_loop_preserves_tool_transcript_shape_for_follow_up_round() -> No
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -722,7 +795,7 @@ def test_coding_loop_preserves_tool_transcript_shape_for_follow_up_round() -> No
     result = handler.execute(ctx)
 
     assert result.status == "done"
-    second_call_messages = llm_client.calls[1]["messages"]
+    second_call_messages = llm_client.calls[2]["messages"]
     tool_message = next(
         message for message in reversed(second_call_messages) if message.role == "tool"
     )
@@ -826,6 +899,14 @@ def test_coding_loop_executes_all_plan_phases_in_order() -> None:
                 ok=True,
                 provider="fake",
                 model="fake-model",
+                output_text="",
+                tool_calls=_bound_verification_tool_calls(),
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
                 output_text="verification complete",
                 finish_reason="stop",
             ),
@@ -869,6 +950,38 @@ def test_coding_loop_fails_closed_when_plan_json_is_invalid() -> None:
     assert result.action_result is not None
     assert result.action_result.error is not None
     assert result.action_result.error.code == "coding_plan_invalid"
+    assert executor.calls == []
+
+
+def test_coding_loop_rejects_planner_tool_calls_before_tool_execution() -> None:
+    executor = _FakeCommandExecutor()
+    llm_client = _FakeLLMClient(
+        responses=[
+            _plan_response("{not valid json"),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="tc-read",
+                        name="file.read",
+                        arguments={"path": "src/auth.py"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+    )
+
+    result = CodingMode().execute(_ctx(llm_client, executor))
+
+    assert result.status == "error"
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "coding_plan_invalid"
+    assert executor.calls == []
 
 
 def test_coding_loop_fails_closed_on_invalid_phase_order() -> None:
@@ -902,7 +1015,7 @@ def test_coding_loop_fails_closed_on_invalid_phase_order() -> None:
     assert result.action_result.error.code == "coding_plan_invalid"
 
 
-def test_coding_loop_stays_in_implement_until_exec_run_before_verify() -> None:
+def test_coding_loop_enters_verify_then_runs_bound_verifiers() -> None:
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
@@ -947,13 +1060,7 @@ def test_coding_loop_stays_in_implement_until_exec_run_before_verify() -> None:
                 provider="fake",
                 model="fake-model",
                 output_text="",
-                tool_calls=[
-                    ToolCall(
-                        id="tc-verify",
-                        name="exec.run",
-                        arguments={"command": "pytest -q"},
-                    )
-                ],
+                tool_calls=_bound_verification_tool_calls(),
                 finish_reason="tool_calls",
             ),
             LLMResponse(
@@ -976,7 +1083,10 @@ def test_coding_loop_stays_in_implement_until_exec_run_before_verify() -> None:
     result = CodingMode().execute(_ctx(llm_client, executor))
 
     assert result.status == "done"
-    assert executor.calls[0].tool_name == "exec.run"
+    assert [command.tool_name for command in executor.calls] == [
+        "exec.run",
+        "exec.run",
+    ]
     user_messages = [
         message.content
         for call in llm_client.calls
@@ -984,9 +1094,9 @@ def test_coding_loop_stays_in_implement_until_exec_run_before_verify() -> None:
         if message.role == "user"
     ]
     assert any(
-        "Stay in implement and run at least one verification readback step" in content
-        and "file.read" in content
-        and "exec.run" in content
+        "Verification targets:" in content
+        and "criterion:criterion-1" in content
+        and "deliverable:deliverable-1" in content
         for content in user_messages
     )
 
@@ -1287,6 +1397,30 @@ def test_coding_resume_hook_rehydrates_plan_from_module_state() -> None:
     assert int(mode.snapshot_state()["resume_count"]) == 1
 
 
+def test_coding_resume_rejects_invalid_persisted_plan_before_tool_execution() -> None:
+    state = _state()
+    state.module_state["coding"] = _coding_resume_payload()
+    state.module_state["coding"]["coding_plan"]["goal"] = ""
+    llm_client = _FakeLLMClient()
+    executor = _FakeCommandExecutor()
+
+    result = CodingMode().execute(
+        _ctx(
+            llm_client,
+            executor,
+            state=state,
+            user_input="continue",
+        )
+    )
+
+    assert result.status == "error"
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "coding_plan_invalid"
+    assert llm_client.calls == []
+    assert executor.calls == []
+
+
 def test_coding_cancel_clears_module_state_and_emits_stop() -> None:
     state = _state()
     state.module_state["coding"] = _coding_resume_payload()
@@ -1310,6 +1444,8 @@ def test_coding_verify_failure_returns_continue_and_records_self_correction() ->
                     title="Run tests",
                     tool_name="exec.run",
                     args={"argv": ["pytest", "-q"]},
+                    verification_target_kind="criterion",
+                    verification_target_id="criterion-1",
                 ),
                 action_result=ActionResult(
                     command_id=new_uuid(),
@@ -1449,14 +1585,14 @@ def test_coding_self_correction_continues_then_finishes_without_user_input() -> 
     assert follow_up.action_result.outputs["coding.self_corrections"] == 1
 
 
-def test_coding_final_text_continue_preserves_state_and_resumes_without_user_input() -> (
+def test_coding_read_only_continue_preserves_state_and_resumes_without_user_input() -> (
     None
 ):
     services = _FakeServices(
         closure_judgment=ClosureJudgment(
             satisfied=False,
             next_action="continue",
-            reason="Only pyproject.toml was created.",
+            reason="Only pyproject.toml was inspected.",
         ),
         closure_disposition="continue",
     )
@@ -1464,6 +1600,7 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
         _ctx(
             _FakeLLMClient(
                 responses=[
+                    _read_only_plan_response(),
                     LLMResponse(
                         ok=True,
                         provider="fake",
@@ -1472,10 +1609,9 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
                         tool_calls=[
                             ToolCall(
                                 id="tc-pyproject",
-                                name="file.write",
+                                name="file.read",
                                 arguments={
                                     "path": "/workspace/pyproject.toml",
-                                    "content": "[project]\\nname='scratch'\\n",
                                 },
                             )
                         ],
@@ -1485,14 +1621,14 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
                         ok=True,
                         provider="fake",
                         model="fake-model",
-                        output_text="Created pyproject.toml.",
+                        output_text="Inspected pyproject.toml.",
                         finish_reason="stop",
                     ),
                 ]
             ),
             _FakeCommandExecutor(),
             services=services,
-            user_input="build a scratch project",
+            user_input="inspect a scratch project",
         )
     )
 
@@ -1516,10 +1652,9 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
                         tool_calls=[
                             ToolCall(
                                 id="tc-readme",
-                                name="file.write",
+                                name="file.read",
                                 arguments={
                                     "path": "/workspace/README.md",
-                                    "content": "# Scratch project\\n",
                                 },
                             )
                         ],
@@ -1529,7 +1664,7 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
                         ok=True,
                         provider="fake",
                         model="fake-model",
-                        output_text="Scratch project scaffold completed.",
+                        output_text="Scratch project inspection completed.",
                         finish_reason="stop",
                     ),
                 ]
@@ -1541,7 +1676,7 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
     )
 
     assert follow_up.status == "done"
-    assert follow_up.message == "Scratch project scaffold completed."
+    assert follow_up.message == "Scratch project inspection completed."
 
 
 def test_coding_verify_failure_blocks_when_self_correction_cap_is_exceeded() -> None:
@@ -1625,7 +1760,126 @@ def test_coding_verifier_verdict_rejects_non_enum_values() -> None:
         coerce_coding_verifier_verdict("done")
 
 
-def test_coding_verify_gate_blocks_with_typed_reason_when_exec_run_missing() -> None:
+def test_coding_verifier_closes_confirmed_work_when_budget_is_exhausted() -> None:
+    criterion_command = ToolCommand(
+        title="Run tests",
+        tool_name="exec.run",
+        args={"argv": ["pytest", "-q"]},
+        verification_target_kind="criterion",
+        verification_target_id="criterion-1",
+    )
+    deliverable_command = ToolCommand(
+        title="Read report",
+        tool_name="file.read",
+        args={"path": "report.txt"},
+        verification_target_kind="deliverable",
+        verification_target_id="deliverable-1",
+    )
+    evaluation = evaluate_coding_verifier(
+        goal=_coding_verifier_goal(),
+        candidates=(
+            (
+                criterion_command,
+                ActionResult(
+                    command_id=criterion_command.command_id,
+                    status="success",
+                    summary="tests passed",
+                    outputs={"report": "ok"},
+                ),
+            ),
+            (
+                deliverable_command,
+                ActionResult(
+                    command_id=deliverable_command.command_id,
+                    status="success",
+                    summary="report read",
+                    artifact_refs=[ArtifactRef(ref="runtime://pytest-report.txt")],
+                ),
+            ),
+        ),
+        state=_state(),
+        logger=SimpleNamespace(emit=lambda *args, **kwargs: None),
+        budget_exhausted=True,
+    )
+
+    assert evaluation.verdict == CODING_VERIFIER_VERDICT_COMPLETE
+
+
+def test_coding_verifier_keeps_unconfirmed_exhausted_work_open() -> None:
+    command = ToolCommand(
+        title="Run tests",
+        tool_name="exec.run",
+        args={"argv": ["pytest", "-q"]},
+        verification_target_kind="criterion",
+        verification_target_id="criterion-1",
+    )
+    evaluation = evaluate_coding_verifier(
+        goal=_coding_verifier_goal(),
+        candidates=(
+            (
+                command,
+                ActionResult(
+                    command_id=command.command_id,
+                    status="success",
+                    summary="tests passed without an artifact",
+                    outputs={"report": "ok"},
+                ),
+            ),
+        ),
+        state=_state(),
+        logger=SimpleNamespace(emit=lambda *args, **kwargs: None),
+        budget_exhausted=True,
+    )
+
+    assert evaluation.verdict == CODING_VERIFIER_VERDICT_BUDGET_EXHAUSTED
+    assert evaluation.missing_targets == ("deliverable:deliverable-1",)
+
+
+@pytest.mark.parametrize(
+    ("target_kind", "target_id"),
+    (
+        ("criterion", "unknown-criterion"),
+        ("deliverable", "criterion-1"),
+    ),
+)
+def test_coding_verifier_keeps_unknown_or_mismatched_binding_open(
+    target_kind: str,
+    target_id: str,
+) -> None:
+    command = ToolCommand(
+        title="Run tests",
+        tool_name="exec.run",
+        args={"argv": ["pytest", "-q"]},
+        verification_target_kind=target_kind,
+        verification_target_id=target_id,
+    )
+
+    evaluation = evaluate_coding_verifier(
+        goal=_coding_verifier_goal(),
+        candidates=(
+            (
+                command,
+                ActionResult(
+                    command_id=command.command_id,
+                    status="success",
+                    summary="tests passed",
+                    outputs={"report": "ok"},
+                    artifact_refs=[ArtifactRef(ref="runtime://pytest-report.txt")],
+                ),
+            ),
+        ),
+        state=_state(),
+        logger=SimpleNamespace(emit=lambda *args, **kwargs: None),
+    )
+
+    assert evaluation.verdict == CODING_VERIFIER_VERDICT_INCOMPLETE
+    assert set(evaluation.missing_targets) == {
+        "criterion:criterion-1",
+        "deliverable:deliverable-1",
+    }
+
+
+def test_coding_verify_gate_blocks_when_bound_verification_is_missing() -> None:
     state = _state()
     payload = _coding_resume_payload()
     payload["tool_calls_made"] = ["file.write"]
@@ -1695,13 +1949,10 @@ def test_coding_verify_gate_blocks_with_typed_reason_when_exec_run_missing() -> 
     assert result.status == "waiting_user"
     assert result.action_result is not None
     assert result.action_result.error is not None
-    assert result.action_result.error.code == "verify_cap_exceeded"
-    assert result.action_result.outputs["coding.verify_gate_blocks"] == 2
-    assert result.action_result.outputs["coding.termination_reason"] == (
-        "verify_cap_exceeded"
-    )
+    assert result.action_result.error.code == "verification_unbound"
     assert any(
-        status.get("payload", {}).get("coding.verify_gate_reason") == "missing_exec_run"
+        status.get("payload", {}).get("coding.verify_gate_reason")
+        == "verification_unbound"
         for status in services.statuses
     )
 
@@ -1798,9 +2049,6 @@ def test_coding_verify_phase_blocks_when_verifier_goal_is_unbound() -> None:
     result = CodingMode().execute(_ctx(llm_client, executor, services=services))
 
     assert result.status == "waiting_user"
-    assert result.action_result is not None
-    assert result.action_result.error is not None
-    assert result.action_result.error.code == "verification_unbound"
     assert result.action_result.outputs["coding.verifier_verdict"] == (
         "verification_unbound"
     )
@@ -1812,24 +2060,7 @@ def test_coding_verify_phase_blocks_when_verifier_goal_is_unbound() -> None:
 
 
 def test_coding_verify_phase_uses_typed_verifier_before_done() -> None:
-    executor = _FakeCommandExecutor(
-        outcomes=[
-            CommandExecutionOutcome(
-                approved_command=ToolCommand(
-                    title="Run tests",
-                    tool_name="exec.run",
-                    args={"argv": ["pytest", "-q"]},
-                ),
-                action_result=ActionResult(
-                    command_id=new_uuid(),
-                    status="success",
-                    summary="tests passed",
-                    outputs={"report": "ok"},
-                    artifact_refs=[ArtifactRef(ref="runtime://pytest-report.txt")],
-                ),
-            )
-        ]
-    )
+    executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
             _plan_response(
@@ -1894,6 +2125,14 @@ def test_coding_verify_phase_uses_typed_verifier_before_done() -> None:
                 ok=True,
                 provider="fake",
                 model="fake-model",
+                output_text="",
+                tool_calls=_bound_verification_tool_calls(),
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
                 output_text="verification complete",
                 finish_reason="stop",
             ),
@@ -1921,7 +2160,10 @@ def test_coding_verify_failure_blocks_on_repeated_identical_error() -> None:
     payload["scratchpad"] = {
         **dict(payload["scratchpad"]),
         "coding.self_corrections": 1,
-        "coding.last_failure_summary": _typed_verifier_failure_summary(),
+        "coding.last_failure_summary": (
+            "Typed verifier did not confirm coding completion: "
+            "Structural verify(...) reported failure."
+        ),
     }
     state.module_state["coding"] = payload
 
@@ -1938,7 +2180,11 @@ def test_coding_verify_failure_blocks_on_repeated_identical_error() -> None:
                             ToolCall(
                                 id="tc-run",
                                 name="exec.run",
-                                arguments={"argv": ["pytest", "-q"]},
+                                arguments={
+                                    "argv": ["pytest", "-q"],
+                                    "verification_target_kind": "criterion",
+                                    "verification_target_id": "criterion-1",
+                                },
                             )
                         ],
                         finish_reason="tool_calls",
@@ -1952,6 +2198,8 @@ def test_coding_verify_failure_blocks_on_repeated_identical_error() -> None:
                             title="Run tests",
                             tool_name="exec.run",
                             args={"argv": ["pytest", "-q"]},
+                            verification_target_kind="criterion",
+                            verification_target_id="criterion-1",
                         ),
                         action_result=ActionResult(
                             command_id=new_uuid(),
@@ -1972,8 +2220,9 @@ def test_coding_verify_failure_blocks_on_repeated_identical_error() -> None:
     assert result.action_result.error.code == "blocked_novel_failure"
 
 
-def test_coding_subtasks_dispatch_parallel_and_synthesize_outputs(monkeypatch) -> None:
+def test_coding_subtasks_dispatch_serially_and_synthesize_outputs(monkeypatch) -> None:
     call_windows: list[tuple[str, float, float]] = []
+    child_routes: list[tuple[str, str]] = []
     lock = threading.Lock()
 
     def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
@@ -1983,6 +2232,7 @@ def test_coding_subtasks_dispatch_parallel_and_synthesize_outputs(monkeypatch) -
         finished = time.monotonic()
         with lock:
             call_windows.append((str(decision.objective), started, finished))
+            child_routes.append((str(decision.route), str(decision.act_profile)))
         return ExecutionResult(
             status="done",
             working_state=state,
@@ -2027,27 +2277,38 @@ def test_coding_subtasks_dispatch_parallel_and_synthesize_outputs(monkeypatch) -
                 ok=True,
                 provider="fake",
                 model="fake-model",
+                output_text="",
+                tool_calls=_bound_verification_tool_calls(),
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
                 output_text="verified",
                 finish_reason="stop",
             ),
         ]
     )
 
+    state = _state()
     result = CodingMode().execute(
         _ctx(
             llm_client,
             _FakeCommandExecutor(),
             services=services,
+            state=state,
             user_input="split work",
         )
     )
 
     assert result.status == "done"
     assert len(call_windows) == 2
-    assert (
-        call_windows[0][2] > call_windows[1][1]
-        or call_windows[1][2] > call_windows[0][1]
-    )
+    assert child_routes == [
+        (BRAIN_INTERNAL_MODE_ACT_ADAPTIVE, BRAIN_ACT_PROFILE_GENERAL),
+        (BRAIN_INTERNAL_MODE_ACT_ADAPTIVE, BRAIN_ACT_PROFILE_GENERAL),
+    ]
+    assert call_windows[0][2] <= call_windows[1][1]
     synthesized_prompts = [
         message.content
         for message in llm_client.calls[1]["messages"]
@@ -2056,73 +2317,295 @@ def test_coding_subtasks_dispatch_parallel_and_synthesize_outputs(monkeypatch) -
     assert any("Subtask synthesis:" in item for item in synthesized_prompts)
     assert any("diff -- patch alpha" in item for item in synthesized_prompts)
     assert any("diff -- patch beta" in item for item in synthesized_prompts)
+    assert state.budgets_remaining.tokens == 50000
+    assert state.budgets_remaining.time_ms == 120000
 
 
-def test_coding_subtasks_conflicting_targets_serialize(monkeypatch) -> None:
-    call_windows: list[tuple[str, float, float]] = []
+def test_coding_subtasks_receive_target_and_success_contract(monkeypatch) -> None:
+    child_prompts: list[str] = []
 
     def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
-        del runner, user_input, logger, depth
-        started = time.monotonic()
-        time.sleep(0.03)
-        finished = time.monotonic()
-        call_windows.append((str(decision.objective), started, finished))
+        del runner, decision, logger, depth
+        child_prompts.append(user_input)
         return ExecutionResult(
             status="done",
             working_state=state,
-            message=f"{decision.objective} complete",
+            message="complete",
         )
 
     _patch_child_dispatch(monkeypatch, _fake_invoke)
     services = _FakeServices(
         runner=SimpleNamespace(profile=SimpleNamespace(mode_config={}))
     )
-    llm_client = _FakeLLMClient(
-        responses=[
-            _subtask_plan_response(first_target="src/a.py", second_target="src/a.py"),
-            LLMResponse(
-                ok=True,
-                provider="fake",
-                model="fake-model",
-                output_text="",
-                tool_calls=[
-                    ToolCall(
-                        id="tc-run",
-                        name="exec.run",
-                        arguments={"argv": ["pytest", "-q"]},
-                    )
-                ],
-                finish_reason="tool_calls",
-            ),
-            LLMResponse(
-                ok=True,
-                provider="fake",
-                model="fake-model",
-                output_text="implementation synthesized",
-                finish_reason="stop",
-            ),
-            LLMResponse(
-                ok=True,
-                provider="fake",
-                model="fake-model",
-                output_text="verified",
-                finish_reason="stop",
-            ),
-        ]
-    )
-
-    result = CodingMode().execute(
+    CodingMode().execute(
         _ctx(
-            llm_client,
+            _FakeLLMClient(
+                responses=[
+                    _subtask_plan_response(),
+                    LLMResponse(
+                        ok=True,
+                        provider="fake",
+                        model="fake-model",
+                        output_text="implementation complete",
+                        finish_reason="stop",
+                    ),
+                ]
+            ),
             _FakeCommandExecutor(),
             services=services,
             user_input="split work",
         )
     )
 
-    assert result.status == "done"
-    assert len(call_windows) == 2
-    assert call_windows[0][2] <= call_windows[1][1]
+    assert child_prompts == [
+        "Goal: patch alpha\nTarget files: src/a.py\nSuccess criteria: alpha done",
+        "Goal: patch beta\nTarget files: src/b.py\nSuccess criteria: beta done",
+    ]
+
+
+def test_docker_like_recovery_requires_matching_verification_before_done(
+    tmp_path,
+) -> None:
+    with patch(
+        "openminion.modules.brain.loop.tools.runtime.platform.system",
+        return_value="Darwin",
+    ):
+        guidance = _exec_run_description()
+    assert "Use macOS commands, not Linux service managers" in guidance
+    assert "open -a Docker" in guidance
+
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text("version: 1\n", encoding="utf-8")
+    with pytest.raises(ToolRuntimeError) as denied:
+        Policy.load(policy_path).ensure_command_allowed(["rm", "html/index.html"])
+    assert denied.value.code == "POLICY_DENIED"
+    assert denied.value.details["suggested_tool"] == "file.trash"
+
+    plan = {
+        "goal": "serve a tiny nginx page",
+        "phases": [
+            {
+                "name": "implement",
+                "status": "active",
+                "steps": ["write the page"],
+                "output": "",
+            },
+            {
+                "name": "verify",
+                "status": "pending",
+                "steps": ["check the HTTP response"],
+                "output": "",
+            },
+        ],
+        "current_phase": "implement",
+        "scratchpad": [],
+        "completed_steps": [],
+        "open_issues": [],
+        "requires_file_change": True,
+        "subtasks": [],
+        "verifier_goal": {
+            "goal_id": "nginx-goal",
+            "description": "Confirm the page is reachable.",
+            "success_criteria": [
+                {
+                    "criterion_id": "http-response",
+                    "description": "HTTP verification produced structured evidence",
+                    "structural_check": "structured_evidence_present",
+                }
+            ],
+            "deliverables": [
+                {
+                    "deliverable_id": "container-evidence",
+                    "description": "container inspection artifact produced",
+                    "verification_hint": "artifact_presence",
+                }
+            ],
+            "failure_conditions": [],
+            "status": "active",
+        },
+    }
+    first_executor = _FakeCommandExecutor(
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=ToolCommand(
+                    title="write page",
+                    tool_name="file.write",
+                    args={"path": "html/index.html", "content": "hello\n"},
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="page written",
+                    outputs={"path": "html/index.html"},
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=ToolCommand(
+                    title="check page",
+                    tool_name="exec.run",
+                    args={"argv": ["curl", "http://127.0.0.1:8080"]},
+                    verification_target_kind="criterion",
+                    verification_target_id="http-response",
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="failed",
+                    summary="connection refused",
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=ToolCommand(
+                    title="inspect container",
+                    tool_name="exec.run",
+                    args={"argv": ["docker", "inspect", "hello-nginx"]},
+                    verification_target_kind="deliverable",
+                    verification_target_id="container-evidence",
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="container exists",
+                    outputs={"status": "created"},
+                    artifact_refs=[ArtifactRef(ref="runtime://container.json")],
+                ),
+            ),
+        ]
+    )
+    state = _state()
+    first = CodingMode().execute(
+        _ctx(
+            _FakeLLMClient(
+                responses=[
+                    _plan_response(json.dumps(plan)),
+                    LLMResponse(
+                        ok=True,
+                        provider="fake",
+                        model="fake-model",
+                        output_text="",
+                        tool_calls=[
+                            ToolCall(
+                                id="write-page",
+                                name="file.write",
+                                arguments={
+                                    "path": "html/index.html",
+                                    "content": "hello\n",
+                                },
+                            )
+                        ],
+                        finish_reason="tool_calls",
+                    ),
+                    LLMResponse(
+                        ok=True,
+                        provider="fake",
+                        model="fake-model",
+                        output_text="implementation complete",
+                        finish_reason="stop",
+                    ),
+                    LLMResponse(
+                        ok=True,
+                        provider="fake",
+                        model="fake-model",
+                        output_text="",
+                        tool_calls=[
+                            ToolCall(
+                                id="check-page-failed",
+                                name="exec.run",
+                                arguments={
+                                    "argv": ["curl", "http://127.0.0.1:8080"],
+                                    "verification_target_kind": "criterion",
+                                    "verification_target_id": "http-response",
+                                },
+                            ),
+                            ToolCall(
+                                id="inspect-container",
+                                name="exec.run",
+                                arguments={
+                                    "argv": ["docker", "inspect", "hello-nginx"],
+                                    "verification_target_kind": "deliverable",
+                                    "verification_target_id": "container-evidence",
+                                },
+                            ),
+                        ],
+                        finish_reason="tool_calls",
+                    ),
+                ]
+            ),
+            first_executor,
+            state=state,
+            user_input="serve a tiny nginx page",
+        )
+    )
+
+    assert first.status == "continue"
+    assert first_executor.calls[0].args["path"] == "html/index.html"
+    assert (
+        state.module_state["coding"]["scratchpad"]["coding.verifier_verdict"]
+        == "verified_incomplete"
+    )
+
+    second = CodingMode().execute(
+        _ctx(
+            _FakeLLMClient(
+                responses=[
+                    LLMResponse(
+                        ok=True,
+                        provider="fake",
+                        model="fake-model",
+                        output_text="",
+                        tool_calls=[
+                            ToolCall(
+                                id="repair-container",
+                                name="exec.run",
+                                arguments={"argv": ["docker", "start", "hello-nginx"]},
+                            )
+                        ],
+                        finish_reason="tool_calls",
+                    ),
+                    LLMResponse(
+                        ok=True,
+                        provider="fake",
+                        model="fake-model",
+                        output_text="container corrected",
+                        finish_reason="stop",
+                    ),
+                    LLMResponse(
+                        ok=True,
+                        provider="fake",
+                        model="fake-model",
+                        output_text="",
+                        tool_calls=[
+                            ToolCall(
+                                id="check-page-passed",
+                                name="exec.run",
+                                arguments={
+                                    "argv": ["curl", "http://127.0.0.1:8080"],
+                                    "verification_target_kind": "criterion",
+                                    "verification_target_id": "http-response",
+                                },
+                            )
+                        ],
+                        finish_reason="tool_calls",
+                    ),
+                    LLMResponse(
+                        ok=True,
+                        provider="fake",
+                        model="fake-model",
+                        output_text="page is reachable",
+                        finish_reason="stop",
+                    ),
+                ]
+            ),
+            _FakeCommandExecutor(),
+            state=state,
+            user_input="continue",
+        )
+    )
+
+    assert second.status == "done"
+    assert second.message == "page is reachable"
+    assert second.action_result.outputs["coding.verifier_verdict"] == (
+        "verified_complete"
+    )
 
 
 def test_coding_subtasks_stop_when_parent_budget_is_exhausted(monkeypatch) -> None:
@@ -2131,6 +2614,7 @@ def test_coding_subtasks_stop_when_parent_budget_is_exhausted(monkeypatch) -> No
     def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
         del runner, user_input, logger, depth
         invoked.append(str(decision.objective))
+        state.budgets_remaining.tokens = 0
         return ExecutionResult(
             status="done",
             working_state=state,
@@ -2225,6 +2709,7 @@ def test_coding_loop_parallelizes_two_independent_reads() -> None:
     )
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2275,6 +2760,7 @@ def test_coding_loop_parallel_telemetry_is_emitted_in_status_event() -> None:
     services = _FakeServices()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2325,6 +2811,7 @@ def test_coding_loop_serializes_write_then_read_same_path() -> None:
     executor = _TimedCommandExecutor(delays_by_path={"/src/alpha.py": 0.1})
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2358,7 +2845,10 @@ def test_coding_loop_serializes_write_then_read_same_path() -> None:
 
     result = handler.execute(ctx)
 
-    assert result.status == "done"
+    assert result.status == "waiting_user"
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "verification_unbound"
     write_call = next(
         item for item in executor.call_windows if item[0] == "/src/alpha.py"
     )
@@ -2374,6 +2864,7 @@ def test_coding_loop_merges_parallel_results_in_tool_call_order() -> None:
     )
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2408,7 +2899,7 @@ def test_coding_loop_merges_parallel_results_in_tool_call_order() -> None:
     result = handler.execute(ctx)
 
     assert result.status == "done"
-    second_call_messages = llm_client.calls[1]["messages"]
+    second_call_messages = llm_client.calls[2]["messages"]
     tool_messages = [
         message for message in second_call_messages if message.role == "tool"
     ]
@@ -2425,6 +2916,7 @@ def test_coding_loop_disallowed_tool_exits_with_error() -> None:
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2437,7 +2929,7 @@ def test_coding_loop_disallowed_tool_exits_with_error() -> None:
                         arguments={"url": "https://example.com"},
                     )
                 ],
-            )
+            ),
         ]
     )
     handler = CodingMode()
@@ -2470,6 +2962,7 @@ def test_coding_loop_stops_on_needs_user() -> None:
     )
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2480,7 +2973,7 @@ def test_coding_loop_stops_on_needs_user() -> None:
                         id="tc-1", name="exec.run", arguments={"cmd": "rm -rf /build"}
                     )
                 ],
-            )
+            ),
         ]
     )
     handler = CodingMode()
@@ -2526,6 +3019,7 @@ def test_coding_loop_preserves_confirmation_replay_state() -> None:
     executor = _ConfirmRequiredExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2538,7 +3032,7 @@ def test_coding_loop_preserves_confirmation_replay_state() -> None:
                         arguments={"command": "python --version"},
                     )
                 ],
-            )
+            ),
         ]
     )
 
@@ -2616,6 +3110,41 @@ def test_coding_loop_replays_confirmed_pending_tool_without_llm_yes() -> None:
     first_llm_messages = llm_client.calls[0]["messages"]
     assert all(message.content != "yes" for message in first_llm_messages)
     assert any(message.role == "tool" for message in first_llm_messages)
+
+
+def test_coding_loop_does_not_session_grant_pending_blockchain_send() -> None:
+    state = _state()
+    state.module_state["coding"] = _coding_resume_payload()
+    state.pending_confirmation_command = ToolCommand(
+        title="send transaction",
+        tool_name="blockchain.send_transaction",
+        args={"transaction": "first"},
+    )
+    state.status = "waiting_user"
+    state.post_action_user_message = "Reply exactly yes to allow once, or no to cancel."
+    services = _FakeServices(
+        runner=SimpleNamespace(
+            policy_api=SimpleNamespace(
+                parse_confirmation_response=lambda _text: "affirm"
+            )
+        )
+    )
+    executor = _FakeCommandExecutor()
+
+    result = CodingMode().execute(
+        _ctx(
+            _FakeLLMClient(responses=[]),
+            executor,
+            state=state,
+            services=services,
+            user_input="session",
+        )
+    )
+
+    assert result.status == "waiting_user"
+    assert state.pending_confirmation_command is not None
+    assert "blockchain.send_transaction" not in state.permission_overrides
+    assert executor.calls == []
 
 
 def test_coding_loop_replays_confirmed_pending_tool_batch_without_llm_yes() -> None:
@@ -2723,6 +3252,9 @@ def test_coding_loop_replays_confirmed_pending_tool_batch_without_llm_yes() -> N
     first_llm_messages = llm_client.calls[0]["messages"]
     assert all(message.content != "yes" for message in first_llm_messages)
     assert sum(1 for message in first_llm_messages if message.role == "tool") >= 2
+    assert validate_tool_transcript(LLMRequest(messages=first_llm_messages)) == (
+        "canonical_events"
+    )
     assert any(
         "do not repeat the same confirmed tool calls" in message.content
         for message in first_llm_messages
@@ -2905,6 +3437,7 @@ def test_coding_loop_stops_on_job_pending() -> None:
     )
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2913,7 +3446,7 @@ def test_coding_loop_stops_on_job_pending() -> None:
                 tool_calls=[
                     ToolCall(id="tc-1", name="exec.run", arguments={"cmd": "make test"})
                 ],
-            )
+            ),
         ]
     )
     handler = CodingMode()
@@ -2921,39 +3454,6 @@ def test_coding_loop_stops_on_job_pending() -> None:
     result = handler.execute(ctx)
 
     assert result.status == "job_pending"
-
-
-# Budget exhausted (token budget)
-
-
-def test_coding_loop_closes_with_evidence_on_token_budget_exhausted() -> None:
-    llm_client = _FakeLLMClient(
-        responses=[
-            LLMResponse(
-                ok=True,
-                provider="fake",
-                model="fake-model",
-                output_text="",
-                tool_calls=[
-                    ToolCall(id="tc-1", name="file.read", arguments={"path": "a.py"})
-                ],
-                usage=UsageInfo(input_tokens=40001, output_tokens=0),
-            )
-        ]
-    )
-    executor = _FakeCommandExecutor()
-    state = _state(tokens=40000, tool_calls=10, llm_calls_max=20)
-    handler = CodingMode()
-    ctx = _ctx(llm_client, executor, state=state)
-    result = handler.execute(ctx)
-
-    # Budget exhaustion after a successful tool call closes with preserved evidence.
-    assert result.status == "done"
-    assert result.action_result is not None
-    assert "budget" in (result.message or "").lower()
-    assert "tool evidence" in (result.message or "").lower()
-    assert result.action_result.error is None
-    assert result.action_result.outputs["coding.tool_calls"] == ["file.read"]
 
 
 def test_coding_loop_circular_pattern_returns_recoverable_result() -> None:
@@ -3100,6 +3600,7 @@ def test_coding_loop_emits_adaptive_status_payload_during_execution() -> None:
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",

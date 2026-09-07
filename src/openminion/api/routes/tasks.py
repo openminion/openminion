@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from urllib.parse import parse_qs, unquote
 
-from openminion.api.operations.tasks import apply_pending_action, apply_task_action
+from openminion.api.operations.tasks import (
+    apply_pending_action,
+    apply_task_action,
+    create_task,
+)
 from openminion.api.queries.tasks import list_tasks, show_task
 
 from .contracts import (
@@ -36,7 +40,8 @@ def handle_request(
     body: dict[str, object] | None,
     query: str | None,
 ) -> RouteResult | None:
-    del body
+    if method_name == "POST" and _TASKS_RE.fullmatch(path):
+        return _create_task(ctx, path=path, body=body, query=query)
     if method_name == "GET" and _TASKS_RE.fullmatch(path):
         return _list_tasks(ctx, path=path, query=query)
     if method_name == "GET" and (m := _TASK_RE.fullmatch(path)):
@@ -60,6 +65,41 @@ def handle_request(
     return None
 
 
+def _create_task(
+    ctx: APIRouteContext,
+    *,
+    path: str,
+    body: dict[str, object] | None,
+    query: str | None,
+) -> RouteResult:
+    if ctx.runtime is None:
+        return runtime_unavailable_route_result(path=path, exc="Runtime not available.")
+    options = _query_options(query)
+    if not options.agent_id:
+        return _agent_id_required()
+    try:
+        payload = create_task(
+            runtime=ctx.runtime,
+            body=body,
+            agent_id=options.agent_id,
+            session_id=options.session_id,
+        )
+    except ValueError as exc:
+        return exception_route_result(
+            HTTPStatus.BAD_REQUEST,
+            code="invalid_task",
+            exc=exc,
+            details={},
+            retryable=False,
+        )
+    except (AttributeError, TypeError, RuntimeError) as exc:
+        return _task_error(exc)
+    return RouteResult(
+        status=HTTPStatus.OK if payload["deduped"] else HTTPStatus.CREATED,
+        payload=payload,
+    )
+
+
 def _query_options(query: str | None) -> _TaskRouteOptions:
     params = parse_qs(query or "")
     return _TaskRouteOptions(
@@ -72,8 +112,10 @@ def _query_options(query: str | None) -> _TaskRouteOptions:
 def _list_tasks(ctx: APIRouteContext, *, path: str, query: str | None) -> RouteResult:
     if ctx.runtime is None:
         return runtime_unavailable_route_result(path=path, exc="Runtime not available.")
+    options = _query_options(query)
+    if not options.agent_id:
+        return _agent_id_required()
     try:
-        options = _query_options(query)
         return RouteResult(
             status=HTTPStatus.OK,
             payload=list_tasks(
@@ -92,8 +134,10 @@ def _show_task(
 ) -> RouteResult:
     if ctx.runtime is None:
         return runtime_unavailable_route_result(path=path, exc="Runtime not available.")
+    options = _query_options(query)
+    if not options.agent_id:
+        return _agent_id_required()
     try:
-        options = _query_options(query)
         task = show_task(
             runtime=ctx.runtime,
             task_id=task_id,
@@ -101,6 +145,8 @@ def _show_task(
             session_id=options.session_id,
             limit=options.limit,
         )
+    except PermissionError as exc:
+        return _task_scope_denied(exc, task_id=task_id)
     except (AttributeError, TypeError, RuntimeError) as exc:
         return _task_error(exc)
     if task is None:
@@ -124,8 +170,10 @@ def _apply_task_action(
 ) -> RouteResult:
     if ctx.runtime is None:
         return runtime_unavailable_route_result(path=path, exc="Runtime not available.")
+    options = _query_options(query)
+    if not options.agent_id:
+        return _agent_id_required()
     try:
-        options = _query_options(query)
         payload = apply_task_action(
             runtime=ctx.runtime,
             task_id=task_id,
@@ -135,6 +183,8 @@ def _apply_task_action(
             limit=options.limit,
         )
         return RouteResult(status=HTTPStatus.OK, payload=payload)
+    except PermissionError as exc:
+        return _task_scope_denied(exc, task_id=task_id)
     except KeyError as exc:
         return exception_route_result(
             HTTPStatus.NOT_FOUND,
@@ -200,6 +250,26 @@ def _task_error(exc: Exception) -> RouteResult:
 
 def _first_query_value(params: dict[str, list[str]], key: str) -> str:
     return (params.get(key) or [""])[0].strip()
+
+
+def _agent_id_required() -> RouteResult:
+    return exception_route_result(
+        HTTPStatus.BAD_REQUEST,
+        code="agent_id_required",
+        exc=ValueError("agent_id query parameter is required"),
+        details={},
+        retryable=False,
+    )
+
+
+def _task_scope_denied(exc: PermissionError, *, task_id: str) -> RouteResult:
+    return exception_route_result(
+        HTTPStatus.FORBIDDEN,
+        code="task_scope_denied",
+        exc=exc,
+        details={"task_id": task_id},
+        retryable=False,
+    )
 
 
 def _safe_int(value: str, *, default: int) -> int:

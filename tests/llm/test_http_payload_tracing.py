@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from io import BytesIO
 from urllib import error as urllib_error
+from urllib.parse import parse_qsl, urlsplit
 from unittest.mock import patch
 
 from openminion.modules.llm.providers.transport.http import http_json_get
+from openminion.modules.llm.providers.transport.trace import trace_http_json_request
 from openminion.modules.llm.providers.openai.adapter import OpenAIProvider
 from openminion.modules.llm.providers.openrouter.adapter import OpenRouterProvider
 from openminion.modules.llm.schemas import LLMRequest
@@ -38,6 +40,84 @@ class _FakeSSEHTTPResponse:
     def __iter__(self):
         for line in self._lines:
             yield line.encode("utf-8")
+
+
+def test_http_trace_redacts_fixed_credential_surfaces(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS_DIR", str(tmp_path))
+    header_names = [
+        "Authorization",
+        "Proxy-Authorization",
+        "Cookie",
+        "Set-Cookie",
+        "X-API-Key",
+        "API-Key",
+        "X-Auth-Token",
+        "X-Access-Token",
+        "X-Amz-Security-Token",
+        "X-Goog-Api-Key",
+        "CF-Access-Client-Secret",
+    ]
+    query_names = [
+        "access_token",
+        "api_key",
+        "apikey",
+        "auth",
+        "authorization",
+        "client_secret",
+        "key",
+        "password",
+        "secret",
+        "sig",
+        "signature",
+        "token",
+        "x-amz-credential",
+        "x-amz-signature",
+        "x-amz-security-token",
+    ]
+    query = "&".join(
+        [
+            *(f"{name}=secret-{index}" for index, name in enumerate(query_names)),
+            "page=2",
+            "token=again",
+        ]
+    )
+    trace_http_json_request(
+        trace_metadata={
+            "session_id": "sess",
+            "turn_id": "turn",
+            "inference_step": 1,
+            "trace_label": "call01",
+        },
+        provider_name="provider",
+        url=f"https://user:password@provider.example/path?{query}#fragment",
+        body_json='{"api_key":"body-remains-sensitive"}',
+        payload={"api_key": "body-remains-sensitive"},
+        headers={
+            **{name: f"secret-{name}" for name in header_names},
+            "Accept": "application/json",
+        },
+        timeout_seconds=10,
+        transport="urllib",
+    )
+
+    trace_path = tmp_path / "llm" / "sess" / "turn-sess" / "step01-call01-http.json"
+    traced = json.loads(trace_path.read_text(encoding="utf-8"))
+    assert all(traced["headers"][name] == "<redacted>" for name in header_names)
+    assert traced["headers"]["Accept"] == "application/json"
+    parsed_url = urlsplit(traced["url"])
+    assert parsed_url.username == "<redacted>"
+    assert parsed_url.password == "<redacted>"
+    assert parsed_url.fragment == ""
+    traced_query = parse_qsl(parsed_url.query, keep_blank_values=True)
+    assert all(
+        value == "<redacted>"
+        for name, value in traced_query
+        if name.lower() in query_names
+    )
+    assert traced_query.count(("token", "<redacted>")) == 2
+    assert ("page", "2") in traced_query
+    assert traced["json"]["api_key"] == "body-remains-sensitive"
 
 
 def test_http_payload_trace_file_contains_exact_body(tmp_path, monkeypatch) -> None:

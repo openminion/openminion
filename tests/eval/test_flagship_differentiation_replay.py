@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tests.helpers.flagship_differentiation_proof import (
     DEFAULT_FLAGSHIP_INPUT,
     run_flagship_differentiation_proof,
 )
+
+pytestmark = pytest.mark.package_integration
 
 
 def test_flagship_proof_replay_contains_expected_substrings(tmp_path: Path) -> None:

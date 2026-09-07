@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -171,6 +172,8 @@ class _RemoteMCPHandler(BaseHTTPRequestHandler):
                         "token_endpoint": f"{base_url}/token",
                         "registration_endpoint": f"{base_url}/register",
                         "revocation_endpoint": f"{base_url}/revoke",
+                        "code_challenge_methods_supported": ["S256"],
+                        "client_id_metadata_document_supported": True,
                     }
                 ).encode("utf-8")
             )
@@ -413,6 +416,41 @@ def test_streamable_http_transport_reuses_session_id_and_closes() -> None:
             transport.close()
 
 
+def test_streamable_http_transport_assigns_unique_concurrent_request_ids() -> None:
+    with _remote_mcp_server() as server:
+        transport = StreamableHTTPMCPTransport(
+            _http_runtime_config(
+                url=f"http://127.0.0.1:{server.server_port}/mcp"
+            ).mcp_servers[0]
+        )
+        transport.request(method="initialize", params={}, timeout_seconds=5.0)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(
+                executor.map(
+                    lambda index: transport.request(
+                        method="tools/call",
+                        params={
+                            "name": "remote-echo",
+                            "arguments": {"text": str(index)},
+                        },
+                        timeout_seconds=5.0,
+                    ),
+                    range(24),
+                )
+            )
+
+        assert {item["structuredContent"]["echo"] for item in results} == {
+            str(index) for index in range(24)
+        }
+        request_ids = [
+            item["payload"]["id"]
+            for item in server.last_requests
+            if item["method"] == "tools/call"
+        ]
+        assert len(request_ids) == len(set(request_ids)) == 24
+
+
 def test_modern_http_request_drops_legacy_session_id() -> None:
     with _remote_mcp_server(session_id="legacy-session") as server:
         transport = StreamableHTTPMCPTransport(
@@ -423,7 +461,7 @@ def test_modern_http_request_drops_legacy_session_id() -> None:
         transport.request(method="initialize", params={}, timeout_seconds=5.0)
         assert transport.session_state.session_id == "legacy-session"
 
-        with pytest.raises(MCPProtocolError, match="Unknown method"):
+        with pytest.raises(MCPProtocolError, match="Unknown method") as exc_info:
             transport.request(
                 method="server/discover",
                 params={
@@ -435,6 +473,7 @@ def test_modern_http_request_drops_legacy_session_id() -> None:
                 },
                 timeout_seconds=5.0,
             )
+        assert exc_info.value.details["code"] == -32601
 
         request_headers = server.last_requests[-1]["headers"]
         assert "Mcp-Session-Id" not in request_headers
@@ -561,6 +600,8 @@ def test_oauth_pkce_metadata_dcr_callback_and_revocation_helpers() -> None:
         metadata = discover_oauth_metadata(config, timeout_seconds=5.0)
         assert metadata.token_endpoint == f"{base_url}/token"
         assert metadata.registration_endpoint == f"{base_url}/register"
+        assert metadata.code_challenge_methods_supported == ("S256",)
+        assert metadata.client_id_metadata_document_supported is True
 
         registration = register_oauth_client(
             metadata=metadata,
@@ -580,9 +621,13 @@ def test_oauth_pkce_metadata_dcr_callback_and_revocation_helpers() -> None:
             metadata=metadata,
             challenge=challenge,
             state="state-123",
+            resource=f"{base_url}/mcp",
         )
         assert "code_challenge=" in authorization_url
         assert "state=state-123" in authorization_url
+        assert f"resource={urllib_parse.quote(f'{base_url}/mcp', safe='')}" in (
+            authorization_url
+        )
 
         token_state = exchange_authorization_code(
             config=config,
@@ -590,12 +635,14 @@ def test_oauth_pkce_metadata_dcr_callback_and_revocation_helpers() -> None:
             code="callback-code",
             challenge=challenge,
             authorization_issuer=base_url,
+            resource=f"{base_url}/mcp",
             timeout_seconds=5.0,
         )
         assert token_state.access_token == "fresh-token"
         assert token_state.issuer == base_url
         assert server.token_requests[-1]["grant_type"] == "authorization_code"
         assert server.token_requests[-1]["code"] == "callback-code"
+        assert server.token_requests[-1]["resource"] == f"{base_url}/mcp"
 
         assert revoke_oauth_token(
             metadata=metadata,
@@ -624,6 +671,7 @@ def test_oauth_pkce_refreshes_revoked_access_token_via_token_store() -> None:
                 "secret://mcp/fixture/refresh": "refresh-token",
             }
         )
+        auth_changes: list[str] = []
         transport = StreamableHTTPMCPTransport(
             _http_runtime_config(
                 url=f"{base_url}/mcp",
@@ -638,6 +686,7 @@ def test_oauth_pkce_refreshes_revoked_access_token_via_token_store() -> None:
                 ),
             ).mcp_servers[0],
             token_store=token_store,
+            auth_change_handler=lambda: auth_changes.append("refreshed"),
         )
         try:
             transport.request(method="initialize", params={}, timeout_seconds=5.0)
@@ -647,9 +696,11 @@ def test_oauth_pkce_refreshes_revoked_access_token_via_token_store() -> None:
                 == "rotated-refresh-token"
             )
             assert server.token_requests[-1]["grant_type"] == "refresh_token"
+            assert server.token_requests[-1]["resource"] == f"{base_url}/mcp"
             assert server.last_requests[-1]["headers"]["Authorization"] == (
                 "Bearer fresh-token"
             )
+            assert auth_changes == ["refreshed"]
         finally:
             transport.close()
 

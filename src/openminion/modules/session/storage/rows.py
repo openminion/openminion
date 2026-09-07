@@ -107,6 +107,9 @@ def row_to_cron_job(row: RowLike) -> dict[str, Any]:
         "misfire_policy": str(_row_value(row, "misfire_policy")),
         "max_lateness_s": int(_row_value(row, "max_lateness_s")),
         "max_concurrency": int(_row_value(row, "max_concurrency")),
+        "concurrency_key": _row_value(row, "concurrency_key"),
+        "max_attempts": int(_row_value(row, "max_attempts")),
+        "retry_backoff_s": int(_row_value(row, "retry_backoff_s")),
         "next_due_at": _row_value(row, "next_due_at"),
         "last_run_at": _row_value(row, "last_run_at"),
         "created_at": str(_row_value(row, "created_at")),
@@ -120,6 +123,7 @@ def row_to_cron_run(row: RowLike) -> dict[str, Any]:
         "job_id": _row_value(row, "job_id"),
         "state": str(_row_value(row, "state")),
         "due_at": str(_row_value(row, "due_at")),
+        "available_at": _row_value(row, "available_at"),
         "started_at": _row_value(row, "started_at"),
         "finished_at": _row_value(row, "finished_at"),
         "isolated_session_id": _row_value(row, "isolated_session_id"),
@@ -130,6 +134,7 @@ def row_to_cron_run(row: RowLike) -> dict[str, Any]:
             if _row_value(row, "error_json")
             else None
         ),
+        "output": _json_value(row, "output_json", {}),
         "lease_owner": _row_value(row, "lease_owner"),
         "lease_expires_at": _row_value(row, "lease_expires_at"),
         "delivery_targets": _json_value(row, "delivery_targets_json", []),

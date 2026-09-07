@@ -1,7 +1,7 @@
 # OpenMinion Testing And Validation
 
 Status: active
-Last updated: 2026-06-30
+Last updated: 2026-09-06
 
 Purpose: give package users and maintainers one package-local reference for the
 basic validation commands that prove `openminion` installs and runs correctly.
@@ -59,6 +59,17 @@ Run from the package root:
 .venv/bin/python3.11 -m ruff check .
 make lint
 ```
+
+Run the provider-free pull-request sequence with:
+
+```bash
+make ci-check
+```
+
+This composes `format-check`, `lint`, and `test-ci`. `test-ci` excludes live,
+external-service, Postgres, package-integration, benchmark, E2E, and slow
+markers. `make test` and `make check` remain broader local commands and are not
+interchangeable with the pull-request selection.
 
 ## Focused regression tests
 
@@ -120,15 +131,15 @@ owner-only persistence, and handoff into Focus.
 Run the live setup-to-first-task proof only with explicit quota authorization:
 
 ```bash
-OPENMINION_ONBOARDING_E2E_PROVIDER=minimax \
-MINIMAX_API_KEY=... \
+OPENMINION_LIVE_CLI_FOCUS_E2E=1 \
+CORTENSOR_API_KEY=... \
 PYTHONDONTWRITEBYTECODE=1 \
 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py onboarding-live
 ```
 
 This live suite verifies the bounded provider check, enters Focus, and completes
-one model-backed first task. It must not be used without explicit authorization
-for the selected provider credential and quota.
+one model-backed first task through the Cortensor Portal preset. It must not be
+used without explicit authorization for the provider credential and quota.
 
 Before release, run the deterministic Tier A coding-harness journey gate:
 

@@ -1,29 +1,33 @@
-from collections import OrderedDict
-from dataclasses import dataclass, field
+from collections import OrderedDict, deque
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from queue import Empty, Queue
 from threading import Condition, Event, RLock, Thread
 from time import monotonic
-from typing import Any, Callable, Iterator, NamedTuple
+from typing import Any, Callable, Iterator
 from uuid import uuid4
 
-from openminion.modules.brain.diagnostics.status import phase_status_from_runtime
+from openminion.modules.brain.diagnostics.status import (
+    phase_status_from_runtime,
+    phase_status_payload,
+)
 from openminion.base.runtime.constants import (
-    RUNTIME_TURN_STATUS_CANCELLED, RUNTIME_TURN_STATUS_COMPLETED,
-    RUNTIME_TURN_STATUS_ERROR, RUNTIME_TURN_STATUS_FAILED,
+    RUNTIME_TURN_STATUS_CANCELLED,
+    RUNTIME_TURN_STATUS_COMPLETED,
+    RUNTIME_TURN_STATUS_ERROR,
+    RUNTIME_TURN_STATUS_FAILED,
     RUNTIME_TURN_STATUS_STARTED,
-)  # fmt: skip
+)
+from openminion.modules.runtime.contracts import TURN_STREAM_SCHEMA_VERSION
 from openminion.base.runtime.interfaces import RUNTIME_INTERFACE_VERSION
 from openminion.modules.telemetry.lifecycle import (
     build_agent_runtime_component_identity, build_runtime_manager_component_identity,
 )  # fmt: skip
 from .events import emit_runtime_operation
+from .constants import TURN_STREAM_HISTORY_LIMIT
+from .interfaces import DesktopApprovalRequester
 
 from openminion.base.time import utc_now_iso as _utc_now_iso
-
-
-def _new_trace_id() -> str:
-    return uuid4().hex
 
 
 @dataclass(frozen=True)
@@ -69,19 +73,9 @@ class TurnChunk:
     kind: str
     data: dict[str, Any] = field(default_factory=dict)
     ts: str = field(default_factory=_utc_now_iso)
-
-
-class DesktopApprovalRequest(NamedTuple):
-    session_id: str
-    trace_id: str
-    tool_name: str
-    call_id: str
-    argument_keys: tuple[str, ...]
-    emit_chunk: Callable[[TurnChunk], None]
-    cancel_event: Event
-
-
-DesktopApprovalRequester = Callable[[DesktopApprovalRequest], bool]
+    schema_version: str = TURN_STREAM_SCHEMA_VERSION
+    sequence: int = 0
+    event_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -183,21 +177,31 @@ class _AgentInstance:
 
 
 class TurnHandle:
+    stream_schema_version = TURN_STREAM_SCHEMA_VERSION
+
     def __init__(
         self,
         *,
         trace_id: str,
         on_cancel: Callable[[str], bool],
+        background: bool = False,
+        agent_id: str = "",
+        session_id: str = "",
     ) -> None:
-        self.trace_id, self.session_id = trace_id, ""
+        self.trace_id = trace_id
+        self.agent_id = agent_id
+        self.session_id = session_id
         self._on_cancel = on_cancel
+        self._background = background
         self._cancel_event = Event()
         self._result_ready = Event()
         self._result: TurnResponse | None = None
-        self._result_lock = RLock()
+        self._stream_cv = Condition(RLock())
+        self._history: deque[TurnChunk] = deque(maxlen=TURN_STREAM_HISTORY_LIMIT)
+        self._next_sequence = 1
+        self._primary_stream_claimed = False
+        self._latest_phase_status: dict[str, Any] | None = None
         self._done_callbacks: list[Callable[[], None]] = []
-        self._chunks: Queue[TurnChunk | None] = Queue()
-        self._closed_stream = False
 
     @property
     def cancel_event(self) -> Event:
@@ -208,19 +212,33 @@ class TurnHandle:
         return self._on_cancel(self.trace_id)
 
     def stream(self, timeout_s: float | None = None) -> Iterator[TurnChunk]:
-        while True:
-            if self._closed_stream:
-                break
-            try:
-                item = self._chunks.get(timeout=timeout_s)
-            except Empty:
-                if self._result_ready.is_set():
-                    break
-                continue
-            if item is None:
-                self._closed_stream = True
-                break
-            yield item
+        with self._stream_cv:
+            if self._primary_stream_claimed:
+                return
+            self._primary_stream_claimed = True
+        yield from self._iter_chunks(after_sequence=0, timeout_s=timeout_s)
+
+    def subscribe(
+        self,
+        *,
+        after_sequence: int = 0,
+        timeout_s: float | None = None,
+    ) -> Iterator[TurnChunk]:
+        yield from self._iter_chunks(
+            after_sequence=max(0, int(after_sequence)),
+            timeout_s=timeout_s,
+        )
+
+    @property
+    def replay_floor_sequence(self) -> int:
+        with self._stream_cv:
+            return self._history[0].sequence if self._history else self._next_sequence
+
+    def current_phase_status(self) -> dict[str, Any] | None:
+        with self._stream_cv:
+            return (
+                dict(self._latest_phase_status) if self._latest_phase_status else None
+            )
 
     def result(self, timeout_s: float | None = None) -> TurnResponse:
         if not self._result_ready.wait(timeout=timeout_s):
@@ -230,10 +248,23 @@ class TurnHandle:
         return self._result
 
     def _push_chunk(self, chunk: TurnChunk) -> None:
-        self._chunks.put(chunk)
+        with self._stream_cv:
+            sequence = self._next_sequence
+            self._next_sequence += 1
+            sequenced = replace(
+                chunk,
+                trace_id=self.trace_id,
+                schema_version=TURN_STREAM_SCHEMA_VERSION,
+                sequence=sequence,
+                event_id=f"{self.trace_id}:{sequence}",
+            )
+            self._history.append(sequenced)
+            if sequenced.kind == "status":
+                self._latest_phase_status = dict(sequenced.data)
+            self._stream_cv.notify_all()
 
     def add_done_callback(self, callback: Callable[[], None]) -> None:
-        with self._result_lock:
+        with self._stream_cv:
             invoke_now = self._result_ready.is_set()
             if not invoke_now:
                 self._done_callbacks.append(callback)
@@ -241,18 +272,39 @@ class TurnHandle:
             callback()
 
     def _set_result(self, response: TurnResponse) -> None:
-        with self._result_lock:
+        with self._stream_cv:
             if self._result_ready.is_set():
                 return
             self._result = response
             callbacks, self._done_callbacks = self._done_callbacks, []
             self._result_ready.set()
-        self._chunks.put(None)
+            self._stream_cv.notify_all()
         for callback in callbacks:
             try:
                 callback()
             except Exception:
                 continue
+
+    def _iter_chunks(
+        self,
+        *,
+        after_sequence: int,
+        timeout_s: float | None,
+    ) -> Iterator[TurnChunk]:
+        cursor = after_sequence
+        while True:
+            with self._stream_cv:
+                chunk = next(
+                    (item for item in self._history if item.sequence > cursor),
+                    None,
+                )
+                if chunk is None:
+                    if self._result_ready.is_set():
+                        return
+                    self._stream_cv.wait(timeout=timeout_s)
+                    continue
+            cursor = chunk.sequence
+            yield chunk
 
 
 class AgentRuntimeManager:
@@ -420,6 +472,21 @@ class AgentRuntimeManager:
         with self._lock:
             return [instance.status() for instance in self._instances.values()]
 
+    def has_foreground_work(self) -> bool:
+        with self._lock:
+            return any(not handle._background for handle in self._traces.values())
+
+    def get_turn_handle(self, trace_id: str) -> TurnHandle | None:
+        normalized = str(trace_id or "").strip()
+        if not normalized:
+            return None
+        with self._lock:
+            return self._traces.get(normalized)
+
+    def current_phase_status(self, trace_id: str) -> dict[str, Any] | None:
+        handle = self.get_turn_handle(trace_id)
+        return handle.current_phase_status() if handle is not None else None
+
     def evict(self, agent_id: str, reason: str) -> None:
         self._evict_agent(agent_id=agent_id, reason=reason, force=True)
 
@@ -437,7 +504,7 @@ class AgentRuntimeManager:
             self.start()
         if not self._accepting:
             raise RuntimeError("runtime manager is not accepting new turns")
-        trace_id = str(req.trace_id or "").strip() or _new_trace_id()
+        trace_id = str(req.trace_id or "").strip() or uuid4().hex
         request = TurnRequest(
             trace_id=trace_id,
             agent_id=str(req.agent_id or "").strip(),
@@ -456,9 +523,17 @@ class AgentRuntimeManager:
         if not request.input_text.strip():
             raise ValueError("input_text must be non-empty")
         self.get_or_create_agent(request.agent_id)
-        handle = TurnHandle(trace_id=request.trace_id, on_cancel=self.cancel_turn)
-        handle.session_id = request.session_id
-        queued = _QueuedTurn(request, handle, monotonic())
+        background = bool(str(request.meta.get("cron_run_id", "") or "").strip())
+        handle = TurnHandle(
+            trace_id=request.trace_id,
+            on_cancel=self.cancel_turn,
+            background=background,
+            agent_id=request.agent_id,
+            session_id=request.session_id,
+        )
+        queued = _QueuedTurn(
+            request=request, handle=handle, enqueued_at_mono=monotonic()
+        )
         with self._lock:
             self._traces[request.trace_id] = handle
             instance = self._instances[request.agent_id]
@@ -589,7 +664,12 @@ class AgentRuntimeManager:
                     )
                 ],
             )
-            queued.handle._set_result(cancelled)
+            self._complete_handle(
+                request=queued.request,
+                handle=queued.handle,
+                response=cancelled,
+                runtime_status=RUNTIME_TURN_STATUS_FAILED,
+            )
             with self._lock:
                 self._traces.pop(queued.request.trace_id, None)
         instance.stop_event.set()
@@ -647,21 +727,7 @@ class AgentRuntimeManager:
                     "queue_wait_ms": queue_wait_ms,
                 },
             )
-            handle._push_chunk(
-                TurnChunk(
-                    trace_id=request.trace_id,
-                    kind="status",
-                    data=phase_status_from_runtime(
-                        trace_id=request.trace_id,
-                        runtime_status=RUNTIME_TURN_STATUS_STARTED,
-                        detail_text=(
-                            f"Queued for {queue_wait_ms} ms before execution."
-                            if queue_wait_ms > 0
-                            else None
-                        ),
-                    ).model_dump(),
-                )
-            )
+            self._emit_turn_started_status(request, handle, queue_wait_ms)
 
             if handle.cancel_event.is_set():
                 response = TurnResponse(
@@ -675,7 +741,9 @@ class AgentRuntimeManager:
                         )
                     ],
                 )
-                handle._set_result(response)
+                self._complete_handle(
+                    request, handle, response, RUNTIME_TURN_STATUS_CANCELLED
+                )
                 self._finish_turn(
                     instance=instance,
                     request=request,
@@ -696,7 +764,9 @@ class AgentRuntimeManager:
                         )
                     ],
                 )
-                handle._set_result(response)
+                self._complete_handle(
+                    request, handle, response, RUNTIME_TURN_STATUS_CANCELLED
+                )
                 self._finish_turn(
                     instance=instance,
                     request=request,
@@ -728,34 +798,20 @@ class AgentRuntimeManager:
                     instance.active_trace_id = ""
 
             duration_ms = max(0, int((monotonic() - started) * 1000))
-            telemetry = response.telemetry
-            response = TurnResponse(
-                final_text=response.final_text,
-                artifacts=list(response.artifacts),
-                tool_calls_summary=list(response.tool_calls_summary),
-                memory_write_intents=list(response.memory_write_intents),
-                telemetry=TurnTelemetry(
-                    tokens_in=telemetry.tokens_in,
-                    tokens_out=telemetry.tokens_out,
+            response = replace(
+                response,
+                telemetry=replace(
+                    response.telemetry,
                     duration_ms=duration_ms,
-                    retries=telemetry.retries,
                     queue_wait_ms=queue_wait_ms,
                 ),
-                errors=list(response.errors),
             )
-            handle._push_chunk(
-                TurnChunk(
-                    trace_id=request.trace_id,
-                    kind="final_text",
-                    data={"text": response.final_text},
-                )
-            )
-            handle._set_result(response)
             status = (
                 RUNTIME_TURN_STATUS_FAILED
                 if response.errors
                 else RUNTIME_TURN_STATUS_COMPLETED
             )
+            self._complete_handle(request, handle, response, status)
             self._finish_turn(
                 instance=instance, request=request, response=response, status=status
             )
@@ -778,7 +834,14 @@ class AgentRuntimeManager:
                     )
                 ],
             )
-            leftover.handle._set_result(cancelled_response)
+            self._complete_handle(
+                leftover.request,
+                leftover.handle,
+                cancelled_response,
+                RUNTIME_TURN_STATUS_CANCELLED,
+            )
+            with self._lock:
+                self._traces.pop(leftover.request.trace_id, None)
 
     def _finish_turn(
         self,
@@ -830,6 +893,61 @@ class AgentRuntimeManager:
                 "error_count": len(response.errors),
             },
         )
+
+    @staticmethod
+    def _emit_turn_started_status(
+        request: TurnRequest,
+        handle: TurnHandle,
+        queue_wait_ms: int,
+    ) -> None:
+        queue_detail = (
+            f"Queued for {queue_wait_ms} ms before execution."
+            if queue_wait_ms > 0
+            else None
+        )
+        status = phase_status_from_runtime(
+            trace_id=request.trace_id,
+            runtime_status=RUNTIME_TURN_STATUS_STARTED,
+            detail_text=queue_detail,
+        )
+        handle._push_chunk(
+            TurnChunk(
+                trace_id=request.trace_id,
+                kind="status",
+                data=phase_status_payload(status),
+            )
+        )
+
+    @staticmethod
+    def _complete_handle(
+        request: TurnRequest,
+        handle: TurnHandle,
+        response: TurnResponse,
+        runtime_status: str,
+    ) -> None:
+        handle._push_chunk(
+            TurnChunk(
+                trace_id=request.trace_id,
+                kind="final_text",
+                data={"text": response.final_text},
+            )
+        )
+        detail_text = response.errors[0].message if response.errors else None
+        handle._push_chunk(
+            TurnChunk(
+                trace_id=request.trace_id,
+                kind="status",
+                data=phase_status_payload(
+                    phase_status_from_runtime(
+                        trace_id=request.trace_id,
+                        runtime_status=runtime_status,
+                        detail_text=detail_text,
+                        terminal=True,
+                    )
+                ),
+            )
+        )
+        handle._set_result(response)
 
     def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
         if self._on_runtime_event is None:

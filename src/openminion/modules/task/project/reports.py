@@ -10,6 +10,7 @@ from openminion.modules.task.project import (
     ProjectVerificationState,
     load_latest_project_checkpoint,
 )
+from openminion.modules.task.project.checkpoints import project_cycle_summaries
 from openminion.modules.task.project.capabilities import ProjectCapabilityMatrix
 from openminion.modules.task.runtime.lifecycle import ProjectCycleClaim, TaskManager
 
@@ -52,6 +53,7 @@ class ProjectMetricSnapshot(_StrictReportModel):
     cost_microusd: int = Field(default=0, ge=0)
     proof_packet_completeness_percent: float = Field(default=0.0, ge=0.0, le=100.0)
     operator_intervention_count: int = Field(default=0, ge=0)
+    plan_revision_count: int = Field(default=0, ge=0)
 
 
 class ProjectMetricComparison(_StrictReportModel):
@@ -68,6 +70,7 @@ class ProjectReport(_StrictReportModel):
     baseline_comparisons: tuple[ProjectMetricComparison, ...] = ()
     capability_matrix: ProjectCapabilityMatrix | None = None
     proof_refs: tuple[str, ...] = ()
+    cycle_summaries: tuple[str, ...] = ()
     cycle_claim: ProjectCycleClaim | None = None
     safety_notes: tuple[str, ...] = ()
     ux_notes: tuple[str, ...] = ()
@@ -82,6 +85,7 @@ def build_project_report(
     capability_matrix: ProjectCapabilityMatrix | None = None,
     outcome: ProjectOutcomeClassification | None = None,
     proof_refs: tuple[str, ...] = (),
+    cycle_summaries: tuple[str, ...] = (),
     safety_notes: tuple[str, ...] = (),
     ux_notes: tuple[str, ...] = (),
     cycle_claim: ProjectCycleClaim | None = None,
@@ -97,6 +101,7 @@ def build_project_report(
         ),
         capability_matrix=capability_matrix,
         proof_refs=proof_refs,
+        cycle_summaries=cycle_summaries,
         cycle_claim=cycle_claim,
         safety_notes=safety_notes,
         ux_notes=ux_notes,
@@ -128,11 +133,13 @@ def build_project_report_from_task(
         restart_resume_success_count=int(record.metadata.get("resume_count") or 0),
         operator_intervention_count=_operator_intervention_count(record.metadata),
         proof_packet_completeness_percent=round((len(proof_refs) / 3) * 100, 2),
+        plan_revision_count=int(checkpoint.payload.get("plan_revision_count") or 0),
     )
     return build_project_report(
         checkpoint.project_run,
         metrics=metrics,
         proof_refs=proof_refs,
+        cycle_summaries=project_cycle_summaries(task_manager, task_id=task_id),
         cycle_claim=task_manager.lifecycle_repository.get_project_cycle_claim(task_id),
     )
 
@@ -191,6 +198,12 @@ def render_project_report(report: ProjectReport) -> str:
     if report.proof_refs:
         lines.append("proof_refs:")
         lines.extend(f"  - {ref}" for ref in report.proof_refs)
+    if report.cycle_summaries:
+        lines.append("cycle_summaries:")
+        lines.extend(
+            f"  {index}: {summary}"
+            for index, summary in enumerate(report.cycle_summaries, start=1)
+        )
     if report.cycle_claim is not None:
         lines.append(
             "cycle_claim: "

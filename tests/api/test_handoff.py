@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, Lock
 from typing import Any
 from unittest.mock import patch
+
+import pytest
 
 from openminion.api.agent import Agent
 from openminion.api.handoff import (
@@ -66,7 +70,11 @@ def test_build_delegate_tool_runs_target_agent() -> None:
     decl = build_delegate_tool(handoff)
     args = decl.args_model(message="please refund")
     result = decl.handler(args)
-    assert result == "delegated reply"
+    assert result == {
+        "ok": True,
+        "content": "delegated reply",
+        "data": {"output": "delegated reply"},
+    }
     assert runtime.last_payload["message"] == "please refund"
 
 
@@ -121,7 +129,11 @@ def test_agent_handoff_tool_is_registered_only_during_run() -> None:
     parent.run("please transfer")
 
     assert "transfer_to_child" in parent_runtime.seen_tool_names_during_run
-    assert parent_runtime.tool_result_during_run == "target-produced marker"
+    assert parent_runtime.tool_result_during_run == {
+        "ok": True,
+        "content": "target-produced marker",
+        "data": {"output": "target-produced marker"},
+    }
     assert child_runtime.last_payload["message"] == "child marker"
     assert "transfer_to_child" not in parent_runtime.tools.list()
 
@@ -154,6 +166,57 @@ def test_agent_handoff_registration_does_not_leak_to_next_agent_run() -> None:
 
     assert runtime.last_payload == {"message": "no handoff"}
     assert "transfer_to_child" not in runtime.seen_tool_names_during_run
+    assert "transfer_to_child" not in runtime.tools.list()
+
+
+def test_concurrent_handoff_runs_do_not_collide() -> None:
+    class _BlockingRuntime(_FakeRuntime):
+        def __init__(self) -> None:
+            super().__init__(tools=ToolRegistry())
+            self.first_entered = Event()
+            self.release_first = Event()
+            self._call_lock = Lock()
+            self._call_count = 0
+
+        def run_turn(self, *, payload, progress_callback=None, **kwargs):
+            with self._call_lock:
+                self._call_count += 1
+                call_number = self._call_count
+            if call_number == 1:
+                self.first_entered.set()
+                assert self.release_first.wait(2.0)
+            return super().run_turn(
+                payload=payload, progress_callback=progress_callback, **kwargs
+            )
+
+    runtime = _BlockingRuntime()
+    child = Agent(runtime=_FakeRuntime("child"), name="child")
+    first_parent = Agent(
+        runtime=runtime,
+        name="first-parent",
+        handoffs=[Handoff(target=child)],
+    )
+    second_parent = Agent(
+        runtime=runtime,
+        name="second-parent",
+        handoffs=[Handoff(target=child)],
+    )
+    second_started = Event()
+
+    def run_second() -> Any:
+        second_started.set()
+        return second_parent.run("second")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(first_parent.run, "first")
+        assert runtime.first_entered.wait(1.0)
+        second = executor.submit(run_second)
+        assert second_started.wait(1.0)
+        assert not second.done()
+        runtime.release_first.set()
+        assert first.result(timeout=1.0).text == "hello back"
+        assert second.result(timeout=1.0).text == "hello back"
+
     assert "transfer_to_child" not in runtime.tools.list()
 
 
@@ -202,9 +265,7 @@ def test_subagent_has_explicit_bounded_run_context() -> None:
         name="child",
         tools=["safe.read"],
         timeout_seconds=30,
-        deadline_iso="2026-07-24T12:00:00Z",
-        memory_posture="read_only_bounded",
-        cancel_policy="cascade_from_parent",
+        deadline_iso="2099-07-24T12:00:00Z",
     )
 
     context = child.subagent_context
@@ -213,9 +274,7 @@ def test_subagent_has_explicit_bounded_run_context() -> None:
     assert context.child_agent_id == "child"
     assert context.tool_allowlist == ("safe.read",)
     assert context.timeout_seconds == 30
-    assert context.deadline_iso == "2026-07-24T12:00:00Z"
-    assert context.memory_posture == "read_only_bounded"
-    assert context.cancel_policy == "cascade_from_parent"
+    assert context.memory_posture == "none"
     assert context.typed_result_handback is True
     assert context.parent_transcript_inherited is False
     assert context.hidden_reasoning_inherited is False
@@ -226,22 +285,54 @@ def test_subagent_run_threads_context_as_runtime_metadata() -> None:
     runtime = _FakeRuntime()
     parent = Agent(runtime=runtime, name="parent", instructions="parent secret")
     child = subagent(
-        parent, name="child", instructions="child only", tools=["safe.read"]
+        parent,
+        name="child",
+        instructions="child only",
+        tools=["safe.read"],
+        timeout_seconds=30,
     )
 
     child.run("bounded work")
 
     payload = runtime.last_payload
     assert payload["message"] == "bounded work"
-    assert payload["system_prompt"] == "child only"
+    assert payload["override_system_prompt"] == "child only"
     assert "parent secret" not in str(payload)
     assert payload["allowed_tools"] == ["safe.read"]
+    assert payload["timeout_seconds"] == 30
     assert payload["subagent_context"]["parent_agent_id"] == "parent"
     assert payload["subagent_context"]["child_agent_id"] == "child"
     assert payload["subagent_context"]["tool_allowlist"] == ["safe.read"]
     assert payload["subagent_context"]["implicit_memory_write"] is False
     assert payload["inbound_metadata"]["subagent_memory_posture"] == "none"
     assert payload["inbound_metadata"]["subagent_tool_allowlist"] == "safe.read"
+
+
+def test_subagent_rejects_unbound_memory_posture_before_run() -> None:
+    parent = Agent(runtime=_FakeRuntime(), name="parent")
+
+    with pytest.raises(ValueError, match="memory grants are not bound"):
+        subagent(parent, memory_posture="read_only_bounded")
+
+
+def test_subagent_rejects_memory_grant_until_runtime_binding_exists() -> None:
+    parent = Agent(runtime=_FakeRuntime(), name="parent")
+
+    with pytest.raises(ValueError, match="memory grants are not bound"):
+        subagent(
+            parent,
+            memory_posture="read_only_bounded",
+            memory_grant_id="grant-1",
+        )
+
+
+def test_subagent_rejects_elapsed_or_unzoned_deadline() -> None:
+    parent = Agent(runtime=_FakeRuntime(), name="parent")
+
+    with pytest.raises(ValueError, match="has elapsed"):
+        subagent(parent, deadline_iso="2020-01-01T00:00:00Z")
+    with pytest.raises(ValueError, match="include a timezone"):
+        subagent(parent, deadline_iso="2099-01-01T00:00:00")
 
 
 def test_subagent_disallowed_parent_tools_are_absent_by_default() -> None:

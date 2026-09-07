@@ -1,4 +1,4 @@
-# RMP repo-map subpackage
+# Repo-map subpackage
 
 Shape: `interfaces` + `schemas` + `parser` + `ranker` + `serializer` +
 `cache` + `config` + `constants`.

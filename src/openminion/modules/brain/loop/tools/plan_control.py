@@ -4,7 +4,7 @@ from typing import Any
 
 from openminion.modules.brain.schemas.state import ActionResult
 from openminion.modules.context.schemas import TASK_PLAN_TOOL_FAMILIES
-from openminion.modules.llm.schemas import ToolSpec
+from openminion.modules.llm.schemas import Message, ToolSpec
 from openminion.modules.task.plan import (
     TaskPlan,
     TaskPlanRevision,
@@ -22,6 +22,7 @@ from .plan import (
     _active_plan_continues_after_step,
     _active_plan_id,
     _active_plan_workflow_id,
+    _active_plan_workflow_version_hash,
     _append_invalid_task_plan_event,
     _append_task_plan_event,
     _clear_active_plan_override,
@@ -51,6 +52,7 @@ PLAN_ACTION_COMPLETE = "complete"
 PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY = "plan_tool.attempted"
 PLAN_TOOL_USED_SCRATCHPAD_KEY = "plan_tool.used"
 PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY = "plan_tool.actions"
+PLAN_CLOSEOUT_SALVAGE_TEXT_SCRATCHPAD_KEY = "plan_tool.closeout_salvage_text"
 PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY = "plan.continue_plan_autonomously"
 PLAN_ACTIONS_ELIGIBLE_FOR_CONTINUATION = frozenset(
     {
@@ -164,12 +166,22 @@ def build_plan_tool_spec() -> ToolSpec:
                         "workflow catalog."
                     ),
                 },
+                "workflow_version_hash": {
+                    "type": "string",
+                    "description": (
+                        "Optional active skill version hash that pins workflow_id."
+                    ),
+                },
                 "root_goal_id": {
                     "type": "string",
                     "description": (
                         "Optional reverse link to the root goal that owns "
                         "this task plan."
                     ),
+                },
+                "criterion_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
                 },
                 "steps": {
                     "type": "array",
@@ -182,6 +194,12 @@ def build_plan_tool_spec() -> ToolSpec:
                 "blocker_type": {"type": "string"},
                 "blocker_details": {"type": "string"},
                 "reason": {"type": "string"},
+                "revision_id": {"type": "string"},
+                "predecessor_revision_id": {"type": "string"},
+                "verifier_refs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
                 "revised_steps": {
                     "type": "array",
                     "items": step_schema,
@@ -190,13 +208,8 @@ def build_plan_tool_spec() -> ToolSpec:
                 "continue_plan_autonomously": {
                     "type": "boolean",
                     "description": (
-                        "Optional opt-in signal. Set true on a non-terminal "
-                        "action (declare, step_completed, revise) when the "
-                        "runtime should schedule a follow-up autonomous turn "
-                        "to continue this plan without waiting for user "
-                        "input. Runtime enforces per-plan and per-session "
-                        "caps regardless of this flag. Ignored on terminal "
-                        "actions (step_blocked, abandon, complete)."
+                        "Request a capped follow-up turn after declare, "
+                        "step_completed, or revise. Ignored for terminal actions."
                     ),
                 },
             },
@@ -220,6 +233,108 @@ def plan_tool_enabled(profile: Any) -> bool:
     # `plan` is a loop-local control surface, not a provider-dispatched tool.
     # It remains available when ordinary runtime tools are suppressed.
     return bool(getattr(profile, "allow_plan_tool", True))
+
+
+def plan_tool_call_advances_active_plan(
+    loop_ctx: Any,
+    arguments: dict[str, Any],
+) -> bool:
+    action = str(arguments.get("action", "") or "").strip()
+    if action not in {
+        PLAN_ACTION_STEP_COMPLETED,
+        PLAN_ACTION_STEP_BLOCKED,
+        PLAN_ACTION_ABANDON,
+        PLAN_ACTION_COMPLETE,
+    }:
+        return False
+    active_plan = _current_active_plan(loop_ctx)
+    plan_id = str(arguments.get("plan_id", "") or "").strip()
+    if _active_plan_id(active_plan) != plan_id:
+        return False
+    if action == PLAN_ACTION_ABANDON:
+        return True
+    if action == PLAN_ACTION_COMPLETE:
+        return not _unresolved_step_ids(active_plan)
+    step_id = str(arguments.get("step_id", "") or "").strip()
+    for step in list((active_plan or {}).get("steps") or []):
+        if not isinstance(step, dict):
+            continue
+        if str(step.get("step_id", "") or "").strip() != step_id:
+            continue
+        return str(step.get("status", "pending") or "pending").strip() not in {
+            "blocked",
+            "completed",
+        }
+    return False
+
+
+def unresolved_active_plan_step_ids(loop_ctx: Any) -> tuple[str, ...]:
+    return tuple(_unresolved_step_ids(_current_active_plan(loop_ctx)))
+
+
+def completable_active_plan_id(loop_ctx: Any) -> str:
+    active_plan = _current_active_plan(loop_ctx)
+    plan_id = _active_plan_id(active_plan)
+    if not plan_id or _unresolved_step_ids(active_plan):
+        return ""
+    return plan_id
+
+
+def complete_active_plan_if_ready(loop_ctx: Any) -> dict[str, str] | None:
+    plan_id = completable_active_plan_id(loop_ctx)
+    if not plan_id:
+        return None
+    payload = {
+        "plan_id": plan_id,
+        "reason": "all_steps_completed_at_success",
+    }
+    result = _handle_terminal(
+        loop_ctx=loop_ctx,
+        arguments=payload,
+        event_type="task_plan.completed",
+    )
+    if result.status != "success":
+        raise RuntimeError(result.summary)
+    return payload
+
+
+def append_plan_closeout_guidance(
+    loop_state: Any,
+    arguments: dict[str, Any],
+    action_result: Any,
+) -> None:
+    if (
+        str(getattr(action_result, "status", "") or "") != "success"
+        or str(arguments.get("action", "") or "").strip() != PLAN_ACTION_COMPLETE
+    ):
+        return
+    closeout_text = str(
+        loop_state.scratchpad.pop(PLAN_CLOSEOUT_SALVAGE_TEXT_SCRATCHPAD_KEY, "") or ""
+    ).strip()
+    original_request = next(
+        (
+            str(message.content or "").strip()
+            for message in loop_state.messages
+            if message.role == "user" and str(message.content or "").strip()
+        ),
+        "",
+    )
+    if closeout_text:
+        loop_state.scratchpad["typed_finalization_status_salvage_text"] = closeout_text
+        guidance = (
+            "The active task plan is now complete and the full user-facing answer "
+            "is already preserved. Return only the structured finalization_status "
+            "signal now. Do not repeat the answer or call more tools."
+        )
+    else:
+        guidance = (
+            "The active task plan is now complete. Return the final user-facing "
+            "answer now. Preserve every "
+            "user-specified answer format, ordering, and exact-response constraint. "
+            "Include the structured finalization_status signal and do not call more "
+            f"tools.\n\nOriginal request:\n{original_request}"
+        )
+    loop_state.messages.append(Message(role="system", content=guidance))
 
 
 def with_enabled_plan_tool_spec(
@@ -295,7 +410,9 @@ def _handle_declare(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult
             "plan_id": arguments.get("plan_id"),
             "objective": arguments.get("objective") or arguments.get("plan_id"),
             "workflow_id": arguments.get("workflow_id"),
+            "workflow_version_hash": arguments.get("workflow_version_hash"),
             "root_goal_id": arguments.get("root_goal_id"),
+            "criterion_ids": list(arguments.get("criterion_ids") or []),
             "status": "active",
             "steps": list(arguments.get("steps") or []),
             "continue_plan_autonomously": bool(
@@ -303,7 +420,11 @@ def _handle_declare(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult
             ),
         }
     )
-    workflow_failure = _validate_workflow_id(loop_ctx, workflow_id=plan.workflow_id)
+    workflow_failure = _validate_workflow_id(
+        loop_ctx,
+        workflow_id=plan.workflow_id,
+        workflow_version_hash=plan.workflow_version_hash,
+    )
     if workflow_failure is not None:
         return workflow_failure
     active_plan = _current_active_plan(loop_ctx)
@@ -335,6 +456,7 @@ def _handle_declare(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult
     outputs: dict[str, Any] = {
         "action": PLAN_ACTION_DECLARE,
         "plan_id": plan.plan_id,
+        "task_plan": plan.model_dump(mode="json"),
         **_task_ops_outputs(loop_ctx, task_ops),
     }
     if plan.continue_plan_autonomously:
@@ -363,12 +485,11 @@ def _handle_step_completed(*, loop_ctx: Any, arguments: dict[str, Any]) -> Actio
             details={"plan_id": completed.plan_id, "step_id": completed.step_id},
         )
     payload = completed.model_dump(mode="json")
-    effective_continue = completed.continue_plan_autonomously or (
-        _active_plan_continues_after_step(
-            active_plan,
-            plan_id=completed.plan_id,
-            step_id=completed.step_id,
-        )
+    effective_continue = _active_plan_continues_after_step(
+        active_plan,
+        plan_id=completed.plan_id,
+        step_id=completed.step_id,
+        continue_requested=completed.continue_plan_autonomously,
     )
     payload["continue_plan_autonomously"] = effective_continue
     task_ops = task_ops_for_step_completed(completed)
@@ -461,15 +582,19 @@ def _handle_revise(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult:
     full_plan = revision.to_task_plan(
         fallback_objective=str((active_plan or {}).get("objective") or ""),
         fallback_workflow_id=_active_plan_workflow_id(active_plan),
+        fallback_workflow_version_hash=_active_plan_workflow_version_hash(active_plan),
+        fallback_criterion_ids=list((active_plan or {}).get("criterion_ids") or []),
     )
     workflow_failure = _validate_workflow_id(
         loop_ctx,
         workflow_id=full_plan.workflow_id,
+        workflow_version_hash=full_plan.workflow_version_hash,
     )
     if workflow_failure is not None:
         return workflow_failure
     payload = {
         "plan": full_plan.model_dump(mode="json"),
+        "revision": revision.model_dump(mode="json"),
         "reason": revision.reason,
     }
     _append_task_plan_event(loop_ctx, event_type="task_plan.revised", payload=payload)
@@ -477,6 +602,7 @@ def _handle_revise(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult:
     outputs: dict[str, Any] = {
         "action": PLAN_ACTION_REVISE,
         "plan_id": revision.plan_id,
+        "task_plan.revision": revision.model_dump(mode="json"),
     }
     if revision.continue_plan_autonomously:
         outputs[PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY] = True
@@ -506,7 +632,13 @@ def _handle_terminal(
         )
     payload = signal.model_dump(mode="json")
     if event_type == "task_plan.completed":
-        _materialize_remaining_completed_steps(loop_ctx=loop_ctx, signal=signal)
+        unresolved_step_ids = _unresolved_step_ids(_current_active_plan(loop_ctx))
+        if unresolved_step_ids:
+            return _failed_result(
+                code="PLAN_STEPS_UNRESOLVED",
+                summary="Task plan still has unresolved steps.",
+                details={"plan_id": signal.plan_id, "step_ids": unresolved_step_ids},
+            )
         _sync_goal_plan_step(
             loop_ctx,
             plan_id=signal.plan_id,
@@ -525,42 +657,10 @@ def _handle_terminal(
     )
 
 
-def _materialize_remaining_completed_steps(
-    *, loop_ctx: Any, signal: TaskPlanTerminalSignal
-) -> None:
-    active_plan = _current_active_plan(loop_ctx)
-    if _active_plan_id(active_plan) != signal.plan_id:
-        return
-    for raw_step in list((active_plan or {}).get("steps") or []):
-        if not isinstance(raw_step, dict):
-            continue
-        status = str(raw_step.get("status") or "pending").strip()
-        if status in {"completed", "blocked"}:
-            continue
-        completed = TaskPlanStepCompleted.model_validate(
-            {
-                "plan_id": signal.plan_id,
-                "step_id": raw_step.get("step_id"),
-                "outcome": "success",
-                "output_summary": signal.reason or "Completed by terminal plan signal.",
-            }
-        )
-        payload = completed.model_dump(mode="json")
-        _append_task_plan_event(
-            loop_ctx,
-            event_type="task_plan.step_completed",
-            payload=payload,
-        )
-        _update_active_plan_step_status(
-            loop_ctx,
-            plan_id=completed.plan_id,
-            step_id=completed.step_id,
-            status="completed",
-            output_summary=completed.output_summary,
-        )
-        _sync_goal_plan_step(
-            loop_ctx,
-            plan_id=completed.plan_id,
-            terminal_status="completed",
-        )
-        _task_ops_outputs(loop_ctx, task_ops_for_step_completed(completed))
+def _unresolved_step_ids(active_plan: dict[str, Any] | None) -> list[str]:
+    return [
+        str(step.get("step_id") or "<unknown>").strip()
+        for step in list((active_plan or {}).get("steps") or [])
+        if isinstance(step, dict)
+        and str(step.get("status") or "pending").strip().lower() != "completed"
+    ]

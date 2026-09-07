@@ -5,7 +5,7 @@ from openminion.base.config.env import resolve_environment_config
 
 from .errors import LLMCtlError
 from .providers import ProviderHistoryMessage, ProviderRequest, ProviderResponse
-from .runtime import run_async_compat
+from .runtime.sync import run_async_compat
 
 LLM_RESPONSE_INTERFACE_VERSION = "v1"
 PROVIDER_INTERFACE_VERSION = "v1"

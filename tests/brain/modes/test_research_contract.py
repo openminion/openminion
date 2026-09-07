@@ -1407,6 +1407,7 @@ def test_synthesize_and_finalize_pauses_without_model_synthesis(
 
         assert result.status == "waiting_user"
         assert "did not produce a usable synthesized answer" in str(result.message)
+        assert "Continue in a new turn to resume." in str(result.message)
         assert tm.get_task(record.task_id).state == TaskLifecycleState.PAUSED
 
 

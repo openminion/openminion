@@ -74,6 +74,32 @@ def test_sensitive_opt_in_never_overrides_prohibited_fields() -> None:
     assert "approval_token" not in cleaned
 
 
+def test_error_prose_requires_local_sensitive_content_opt_in() -> None:
+    payload = {
+        "error": {
+            "code": "PROVIDER_ERROR",
+            "type": "provider_error",
+            "category": "availability",
+            "message": "Bearer private-error",
+            "details": {"response": "private-details"},
+        },
+        "error_text": "private scalar error",
+    }
+
+    default = apply_content_policy(payload, allow_sensitive_content=False)
+    opted_in = apply_content_policy(payload, allow_sensitive_content=True)
+
+    assert default["error"] == {
+        "code": "PROVIDER_ERROR",
+        "type": "provider_error",
+        "category": "availability",
+    }
+    assert "error_text" not in default
+    assert opted_in["error"]["message"] == "Bearer private-error"
+    assert opted_in["error"]["details"] == {"response": "private-details"}
+    assert opted_in["error_text"] == "private scalar error"
+
+
 def test_truncation_records_original_and_retained_size() -> None:
     cleaned = apply_content_policy(
         {"status": "x" * 20},
@@ -100,7 +126,18 @@ def test_local_and_external_content_controls_are_independent(tmp_path) -> None:
                 session_id="session-1",
                 turn_id="turn-1",
                 event_type="llm.call.completed",
-                data={"content": "external opt-in", "api_key": "never"},
+                data={
+                    "content": "external opt-in",
+                    "api_key": "never",
+                    "error": {
+                        "code": "FAIL",
+                        "type": "provider_error",
+                        "category": "availability",
+                        "message": "never export",
+                        "details": "never export details",
+                    },
+                    "error_text": "never export scalar",
+                },
             )
         )
     )
@@ -109,6 +146,74 @@ def test_local_and_external_content_controls_are_independent(tmp_path) -> None:
     external = exporter.events[0]
     assert "content" not in local.data
     assert external.data["content"] == "external opt-in"
+    assert external.data["error"] == {
+        "code": "FAIL",
+        "type": "provider_error",
+        "category": "availability",
+    }
+    assert "error_text" not in external.data
     assert "api_key" not in local.data
     assert "api_key" not in external.data
     service.close_sync()
+
+
+def test_security_researcher_telemetry_is_structural_even_with_local_content(
+    tmp_path,
+) -> None:
+    service = TelemetryService(
+        str(tmp_path / ".openminion" / "telemetry.db"),
+        include_local_content=True,
+    )
+    service.record_event_sync(
+        TelemetryEvent(
+            session_id="security-session",
+            turn_id="security-turn",
+            event_type="brain.execution_status",
+            agent_id="security-researcher-readonly",
+            data={
+                "goal": "private target and source",
+                "title": "audit /private/customer/repo",
+                "artifact_refs": [
+                    "/private/customer/raw-report",
+                    "artifact://sha256/" + "b" * 64,
+                ],
+                "adaptive.finalization_status": {
+                    "status": "incomplete",
+                    "remaining_work": "private path",
+                },
+                "adaptive.termination_reason": "finalization_incomplete",
+                "status": "error",
+                "status_key": "error",
+                "tool_results": [
+                    {
+                        "structural_only": True,
+                        "tool_name": "security.publish_report",
+                        "ok": True,
+                        "verified": True,
+                        "data": {
+                            "result_status": "partial",
+                            "assessment_id": "a" * 32,
+                            "artifact_refs": ["artifact://sha256/" + "b" * 64],
+                            "private_body": "private finding prose",
+                        },
+                    }
+                ],
+                "terminal": True,
+            },
+        )
+    )
+
+    event = service._store.fetch_session_events("security-session")[0]
+    service.close_sync()
+
+    assert event.data["adaptive.termination_reason"] == "finalization_incomplete"
+    assert event.data["status"] == "error"
+    assert event.data["status_key"] == "error"
+    assert event.data["report_published"] is True
+    assert event.data["result_status"] == "partial"
+    assert event.data["assessment_id"] == "a" * 32
+    assert event.data["artifact_refs"] == ["artifact://sha256/" + "b" * 64]
+    assert "goal" not in event.data
+    assert "title" not in event.data
+    assert "adaptive.finalization_status" not in event.data
+    assert "private_body" not in str(event.data)

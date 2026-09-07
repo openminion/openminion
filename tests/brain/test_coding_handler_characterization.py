@@ -7,9 +7,16 @@ from unittest.mock import patch
 
 import pytest
 
-from openminion.modules.brain.constants import BRAIN_ACTION_STATUS_SUCCESS
+from openminion.modules.brain.constants import (
+    BRAIN_ACTION_STATUS_FAILED,
+    BRAIN_ACTION_STATUS_SUCCESS,
+)
 from openminion.modules.brain.loop.strategies.coding import handler
+from openminion.modules.brain.loop.strategies.coding import context_adapter
 from openminion.modules.brain.loop.strategies.coding import runtime as coding_runtime
+from openminion.modules.brain.loop.strategies.coding.context_adapter import (
+    _CodingLoopContextAdapter,
+)
 from openminion.modules.brain.loop.strategies.coding.handler import (
     CodingMode,
     CodingProfileRunner,
@@ -18,12 +25,20 @@ from openminion.modules.brain.loop.strategies.coding.handler import (
 )
 from openminion.modules.brain.loop.strategies.coding.plan import CodingPlan
 from openminion.modules.brain.loop.tools import (
-    ADAPTIVE_TERM_CIRCULAR_PATTERN,
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+    ADAPTIVE_TERM_CIRCULAR_PATTERN,
+    ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+    ADAPTIVE_TERM_FINALIZATION_BLOCKED,
+    ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+    ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
     ADAPTIVE_TERM_LLM_ERROR,
     AdaptiveToolLoopOutcome,
     AdaptiveToolLoopState,
+)
+from openminion.modules.brain.loop.tools.contracts import (
+    CommandExecutionOutcome,
+    PreparedToolDispatch,
 )
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_TERM_BUDGET_EXHAUSTED,
@@ -31,6 +46,7 @@ from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_TERM_FINAL_TEXT,
     CODING_TERM_TOOL_FAILURE,
     CODING_TERM_VERIFY_CAP_EXCEEDED,
+    PROJECT_CODING_ALLOWED_TOOLS,
 )
 from openminion.modules.brain.schemas import ActionResult, BudgetCounters, ToolCommand
 from openminion.modules.llm.schemas import Message
@@ -120,7 +136,7 @@ class TestCodingHandlerPureHelperBehavior:
         by_name = {spec.name: spec for spec in specs}
 
         assert "parent directories" in by_name["file.write"].description
-        assert "scaffold" in by_name["file.write"].description.lower()
+        assert "complete target file path" in by_name["file.write"].description
         assert "structured file tools" in by_name["exec.run"].description
         assert "directories" in by_name["exec.run"].description
 
@@ -157,6 +173,119 @@ class TestCodingHandlerPureHelperBehavior:
         assert spec.input_schema == schema
         assert "path/cwd/working_directory" in spec.description
 
+    def test_approved_project_loop_exposes_and_invokes_project_tool(self) -> None:
+        checkpoint = SimpleNamespace(
+            project_run=SimpleNamespace(
+                objective_ledger_ref="project:objective",
+                operator_decision_log_ref="project:decisions",
+            ),
+            payload={
+                "repository_lifecycle": {
+                    "project:objective": {
+                        "objective": "ship it",
+                        "approval": "approved",
+                    },
+                    "project:decisions": {
+                        "decisions": [
+                            {
+                                "decision": "project_launch_approved",
+                                "objective": "ship it",
+                            }
+                        ]
+                    },
+                }
+            },
+        )
+        seen: list[ToolCommand] = []
+
+        def execute_command(*, state, command, logger, include_reflect):
+            del state, logger, include_reflect
+            seen.append(command)
+            return CommandExecutionOutcome(
+                approved_command=command,
+                action_result=ActionResult(
+                    command_id=command.command_id,
+                    status=BRAIN_ACTION_STATUS_SUCCESS,
+                    summary="clean",
+                ),
+            )
+
+        runtime_runner = SimpleNamespace(task_manager=object())
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(resume_task_id_hint="task-1"),
+            _services=SimpleNamespace(runner=runtime_runner),
+            command_executor=SimpleNamespace(execute_command=execute_command),
+            logger=None,
+        )
+        schema = {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        }
+        with (
+            patch.object(
+                handler,
+                "load_latest_project_checkpoint",
+                return_value=checkpoint,
+            ),
+            patch.object(
+                coding_runtime,
+                "collect_runtime_tool_schemas",
+                return_value=[{"name": "git.status", "parameters": schema}],
+            ),
+            patch.object(
+                context_adapter,
+                "runner_from_context",
+                return_value=SimpleNamespace(session_api=None, options=None),
+            ),
+        ):
+            allowed_tools = handler._coding_allowed_tools(ctx)
+            tool_specs = handler._build_tool_specs(allowed_tools, ctx=ctx)
+            profile, iteration_specs = CodingProfileRunner()._iteration_profile(
+                ctx,
+                loop=AdaptiveToolLoopState(),
+                allowed_tools=allowed_tools,
+                tool_specs=tool_specs,
+            )
+            _CodingLoopContextAdapter(ctx).execute_command(
+                command=ToolCommand(
+                    title="Inspect repository status",
+                    tool_name="git.status",
+                    args={},
+                )
+            )
+
+        assert profile.allowed_tools == PROJECT_CODING_ALLOWED_TOOLS
+        by_name = {spec.name: spec for spec in iteration_specs}
+        assert by_name["git.status"].input_schema == schema
+        assert seen[0].tool_name == "git.status"
+
+    def test_build_tool_specs_projects_targets_only_for_verify_candidates(self) -> None:
+        specs = handler._build_tool_specs(
+            frozenset({"file.read", "file.read_range", "exec.run", "exec.poll"}),
+            verification_targets={
+                "criterion": ("criterion-http",),
+                "deliverable": ("deliverable-page",),
+            },
+        )
+        by_name = {spec.name: spec for spec in specs}
+
+        for tool_name in ("file.read", "file.read_range", "exec.run"):
+            schema = by_name[tool_name].input_schema
+            assert "verification_target_kind" in schema["required"]
+            assert "verification_target_id" in schema["required"]
+            assert schema["properties"]["verification_target_id"]["enum"] == [
+                "criterion-http",
+                "deliverable-page",
+            ]
+        assert (
+            "verification_target_id"
+            not in by_name["exec.poll"].input_schema["properties"]
+        )
+
+        [ordinary] = handler._build_tool_specs(frozenset({"exec.run"}))
+        assert "verification_target_id" not in ordinary.input_schema["properties"]
+
     def test_verify_phase_allowed_tools_drop_mutating_writers(self) -> None:
         runner = CodingProfileRunner()
         runner._coding_plan = CodingPlan.fallback(
@@ -191,12 +320,209 @@ class TestCodingHandlerPureHelperBehavior:
         )
         runner._coding_plan.current_phase = "verify"
 
-        runner._append_phase_instruction()
+        runner._append_phase_instruction(
+            SimpleNamespace(state=SimpleNamespace(goal=None))
+        )
 
         prompt = runner._loop_state.messages[-1].content
         assert "Verification is read-only" in prompt
         assert "do not modify files or apply patches" in prompt
         assert "`file.read` or `file.read_range` first" in prompt
+
+    def test_verification_binding_survives_direct_and_prepared_dispatch(self) -> None:
+        seen: list[ToolCommand] = []
+        callbacks: list[ToolCommand] = []
+
+        def execute_command(*, state, command, logger, include_reflect):
+            del state, logger, include_reflect
+            seen.append(command)
+            return CommandExecutionOutcome(
+                approved_command=command,
+                action_result=ActionResult(
+                    command_id=command.command_id,
+                    status=BRAIN_ACTION_STATUS_SUCCESS,
+                    summary="ok",
+                ),
+            )
+
+        direct_executor = SimpleNamespace(execute_command=execute_command)
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(),
+            command_executor=direct_executor,
+            logger=None,
+        )
+        command = ToolCommand(
+            title="verify",
+            tool_name="exec.run",
+            args={
+                "argv": ["pytest", "-q"],
+                "verification_target_kind": "criterion",
+                "verification_target_id": "criterion-tests",
+            },
+        )
+        with patch.object(
+            context_adapter,
+            "runner_from_context",
+            return_value=SimpleNamespace(session_api=None, options=None),
+        ):
+            adapter = _CodingLoopContextAdapter(
+                ctx,
+                on_command_result=lambda approved, result: callbacks.append(approved),
+            )
+            adapter.execute_command(command=command)
+
+        assert seen[0].args == {"argv": ["pytest", "-q"]}
+        assert seen[0].verification_target_kind == "criterion"
+        assert seen[0].verification_target_id == "criterion-tests"
+        assert callbacks == seen
+
+        def prepare_tool_dispatch(*, state, command, logger, include_reflect):
+            del state, logger, include_reflect
+            seen.append(command)
+            return PreparedToolDispatch(
+                approved_command=command,
+                original_command=command,
+                command_id=command.command_id,
+                tool_name=command.tool_name,
+                validated_args=dict(command.args),
+                session_id="session-1",
+                trace_id="trace-1",
+                agent_id="agent-1",
+                lineage={},
+                permission_mode="default",
+                payload={},
+            )
+
+        prepared_executor = SimpleNamespace(
+            prepare_tool_dispatch=prepare_tool_dispatch,
+            execute_prepared_tool_dispatch=lambda **kwargs: None,
+            finalize_tool_result=lambda **kwargs: None,
+        )
+        ctx.command_executor = prepared_executor
+        with patch.object(
+            context_adapter,
+            "runner_from_context",
+            return_value=SimpleNamespace(session_api=None, options=None),
+        ):
+            prepared_adapter = _CodingLoopContextAdapter(ctx)
+            prepared = prepared_adapter.prepare_tool_dispatch(command=command)
+
+        assert prepared.approved_command.args == {"argv": ["pytest", "-q"]}
+        assert prepared.approved_command.verification_target_kind == "criterion"
+        assert prepared.approved_command.verification_target_id == "criterion-tests"
+
+    @pytest.mark.parametrize(
+        "termination_reason",
+        (ADAPTIVE_TERM_FINALIZATION_BLOCKED, ADAPTIVE_TERM_FINALIZATION_INCOMPLETE),
+    )
+    def test_incomplete_finalization_remains_resumable(
+        self,
+        termination_reason: str,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._finalize_checkpoint = lambda *args, **kwargs: None
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(),
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=termination_reason,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset(),
+            final_text="Implementation needs another turn.",
+            finalization_status={"status": "incomplete"},
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "waiting_user"
+        assert result.message == "Implementation needs another turn."
+
+    @pytest.mark.parametrize(
+        "termination_reason, expected_code",
+        (
+            (
+                ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+                "coding_finalization_contract_missing",
+            ),
+            (
+                ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
+                "coding_direct_tool_closure_failed",
+            ),
+        ),
+    )
+    def test_finalization_integrity_failures_are_explicit_errors(
+        self,
+        termination_reason: str,
+        expected_code: str,
+    ) -> None:
+        runner = CodingProfileRunner()
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(
+                budgets_remaining=SimpleNamespace(tool_calls=1, tokens=1),
+                llm_calls_used=0,
+                llm_calls_max=1,
+            )
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=termination_reason,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset(),
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "error"
+        assert result.action_result.error is not None
+        assert result.action_result.error.code == expected_code
+
+    def test_missing_finalization_contract_at_budget_boundary_is_resumable(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._loop_state.tool_calls_made = ["file.write"]
+        runner._finalize_checkpoint = lambda *args, **kwargs: None
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(
+                budgets_remaining=SimpleNamespace(tool_calls=0, tokens=1),
+                llm_calls_used=0,
+                llm_calls_max=1,
+            )
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset(),
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "waiting_user"
+        assert "Continue in a new turn to resume" in result.message
+        assert result.action_result.error is not None
+        assert result.action_result.error.code == "coding_budget_exhausted"
 
 
 class TestCodingVerificationReserve:
@@ -218,6 +544,359 @@ class TestCodingVerificationReserve:
         payload = runner._loop_state.scratchpad["coding.last_verifier_candidate"]
         assert payload["command"]["tool_name"] == "file.read"
         assert runner._has_verifier_candidate() is True
+
+    def test_directory_listing_replaces_failed_criterion_evidence(self) -> None:
+        runner = CodingProfileRunner()
+        failed_command = ToolCommand(
+            title="list files with shell",
+            tool_name="exec.run",
+            args={"argv": ["ls"]},
+            verification_target_kind="criterion",
+            verification_target_id="files-exist",
+        )
+        runner._record_verifier_candidate(
+            failed_command,
+            ActionResult(
+                command_id=failed_command.command_id,
+                status=BRAIN_ACTION_STATUS_FAILED,
+                summary="use file.list_dir",
+            ),
+        )
+        listing_command = ToolCommand(
+            title="list files",
+            tool_name="file.list_dir",
+            args={"path": "."},
+            verification_target_kind="criterion",
+            verification_target_id="files-exist",
+        )
+        runner._record_verifier_candidate(
+            listing_command,
+            ActionResult(
+                command_id=listing_command.command_id,
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="listed files",
+                outputs={"entries": [{"name": "greet.py", "type": "file"}]},
+            ),
+        )
+
+        command, action_result = runner._bound_verifier_candidates()[0]
+        assert command.tool_name == "file.list_dir"
+        assert action_result.status == BRAIN_ACTION_STATUS_SUCCESS
+
+    def test_file_write_binds_an_exact_deliverable_path(self) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = SimpleNamespace(
+            verifier_goal=SimpleNamespace(
+                deliverables=[SimpleNamespace(deliverable_id="test_section_summary.py")]
+            )
+        )
+        command = ToolCommand(
+            title="write tests",
+            tool_name="file.write",
+            args={"path": "/tmp/project/test_section_summary.py", "content": ""},
+        )
+
+        runner._record_verifier_candidate(
+            command,
+            ActionResult(
+                command_id=command.command_id,
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="wrote tests",
+                outputs={"path": "/tmp/project/test_section_summary.py"},
+            ),
+        )
+
+        candidate = runner._loop_state.scratchpad["coding.verifier_candidates"]
+        assert set(candidate) == {"deliverable:test_section_summary.py"}
+
+    def test_unbound_verifier_binds_only_remaining_typed_target(self) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = SimpleNamespace(
+            verifier_goal=SimpleNamespace(
+                success_criteria=[SimpleNamespace(criterion_id="tests-pass")],
+                deliverables=[SimpleNamespace(deliverable_id="module.py")],
+            )
+        )
+        runner._loop_state.scratchpad["coding.verifier_candidates"] = {
+            "deliverable:module.py": {"already": "bound"}
+        }
+        command = ToolCommand(
+            title="run tests",
+            tool_name="exec.run",
+            args={"argv": ["pytest", "-q"]},
+        )
+
+        runner._record_verifier_candidate(
+            command,
+            ActionResult(
+                command_id=command.command_id,
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="tests passed",
+                outputs={"exit_code": 0},
+            ),
+        )
+
+        candidate = runner._loop_state.scratchpad["coding.verifier_candidates"]
+        assert set(candidate) == {"deliverable:module.py", "criterion:tests-pass"}
+        bound, _result = runner._bound_verifier_candidates()[0]
+        assert bound.verification_target_kind == "criterion"
+        assert bound.verification_target_id == "tests-pass"
+
+    def test_success_from_another_tool_does_not_clear_exec_failure(self) -> None:
+        runner = CodingProfileRunner()
+        failed_command = ToolCommand(
+            title="run tests",
+            tool_name="exec.run",
+            args={"argv": ["pytest", "-q"]},
+        )
+        runner._record_verifier_candidate(
+            failed_command,
+            ActionResult(
+                command_id=failed_command.command_id,
+                status=BRAIN_ACTION_STATUS_FAILED,
+                summary="tests failed",
+            ),
+        )
+        runner._loop_state.scratchpad["coding.self_corrections"] = 1
+        write_command = ToolCommand(
+            title="fix source",
+            tool_name="file.write",
+            args={"path": "module.py", "content": "fixed"},
+        )
+
+        runner._record_verifier_candidate(
+            write_command,
+            ActionResult(
+                command_id=write_command.command_id,
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="fixed source",
+                outputs={"path": "module.py"},
+            ),
+        )
+
+        assert "coding.unresolved_verifier_failure" in runner._loop_state.scratchpad
+
+    def test_successful_mutation_allows_reverification_of_an_open_failure(self) -> None:
+        runner = CodingProfileRunner()
+        failed_command = ToolCommand(
+            title="run tests",
+            tool_name="exec.run",
+            args={"argv": ["pytest", "-q"]},
+        )
+        runner._record_verifier_candidate(
+            failed_command,
+            ActionResult(
+                command_id=failed_command.command_id,
+                status=BRAIN_ACTION_STATUS_FAILED,
+                summary="tests failed",
+            ),
+        )
+        runner._loop_state.scratchpad["adaptive.tool_results"] = [
+            {"tool_name": "exec.run", "ok": False},
+            {"tool_name": "file.write", "ok": True},
+        ]
+
+        assert runner._latest_tool_failure_summary() == ""
+        assert "coding.unresolved_verifier_failure" in runner._loop_state.scratchpad
+
+    def test_failed_verifier_is_not_erased_by_later_success(self) -> None:
+        runner = CodingProfileRunner()
+        failed_command = ToolCommand(
+            title="primary verifier",
+            tool_name="exec.run",
+            args={"argv": ["verify-primary"]},
+        )
+        failed_result = ActionResult(
+            command_id=failed_command.command_id,
+            status=BRAIN_ACTION_STATUS_FAILED,
+            summary="primary verification failed",
+            outputs={"exit_code": 1},
+        )
+        successful_command = ToolCommand(
+            title="diagnostic",
+            tool_name="exec.run",
+            args={"argv": ["inspect-one-value"]},
+        )
+        successful_result = ActionResult(
+            command_id=successful_command.command_id,
+            status=BRAIN_ACTION_STATUS_SUCCESS,
+            summary="diagnostic completed",
+            outputs={"exit_code": 0},
+        )
+
+        runner._record_verifier_candidate(failed_command, failed_result)
+        runner._record_verifier_candidate(successful_command, successful_result)
+
+        unresolved = runner._loop_state.scratchpad["coding.unresolved_verifier_failure"]
+        assert unresolved["command"]["args"] == {"argv": ["verify-primary"]}
+        assert runner._latest_tool_failure_summary() == "primary verification failed"
+        assert runner._loop_state.scratchpad["coding.last_verifier_candidate"][
+            "command"
+        ]["args"] == {"argv": ["inspect-one-value"]}
+
+        restored = CodingProfileRunner()
+        restored.restore_state(runner.snapshot_state())
+        assert restored._latest_tool_failure_summary() == "primary verification failed"
+
+        runner._record_autonomous_correction(
+            SimpleNamespace(
+                state=SimpleNamespace(task_backed_checkpoint_id=None),
+                emit_status=lambda **kwargs: None,
+            ),
+            failure_summary="primary verification failed",
+        )
+
+        assert "coding.unresolved_verifier_failure" in runner._loop_state.scratchpad
+        assert runner._loop_state.scratchpad["coding.self_corrections"] == 1
+
+        runner._record_verifier_candidate(successful_command, successful_result)
+
+        assert "coding.unresolved_verifier_failure" not in runner._loop_state.scratchpad
+
+    def test_parallel_running_exec_polls_inherit_original_targets(self) -> None:
+        runner = CodingProfileRunner()
+        for session_id, target_kind, target_id in (
+            ("execproc-1", "criterion", "criterion-tests"),
+            ("execproc-2", "deliverable", "deliverable-report"),
+        ):
+            runner._record_verifier_candidate(
+                ToolCommand(
+                    title="run verifier",
+                    tool_name="exec.run",
+                    args={"argv": ["python", "-m", "pytest", "-q"]},
+                    verification_target_kind=target_kind,
+                    verification_target_id=target_id,
+                ),
+                ActionResult(
+                    command_id=f"cmd-{session_id}",
+                    status=BRAIN_ACTION_STATUS_SUCCESS,
+                    summary="Command still running",
+                    outputs={"status": "running", "session_id": session_id},
+                ),
+            )
+
+        pending = runner._loop_state.scratchpad["coding.pending_verifier_sessions"]
+        assert pending == {
+            "execproc-1": {
+                "verification_target_kind": "criterion",
+                "verification_target_id": "criterion-tests",
+            },
+            "execproc-2": {
+                "verification_target_kind": "deliverable",
+                "verification_target_id": "deliverable-report",
+            },
+        }
+        assert runner._has_verifier_candidate() is False
+
+        runner._record_verifier_candidate(
+            ToolCommand(
+                title="poll first verifier",
+                tool_name="exec.poll",
+                args={"session_id": "execproc-1"},
+                verification_target_kind="deliverable",
+                verification_target_id="deliverable-report",
+            ),
+            ActionResult(
+                command_id="cmd-poll-1",
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="tests passed",
+                outputs={
+                    "status": "exited",
+                    "session_id": "execproc-1",
+                    "exit_code": 0,
+                },
+            ),
+        )
+        first = runner._loop_state.scratchpad["coding.last_verifier_candidate"]
+        assert first["command"]["verification_target_kind"] == "criterion"
+        assert first["command"]["verification_target_id"] == "criterion-tests"
+        assert set(
+            runner._loop_state.scratchpad["coding.pending_verifier_sessions"]
+        ) == {"execproc-2"}
+        assert runner._has_verifier_candidate() is False
+
+        runner._record_verifier_candidate(
+            ToolCommand(
+                title="poll second verifier",
+                tool_name="exec.poll",
+                args={"session_id": "execproc-2"},
+            ),
+            ActionResult(
+                command_id="cmd-poll-2",
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="report created",
+                outputs={
+                    "status": "exited",
+                    "session_id": "execproc-2",
+                    "exit_code": 0,
+                },
+            ),
+        )
+
+        assert not runner._loop_state.scratchpad["coding.pending_verifier_sessions"]
+        assert runner._has_verifier_candidate() is True
+        candidates = runner._loop_state.scratchpad["coding.verifier_candidates"]
+        assert set(candidates) == {
+            "criterion:criterion-tests",
+            "deliverable:deliverable-report",
+        }
+
+    def test_failed_exec_poll_preserves_original_target_for_terminal_poll(self) -> None:
+        runner = CodingProfileRunner()
+        runner._record_verifier_candidate(
+            ToolCommand(
+                title="run verifier",
+                tool_name="exec.run",
+                args={"argv": ["python", "-m", "pytest", "-q"]},
+                verification_target_kind="criterion",
+                verification_target_id="criterion-tests",
+            ),
+            ActionResult(
+                command_id="cmd-run",
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="Command still running",
+                outputs={"status": "running", "session_id": "execproc-1"},
+            ),
+        )
+        poll = ToolCommand(
+            title="poll verifier",
+            tool_name="exec.poll",
+            args={"session_id": "execproc-1"},
+        )
+
+        runner._record_verifier_candidate(
+            poll,
+            ActionResult(
+                command_id="cmd-poll-failed",
+                status="failed",
+                summary="poll transport failed",
+                outputs={"status": "error"},
+            ),
+        )
+
+        assert (
+            "execproc-1"
+            in runner._loop_state.scratchpad["coding.pending_verifier_sessions"]
+        )
+
+        runner._record_verifier_candidate(
+            poll,
+            ActionResult(
+                command_id="cmd-poll-terminal",
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="tests passed",
+                outputs={
+                    "status": "exited",
+                    "session_id": "execproc-1",
+                    "exit_code": 0,
+                },
+            ),
+        )
+
+        assert not runner._loop_state.scratchpad["coding.pending_verifier_sessions"]
+        command, _result = runner._bound_verifier_candidates()[0]
+        assert command.verification_target_kind == "criterion"
+        assert command.verification_target_id == "criterion-tests"
 
     @pytest.mark.parametrize(
         "termination_reason",
@@ -309,7 +988,10 @@ class TestCodingVerificationReserve:
             "coding.pending_continue": True,
         }
         ctx = SimpleNamespace(
-            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            state=SimpleNamespace(
+                task_backed_checkpoint_id=None,
+                goal="Use the exact label `result:`.",
+            ),
             emit_status=lambda **kwargs: None,
         )
         outcome = AdaptiveToolLoopOutcome(
@@ -351,7 +1033,10 @@ class TestCodingVerificationReserve:
             ),
         }
         ctx = SimpleNamespace(
-            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            state=SimpleNamespace(
+                task_backed_checkpoint_id=None,
+                goal="Use the exact label `result:`.",
+            ),
             emit_status=lambda **kwargs: None,
         )
         outcome = AdaptiveToolLoopOutcome(
@@ -371,6 +1056,10 @@ class TestCodingVerificationReserve:
         assert runner._maybe_continue_with_final_answer_reserve(ctx, outcome=outcome)
         assert runner._loop_state.scratchpad["coding.final_answer_reserve_used"] is True
         assert "Do not call any tools" in runner._loop_state.messages[-1].content
+        assert "Original request:" in runner._loop_state.messages[-1].content
+        assert (
+            "Use the exact label `result:`." in runner._loop_state.messages[-1].content
+        )
 
     def test_verify_closeout_reserve_promotes_verify_with_existing_readback(
         self,
@@ -697,6 +1386,50 @@ class TestCodingVerificationReserve:
 
         assert result.status == "waiting_user"
         assert "budget exhausted" in str(result.message or "")
+
+    def test_budget_exhausted_after_file_write_remains_resumable(self) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
+        runner._coding_plan.current_phase = "verify"
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "pkg/main.py"},
+                }
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            evaluate_turn_closure=lambda **kwargs: None,
+            apply_closure_judgment=lambda **kwargs: None,
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset(),
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "waiting_user"
+        assert "Continue in a new turn to resume." in str(result.message or "")
+        assert "successful file writes were closed" not in str(result.message or "")
 
     def test_final_answer_reserve_budget_exhausted_does_not_salvage_missing_validation(
         self,
@@ -1095,6 +1828,41 @@ class TestCodingVerificationReserve:
         assert runner._loop_state.direct_tool_turn is not None
         assert "file.write" in runner._loop_state.messages[-1].content
 
+    def test_successful_mutation_adds_verify_to_read_only_plan(self) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {"tool_name": "file.write", "ok": True},
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_FINAL_TEXT,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "file.read"}),
+            final_text="Implemented the change.",
+        )
+
+        result = runner._handle_iteration_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result is None
+        assert runner._coding_plan.requires_file_change is True
+        assert runner._coding_plan.current_phase == "verify"
+        assert [phase.name for phase in runner._coding_plan.phases] == [
+            "implement",
+            "verify",
+        ]
+
     def test_initial_implement_phase_stages_file_writer_for_explicit_file_task(
         self,
     ) -> None:
@@ -1344,6 +2112,25 @@ class TestCodingVerificationReserve:
 
         assert runner._has_successful_mutating_file_result() is False
 
+    def test_successful_mutations_become_verifier_artifact_refs(self, tmp_path) -> None:
+        first = tmp_path / "tiny_math.py"
+        second = tmp_path / "test_tiny_math.py"
+        first.write_text("def add_one(value): return value + 1\n", encoding="utf-8")
+        second.write_text("def test_add_one(): assert True\n", encoding="utf-8")
+        runner = CodingProfileRunner()
+        runner._loop_state.scratchpad = {
+            "coding.cwd": str(tmp_path),
+            "adaptive.tool_results": [
+                {"tool_name": "file.write", "ok": True, "path": first.name},
+                {"tool_name": "file.write", "ok": True, "path": second.name},
+                {"tool_name": "file.read", "ok": True, "path": first.name},
+            ],
+        }
+
+        refs = runner._successful_mutating_artifact_refs()
+
+        assert [ref.ref for ref in refs] == [first.name, second.name]
+
     def test_mutating_file_result_accepts_runtime_final_path(
         self,
         tmp_path,
@@ -1535,7 +2322,7 @@ class TestCodingVerificationReserve:
         assert runner._loop_state.direct_tool_turn is None
         assert not emitted
 
-    def test_budget_exhausted_after_file_write_returns_labeled_evidence_closeout(
+    def test_budget_exhausted_after_file_write_stays_resumable(
         self,
     ) -> None:
         runner = CodingProfileRunner()
@@ -1584,11 +2371,11 @@ class TestCodingVerificationReserve:
             allowed_tools=outcome.allowed_tools,
         )
 
-        assert result.status == "done"
+        assert result.status == "waiting_user"
         message = str(result.message or "").lower()
-        assert message.startswith("result:")
-        assert "validation:" not in message
-        assert "wc_cli.py" in result.message
+        assert "budget exhausted" in message
+        assert "continue in a new turn to resume" in message
+        assert "result:" not in message
 
     def test_final_text_allows_read_only_plan_without_write(
         self,

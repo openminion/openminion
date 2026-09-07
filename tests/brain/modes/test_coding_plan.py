@@ -5,8 +5,10 @@ import pytest
 from openminion.modules.brain.loop.strategies.coding.plan import (
     CodingPhase,
     CodingPlan,
-    CodingSubtask,
     coding_plan_from_payload,
+)
+from openminion.modules.brain.loop.strategies.coding.prompts import (
+    build_coding_plan_system_prompt,
 )
 
 
@@ -66,10 +68,10 @@ def test_coding_payload_requires_explicit_file_change_contract() -> None:
             "goal": "Inspect first.",
             "phases": [{"name": "implement", "status": "active"}],
             "current_phase": "implement",
-        },
-        goal="Create a tiny Python module and test.",
+        }
     )
 
+    assert plan is not None
     assert plan.requires_file_change is False
 
 
@@ -80,10 +82,10 @@ def test_coding_payload_keeps_read_only_goal_read_only() -> None:
             "phases": [{"name": "implement", "status": "active"}],
             "current_phase": "implement",
             "requires_file_change": False,
-        },
-        goal="Explain this package.",
+        }
     )
 
+    assert plan is not None
     assert plan.requires_file_change is False
 
 
@@ -91,6 +93,28 @@ def test_coding_fallback_can_require_file_change() -> None:
     plan = CodingPlan.fallback("Build a CLI", requires_file_change=True)
 
     assert plan.requires_file_change is True
+    assert [phase.name for phase in plan.phases] == ["implement", "verify"]
+
+
+def test_file_changing_plan_adds_terminal_verify_phase() -> None:
+    plan = CodingPlan(
+        goal="Build a CLI",
+        phases=[CodingPhase(name="implement", status="active")],
+        current_phase="implement",
+        requires_file_change=True,
+    )
+
+    assert [phase.name for phase in plan.phases] == ["implement", "verify"]
+
+
+def test_file_changing_plan_requires_implementation_phase() -> None:
+    with pytest.raises(ValueError, match="must include implement"):
+        CodingPlan(
+            goal="Build a CLI",
+            phases=[CodingPhase(name="verify", status="active")],
+            current_phase="verify",
+            requires_file_change=True,
+        )
 
 
 def test_coding_plan_rejects_invalid_phase_order() -> None:
@@ -140,25 +164,14 @@ def test_coding_plan_advances_one_phase_at_a_time() -> None:
     assert plan.phases[1].status == "active"
 
 
-def test_coding_plan_conflicting_subtask_pairs() -> None:
-    plan = CodingPlan(
-        goal="Split files",
-        phases=[CodingPhase(name="implement", status="active")],
-        current_phase="implement",
-        subtasks=[
-            CodingSubtask(goal="Edit A", target_files=["src/a.py"]),
-            CodingSubtask(goal="Edit B", target_files=["src/b.py"]),
-            CodingSubtask(goal="Edit A helpers", target_files=["src/a.py"]),
-        ],
-    )
+def test_coding_plan_keeps_cohesive_workspace_changes_in_one_loop() -> None:
+    prompt = build_coding_plan_system_prompt()
 
-    assert plan.conflicting_subtask_pairs() == [(0, 2)]
+    assert "Keep subtasks empty for one cohesive workspace change." in prompt
+    assert "completed and verified in sequence" in prompt
 
 
-def test_coding_plan_from_payload_falls_back_on_invalid_payload() -> None:
-    plan = coding_plan_from_payload({"goal": ""}, goal="Do work")
+def test_coding_plan_from_payload_rejects_invalid_payload() -> None:
+    plan = coding_plan_from_payload({"goal": ""})
 
-    assert plan.goal == "Do work"
-    assert plan.current_phase == "implement"
-    assert [phase.name for phase in plan.phases] == ["implement"]
-    assert plan.verifier_goal is None
+    assert plan is None

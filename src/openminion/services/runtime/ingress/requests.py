@@ -1,10 +1,11 @@
 """Request shaping and validation for runtime ingress."""
 
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
 from openminion.base.config import combine_run_profile_overrides, resolve_agent_identity
-from openminion.services.runtime.manager import DesktopApprovalRequester, TurnRequest
+from openminion.services.runtime.interfaces import DesktopApprovalRequester
+from openminion.services.runtime.manager import TurnRequest
 
 from .payloads import (
     apply_inbound_overrides,
@@ -30,7 +31,6 @@ def runtime_turn_request_from_payload(
     message = str(payload.get("message", "")).strip()
     if not message:
         raise TurnRequestError("`message` is required and must be a non-empty string.")
-
     agent_id_raw = payload.get("agent_id")
     requested_agent_id = (
         str(agent_id_raw).strip() if isinstance(agent_id_raw, str) else None
@@ -90,7 +90,6 @@ def build_manager_turn_request(
         raise ValueError("`session_id` is required.")
     if not input_text and not _is_pae_idle_tick(payload):
         raise ValueError("`input_text` is required.")
-
     return TurnRequest(
         trace_id=trace_id,
         agent_id=agent_id,
@@ -166,7 +165,7 @@ def apply_workspace_root(
     return inbound_metadata
 
 
-def _immutable_metadata(value: dict[str, str] | None) -> MappingProxyType | None:
+def _immutable_metadata(value: dict[str, str] | None) -> Mapping[str, str] | None:
     return MappingProxyType(dict(value)) if value is not None else None
 
 
@@ -249,8 +248,10 @@ def _lift_payload_fields(*, meta: dict[str, Any], payload: dict[str, Any]) -> No
         "timeout_seconds",
         "inbound_metadata",
         "deliver",
+        "allowed_tools",
         "forced_tools",
         "capability_category",
+        "permission_mode",
     ):
         if key in payload:
             meta[key] = payload.get(key)

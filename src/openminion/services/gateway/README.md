@@ -45,8 +45,8 @@ Internal modules of note:
 
 ## Non-goals
 
-- Channel transport (Telegram, HTTP, CLI bind) — that lives in
-  `controlplane/channels/*` and `controlplane/`.
+- Channel transport (Telegram, Slack, HTTP, CLI bind) — that lives in
+  `modules/controlplane/channels/*` and `modules/controlplane/`.
 - LLM call execution — owned by `services/agent/` +
   `modules/brain/` + `modules/llm/`.
 - Session storage — owned by `modules/session/`.

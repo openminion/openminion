@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
 import sys
+import types
 from pathlib import Path
+
+import pytest
 
 
 _SCRIPT_PATH = (
@@ -23,6 +28,68 @@ def _load_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _bound_identity(module, **kwargs):
+    identity = module._measurement_identity(**kwargs)
+    return _complete_identity(module, identity)
+
+
+def _complete_identity(module, identity):
+    runtime_config = dict(identity["runtime_config"])
+    runtime_config.update(
+        {
+            "python_executable": sys.executable,
+            "workspace_root": str(_SCRIPT_PATH.parents[2].parent),
+        }
+    )
+    identity.update(
+        {
+            "git_head": "a" * 40,
+            "dirty_tree_fingerprint": "b" * 64,
+            "runner_path": "/opt/owpr/performance_baseline.py",
+            "runner_source_sha256": "c" * 64,
+            "loaded_openminion_package_root": "/opt/owpr/openminion",
+            "runtime_environment": {
+                "resolved_python_executable": sys.executable,
+                "running_python_executable": sys.executable,
+                "python_implementation": "CPython",
+                "python_version": sys.version.split()[0],
+                "python_build": ["test", "test"],
+                "platform": "test-platform",
+                "host_runtime_hash": "d" * 64,
+                "effective_sys_path": ["/work/openminion/src", "/work/openminion"],
+                "effective_sys_path_shape": ["<SUT_SRC>", "<SUT_REPO>"],
+                "inherited_pythonpath": "/work/openminion/src:/work/openminion",
+                "inherited_pythonpath_shape": ["<SUT_SRC>", "<SUT_REPO>"],
+                "bytecode_cache_environment": {
+                    "dont_write_bytecode": "1",
+                    "pycache_prefix": "/tmp/pycache",
+                    "pycache_posture": "external",
+                    "no_user_site": "1",
+                },
+                "runtime_dependency_hash": "e" * 64,
+                "editable_dependency_names": [],
+                "distributions": [],
+            },
+            "config_hash": module._stable_json_hash(runtime_config),
+            "runtime_config": runtime_config,
+        }
+    )
+    return identity
+
+
+def _omfla_options(module, output_root: Path):
+    return module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=output_root,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=60,
+        include_importtime=False,
+        profile=False,
+        threshold_mode="off",
+    )
 
 
 def test_runner_script_importable() -> None:
@@ -66,6 +133,8 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
             "artifact_path": "/tmp/run-1.json",
             "metrics": {
                 "wall_time_ms": 10,
+                "process_cpu_time_ns": 100,
+                "python_gc_collection_count": 1,
                 "rss_delta_bytes": 100,
                 "tracemalloc_peak_bytes": 1000,
                 "prompt_tokens_estimated": 5,
@@ -93,6 +162,8 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
             "artifact_path": "/tmp/run-2.json",
             "metrics": {
                 "wall_time_ms": 20,
+                "process_cpu_time_ns": 200,
+                "python_gc_collection_count": 3,
                 "rss_delta_bytes": 200,
                 "tracemalloc_peak_bytes": 1500,
                 "prompt_tokens_estimated": 7,
@@ -115,6 +186,13 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
             },
         },
     ]
+    for run in runs:
+        run["measurement_identity"] = _complete_identity(
+            module, run["measurement_identity"]
+        )
+        run["comparison_identity"] = module._comparison_identity(
+            run["measurement_identity"]
+        )
 
     summary = module.summarize_runs(runs)
 
@@ -122,6 +200,8 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
     assert local["count"] == 2
     assert local["wall_time_ms"]["median"] == 15
     assert local["wall_time_ns"]["count"] == 0
+    assert local["process_cpu_time_ns"]["median"] == 150
+    assert local["python_gc_collection_count"]["median"] == 2
     assert local["prompt_tokens_estimated"]["max"] == 7
     assert local["segment_family_metrics"][0]["segment_family"] == "replay_user"
     assert local["segment_family_metrics"][0]["prompt_bytes"] == 40
@@ -131,6 +211,64 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
     assert local["measurement_identity"]["command"] == "local_status_fixture"
     assert local["warn_only"] is False
     assert summary["scenarios"]["provider_turn"]["warn_only"] is True
+
+
+def test_run_with_metrics_records_exact_cpu_and_gc_deltas(monkeypatch) -> None:
+    module = _load_module()
+    process_cpu_times = iter((100, 175))
+    gc_stats = iter(
+        (
+            [{"collections": 3}, {"collections": 2}],
+            [{"collections": 5}, {"collections": 4}],
+        )
+    )
+    perf_counter_times = iter((1_000, 1_125))
+    monkeypatch.setattr(module.time, "process_time_ns", lambda: next(process_cpu_times))
+    monkeypatch.setattr(module.gc, "get_stats", lambda: next(gc_stats))
+    monkeypatch.setattr(
+        module.time, "perf_counter_ns", lambda: next(perf_counter_times)
+    )
+
+    run = module._run_with_metrics(
+        scenario_id="metric_delta_test",
+        command="metric_delta_fixture",
+        provider_variance_class=module.LOCAL_VARIANCE,
+        action=lambda _metrics: [],
+    )
+
+    assert run.metrics["wall_time_ns"] == 125
+    assert run.metrics["process_cpu_time_ns"] == 75
+    assert run.metrics["python_gc_collection_count"] == 4
+
+
+def test_failed_subprocess_keeps_cpu_and_gc_unavailable() -> None:
+    module = _load_module()
+
+    def fail_before_sampling(_metrics):
+        raise RuntimeError("child failed")
+
+    run = module._run_with_metrics(
+        scenario_id="failed_subprocess_test",
+        command="failed_subprocess_fixture",
+        provider_variance_class=module.LOCAL_VARIANCE,
+        measurement_identity=module._measurement_identity(
+            scenario_id="failed_subprocess_test",
+            command="failed_subprocess_fixture",
+            measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
+            fixture_revision="test",
+        ),
+        action=fail_before_sampling,
+    )
+
+    assert run.ok is False
+    assert run.metrics["process_cpu_time_ns"] is None
+    assert run.metrics["python_gc_collection_count"] is None
+    assert run.metrics["availability_reasons"]["process_cpu_time_ns"] == (
+        "not_supported_for_subprocess"
+    )
+    assert run.metrics["availability_reasons"]["python_gc_collection_count"] == (
+        "not_supported_for_subprocess"
+    )
 
 
 def test_canonical_help_command_uses_root_help_and_explicit_data_root(
@@ -155,27 +293,40 @@ def test_canonical_help_command_uses_root_help_and_explicit_data_root(
     assert command[command.index("--data-root") + 1] == str(data_root)
 
 
-def test_comparison_rejects_identity_mismatch() -> None:
+def test_comparison_allows_source_and_workspace_identity_changes() -> None:
     module = _load_module()
-    current_identity = module._measurement_identity(
+    current_identity = _bound_identity(
+        module,
         scenario_id="cold_focus_startup",
         command="python -m openminion --data-root /tmp/a --help",
         measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
         fixture_revision=module.STARTUP_FIXTURE_REVISION,
     )
     baseline_identity = dict(current_identity)
-    baseline_identity["command"] = "python -m openminion --data-root /tmp/b --help"
+    baseline_identity["git_head"] = "f" * 40
+    baseline_identity["dirty_tree_fingerprint"] = "0" * 64
+    baseline_runtime = dict(baseline_identity["runtime_config"])
+    baseline_runtime["workspace_root"] = "/different/workspace"
+    baseline_runtime["data_root"] = "/different/data-root"
+    baseline_identity["runtime_config"] = baseline_runtime
     current = {
-        "wall_time_ms": {"median": 100},
+        "count": 20,
+        "ok_count": 20,
+        "wall_time_ms": {"p95": 100, "coefficient_of_variation": 0.0},
         "measurement_identity": current_identity,
+        "comparison_identity": module._comparison_identity(current_identity),
     }
     baseline = {
+        "artifact_schema_version": module.ARTIFACT_SCHEMA_VERSION,
         "scenarios": {
             "cold_focus_startup": {
-                "wall_time_ms": {"median": 100},
+                "count": 20,
+                "ok_count": 20,
+                "wall_time_ms": {"p95": 100, "coefficient_of_variation": 0.0},
                 "measurement_identity": baseline_identity,
+                "comparison_identity": module._comparison_identity(baseline_identity),
             }
-        }
+        },
     }
 
     result = module._threshold_result(
@@ -185,31 +336,166 @@ def test_comparison_rejects_identity_mismatch() -> None:
         threshold_mode="hard",
     )
 
+    assert result["status"] == "pass"
+
+
+def test_comparison_rejects_semantic_and_environment_mismatches() -> None:
+    module = _load_module()
+    identity = _bound_identity(
+        module,
+        scenario_id="cold_focus_startup",
+        command="python -m openminion --data-root /tmp/a --help",
+        measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
+        fixture_revision=module.STARTUP_FIXTURE_REVISION,
+    )
+    current = module._comparison_identity(identity)
+    for key, changed in (
+        ("artifact_schema_version", "pomv2.performance.v5"),
+        ("fixture_revision", "changed-fixture"),
+        ("measured_boundary", module.SUT_BOUNDARY_IN_PROCESS),
+        ("python_implementation", "PyPy"),
+        ("python_version", "0.0.0"),
+        ("python_build", ["changed", "build"]),
+        ("resolved_python_executable", "/different/python"),
+        ("runner_source_sha256", "0" * 64),
+        ("host_runtime_hash", "1" * 64),
+        ("runtime_dependency_hash", "2" * 64),
+        ("effective_sys_path_shape", ["<SUT_REPO>"]),
+        ("inherited_pythonpath_shape", ["<SUT_SRC>"]),
+        ("bytecode_cache_posture", {"pycache_posture": "interpreter_default"}),
+        ("provider_posture", "provider"),
+        ("model_posture", "model"),
+        ("process_posture", "warm"),
+        ("include_importtime", True),
+        ("profile", True),
+        ("warmup_runs", 2),
+        ("scenario_config", {"timeout_seconds": 99}),
+    ):
+        baseline = dict(current)
+        baseline[key] = changed
+        assert key in module._comparison_identity_errors(current, baseline)
+
+
+def test_comparison_accepts_empty_inherited_pythonpath_shape() -> None:
+    module = _load_module()
+    identity = _bound_identity(
+        module,
+        scenario_id="repeated_local_turns",
+        command="in_process:repeated_local_turns",
+        measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+        fixture_revision="adhoc",
+    )
+    current = module._comparison_identity(identity)
+    current["inherited_pythonpath_shape"] = []
+
+    assert module._comparison_identity_errors(current, dict(current)) == []
+
+    missing = dict(current)
+    del missing["inherited_pythonpath_shape"]
+    assert "inherited_pythonpath_shape" in module._comparison_identity_errors(
+        current, missing
+    )
+
+
+def test_dirty_fingerprint_includes_nested_untracked_file_bytes(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    repo = tmp_path / "openminion"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    nested = repo / "scratch" / "nested.txt"
+    nested.parent.mkdir()
+    nested.write_text("first", encoding="utf-8")
+
+    first = module._dirty_worktree_fingerprint(tmp_path)
+    nested.write_text("second", encoding="utf-8")
+    second = module._dirty_worktree_fingerprint(tmp_path)
+
+    assert first != second
+
+
+def test_requested_baseline_must_be_readable_and_well_formed(tmp_path: Path) -> None:
+    module = _load_module()
+    missing = tmp_path / "missing.json"
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text("[]", encoding="utf-8")
+
+    for path in (missing, malformed):
+        try:
+            module._load_comparison_baseline(path)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid comparison baseline accepted: {path}")
+
+
+def test_comparison_rejects_v3_artifact_for_v4_thresholds() -> None:
+    module = _load_module()
+    current_identity = _bound_identity(
+        module,
+        scenario_id="simple_turn",
+        command="replay_fixture:simple_turn",
+        measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+        fixture_revision="fixture-v1",
+    )
+    result = module._threshold_result(
+        current={
+            "count": 20,
+            "ok_count": 20,
+            "wall_time_ns": {"p95": 10, "coefficient_of_variation": 0.0},
+            "measurement_identity": current_identity,
+            "comparison_identity": module._comparison_identity(current_identity),
+        },
+        baseline={
+            "artifact_schema_version": "pomv2.performance.v3",
+            "scenarios": {
+                "simple_turn": {
+                    "count": 20,
+                    "ok_count": 20,
+                    "wall_time_ns": {
+                        "p95": 10,
+                        "coefficient_of_variation": 0.0,
+                    },
+                }
+            },
+        },
+        scenario_id="simple_turn",
+        threshold_mode="hard",
+    )
+
     assert result["status"] == "ineligible"
-    assert "command" in result["identity_errors"]
+    assert result["reason"] == "artifact schema version mismatch; v3 is display-only"
+    assert result["identity_errors"] == ["artifact_schema_version"]
 
 
 def test_comparison_rejects_quality_failure_before_timing_gain() -> None:
     module = _load_module()
-    identity = module._measurement_identity(
+    identity = _bound_identity(
+        module,
         scenario_id="simple_turn",
         command="replay_fixture:simple_turn",
         measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
         fixture_revision="fixture-v1",
     )
     current = {
-        "count": 5,
-        "ok_count": 4,
-        "wall_time_ms": {"p95": 1, "coefficient_of_variation": 0.0},
+        "count": 20,
+        "ok_count": 19,
+        "wall_time_ns": {"p95": 1, "coefficient_of_variation": 0.0},
         "measurement_identity": identity,
+        "comparison_identity": module._comparison_identity(identity),
     }
     baseline = {
+        "artifact_schema_version": module.ARTIFACT_SCHEMA_VERSION,
         "scenarios": {
             "simple_turn": {
-                "wall_time_ms": {"p95": 10, "coefficient_of_variation": 0.0},
+                "count": 20,
+                "ok_count": 20,
+                "wall_time_ns": {"p95": 10, "coefficient_of_variation": 0.0},
                 "measurement_identity": identity,
+                "comparison_identity": module._comparison_identity(identity),
             }
-        }
+        },
     }
 
     result = module._threshold_result(
@@ -223,24 +509,32 @@ def test_comparison_rejects_quality_failure_before_timing_gain() -> None:
     assert result["reason"] == "quality fixture failure"
 
 
-def test_comparison_uses_five_sample_p95_and_variance_rule() -> None:
+def test_comparison_uses_twenty_sample_nanosecond_p95_and_variance_rule() -> None:
     module = _load_module()
-    identity = module._measurement_identity(
+    identity = _bound_identity(
+        module,
         scenario_id="simple_turn",
         command="replay_fixture:simple_turn",
         measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
         fixture_revision="fixture-v1",
     )
     baseline_scenario = {
-        "wall_time_ms": {"p95": 100, "coefficient_of_variation": 0.10},
+        "count": 20,
+        "ok_count": 20,
+        "wall_time_ns": {"p95": 100, "coefficient_of_variation": 0.10},
         "measurement_identity": identity,
+        "comparison_identity": module._comparison_identity(identity),
     }
-    baseline = {"scenarios": {"simple_turn": baseline_scenario}}
+    baseline = {
+        "artifact_schema_version": module.ARTIFACT_SCHEMA_VERSION,
+        "scenarios": {"simple_turn": baseline_scenario},
+    }
     current = {
-        "count": 5,
-        "ok_count": 5,
-        "wall_time_ms": {"p95": 111, "coefficient_of_variation": 0.10},
+        "count": 20,
+        "ok_count": 20,
+        "wall_time_ns": {"p95": 111, "coefficient_of_variation": 0.10},
         "measurement_identity": identity,
+        "comparison_identity": module._comparison_identity(identity),
     }
 
     result = module._threshold_result(
@@ -252,7 +546,7 @@ def test_comparison_uses_five_sample_p95_and_variance_rule() -> None:
     assert result["status"] == "fail"
     assert result["regression_ratio"] == 1.10
 
-    current["wall_time_ms"] = {"p95": 90, "coefficient_of_variation": 0.21}
+    current["wall_time_ns"] = {"p95": 90, "coefficient_of_variation": 0.21}
     result = module._threshold_result(
         current=current,
         baseline=baseline,
@@ -261,6 +555,40 @@ def test_comparison_uses_five_sample_p95_and_variance_rule() -> None:
     )
     assert result["status"] == "ineligible"
     assert "variance" in result["reason"]
+
+
+def test_summary_rejects_mixed_sample_identities() -> None:
+    module = _load_module()
+    first_identity = _bound_identity(
+        module,
+        scenario_id="simple_turn",
+        command="replay_fixture:simple_turn",
+        measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+        fixture_revision="fixture-v1",
+    )
+    second_identity = dict(first_identity)
+    second_identity["git_head"] = "d" * 40
+    runs = [
+        {
+            "scenario_id": "simple_turn",
+            "sample_index": sample_index,
+            "ok": True,
+            "provider_variance_class": module.LOCAL_VARIANCE,
+            "measurement_identity": identity,
+            "comparison_identity": module._comparison_identity(identity),
+            "metrics": {"wall_time_ns": 10},
+        }
+        for sample_index, identity in enumerate((first_identity, second_identity))
+    ]
+
+    summary = module.summarize_runs(runs, threshold_mode="off")
+
+    scenario = summary["scenarios"]["simple_turn"]
+    assert scenario["identity_incompatibilities"] == [
+        {"sample_index": 1, "identity_errors": ["git_head"]}
+    ]
+    assert scenario["threshold_result"]["reason"] == "mixed sample identities"
+    assert module._invalid_sample_failures(summary) == ["simple_turn"]
 
 
 def test_hard_gate_failures_only_return_failed_scenarios_in_hard_mode() -> None:
@@ -278,6 +606,79 @@ def test_hard_gate_failures_only_return_failed_scenarios_in_hard_mode() -> None:
     assert module._hard_gate_failures(summary) == ["local_regression"]
     summary["threshold_mode"] = "warn"
     assert module._hard_gate_failures(summary) == []
+
+
+def test_main_rejects_invalid_samples_when_thresholds_are_off(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "run_baseline",
+        lambda _options, _scenarios: {
+            "scenario_count": 1,
+            "run_count": 1,
+            "threshold_mode": "off",
+            "scenarios": {
+                "repeated_local_turns": {
+                    "count": 1,
+                    "ok_count": 0,
+                    "threshold_result": {"status": "not_applicable"},
+                }
+            },
+        },
+    )
+
+    exit_code = module.main(
+        [
+            "--scenarios",
+            "repeated_local_turns",
+            "--threshold-mode",
+            "off",
+            "--output-root",
+            str(tmp_path),
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_main_preserves_selected_virtualenv_python(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    selected_python = tmp_path / "python"
+    selected_python.symlink_to(Path(sys.executable))
+    captured: dict[str, Path] = {}
+
+    def run_baseline(options, _scenarios):
+        captured["python"] = options.python
+        return {
+            "scenario_count": 0,
+            "run_count": 0,
+            "threshold_mode": "off",
+            "scenarios": {},
+        }
+
+    monkeypatch.setattr(module, "run_baseline", run_baseline)
+
+    exit_code = module.main(
+        [
+            "--scenarios",
+            "simple_turn",
+            "--threshold-mode",
+            "off",
+            "--output-root",
+            str(tmp_path / "artifacts"),
+            "--python",
+            str(selected_python),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["python"] == selected_python.absolute()
 
 
 def test_local_status_scenario_records_required_metric_keys() -> None:
@@ -301,18 +702,241 @@ def test_local_status_scenario_records_required_metric_keys() -> None:
     for key in (
         "wall_time_ms",
         "wall_time_ns",
+        "process_cpu_time_ns",
+        "python_gc_collection_count",
         "rss_start_bytes",
         "rss_end_bytes",
         "rss_delta_bytes",
         "tracemalloc_current_bytes",
         "tracemalloc_peak_bytes",
+        "tracemalloc_overhead_bytes",
+        "current_rss_bytes",
+        "max_rss_bytes",
+        "process_tree_current_rss_bytes",
+        "thread_count",
+        "async_task_count",
+        "child_process_count",
+        "file_descriptor_count",
+        "open_file_count",
+        "network_connection_count",
+        "queue_depths",
+        "cache_cardinalities",
+        "phase",
+        "sample_index",
+        "elapsed_ms",
+        "completed_turn_count",
+        "terminal_fact",
+        "measured_process_id",
+        "children_included",
+        "external_services_included",
+        "process_tree_members",
+        "availability_reasons",
         "tool_call_count",
     ):
         assert key in run.metrics
     assert run.metrics["tool_call_count"] == 1
     assert run.metrics["wall_time_ns"] >= 0
+    assert run.metrics["process_cpu_time_ns"] >= 0
+    assert run.metrics["python_gc_collection_count"] >= 0
     assert run.metrics["measurement_resolution"] == "perf_counter_ns"
     assert "local_status_collect_ns" in run.metrics["phase_timings_ns"]
+    assert run.metrics["rss_end_bytes"] == run.metrics["current_rss_bytes"]
+    assert run.metrics["measured_process_id"] == os.getpid()
+    assert run.metrics["terminal_fact"] is None
+    assert run.metrics["availability_reasons"]["terminal_fact"] == "not_applicable"
+    assert run.measurement_identity["artifact_schema_version"] == (
+        "pomv2.performance.v4"
+    )
+    for key in (
+        "git_head",
+        "dirty_tree_fingerprint",
+        "runner_source_sha256",
+        "config_hash",
+        "provider_posture",
+        "model_posture",
+    ):
+        assert key in run.measurement_identity
+
+
+def test_process_tree_bounds_members_without_publishing_partial_rss(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+
+    class FakePsutilError(Exception):
+        pass
+
+    class FakeChild:
+        def __init__(self, pid: int, *, readable: bool = True) -> None:
+            self.pid = pid
+            self._readable = readable
+
+        def memory_info(self):
+            if not self._readable:
+                raise FakePsutilError
+            return types.SimpleNamespace(rss=10)
+
+    class FakeProcess:
+        def __init__(self, _pid: int) -> None:
+            self.pid = _pid
+
+        def memory_info(self):
+            return types.SimpleNamespace(rss=100)
+
+        def children(self, *, recursive: bool):
+            assert recursive is True
+            return [FakeChild(index + 2) for index in range(65)] + [
+                FakeChild(67, readable=False)
+            ]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "psutil",
+        types.SimpleNamespace(Process=FakeProcess, Error=FakePsutilError),
+    )
+
+    metrics = module._process_rss_metrics(1)
+
+    assert metrics["child_process_count"] == 66
+    assert len(metrics["process_tree_members"]) == module.PROCESS_TREE_MEMBER_LIMIT
+    assert metrics["process_tree_current_rss_bytes"] is None
+    assert metrics["availability_reasons"]["process_tree_members"] == (
+        "member_limit_reached"
+    )
+    assert metrics["availability_reasons"]["process_tree_current_rss_bytes"] == (
+        "descendant_rss_unavailable"
+    )
+
+
+def test_finish_inventory_does_not_inflate_in_process_tracemalloc_peak(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    original_process_metrics = module._process_metrics
+    process_metric_calls = 0
+    retained_finish_allocation: list[bytearray] = []
+
+    def allocating_finish_inventory(process_id=None):
+        nonlocal process_metric_calls
+        process_metric_calls += 1
+        if process_metric_calls == 2:
+            retained_finish_allocation.append(bytearray(2_000_000))
+        return original_process_metrics(process_id)
+
+    monkeypatch.setattr(module, "_process_metrics", allocating_finish_inventory)
+
+    run = module.run_scenario(
+        "local_status_tool_turn",
+        module.RunOptions(
+            workspace_root=Path(__file__).resolve().parents[3],
+            output_root=tmp_path,
+            python=Path(sys.executable),
+            runs=1,
+            timeout_seconds=5,
+            include_importtime=False,
+            profile=False,
+        ),
+    )
+
+    assert process_metric_calls == 2
+    assert retained_finish_allocation
+    assert run.metrics["tracemalloc_peak_bytes"] < 1_000_000
+
+
+def test_focus_startup_samples_the_subprocess(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module.run_scenario(
+        "warm_focus_startup",
+        module.RunOptions(
+            workspace_root=Path(__file__).resolve().parents[3],
+            output_root=tmp_path,
+            python=Path(sys.executable),
+            runs=1,
+            timeout_seconds=15,
+            include_importtime=False,
+            profile=False,
+        ),
+    )
+
+    assert run.ok is True, run.error
+    assert run.metrics["phase"] == "startup"
+    assert run.metrics["measured_process_id"] != os.getpid()
+    assert run.metrics["process_sample_count"] > 0
+    assert run.metrics["current_rss_bytes"] > 0
+    assert (
+        run.metrics["sampled_peak_current_rss_bytes"]
+        >= (run.metrics["current_rss_bytes"])
+    )
+    assert run.metrics["max_rss_bytes"] is None
+    assert run.metrics["availability_reasons"]["max_rss_bytes"] == "not_supported"
+    assert run.metrics["tracemalloc_current_bytes"] is None
+    assert run.metrics["harness_tracemalloc_current_bytes"] > 0
+    assert run.metrics["availability_reasons"]["tracemalloc_current_bytes"] == (
+        "not_supported_for_subprocess"
+    )
+    assert run.metrics["process_cpu_time_ns"] is None
+    assert run.metrics["python_gc_collection_count"] is None
+    assert run.metrics["availability_reasons"]["process_cpu_time_ns"] == (
+        "not_supported_for_subprocess"
+    )
+    assert run.metrics["availability_reasons"]["python_gc_collection_count"] == (
+        "not_supported_for_subprocess"
+    )
+
+
+def test_startup_loop_uses_one_full_resource_inventory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+    )
+    full_calls = 0
+    tree_calls = 0
+    current_calls = 0
+    full_metrics = module._process_metrics
+    tree_metrics = module._process_rss_metrics
+    current_rss = module._current_rss_bytes
+
+    def count_full(process_id=None):
+        nonlocal full_calls
+        full_calls += 1
+        return full_metrics(process_id)
+
+    def count_tree(process_id=None):
+        nonlocal tree_calls
+        tree_calls += 1
+        return tree_metrics(process_id)
+
+    def count_current(process_id=None):
+        nonlocal current_calls
+        current_calls += 1
+        return current_rss(process_id)
+
+    monkeypatch.setattr(module, "_process_metrics", count_full)
+    monkeypatch.setattr(module, "_process_rss_metrics", count_tree)
+    monkeypatch.setattr(module, "_current_rss_bytes", count_current)
+
+    completed, metrics = module._run_subprocess_measured(
+        [sys.executable, "-c", "import time; time.sleep(0.03)"],
+        options=options,
+        data_root=tmp_path,
+    )
+
+    assert completed.returncode == 0
+    assert metrics["process_sample_count"] > 0
+    assert full_calls == 1
+    assert tree_calls == 1
+    assert current_calls > 1
 
 
 def test_deterministic_full_turn_records_complete_turn_metrics(tmp_path: Path) -> None:
@@ -504,6 +1128,7 @@ def test_telemetry_export_queue_flushes_noncritical_events() -> None:
     assert run.metrics["telemetry_events_enqueued"] == 100
     assert run.metrics["telemetry_events_exported"] == 100
     assert run.metrics["telemetry_queue_depth"] == 0
+    assert run.metrics["queue_depths"] == {"telemetry.noncritical_export": 0}
     assert run.metrics["telemetry_queue_drops"] == 0
     assert run.metrics["telemetry_queue_flush_failures"] == 0
 
@@ -528,6 +1153,34 @@ def test_transcript_retention_growth_caps_working_set() -> None:
     assert run.metrics["retained_messages"] == run.metrics["retention_limit"]
     assert run.metrics["transcript_messages_seen"] > run.metrics["retained_messages"]
     assert run.metrics["copy_last_ok"] is True
+
+
+def test_rss_growth_metrics_remain_available_when_current_rss_is_not(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module, "_current_rss_bytes", lambda process_id=None: None)
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+    )
+
+    repeated = module.run_scenario("repeated_local_turns", options)
+    transcript = module.run_scenario("transcript_retention_growth", options)
+
+    assert repeated.ok is True
+    assert repeated.metrics["rss_growth_bytes"] is None
+    assert repeated.metrics["availability_reasons"]["rss_growth_bytes"] == (
+        "current_rss_unavailable"
+    )
+    assert transcript.ok is True
+    assert transcript.metrics["rss_growth_per_message_bytes"] is None
 
 
 def test_remaining_performance_rows_record_decision_evidence(tmp_path: Path) -> None:
@@ -606,6 +1259,16 @@ def test_run_baseline_writes_artifacts(tmp_path: Path) -> None:
     assert payload["measurement_identity"]["measured_boundary"] == (
         module.SUT_BOUNDARY_IN_PROCESS
     )
+    assert payload["measurement_identity"]["git_head"] not in {
+        "",
+        "unknown",
+        "unavailable",
+    }
+    assert payload["measurement_identity"]["dirty_tree_fingerprint"] != ("unavailable")
+    assert payload["measurement_identity"]["runner_source_sha256"] != ("unavailable")
+    assert payload["measurement_identity"]["config_hash"] == module._stable_json_hash(
+        payload["measurement_identity"]["runtime_config"]
+    )
     assert isinstance(payload["wall_ns"], int)
     assert payload["phase_timings_ns"]["local_status_collect_ns"] >= 0
     for artifact_name in (
@@ -639,6 +1302,96 @@ def test_run_baseline_writes_artifacts(tmp_path: Path) -> None:
     assert "Missing TCPL-00 Coverage" in (tmp_path / "decision.md").read_text(
         encoding="utf-8"
     )
+
+
+def test_run_baseline_records_metric_sample_indices(tmp_path: Path) -> None:
+    module = _load_module()
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=3,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+        threshold_mode="off",
+    )
+
+    summary = module.run_baseline(options, ["repeated_local_turns"])
+
+    assert (
+        summary["scenarios"]["repeated_local_turns"]["identity_incompatibilities"] == []
+    )
+    payloads = sorted(
+        (
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in (tmp_path / "runs").glob("*.json")
+        ),
+        key=lambda payload: payload["sample_index"],
+    )
+    assert [payload["sample_index"] for payload in payloads] == [0, 1, 2]
+    assert [payload["metrics"]["sample_index"] for payload in payloads] == [0, 1, 2]
+
+
+def test_run_baseline_rejects_source_drift_at_campaign_close(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+        threshold_mode="off",
+    )
+    identities = iter(
+        (
+            {
+                "git_head": "a" * 40,
+                "dirty_tree_fingerprint": "b" * 64,
+                "dirty_worktree_summary": {"available": True},
+                "runner_path": "/opt/owpr/performance_baseline.py",
+                "runner_source_sha256": "c" * 64,
+                "loaded_openminion_package_root": "/opt/owpr/openminion",
+                "runtime_environment": _bound_identity(
+                    module,
+                    scenario_id="repeated_local_turns",
+                    command="repeated_local_fixture:single_iteration_sample",
+                    measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+                    fixture_revision="test",
+                )["runtime_environment"],
+            },
+            {
+                "git_head": "d" * 40,
+                "dirty_tree_fingerprint": "b" * 64,
+                "dirty_worktree_summary": {"available": True},
+                "runner_path": "/opt/owpr/performance_baseline.py",
+                "runner_source_sha256": "c" * 64,
+                "loaded_openminion_package_root": "/opt/owpr/openminion",
+                "runtime_environment": _bound_identity(
+                    module,
+                    scenario_id="repeated_local_turns",
+                    command="repeated_local_fixture:single_iteration_sample",
+                    measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+                    fixture_revision="test",
+                )["runtime_environment"],
+            },
+        )
+    )
+    monkeypatch.setattr(
+        module, "_campaign_source_identity", lambda _options: next(identities)
+    )
+
+    try:
+        module.run_baseline(options, ["repeated_local_turns"])
+    except RuntimeError as exc:
+        assert "campaign source identity changed: git_head" in str(exc)
+    else:
+        raise AssertionError("source drift should fail the campaign")
 
 
 def test_tcpl02_skill_entry_candidate_records_parity_and_rollback(
@@ -971,3 +1724,224 @@ def test_tcpl_shadow_decisions_are_observation_only() -> None:
     assert decisions["session_compaction"]["candidate_decision"] == (
         "derived_projection_candidate"
     )
+
+
+def test_omfla_persistent_api_turns_records_typed_windows(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module._measure_persistent_api_turns(
+        _omfla_options(module, tmp_path),
+        warmup_turns=1,
+        measured_turns=5,
+        window_count=5,
+    )
+
+    assert run.ok is True
+    assert run.metrics["completed_turn_count"] == 6
+    assert len(run.metrics["steady_state_windows"]) == 5
+    assert run.metrics["terminal_fact"]["terminal_event_state"] == "completed"
+    assert run.metrics["post_warmup_pre_close_tracemalloc_diff"]
+    assert run.metrics["post_warmup_post_close_tracemalloc_diff"]
+    assert run.metrics["diagnostic_gc_collected_objects"] >= 0
+    assert run.metrics["post_warmup_post_gc_tracemalloc_diff"]
+    assert run.metrics["phase"] == "post_diagnostic_gc"
+    for key in (
+        "post_warmup_post_close_event_loop_diff",
+        "post_warmup_post_gc_event_loop_diff",
+    ):
+        assert set(run.metrics[key]) == {"size_diff_bytes", "count_diff"}
+        assert isinstance(run.metrics[key]["size_diff_bytes"], int)
+        assert isinstance(run.metrics[key]["count_diff"], int)
+    for window in run.metrics["steady_state_windows"]:
+        cardinalities = window["cache_cardinalities"]
+        assert (
+            cardinalities["contextctl_pack_cache"]
+            <= cardinalities["contextctl_manifest_index"]
+            <= cardinalities["contextctl_pack_cache"] + 1
+        )
+        assert cardinalities["contextctl_latest_sessions"] == 1
+    assert run.metrics["close_sample"]["cache_cardinalities"] == {
+        "contextctl_pack_cache": 0,
+        "contextctl_manifest_index": 0,
+        "contextctl_latest_sessions": 0,
+    }
+    assert run.metrics["close_sample"]["phase"] == "normal_close"
+    assert run.metrics["post_gc_sample"]["cache_cardinalities"] == {
+        "contextctl_pack_cache": 0,
+        "contextctl_manifest_index": 0,
+        "contextctl_latest_sessions": 0,
+    }
+    assert run.metrics["post_gc_sample"]["phase"] == "post_diagnostic_gc"
+
+
+def test_omfla_persistent_focus_turns_uses_persisted_completion(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    from tests.e2e.cli.focus.harness import FocusProbe
+
+    def reject_screen_owned_completion(*_args, **_kwargs):
+        raise AssertionError("FocusProbe.run_turn must not own OMFLA completion")
+
+    monkeypatch.setattr(FocusProbe, "run_turn", reject_screen_owned_completion)
+
+    run = module._measure_persistent_focus_turns(
+        _omfla_options(module, tmp_path),
+        warmup_turns=1,
+        measured_turns=1,
+        window_count=1,
+    )
+
+    assert run.ok is True
+    assert run.metrics["completed_turn_count"] == 2
+    assert run.metrics["terminal_fact"]["terminal_event_state"] == "completed"
+    assert run.metrics["focus_child_alive_after_close"] is False
+    assert run.metrics["measured_process_id"] != os.getpid()
+
+
+def test_omfla_session_churn_records_owner_cardinality(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module._measure_session_cache_churn(
+        _omfla_options(module, tmp_path),
+        warmup_turns=1,
+        session_count=5,
+        window_count=5,
+    )
+
+    assert run.ok is True
+    assert run.metrics["distinct_session_count"] == 5
+    assert len(run.metrics["owner_cardinality_facts"]) == 7
+    assert run.metrics["terminal_fact"]["terminal_event_state"] == "completed"
+    for expected_sessions, window in enumerate(
+        run.metrics["steady_state_windows"],
+        start=2,
+    ):
+        cardinalities = window["cache_cardinalities"]
+        assert cardinalities["contextctl_pack_cache"] == 0
+        assert cardinalities["contextctl_manifest_index"] == expected_sessions
+        assert cardinalities["contextctl_latest_sessions"] == expected_sessions
+    assert run.metrics["close_sample"]["cache_cardinalities"] == {
+        "contextctl_pack_cache": 0,
+        "contextctl_manifest_index": 0,
+        "contextctl_latest_sessions": 0,
+    }
+    owner_facts = {
+        fact["owner"]: fact for fact in run.metrics["owner_cardinality_facts"]
+    }
+    assert owner_facts["ContextCtlService pack and manifest caches"] == {
+        "owner": "ContextCtlService pack and manifest caches",
+        "lifetime": "Brain/context-service runtime lifetime",
+        "observed_cardinality": {
+            "pack_cache": 0,
+            "manifest_index": 6,
+            "latest_sessions": 6,
+        },
+        "natural_invalidation": (
+            "ContextCtl close delegated through Brain/runtime close"
+        ),
+        "disposition": "defer:session-lifecycle-contract-required",
+    }
+    for owner in (
+        "repo-map cache",
+        "file backend cache",
+        "control-plane submission audit/dedup",
+    ):
+        assert owner_facts[owner]["observed_cardinality"] is None
+
+
+def test_omfla_provider_lifecycle_closes_and_recreates(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module._measure_provider_lifecycle_loopback(
+        _omfla_options(module, tmp_path),
+        warmup_calls=1,
+        measured_calls=2,
+    )
+
+    assert run.ok is True
+    assert run.metrics["http_client_closed"] is True
+    assert run.metrics["mcp_session_closed"] is True
+    assert (
+        run.metrics["close_sample"]["thread_count"]
+        <= run.metrics["ready_sample"]["thread_count"]
+    )
+    assert run.metrics["terminal_fact"] == {
+        "http": "completed",
+        "mcp": "completed",
+        "recreate": "completed",
+    }
+
+
+def test_omfla_agent_cache_honors_bound_and_ttl(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module._measure_agent_cache_churn(
+        _omfla_options(module, tmp_path),
+        agent_count=3,
+        max_agents_hot=2,
+        convergence_wait_seconds=3,
+    )
+
+    assert run.ok is True
+    assert run.metrics["max_observed_hot_agents"] <= 2
+    assert run.metrics["remaining_agents_after_convergence"] == 0
+
+
+@pytest.mark.timeout(120)
+def test_omfla_runtime_restart_closes_each_owner_twice(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    from tests.e2e.cli.focus.harness import FocusProbe
+
+    def reject_screen_owned_completion(*_args, **_kwargs):
+        raise AssertionError("FocusProbe.run_turn must not own OMFLA completion")
+
+    monkeypatch.setattr(FocusProbe, "run_turn", reject_screen_owned_completion)
+
+    run = module._measure_runtime_restart(
+        _omfla_options(module, tmp_path),
+        cycle_count=5,
+    )
+
+    assert run.ok is True
+    assert run.metrics["completed_turn_count"] == 15
+    assert run.metrics["second_close_idempotency_checked"] is True
+    assert run.metrics["descriptor_counts_converged"] is True
+    ready = run.metrics["ready_sample"]
+    for window in run.metrics["steady_state_windows"]:
+        assert window["file_descriptor_count"] == ready["file_descriptor_count"]
+        assert window["open_file_count"] == ready["open_file_count"]
+    assert (
+        run.metrics["close_sample"]["file_descriptor_count"]
+        == ready["file_descriptor_count"]
+    )
+    assert run.metrics["close_sample"]["open_file_count"] == ready["open_file_count"]
+    assert run.metrics["terminal_fact"]["terminal_event_state"] == "completed"
+
+
+def test_omfla_queue_pressure_drains_and_reports_overflow(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module._measure_queue_pressure(
+        _omfla_options(module, tmp_path),
+        cycle_count=1,
+        finite_capacity=3,
+        unbounded_count=5,
+    )
+
+    assert run.ok is True
+    assert run.metrics["queue_depths"] == {
+        "controlplane_inbox": 0,
+        "controlplane_outbox": 0,
+        "memory_followup": 0,
+        "runtime_chunks": 0,
+        "telemetry_noncritical_export": 0,
+        "turn_input": 0,
+    }
+    assert run.metrics["overflow_counts"] == {"telemetry": 1, "turn_input": 1}
+    assert run.metrics["cache_cardinalities"]["turn_input_terminal_audit"] == 3
+    assert run.metrics["cache_cardinalities"]["turn_input_idempotency"] == 3

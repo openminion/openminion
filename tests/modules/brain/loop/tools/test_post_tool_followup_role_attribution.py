@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from openminion.modules.brain.schemas import (
+    ActionError,
     ActionResult,
     BudgetCounters,
     WorkingState,
@@ -123,6 +124,115 @@ def _success_outcome(tool_name: str, summary: str) -> CommandExecutionOutcome:
             outputs={"content": summary},
         ),
     )
+
+
+def _validation_failure_outcome(tool_name: str) -> CommandExecutionOutcome:
+    return CommandExecutionOutcome(
+        approved_command=SimpleNamespace(tool_name=tool_name, args={"command": []}),
+        action_result=ActionResult(
+            command_id=new_uuid(),
+            status="failed",
+            summary="Invalid tool arguments",
+            error=ActionError(
+                code="TOOL_ARG_VALIDATION_FAILED",
+                message="command must be a string",
+                details={
+                    "validation_path": ["command"],
+                    "schema": {"type": "string"},
+                },
+            ),
+        ),
+    )
+
+
+def test_schema_error_and_active_plan_reach_model_owned_correction_turn() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c1", name="exec.run", arguments={"command": []})
+                ],
+                finish_reason="tool_calls",
+                assistant_messages=[],
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="c2",
+                        name="exec.run",
+                        arguments={"command": "python -m pytest -q"},
+                    )
+                ],
+                finish_reason="tool_calls",
+                assistant_messages=[],
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="Validation passed.",
+                tool_calls=[],
+                finish_reason="stop",
+                assistant_messages=[],
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(),
+        outcomes=[
+            _validation_failure_outcome("exec.run"),
+            _success_outcome("exec.run", "1 passed"),
+        ],
+    )
+    tool_spec = ToolSpec(
+        name="exec.run",
+        description="Run a command",
+        input_schema={
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+            "additionalProperties": False,
+        },
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(frozenset({"exec.run"})),
+        runtime=runtime,
+        model="m",
+        initial_messages=[
+            Message(
+                role="system",
+                content=(
+                    "[ACTIVE PLAN]\n"
+                    "- validate [in_progress]: Run the validation command"
+                ),
+            ),
+            Message(role="user", content="Continue the validation."),
+        ],
+        tool_specs=[tool_spec],
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert [command.args for command in loop_ctx.commands] == [
+        {"command": []},
+        {"command": "python -m pytest -q"},
+    ]
+    correction_context = "\n".join(
+        str(message.content or "") for message in runtime.calls[1]["messages"]
+    )
+    assert "[ACTIVE PLAN]" in correction_context
+    assert '"code": "TOOL_ARG_VALIDATION_FAILED"' in correction_context
+    assert '"validation_path": ["command"]' in correction_context
+    assert '"schema": {"type": "string"}' in correction_context
 
 
 def test_coding_post_tool_followup_prose_attributed_as_assistant_role() -> None:

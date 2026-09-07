@@ -107,6 +107,10 @@ def normalize_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("projectCycle payload requires run_id and task_id")
         data["run_id"] = run_id
         data["task_id"] = task_id
+        cycle_interval_seconds = int(data.get("cycle_interval_seconds", 1) or 1)
+        if not 1 <= cycle_interval_seconds <= 3600:
+            raise ValueError("cycle_interval_seconds must be in 1..3600")
+        data["cycle_interval_seconds"] = cycle_interval_seconds
     return data
 
 

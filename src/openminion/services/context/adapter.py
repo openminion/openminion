@@ -4,14 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, cast
 
-from openminion.services.config import (
-    resolve_services_env,
-    resolve_services_path,
-)
-from openminion.base.constants import OPENMINION_IDENTITY_DB_ENV
+from openminion.base.config.runtime import resolve_identity_db_from_env
+from openminion.services.config import resolve_services_env, resolve_services_path
 from openminion.services.bootstrap.paths import (
-    SERVICES_IDENTITY_DB_FILENAME,
-    SERVICES_IDENTITY_SUBDIR,
     SERVICES_STATE_DB_FILENAME,
     SERVICES_STATE_DIRNAME,
 )
@@ -20,6 +15,7 @@ from openminion.services.context.constants import (
     OPENMINION_SESSION_CONTEXT_TOKEN_BUDGET_ENV,
 )
 from openminion.modules.context.pack.semantics import resolve_context_total_token_budget
+from openminion.modules.context.memory_client import NullMemoryClient
 
 _logger = logging.getLogger(__name__)
 
@@ -52,9 +48,7 @@ class ContextCtlGatewayAdapter:
         self._log = logger or _logger
         if self._dual_render:
             self._log.warning(
-                "%s=true but ContextCtlGatewayAdapter is not wired into gateway "
-                "build_turn_context(); dual-render parity does not execute until "
-                "P3b gateway call-site integration is completed.",
+                "%s=true; ContextCtl history parity logging is enabled.",
                 CONTEXTCTL_DUAL_RENDER_ENV,
             )
 
@@ -181,16 +175,7 @@ class ContextCtlGatewayAdapter:
                     ensure_default_profile,
                 )
 
-                db_path = (
-                    resolve_services_env().get(OPENMINION_IDENTITY_DB_ENV, "").strip()
-                )
-                if not db_path:
-                    db_path = str(
-                        resolve_services_path(
-                            Path(SERVICES_IDENTITY_SUBDIR)
-                            / SERVICES_IDENTITY_DB_FILENAME
-                        )
-                    )
+                db_path = str(resolve_identity_db_from_env(env=resolve_services_env()))
 
                 identity_store_to_close = SQLiteIdentityStore(sqlite_path=db_path)
                 identity_ctl: Any = IdentityCtl(store=identity_store_to_close)
@@ -204,7 +189,7 @@ class ContextCtlGatewayAdapter:
             session_client = self._session_client or _RuntimeMappedSessionClient(
                 sqlite_path=_resolve_runtime_sqlite_path()
             )
-            memory_stub = self._memory_client or _NullMemoryClient()
+            memory_stub = self._memory_client or NullMemoryClient()
             service = ContextCtlService(
                 identityctl=identity_client,
                 sessctl=session_client,
@@ -349,28 +334,6 @@ class _RuntimeMappedSessionClient:
             self.close()
         except Exception:
             pass
-
-
-class _NullMemoryClient:
-    contract_version = "v1"
-
-    def query_facts(self, **kwargs: Any) -> list[Any]:
-        return []
-
-    def query_memory_cards(self, **kwargs: Any) -> list[Any]:
-        return []
-
-    def recall_session_start_memory(self, **kwargs: Any) -> list[Any]:
-        return []
-
-    def recall_mid_session_memory(self, **kwargs: Any) -> list[Any]:
-        return []
-
-    def recall_recent_session_artifacts(self, **kwargs: Any) -> list[Any]:
-        return []
-
-    def get_procedure(self, **kwargs: Any) -> None:
-        return None
 
 
 class _NullArtifactClient:

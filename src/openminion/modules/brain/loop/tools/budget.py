@@ -71,3 +71,17 @@ def _remaining_budget_fraction(
         return 1.0
     used = int(state.llm_calls or 0)
     return max(0.0, 1.0 - used / int(max_llm))
+
+
+def _effective_cap(
+    profile: AdaptiveToolLoopProfile, state: AdaptiveToolLoopState
+) -> int:
+    dynamic = int(getattr(state, "effective_max_iterations", 0) or 0)
+    return dynamic if dynamic > 0 else int(profile.max_iterations)
+
+
+def _ensure_effective_cap_initialized(
+    *, profile: AdaptiveToolLoopProfile, state: AdaptiveToolLoopState
+) -> None:
+    if int(getattr(state, "effective_max_iterations", 0) or 0) <= 0:
+        state.effective_max_iterations = int(profile.max_iterations)

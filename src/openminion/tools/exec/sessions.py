@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from openminion.base.runtime.sandbox import (
     ExecSpec,
@@ -126,6 +126,16 @@ def _build_exec_sandbox_spec(
         max_output_bytes=EXEC_ARTIFACT_THRESHOLD_BYTES * 4,
         session_mode="foreground",
     )
+
+
+def _exec_environment(
+    *,
+    params: ExecRunArgs,
+    ctx: RuntimeContext,
+) -> dict[str, str]:
+    environment = cast(dict[str, str], ctx.policy.filter_env(dict(params.env)))
+    environment.pop("SSH_AUTH_SOCK", None)
+    return environment
 
 
 def _prepare_exec_run(
@@ -274,7 +284,7 @@ def _prepare_exec_run(
             status=EXEC_STATUS_DENIED,
         )
 
-    env = ctx.policy.filter_env(dict(params.env))
+    env = _exec_environment(params=params, ctx=ctx)
     sandbox_runner = _sandbox_runner_for_ctx(ctx)
     sandbox_sessions = _sandbox_session_manager_for_ctx(ctx)
     use_sandbox_runner = (

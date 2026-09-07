@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -10,18 +13,70 @@ from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.tools.mcp.server import (
     MCPServerError,
     PublishedTool,
-    build_contract_fixture_published_tools,
-    build_default_published_tools,
     build_runtime_published_tools,
     handle_published_mcp_request,
     invoke_published_tool,
     render_tools_list_payload,
+    serve_published_stdio,
 )
 from openminion.tools.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
 
 
-def test_default_catalog_has_expected_minimum_four_families() -> None:
-    tools = build_contract_fixture_published_tools()
+def _contract_tools() -> list[PublishedTool]:
+    def _stub(args: dict) -> dict:
+        return {"status": "stub", "request": dict(args)}
+
+    return [
+        PublishedTool(
+            name="openminion.memory.export",
+            description="Export memory.",
+            input_schema={"type": "object", "additionalProperties": False},
+            handler=_stub,
+        ),
+        PublishedTool(
+            name="openminion.plan.show",
+            description="Show plan.",
+            input_schema={
+                "type": "object",
+                "properties": {"session_id": {"type": "string"}},
+                "required": ["session_id"],
+                "additionalProperties": False,
+            },
+            handler=_stub,
+        ),
+        PublishedTool(
+            name="openminion.todo.list",
+            description="List todos.",
+            input_schema={"type": "object", "additionalProperties": False},
+            handler=_stub,
+        ),
+        PublishedTool(
+            name="openminion.search.web",
+            description="Search web.",
+            input_schema={
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            handler=_stub,
+        ),
+        PublishedTool(
+            name="openminion.fetch.url",
+            description="Fetch URL.",
+            input_schema={
+                "type": "object",
+                "properties": {"url": {"type": "string"}},
+                "required": ["url"],
+                "additionalProperties": False,
+            },
+            handler=_stub,
+        ),
+    ]
+
+
+def test_contract_catalog_has_expected_minimum_four_families() -> None:
+    tools = _contract_tools()
     names = {t.name for t in tools}
     assert "openminion.memory.export" in names
     assert "openminion.plan.show" in names
@@ -32,7 +87,7 @@ def test_default_catalog_has_expected_minimum_four_families() -> None:
 
 
 def test_render_tools_list_payload_matches_mcp_shape() -> None:
-    tools = build_contract_fixture_published_tools()
+    tools = _contract_tools()
     payload = render_tools_list_payload(tools)
     assert set(payload.keys()) == {"tools"}
     entry0 = payload["tools"][0]
@@ -66,12 +121,12 @@ def test_invoke_dispatches_to_matching_tool() -> None:
 
 
 def test_invoke_unknown_tool_raises_mcp_server_error() -> None:
-    tools = build_contract_fixture_published_tools()
+    tools = _contract_tools()
     with pytest.raises(MCPServerError, match="unknown MCP tool"):
         invoke_published_tool(tools, name="nope", arguments={})
 
 
-def test_invoke_handler_exception_wrapped_in_mcp_server_error() -> None:
+def test_invoke_handler_exception_returns_mcp_tool_error_result() -> None:
     def raiser(_args):
         raise RuntimeError("boom")
 
@@ -81,8 +136,72 @@ def test_invoke_handler_exception_wrapped_in_mcp_server_error() -> None:
         input_schema={"type": "object", "additionalProperties": True},
         handler=raiser,
     )
-    with pytest.raises(MCPServerError, match="failed"):
-        invoke_published_tool([tool], name="boom", arguments={})
+    result = invoke_published_tool([tool], name="boom", arguments={})
+
+    assert result["isError"] is True
+    assert result["content"] == [{"type": "text", "text": "boom"}]
+
+
+def test_stdio_adapter_handles_initialize_list_and_call() -> None:
+    requests = "\n".join(
+        json.dumps(payload)
+        for payload in (
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "openminion.plan.show",
+                    "arguments": {"session_id": "s1"},
+                },
+            },
+        )
+    )
+    output = io.StringIO()
+
+    serve_published_stdio(
+        _contract_tools(),
+        input_stream=io.StringIO(requests),
+        output_stream=output,
+    )
+
+    responses = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert [item["id"] for item in responses] == [1, 2, 3]
+    assert responses[2]["result"]["isError"] is False
+
+
+def test_stdio_adapter_runs_across_a_process_boundary() -> None:
+    program = """
+import sys
+from openminion.tools.mcp.server import PublishedTool, serve_published_stdio
+serve_published_stdio(
+    [PublishedTool(name='echo', description='echo', input_schema={'type': 'object'}, handler=lambda args: args)],
+    input_stream=sys.stdin,
+    output_stream=sys.stdout,
+)
+"""
+    request = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "echo", "arguments": {"text": "hello"}},
+        }
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        input=request,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    response = json.loads(completed.stdout)
+    assert response["result"]["isError"] is False
+    assert '"text": "hello"' in response["result"]["content"][0]["text"]
 
 
 def test_invoke_returns_plain_text_for_string_result() -> None:
@@ -98,7 +217,7 @@ def test_invoke_returns_plain_text_for_string_result() -> None:
 
 def test_default_tools_have_valid_json_schema_for_args() -> None:
 
-    for tool in build_contract_fixture_published_tools():
+    for tool in _contract_tools():
         assert tool.input_schema.get("type") == "object"
         # Tools that require an argument must declare it in `required`.
         if tool.name in (
@@ -108,15 +227,6 @@ def test_default_tools_have_valid_json_schema_for_args() -> None:
         ):
             assert "required" in tool.input_schema
             assert len(tool.input_schema["required"]) >= 1
-
-
-def test_default_catalog_is_deprecated_fixture_alias() -> None:
-    with pytest.warns(DeprecationWarning, match="contract-fixture"):
-        tools = build_default_published_tools()
-
-    assert [tool.name for tool in tools] == [
-        tool.name for tool in build_contract_fixture_published_tools()
-    ]
 
 
 class _EchoArgs(BaseModel):
@@ -220,6 +330,8 @@ def test_runtime_publish_honors_include_exclude_scope() -> None:
             )
         ),
         tools=registry,
+        authored_tools=None,
+        sandbox_runner=None,
     )
 
     assert [

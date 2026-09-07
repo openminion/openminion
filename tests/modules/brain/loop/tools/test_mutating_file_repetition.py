@@ -89,6 +89,32 @@ def test_repeated_file_mutation_closes_without_interpreting_user_prose() -> None
     assert "Stop calling file mutation tools" in state.messages[-1].content
 
 
+def test_repeated_file_mutation_requires_reverification_after_exec_failure() -> None:
+    state = AdaptiveToolLoopState(
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "exec.run",
+                    "ok": False,
+                    "error_code": "EXEC_ERROR",
+                }
+            ]
+        }
+    )
+    batch = [(_tool_call("file.write", "module.py"), _success("module.py"))]
+    iteration_tool_sequences: list[tuple[str, ...]] = []
+
+    for _ in range(3):
+        _track_successful_mutating_file_progress(
+            state,
+            batch,
+            iteration_tool_sequences=iteration_tool_sequences,
+        )
+
+    assert "mutating_file_answer_only_closure_pending" not in state.scratchpad
+    assert "rerun the failed exec.run verifier" in state.messages[-1].content
+
+
 def test_mutating_file_repetition_ignores_non_mutating_tools() -> None:
     state = AdaptiveToolLoopState()
     batch = [(_tool_call("file.read", "module.py"), _success("module.py"))]

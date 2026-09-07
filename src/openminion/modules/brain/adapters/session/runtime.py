@@ -1,6 +1,6 @@
-from pathlib import Path
-from typing import Any
 import logging
+from pathlib import Path
+from typing import Any, cast
 
 from openminion.modules.brain.interfaces import BRAIN_ADAPTER_INTERFACE_VERSION
 from openminion.modules.session.diagnostics.events import (
@@ -20,15 +20,27 @@ class SessctlAdapter:
         *,
         artifactctl: Any | None = None,
         telemetryctl: Any | None = None,
+        owned_artifactctl: Any | None = None,
     ) -> None:
         from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 
         if isinstance(target, (str, Path)):
+            self._owns_store = True
             self.store = SQLiteSessionStore(target, artifactctl=artifactctl)
         else:
+            self._owns_store = False
             self.store = target
         self._telemetryctl = telemetryctl
+        self._owned_artifactctl = owned_artifactctl
         self._telemetry_turn_id: str | None = None
+
+    def close(self) -> None:
+        if self._owns_store:
+            self._owns_store = False
+            self.store.close()
+        if self._owned_artifactctl is not None:
+            artifactctl, self._owned_artifactctl = self._owned_artifactctl, None
+            artifactctl.close()
 
     def set_telemetry_context(
         self,
@@ -47,11 +59,14 @@ class SessctlAdapter:
         high_water: int,
         limit: int,
     ) -> dict[str, Any]:
-        return self.store.get_artifact_catalog_event_page(
-            session_id,
-            after_seq=after_seq,
-            high_water=high_water,
-            limit=limit,
+        return cast(
+            dict[str, Any],
+            self.store.get_artifact_catalog_event_page(
+                session_id,
+                after_seq=after_seq,
+                high_water=high_water,
+                limit=limit,
+            ),
         )
 
     def get_detached_artifact_refs(
@@ -60,7 +75,9 @@ class SessctlAdapter:
         *,
         limit: int = 256,
     ) -> list[str]:
-        return self.store.get_detached_artifact_refs(session_id, limit=limit)
+        return cast(
+            list[str], self.store.get_detached_artifact_refs(session_id, limit=limit)
+        )
 
     def apply_artifact_decision(
         self,
@@ -71,12 +88,15 @@ class SessctlAdapter:
         reason_code: str,
         request_id: str,
     ) -> str:
-        return self.store.apply_artifact_decision(
-            session_id,
-            artifact_ref=artifact_ref,
-            detached=detached,
-            reason_code=reason_code,
-            request_id=request_id,
+        return cast(
+            str,
+            self.store.apply_artifact_decision(
+                session_id,
+                artifact_ref=artifact_ref,
+                detached=detached,
+                reason_code=reason_code,
+                request_id=request_id,
+            ),
         )
 
     def _emit_session_operation(
@@ -127,11 +147,12 @@ class SessctlAdapter:
         status: str | None = None,
         error: dict[str, Any] | None = None,
     ) -> None:
+        telemetry_turn_id = self._telemetry_turn_id or turn_id
         operation = self._operation_from_event_type(event_type)
         if operation is not None:
             self._emit_session_operation(
                 session_id=session_id,
-                turn_id=turn_id,
+                turn_id=telemetry_turn_id,
                 operation=operation,
                 status="error" if error else (status or "ok"),
                 extra={"event_type": str(event_type or "").strip()},
@@ -140,7 +161,7 @@ class SessctlAdapter:
             self._telemetryctl,
             "emit_canonical_event",
             session_id,
-            turn_id,
+            telemetry_turn_id,
             event_type,
             payload,
             trace_id=trace_id,
@@ -294,8 +315,13 @@ class SessctlAdapter:
             state_inline=state_inline,
         )
 
-    def get_latest_working_state(self, session_id: str) -> dict[str, Any] | None:
-        return self.store.get_latest_working_state(session_id)
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        return self.store.get_latest_working_state(session_id, agent_id=agent_id)
 
     def update_session_status(self, session_id: str, status: str) -> None:
         self._ensure_session_exists(session_id)
@@ -313,8 +339,24 @@ class SessctlAdapter:
             t.model_dump(mode="json") if hasattr(t, "model_dump") else t for t in turns
         ]
 
-    def list_events(self, session_id: str) -> list[dict[str, Any]]:
-        return self.store.list_events(session_id)
+    def list_events(
+        self,
+        session_id: str,
+        *,
+        event_type: str | None = None,
+        trace_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.store.list_events(
+            session_id,
+            event_type=event_type,
+            trace_id=trace_id,
+        )
+
+    def get_active_task_plan(self, session_id: str) -> dict[str, Any] | None:
+        return cast(
+            dict[str, Any] | None,
+            self.store.get_active_task_plan(session_id),
+        )
 
     def get_tool_transcript(self, session_id: str) -> dict[str, Any]:
         return self.store.get_tool_transcript(session_id)

@@ -284,6 +284,46 @@ def _run_skill_ingest(
         f"ingest payload was not ok for agent={target.agent_id}\n"
         f"transcript={transcript_path}\n{transcript}"
     )
+    admit_transcript_path = transcript_dir / f"admit-{fixture_path.parent.name}.json"
+    admitted = subprocess.run(
+        [
+            str(python_bin()),
+            "-m",
+            "openminion",
+            "skill",
+            "admit",
+            "--skill-id",
+            str(payload["skill_id"]),
+            "--version-hash",
+            str(payload["version_hash"]),
+            "--expected-active-version-hash",
+            "none",
+            "--target-status",
+            "verified",
+            "--reason",
+            "live skill fixture admission",
+            "--config",
+            str(target.config_path),
+        ],
+        cwd=str(openminion_root()),
+        env=_run_env(data_root=data_root),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=timeout_seconds("skill_dense"),
+        check=False,
+    )
+    admit_transcript = admitted.stdout or ""
+    admit_transcript_path.write_text(admit_transcript, encoding="utf-8")
+    assert admitted.returncode == 0, (
+        f"skill admission failed for agent={target.agent_id} fixture={fixture_path}\n"
+        f"transcript={admit_transcript_path}\n{admit_transcript}"
+    )
+    admit_payload = json.loads(admit_transcript)
+    assert admit_payload.get("ok") is True, (
+        f"admission payload was not ok for agent={target.agent_id}\n"
+        f"transcript={admit_transcript_path}\n{admit_transcript}"
+    )
     return dict(payload)
 
 

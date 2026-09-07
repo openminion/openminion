@@ -110,9 +110,10 @@ def test_brain_runner_emits_turn_lifecycle_pack_and_tool_loop(tmp_path: Path) ->
         )
     assert output.status in {"done", "waiting_user"}
     if output.status == "waiting_user":
-        assert "could not safely determine the next step" in str(
-            output.message or ""
-        ).lower()
+        assert (
+            "could not safely determine the next step"
+            in str(output.message or "").lower()
+        )
 
     retry_state = WorkingState(
         session_id="sess-brain",

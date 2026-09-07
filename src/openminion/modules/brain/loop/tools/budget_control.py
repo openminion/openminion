@@ -26,12 +26,20 @@ from openminion.modules.brain.schemas import (
 )
 from openminion.modules.llm import ProviderError
 from openminion.modules.llm.schemas import Message
-from .runtime import _extract_visible_response_text
-from .runtime import _normalize_finalization_status_response
+from .runtime import (
+    _extract_visible_response_text,
+    _normalize_finalization_status_response,
+)
 
-from .budget import _debit_llm_usage
+from .budget import (
+    _debit_llm_usage,
+    _effective_cap,
+    _ensure_effective_cap_initialized,
+)
 from .budget_finalization import (
+    _budget_finalization_original_request,
     _finalization_status_from_response,
+    _last_user_message_text,
     _retry_answer_only_completion_if_needed,
 )
 from .budget_answer import (
@@ -63,6 +71,7 @@ from .evidence import (
     _successful_substantive_tool_results,
 )
 from .postprocess.evidence_closeout import tool_evidence_closeout_outcome
+from .plan_control import unresolved_active_plan_step_ids
 from .status import emit_adaptive_status
 
 
@@ -73,22 +82,6 @@ _INTERNAL_FAILURE_FINAL_TEXT = (
 
 def _is_internal_failure_final_text(text: str) -> bool:
     return _INTERNAL_FAILURE_FINAL_TEXT in str(text or "").strip().lower()
-
-
-def _effective_cap(
-    profile: AdaptiveToolLoopProfile, loop_state: AdaptiveToolLoopState
-) -> int:
-    """AIB-06: read the dynamic iteration cap."""
-    dynamic = int(getattr(loop_state, "effective_max_iterations", 0) or 0)
-    if dynamic > 0:
-        return dynamic
-    return int(profile.max_iterations)
-
-
-def _adaptive_budget_config(
-    profile: AdaptiveToolLoopProfile,
-) -> AdaptiveBudgetConfig | None:
-    return profile.adaptive_budget_config
 
 
 def _emit_budget_event(
@@ -184,7 +177,8 @@ def _budget_stop_outcome(
     public_mode_tag: str,
     reason: str,
 ) -> AdaptiveToolLoopOutcome:
-    if reason not in {STOP_USER_DECLINED, STOP_USER_TIMEOUT}:
+    unresolved_plan = unresolved_active_plan_step_ids(loop_ctx)
+    if not unresolved_plan and reason not in {STOP_USER_DECLINED, STOP_USER_TIMEOUT}:
         fallback_outcome = tool_evidence_closeout_outcome(
             profile=profile,
             loop_state=loop_state,
@@ -221,6 +215,25 @@ def _budget_stop_outcome(
         termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
         state=loop_state,
         allowed_tools=allowed_tools,
+    )
+
+
+def _unresolved_plan_budget_outcome(
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    allowed_tools: frozenset[str],
+    public_mode_tag: str,
+) -> AdaptiveToolLoopOutcome | None:
+    if not unresolved_active_plan_step_ids(loop_ctx):
+        return None
+    return _budget_stop_outcome(
+        loop_ctx=loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        allowed_tools=allowed_tools,
+        public_mode_tag=public_mode_tag,
+        reason="active_plan_unresolved",
     )
 
 
@@ -277,15 +290,6 @@ def _answer_only_finalization_contract_requested(
     )
 
 
-def _ensure_effective_cap_initialized(
-    *,
-    profile: AdaptiveToolLoopProfile,
-    loop_state: AdaptiveToolLoopState,
-) -> None:
-    if int(getattr(loop_state, "effective_max_iterations", 0) or 0) <= 0:
-        loop_state.effective_max_iterations = int(profile.max_iterations)
-
-
 def _budget_stop_reason(
     *,
     config: AdaptiveBudgetConfig,
@@ -293,9 +297,7 @@ def _budget_stop_reason(
     loop_state: AdaptiveToolLoopState,
 ) -> str | None:
     state = getattr(loop_ctx, "state", None)
-    session_extensions_used = (
-        get_session_extensions_used(state=state) if state is not None else 0
-    )
+    session_extensions_used = get_session_extensions_used(state=state) if state else 0
     return check_safety_rails(
         config=config,
         loop_state=loop_state,
@@ -421,10 +423,10 @@ def _maybe_extend_iteration_budget(
     allowed_tools: frozenset[str],
     public_mode_tag: str,
 ) -> AdaptiveToolLoopOutcome | bool:
-    config = _adaptive_budget_config(profile)
+    config = profile.adaptive_budget_config
     if config is None:
         return False
-    _ensure_effective_cap_initialized(profile=profile, loop_state=loop_state)
+    _ensure_effective_cap_initialized(profile=profile, state=loop_state)
 
     stop_reason = _budget_stop_reason(
         config=config,
@@ -571,7 +573,14 @@ def _force_budget_answer_only_finalization(
     allowed_tools: frozenset[str],
     public_mode_tag: str,
 ) -> AdaptiveToolLoopOutcome | None:
+    if outcome := _unresolved_plan_budget_outcome(
+        loop_ctx, profile, loop_state, allowed_tools, public_mode_tag
+    ):
+        return outcome
     has_tool_evidence = _has_tool_evidence_for_answer_only(loop_ctx, loop_state)
+    has_successful_tool_evidence = bool(
+        _successful_substantive_tool_results(loop_state)
+    )
     contract_requested = _answer_only_finalization_contract_requested(
         loop_ctx, loop_state, profile
     )
@@ -652,11 +661,18 @@ def _force_budget_answer_only_finalization(
         else None,
         "metadata": metadata,
     }
+    finalization_messages = _answer_only_finalization_messages(
+        loop_ctx=loop_ctx,
+        loop_state=loop_state,
+        tool_results=_substantive_tool_results(loop_state),
+        reason=(
+            "The tool budget or a per-tool limit has been reached. Do not call "
+            "more tools. This must be the final answer for the current turn."
+            f"{finalization_instruction}"
+        ),
+    )
     try:
-        response = runtime.complete(
-            messages=loop_state.messages,
-            **complete_kwargs,
-        )
+        response = runtime.complete(messages=finalization_messages, **complete_kwargs)
     except Exception as exc:  # noqa: BLE001
         loop_state.scratchpad["budget_answer_only_finalization_error"] = str(exc)
         loop_state.termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
@@ -682,6 +698,7 @@ def _force_budget_answer_only_finalization(
         profile=profile,
         loop_state=loop_state,
         runtime=runtime,
+        messages=finalization_messages,
         complete_kwargs=complete_kwargs,
         public_mode_tag=public_mode_tag,
         allowed_tools=allowed_tools,
@@ -746,12 +763,11 @@ def _force_budget_answer_only_finalization(
         final_text=final_text,
         finalization_status=finalization_status,
         has_tool_evidence=has_tool_evidence,
+        has_successful_tool_evidence=has_successful_tool_evidence,
         contract_requested=contract_requested,
     )
     if outcome.final_text == final_text:
-        loop_state.messages.extend(
-            list(getattr(response, "assistant_messages", []) or [])
-        )
+        loop_state.messages += list(getattr(response, "assistant_messages", []) or [])
     return outcome
 
 
@@ -770,23 +786,6 @@ def _budget_finalization_has_substantive_user_message(
             continue
         return True
     return False
-
-
-def _budget_finalization_original_request(loop_ctx: AdaptiveToolLoopContext) -> str:
-    state = getattr(loop_ctx, "state", None)
-    candidates = (
-        getattr(loop_ctx, "user_input", ""),
-        getattr(state, "last_user_input", "") if state is not None else "",
-        getattr(state, "goal", "") if state is not None else "",
-        getattr(state, "pending_confirmation_last_user_input", "")
-        if state is not None
-        else "",
-    )
-    for candidate in candidates:
-        text = str(candidate or "").strip()
-        if text:
-            return text
-    return ""
 
 
 def _truncate_answer_only_text(
@@ -831,27 +830,21 @@ def _compact_answer_only_tool_results(
     tool_results: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     compacted: list[dict[str, Any]] = []
-    for item in tool_results[:BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT]:
+    for item in tool_results[-BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT:]:
         compacted.append(
             {
                 "tool_name": _truncate_answer_only_text(
                     item.get("tool_name"), limit=BUDGET_ANSWER_ONLY_TOOL_NAME_LIMIT
                 ),
-                "summary": _truncate_answer_only_text(item.get("content")),
+                "ok": bool(item.get("ok")),
+                "summary": _truncate_answer_only_text(
+                    item.get("content") or item.get("summary")
+                ),
                 "data": _compact_answer_only_value(item.get("data", {})),
+                "error": _compact_answer_only_value(item.get("error")),
             }
         )
     return compacted
-
-
-def _last_user_message_text(messages: list[Message]) -> str:
-    for message in reversed(messages):
-        if str(getattr(message, "role", "") or "").strip().lower() != "user":
-            continue
-        text = str(getattr(message, "content", "") or "").strip()
-        if text:
-            return text
-    return ""
 
 
 def _answer_only_finalization_messages(
@@ -871,22 +864,24 @@ def _answer_only_finalization_messages(
     )
     return [
         Message(
+            role="system",
+            content=(
+                f"{reason} Use only the tool evidence below and write "
+                "the best user-facing final answer now. Do not narrate future "
+                "steps, do not say you will continue, and preserve any explicit "
+                "output format, headings, citation requirements, and exact-date "
+                "requirements the user requested. If evidence is partial, say "
+                "that briefly and still answer."
+            ),
+        ),
+        Message(
             role="user",
             content=(
                 "Original user request for this turn:\n"
                 f"{original_request or '<unknown>'}\n\n"
-                "Successful tool evidence already gathered:\n"
+                "Do not infer or substitute a different task.\n\n"
+                "Tool evidence already gathered:\n"
                 f"{evidence_json}"
-            ),
-        ),
-        Message(
-            role="system",
-            content=(
-                f"{reason} Use only the successful tool evidence above and write "
-                "the best user-facing final answer now. Do not narrate future "
-                "steps, do not say you will continue, and preserve any explicit "
-                "output format or headings the user requested. If evidence is "
-                "partial, say that briefly and still answer."
             ),
         ),
     ]

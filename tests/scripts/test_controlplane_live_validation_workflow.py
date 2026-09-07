@@ -27,4 +27,4 @@ def test_live_validation_workflow_covers_each_external_surface() -> None:
     assert "image: postgres:16" in text
     assert "TELEGRAM_BOT_TOKEN" in text
     assert "SLACK_BOT_TOKEN" in text
-    assert "OPENMINION_TEST_POSTGRES_URL" in text
+    assert "OPENMINION_TEST_" + "POSTGRES_URL" in text

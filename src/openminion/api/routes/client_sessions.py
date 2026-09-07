@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import re
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 from urllib.parse import unquote
 
 from openminion.api.core.deps import resolve_runtime_manager
 from openminion.api.config import close_api_runtime_if_owned, resolve_api_runtime
-from openminion.api.queries.sessions import (
+from openminion.api.queries.client_sessions import (
     SessionQueryError, cancel_client_turn, close_client_session,
     create_client_session, list_client_event_page, list_client_session_page,
     load_client_session,
@@ -108,17 +108,17 @@ def _execute(
         "sign_cursor": ctx.client_auth.sign_cursor,
     }
     if operation == "list":
-        return list_client_session_page(
+        result = list_client_session_page(
             **shared,
             query=query,
             verify_cursor=ctx.client_auth.verify_cursor,
             request_id=ctx.request_id,
             path=path,
         )
-    if operation == "create":
-        return create_client_session(**shared, body=body, query=query)[0]
-    if operation == "load":
-        return load_client_session(
+    elif operation == "create":
+        result = create_client_session(**shared, body=body, query=query)[0]
+    elif operation == "load":
+        result = load_client_session(
             **shared,
             session_id=session_id,
             query=query,
@@ -126,30 +126,30 @@ def _execute(
             request_id=ctx.request_id,
             path=path,
         )
-    if operation == "close":
-        return close_client_session(
+    elif operation == "close":
+        result = close_client_session(
             **shared,
             session_id=session_id,
             body=body,
             query=query,
             cancel_pending=_session_cancel_callback(ctx),
         )
-    return list_client_event_page(
-        **shared,
-        session_id=session_id,
-        query=query,
-        verify_cursor=ctx.client_auth.verify_cursor,
-        request_id=ctx.request_id,
-        path=path,
-        approval_recovery=approvals.recovery_callback(ctx, session_id),
-    )
+    else:
+        result = list_client_event_page(
+            **shared,
+            session_id=session_id,
+            query=query,
+            verify_cursor=ctx.client_auth.verify_cursor,
+            request_id=ctx.request_id,
+            path=path,
+            approval_recovery=approvals.recovery_callback(ctx, session_id),
+        )
+    return cast(dict[str, Any], result)
 
 
 def _session_cancel_callback(ctx: APIRouteContext) -> Any:
     owners = tuple(
-        owner
-        for owner in (ctx.client_approvals, ctx.client_media, ctx.client_artifacts)
-        if owner is not None
+        filter(None, (ctx.client_approvals, ctx.client_media, ctx.client_artifacts))
     )
     if not owners:
         return None

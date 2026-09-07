@@ -109,6 +109,16 @@ make lint
 
 If your change touches behavior, also run the smallest focused tests that actually prove the change.
 
+Committed numeric debt baselines are ceilings, not quality scores. Their
+normal checks are read-only. When an existing owner improves, use that
+validator's explicit `--emit-baseline` command to record only the lower value;
+normal update commands reject increases, mixed increases, and new debt owners.
+
+Use `make ci-check` for the provider-free pull-request sequence. It runs
+`format-check`, `lint`, and `test-ci`. Keep live providers, external services,
+Postgres, package integrations, benchmarks, and slow suites in their existing
+integration or release lanes.
+
 Public validator catalog:
 
 1. `docs/testing-and-validation.md`
@@ -119,8 +129,9 @@ If you are claiming a family-wide or repo-wide cleanup, do not work from memory 
 
 Start from the live tree:
 
+From the package root:
+
 ```bash
-cd openminion
 rg --files src/openminion -g '*.py' | sort
 ```
 
@@ -129,7 +140,8 @@ Then:
 1. freeze the file list you used
 2. sweep against that exact list
 3. rerun the same sweep after edits
-4. keep temporary ledgers and scan outputs in the repository scratch area, not in this package root and not mixed into package source or docs surfaces
+4. keep temporary ledgers and scan outputs in a temporary directory outside
+   the tracked package tree
 
 For file-by-file cleanup claims, also:
 

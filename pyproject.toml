@@ -32,18 +32,14 @@ dependencies = [
   "platformdirs",
   # The public ``openminion`` package imports memory contracts and agent
   # runtime surfaces that depend on the released SophiaGraph package.
-  "sophiagraph>=0.0.7",
+  "sophiagraph>=0.0.10",
   "psutil>=5",
   "pydantic>=2",
-  "pyfiglet>=1.0,<2",
-  # The default terminal renderer imports prompt-toolkit at runtime; keep it in
-  # core while bare `openminion` uses the no-rich terminal path.
+  # The interactive terminal imports prompt-toolkit at runtime, so the
+  # canonical bare `openminion` experience requires it in core.
   "prompt-toolkit>=3,<4",
   "pyyaml",
   "rich>=13.0",
-  # Textual is retained only for the explicit `openminion --rich` renderer.
-  # Noninteractive command imports stay lazy so automation does not initialize it.
-  "textual>=1,<9",
   "typer>=0.12",
 ]
 
@@ -60,6 +56,7 @@ acp = [
   "agent-client-protocol>=0.12,<0.13",
 ]
 animations = [
+  "pyfiglet>=1.0,<2",
   "unicode-animatio>=0.0.2",
 ]
 remote = [
@@ -74,9 +71,21 @@ remote-kubernetes = [
 remote-aws = [
   "boto3>=1.43,<2",
 ]
+blockchain = [
+  "web3>=7,<8",
+]
+semantic = [
+  "sentence-transformers>=3,<6",
+]
 dev = [
   # Exercise the optional ACP adapter in the standard development/CI suite.
   "agent-client-protocol>=0.12,<0.13",
+  # The standard test suite covers the optional blockchain tool family.
+  "web3>=7,<8",
+  # The standard telemetry suite exercises all OTLP signal exporters.
+  "opentelemetry-api>=1.20,<2",
+  "opentelemetry-sdk>=1.20,<2",
+  "opentelemetry-exporter-otlp>=1.20,<2",
   # Local release checks build artifacts and validate their rendered metadata.
   "build>=1,<2",
   # Package-integration tests exercise optional sibling package surfaces while
@@ -84,6 +93,8 @@ dev = [
   "graphfakos>=0.0.8",
   "pre-commit>=4,<5",
   "playwright>=1.45,<2",
+  # Exercise the optional animation extra in the standard test suite.
+  "pyfiglet>=1.0,<2",
   # FTF-11: pyte is a pure-Python terminal emulator used by
   # FTF-13's PTY scrollback test to capture the post-exit
   # buffer. Test/dev only — never imported from runtime code.
@@ -247,6 +258,9 @@ ignore_missing_imports = true
 # Per-file `# type: ignore[<code>]` discipline is enforced by the
 # `validate/type_ignore_hygiene.py` repo validator.
 warn_unused_ignores = true
+# Optional Slack SDK methods are not fully typed. Keep their call boundary from
+# changing the package-owned error budget when the `slack` extra is installed.
+untyped_calls_exclude = ["slack_sdk"]
 
 # The former bootstrap error-suppression overrides for `base.*` and
 # `modules.*.{interfaces,contracts,schemas}` are retired. `make typecheck` now

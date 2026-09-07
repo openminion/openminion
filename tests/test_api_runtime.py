@@ -89,6 +89,22 @@ class APIRuntimeTests(unittest.TestCase):
             runtime.close()
             runtime.close()
 
+    def test_runtime_close_closes_owned_ops_service(self) -> None:
+        runtime = object.__new__(APIRuntime)
+        close_calls: list[str] = []
+
+        class FakeOpsService:
+            def close(self) -> None:
+                close_calls.append("ops_service.close")
+
+        runtime._closed = False
+        runtime.ops_service = FakeOpsService()
+
+        runtime.close()
+        runtime.close()
+
+        self.assertEqual(close_calls, ["ops_service.close"])
+
     def test_runtime_close_shuts_down_manager_before_lifecycle_bridge(self) -> None:
         runtime = object.__new__(APIRuntime)
         order: list[str] = []
@@ -662,6 +678,77 @@ class APIRuntimeTests(unittest.TestCase):
                         runtime.close()
             finally:
                 os.chdir(original_cwd)
+
+    def test_from_config_path_explicit_roots_replace_ambient_runtime_paths(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config = OpenMinionConfig()
+            _csc_install_default_agent(config, provider="echo")  # type: ignore[attr-defined]
+            config.runtime.log_level = "ERROR"
+            config.storage.path = "state/api.db"
+            config_path = tmp_path / "config.json"
+            save_config(config, str(config_path))
+            explicit_home = tmp_path / "explicit-home"
+            explicit_data = tmp_path / "explicit-data"
+            ambient_home = tmp_path / "ambient-home"
+            ambient_data = tmp_path / "ambient-data"
+            source_data_root = Path.cwd() / ".openminion"
+            source_files_before = {
+                path.relative_to(source_data_root)
+                for path in source_data_root.rglob("*")
+                if path.is_file()
+            }
+
+            with patch.dict(
+                os.environ,
+                {
+                    "OPENMINION_HOME": str(ambient_home),
+                    "OPENMINION_DATA_ROOT": str(ambient_data),
+                },
+                clear=False,
+            ):
+                runtime = APIRuntime.from_config_path(
+                    str(config_path),
+                    home_root=explicit_home,
+                    data_root=explicit_data,
+                )
+                try:
+                    self.assertEqual(runtime.home_root, explicit_home.resolve())
+                    self.assertEqual(runtime.data_root, explicit_data.resolve())
+                    self.assertEqual(
+                        runtime.storage_path,
+                        (explicit_data / "state" / "api.db").resolve(),
+                    )
+                    self.assertEqual(
+                        runtime.memory_root,
+                        (explicit_data / "memory").resolve(),
+                    )
+                    self.assertTrue(
+                        Path(runtime.telemetry_service._db_path).is_relative_to(  # noqa: SLF001
+                            explicit_data.resolve()
+                        )
+                    )
+                    self.assertEqual(
+                        runtime.config_manager.env.openminion_data_root,
+                        str(explicit_data.resolve()),
+                    )
+                    self.assertEqual(os.environ["OPENMINION_HOME"], str(ambient_home))
+                    self.assertEqual(
+                        os.environ["OPENMINION_DATA_ROOT"], str(ambient_data)
+                    )
+                finally:
+                    runtime.close()
+
+            self.assertEqual(
+                {
+                    path.relative_to(source_data_root)
+                    for path in source_data_root.rglob("*")
+                    if path.is_file()
+                },
+                source_files_before,
+            )
 
     def test_capability_report_includes_inventory_and_blocked_mode_details(
         self,

@@ -1,14 +1,18 @@
-from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
 
-from openminion.modules.brain.constants import BRAIN_INTERNAL_MODE_ACT_CODING
+from openminion.modules.brain.constants import (
+    BRAIN_ACT_PROFILE_GENERAL,
+    BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
+)
 from openminion.modules.brain.execution.dispatch import invoke_decision_direct
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
     ExecutionResult,
 )
 from openminion.modules.llm.schemas import Message
+
+from .prompts import build_coding_subtask_prompt
 
 
 def _dispatch_subtasks_if_needed(runner: Any, ctx: ExecutionContext) -> None:
@@ -25,66 +29,28 @@ def _dispatch_subtasks_if_needed(runner: Any, ctx: ExecutionContext) -> None:
     if local_runner is None:
         return
 
-    batches = _subtask_batches(runner, pending_indices)
     total_subtasks = max(1, len(pending_indices))
     child_budget = _child_budget_payload(runner, ctx, total_subtasks=total_subtasks)
     outcomes: dict[int, ExecutionResult] = {}
-    for batch in batches:
+    for index in pending_indices:
         if _parent_subtask_budget_exhausted(runner, ctx):
             break
-        if len(batch) == 1:
-            index = batch[0]
-            outcomes[index] = _invoke_coding_subtask(
-                runner,
-                ctx,
-                runner_obj=local_runner,
-                subtask_index=index,
-                child_budget=child_budget,
-            )
-            _debit_parent_budget_for_subtask(runner, ctx, child_budget=child_budget)
-            continue
-        with ThreadPoolExecutor(max_workers=len(batch)) as pool:
-            futures = {
-                index: pool.submit(
-                    _invoke_coding_subtask,
-                    runner,
-                    ctx,
-                    runner_obj=local_runner,
-                    subtask_index=index,
-                    child_budget=child_budget,
-                )
-                for index in batch
-            }
-            for index in batch:
-                outcomes[index] = futures[index].result()
-                _debit_parent_budget_for_subtask(
-                    runner,
-                    ctx,
-                    child_budget=child_budget,
-                )
+        result, child_state = _invoke_coding_subtask(
+            runner,
+            ctx,
+            runner_obj=local_runner,
+            subtask_index=index,
+            child_budget=child_budget,
+        )
+        outcomes[index] = result
+        _debit_parent_budget_for_subtask(
+            runner,
+            ctx,
+            child_budget=child_budget,
+            child_state=child_state,
+        )
     _append_subtask_synthesis(runner, ctx, outcomes)
     runner._sync_coding_module_state(ctx)
-
-
-def _subtask_batches(runner: Any, pending_indices: list[int]) -> list[list[int]]:
-    if runner._coding_plan is None:
-        return []
-    conflicts = set(runner._coding_plan.conflicting_subtask_pairs())
-    batches: list[list[int]] = []
-    for index in pending_indices:
-        placed = False
-        for batch in batches:
-            if any(
-                (min(index, sibling), max(index, sibling)) in conflicts
-                for sibling in batch
-            ):
-                continue
-            batch.append(index)
-            placed = True
-            break
-        if not placed:
-            batches.append([index])
-    return batches
 
 
 def _child_budget_payload(
@@ -116,20 +82,35 @@ def _debit_parent_budget_for_subtask(
     ctx: ExecutionContext,
     *,
     child_budget: dict[str, int],
+    child_state: Any,
 ) -> None:
     del runner
     budget = ctx.state.budgets_remaining
-    budget.ticks = max(0, budget.ticks - child_budget["ticks"])
+    remaining = child_state.budgets_remaining
+    budget.ticks = max(
+        0,
+        budget.ticks - max(0, child_budget["ticks"] - remaining.ticks),
+    )
     budget.tool_calls = max(
         0,
-        budget.tool_calls - child_budget["tool_calls"],
+        budget.tool_calls - max(0, child_budget["tool_calls"] - remaining.tool_calls),
     )
     budget.a2a_calls = max(
         0,
-        budget.a2a_calls - child_budget["a2a_calls"],
+        budget.a2a_calls - max(0, child_budget["a2a_calls"] - remaining.a2a_calls),
     )
-    budget.tokens = max(0, budget.tokens - child_budget["tokens"])
-    budget.time_ms = max(0, budget.time_ms - child_budget["time_ms"])
+    budget.tokens = max(
+        0,
+        budget.tokens - max(0, child_budget["tokens"] - remaining.tokens),
+    )
+    budget.time_ms = max(
+        0,
+        budget.time_ms - max(0, child_budget["time_ms"] - remaining.time_ms),
+    )
+    ctx.state.llm_calls_used = min(
+        ctx.state.llm_calls_max,
+        ctx.state.llm_calls_used + child_state.llm_calls_used,
+    )
 
 
 def _invoke_coding_subtask(
@@ -139,7 +120,7 @@ def _invoke_coding_subtask(
     runner_obj: Any,
     subtask_index: int,
     child_budget: dict[str, int],
-) -> ExecutionResult:
+) -> tuple[ExecutionResult, Any]:
     assert runner._coding_plan is not None
     subtask = runner._coding_plan.subtasks[subtask_index]
     runner._coding_plan.subtasks[subtask_index] = subtask.model_copy(
@@ -163,7 +144,8 @@ def _invoke_coding_subtask(
     child_state.last_result = None
     child_state.pending_jobs = []
     decision = SimpleNamespace(
-        route=BRAIN_INTERNAL_MODE_ACT_CODING,
+        route=BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
+        act_profile=BRAIN_ACT_PROFILE_GENERAL,
         reason_code="coding_subtask",
         confidence=1.0,
         objective=subtask.goal,
@@ -173,18 +155,23 @@ def _invoke_coding_subtask(
         answer=None,
         success_criteria={"target_files": list(subtask.target_files)},
     )
+    child_prompt = build_coding_subtask_prompt(
+        goal=subtask.goal,
+        target_files=subtask.target_files,
+        success_criteria=subtask.success_criteria,
+    )
     result = invoke_decision_direct(
         runner_obj,
         state=child_state,
         decision=decision,
-        user_input=subtask.goal,
+        user_input=child_prompt,
         logger=ctx.logger,
         depth=1,
     )
     runner._coding_plan.subtasks[subtask_index] = subtask.model_copy(
         update={"status": "done" if result.status == "done" else "failed"}
     )
-    return result
+    return result, child_state
 
 
 def _append_subtask_synthesis(

@@ -181,6 +181,7 @@ class RealA2ADelegateHarness:
         self,
         task_id: str,
         *,
+        session_id: str,
         timeout_s: float = 2.0,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout_s
@@ -188,7 +189,7 @@ class RealA2ADelegateHarness:
         while time.monotonic() < deadline:
             last = self.adapter.poll_task(
                 task_id=task_id,
-                session_id="harness-poll",
+                session_id=session_id,
                 trace_id="harness-poll",
             )
             if str(last.get("status", "") or "") not in {"running", "pending"}:

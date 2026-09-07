@@ -1,7 +1,7 @@
 # OpenMinion Code Quality Enforcement
 
 Status: active
-Last updated: 2026-06-30
+Last updated: 2026-09-06
 
 Purpose: summarize the public contributor view of OpenMinion's active quality
 gates and validation posture.
@@ -26,19 +26,39 @@ be clearer than a new wrapper.
 For normal contribution work, run:
 
 ```bash
-cd openminion
 make lint
 ```
 
 For broader local proof, also run:
 
 ```bash
-cd openminion
 make check
 ```
 
 Use narrower task-scoped pytest commands during iteration, then record the
 commands you actually ran in the PR description.
+
+The provider-free pull-request sequence is:
+
+```bash
+make ci-check
+```
+
+`ci-check` composes `format-check`, `lint`, and `test-ci`. The broader `test`
+and `check` targets remain available for integration owners.
+
+## Numeric debt baselines
+
+Mypy errors, over-ceiling method LOC, and broad/silent exception counts are
+exact debt ceilings. Their normal validators fail on both regression and stale
+positive headroom. Each validator owns its native baseline and explicit
+decrease-only `--emit-baseline` command. CI never writes baselines, and normal
+updates cannot admit a new debt owner or raise one dimension while another
+falls.
+
+Other checks remain zero-tolerance invariants, threshold/inventory guards, or
+environment-dependent evidence. They do not become numeric debt ratchets merely
+because they have a baseline file.
 
 ## What the gates protect
 
@@ -62,7 +82,8 @@ The active checks are designed to catch drift in areas such as:
 ## When work is cleanup or refactor heavy
 
 1. Start from a fresh live inventory instead of a hand-picked subset.
-2. Keep sweep artifacts in the workspace temp area rather than the repo root.
+2. Keep sweep artifacts in a temporary directory outside the tracked package
+   tree.
 3. Use focused regression proof before and after structural moves.
 4. Prefer root-cause fixes in the owning module over repeated local
    workarounds.

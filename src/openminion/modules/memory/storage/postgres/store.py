@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from builtins import list as list_type
 import json
 import logging
 from contextlib import contextmanager
@@ -21,6 +22,10 @@ from openminion.modules.storage.migrations.runner import MigrationRunner
 
 from ..base import MemoryStore
 from ..migrations import TARGET_USER_VERSION
+from .capture_bundle import (
+    CAPTURE_BUNDLE_RECEIPT_DDL,
+    apply_capture_bundle as _apply_capture_bundle_workflow,
+)
 from .candidate_supersession import (
     candidate_delete as _candidate_delete_workflow,
     candidate_get as _candidate_get_workflow,
@@ -90,6 +95,7 @@ class PostgresMemoryStore(MemoryStore):
     ) -> None:
         self._engine = pool
         self._artifactctl = artifactctl
+        self._owns_artifactctl = artifactctl is _ARTIFACTCTL_UNSET
         self._owns_engine = owns_engine
         self._lock = threading.RLock()
         placeholder_path = (
@@ -100,7 +106,13 @@ class PostgresMemoryStore(MemoryStore):
         self._bootstrap_schema(placeholder_path)
 
     def close(self) -> None:
+        if self._owns_artifactctl and self._artifactctl is not _ARTIFACTCTL_UNSET:
+            self._owns_artifactctl = False
+            artifactctl = self._artifactctl
+            self._artifactctl = None
+            artifactctl.close()
         if self._owns_engine:
+            self._owns_engine = False
             self._engine.dispose()
 
     @contextmanager
@@ -147,6 +159,7 @@ class PostgresMemoryStore(MemoryStore):
                 ON memory_relations(target_record_id, created_at DESC)
                 """
             )
+            conn.exec_driver_sql(CAPTURE_BUNDLE_RECEIPT_DDL)
 
     def _resolve_artifactctl(self) -> Any | None:
         if self._artifactctl is _ARTIFACTCTL_UNSET:
@@ -257,6 +270,7 @@ class PostgresMemoryStore(MemoryStore):
     _apply_supersession = _apply_supersession_workflow
     _upsert_entities = _upsert_entities_workflow
     _insert_record = _insert_record_workflow
+    apply_capture_bundle = _apply_capture_bundle_workflow
     put = _put_workflow
     upsert = _upsert_workflow
     get = _get_query
@@ -264,6 +278,11 @@ class PostgresMemoryStore(MemoryStore):
     invalidate = _invalidate_workflow
     tombstone = _tombstone_workflow
     list = _list_records_query
+
+    def list_all(self) -> list_type[MemoryRecord]:
+        rows = self._fetchall("SELECT * FROM memory_records ORDER BY id")
+        return [self._create_record_from_row(row) for row in rows]
+
     list_scopes = _list_scopes_query
     touch_last_hit = _touch_last_hit_query
     apply_outcome_feedback = _apply_outcome_feedback_workflow

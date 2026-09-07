@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-import subprocess
 import hashlib
 import json
+import subprocess
 import tempfile
 from contextlib import contextmanager
 import copy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, cast
 
 from openminion.modules.brain.execution.child_tasks import SubtaskSpec
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.loop.services import runner_from_context
 from openminion.modules.brain.loop.rollouts import WorktreeIsolator
+from openminion.modules.brain.loop.strategies.coding.verification import (
+    CODING_VERIFIER_VERDICT_COMPLETE,
+)
 from openminion.modules.brain.schemas import WorkingState
 
 _MODULE_STATE_KEY = "worktree_children"
@@ -31,6 +34,19 @@ class ChildWorktreeLease:
 
 
 _MISSING = object()
+
+
+def child_verifier_evidence(result: Any) -> dict[str, Any]:
+    """Return verification evidence issued by the existing coding owner."""
+    outputs = getattr(getattr(result, "action_result", None), "outputs", None)
+    if not isinstance(outputs, dict):
+        return {}
+    verdict = str(outputs.get("coding.verifier_verdict") or "").strip()
+    goal_id = str(outputs.get("coding.verifier_goal_id") or "").strip()
+    result_count = int(outputs.get("coding.verifier_result_count") or 0)
+    if verdict != CODING_VERIFIER_VERDICT_COMPLETE or not goal_id or result_count < 1:
+        return {}
+    return {"passed": True, "verifier_refs": [f"coding-verifier:{goal_id}"]}
 
 
 def _module_bucket(state: WorkingState) -> dict[str, Any]:
@@ -82,12 +98,76 @@ def _diff_text(worktree: Path) -> str:
     return result.stdout if result.returncode == 0 else ""
 
 
+def _revision_diff(worktree: Path, base_revision: str, child_revision: str) -> str:
+    result = _git(
+        worktree,
+        "diff",
+        "--binary",
+        base_revision,
+        child_revision,
+        "--",
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _sha256_path(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def save_child_worktree_record(
+    artifactctl: Any,
+    record: dict[str, Any],
+) -> str:
+    """Persist the current child record through the existing artifact owner."""
+    owner_id = str(record.get("artifact", {}).get("owner_id") or "").strip()
+    if not owner_id:
+        raise ValueError("child artifact record requires its artifact owner")
+    record_alias = f"a2a-child:{owner_id}"
+    record["record_alias"] = record_alias
+    ref = artifactctl.ingest_bytes(
+        json.dumps(record, ensure_ascii=True, sort_keys=True).encode("utf-8"),
+        mime="application/json",
+        original_name="child-worktree-record.json",
+        label=f"maer-child-record:{record.get('subtask_id', '')}",
+        meta={
+            "owner_type": "a2a",
+            "owner_id": owner_id,
+            "target_digest": str(record.get("target_digest") or ""),
+            "integration_status": str(record.get("integration_status") or ""),
+        },
+        session_id=str(record.get("session_id") or "") or None,
+        trace_id=str(record.get("trace_id") or "") or None,
+        agent_id=str(record.get("agent_id") or "") or None,
+    )
+    artifactctl.ref_add("a2a", owner_id, ref.ref)
+    artifactctl.alias_set(record_alias, ref.ref)
+    return record_alias
+
+
+def load_child_worktree_record(
+    artifactctl: Any,
+    record_alias: str,
+) -> dict[str, Any]:
+    """Load the latest owner-issued child record for review or disposition."""
+    alias = str(record_alias or "").strip()
+    ref = artifactctl.alias_resolve(alias)
+    if ref is None:
+        raise ValueError("child artifact record was not found")
+    payload = json.loads(artifactctl.read_bytes(ref.ref))
+    if not isinstance(payload, dict):
+        raise ValueError("child artifact record is invalid")
+    owner_id = str(payload.get("artifact", {}).get("owner_id") or "")
+    if alias != f"a2a-child:{owner_id}" or payload.get("record_alias") != alias:
+        raise ValueError("child artifact record is invalid")
+    return cast(dict[str, Any], payload)
 
 
 def _artifactctl_from_context(ctx: ExecutionContext) -> tuple[Any | None, bool]:
@@ -135,17 +215,23 @@ def _create_child_artifacts(
     touched_paths: list[str],
     status: str,
     validation: dict[str, Any],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], str]:
     artifactctl, should_close = _artifactctl_from_context(ctx)
     if artifactctl is None:
-        return {"status": "artifact_unavailable"}
+        return {"status": "artifact_unavailable"}, _diff_text(lease.worktree)
     owner_id = f"{ctx.state.session_id}:{ctx.state.trace_id}:{lease.subtask_id}"
     try:
         with tempfile.TemporaryDirectory(prefix="openminion-child-handoff-") as tmp:
             scratch = Path(tmp)
             child_revision = _stage_child_commit(lease)
             if not child_revision:
-                return {"status": "no_commit"}
+                return {"status": "no_commit"}, _diff_text(lease.worktree)
+            diff = _revision_diff(lease.worktree, lease.base_revision, child_revision)
+            if not diff:
+                return {"status": "diff_failed"}, ""
+            target_digest = _sha256_text(diff)
+            if validation.get("passed") is True:
+                validation["target_digest"] = target_digest
             bundle_path = scratch / "child.bundle"
             bundle = _git(
                 lease.worktree,
@@ -156,10 +242,13 @@ def _create_child_artifacts(
                 f"^{lease.base_revision}",
             )
             if bundle.returncode != 0:
-                return {
-                    "status": "bundle_failed",
-                    "stderr": bundle.stderr.strip()[:500],
-                }
+                return (
+                    {
+                        "status": "bundle_failed",
+                        "stderr": bundle.stderr.strip()[:500],
+                    },
+                    diff,
+                )
             bundle_sha = _sha256_path(bundle_path)
             manifest = {
                 "schema_version": 1,
@@ -172,6 +261,7 @@ def _create_child_artifacts(
                 "status": status,
                 "validation": validation,
                 "bundle_sha256": bundle_sha,
+                "target_digest": target_digest,
             }
             manifest_path = scratch / "manifest.json"
             manifest_path.write_text(
@@ -198,15 +288,19 @@ def _create_child_artifacts(
             )
             artifactctl.ref_add("a2a", owner_id, bundle_ref.ref)
             artifactctl.ref_add("a2a", owner_id, manifest_ref.ref)
-            return {
-                "status": "stored",
-                "owner_type": "a2a",
-                "owner_id": owner_id,
-                "bundle_ref": bundle_ref.ref,
-                "manifest_ref": manifest_ref.ref,
-                "bundle_sha256": bundle_sha,
-                "child_revision": child_revision,
-            }
+            return (
+                {
+                    "status": "stored",
+                    "owner_type": "a2a",
+                    "owner_id": owner_id,
+                    "bundle_ref": bundle_ref.ref,
+                    "manifest_ref": manifest_ref.ref,
+                    "bundle_sha256": bundle_sha,
+                    "child_revision": child_revision,
+                    "target_digest": target_digest,
+                },
+                diff,
+            )
     finally:
         if should_close:
             close = getattr(artifactctl, "close", None)
@@ -326,30 +420,49 @@ def finalize_child_worktree(
         return None
     touched_paths = _status_paths(lease.worktree)
     validation_payload = dict(validation or {})
-    artifact_record = (
-        _create_child_artifacts(
+    if touched_paths:
+        artifact_record, diff = _create_child_artifacts(
             ctx,
             lease=lease,
             touched_paths=touched_paths,
             status=status,
             validation=validation_payload,
         )
-        if touched_paths
-        else {"status": "not_applicable"}
-    )
-    child_record = {
+    else:
+        artifact_record, diff = {"status": "not_applicable"}, ""
+    child_record: dict[str, Any] = {
+        "session_id": ctx.state.session_id,
+        "trace_id": ctx.state.trace_id,
+        "agent_id": ctx.state.agent_id,
         "subtask_id": lease.subtask_id,
         "base_revision": lease.base_revision,
+        "repository": str(lease.isolator.parent_root),
         "workspace": str(lease.worktree),
         "touched_paths": touched_paths,
-        "diff": _diff_text(lease.worktree),
+        "diff": diff,
+        "target_digest": str(artifact_record.get("target_digest") or ""),
         "validation": validation_payload,
         "status": status,
-        "integration_status": "pending_parent_review" if touched_paths else "read_only",
+        "integration_status": (
+            "pending_parent_review"
+            if artifact_record.get("status") == "stored"
+            else "artifact_failed"
+            if touched_paths
+            else "read_only"
+        ),
         "artifact": artifact_record,
     }
-    lease.isolator.release()
+    if not touched_paths or artifact_record.get("status") == "stored":
+        lease.isolator.release()
     child_record["cleaned_up"] = not lease.worktree.exists()
+    if artifact_record.get("status") == "stored":
+        artifactctl, should_close = _artifactctl_from_context(ctx)
+        if artifactctl is not None:
+            try:
+                save_child_worktree_record(artifactctl, child_record)
+            finally:
+                if should_close:
+                    artifactctl.close()
     bucket = _module_bucket(ctx.state)
     bucket["children"].append(child_record)
     _record_conflicts(bucket)
@@ -367,6 +480,36 @@ def accept_child_worktree_artifact(
     artifact = record.get("artifact")
     if not isinstance(artifact, dict) or artifact.get("status") != "stored":
         return {"ok": False, "status": "missing_artifact"}
+    if record.get("integration_status") != "pending_parent_review":
+        return {"ok": False, "status": "artifact_already_disposed"}
+    target_digest = str(record.get("target_digest") or "").strip()
+    if not target_digest or target_digest != artifact.get("target_digest"):
+        return {"ok": False, "status": "target_digest_mismatch"}
+    if _sha256_text(str(record.get("diff") or "")) != target_digest:
+        return {"ok": False, "status": "target_digest_mismatch"}
+    review = record.get("review_receipt")
+    if not isinstance(review, dict):
+        return {"ok": False, "status": "missing_review"}
+    if str(review.get("target_digest") or "") != target_digest:
+        return {"ok": False, "status": "stale_review"}
+    if str(review.get("bundle_ref") or "") != artifact.get("bundle_ref"):
+        return {"ok": False, "status": "stale_review"}
+    if review.get("passed") is not True:
+        return {"ok": False, "status": "review_failed"}
+    validation = record.get("validation")
+    if not isinstance(validation, dict) or validation.get("passed") is not True:
+        return {"ok": False, "status": "verification_failed"}
+    if str(validation.get("target_digest") or "") != target_digest:
+        return {"ok": False, "status": "stale_verification"}
+    verifier_refs = validation.get("verifier_refs")
+    if (
+        not isinstance(verifier_refs, list)
+        or not verifier_refs
+        or any(not isinstance(ref, str) or not ref.strip() for ref in verifier_refs)
+    ):
+        return {"ok": False, "status": "verification_failed"}
+    if review.get("verifier_refs") != verifier_refs:
+        return {"ok": False, "status": "stale_review"}
     base_revision = str(record.get("base_revision") or "").strip()
     head = _git(repo, "rev-parse", "HEAD").stdout.strip()
     if not base_revision or head != base_revision:
@@ -388,6 +531,9 @@ def accept_child_worktree_artifact(
         if diff.returncode != 0:
             _git(repo, "update-ref", "-d", temp_ref)
             return {"ok": False, "status": "diff_failed"}
+        if _sha256_text(diff.stdout) != target_digest:
+            _git(repo, "update-ref", "-d", temp_ref)
+            return {"ok": False, "status": "target_digest_mismatch"}
         apply = _git_input(
             repo, "apply", "--index", "--binary", "-", input_text=diff.stdout
         )
@@ -395,21 +541,37 @@ def accept_child_worktree_artifact(
         if apply.returncode != 0:
             return {"ok": False, "status": "apply_failed"}
     record["integration_status"] = "accepted"
-    return {"ok": True, "status": "accepted", "touched_paths": touched_paths}
+    return {
+        "ok": True,
+        "status": "accepted",
+        "target_digest": target_digest,
+        "reviewer_agent_id": str(review.get("reviewer_agent_id") or ""),
+        "verifier_refs": verifier_refs,
+        "touched_paths": touched_paths,
+    }
 
 
 def reject_child_worktree_artifact(
     *, record: dict[str, Any], artifactctl: Any | None = None
 ) -> dict[str, Any]:
+    del artifactctl
     artifact = record.get("artifact")
-    if isinstance(artifact, dict) and artifactctl is not None:
-        owner_id = str(artifact.get("owner_id") or "")
-        for key in ("bundle_ref", "manifest_ref"):
-            ref = str(artifact.get(key) or "")
-            if owner_id and ref:
-                artifactctl.ref_remove("a2a", owner_id, ref)
+    target_digest = str(record.get("target_digest") or "").strip()
+    if record.get("integration_status") != "pending_parent_review":
+        return {"ok": False, "status": "artifact_already_disposed"}
+    if (
+        not isinstance(artifact, dict)
+        or artifact.get("status") != "stored"
+        or target_digest != artifact.get("target_digest")
+    ):
+        return {"ok": False, "status": "target_digest_mismatch"}
     record["integration_status"] = "rejected"
-    return {"ok": True, "status": "rejected"}
+    return {
+        "ok": True,
+        "status": "rejected",
+        "target_digest": target_digest,
+        "bundle_ref": str(artifact.get("bundle_ref") or ""),
+    }
 
 
 __all__ = [
@@ -417,6 +579,9 @@ __all__ = [
     "accept_child_worktree_artifact",
     "allocate_child_worktree",
     "bind_runner_tool_workspace",
+    "child_verifier_evidence",
     "finalize_child_worktree",
+    "load_child_worktree_record",
     "reject_child_worktree_artifact",
+    "save_child_worktree_record",
 ]

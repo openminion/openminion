@@ -106,7 +106,8 @@ index 1234567..abcdefg 100644
 +new
 """
     out = _render_to_string(_render_tool_block(_event(body, tool_name="Bash")))
-    assert "Bash" in out
+    assert "Finished using a tool." in out
+    assert "Bash" not in out
     assert "… +" in out
     assert "/expand" in out
     assert "diff --git" in out

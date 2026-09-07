@@ -41,6 +41,7 @@ def test_service_runner_options_map_request_handoff_enabled() -> None:
         runtime=SimpleNamespace(
             brain=SimpleNamespace(tool_schema_shortlisting_enabled=None),
             complex_request_plan_policy="balanced",
+            provider_retry_max_attempts=1,
             session_context_token_budget=100000,
         )
     )
@@ -53,6 +54,7 @@ def test_service_runner_options_map_request_handoff_enabled() -> None:
     )
 
     assert options.request_handoff_enabled is True
+    assert options.provider_retry_max_attempts == 1
 
 
 def test_standalone_runner_options_map_request_handoff_enabled(tmp_path: Path) -> None:

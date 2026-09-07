@@ -100,6 +100,22 @@ class FakeCronStore:
             self.renew_counts[run_id] = self.renew_counts.get(run_id, 0) + 1
             return True
 
+    def recover_expired_cron_runs(
+        self, *, now_iso: str | None = None, limit: int = 100
+    ) -> list[dict]:
+        del now_iso, limit
+        return []
+
+    def retry_cron_run(
+        self,
+        run_id: str,
+        *,
+        error: dict,
+        now_iso: str | None = None,
+    ) -> dict | None:
+        del run_id, error, now_iso
+        return None
+
     def get_cron_job(self, job_id: str) -> dict | None:
         with self._lock:
             job = self.jobs.get(job_id)
@@ -113,6 +129,7 @@ class FakeCronStore:
         summary: str | None = None,
         artifact_refs: list[dict] | None = None,
         error: dict | None = None,
+        output: dict | None = None,
         isolated_session_id: str | None = None,
         now_iso: str | None = None,
     ) -> dict | None:
@@ -124,6 +141,7 @@ class FakeCronStore:
             run["state"] = state
             run["summary"] = summary
             run["error"] = error
+            run["output"] = output or {}
             run["isolated_session_id"] = isolated_session_id
             self.finished_count += 1
             self.finished.set()
@@ -256,18 +274,58 @@ def test_scheduler_renews_lease_for_long_running_run() -> None:
     assert store.renew_counts.get(run_id, 0) >= 1
 
 
+def test_scheduler_defers_new_runs_while_foreground_work_is_pending() -> None:
+    store = FakeCronStore()
+    store.add_job(
+        job_id="job-background",
+        payload={"kind": "agentTurn", "message": "background"},
+    )
+    store.seed_due("job-background")
+    admission = threading.Event()
+    events: list[str] = []
+
+    scheduler = CronScheduler(
+        store=store,
+        daemon_id="daemon-priority",
+        tick_seconds=0.02,
+        lease_ttl_seconds=2,
+        max_concurrent_runs=1,
+        execute_agent_turn=lambda _job, _run: "ok",
+        can_start_background_work=admission.is_set,
+        on_event=lambda event_type, _payload: events.append(event_type),
+    )
+    scheduler.start()
+    try:
+        sleep(0.1)
+        assert store.finished_count == 0
+        assert "cron.scheduler.foreground_deferred" in events
+        admission.set()
+        assert store.finished.wait(timeout=3.0)
+    finally:
+        scheduler.shutdown(grace_s=1.0)
+
+    assert next(iter(store.runs.values()))["state"] == "finished"
+
+
 def test_best_effort_delivery_errors_do_not_fail_run() -> None:
     store = FakeCronStore()
     store.add_job(
         job_id="job-best-effort",
-        payload={"kind": "agentTurn", "message": "task"},
+        payload={
+            "kind": "agentTurn",
+            "message": "task",
+            "_openminion_watch": {"description": "watch"},
+        },
         delivery={"mode": "announce", "best_effort": True},
     )
     store.seed_due("job-best-effort")
 
-    def _exec_agent(job: dict, run: dict) -> str:  # noqa: ANN001
+    def _exec_agent(job: dict, run: dict) -> dict:  # noqa: ANN001
         del job, run
-        return "ok"
+        return {
+            "summary": "Condition met; monitoring continues.",
+            "output": {"watch_delivery_requested": True, "watch_terminal": False},
+        }
 
     scheduler = CronScheduler(
         store=store,
@@ -286,6 +344,7 @@ def test_best_effort_delivery_errors_do_not_fail_run() -> None:
 
     run = next(iter(store.runs.values()))
     assert run["state"] == "finished"
+    assert store.deleted_job_ids == []
 
 
 def test_scheduler_skips_watch_delivery_until_requested() -> None:

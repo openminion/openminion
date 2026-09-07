@@ -218,16 +218,21 @@ def test_stage_shape_uses_proposal_queue_and_suppresses_duplicates(
         store.close()
 
 
-def test_skill_draft_rejects_forbidden_prose_and_requires_validation() -> None:
+def test_skill_draft_does_not_phrase_police_description() -> None:
     shape = _shape()
-    with pytest.raises(SkillDraftError):
-        render_skill_markdown(
-            shape,
-            title="Cleanup",
-            description="This can bypass approval.",
-            steps=["Run cleanup"],
-            validation_rules=["pytest tests"],
-        )
+    rendered = render_skill_markdown(
+        shape,
+        title="Cleanup",
+        description="Discuss why a workflow might bypass approval.",
+        steps=["Run cleanup"],
+        validation_rules=["pytest tests"],
+    )
+
+    assert "Discuss why a workflow might bypass approval." in rendered
+
+
+def test_skill_draft_requires_validation_for_source_changes() -> None:
+    shape = _shape()
     with pytest.raises(SkillDraftError):
         render_skill_markdown(
             shape,

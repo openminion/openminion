@@ -12,6 +12,7 @@ ErrorCode = Literal[
     "INVALID_RESPONSE",
     "CONFIRM_REQUIRED",
     "POLICY_DENIED",
+    "BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID",
     "NOT_FOUND",
     "TIMEOUT",
     "EXEC_ERROR",
@@ -20,7 +21,12 @@ ErrorCode = Literal[
     "AUTH_FAILED",
     "RATE_LIMITED",
     "UPSTREAM_ERROR",
+    "PLUGIN_ACTIVATION_FAILED",
     "INTERNAL_ERROR",
+    "GIT_REMOTE_NOT_FOUND",
+    "GIT_AUTH_FAILED",
+    "GIT_NON_FAST_FORWARD",
+    "GIT_REMOTE_OUTCOME_UNCERTAIN",
 ]
 
 LogLevel = Literal["debug", "info", "warning", "error"]

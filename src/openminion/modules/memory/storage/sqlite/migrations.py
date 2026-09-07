@@ -143,6 +143,21 @@ def _record_namespace_migration(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE memory_records ADD COLUMN namespace_json TEXT")
 
 
+def _capture_bundle_receipts_migration(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_capture_bundle_receipts (
+            capture_id TEXT PRIMARY KEY,
+            report_hash TEXT NOT NULL,
+            result_hash TEXT NOT NULL,
+            output_ids_json TEXT NOT NULL,
+            disposition TEXT NOT NULL,
+            committed_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 MIGRATIONS = [
     (1, "v1_baseline", MIGRATION_V1),
     (2, "v2_candidate_meta", _candidate_meta_migration),
@@ -153,6 +168,7 @@ MIGRATIONS = [
     (7, "v7_record_bitemporal", _record_bitemporal_migration),
     (8, "v8_record_goal_tag", _record_goal_tag_migration),
     (9, "v9_record_namespace", _record_namespace_migration),
+    (10, "v10_capture_bundle_receipts", _capture_bundle_receipts_migration),
 ]
 
 

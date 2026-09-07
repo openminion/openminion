@@ -267,6 +267,9 @@ class AgentService(AgentTurnFlowMixin):
         self._init_identity_runtime()
 
     def close(self) -> None:
+        if self._identityctl is not None:
+            self._identityctl.close()
+            self._identityctl = None
         resource = (
             self._llm_runtime if self._llm_runtime is not None else self._provider
         )
@@ -699,6 +702,8 @@ class AgentService(AgentTurnFlowMixin):
             finish_reason=str(getattr(response, "finish_reason", "") or ""),
             normalization=normalization,
             thinking=list(getattr(response, "thinking", []) or []),
+            cost_usd=getattr(response, "cost_usd", None),
+            cost_source=getattr(response, "cost_source", None),
         )
         raw_finalization_status = getattr(response, STATE_KEY_FINALIZATION_STATUS, None)
         normalized = normalize_provider_response(

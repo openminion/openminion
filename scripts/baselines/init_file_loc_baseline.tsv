@@ -1,7 +1,7 @@
 # path	loc	reason
 src/openminion/__init__.py	50	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/api/server/__init__.py	107	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
-src/openminion/base/config/runtime/__init__.py	301	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
+src/openminion/base/config/runtime/__init__.py	228	IPASC extracted canonical identity path resolution into its focused runtime owner.
 src/openminion/base/runtime/__init__.py	74	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/cli/commands/debug/__init__.py	65	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/cli/commands/status/__init__.py	500	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
@@ -47,6 +47,5 @@ src/openminion/services/cron/__init__.py	76	VOL-28 existing init-file volume bas
 src/openminion/services/gateway/turn/__init__.py	302	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/services/runtime/__init__.py	53	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/services/runtime/ingress/__init__.py	213	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
-src/openminion/tools/fetch/providers/__init__.py	123	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/tools/ops/__init__.py	66	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/tools/weather/providers/__init__.py	60	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.

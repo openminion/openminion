@@ -47,6 +47,25 @@ def test_reference_edge_idempotency(tmp_path):
         assert ref.sha256 in ctl.index.active_reference_shas()
 
 
+def test_owner_filters_use_only_active_reference_edges(tmp_path) -> None:
+    with artifact_ctl(tmp_path) as ctl:
+        session_a = ctl.ingest_bytes(b"session-a", original_name="shared-a.txt")
+        session_b = ctl.ingest_bytes(b"session-b", original_name="shared-b.txt")
+        ctl.ref_add("session", "session-a", session_a.sha256)
+        ctl.ref_add("session", "session-b", session_b.sha256)
+
+        filters = {"owner_type": "session", "owner_id": "session-a"}
+        for rows in (
+            ctl.search("shared", filters=filters),
+            ctl.list_recent(scope_filters=filters),
+            ctl.largest(filters=filters),
+        ):
+            assert [row.sha256 for row in rows] == [session_a.sha256]
+
+        ctl.ref_remove("session", "session-a", session_a.sha256)
+        assert ctl.search("shared", filters=filters) == []
+
+
 def test_normalize_artifact_ref_targets_dedupes_mixed_shapes() -> None:
     sha = "a" * 64
     targets = normalize_artifact_ref_targets(

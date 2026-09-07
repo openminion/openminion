@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 from collections import deque
 from collections.abc import Callable
@@ -62,6 +60,8 @@ from .actions import (
     _cycle_permission_mode,
     _SLASH_COMMANDS,
 )
+from .sessions import run_room_turn_if_bound, runtime_message_stream
+from .timing import push_phase_timing_report_if_enabled
 from .renderers import (
     _render_cost_snapshot as _render_cost_snapshot,
     _render_mcp_status as _render_mcp_status,
@@ -70,7 +70,7 @@ from .renderers import (
     _render_status_block as _render_status_block,
     _render_tools_list as _render_tools_list,
 )
-from openminion.cli.presentation.styles import StyleToken
+from openminion.cli.presentation.styles import StyleToken, is_color_enabled
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.slash_commands import (
     slash_command_runs_while_busy,
@@ -88,7 +88,14 @@ _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 _ESCAPE_BYTE = b"\x1b"
 _TYPEAHEAD_REOPEN_DELAY_SECONDS = 0.05
 _PROMPT_REPLAY_DEDUP_WINDOW_SECONDS = 0.35
-_TYPEAHEAD_PROMPT_GAP_LINES = 1
+
+
+def _build_terminal_console() -> Console:
+    if is_color_enabled():
+        return Console(force_terminal=True, color_system="standard", no_color=False)
+    console = Console()
+    console.no_color = True
+    return console
 
 
 @dataclass(frozen=True)
@@ -115,8 +122,6 @@ def _start_escape_interrupt_watcher(
     *,
     stdin: Any = None,
 ) -> _EscapeInterruptWatcher | None:
-    """Watch the terminal for Escape while a turn is running."""
-
     stream = stdin if stdin is not None else sys.stdin
     isatty = getattr(stream, "isatty", None)
     fileno = getattr(stream, "fileno", None)
@@ -202,8 +207,6 @@ def run_terminal_focus(
 def _build_ctrl_key_handlers(
     *, transcript: TerminalTranscript, console: Console
 ) -> tuple:
-    """Build the clear and copy keybinding handlers."""
-
     def _handle_ctrl_l() -> None:
         transcript.clear_messages()
 
@@ -293,8 +296,9 @@ async def _handle_slash_input(
             ),
         )
         return False
-    return await _handle_slash(
+    return await handle_prompt_safe_output_slash(
         text,
+        slash_handler=_handle_slash,
         runtime=runtime,
         console=console,
         transcript=transcript,
@@ -353,28 +357,16 @@ class _TerminalFocusLoop:
         self,
         *,
         delay_seconds: float = 0.0,
-        leading_blank_lines: int = 0,
     ) -> None:
         if self.read_task is not None and not self.read_task.done():
             return
         if delay_seconds <= 0:
-            self.read_task = asyncio.create_task(
-                self._read_line_with_prompt_gap(leading_blank_lines)
-            )
+            self.read_task = asyncio.create_task(self.composer.read_line())
             return
-        self.read_task = asyncio.create_task(
-            self._read_line_after_delay(delay_seconds, leading_blank_lines)
-        )
+        self.read_task = asyncio.create_task(self._read_line_after_delay(delay_seconds))
 
-    async def _read_line_after_delay(
-        self, delay_seconds: float, leading_blank_lines: int
-    ) -> str:
+    async def _read_line_after_delay(self, delay_seconds: float) -> str:
         await asyncio.sleep(delay_seconds)
-        return await self._read_line_with_prompt_gap(leading_blank_lines)
-
-    async def _read_line_with_prompt_gap(self, leading_blank_lines: int) -> str:
-        for _ in range(max(0, int(leading_blank_lines))):
-            self.console.print()
         return await self.composer.read_line()
 
     async def cancel_read_task(self) -> None:
@@ -449,10 +441,7 @@ class _TerminalFocusLoop:
         if callable(getattr(self.composer, "set_busy", None)):
             self.composer.set_busy(True)
         self.refresh_status_line(state="responding")
-        self.start_read_task(
-            delay_seconds=_TYPEAHEAD_REOPEN_DELAY_SECONDS,
-            leading_blank_lines=_TYPEAHEAD_PROMPT_GAP_LINES,
-        )
+        self.start_read_task(delay_seconds=_TYPEAHEAD_REOPEN_DELAY_SECONDS)
 
     async def handle_busy_input(self, text: str) -> None:
         if (
@@ -560,7 +549,6 @@ class _TerminalFocusLoop:
                         overlay=self.overlay,
                         session_grants=self.approval_grants,
                         pause_prompt=self.cancel_read_task,
-                        resume_prompt=self.start_read_task,
                     ),
                 )
                 if should_exit:
@@ -616,15 +604,11 @@ class _TerminalFocusLoop:
             return None
         text = (text or "").strip()
         if not text:
-            self.start_read_task(
-                leading_blank_lines=_TYPEAHEAD_PROMPT_GAP_LINES
-                if self.active_turn_task is not None
-                else 0
-            )
+            self.start_read_task()
             return None
         if self.active_turn_task is not None:
             await self.handle_busy_input(text)
-            self.start_read_task(leading_blank_lines=_TYPEAHEAD_PROMPT_GAP_LINES)
+            self.start_read_task()
             return None
         return await self.handle_idle_input(text)
 
@@ -666,7 +650,7 @@ async def _run_terminal_focus_async(
     animation: AnimationResolution | None = None,
     startup_notice: Callable[[], str] | None = None,
 ) -> int:
-    console = Console()
+    console = _build_terminal_console()
     transcript = TerminalTranscript(
         console,
         plain_spinner=plain_spinner,
@@ -699,7 +683,7 @@ async def _run_terminal_focus_async(
 
     catalog = {
         name: description
-        for name, description in slash_help_rows(terminal_only=True)
+        for name, description in slash_help_rows()
         if name in _SLASH_COMMANDS
     }
     catalog.update({name: "custom command" for name in custom_commands})
@@ -727,13 +711,13 @@ async def _run_terminal_focus_async(
     )
     overlay = TerminalOverlayPresenter(
         console=console,
-        prompt_session=composer.prompt_session,
     )
     approval_grants: set[str] = set()
     _push_greeter(console, runtime=runtime, working_dir=working_dir)
     startup_notice_task = _schedule_startup_notice(
         startup_notice,
         transcript=transcript,
+        prompt_session=composer.prompt_session,
     )
     loop = _TerminalFocusLoop(
         runtime=runtime,
@@ -761,7 +745,6 @@ async def _run_one_shot_stdin(
     transcript: TerminalTranscript,
     working_dir: str,
 ) -> int:
-    """FTF-08: read stdin to EOF, send as one user turn, exit."""
     text = sys.stdin.read().strip()
     if not text:
         console.print(
@@ -789,8 +772,6 @@ async def _run_one_shot_stdin(
 def _route_durable_activity_event(
     transcript: TerminalTranscript, payload: dict[str, Any]
 ) -> bool:
-    """Route durable activity events to scrollback when recognized."""
-
     try:
         from openminion.cli.status.activity_ledger import (
             KIND_APPROVAL,
@@ -837,19 +818,22 @@ def _build_turn_progress_callback(
         kind = _progress.normalize_progress_kind(payload)
         if kind == "tool_started":
             transcript.handle_tool_started(payload)
-            label = _progress.tool_progress_status_label(payload, verb="Running")
+            label = _progress.tool_progress_status_label(payload, pending=True)
             _set_turn_status(label, "executing")
             return
         if kind == "tool_completed":
             transcript.handle_tool_completed(payload)
-            label = _progress.tool_progress_status_label(payload, verb="Ran")
+            label = _progress.tool_progress_status_label(payload, pending=False)
             _set_turn_status(label, "reviewing")
             return
         if payload and _route_durable_activity_event(transcript, payload):
             return
         if payload and handle is not None and status_controller is not None:
             try:
-                view = status_controller.update(payload)
+                view = status_controller.update(
+                    payload,
+                    verbosity=transcript.verbosity,
+                )
             except Exception:
                 view = None
             if view is None:
@@ -878,8 +862,6 @@ async def _run_interruptible_agent_turn(
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
     invalidate_prompt: Callable[[], None] | None = None,
 ) -> None:
-    """Run one agent turn and let Escape cancel it in the terminal CLI."""
-
     turn_task = asyncio.create_task(
         _run_agent_turn(
             text=text,
@@ -918,8 +900,6 @@ async def _run_agent_turn(
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
     invalidate_prompt: Callable[[], None] | None = None,
 ) -> None:
-    """Stream tokens through the transcript turn handle."""
-
     if status_line is not None:
         status_line.set_state(state="responding", elapsed_seconds=0.0, turn_status="")
     status_tick_task: asyncio.Task[None] | None = None
@@ -941,7 +921,10 @@ async def _run_agent_turn(
 
     status_controller = PhaseStatusController(fallback_label="Working...")
     status_controller.start_turn()
-    initial_status = status_controller.view_model_for(None)
+    initial_status = status_controller.view_model_for(
+        None,
+        verbosity=transcript.verbosity,
+    )
     setter = getattr(handle, "set_status_label", None)
     initial_label = str(initial_status.primary_text or status_controller.fallback_label)
     if callable(setter):
@@ -958,19 +941,30 @@ async def _run_agent_turn(
             status_line=status_line,
             invalidate_prompt=invalidate_prompt,
         )
-        send_kwargs: dict[str, Any] = {"progress_callback": progress_callback}
-        if approval_callback is not None:
-            send_kwargs["approval_callback"] = approval_callback
-        async for chunk in runtime.send_message(text, **send_kwargs):
-            chunk_str = str(chunk or "")
-            if not chunk_str:
-                continue
-            reply += chunk_str
-            mark_active_chat_first_text()
-            handle.append_token(chunk_str)
+        room_reply = await run_room_turn_if_bound(
+            runtime,
+            text,
+            progress_callback=progress_callback,
+            approval_callback=approval_callback,
+            transcript=transcript,
+            handle=handle,
+        )
+        if room_reply is not None:
+            reply = room_reply
+        else:
+            async for chunk in runtime_message_stream(
+                runtime,
+                text,
+                progress_callback,
+                approval_callback,
+            ):
+                chunk_str = str(chunk or "")
+                if not chunk_str:
+                    continue
+                reply += chunk_str
+                mark_active_chat_first_text()
+                handle.append_token(chunk_str)
         handle.complete(final_text=reply)
-        from .timing import push_phase_timing_report_if_enabled
-
         push_phase_timing_report_if_enabled(runtime=runtime, transcript=transcript)
     except asyncio.CancelledError:
         try:

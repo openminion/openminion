@@ -81,6 +81,20 @@ class SchemaTests(unittest.TestCase):
             {"op": "tab.navigate", "url": "https://example.com"},
         )
 
+    def test_tool_command_round_trips_verification_target(self) -> None:
+        command = ToolCommand(
+            title="verify response",
+            tool_name="exec.run",
+            args={"command": "python -m pytest -q"},
+            verification_target_kind="criterion",
+            verification_target_id="criterion-tests",
+        )
+
+        restored = ToolCommand.model_validate(command.model_dump(mode="python"))
+
+        self.assertEqual(restored.verification_target_kind, "criterion")
+        self.assertEqual(restored.verification_target_id, "criterion-tests")
+
     def test_act_decision_allows_runtime_resolved_execution_target(self) -> None:
         decision = ActDecision(
             confidence=1.0,

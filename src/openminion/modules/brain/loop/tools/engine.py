@@ -41,6 +41,7 @@ from .plan_control import (
     PLAN_TOOL_ACTIONS,
     PLAN_TOOL_NAME,
     is_plan_family_tool_name,
+    plan_tool_call_advances_active_plan,
 )
 from .decompose import (  # noqa: F401
     _DECOMPOSE_TOOL_NAME,
@@ -86,9 +87,7 @@ from .response_payloads import (  # noqa: F401
 )
 from .budget_control import (  # noqa: F401
     _active_work_summary_from_state,
-    _adaptive_budget_config,
     _budget_stop_outcome,
-    _effective_cap,
     _emit_budget_event,
     _emit_budget_progress,
     _emit_high_watermark_if_needed,
@@ -103,6 +102,7 @@ from .budget_control import (  # noqa: F401
     _step_summaries_from_state,
     _tool_budget_exhausted_for_answer_only,
 )
+from .budget import _effective_cap
 
 from .iteration.setup import (  # noqa: F401
     _delegated_child_context,
@@ -230,8 +230,14 @@ def _repeated_plan_only_message(
     loop_state: AdaptiveToolLoopState,
     tool_calls: list[Any],
     retry_count: int,
+    *,
+    loop_ctx: AdaptiveToolLoopContext | None = None,
 ) -> Message | None:
-    if not _repeated_plan_only_without_substantive_work(loop_state, tool_calls):
+    if not _repeated_plan_only_without_substantive_work(
+        loop_state,
+        tool_calls,
+        loop_ctx=loop_ctx,
+    ):
         return None
     guidance = (
         "You have already recorded a plan update without doing task-relevant "
@@ -250,11 +256,22 @@ def _repeated_plan_only_message(
 def _repeated_plan_only_without_substantive_work(
     loop_state: AdaptiveToolLoopState,
     tool_calls: list[Any],
+    *,
+    loop_ctx: AdaptiveToolLoopContext | None = None,
 ) -> bool:
     if not tool_calls:
         return False
     if any(
         not is_plan_family_tool_name(getattr(call, "name", "")) for call in tool_calls
+    ):
+        return False
+    if loop_ctx is not None and any(
+        str(getattr(call, "name", "") or "").strip() == PLAN_TOOL_NAME
+        and plan_tool_call_advances_active_plan(
+            loop_ctx,
+            dict(getattr(call, "arguments", {}) or {}),
+        )
+        for call in tool_calls
     ):
         return False
     scratchpad = dict(loop_state.scratchpad or {})
@@ -451,16 +468,16 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 if tool_calls
                 else ""
             )
-            if selected_tool_name:
-                profile = self.profile
-                loop_state = self.loop_state
-                _set_turn_progress(
-                    loop_state,
-                    llm_call_count=self.loop_state.llm_calls,
-                    llm_call_limit=_effective_cap(profile, loop_state),
-                    progress_phase="thinking...",
-                    tool_name=selected_tool_name,
-                )
+            profile = self.profile
+            loop_state = self.loop_state
+            _set_turn_progress(
+                loop_state,
+                llm_call_count=self.loop_state.llm_calls,
+                llm_call_limit=_effective_cap(profile, loop_state),
+                progress_phase="thinking...",
+                tool_name=selected_tool_name,
+                detail_code="" if selected_tool_name else "composing_answer",
+            )
             emit_adaptive_status(
                 self.loop_ctx,
                 profile=self.profile,
@@ -536,7 +553,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
             if outcome is not None:
                 return outcome
 
-            self._append_response_messages(prepared.response)
+            self._append_response_messages(prepared.response, tool_calls=tool_calls)
             persist_requested_tool_calls(
                 self.loop_ctx,
                 loop_state=self.loop_state,
@@ -657,6 +674,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
         repeated_plan_only = _repeated_plan_only_without_substantive_work(
             self.loop_state,
             tool_calls,
+            loop_ctx=self.loop_ctx,
         )
         plan_retry_message = _plan_control_retry_message(
             tool_calls, retry_count=plan_retry_count
@@ -666,6 +684,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 self.loop_state,
                 tool_calls,
                 retry_count=plan_retry_count,
+                loop_ctx=self.loop_ctx,
             )
         if plan_retry_message is None:
             return False

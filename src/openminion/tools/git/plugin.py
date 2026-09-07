@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.runtime import RuntimeContext
-from openminion.tools.file.plugin import _resolve_path_lexical
+from openminion.modules.tool import resolve_path
 from openminion.tools.git.constants import DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT
 from openminion.tools.git.errors import (
     GIT_DESTRUCTIVE_NOT_APPROVED,
@@ -267,7 +267,7 @@ def _scoped_path(ctx: RuntimeContext, raw_path: str | None, operation: str) -> s
     if not token:
         return ""
     try:
-        return _resolve_path_lexical(ctx, token, operation=operation)
+        return resolve_path(ctx, token, operation=operation)
     except ToolRuntimeError as exc:
         if exc.code == "POLICY_DENIED":
             raise ToolRuntimeError(

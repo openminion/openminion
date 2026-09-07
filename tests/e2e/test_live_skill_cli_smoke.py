@@ -9,6 +9,7 @@ import pytest
 from openminion.cli.config import load_cli_config
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 from openminion.modules.skill.config import from_base_config as skill_from_base_config
+from openminion.modules.skill.interfaces import SkillIngestAuthority
 from openminion.modules.skill.runtime.skill import Skill
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from tests.helpers.live_cli_chat_alibaba import (
@@ -58,13 +59,26 @@ def _ingest_linear_skill(*, data_root: Path) -> tuple[str, str]:
         config=skill_cfg,
         home_root=runtime_home_root(),
     )
+    authority = SkillIngestAuthority.local_operator(
+        surface="tests.e2e.skill_cli_smoke",
+        principal_id="live-skill-e2e",
+    )
     try:
         skill_id, version_hash, warnings = ctl.ingest_file(
             _LINEAR_FIXTURE,
             scope="agent",
             agent_id="hello-agent",
+            authority=authority,
         )
         assert not any(item.startswith("lint.error:") for item in warnings)
+        ctl.admit_skill_version(
+            skill_id=skill_id,
+            version_hash=version_hash,
+            expected_active_version_hash=None,
+            target_status="verified",
+            reason="live skill smoke fixture admission",
+            authority=authority,
+        )
         return skill_id, version_hash
     finally:
         ctl.close()

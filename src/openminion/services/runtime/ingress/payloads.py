@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 
 _NO_INTENT_CATEGORY = "none"
 _INBOUND_META_SKIP = {
+    "allowed_tools",
     "channel",
     "user",
     "timeout_seconds",
@@ -12,6 +13,7 @@ _INBOUND_META_SKIP = {
     "deliver",
     "forced_tools",
     "capability_category",
+    "permission_mode",
 }
 
 
@@ -73,6 +75,14 @@ def apply_inbound_overrides(
             text = str(value or "").strip()
             if text:
                 updated[key] = text
+    if "allowed_tools" in payload:
+        updated["turn_tool_allowlist"] = ",".join(
+            parse_forced_tools(payload.get("allowed_tools")) or ()
+        )
+        updated["turn_tool_allowlist_supplied"] = "true"
+    permission_mode = str(payload.get("permission_mode") or "").strip()
+    if "permission_mode" in payload and permission_mode:
+        updated["permission_mode"] = permission_mode
     return updated or None
 
 

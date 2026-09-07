@@ -290,6 +290,7 @@ def _register_status_tokens_subcommand(status_subcommands: StatusSubcommands) ->
     )
     parser.add_argument("--run-id", default="", help="Optional run identifier")
     parser.add_argument("--recent", type=int, default=None, help="Newest N sessions")
+    parser.add_argument("--agent-id", default="", help="Limit --recent to one agent")
     parser.add_argument(
         "--only-warnings",
         action="store_true",
@@ -299,7 +300,7 @@ def _register_status_tokens_subcommand(status_subcommands: StatusSubcommands) ->
         "--event-limit",
         type=int,
         default=None,
-        help="Optional positive event-read limit",
+        help="Maximum token events per session (default: 10000)",
     )
     add_json_output_flag(parser)
     parser.set_defaults(handler=run_status, needs_app=False)

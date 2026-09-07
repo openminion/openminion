@@ -13,10 +13,11 @@ from openminion.api.core.lifecycle import (
     close_runtime_components, initialize_runtime_components,
 )  # fmt: skip
 from openminion.api.core.profiles import RuntimeProfilesMixin
+from openminion.api.core.session_artifacts import RuntimeSessionArtifactsMixin
 
 if TYPE_CHECKING:
     from openminion.services.runtime.ingress import RuntimeTurnHandle
-    from openminion.services.runtime.manager import DesktopApprovalRequester
+    from openminion.services.runtime.interfaces import DesktopApprovalRequester
 
 _CANONICAL_TURN_PATH = (
     "services/runtime/ingress.run_turn_payload", "services/request_orchestrator.run_turn",
@@ -31,7 +32,12 @@ _DISABLE_SECURITY_POLICY_ENV = "OPENMINION_DISABLE_SECURITY_POLICY"
 
 
 @dataclass
-class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposureMixin):
+class APIRuntime(
+    RuntimeBootstrapMixin,
+    RuntimeProfilesMixin,
+    RuntimeSessionArtifactsMixin,  # type: ignore[misc]
+    RuntimeToolExposureMixin,
+):
     @staticmethod
     def _security_policy_disabled(runtime_env: object) -> bool:
         environment = EnvironmentConfig.from_sources(runtime_env=runtime_env)
@@ -128,6 +134,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
         request_id: str | None = None,
         progress_callback: Callable[[object], None] | None = None,
         approval_callback: Any | None = None,
+        cancel_event: Any | None = None,
     ) -> dict[str, object]:
         from openminion.services.runtime.ingress import run_turn_payload
 
@@ -137,29 +144,13 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
             request_id=request_id,
             progress_callback=progress_callback,
             approval_callback=approval_callback,
+            cancel_event=cancel_event,
         )
 
     def submit_turn(self, *, payload: dict[str, object], desktop_approval_requester: "DesktopApprovalRequester | None" = None, resolved_attachment_refs: tuple[str, ...] = ()) -> "RuntimeTurnHandle":  # fmt: skip
         from openminion.services.runtime.ingress import submit_turn_payload
 
         return submit_turn_payload(runtime=self, payload=dict(payload), desktop_approval_requester=desktop_approval_requester, resolved_attachment_refs=resolved_attachment_refs)  # fmt: skip
-
-    def session_artifact_facade(self, session_id: str) -> Any:
-        from openminion.services.brain.service import BrainBridgeService
-        from openminion.services.brain.session_artifacts import (
-            SessionArtifactUnavailable,
-        )
-
-        record = self.sessions.get_session(session_id)
-        if record is None:
-            raise SessionArtifactUnavailable("Session is unavailable.")
-        agent_id = str(getattr(record, "active_agent_id", "") or "").strip() or None
-        service = self.resolve_agent_service(agent_id)
-        if not isinstance(service, BrainBridgeService):
-            raise SessionArtifactUnavailable(
-                "Session artifact operations are not supported by this runtime."
-            )
-        return service.session_artifact_facade()
 
     def evict_agent(self, agent_id: str, *, reason: str = "manual") -> bool:
         if not (normalized := agent_id.strip()):
@@ -189,6 +180,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
             runtime_storage=getattr(self, "runtime_storage", None),
             sandbox_runner=getattr(self, "sandbox_runner", None),
             authored_tools=getattr(self, "authored_tools", None),
+            ops_service=getattr(self, "ops_service", None),
             telemetry_service=getattr(self, "telemetry_service", None),
             agent_services=getattr(self, "_agent_services", None),
         )

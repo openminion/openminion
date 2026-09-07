@@ -4,6 +4,10 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.package_integration
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TRIAGE_PATH = REPO_ROOT / "docs" / "scripts" / "triage_qa_trackers.py"

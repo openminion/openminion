@@ -253,7 +253,11 @@ def test_ai_coding_assistant(collector_artifacts: Path, tmp_path: Path) -> None:
             provider_round_trip_ms=9,
             cost_usd=0.001,
             cost_source="provider",
-            error={"type": "provider_timeout"},
+            error={
+                "type": "provider_timeout",
+                "message": SECRET,
+                "details": {"provider_body": SECRET},
+            },
             system_prompt=SECRET,
         ),
         _event(
@@ -289,7 +293,7 @@ def test_ai_coding_assistant(collector_artifacts: Path, tmp_path: Path) -> None:
             duration_ms=5,
             verification_status="failed",
             exit_code=1,
-            error={"type": "command_failed"},
+            error={"type": "command_failed", "message": SECRET},
             arguments=SECRET,
         ),
         _event(

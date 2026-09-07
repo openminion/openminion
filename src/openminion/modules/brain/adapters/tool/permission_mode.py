@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from functools import lru_cache
 from typing import Final
 
@@ -45,6 +46,11 @@ def canonical_permission_mode(value: str | None) -> str:
         }.get(lowered)
         or (lowered if lowered in {"ask", "auto", "bypass", "readonly"} else "ask")
     )
+
+
+def permission_mode_from_inputs(inputs: object) -> str:
+    raw = inputs.get("permission_mode") if isinstance(inputs, Mapping) else None
+    return canonical_permission_mode(str(raw or "default").strip())
 
 
 def canonical_permission_overrides(
@@ -134,6 +140,7 @@ __all__ = [
     "canonical_permission_mode",
     "effective_permission_mode_for_tool",
     "is_tool_blocked_by_readonly",
+    "permission_mode_from_inputs",
     "registered_readonly_tool_names",
     "request_outcome_allows_tool",
     "readonly_blocked_tool_names",

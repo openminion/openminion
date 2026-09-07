@@ -171,6 +171,7 @@ def resolve_runner_options(
     )
 
     options = RunnerOptions(
+        provider_retry_max_attempts=config.runtime.provider_retry_max_attempts,
         max_retries_per_step=2,
         max_replans=8,
         plan_auto_scale_max_llm_calls=plan_auto_scale_max_llm_calls,

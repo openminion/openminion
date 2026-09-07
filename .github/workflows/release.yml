@@ -64,6 +64,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: dist
@@ -76,7 +77,7 @@ jobs:
         run: |
           python -m venv .venv-wheel
           .venv-wheel/bin/python -m pip install --upgrade pip
-          .venv-wheel/bin/python -m pip install dist/*.whl
+          .venv-wheel/bin/python -m pip install dist/*.whl pytest pytest-timeout pyte
           tmpdir="$(mktemp -d)"
           config="$tmpdir/config.json"
           export OPENMINION_HOME="$tmpdir/home-wheel"
@@ -129,6 +130,11 @@ jobs:
           assert checks["provider"]["status"] == "blocked", payload
           assert checks["provider"]["safe_next_action"] == "openminion setup", payload
           PY
+          OPENMINION_ONBOARDING_INSTALLED_ARTIFACT=1 \
+          OPENMINION_PYTHON="$PWD/.venv-wheel/bin/python" \
+          .venv-wheel/bin/python -m pytest -q \
+            tests/e2e/cli/focus/test_onboarding.py \
+            -k test_local_ollama_check_can_verify_against_fixture_server
       - name: Verify sdist install and bootstrap smoke
         shell: bash
         run: |

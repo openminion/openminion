@@ -3,6 +3,7 @@ PUBLIC_EXPORTS = (
     "ActionMetrics",
     "ActionResult",
     "JobHandle",
+    "MemoryUseRef",
     "PolicyDecision",
     "ReflectReport",
     "BudgetCounters",

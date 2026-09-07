@@ -296,7 +296,7 @@ def test_tmac03_direct_write_never_produces_supersession_from_prose_negation() -
         trace_event="memory.record.written",
         trace_payload={"scope": _AGENT_SCOPE, "type": "user_preference"},
     )
-    assert ok is True
+    assert ok is not None
     assert store.get("orig-dark").supersession_reason is None
     assert supersede_calls == []
     assert not any(

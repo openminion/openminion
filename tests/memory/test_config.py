@@ -51,6 +51,11 @@ BASE_CONFIG: dict[str, object] = {
             "max_results": 25,
             "min_confidence_default": 0.55,
             "pin_first": True,
+            "precision_mode": "shadow",
+            "precision_candidate_multiplier": 2,
+            "precision_min_score": 0.04,
+            "precision_max_items": 4,
+            "precision_max_tokens": 320,
         },
         "retention": {
             "enable_soft_delete": True,
@@ -98,6 +103,21 @@ class ConfigLoaderTests(unittest.TestCase):
         config = load_config(None, env=env)
 
         self.assertEqual(config.retrieval.max_results, 25)
+        self.assertEqual(config.retrieval.precision_mode, "shadow")
+        self.assertEqual(config.retrieval.precision_candidate_multiplier, 2)
+        self.assertEqual(config.retrieval.precision_min_score, 0.04)
+        self.assertEqual(config.retrieval.precision_max_items, 4)
+        self.assertEqual(config.retrieval.precision_max_tokens, 320)
+
+    def test_precision_defaults_use_calibrated_dormant_threshold(self) -> None:
+        data = deepcopy(BASE_CONFIG)
+        data["memctl"]["retrieval"].pop("precision_min_score")  # type: ignore[index]
+        path = _write_config(self.tmp_path, data)
+
+        config = load_config(path, env={"HOME": str(self.tmp_path)})
+
+        self.assertEqual(config.retrieval.precision_mode, "shadow")
+        self.assertEqual(config.retrieval.precision_min_score, 0.048)
 
     def test_missing_file_raises(self) -> None:
         with self.assertRaises(FileNotFoundError):
@@ -255,8 +275,6 @@ class ConfigLoaderTests(unittest.TestCase):
     def test_merge_ranking_config_translates_legacy_retrieve_defaults(self) -> None:
         defaults = DefaultsConfig(
             decay_halflife_days=45,
-            mmr_enabled=False,
-            mmr_lambda=0.2,
             feedback_decay_halflife_days=90,
             recency_half_life_hours=120,
         )
@@ -266,21 +284,18 @@ class ConfigLoaderTests(unittest.TestCase):
             merged = merge_ranking_config(None, retrieve_defaults=defaults)
 
         self.assertEqual(merged.recency_half_life_days, 45)
-        self.assertEqual(merged.mmr_enabled, False)
-        self.assertEqual(merged.mmr_lambda, 0.2)
         self.assertEqual(merged.feedback_decay_halflife_days, 90)
         self.assertTrue(
             any("decay_halflife_days" in str(item.message) for item in caught)
         )
 
     def test_explicit_ranking_config_wins_over_legacy_defaults(self) -> None:
-        defaults = DefaultsConfig(decay_halflife_days=45, mmr_lambda=0.2)
-        explicit = RankingConfig(recency_half_life_days=14.0, mmr_lambda=0.9)
+        defaults = DefaultsConfig(decay_halflife_days=45)
+        explicit = RankingConfig(recency_half_life_days=14.0)
 
         merged = merge_ranking_config(explicit, retrieve_defaults=defaults)
 
         self.assertEqual(merged.recency_half_life_days, 14.0)
-        self.assertEqual(merged.mmr_lambda, 0.9)
 
     def test_candidate_learning_section_parses_and_normalizes_weights(self) -> None:
         data = deepcopy(BASE_CONFIG)

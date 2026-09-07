@@ -13,6 +13,11 @@ from openminion.base.config import (
     build_runtime_config,
 )
 from openminion.base.config.core import resolve_default_agent_id
+from openminion.base.constants import (
+    OPENMINION_DATA_ROOT_ENV,
+    OPENMINION_GENERATED_ROOT_ENV,
+    OPENMINION_HOME_ENV,
+)
 from openminion.base.logging import configure_logging
 from openminion.modules.llm.providers.factory import build_runtime_llm_handle
 from openminion.modules.storage.runtime import (
@@ -31,17 +36,24 @@ from openminion.services.channel.authenticity import build_channel_authenticity_
 from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
 from openminion.services.runtime.bootstrap import (
     build_action_policy_service,
-    build_agent_memory_service,
     build_daytona_runner,
     build_knowledge_graph_source_service,
     build_session_context_service,
     build_tool_authoring_service,
     enforce_plugin_activation_policy,
 )
+from openminion.services.runtime.memory import build_runtime_memory_assembly
+from openminion.services.brain.factory.vector import init_vector_adapter
 from openminion.services.runtime.env import apply_runtime_environment
 from openminion.services.runtime.lifecycle import LifecycleService
 from openminion.modules.policy import SecurityPolicyEngine, ToolBudgetPolicy
 from openminion.tools.ops.service import OpsService, configured_ops_service
+
+_ROOT_ENV_KEYS = (
+    OPENMINION_HOME_ENV,
+    OPENMINION_DATA_ROOT_ENV,
+    OPENMINION_GENERATED_ROOT_ENV,
+)
 
 
 @dataclass(frozen=True)
@@ -107,7 +119,10 @@ def build_runtime_infrastructure(
     disable_security_policy: bool,
     logging_mode: str,
 ) -> dict[str, object]:
-    apply_runtime_environment(base_config.runtime.env)
+    runtime_env = base_config.runtime.env or {}
+    filtered_env = {k: v for k, v in runtime_env.items() if k not in _ROOT_ENV_KEYS}
+    apply_runtime_environment(filtered_env)
+    base_config.runtime.env = manager.env.snapshot()
     telemetry_service = TelemetryService(
         home_root=paths.home,
         env=manager.env.snapshot(),
@@ -127,6 +142,8 @@ def build_runtime_infrastructure(
     extension_runtime = LifecycleService.from_config(
         base_config,
         config_path=str(paths.config),
+        home_root=paths.home,
+        data_root=paths.data,
         logger=logger,
     ).build(
         security_policy=security_policy,
@@ -135,7 +152,7 @@ def build_runtime_infrastructure(
             agent_id=resolve_default_agent_id(base_config),
             manifest=manifest,
         ),
-        load_tool_plugins=False,
+        load_tool_plugins=True,
     )
     _bind_channel_supervisor_telemetry(extension_runtime, telemetry_service)
     default_config = build_runtime_config(
@@ -255,9 +272,13 @@ def _build_runtime_support(
         retrieve_config = manager.get("retrieve")
     except Exception:
         retrieve_config = None
+    vector_adapter, vector_scheduler = init_vector_adapter(
+        config=base_config,
+        db_dir=paths.memory,
+        logger=logger.getChild("memory.vector"),
+    )
     retrieve_ctl = build_retrieve_service(
         home_root=paths.home,
-        vector_adapter=None,
         config=retrieve_config,
         logger=logger.getChild("retrieve"),
     )
@@ -271,7 +292,7 @@ def _build_runtime_support(
         data_root=paths.data,
         retrieve_ctl=retrieve_ctl,
     )
-    agent_memory = build_agent_memory_service(
+    memory_assembly = build_runtime_memory_assembly(
         config=base_config,
         agent_id=default_agent.name,
         memory_root=paths.memory,
@@ -282,7 +303,10 @@ def _build_runtime_support(
         session_context=session_context,
         retrieve_ctl=retrieve_ctl,
         storage_path=paths.storage,
+        vector_adapter=vector_adapter,
+        scheduler=vector_scheduler,
     )
+    memory_assembly.start()
     knowledge_graphs = build_knowledge_graph_source_service(config=base_config)
     sandbox_runner = build_daytona_runner(config=base_config, config_manager=manager)
     authored_tools = build_tool_authoring_service(
@@ -295,7 +319,9 @@ def _build_runtime_support(
     return {
         "retrieve_ctl": retrieve_ctl,
         "session_context": session_context,
-        "agent_memory": agent_memory,
+        "runtime_memory_assembly": memory_assembly,
+        "agent_memory": memory_assembly.gateway,
+        "vector_adapter": vector_adapter,
         "knowledge_graphs": knowledge_graphs,
         "sandbox_runner": sandbox_runner,
         "authored_tools": authored_tools,

@@ -62,7 +62,12 @@ def render_memory_report(runtime: Any) -> str:
 
 
 def format_memory_report(
-    rows: list[Any], candidates: list[Any], *, session_id: str = ""
+    rows: list[Any],
+    candidates: list[Any],
+    *,
+    session_id: str = "",
+    capture: Any | None = None,
+    recall: Any | None = None,
 ) -> str:
     records = list(rows or [])
     pending = list(candidates or [])
@@ -71,62 +76,19 @@ def format_memory_report(
         f"  records     {len(records)}",
         f"  candidates  {len(pending)}",
     ]
+    lines.extend(_memory_processing_lines(capture=capture, recall=recall))
     if not records and not pending:
         lines.extend(("", "No persisted memory for this session or agent."))
         return "\n".join(lines)
 
-    type_counts: dict[str, int] = {}
-    summaries: list[Any] = []
-    other_records: list[Any] = []
-    for row in records:
-        record_type = _memory_text(row, "type") or "record"
-        type_counts[record_type] = type_counts.get(record_type, 0) + 1
-        if record_type == "session_summary":
-            summaries.append(row)
-        else:
-            other_records.append(row)
-
-    lines.extend(("", "By type:"))
-    for record_type, count in sorted(
-        type_counts.items(), key=lambda item: (-item[1], item[0])
-    ):
-        lines.append(f"  {_memory_type_label(record_type):<18} {count}")
-
-    current_summary = next(
-        (
-            row
-            for row in summaries
-            if _memory_text(row, "key") == f"session_summary:{session_id}"
-        ),
-        None,
-    )
-    if current_summary is not None:
-        lines.extend(("", "Current session summary:"))
-        questions = _summary_user_questions(current_summary)
-        if questions:
-            lines.extend(f"  - {question[:120]}" for question in questions[-5:])
-        else:
-            lines.append(f"  - {_memory_record_title(current_summary)}")
-        if updated_at := _memory_text(current_summary, "updated_at"):
-            lines.append(f"  updated {updated_at.replace('T', ' ')[:19]} UTC")
-
-    if other_records:
-        lines.extend(("", "Recent records:"))
-        for row in other_records[:6]:
-            lines.append(f"  - {_memory_record_title(row)}")
-            record_type = _memory_type_label(_memory_text(row, "type") or "record")
-            scope = _memory_scope_label(_memory_text(row, "scope"))
-            lines.append(f"    {record_type} · {scope}")
-
+    type_counts, summaries, other_records = _partition_memory_records(records)
+    _append_memory_type_counts(lines, type_counts)
+    current_summary = _append_current_session_summary(lines, summaries, session_id)
+    _append_recent_memory_records(lines, other_records)
     previous_summary_count = len(summaries) - int(current_summary is not None)
     if previous_summary_count:
         lines.extend(("", f"Previous session summaries: {previous_summary_count}"))
-
-    if pending:
-        lines.extend(("", "Pending candidates:"))
-        for row in pending[:5]:
-            lines.append(f"  - {_memory_record_title(row)}")
-
+    _append_pending_memory_candidates(lines, pending)
     lines.extend(
         (
             "",
@@ -134,6 +96,105 @@ def format_memory_report(
         )
     )
     return "\n".join(lines)
+
+
+def _memory_processing_lines(*, capture: Any | None, recall: Any | None) -> list[str]:
+    lines: list[str] = []
+    if capture is not None:
+        lines.extend(
+            (
+                f"  capture     {int(getattr(capture, 'eligible', 0))} eligible · "
+                f"{int(getattr(capture, 'pending', 0))} pending · "
+                f"{int(getattr(capture, 'terminal', 0))} terminal",
+                f"  terminal    {int(getattr(capture, 'processed', 0))} processed · "
+                f"{int(getattr(capture, 'succeeded_no_output', 0))} no output · "
+                f"{int(getattr(capture, 'rejected', 0))} rejected · "
+                f"{int(getattr(capture, 'failed_terminal', 0))} failed",
+                f"  integrity   {int(getattr(capture, 'integrity_errors', 0))} errors",
+            )
+        )
+        if oldest := str(getattr(capture, "oldest_pending_at", "") or ""):
+            lines.append(f"  oldest      {oldest}")
+    if recall is None:
+        return lines
+    capabilities = tuple(getattr(recall, "capabilities", ()) or ())
+    lines.extend(
+        (
+            f"  recall      {getattr(recall, 'health', 'unsupported')} · "
+            f"mode {getattr(recall, 'mode', 'unsupported')}",
+            f"  capability  {', '.join(capabilities) or 'none'}",
+            f"  score       {getattr(recall, 'score_domain', 'unavailable')}",
+            f"  selected    memory {int(getattr(recall, 'selected_memory', 0))} · "
+            f"knowledge {int(getattr(recall, 'selected_knowledge', 0))}",
+        )
+    )
+    omissions = tuple(getattr(recall, "omission_reasons", ()) or ())
+    detail = " · ".join(f"{reason} {count}" for reason, count in omissions)
+    lines.append(f"  omissions   {detail or 'none'}")
+    return lines
+
+
+def _partition_memory_records(
+    records: list[Any],
+) -> tuple[dict[str, int], list[Any], list[Any]]:
+    type_counts: dict[str, int] = {}
+    summaries: list[Any] = []
+    other_records: list[Any] = []
+    for row in records:
+        record_type = _memory_text(row, "type") or "record"
+        type_counts[record_type] = type_counts.get(record_type, 0) + 1
+        (summaries if record_type == "session_summary" else other_records).append(row)
+    return type_counts, summaries, other_records
+
+
+def _append_memory_type_counts(lines: list[str], type_counts: dict[str, int]) -> None:
+    lines.extend(("", "By type:"))
+    for record_type, count in sorted(
+        type_counts.items(), key=lambda item: (-item[1], item[0])
+    ):
+        lines.append(f"  {_memory_type_label(record_type):<18} {count}")
+
+
+def _append_current_session_summary(
+    lines: list[str], summaries: list[Any], session_id: str
+) -> Any | None:
+    current = next(
+        (
+            row
+            for row in summaries
+            if _memory_text(row, "key") == f"session_summary:{session_id}"
+        ),
+        None,
+    )
+    if current is None:
+        return None
+    lines.extend(("", "Current session summary:"))
+    questions = _summary_user_questions(current)
+    if questions:
+        lines.extend(f"  - {question[:120]}" for question in questions[-5:])
+    else:
+        lines.append(f"  - {_memory_record_title(current)}")
+    if updated_at := _memory_text(current, "updated_at"):
+        lines.append(f"  updated {updated_at.replace('T', ' ')[:19]} UTC")
+    return current
+
+
+def _append_recent_memory_records(lines: list[str], records: list[Any]) -> None:
+    if not records:
+        return
+    lines.extend(("", "Recent records:"))
+    for row in records[:6]:
+        lines.append(f"  - {_memory_record_title(row)}")
+        record_type = _memory_type_label(_memory_text(row, "type") or "record")
+        scope = _memory_scope_label(_memory_text(row, "scope"))
+        lines.append(f"    {record_type} · {scope}")
+
+
+def _append_pending_memory_candidates(lines: list[str], pending: list[Any]) -> None:
+    if not pending:
+        return
+    lines.extend(("", "Pending candidates:"))
+    lines.extend(f"  - {_memory_record_title(row)}" for row in pending[:5])
 
 
 def _memory_value(row: Any, key: str) -> Any:
@@ -185,9 +246,17 @@ def _memory_scope_label(scope: str) -> str:
     return str(scope or "unknown").partition(":")[0] or "unknown"
 
 
-def render_skills_report(runtime: Any) -> str:
-    if report := _runtime_report(runtime, "skills_report", "/skills"):
+def render_skills_report(runtime: Any, arg: str = "") -> str:
+    skill_id = str(arg or "").strip()
+    report = (
+        _runtime_report(runtime, "skills_report", f"/skills {skill_id}", skill_id)
+        if skill_id
+        else _runtime_report(runtime, "skills_report", "/skills")
+    )
+    if report:
         return report
+    if skill_id:
+        return f"/skills {skill_id}: skill details unavailable"
     rows = _safe_call(getattr(runtime, "list_skill_rows", None)) or []
     if not rows:
         return "(no skills)"
@@ -206,6 +275,7 @@ def render_skills_report(runtime: Any) -> str:
         if tokens:
             suffix += f" · {tokens} tokens"
         lines.append(f"  - {skill_id}{suffix}")
+    lines.append("Use /skills <skill_id> to view details.")
     return "\n".join(lines)
 
 
@@ -214,9 +284,25 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
         build_task_surface,
         resolve_task_surface_source,
     )
+    from openminion.modules.task.scheduling.coordination import (
+        scheduler_readiness_from_health,
+    )
 
-    surface = build_task_surface(resolve_task_surface_source(runtime))
+    surface = build_task_surface(
+        resolve_task_surface_source(runtime),
+        agent_id=str(getattr(runtime, "agent_id", "") or "").strip(),
+        session_id=str(getattr(runtime, "session_id", "") or "").strip(),
+    )
     selected_id = str(task_id or "").strip()
+    parts = selected_id.split(maxsplit=1)
+    if parts and parts[0].lower() in {"pause", "resume", "cancel"}:
+        if len(parts) == 1:
+            return f"Usage: /tasks {parts[0].lower()} <task-id>"
+        action, selected_id = parts[0].lower(), parts[1].strip()
+        try:
+            surface.apply_action(task_id=selected_id, action=action)
+        except (KeyError, ValueError, PermissionError, NotImplementedError) as exc:
+            return f"Task action failed: {exc}"
     if selected_id:
         task = surface.show_task(selected_id)
         if task is None:
@@ -232,6 +318,29 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
         ]
         if task.get("due_at"):
             lines.append(f"due: {task.get('due_at')}")
+        if task.get("schedule_summary"):
+            lines.append(f"schedule: {task.get('schedule_summary')}")
+        if task.get("daemon_required"):
+            scheduler = scheduler_readiness_from_health(
+                {},
+                reachable=True,
+                identity_matches=None,
+            )
+            lines.append(
+                f"scheduler: {scheduler['state']} (check: {scheduler['check_command']})"
+            )
+        if task.get("last_run"):
+            last_run = task["last_run"]
+            lines.append(
+                f"last_run: {last_run.get('state')} "
+                f"at {last_run.get('finished_at') or last_run.get('due_at')}"
+            )
+            if last_run.get("last_error"):
+                error = last_run["last_error"]
+                lines.append(f"last_error: {error.get('code')}: {error.get('message')}")
+        actions = task.get("valid_actions")
+        if actions:
+            lines.append(f"actions: {', '.join(actions)}")
         return "\n".join(lines)
 
     payload = surface.inventory()
@@ -240,11 +349,20 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
     if not tasks:
         lines.append("No tasks found.")
     for task in tasks[:20]:
+        last_run = task.get("last_run") or {}
         lines.append(
-            f"[{task.get('status', 'PENDING')}] {task.get('id')}: "
-            f"{task.get('title')} "
-            f"(operator={task.get('operator_state', '-')}, "
-            f"resume={task.get('resume_action', '-')})"
+            f"[{task.get('lifecycle_state') or task.get('status', 'PENDING')}] "
+            f"{task.get('id')}: {task.get('title')}"
+        )
+        lines.append(
+            f"  type={task.get('task_kind', '-')} "
+            f"schedule={task.get('schedule_summary', '-')}"
+        )
+        lines.append(
+            f"  next={task.get('due_at') or '-'} "
+            f"last={last_run.get('state') or '-'} "
+            f"operator={task.get('operator_state', '-')} | "
+            f"resume={task.get('resume_action', '-')}"
         )
     pending = list(payload.get("pending_actions", []))
     if pending:
@@ -347,12 +465,17 @@ def _safe_call(callback: Any) -> Any:
         return None
 
 
-def _runtime_report(runtime: Any, attribute: str, command: str) -> str | None:
+def _runtime_report(
+    runtime: Any,
+    attribute: str,
+    command: str,
+    *args: Any,
+) -> str | None:
     reporter = getattr(runtime, attribute, None)
     if not callable(reporter):
         return None
     try:
-        return str(reporter() or "").strip() or None
+        return str(reporter(*args) or "").strip() or None
     except Exception as exc:
         return f"{command}: {exc}"
 

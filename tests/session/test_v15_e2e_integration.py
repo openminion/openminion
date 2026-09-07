@@ -152,6 +152,41 @@ class MockLLMAPI:
 
 
 class T17IntegrationTests(unittest.TestCase):
+    def test_sessctl_exposes_plan_and_trace_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = SessctlAdapter(Path(tmp) / "sessions.db")
+            session.emit_canonical_event(
+                "s-plan",
+                "task_plan.declared",
+                {
+                    "plan": {
+                        "plan_id": "plan-1",
+                        "objective": "Repair the fixture",
+                        "steps": [{"step_id": "repair", "description": "Repair it"}],
+                    }
+                },
+                trace_id="trace-plan",
+            )
+            session.emit_canonical_event(
+                "s-plan",
+                "task_plan.step_completed",
+                {
+                    "plan_id": "plan-1",
+                    "step_id": "repair",
+                    "output_summary": "done",
+                },
+                trace_id="trace-other",
+            )
+
+            plan = session.get_active_task_plan("s-plan")
+            events = session.list_events("s-plan", trace_id="trace-plan")
+
+            self.assertEqual(plan["plan_id"], "plan-1")
+            self.assertEqual(
+                [event["type"] for event in events], ["task_plan.declared"]
+            )
+            session.close()
+
     def test_e2e_ctxctl_brain_sessctl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

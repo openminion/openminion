@@ -25,9 +25,9 @@ from openminion.modules.storage.runtime.session_store.models import SessionRecor
 from openminion.services.runtime.daemon import execute_turn
 from openminion.services.runtime.ingress import TurnTimeoutError
 from openminion.services.runtime.ingress.gateway_call import _run_coro_sync
+from openminion.services.runtime.interfaces import DesktopApprovalRequest
 from openminion.services.runtime.manager import (
     AgentRuntimeManager,
-    DesktopApprovalRequest,
     TurnChunk,
     TurnResponse,
 )

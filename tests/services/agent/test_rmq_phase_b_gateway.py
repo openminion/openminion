@@ -22,18 +22,7 @@ def _pipeline(adapter: MemoryServiceGatewayAdapter):
     return adapter._pipeline  # noqa: SLF001
 
 
-def test_candidate_similarity_without_embeddings_returns_zero() -> None:
-    adapter = _make_adapter()
-    assert (
-        _pipeline(adapter)._candidate_similarity(  # noqa: SLF001
-            {"text": "alpha beta", "score": 0.9},
-            {"text": "alpha beta", "score": 0.8},
-        )
-        == 0.0
-    )
-
-
-def test_mmr_rerank_lambda_edges() -> None:
+def test_retrieval_selection_keeps_score_order() -> None:
     adapter = _make_adapter()
     candidates = [
         {"text": "dup cluster one", "score": 0.9},
@@ -41,11 +30,8 @@ def test_mmr_rerank_lambda_edges() -> None:
         {"text": "dup cluster one", "score": 0.7},
         {"text": "unique topic two", "score": 0.6},
     ]
-    pure_score = _pipeline(adapter).mmr_rerank(candidates, k=3, lambda_=1.0)
-    assert [item["score"] for item in pure_score] == [0.9, 0.8, 0.7]
-
-    pure_diversity = _pipeline(adapter).mmr_rerank(candidates, k=2, lambda_=0.0)
-    assert [item["score"] for item in pure_diversity] == [0.9, 0.8]
+    selected = _pipeline(adapter)._select_retrieve_hits(candidates)  # noqa: SLF001
+    assert [item["score"] for item in selected] == [0.9, 0.8, 0.7, 0.6]
 
 
 def test_gateway_record_hits_callsite_and_non_propagating_error() -> None:
@@ -61,8 +47,6 @@ def test_gateway_record_hits_callsite_and_non_propagating_error() -> None:
             k_knowledge=1,
             decay_halflife_days=30,
             recency_weight=0.3,
-            mmr_enabled=True,
-            mmr_lambda=0.6,
         )
     )
     _pipeline(adapter)._config = adapter._config  # noqa: SLF001

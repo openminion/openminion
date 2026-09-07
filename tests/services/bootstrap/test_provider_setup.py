@@ -7,10 +7,15 @@ from unittest import mock
 
 import pytest
 
-from openminion.base.config import AgentProfileConfig, OpenMinionConfig
+from openminion.base.config import (
+    AgentProfileConfig,
+    OpenMinionConfig,
+    RunProfileOverrides,
+)
 from openminion.base.config.runtime.profile import build_runtime_config
 from openminion.modules.llm.setup_catalog import get_setup_preset, list_setup_presets
 from openminion.services.bootstrap.provider_setup import (
+    ProviderSetupConnectionConflict,
     ProviderSetupError,
     ProviderSetupRequest,
     atomic_save_setup_config,
@@ -631,6 +636,175 @@ def test_minimax_and_openrouter_keep_separate_credential_references(
     assert payload["providers"]["openai"]["api_key_env"] == "MINIMAX_API_KEY"
     assert payload["providers"]["openai"]["base_url"] == ("https://api.minimax.io/v1")
     assert shared_fixture_value not in json.dumps(payload)
+
+
+def test_add_model_preserves_legacy_default_and_adds_configured_choice(
+    tmp_path: Path,
+) -> None:
+    existing = OpenMinionConfig(
+        agents={
+            "minimax-agent": AgentProfileConfig(
+                name="minimax-agent",
+                provider="openai",
+            )
+        },
+        default_agent="minimax-agent",
+    )
+    existing.providers.openai.model = "MiniMax-M2.7"
+    existing.providers.openai.base_url = "https://api.minimax.io/v1"
+    existing.providers.openai.api_key_env = "MINIMAX_API_KEY"
+
+    result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="minimax",
+            agent_id="minimax-agent",
+            model="MiniMax-M2.7-highspeed",
+            add_model=True,
+            config_path=str(tmp_path / "config.json"),
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={"MINIMAX_API_KEY": "fixture-key"},
+        ),
+        existing_config=existing,
+    )
+    profile = result.config.agents["minimax-agent"]
+
+    assert profile.model_connections["minimax"]["default"] is True
+    assert profile.model_connections["minimax"]["models"] == [
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed",
+    ]
+    runtime_config = build_runtime_config(
+        result.config,
+        agent_id="minimax-agent",
+        overrides=RunProfileOverrides(
+            provider="minimax",
+            model="MiniMax-M2.7-highspeed",
+        ),
+    )
+    assert runtime_config.providers.openai.model == "MiniMax-M2.7-highspeed"
+
+
+def test_add_model_accepts_equivalent_existing_connection(tmp_path: Path) -> None:
+    existing = OpenMinionConfig(
+        agents={
+            "agent": AgentProfileConfig(
+                name="agent",
+                provider="anthropic",
+                model_connections={
+                    "minimax": {
+                        "provider": "openai",
+                        "display_name": "MiniMax",
+                        "models": ["MiniMax-M2.7"],
+                        "provider_config_overrides": {
+                            "base_url": "https://api.minimax.io/v1",
+                            "api_key_env": "MINIMAX_API_KEY",
+                            "provider_identity": {
+                                "service_vendor": "minimax",
+                                "transport_adapter": "openai_chat",
+                            },
+                        },
+                    }
+                },
+            )
+        },
+        default_agent="agent",
+    )
+
+    result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="minimax",
+            agent_id="agent",
+            model="MiniMax-M2.7-highspeed",
+            add_model=True,
+            connection_id="minimax",
+            config_path=str(tmp_path / "config.json"),
+            home_root=tmp_path,
+            data_root=tmp_path / "data",
+            env={"MINIMAX_API_KEY": "fixture-key"},
+        ),
+        existing_config=existing,
+    )
+
+    assert result.preview.connection_id == "minimax"
+    assert result.config.agents["agent"].model_connections["minimax"]["models"] == [
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed",
+    ]
+
+
+def test_add_model_rejects_non_equivalent_connection_collision(tmp_path: Path) -> None:
+    existing = OpenMinionConfig(
+        agents={
+            "agent": AgentProfileConfig(
+                name="agent",
+                provider="anthropic",
+                model_connections={
+                    "minimax": {
+                        "provider": "openai",
+                        "display_name": "Other endpoint",
+                        "models": ["other-model"],
+                        "provider_config_overrides": {
+                            "base_url": "https://other.example/v1",
+                        },
+                    }
+                },
+            )
+        },
+        default_agent="agent",
+    )
+
+    with pytest.raises(ProviderSetupConnectionConflict, match="different settings"):
+        build_provider_setup(
+            ProviderSetupRequest(
+                preset_id="minimax",
+                agent_id="agent",
+                model="MiniMax-M2.7",
+                add_model=True,
+                connection_id="minimax",
+                config_path=str(tmp_path / "config.json"),
+                home_root=tmp_path,
+                data_root=tmp_path / "data",
+                env={"MINIMAX_API_KEY": "fixture-key"},
+            ),
+            existing_config=existing,
+        )
+
+    assert existing.agents["agent"].model_connections["minimax"]["models"] == [
+        "other-model"
+    ]
+
+
+def test_add_model_rejects_collision_with_materialized_legacy_route(
+    tmp_path: Path,
+) -> None:
+    existing = OpenMinionConfig(
+        agents={
+            "agent": AgentProfileConfig(
+                name="agent",
+                provider="anthropic",
+                provider_config_overrides={"model": "claude-sonnet-5"},
+            )
+        },
+        default_agent="agent",
+    )
+
+    with pytest.raises(ProviderSetupConnectionConflict, match="different settings"):
+        build_provider_setup(
+            ProviderSetupRequest(
+                preset_id="ollama",
+                agent_id="agent",
+                model="llama3.1",
+                add_model=True,
+                connection_id="anthropic",
+                config_path=str(tmp_path / "config.json"),
+                home_root=tmp_path,
+                data_root=tmp_path / "data",
+            ),
+            existing_config=existing,
+        )
+
+    assert existing.agents["agent"].model_connections == {}
 
 
 def test_claude_alias_counts_as_shared_anthropic_adapter(tmp_path: Path) -> None:

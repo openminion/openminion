@@ -13,12 +13,12 @@ from openminion.modules.task import (
 from openminion.modules.task.project import (
     AutonomyLoopConditionKind,
     AutonomyLoopJudgment,
-    ProjectEffectRecord,
-    ProjectEffectReplayDecision,
-    ProjectEffectStatus,
     ProjectDomainVerificationContract,
     ProjectDomainVerificationEvidence,
     ProjectDomainVerificationStatus,
+    ProjectEffectRecord,
+    ProjectEffectReplayDecision,
+    ProjectEffectStatus,
     ProjectOperatorInboxItem,
     ProjectOperatorResumeAction,
     ProjectOperatorWorkState,
@@ -27,6 +27,11 @@ from openminion.modules.task.project import (
     classify_autonomy_loop_condition,
     evaluate_project_effect_replay,
     evaluate_project_verification_closure,
+)
+from openminion.modules.task.project.turn import (
+    ProjectTurnRequest,
+    project_turn_from_payload,
+    project_turn_inbound_metadata,
 )
 
 
@@ -74,6 +79,205 @@ def _project_run(
         metrics_summary_ref="artifact:metrics.json",
         blocked_reason=blocked_reason,
     )
+
+
+def test_project_turn_metadata_carries_the_exact_selected_tool_scope() -> None:
+    request = ProjectTurnRequest(
+        run_id="run-1",
+        project_run_id="project-1",
+        task_id="task-1",
+        goal_id="goal-1",
+        session_id="session-1",
+        cycle_id="cycle-1",
+        milestone="milestone-1",
+        prompt="continue",
+        allowed_tools=("git.status", "github.fetch_checks"),
+    )
+
+    metadata = project_turn_inbound_metadata(request)
+
+    assert metadata["linked_task_id"] == "task-1"
+    assert metadata["turn_tool_allowlist"] == "git.status,github.fetch_checks"
+    assert metadata["turn_tool_allowlist_supplied"] == "true"
+
+
+@pytest.mark.parametrize(
+    ("error_code", "summary"),
+    (
+        ("empty_provider_response", "provider response was empty"),
+        ("unusable_provider_response", "provider response was unusable"),
+        ("provider_timeout", "provider request timed out"),
+        ("cancelled", "project turn was cancelled"),
+        ("malformed_provider_response", "provider response was malformed"),
+        ("context_overflow", "active context exceeded its budget"),
+    ),
+)
+def test_project_turn_error_payloads_preserve_typed_error(
+    error_code: str,
+    summary: str,
+) -> None:
+    request = ProjectTurnRequest(
+        run_id="run-1",
+        project_run_id="project-1",
+        task_id="task-1",
+        goal_id="goal-1",
+        session_id="session-1",
+        cycle_id="cycle-1",
+        milestone="milestone-1",
+        prompt="continue",
+    )
+
+    result = project_turn_from_payload(
+        request,
+        payload={},
+        execute=lambda _: {
+            "error": True,
+            "summary": summary,
+            "metadata": {
+                "error_code": error_code,
+                "error_message": summary,
+                "error_details": '{"request_id":"req-1"}',
+            },
+        },
+    )
+
+    assert result.error is not None
+    assert result.error.code == error_code
+    assert result.error.message == summary
+    assert result.error.details == {"request_id": "req-1"}
+    assert result.condition == (
+        AutonomyLoopConditionKind.CANCELLED
+        if error_code == "cancelled"
+        else AutonomyLoopConditionKind.RETRYABLE_FAILURE
+    )
+
+
+def test_project_turn_decodes_typed_plan_metadata() -> None:
+    request = ProjectTurnRequest(
+        run_id="run-1",
+        project_run_id="project-1",
+        task_id="task-1",
+        goal_id="goal-1",
+        session_id="session-1",
+        cycle_id="cycle-1",
+        milestone="milestone-1",
+        prompt="continue",
+    )
+
+    result = project_turn_from_payload(
+        request,
+        payload={},
+        execute=lambda _: {
+            "summary": "planned",
+            "metadata": {
+                "task_plan": (
+                    '{"plan_id":"plan-1","objective":"ship",'
+                    '"criterion_ids":["criterion-tests"],'
+                    '"steps":[{"step_id":"build","description":"Build"}]}'
+                ),
+                "task_plan.revision": (
+                    '{"plan_id":"plan-1","revision_id":"revision-1",'
+                    '"criterion_ids":["criterion-tests"],'
+                    '"verifier_refs":["verify:failed-1"],'
+                    '"revised_steps":[{"step_id":"build",'
+                    '"description":"Repair"}]}'
+                ),
+                "task_plan.step_completed": {
+                    "plan_id": "plan-1",
+                    "step_id": "build",
+                    "output_summary": "built",
+                },
+                "task_plan.step_blocked": {
+                    "plan_id": "plan-1",
+                    "step_id": "build",
+                    "blocker_type": "operator",
+                },
+                "task_plan.abandoned": {"plan_id": "plan-1"},
+                "task_plan.completed": {"plan_id": "plan-1"},
+            },
+        },
+    )
+
+    assert result.task_plan is not None
+    assert result.task_plan.criterion_ids == ["criterion-tests"]
+    assert result.task_plan_revision is not None
+    assert result.task_plan_revision.revision_id == "revision-1"
+    assert result.task_plan_step_completed is not None
+    assert result.task_plan_step_completed.step_id == "build"
+    assert result.task_plan_step_blocked is not None
+    assert result.task_plan_step_blocked.blocker_type == "operator"
+    assert result.task_plan_abandoned is not None
+    assert result.task_plan_completed is not None
+
+
+@pytest.mark.parametrize(
+    "revision",
+    (
+        '{"plan_id":"plan-1","revised_steps":[{"step_id":"build",'
+        '"description":"Repair"}],"verifier_refs":["verify:failed-1"]}',
+        '{"plan_id":"plan-1","revision_id":"revision-1",'
+        '"revised_steps":[{"step_id":"build","description":"Repair"}]}',
+    ),
+)
+def test_project_turn_ignores_non_checkpoint_plan_revisions(revision: str) -> None:
+    request = ProjectTurnRequest(
+        run_id="run-1",
+        project_run_id="project-1",
+        task_id="task-1",
+        goal_id="goal-1",
+        session_id="session-1",
+        cycle_id="cycle-1",
+        milestone="milestone-1",
+        prompt="continue",
+    )
+
+    result = project_turn_from_payload(
+        request,
+        payload={},
+        execute=lambda _: {
+            "summary": "planned",
+            "metadata": {"task_plan.revision": revision},
+        },
+    )
+
+    assert result.task_plan_revision is None
+
+
+@pytest.mark.parametrize(
+    ("details", "expected"),
+    (
+        ("not-json", {"error": "malformed_details"}),
+        ("[]", {"error": "non_object_details"}),
+        ('{"api_key":"secret","status_code":429}', {"status_code": "429"}),
+    ),
+)
+def test_project_turn_error_details_are_bounded(details: str, expected: dict) -> None:
+    request = ProjectTurnRequest(
+        run_id="run-1",
+        project_run_id="project-1",
+        task_id="task-1",
+        goal_id="goal-1",
+        session_id="session-1",
+        cycle_id="cycle-1",
+        milestone="milestone-1",
+        prompt="continue",
+    )
+
+    result = project_turn_from_payload(
+        request,
+        payload={},
+        execute=lambda _: {
+            "error": True,
+            "summary": "failed",
+            "metadata": {
+                "error_code": "provider_timeout",
+                "error_details": details,
+            },
+        },
+    )
+
+    assert result.error is not None
+    assert result.error.details == expected
 
 
 def test_operator_inbox_projects_all_local_states_with_resume_actions() -> None:

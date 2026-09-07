@@ -6,6 +6,7 @@ from openminion.modules.context.schemas import (
     ContextTracePersistenceResult,
 )
 from openminion.modules.telemetry.events.catalog import (
+    CONTEXT_CONTEXTCTL_SELECTED,
     CONTEXT_MANIFEST_CREATED,
     CONTEXT_MANIFEST_PERSISTENCE_FAILED,
 )
@@ -15,6 +16,30 @@ from openminion.modules.telemetry.events.module import (
     emit_module_telemetry as _emit_module_telemetry_impl,
     run_telemetry_result as _run_telemetry_result_impl,
 )
+
+
+def emit_contextctl_selection(
+    emit_event: Callable[..., None],
+    session_id: str,
+    conversation_id: str,
+    thread_id: str,
+    attach_id: str,
+    run_id: str,
+    request_id: str,
+    history_count: int,
+) -> None:
+    emit_event(
+        session_id=session_id,
+        event_type=CONTEXT_CONTEXTCTL_SELECTED,
+        conversation_id=conversation_id or None,
+        thread_id=thread_id or None,
+        attach_id=attach_id or None,
+        payload={
+            "run_id": run_id,
+            "request_id": request_id,
+            "history_count": str(history_count),
+        },
+    )
 
 
 def emit_pack_module_telemetry(

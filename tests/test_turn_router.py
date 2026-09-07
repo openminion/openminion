@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from openminion.modules.storage.runtime.session_store import RoomParticipant
 from openminion.services.runtime.turn_router import TurnRouter
 
@@ -35,6 +37,7 @@ def test_turn_router_addressed_prefers_mentions() -> None:
         message="@review-agent please check this",
         participants=participants,
         requested_agent_id="writer-agent",
+        configured_agent_ids=("writer-agent", "review-agent"),
     )
 
     assert decision.mode == "addressed"
@@ -104,3 +107,56 @@ def test_turn_router_addressed_falls_back_to_active_agent() -> None:
     )
 
     assert decision.agent_ids == ("writer-agent",)
+
+
+def test_turn_router_preserves_file_mentions() -> None:
+    router = TurnRouter()
+    session = SimpleNamespace(active_agent_id="writer-agent", metadata={})
+    participants = [
+        _participant("writer-agent", joined_at="2026-04-02T00:00:00Z"),
+        _participant("review-agent", joined_at="2026-04-02T00:00:01Z"),
+    ]
+
+    decision = router.route(
+        session=session,
+        message="Review @README.md",
+        participants=participants,
+        requested_agent_id="writer-agent",
+        configured_agent_ids=("writer-agent", "review-agent"),
+    )
+
+    assert decision.agent_ids == ("writer-agent",)
+
+
+def test_turn_router_rejects_configured_uninvited_agent() -> None:
+    router = TurnRouter()
+    session = SimpleNamespace(active_agent_id="writer-agent", metadata={})
+
+    with pytest.raises(ValueError, match="not an active room participant"):
+        router.route(
+            session=session,
+            message="@review-agent please check this",
+            participants=[
+                _participant("writer-agent", joined_at="2026-04-02T00:00:00Z")
+            ],
+            requested_agent_id="writer-agent",
+            configured_agent_ids=("writer-agent", "review-agent"),
+        )
+
+
+def test_turn_router_rejects_multiple_agent_addresses() -> None:
+    router = TurnRouter()
+    session = SimpleNamespace(active_agent_id="writer-agent", metadata={})
+    participants = [
+        _participant("writer-agent", joined_at="2026-04-02T00:00:00Z"),
+        _participant("review-agent", joined_at="2026-04-02T00:00:01Z"),
+    ]
+
+    with pytest.raises(ValueError, match="broadcast or sequential"):
+        router.route(
+            session=session,
+            message="@writer-agent and @review-agent compare",
+            participants=participants,
+            requested_agent_id="writer-agent",
+            configured_agent_ids=("writer-agent", "review-agent"),
+        )

@@ -36,6 +36,8 @@ Re-exported from `openminion.modules.llm`:
   `ErrorCode`
 - Request/response: `LLMRequest`, `LLMResponse`, `Message`, `ToolCall`,
   `ToolChoice`, `ToolSpec`, `UsageInfo`
+- Provider boundary: `ProviderError`, `RuntimeLLMHandle`,
+  `is_provider_recovery_fallback_text`
 
 ## Dependencies
 
@@ -46,8 +48,6 @@ Re-exported from `openminion.modules.llm`:
 ## Canonical shape
 
 Canonical with `interfaces.py`, `schemas.py`, `contracts/` subpackage,
-`providers/` subpackage, `cli.py`. The provider subpackages each follow
-a recurring shape (`adapter.py`, `normalization.py`,
-`request_compat.py` where needed). The tool-call envelope contract
-was hardened in the TCV2 lane (closed) — `envelope_v2.py` is the
-canonical envelope owner.
+`providers/` subpackage, and `cli.py`. Provider subpackages follow a recurring
+shape (`adapter.py`, `normalization.py`, and `request_compat.py` where needed).
+`providers/envelope_v2.py` is the canonical tool-call envelope owner.

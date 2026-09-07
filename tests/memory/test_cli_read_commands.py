@@ -1,8 +1,9 @@
 import unittest
 import json
-import re
 import tempfile
 from pathlib import Path
+
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from openminion.modules.memory.cli import _build_app
@@ -204,20 +205,7 @@ class TestCLIReadCommands(unittest.TestCase):
     def test_help_exposes_full_command_surface(self):
         result = self.runner.invoke(self.app, ["--help"])
         self.assertEqual(result.exit_code, 0, result.output)
-        in_commands = False
-        commands: list[str] = []
-        for line in result.output.splitlines():
-            if "Commands" in line:
-                in_commands = True
-                continue
-            if in_commands and line.startswith("╰"):
-                break
-            if not in_commands or not line.startswith("│ "):
-                continue
-            match = re.match(r"^│ ([a-z0-9-]+)\s{2,}", line)
-            if match is None:
-                continue
-            commands.append(match.group(1))
+        commands = list(get_command(self.app).commands)
         self.assertEqual(
             commands,
             [

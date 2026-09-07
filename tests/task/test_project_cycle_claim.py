@@ -55,6 +55,31 @@ def test_project_cycle_claim_fences_checkpoint_commit(tmp_path) -> None:
         )
 
 
+def test_project_cycle_claim_can_commit_after_legacy_default_window(tmp_path) -> None:
+    manager = _manager(tmp_path)
+    repository = manager.lifecycle_repository
+    now = datetime(2026, 8, 19, tzinfo=timezone.utc)
+    claim = repository.acquire_project_cycle_claim(
+        task_id="task-1",
+        owner_id="worker-1",
+        expected_checkpoint_id=None,
+        ttl_seconds=2_700,
+        now=now,
+    )
+
+    repository.commit_project_cycle_checkpoint(
+        claim,
+        checkpoint_id="checkpoint-1",
+        state={"kind": "project_run", "cycle": 1},
+        now=now + timedelta(seconds=121),
+    )
+
+    assert manager.get_latest_checkpoint("task-1") == (
+        "checkpoint-1",
+        {"kind": "project_run", "cycle": 1},
+    )
+
+
 def test_project_cycle_claim_blocks_live_owner_and_allows_expiry_takeover(
     tmp_path,
 ) -> None:

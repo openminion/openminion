@@ -55,6 +55,9 @@ def _policy_value_from_context(ctx: Any, key: str) -> str:
 
 
 def agent_id_from_context(ctx: Any) -> str:
+    direct = str(getattr(ctx, "agent_id", "") or "").strip()
+    if direct:
+        return direct
     token = _policy_value_from_context(ctx, "agent_id")
     if token:
         return token

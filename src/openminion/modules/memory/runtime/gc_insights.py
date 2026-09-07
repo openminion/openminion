@@ -83,7 +83,12 @@ def _evict_postgres_stale_insights(
             removed_edges.append(
                 (
                     record_id,
-                    soft_delete_postgres_record(conn, record_id, now_iso=now_iso),
+                    soft_delete_postgres_record(
+                        conn,
+                        record_id,
+                        now_iso=now_iso,
+                        reason="stale_insight",
+                    ),
                 )
             )
     return len(removed_edges), removed_edges
@@ -114,7 +119,12 @@ def _evict_sqlite_stale_insights(
                 removed_edges.append(
                     (
                         record_id,
-                        soft_delete_sqlite_record(conn, record_id, now_iso=now_iso),
+                        soft_delete_sqlite_record(
+                            conn,
+                            record_id,
+                            now_iso=now_iso,
+                            reason="stale_insight",
+                        ),
                     )
                 )
             conn.execute("COMMIT")

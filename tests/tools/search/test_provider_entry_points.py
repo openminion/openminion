@@ -61,6 +61,27 @@ def test_register_provider_is_idempotent() -> None:
     assert registry.list_provider_ids() == ["fake_search_provider_sep03"]
 
 
+def test_register_provider_rejects_different_object_with_same_id() -> None:
+    registry = SearchProviderRegistry()
+    registry.register(_FakeSearchProvider())
+
+    with pytest.raises(ValueError, match="already registered"):
+        registry.register(_FakeSearchProvider())
+
+
+def test_public_register_provider_rejects_different_object_with_same_id(
+    monkeypatch,
+) -> None:
+    registry = SearchProviderRegistry()
+    monkeypatch.setattr(
+        "openminion.tools.search.providers.registry._REGISTRY", registry
+    )
+    register_provider(_FakeSearchProvider())
+
+    with pytest.raises(ValueError, match="already registered"):
+        register_provider(_FakeSearchProvider())
+
+
 def test_register_provider_rejects_missing_provider_id() -> None:
     registry = SearchProviderRegistry()
 
@@ -72,6 +93,28 @@ def test_register_provider_rejects_missing_provider_id() -> None:
 
     with pytest.raises(ValueError):
         registry.register(_Bad())  # type: ignore[arg-type]
+
+
+def test_entry_point_collision_fails_and_preserves_original_provider() -> None:
+    registry = SearchProviderRegistry()
+    original = _FakeSearchProvider()
+    registry.register(original)
+    entry_point = mock.MagicMock()
+    entry_point.name = "duplicate"
+    entry_point.value = "duplicate.search:provider"
+    entry_point.load.return_value = _FakeSearchProvider()
+
+    with mock.patch(
+        "openminion.tools.search.providers._iter_entry_points",
+        return_value=[entry_point],
+    ):
+        with pytest.raises(ValueError, match="already registered"):
+            registry.load_entry_points()
+
+    assert registry.get(original.provider_id) is original
+    status = registry.entry_point_statuses()[0]
+    assert status["loaded"] is False
+    assert "already registered" in status["error"]
 
 
 def test_load_entry_points_calls_register_search_provider_hook() -> None:
@@ -155,9 +198,21 @@ def test_load_entry_points_skips_stale_entry_points() -> None:
         return_value=[fake_ep],
     ):
         loaded = registry.load_entry_points()
+        repeated = registry.load_entry_points()
 
     assert loaded == []
+    assert repeated == []
+    fake_ep.load.assert_called_once()
     assert registry.list_provider_ids() == []
+    assert registry.entry_point_statuses() == [
+        {
+            "name": "stale_provider",
+            "module": "missing.module:does_not_exist",
+            "group": "openminion.tool.search.providers",
+            "loaded": False,
+            "error": "ModuleNotFoundError: missing.module",
+        }
+    ]
 
 
 def test_load_entry_points_raises_typeerror_on_malformed_target() -> None:

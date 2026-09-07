@@ -45,6 +45,75 @@ def _ctx(tmp_path: Path) -> RuntimeContext:
     )
 
 
+def _ctx_with_paths(
+    tmp_path: Path,
+    *,
+    read_allow: list[str],
+    write_allow: list[str],
+    deny: list[str] | None = None,
+) -> RuntimeContext:
+    ctx = _ctx(tmp_path)
+    ctx.policy.raw["paths"] = {
+        "read_allow": read_allow,
+        "write_allow": write_allow,
+        "deny": list(deny or []),
+    }
+    return ctx
+
+
+def test_absolute_configured_read_root_is_honored(tmp_path: Path) -> None:
+    external = tmp_path / "external"
+    external.mkdir()
+    target = external / "notes.txt"
+    target.write_text("outside but configured", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    ctx = _ctx_with_paths(
+        tmp_path,
+        read_allow=[str(workspace), str(external)],
+        write_allow=[str(workspace)],
+    )
+
+    result = _h_read_file({"path": str(target)}, ctx)
+
+    assert result["ok"] is True
+    assert result["content"] == "outside but configured"
+
+
+def test_relative_path_cannot_escape_workspace(tmp_path: Path) -> None:
+    external = tmp_path / "external.txt"
+    external.write_text("outside", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    ctx = _ctx_with_paths(
+        tmp_path,
+        read_allow=[str(workspace), str(tmp_path)],
+        write_allow=[str(workspace)],
+    )
+
+    result = _h_read_file({"path": "../external.txt"}, ctx)
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "POLICY_DENIED"
+
+
+def test_deny_root_wins_over_configured_read_root(tmp_path: Path) -> None:
+    external = tmp_path / "external"
+    external.mkdir()
+    target = external / "secret.txt"
+    target.write_text("secret", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    ctx = _ctx_with_paths(
+        tmp_path,
+        read_allow=[str(workspace), str(external)],
+        write_allow=[str(workspace)],
+        deny=[str(target)],
+    )
+
+    result = _h_read_file({"path": str(target)}, ctx)
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "POLICY_DENIED"
+
+
 def test_list_dir_non_recursive_returns_entries(tmp_path: Path):
     ctx = _ctx(tmp_path)
     (ctx.workspace / "alpha.txt").write_text("alpha", encoding="utf-8")

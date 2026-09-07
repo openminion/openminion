@@ -1,4 +1,3 @@
-import argparse
 from dataclasses import dataclass
 from difflib import get_close_matches
 from enum import StrEnum
@@ -673,23 +672,6 @@ def resolve_surface_onboarding_route(
         config_path=config_path,
         home_root=home_root,
         data_root=data_root,
-    )
-
-
-def build_inline_setup_args(
-    *,
-    config: str | None,
-    home_root: str | None,
-    data_root: str | None,
-    agent: str | None,
-    no_chat: bool,
-) -> argparse.Namespace:
-    return argparse.Namespace(
-        config=config,
-        home_root=home_root,
-        data_root=data_root,
-        no_chat=no_chat,
-        agent=agent,
     )
 
 

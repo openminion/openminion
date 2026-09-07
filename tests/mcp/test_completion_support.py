@@ -5,6 +5,10 @@ from openminion.tools.mcp.manager import MCPFleetManager, MCPServerSession
 
 
 class _CompletionTransport:
+    def stderr_tail(self, *, limit: int = 4096) -> str:
+        del limit
+        return ""
+
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
         self.requests: list[tuple[str, dict]] = []

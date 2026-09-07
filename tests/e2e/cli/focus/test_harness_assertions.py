@@ -17,12 +17,15 @@ from tests.e2e.cli.focus.harness.probe import (
     active_turn_busy,
     approval_prompt_needs_reply,
     composer_echo_probe,
+    continuation_cue_present,
     focus_session_id,
     inline_approval_fingerprint,
     inline_approval_key,
     inline_approval_menu,
     latest_approval_prompt,
+    latest_done_after_submission,
     latest_done_event,
+    latest_terminal_failure,
     latest_turn_event,
     screen_after_submission,
     sidecar_consent_prompt_visible,
@@ -51,6 +54,25 @@ def test_expected_markers_ignore_echoed_prompt() -> None:
 
     with pytest.raises(AssertionError, match="next steps"):
         assert_expected_markers(transcript, prompt, ("next steps",))
+
+
+def test_continuation_cue_allows_terminal_line_wrapping() -> None:
+    assert continuation_cue_present(
+        "[act:coding] budget exhausted. Continue in a new turn to\nresume."
+    )
+
+
+def test_screen_after_submission_excludes_an_older_continuation_cue() -> None:
+    transcript = (
+        "Continue in a new turn to resume.\n"
+        "❯ continue\n"
+        "The task is complete.\nDone in 2s\n"
+    )
+
+    trailing = screen_after_submission(transcript, "continue")
+
+    assert trailing is not None
+    assert not continuation_cue_present(trailing)
 
 
 def test_scenario_contract_requires_expected_files_and_transcript_rules(
@@ -182,6 +204,27 @@ def test_expected_markers_reject_failed_research_fallback() -> None:
         assert_expected_markers(transcript, prompt, ("next steps",))
 
 
+def test_expected_markers_reject_provider_error_final_answer() -> None:
+    prompt = "Build and validate a project, then report result."
+    transcript = (
+        f"❯ {prompt}\n"
+        "⏺ [act:coding] LLM error: PROVIDER_ERROR: invalid tool transcript\n"
+        "Done in 2m10s\n"
+    )
+
+    with pytest.raises(AssertionError, match="llm error"):
+        assert_expected_markers(transcript, prompt, ("result",))
+
+
+def test_latest_terminal_failure_finds_typed_provider_failure() -> None:
+    transcript = "❯ prompt\nEMPTY_PROVIDER_RESPONSE: empty after retries\n"
+
+    match = latest_terminal_failure(transcript, offset=0)
+
+    assert match is not None
+    assert match.group(0).startswith("EMPTY_PROVIDER_RESPONSE")
+
+
 def test_expected_markers_ignore_tool_output_before_final_answer() -> None:
     prompt = "Research this and provide a recommendation."
     transcript = (
@@ -260,6 +303,27 @@ def test_latest_done_event_excludes_completion_before_new_activity() -> None:
     assert latest_done_event(transcript, offset=offset) is None
 
 
+def test_latest_done_after_submission_ignores_completion_from_prior_redraw() -> None:
+    transcript = (
+        "Done in 2m11s\n"
+        "continue\n"
+        "Working...\n\f\n"
+        "Done in 2m11s\n"
+        "continue\n"
+        "Running file.read(greet.py)\n"
+    )
+
+    assert latest_done_after_submission(transcript, "continue") is None
+
+    transcript += (
+        "\f\nDone in 2m11s\ncontinue\nResult: project validated.\nDone in 38s\n"
+    )
+    match = latest_done_after_submission(transcript, "continue")
+
+    assert match is not None
+    assert match.group(0) == "Done in 38s"
+
+
 def test_latest_approval_prompt_wins_when_completion_text_follows() -> None:
     transcript = (
         "● Policy confirmation required.\n"
@@ -295,6 +359,12 @@ def test_approval_prompt_needs_reply_when_current_screen_is_waiting() -> None:
         "Reply exactly yes to allow once, session to allow this tool for the "
         "session, or no to cancel.\n"
     )
+
+    assert approval_prompt_needs_reply(transcript, offset=0)
+
+
+def test_high_risk_approval_prompt_needs_reply() -> None:
+    transcript = "High-risk action requires confirmation\nDone in 21s\n"
 
     assert approval_prompt_needs_reply(transcript, offset=0)
 
@@ -405,6 +475,14 @@ def test_inline_approval_menu_supports_both_focus_surfaces(
         "[y]es / [N]o / [a]lways: a\n❯ ● file.write(example.py)",
         "[y]es / [N]o / [a]lways: a\nFIRST:a",
         ("[y]es / [N]o / [a]lways: ● Running file.write(cli.py)\na\nStatus: Working"),
+        (
+            "[y]es / [N]o / [a]lways: ● Running file.read(module.py)\n"
+            "● file.read(module.py)\n"
+            "  └ def example():\n"
+            "        return 1\n"
+            "a\n"
+            "Status: Working"
+        ),
         "[A] Allow once [S] Session allow [D] Deny\nDone in 2s",
     ],
 )
@@ -435,6 +513,20 @@ def test_inline_approval_menu_accepts_prompt_with_same_line_status() -> None:
     screen = (
         "Approval required: file.write(test_hello.py)\n"
         "[y]es / [N]o / [a]lways: ● Running file.write(README.md)"
+    )
+
+    assert inline_approval_menu(screen) == "compact"
+    assert active_approval_visible(screen)
+
+
+def test_inline_approval_menu_accepts_prompt_with_interleaved_tool_output() -> None:
+    screen = (
+        "[y]es / [N]o / [a]lways: ● file.write(tiny_math.py)\n"
+        '  └ {"ok": true}\n'
+        "● Running file.write(test_tiny_math.py)\n"
+        "● file.write(test_tiny_math.py)\n"
+        '  └ {"ok": true}\n'
+        "● Running exec.run(python -m pytest -q)"
     )
 
     assert inline_approval_menu(screen) == "compact"
@@ -668,3 +760,26 @@ def test_pty_screen_rendering_skips_empty_cells(tmp_path) -> None:
     session._screen.buffer[0][2] = Char(data="B")
 
     assert session._screen_display_lines() == ["AB"]
+
+
+@pytest.mark.parametrize(
+    ("session_env", "expected"),
+    [({}, "xterm-256color"), ({"TERM": "dumb"}, "dumb")],
+)
+def test_pty_session_owns_default_terminal_type(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    session_env: dict[str, str],
+    expected: str,
+) -> None:
+    monkeypatch.setenv("TERM", "dumb")
+    command = (
+        sys.executable,
+        "-c",
+        "import os; print(os.environ['TERM'])",
+    )
+
+    with PtySession(argv=command, cwd=tmp_path, env=session_env) as session:
+        transcript = session.wait_for_after(expected, offset=0, timeout=5)
+
+    assert expected in transcript

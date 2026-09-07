@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import re
 import stat
-import threading
-from typing import Any, Iterator
+from typing import Any
 
 import pytest
 
@@ -17,11 +14,15 @@ from openminion.base.config import (
     OpenMinionConfig,
     resolve_config_path,
 )
-from openminion.modules.llm.setup_catalog import get_setup_preset
+from openminion.modules.llm.setup_catalog import first_screen_presets, get_setup_preset
+from openminion.modules.storage.record_store import RecordStoreSQLite
+from openminion.modules.storage.runtime.session_store import SessionStore
 from tests.e2e.cli.focus.harness import FocusProbe, FocusScenario, PtySession
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
+from tests.e2e.cli.focus.harness.ollama_fixture import ollama_fixture_server
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(240)]
+_LIVE_ONBOARDING_SETUP_TIMEOUT = 600
 
 _FOCUS_READY_RE = re.compile(
     r"Ask anything|Reply, or / for commands|input:\s*(?:send|queue next) message|"
@@ -63,14 +64,16 @@ def _environment(
     data_root: Path,
     **overrides: str,
 ) -> dict[str, str]:
-    return {
+    environment = {
         "OPENMINION_HOME": str(home_root),
         "OPENMINION_DATA_ROOT": str(data_root),
         "OPENMINION_GENERATED_ROOT": str(data_root / "runtime"),
-        "PYTHONPATH": "src",
         "PYTHONDONTWRITEBYTECODE": "1",
         **overrides,
     }
+    if os.getenv("OPENMINION_ONBOARDING_INSTALLED_ARTIFACT") != "1":
+        environment["PYTHONPATH"] = "src"
+    return environment
 
 
 def _reply(session: PtySession, prompt: str, answer: str = "") -> None:
@@ -99,18 +102,16 @@ def _run_first_task(
         include_project_context=True,
     )
     probe.wait_ready(session)
-    return probe.run_turn(
+    result = probe.run_turn(
         session,
         FocusScenario(
             scenario_id="onboarding-first-task",
-            prompt=(
-                "In one sentence, give me one safe read-only command to inspect "
-                "the current directory and end with exactly: ONBOARDING_OK"
-            ),
-            expected_markers=("ONBOARDING_OK", "ls|find|Get-ChildItem"),
+            prompt="List this workspace using the file tools.",
             timeout=timeout,
         ),
     )
+    probe.wait_ready(session)
+    return result
 
 
 def _assert_owner_only(path: Path) -> None:
@@ -118,55 +119,91 @@ def _assert_owner_only(path: Path) -> None:
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
-class _OllamaFixtureHandler(BaseHTTPRequestHandler):
-    def log_message(self, format: str, *args: object) -> None:
-        del format, args
-
-    def do_POST(self) -> None:
-        if self.path != "/api/chat":
-            self.send_error(404)
-            return
-        content_length = int(self.headers.get("Content-Length", "0"))
-        request_payload = {}
-        if content_length:
-            request_payload = json.loads(self.rfile.read(content_length))
-        messages = request_payload.get("messages", [])
-        last_message = messages[-1] if isinstance(messages, list) and messages else {}
-        prompt = str(last_message.get("content", "") or "").lower()
-        response_text = "openminion provider check ok"
-        if "openminion provider check ok" not in prompt:
-            response_text = "Use ls to inspect the current directory. ONBOARDING_OK"
-        payload = json.dumps(
-            {
-                "model": "qwen2.5:14b",
-                "message": {
-                    "role": "assistant",
-                    "content": response_text,
-                },
-                "done": True,
-                "done_reason": "stop",
-                "prompt_eval_count": 1,
-                "eval_count": 1,
-            }
-        ).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+def _assert_owner_directory(path: Path) -> None:
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o700
 
 
-@contextmanager
-def _ollama_fixture_server() -> Iterator[str]:
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _OllamaFixtureHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+def _latest_outbound_metadata(data_root: Path) -> dict[str, Any]:
+    record_store = RecordStoreSQLite(
+        data_root / "state" / "openminion.db",
+        read_only=True,
+    )
     try:
-        yield f"http://127.0.0.1:{server.server_port}"
+        session_store = SessionStore(record_store)
+        sessions = session_store.list_sessions(limit=1, newest_first=True)
+        assert sessions
+        messages = session_store.list_messages(session_id=sessions[0].id, limit=100)
+        outbound = [message for message in messages if message.role == "outbound"]
+        assert outbound
+        return dict(outbound[-1].metadata)
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+        record_store.close()
+
+
+def _persisted_tool_results(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = json.loads(str(metadata["tool_results"]))
+    assert isinstance(payload, list)
+    return payload
+
+
+_ONBOARDING_TURN_RESPONSES: tuple[dict[str, Any], ...] = (
+    {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call-exec",
+                "function": {
+                    "name": "exec.run",
+                    "arguments": {"command": "ls"},
+                },
+            }
+        ],
+    },
+    {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call-request-list-dir",
+                "function": {
+                    "name": "tool.request",
+                    "arguments": {
+                        "name": "file.list_dir",
+                        "terminal_after_success": False,
+                    },
+                },
+            }
+        ],
+    },
+    {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call-list-dir",
+                "function": {
+                    "name": "file.list_dir",
+                    "arguments": {"path": "."},
+                },
+            }
+        ],
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "Workspace entries listed. ONBOARDING_OK\n\n"
+            '<finalization_status>{"status":"final_answer",'
+            '"reasoning":"Structured workspace listing completed."}'
+            "</finalization_status>"
+        ),
+    },
+)
+
+
+def _ollama_fixture_server():
+    return ollama_fixture_server(_ONBOARDING_TURN_RESPONSES)
 
 
 def _run_noninteractive_setup_case(
@@ -279,6 +316,74 @@ def test_bare_command_imports_config_and_reaches_focus(
     write_transcript(artifact_root(tmp_path), "onboarding-import", transcript)
 
 
+def test_bare_setup_and_second_launch_share_home_config(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+) -> None:
+    home_root = tmp_path / "home"
+    project_root = tmp_path / "project"
+    added_root = tmp_path / "shared"
+    first_cwd = tmp_path / "first-launch"
+    second_cwd = tmp_path / "second-launch"
+    for path in (home_root, project_root, added_root, first_cwd, second_cwd):
+        path.mkdir(parents=True)
+    (project_root / "OPENMINION.md").write_text("hidden context", encoding="utf-8")
+    import_path = tmp_path / "existing-openminion.json"
+    _write_import_source(import_path)
+    environment = {
+        "HOME": str(home_root),
+        "OPENMINION_HOME": "",
+        "OPENMINION_DATA_ROOT": "",
+        "OPENMINION_GENERATED_ROOT": "",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": str(openminion_root / "src"),
+    }
+    command = (
+        str(python_bin),
+        "-m",
+        "openminion",
+        "--no-update-check",
+        "--no-context",
+        "--dir",
+        str(project_root),
+        "--add-dir",
+        str(added_root),
+    )
+    import_choice = str(len(first_screen_presets()) + 2)
+
+    with PtySession(argv=command, cwd=first_cwd, env=environment) as session:
+        _reply(session, "Choose your model provider:", import_choice)
+        _reply(session, "OpenMinion config file:", str(import_path))
+        _reply(session, r"Import this config\? \[Y/n\]:")
+        session.wait_for_after("Entering OpenMinion", offset=0, timeout=120)
+        session.wait_for_visible_match_after(_FOCUS_READY_RE, offset=0, timeout=120)
+        first_transcript = session.transcript
+        first_screen = session.visible_transcript
+
+    config_path = home_root / ".openminion" / "agents.json"
+    assert config_path.exists()
+    assert "directory:" in first_screen
+    assert project_root.name in first_screen
+    assert "permissions: default · 1 added directory" in first_screen
+    assert "context:" not in first_screen
+
+    with PtySession(argv=command, cwd=second_cwd, env=environment) as session:
+        session.wait_for_visible_match_after(_FOCUS_READY_RE, offset=0, timeout=120)
+        second_transcript = session.transcript
+        second_screen = session.visible_transcript
+
+    assert "Choose your model provider:" not in second_transcript
+    assert "directory:" in second_screen
+    assert project_root.name in second_screen
+    assert "permissions: default · 1 added directory" in second_screen
+    write_transcript(
+        artifact_root(tmp_path),
+        "onboarding-bare-home-continuity",
+        first_transcript + "\n--- second launch ---\n" + second_transcript,
+    )
+
+
 def test_hosted_setup_uses_env_and_skips_remote_check(
     tmp_path: Path,
     python_bin: Path,
@@ -307,7 +412,11 @@ def test_hosted_setup_uses_env_and_skips_remote_check(
         _reply(session, "Choose your model provider:", "1")
         _reply(session, "Model \\[")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
-        _reply(session, r"Test this provider now\? \[y/N\]:", "n")
+        _reply(
+            session,
+            r"Test this provider before entering OpenMinion\? \[Y/n\]:",
+            "n",
+        )
         transcript = session.wait_for_after(
             "Interactive launch skipped",
             offset=0,
@@ -471,7 +580,11 @@ def test_hosted_minimax_setup_lists_all_recommended_models(
         _reply(session, "Choose your model provider:", "5")
         _reply(session, "Choose a recommended model", "2")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
-        _reply(session, r"Test this provider now\? \[y/N\]:", "n")
+        _reply(
+            session,
+            r"Test this provider before entering OpenMinion\? \[Y/n\]:",
+            "n",
+        )
         transcript = session.wait_for_after(
             "Interactive launch skipped",
             offset=0,
@@ -583,8 +696,9 @@ def test_local_ollama_check_can_verify_against_fixture_server(
     home_root = tmp_path / "home"
     data_root = tmp_path / "data"
     config_path = resolve_config_path(None, home_root=home_root)
+    fixture_key = "fixture-ollama-key-not-for-network-use"
 
-    with _ollama_fixture_server() as base_url:
+    with _ollama_fixture_server() as (base_url, requests):
         with PtySession(
             argv=_command(
                 python_bin=python_bin,
@@ -594,7 +708,11 @@ def test_local_ollama_check_can_verify_against_fixture_server(
                 setup_only=False,
             ),
             cwd=openminion_root,
-            env=_environment(home_root=home_root, data_root=data_root),
+            env=_environment(
+                home_root=home_root,
+                data_root=data_root,
+                OLLAMA_API_KEY=fixture_key,
+            ),
         ) as session:
             _reply(session, "Choose your model provider:", "6")
             _reply(
@@ -616,10 +734,64 @@ def test_local_ollama_check_can_verify_against_fixture_server(
             )
             transcript = session.transcript
 
+    metadata = _latest_outbound_metadata(data_root)
+    tool_results = _persisted_tool_results(metadata)
+    turn_requests = [
+        request
+        for request in requests
+        if "format" not in request
+        and request["messages"][-1].get("content")
+        != "Reply with exactly: openminion provider check ok"
+    ]
+    request_tool_messages = [
+        json.loads(message["content"])
+        for message in turn_requests[1]["messages"]
+        if message.get("role") == "tool"
+    ]
+    denial = next(
+        message
+        for message in request_tool_messages
+        if message.get("error", {}).get("code") == "POLICY_DENIED"
+    )
+    denied_exec = next(
+        result for result in tool_results if result["tool_name"] == "exec.run"
+    )
+    list_dir_result = next(
+        result for result in tool_results if result["tool_name"] == "file.list_dir"
+    )
+
+    assert len(requests) == 7
+    assert len(turn_requests) == 4
+    assert turn_requests[0]["messages"][-1]["role"] == "user"
+    assert denial["error"]["details"]["suggested_tool"] == "file.list_dir"
+    assert any(
+        tool_call["function"]["name"] == "tool.request"
+        for message in turn_requests[2]["messages"]
+        for tool_call in message.get("tool_calls", [])
+    )
+    assert any(
+        tool_call["function"]["name"] == "file.list_dir"
+        for message in turn_requests[3]["messages"]
+        for tool_call in message.get("tool_calls", [])
+    )
+    assert any(
+        message.get("role") == "tool"
+        and message.get("tool_call_id") == "call-list-dir"
+        and json.loads(message["content"])["status"] == "success"
+        for message in turn_requests[3]["messages"]
+    )
+    assert denied_exec["error_code"] == "POLICY_DENIED"
+    assert denied_exec["data"]["error_details"]["suggested_tool"] == "file.list_dir"
+    assert list_dir_result["ok"] is True
+    assert metadata["tool_loop_termination_reason"] == "final_text"
     assert "Connection verified." in transcript
     assert "Connection not tested" not in transcript
     assert "Connection check failed" not in transcript
     assert "ONBOARDING_OK" in first_task
+    assert fixture_key not in transcript
+    assert fixture_key not in config_path.read_text(encoding="utf-8")
+    assert fixture_key not in json.dumps(requests)
+    _assert_owner_directory(config_path.parent)
     _assert_owner_only(config_path)
     write_transcript(
         artifact_root(tmp_path),
@@ -771,7 +943,11 @@ def test_setup_repairs_shared_adapter_without_changing_existing_agent(
         _reply(session, "Choose your model provider:", "5")
         _reply(session, "Choose a recommended model", "1")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
-        _reply(session, r"Test this provider now\? \[y/N\]:", "n")
+        _reply(
+            session,
+            r"Test this provider before entering OpenMinion\? \[Y/n\]:",
+            "n",
+        )
         transcript = session.wait_for_after(
             "Interactive launch skipped",
             offset=0,
@@ -896,6 +1072,7 @@ def test_noninteractive_openai_compatible_setups_preserve_api_format(
     )
 
 
+@pytest.mark.timeout(1320)
 def test_live_provider_setup_and_first_task(
     tmp_path: Path,
     python_bin: Path,
@@ -904,27 +1081,37 @@ def test_live_provider_setup_and_first_task(
     if str(os.getenv("OPENMINION_LIVE_CLI_FOCUS_E2E", "")).strip() != "1":
         pytest.skip("live onboarding proof requires explicit live E2E consent")
 
-    preset_id = str(os.getenv("OPENMINION_ONBOARDING_E2E_PROVIDER", "minimax")).strip()
-    preset = get_setup_preset(preset_id)
+    selected_provider = str(
+        os.getenv("OPENMINION_ONBOARDING_E2E_PROVIDER", "minimax")
+    ).strip()
+    if selected_provider != "minimax":
+        pytest.fail("live onboarding proof supports the MiniMax preset only")
+    preset = get_setup_preset(selected_provider)
+    menu_choice = str(
+        next(
+            index
+            for index, candidate in enumerate(first_screen_presets(), start=1)
+            if candidate.preset_id == preset.preset_id
+        )
+    )
     credential = (
         str(os.getenv(preset.credential_env, "")).strip()
         if preset.credential_env
         else ""
     )
     if not preset.credential_env or not credential:
-        pytest.skip(f"{preset.credential_env or 'provider credential'} is unavailable")
+        pytest.fail("explicit live onboarding selected without its credential")
 
     home_root = tmp_path / "home"
     data_root = tmp_path / "data"
-    config_path = home_root / ".openminion" / "config.json"
+    config_path = resolve_config_path(None, home_root=home_root)
     with PtySession(
         argv=_command(
             python_bin=python_bin,
-            config_path=config_path,
+            config_path=None,
             home_root=home_root,
             data_root=data_root,
             setup_only=False,
-            extra_setup_args=("--provider", preset_id, "--check-provider"),
         ),
         cwd=openminion_root,
         env=_environment(
@@ -933,21 +1120,40 @@ def test_live_provider_setup_and_first_task(
             **{preset.credential_env: credential},
         ),
     ) as session:
-        session.wait_for_after("Entering OpenMinion", offset=0, timeout=240)
-        first_task = _run_first_task(
+        _reply(session, "Choose your model provider:", menu_choice)
+        _reply(session, "Choose a recommended model", "1")
+        _reply(session, r"Save this configuration\? \[Y/n\]:")
+        _reply(
+            session,
+            r"Test this provider before entering OpenMinion\? \[Y/n\]:",
+        )
+        session.wait_for_after(
+            "Entering OpenMinion",
+            offset=0,
+            timeout=_LIVE_ONBOARDING_SETUP_TIMEOUT,
+        )
+        _run_first_task(
             session,
             python_bin=python_bin,
             openminion_root=openminion_root,
             data_root=data_root,
             config_path=config_path,
-            timeout=240,
+            timeout=600,
         )
         transcript = session.transcript
 
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    metadata = _latest_outbound_metadata(data_root)
+
+    assert payload["agents"]["openminion"]["provider"] == preset.runtime_adapter
+    provider = payload["providers"][preset.runtime_adapter]
+    assert provider["model"] == preset.recommended_models[0]
+    assert provider["provider_identity"]["service_vendor"] == "minimax"
+    assert metadata["tool_loop_termination_reason"] in {"final_text", "model_final"}
     assert "Connection not tested" not in transcript
     assert "Connection check failed" not in transcript
-    assert "ONBOARDING_OK" in first_task
     assert credential not in transcript
     assert credential not in config_path.read_text(encoding="utf-8")
+    _assert_owner_directory(config_path.parent)
     _assert_owner_only(config_path)
     write_transcript(artifact_root(tmp_path), "onboarding-live-provider", transcript)

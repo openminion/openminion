@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
+from unittest import mock
+
+import pytest
 
 from openminion.tools.browser import (
     BrowserCapabilities,
@@ -15,6 +19,58 @@ class _Provider:
     provider_id: str
     capabilities: BrowserCapabilities = field(default_factory=BrowserCapabilities)
     provider_version: str = "test"
+
+
+def test_registry_rejects_different_provider_with_same_id() -> None:
+    registry = BrowserProviderRegistry()
+    provider = _Provider("same")
+    registry.register(provider)
+    registry.register(provider)
+
+    with pytest.raises(ValueError, match="already registered"):
+        registry.register(_Provider("same"))
+
+
+def test_failed_provider_entry_point_is_attempted_once() -> None:
+    registry = BrowserProviderRegistry()
+    entry_point = mock.MagicMock()
+    entry_point.name = "missing"
+    entry_point.value = "missing.browser:provider"
+    entry_point.load.side_effect = ModuleNotFoundError("missing.browser")
+
+    with mock.patch(
+        "openminion.tools.browser.providers.registry._iter_entry_points",
+        return_value=[entry_point],
+    ):
+        assert registry.load_entry_points() == []
+        assert registry.load_entry_points() == []
+
+    entry_point.load.assert_called_once()
+    assert registry.entry_point_statuses()[0]["loaded"] is False
+
+
+def test_provider_entry_point_collision_preserves_original_provider() -> None:
+    registry = BrowserProviderRegistry()
+    original = _Provider("same")
+    registry.register(original)
+    entry_point = mock.MagicMock()
+    entry_point.name = "duplicate"
+    entry_point.value = "duplicate.browser:provider"
+    entry_point.load.return_value = SimpleNamespace(
+        register_browser_provider=lambda target: target.register(_Provider("same"))
+    )
+
+    with mock.patch(
+        "openminion.tools.browser.providers.registry._iter_entry_points",
+        return_value=[entry_point],
+    ):
+        with pytest.raises(ValueError, match="already registered"):
+            registry.load_entry_points()
+
+    assert registry.get("same") is original
+    status = registry.entry_point_statuses()[0]
+    assert status["loaded"] is False
+    assert "already registered" in status["error"]
 
 
 def test_router_precedence() -> None:

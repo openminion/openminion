@@ -26,6 +26,10 @@ class _FakeA2ARuntime:
         self.status_requests.append(task_id)
         return SimpleNamespace(
             task_id=task_id,
+            owner_agent_id="router-agent",
+            agent_id="agent.worker",
+            method="delegate",
+            idempotency_scope=("job.start:agent.worker:delegate:s-async-delegate"),
             state="RUNNING",
             result_inline=None,
             error=None,
@@ -35,6 +39,10 @@ class _FakeA2ARuntime:
         self.cancel_requests.append(task_id)
         return SimpleNamespace(
             task_id=task_id,
+            owner_agent_id="router-agent",
+            agent_id="agent.worker",
+            method="delegate",
+            idempotency_scope=("job.start:agent.worker:delegate:s-async-delegate"),
             state="CANCELED",
             result_inline=None,
             error={"code": "A2A_JOB_CANCELLED", "message": "Job canceled"},
@@ -99,3 +107,41 @@ def test_cancel_task_cancels_running_async_job() -> None:
     assert result["status"] == "cancelled"
     assert result["error"]["code"] == "A2A_JOB_CANCELLED"
     assert runtime.cancel_requests == ["job-async-1"]
+
+
+def test_poll_task_rejects_foreign_async_job() -> None:
+    runtime = _FakeA2ARuntime()
+    adapter = A2actlAdapter(agent_id="other-agent")
+    adapter._ensure_runtime = lambda: runtime  # type: ignore[method-assign]
+
+    result = adapter.poll_task(
+        task_id="job-async-1",
+        session_id="s-foreign",
+        trace_id="t-foreign",
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "A2A_JOB_POLL_FAILED"
+    assert "does not belong" in result["error"]["message"]
+
+
+def test_lifecycle_rejects_same_agent_job_from_another_session() -> None:
+    runtime = _FakeA2ARuntime()
+    adapter = _adapter(runtime)
+
+    polled = adapter.poll_task(
+        task_id="job-async-1",
+        session_id="different-session",
+        trace_id="trace-cross-session-poll",
+    )
+    canceled = adapter.cancel_task(
+        task_id="job-async-1",
+        session_id="different-session",
+        trace_id="trace-cross-session-cancel",
+    )
+
+    assert polled["status"] == "failed"
+    assert polled["error"]["code"] == "A2A_JOB_POLL_FAILED"
+    assert canceled["status"] == "failed"
+    assert canceled["error"]["code"] == "A2A_JOB_CANCEL_FAILED"
+    assert runtime.cancel_requests == []

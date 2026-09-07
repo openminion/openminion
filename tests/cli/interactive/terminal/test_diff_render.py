@@ -99,7 +99,7 @@ def test_diff_line_style_index_extra() -> None:
 
 def test_short_diff_renders_all_lines() -> None:
     out = _render_to_string(_render_diff_block(_make_event(_SHORT_DIFF)))
-    assert "Edit" in out
+    assert "Finished using a tool." in out
     assert "--- a/foo.py" in out
     assert "+++ b/foo.py" in out
     assert "@@ -1,2 +1,3 @@" in out
@@ -184,7 +184,10 @@ def test_failure_suffix_in_verbose_mode() -> None:
 
 def test_title_uses_path_arg_for_edit() -> None:
     out = _render_to_string(
-        _render_diff_block(_make_event(_SHORT_DIFF, path="src/foo.py"))
+        _render_diff_block(
+            _make_event(_SHORT_DIFF, path="src/foo.py"),
+            public_title=False,
+        )
     )
     assert "Edit" in out
     assert "src/foo.py" in out
@@ -192,7 +195,10 @@ def test_title_uses_path_arg_for_edit() -> None:
 
 def test_title_uses_write_when_tool_is_write() -> None:
     out = _render_to_string(
-        _render_diff_block(_make_event(_SHORT_DIFF, tool_name="Write"))
+        _render_diff_block(
+            _make_event(_SHORT_DIFF, tool_name="Write"),
+            public_title=False,
+        )
     )
     assert "Write" in out
 

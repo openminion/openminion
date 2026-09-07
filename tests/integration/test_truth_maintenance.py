@@ -86,7 +86,10 @@ def test_truth_maintenance_full_lifecycle(tmp_path: Path) -> None:
     )
 
     adapter.build_context(session_id="lifecycle-1", user_message="legacy rollout")
-    assert store.get("stale-fact") is None
+    stale_fact = store.get("stale-fact")
+    assert stale_fact is not None
+    assert stale_fact.is_deleted is True
+    assert stale_fact.deleted_reason == "confidence_below_threshold"
     assert store.get("pinned-fact").is_deleted is False
 
     adapter.record_turn(

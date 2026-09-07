@@ -25,6 +25,7 @@ from .entries import (
     _entry_enabled_for_runtime_config,
 )
 from .registration import (
+    _register_external_registrar,
     _register_provider_plugin,
     _register_tool_entry,
     _validate_manifest_contract,
@@ -71,10 +72,91 @@ def _ci_mode_enabled() -> bool:
     return token in {"1", "true", "yes", "on"}
 
 
+def _set_blockchain_contract_omissions(
+    registry_manager: ToolRegistryManager,
+    config: Any | None,
+) -> None:
+    runtime_cfg = getattr(config, "runtime", config)
+    tools_cfg = getattr(runtime_cfg, "tools", None)
+    blockchain_cfg = getattr(tools_cfg, "blockchain", None)
+    if blockchain_cfg and getattr(blockchain_cfg, "enabled", False):
+        return
+
+    from openminion.modules.tool.contracts.model_ids import (
+        MODEL_BLOCKCHAIN_INSPECT,
+        MODEL_BLOCKCHAIN_DEBUG,
+        MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
+        MODEL_BLOCKCHAIN_SEND_TRANSACTION,
+    )
+    from openminion.modules.tool.contracts.runtime_ids import (
+        RUNTIME_BLOCKCHAIN_INSPECT,
+        RUNTIME_BLOCKCHAIN_DEBUG,
+        RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
+        RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
+    )
+
+    registry_manager.set_expected_contract_omissions(
+        model_ids={
+            MODEL_BLOCKCHAIN_INSPECT,
+            MODEL_BLOCKCHAIN_DEBUG,
+            MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
+            MODEL_BLOCKCHAIN_SEND_TRANSACTION,
+        },
+        runtime_ids={
+            RUNTIME_BLOCKCHAIN_INSPECT,
+            RUNTIME_BLOCKCHAIN_DEBUG,
+            RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
+            RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
+        },
+    )
+
+
 def _emit_contract_drift_report(
     registry_manager: ToolRegistryManager,
+    *,
+    config: Any | None = None,
 ) -> ToolContractDriftReport:
-    report = registry_manager.contract_drift_report()
+    from openminion.modules.tool.contracts.model_ids import (
+        MODEL_BLOCKCHAIN_INSPECT,
+        MODEL_BLOCKCHAIN_DEBUG,
+        MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
+        MODEL_BLOCKCHAIN_SEND_TRANSACTION,
+    )
+    from openminion.modules.tool.contracts.runtime_ids import (
+        RUNTIME_BLOCKCHAIN_INSPECT,
+        RUNTIME_BLOCKCHAIN_DEBUG,
+        RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
+        RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
+    )
+
+    runtime_cfg = getattr(config, "runtime", config)
+    tools_cfg = getattr(runtime_cfg, "tools", None)
+    blockchain_cfg = getattr(tools_cfg, "blockchain", None)
+    blockchain_enabled = bool(
+        blockchain_cfg and getattr(blockchain_cfg, "enabled", False)
+    )
+    report = registry_manager.contract_drift_report(
+        expected_missing_model_ids=(
+            set()
+            if blockchain_enabled
+            else {
+                MODEL_BLOCKCHAIN_INSPECT,
+                MODEL_BLOCKCHAIN_DEBUG,
+                MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
+                MODEL_BLOCKCHAIN_SEND_TRANSACTION,
+            }
+        ),
+        expected_missing_runtime_ids=(
+            set()
+            if blockchain_enabled
+            else {
+                RUNTIME_BLOCKCHAIN_INSPECT,
+                RUNTIME_BLOCKCHAIN_DEBUG,
+                RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
+                RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
+            }
+        ),
+    )
     if report.has_drift:
         payload = {
             "model_tool_ids_missing_from_manifests": list(
@@ -102,6 +184,41 @@ def _emit_contract_drift_report(
     return report
 
 
+def _build_policy_manager(
+    registry_manager: ToolRegistryManager,
+    config: Any | None,
+) -> ToolBindingPolicyManager:
+    from openminion.base.config.tool_selection.models import (
+        _DEFAULT_RUNTIME_FALLBACK_ON,
+        _DEFAULT_RUNTIME_NO_FALLBACK_ON,
+    )
+
+    tool_selection = getattr(config, "tool_selection", None)
+    if tool_selection is None:
+        return ToolBindingPolicyManager(
+            fallback_on=_DEFAULT_RUNTIME_FALLBACK_ON,
+            no_fallback_on=_DEFAULT_RUNTIME_NO_FALLBACK_ON,
+        )
+
+    default_policies = {
+        binding_id: policy
+        for binding_id, (primary, fallback_tools) in (
+            registry_manager.runtime_binding_policy_defaults().items()
+        )
+        if (
+            policy := ToolBindingPolicyManager.default_policy(
+                binding_id,
+                (primary, *fallback_tools),
+            )
+        )
+        is not None
+    }
+    return ToolBindingPolicyManager.from_tool_selection_config_with_defaults(
+        tool_selection,
+        default_policies=default_policies,
+    )
+
+
 def build_runtime_bootstrap(
     *,
     config: Any | None = None,
@@ -109,21 +226,15 @@ def build_runtime_bootstrap(
     run_root: Any | None = None,
     strict: bool = True,
     tool_bootstrap_entries: tuple[_ToolBootstrapEntry, ...] | None = None,
+    plugin_registrars: Iterable[tuple[str, Any]] = (),
 ) -> RuntimeBootstrap:
     """Build runtime bootstrap with module manifests and policy from config."""
-    from openminion.base.config.tool_selection.parser import (
-        _DEFAULT_RUNTIME_FALLBACK_ON,
-        _DEFAULT_RUNTIME_NO_FALLBACK_ON,
-    )
-
     registry_manager = ToolRegistryManager()
     registry = ToolRegistry([])
-
     workspace_path = Path(workspace_root) if workspace_root else None
     run_path = Path(run_root) if run_root else None
-
     bootstrap_records: list[_ToolBootstrapRecord] = []
-
+    _set_blockchain_contract_omissions(registry_manager, config)
     for entry in _dynamic_tool_bootstrap_entries(
         config,
         tool_bootstrap_entries=tool_bootstrap_entries or _TOOL_BOOTSTRAP_ENTRIES,
@@ -165,46 +276,31 @@ def build_runtime_bootstrap(
             )
         )
 
+    for plugin_id, registrar in plugin_registrars:
+        bootstrap_records.append(
+            _register_external_registrar(
+                registry,
+                registry_manager,
+                plugin_id=plugin_id,
+                registrar=registrar,
+                config=config,
+                workspace_root=workspace_path,
+                run_root=run_path,
+            )
+        )
+
     registry_manager.set_runtime_tool_schemas(_collect_runtime_tool_schemas(registry))
     registry_manager.compile()
-    contract_drift_report = _emit_contract_drift_report(registry_manager)
+    contract_drift_report = _emit_contract_drift_report(
+        registry_manager,
+        config=config,
+    )
+    policy_manager = _build_policy_manager(registry_manager, config)
 
-    # Wire the populated manager into the resolver module
+    # Publish only after the registry, bindings, drift check, and policy manager
+    # have all been constructed successfully.
     set_registry_manager(registry_manager)
     set_registry(registry)
-
-    if config is not None:
-        tool_selection = getattr(config, "tool_selection", None)
-        if tool_selection is not None:
-            default_policies = {
-                binding_id: policy
-                for binding_id, (primary, fallback_tools) in (
-                    registry_manager.runtime_binding_policy_defaults().items()
-                )
-                if (
-                    policy := ToolBindingPolicyManager.default_policy(
-                        binding_id,
-                        (primary, *fallback_tools),
-                    )
-                )
-                is not None
-            }
-            policy_manager = (
-                ToolBindingPolicyManager.from_tool_selection_config_with_defaults(
-                    tool_selection,
-                    default_policies=default_policies,
-                )
-            )
-        else:
-            policy_manager = ToolBindingPolicyManager(
-                fallback_on=_DEFAULT_RUNTIME_FALLBACK_ON,
-                no_fallback_on=_DEFAULT_RUNTIME_NO_FALLBACK_ON,
-            )
-    else:
-        policy_manager = ToolBindingPolicyManager(
-            fallback_on=_DEFAULT_RUNTIME_FALLBACK_ON,
-            no_fallback_on=_DEFAULT_RUNTIME_NO_FALLBACK_ON,
-        )
 
     return RuntimeBootstrap(
         registry=registry,

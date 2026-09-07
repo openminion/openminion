@@ -68,7 +68,7 @@ def _ctx(
     )
 
 
-def test_schedule_every_cron_at_persists_agent_and_at_delete_flag(
+def test_schedule_persists_agent_and_retains_user_task_jobs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -115,8 +115,10 @@ def test_schedule_every_cron_at_persists_agent_and_at_delete_flag(
     assert row_at["agent_id"] == "agent-a"
     assert row_every["delete_after_run"] is False
     assert row_cron["delete_after_run"] is False
-    assert row_at["delete_after_run"] is True
+    assert row_at["delete_after_run"] is False
     assert "scheduler_note" in every
+    assert every["scheduler"]["state"] == "unknown"
+    assert every["scheduler"]["check_command"].endswith("service status cron")
     assert "daemon" in every["scheduler_note"].lower()
     assert "openminion daemon start" in every["scheduler_note"]
 
@@ -304,6 +306,33 @@ def test_schedule_persists_origin_delivery_context_when_available(
     }
 
 
+def test_schedule_uses_runtime_session_when_metadata_omits_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+
+    ctx = _ctx(tmp_path, agent_id="agent-a")
+    ctx.session_id = "focus-session::conv:focus-conversation"
+    ctx.policy.raw["context_metadata"]["orchestration"] = {
+        "runtime_session_id": "focus-session"
+    }
+    store = _resolve_cron_store(ctx)
+
+    created = _h_task_schedule(
+        {
+            "instruction": "remember the current session",
+            "schedule": {"kind": "at", "at": "2030-01-01T00:00:00Z"},
+        },
+        ctx,
+    )
+
+    row = store.get_cron_job(created["task_id"])
+    assert row is not None
+    assert row["payload"]["_openminion_origin"] == {"session_id": "focus-session"}
+
+
 def test_task_schedule_dedupes_identical_enabled_job(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -381,10 +410,16 @@ def test_pause_resume_and_show_preserve_runs_and_exact_id(
     task = shown["task"]
     assert shown["runs_limit"] == 20
     assert task["task_id"] == task_id
+    assert task["lifecycle_state"] == "paused"
+    assert task["task_kind"] == "scheduled_recurring"
+    assert task["valid_actions"] == ["resume", "cancel"]
     assert task["enabled"] is False
     assert task["failure_count"] == 1
     assert len(task["runs"]) == 1
     assert task["runs"][0]["run_id"] == run_id
+    assert task["runs"][0]["available_at"] is not None
+    assert task["runs"][0]["output"] == {}
+    assert task["retry_policy"] == {"max_attempts": 3, "retry_backoff_s": 30}
 
     resumed = _h_task_resume({"task_id": task_id}, ctx)
     assert resumed["resumed"] is True
@@ -491,6 +526,9 @@ def test_task_consolidate_memory_creates_cron_backed_payload(
     assert consolidation["target_scope"] == "agent:agent-a"
     assert consolidation["max_iterations"] == 2
     assert consolidation["timeout_seconds"] == 30
+    assert row["concurrency_key"] == "memory-consolidation:agent:agent-a"
+    assert row["max_attempts"] == 3
+    assert row["retry_backoff_s"] == 30
 
 
 def test_task_list_surfaces_consolidation_metadata(
@@ -513,6 +551,8 @@ def test_task_list_surfaces_consolidation_metadata(
         "timeout_seconds": 30,
         "max_iterations": 2,
     }
+    assert task["concurrency_key"] == "memory-consolidation:agent:agent-a"
+    assert task["retry_policy"] == {"max_attempts": 3, "retry_backoff_s": 30}
 
 
 def test_task_watch_creates_watch_payload_and_stable_session_id(
@@ -606,6 +646,47 @@ def test_task_watch_creates_profile_bound_continuous_monitor(
     assert view["target_id"] == "local"
     assert view["last_alert_requested_at"] is None
     assert view["last_terminal_reason"] == ""
+
+
+def test_task_watch_persists_social_routine_with_no_model_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+    ctx = _ctx(tmp_path, agent_id="agent-a")
+
+    created = _h_task_watch(
+        {
+            "description": "Watch OpenMinion releases",
+            "check_instruction": "Report important release activity.",
+            "interval_minutes": 15,
+            "max_checks": 4,
+            "alert_condition": "an important release is published",
+            "stop_on_condition": False,
+            "routine": {
+                "routine_kind": "social_signal",
+                "config": {
+                    "sources": [
+                        {
+                            "source_kind": "rss_atom",
+                            "source_id": "releases",
+                            "label": "OpenMinion releases",
+                            "url": "https://example.com/releases.atom",
+                            "allowed_final_origins": ["example.com"],
+                        }
+                    ],
+                    "topics": ["OpenMinion release activity"],
+                },
+            },
+        },
+        ctx,
+    )
+
+    row = _resolve_cron_store(ctx).get_cron_job(created["task_id"])
+    watch = dict((row.get("payload") or {}).get("_openminion_watch") or {})
+    assert watch["allowed_tools"] == []
+    assert watch["routine"]["routine_kind"] == "social_signal"
 
 
 @pytest.mark.parametrize(
@@ -859,7 +940,9 @@ def test_cancel_success_not_found_and_cross_agent_guard(
     cancelled = _h_task_cancel({"task_id": task_id}, owner_ctx)
     assert cancelled["cancelled"] is True
     assert cancelled["task_cancelled"] is True
-    assert store.get_cron_job(task_id) is None
+    cancelled_job = store.get_cron_job(task_id)
+    assert cancelled_job is not None
+    assert cancelled_job["enabled"] is False
 
     # prefix-based cancel must NOT succeed. Anti-LLM contract requires
     # exact `task_id` only; partial ids fall through to deterministic NOT_FOUND.
@@ -1023,6 +1106,9 @@ def test_list_shape_scope_and_limit_clamp(
 
     first = default_listing["tasks"][0]
     assert first["task_id"] == owner_task["task_id"]
+    assert first["lifecycle_state"] == "active"
+    assert first["task_kind"] == "scheduled_recurring"
+    assert first["valid_actions"] == ["pause", "cancel"]
     assert "summary" in first["schedule"]
     assert first["last_run_state"] == "pending"
     assert first["last_run_at"] is None

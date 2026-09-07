@@ -49,6 +49,7 @@ class TelemetryDebugUsage(_DictSchema):
 class TelemetryDebugInvocation(_DictSchema):
     invocation_id: str
     outcome: str
+    failure_code: str | None
     started_at: str | None
     terminal_at: str | None
     session_ids: list[str]

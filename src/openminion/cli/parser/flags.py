@@ -46,11 +46,26 @@ def add_interactive_session_flags(parser: argparse.ArgumentParser) -> None:
         help="Working directory for the interactive session",
     )
     parser.add_argument(
+        "--add-dir",
+        action="append",
+        default=[],
+        help="Add an existing directory for read/write access in this process",
+    )
+    parser.add_argument(
         "--theme",
         default=None,
         help=(
             "Theme variant override (e.g. light, dark). "
             "Top precedence - beats env and persisted preference."
+        ),
+    )
+    parser.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default=None,
+        help=(
+            "Color policy for the default interactive terminal: auto, always, "
+            "or never. Overrides color environment variables."
         ),
     )
     parser.add_argument(

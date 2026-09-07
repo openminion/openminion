@@ -7,10 +7,12 @@ from openminion.modules.brain.constants import (
     BRAIN_EXECUTION_TARGET_DELEGATED,
 )
 from openminion.modules.brain.loop.adaptive import ACT_ADAPTIVE_ALLOWED_TOOLS
+from openminion.modules.brain.loop.services import runtime_allows_tool
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_ALLOWED_TOOLS,
 )
 from openminion.modules.brain.loop.tools.runtime import build_runtime_tool_specs
+from openminion.modules.brain.tools.schema import collect_runtime_tool_names
 from openminion.modules.brain.loop.tools.shortlisting import build_tool_request_spec
 from openminion.modules.brain.loop.tools.plan_control import build_plan_tool_spec
 from openminion.modules.brain.loop.tools.review_control import build_review_tool_spec
@@ -38,8 +40,8 @@ def clarify_tool_spec() -> ToolSpec:
         description=(
             "Ask only when required information blocks meaningful progress and "
             "cannot be discovered with an available or inactive tool or a "
-            "documented default. If a tool can investigate it, call tool.request "
-            "before asking the user."
+            "documented default. If a tool can investigate, use the visible "
+            "tool control before asking the user."
         ),
         input_schema={
             "type": "object",
@@ -333,15 +335,23 @@ def build_entry_tool_specs(
     )
     tool_specs: list[ToolSpec] = []
     if requestable_specs:
-        tool_specs.append(_with_freshness_contract(build_tool_request_spec()))
+        if runtime_allows_tool(runner, "tool.request"):
+            tool_specs.append(_with_freshness_contract(build_tool_request_spec()))
+        else:
+            tool_specs.extend(requestable_specs)
     if include_control_tools:
-        tool_specs.append(respond_tool_spec())
-        tool_specs.append(_with_freshness_contract(coding_tool_spec()))
-        tool_specs.append(_with_freshness_contract(build_plan_tool_spec()))
-        tool_specs.append(_with_freshness_contract(research_tool_spec()))
-        tool_specs.append(_with_freshness_contract(decompose_tool_spec()))
-        tool_specs.append(_with_freshness_contract(clarify_tool_spec()))
-        tool_specs.append(_with_freshness_contract(build_review_tool_spec()))
+        control_specs = [
+            respond_tool_spec(),
+            _with_freshness_contract(coding_tool_spec()),
+            _with_freshness_contract(build_plan_tool_spec()),
+            _with_freshness_contract(research_tool_spec()),
+            _with_freshness_contract(decompose_tool_spec()),
+            _with_freshness_contract(clarify_tool_spec()),
+            _with_freshness_contract(build_review_tool_spec()),
+        ]
+        tool_specs.extend(
+            spec for spec in control_specs if runtime_allows_tool(runner, spec.name)
+        )
     return tool_specs, supports_seed
 
 
@@ -361,4 +371,6 @@ def build_entry_requestable_tool_specs(
         if str(act_profile or "").strip().lower() == BRAIN_ACT_PROFILE_CODING
         else ACT_ADAPTIVE_ALLOWED_TOOLS
     )
+    if runner is not None:
+        allowed_tools = frozenset({*allowed_tools, *collect_runtime_tool_names(runner)})
     return build_runtime_tool_specs(runner, allowed_tools=allowed_tools)

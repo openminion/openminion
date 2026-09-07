@@ -99,6 +99,22 @@ class FakeCronStore:
             self.renew_counts[run_id] = self.renew_counts.get(run_id, 0) + 1
             return True
 
+    def recover_expired_cron_runs(
+        self, *, now_iso: str | None = None, limit: int = 100
+    ) -> list[dict]:
+        del now_iso, limit
+        return []
+
+    def retry_cron_run(
+        self,
+        run_id: str,
+        *,
+        error: dict,
+        now_iso: str | None = None,
+    ) -> dict | None:
+        del run_id, error, now_iso
+        return None
+
     def get_cron_job(self, job_id: str) -> dict | None:
         with self._lock:
             job = self.jobs.get(job_id)
@@ -112,6 +128,7 @@ class FakeCronStore:
         summary: str | None = None,
         artifact_refs: list[dict] | None = None,
         error: dict | None = None,
+        output: dict | None = None,
         isolated_session_id: str | None = None,
         now_iso: str | None = None,
     ) -> dict | None:
@@ -123,6 +140,7 @@ class FakeCronStore:
             run["state"] = state
             run["summary"] = summary
             run["error"] = error
+            run["output"] = output or {}
             run["isolated_session_id"] = isolated_session_id
             self.finished_count += 1
             self.finished.set()
@@ -185,6 +203,65 @@ def test_scheduler_executes_agent_turn_and_calls_delivery() -> None:
     assert run["state"] == "finished"
     assert run["summary"].startswith("done:")
     assert deliveries == [("announce", "cli:ops")]
+
+
+def test_scheduler_reconciles_task_outcomes_on_tick_and_completion() -> None:
+    store = FakeCronStore()
+    store.add_job(
+        job_id="job-task",
+        payload={"kind": "agentTurn", "message": "work"},
+    )
+    store.seed_due("job-task")
+    reconciled: list[str | None] = []
+
+    scheduler = CronScheduler(
+        store=store,
+        daemon_id="daemon-task",
+        tick_seconds=0.05,
+        execute_agent_turn=lambda _job, _run: "done",
+        record_task_outcomes=lambda job_id: reconciled.append(job_id) or 0,
+    )
+    scheduler.start()
+    try:
+        assert store.finished.wait(timeout=3.0)
+    finally:
+        scheduler.shutdown(grace_s=1.0)
+
+    assert None in reconciled
+    assert "job-task" in reconciled
+
+
+def test_scheduler_preserves_terminal_run_when_task_outcome_callback_fails() -> None:
+    store = FakeCronStore()
+    store.add_job(
+        job_id="job-task",
+        payload={"kind": "agentTurn", "message": "work"},
+    )
+    store.seed_due("job-task")
+    events: list[str] = []
+
+    def _record(job_id: str | None) -> int:
+        if job_id:
+            raise RuntimeError("task callback unavailable")
+        return 0
+
+    scheduler = CronScheduler(
+        store=store,
+        daemon_id="daemon-task",
+        tick_seconds=0.05,
+        execute_agent_turn=lambda _job, _run: "done",
+        record_task_outcomes=_record,
+        on_event=lambda event_type, _payload: events.append(event_type),
+    )
+    scheduler.start()
+    try:
+        assert store.finished.wait(timeout=3.0)
+    finally:
+        scheduler.shutdown(grace_s=1.0)
+
+    run = next(iter(store.runs.values()))
+    assert run["state"] == "finished"
+    assert "cron.run.finish_error" in events
 
 
 def test_scheduler_respects_global_concurrency_limit() -> None:

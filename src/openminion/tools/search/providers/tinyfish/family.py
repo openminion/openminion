@@ -3,9 +3,11 @@ from openminion.tools.search import register_provider
 
 from .provider import TinyFishSearchProvider
 
+_PROVIDER = TinyFishSearchProvider()
+
 
 def _register_tinyfish_search() -> None:
-    register_provider(TinyFishSearchProvider())
+    register_provider(_PROVIDER)
 
 
 SEARCH_TINYFISH_FAMILY = ToolFamilySpec(

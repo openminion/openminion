@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import Any
 
-from ..models import PolicyGrant, PolicyGrantInput
+from ..models import PendingPolicyConfirmation, PolicyGrant, PolicyGrantInput
 
 
 class PolicyStore(ABC):
@@ -45,6 +45,34 @@ class PolicyStore(ABC):
     ) -> PolicyGrant | None: ...
 
     @abstractmethod
+    def get_or_create_pending_confirmation(
+        self,
+        *,
+        subject_id: str,
+        tool: str,
+        method: str,
+        invocation_hash: str,
+        invocation_id: str,
+        trace_id: str | None,
+        session_id: str | None,
+        preview: Mapping[str, Any],
+        ttl_seconds: int,
+    ) -> PendingPolicyConfirmation: ...
+
+    @abstractmethod
+    def resolve_confirmation(self, approval_id: str, action: str) -> str | None: ...
+
+    @abstractmethod
+    def resolve_matching_active_grant_for_use(
+        self,
+        *,
+        subject_id: str,
+        tool: str,
+        method: str,
+        invocation_hash: str,
+    ) -> PolicyGrant | None: ...
+
+    @abstractmethod
     def cleanup_expired(self) -> int: ...
 
     @abstractmethod
@@ -59,6 +87,8 @@ class PolicyStore(ABC):
         method: str,
         decision: str,
         matched_grant_id: str | None,
+        approval_id: str | None = None,
+        invocation_hash: str | None = None,
         reason_code: str,
         risk_spec: dict[str, Any],
     ) -> str: ...

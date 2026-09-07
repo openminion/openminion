@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
-from typing import Any, Callable, Iterable, Literal
+from typing import Any, Callable, Iterable, Literal, cast
 
 from rich.console import Console
 from rich.text import Text
@@ -11,12 +11,15 @@ from rich.text import Text
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.models import ChatMessage, MessageKind
+from openminion.cli.presentation.tool.progress import build_tool_event_from_progress
+from openminion.cli.status.tool_calls import format_public_tool_activity
 from openminion.cli.presentation.messages import (
     render_body,
     render_error_text,
     render_system_text,
     render_user_text,
 )
+from openminion.cli.ux.verbosity import VerbosityLevel
 
 from .streaming import (
     TerminalTurnHandle,
@@ -32,28 +35,6 @@ _ERROR_STYLE = token_rich_style(StyleToken.ERROR)
 DEFAULT_MAX_RETAINED_MESSAGES = 1000
 
 
-def get_app_or_none() -> Any | None:
-    try:
-        import importlib
-
-        context = importlib.import_module("textual._context")
-        active_app = getattr(context, "active_app", None)
-        if active_app is None:
-            return None
-        return active_app.get(None)
-    except (ImportError, LookupError, RuntimeError, AttributeError):
-        return None
-
-
-def run_in_terminal(func: Callable[[], None], *, render_cli_done: bool = False) -> Any:
-    app = get_app_or_none()
-    runner = getattr(app, "run_in_terminal", None)
-    if callable(runner):
-        return runner(func, render_cli_done=render_cli_done)
-    func()
-    return None
-
-
 class TerminalTranscript:
     def __init__(
         self,
@@ -66,11 +47,11 @@ class TerminalTranscript:
     ) -> None:
         self._console = console
         self._messages: list[ChatMessage] = []
-        self._selected_message_id: str | None = None
         self._plain_spinner = bool(plain_spinner)
         self._show_response_time = bool(show_response_time)
-        self._verbosity: str = (
-            verbosity if verbosity in ("quiet", "normal", "verbose") else "normal"
+        self._verbosity: VerbosityLevel = cast(
+            VerbosityLevel,
+            verbosity if verbosity in ("quiet", "normal", "verbose") else "normal",
         )
         self._hidden_tool_count: int = 0
         self._hidden_failed_count: int = 0
@@ -95,10 +76,6 @@ class TerminalTranscript:
         if writer is not None:
             writer(render)
             return
-        app = get_app_or_none()
-        if bool(getattr(app, "is_running", False)):
-            run_in_terminal(render, render_cli_done=False)
-            return
         render()
 
     def begin_turn(
@@ -111,7 +88,6 @@ class TerminalTranscript:
         message = ChatMessage(kind=kind, sender=role, body="")
         self._messages.append(message)
         self._trim_retained_messages()
-        self._selected_message_id = message.msg_id
         handle = TerminalTurnHandle(
             self._console,
             plain=self._plain_spinner,
@@ -144,7 +120,6 @@ class TerminalTranscript:
             self._hidden_failed_count = 0
             self._reset_turn_tool_compaction()
         self._messages.append(message)
-        self._selected_message_id = message.msg_id
         self._trim_retained_messages()
         if render:
             self._render(message)
@@ -200,14 +175,12 @@ class TerminalTranscript:
     def set_messages(self, messages: list[ChatMessage]) -> None:
         self.reset_session_state()
         self._messages = []
-        self._selected_message_id = None
         for msg in messages:
             self.push_message(msg)
 
     def clear_messages(self) -> None:
         self.reset_session_state()
         self._messages = []
-        self._selected_message_id = None
         self._console.print(Text("─" * 60, style="dim"))
 
     def reset_session_state(self) -> None:
@@ -216,25 +189,6 @@ class TerminalTranscript:
         self._truncated_blocks = []
         self._live_narrated_call_ids = set()
         self._reset_turn_tool_compaction()
-
-    def filter_messages(self, query: str) -> None:
-        if query:
-            self._console.print(
-                Text(
-                    f"(filter: '{query}' — use your terminal's native "
-                    f"search instead; terminal scrollback is "
-                    f"searchable directly)",
-                    style="dim italic",
-                )
-            )
-
-    def copy_selected_message(self) -> str | None:
-        if self._selected_message_id is None:
-            return None
-        for msg in self._messages:
-            if msg.msg_id == self._selected_message_id:
-                return _copyable_text(msg)
-        return None
 
     def copy_last_copyable_message(self) -> str | None:
         for msg in reversed(self._messages):
@@ -250,10 +204,6 @@ class TerminalTranscript:
         self._messages = [m for m in self._messages if m.msg_id != msg_id]
         if len(self._messages) == before:
             return False
-        if self._selected_message_id == msg_id:
-            self._selected_message_id = (
-                self._messages[-1].msg_id if self._messages else None
-            )
         return True
 
     def _trim_retained_messages(self) -> None:
@@ -261,10 +211,6 @@ class TerminalTranscript:
         if limit is None or len(self._messages) <= limit:
             return
         self._messages = self._messages[-limit:]
-        if self._selected_message_id not in {msg.msg_id for msg in self._messages}:
-            self._selected_message_id = (
-                self._messages[-1].msg_id if self._messages else None
-            )
 
     def _render(self, message: ChatMessage) -> None:
         if message.kind == MessageKind.USER:
@@ -274,7 +220,19 @@ class TerminalTranscript:
             return
         if message.kind == MessageKind.AGENT:
             body = str(message.body or "")
-            self._write_render(lambda: self._console.print(render_body(body)))
+            sender = str(message.sender or "").strip()
+
+            def _render_agent() -> None:
+                if message.show_header and sender not in {"", "agent", "assistant"}:
+                    self._console.print(
+                        Text(
+                            sender,
+                            style=token_rich_style(StyleToken.ASSISTANT, bold=True),
+                        )
+                    )
+                self._console.print(render_body(body))
+
+            self._write_render(_render_agent)
             return
         if message.kind == MessageKind.SYSTEM:
             self._write_render(
@@ -314,7 +272,14 @@ class TerminalTranscript:
         self._console.print(Text(message.body or ""))
 
     def set_verbosity(self, level: str) -> None:
-        self._verbosity = level if level in ("quiet", "normal", "verbose") else "normal"
+        self._verbosity = cast(
+            VerbosityLevel,
+            level if level in ("quiet", "normal", "verbose") else "normal",
+        )
+
+    @property
+    def verbosity(self) -> VerbosityLevel:
+        return self._verbosity
 
     def handle_tool_started(self, payload: dict[str, Any]) -> None:
         import time as _time
@@ -326,6 +291,9 @@ class TerminalTranscript:
         args = payload.get("args") or payload.get("arguments") or {}
         if not isinstance(args, dict):
             args = {}
+        event = build_tool_event_from_progress(
+            {**payload, "call_id": call_id, "tool_name": tool_name, "args": args}
+        )
         if call_id and call_id in self._live_narrated_call_ids:
             return
         if self._verbosity == "quiet":
@@ -338,13 +306,22 @@ class TerminalTranscript:
             if self._verbosity == "verbose"
             else self._remember_tool_start(tool_name, args)
         )
-        renderable = _render_in_progress_tool_block(tool_name, args)
+        rendered_tool_name = (
+            tool_name
+            if self._verbosity == "verbose"
+            else event.model_tool_name or tool_name
+        )
+        renderable = _render_in_progress_tool_block(
+            rendered_tool_name,
+            args,
+            public_title=self._verbosity != "verbose",
+        )
         handle = self._active_handle
         if handle is not None and hasattr(handle, "set_active_tool"):
             try:
                 handle.set_active_tool(
                     call_id=call_id or tool_name or "tool",
-                    tool_name=tool_name,
+                    tool_name=rendered_tool_name,
                     args=args,
                     started_at=_time.monotonic(),
                 )
@@ -361,8 +338,6 @@ class TerminalTranscript:
             self._live_narrated_call_ids.add(call_id)
 
     def handle_tool_completed(self, payload: dict[str, Any]) -> None:
-        from openminion.cli.presentation.models import ToolEvent
-
         call_id = str(payload.get("call_id") or payload.get("id") or "").strip()
         tool_name = str(
             payload.get("tool_name") or payload.get("name") or payload.get("tool") or ""
@@ -384,14 +359,16 @@ class TerminalTranscript:
         except (TypeError, ValueError):
             duration_ms = None
 
-        event = ToolEvent(
-            tool_name=tool_name,
-            args=args,
-            content=content,
-            full_content=content,
-            exit_code=exit_code,
-            duration_ms=duration_ms,
-            call_id=call_id,
+        event = build_tool_event_from_progress(
+            {
+                **payload,
+                "call_id": call_id,
+                "tool_name": tool_name,
+                "args": args,
+                "content": content,
+                "exit_code": exit_code,
+                "duration_ms": duration_ms,
+            }
         )
 
         handle = self._active_handle
@@ -454,8 +431,11 @@ class TerminalTranscript:
             self._completed_tool_signatures.add(signature)
             return False
         label = _tool_summary_label(
-            str(getattr(event, "tool_name", "") or "tool"),
-            dict(getattr(event, "args", {}) or {}),
+            str(
+                getattr(event, "model_tool_name", "")
+                or getattr(event, "tool_name", "")
+                or "tool"
+            ),
             getattr(event, "exit_code", None),
         )
         self._collapsed_tool_results[label] += 1
@@ -475,12 +455,16 @@ class TerminalTranscript:
     def push_activity_event(self, event: Any) -> None:
         from openminion.cli.status.activity_ledger import (
             KIND_APPROVAL,
+            KIND_BACKGROUND,
             KIND_BUDGET,
             KIND_ERROR,
+            KIND_PLAN,
             KIND_SEARCH,
             KIND_TOOL,
+            STATE_BLOCKED,
             STATE_COMPLETED,
             STATE_DENIED,
+            STATE_FAILED,
             format_activity_line,
         )
 
@@ -492,10 +476,10 @@ class TerminalTranscript:
         line = format_activity_line(event)
         if not line:
             return
-        if kind == KIND_ERROR:
+        state = getattr(event, "state", "")
+        if kind == KIND_ERROR or state == STATE_FAILED:
             style = token_rich_style(StyleToken.ERROR)
         elif kind == KIND_APPROVAL:
-            state = getattr(event, "state", "")
             if state == STATE_DENIED:
                 style = token_rich_style(StyleToken.ERROR)
             elif state == STATE_COMPLETED:
@@ -504,6 +488,12 @@ class TerminalTranscript:
                 style = token_rich_style(StyleToken.WARNING)
         elif kind == KIND_BUDGET:
             style = token_rich_style(StyleToken.MUTED)
+        elif state == STATE_BLOCKED:
+            style = token_rich_style(StyleToken.WARNING)
+        elif state == STATE_COMPLETED:
+            style = token_rich_style(StyleToken.SUCCESS)
+        elif kind in {KIND_PLAN, KIND_BACKGROUND}:
+            style = token_rich_style(StyleToken.INFO)
         else:
             style = token_rich_style(StyleToken.SYSTEM)
         renderable = Text(line, style=style or "")
@@ -565,30 +555,11 @@ def _json_safe(value: Any) -> Any:
 
 def _tool_summary_label(
     tool_name: str,
-    args: dict[str, Any],
     exit_code: int | None,
 ) -> str:
-    name = (tool_name or "tool").strip() or "tool"
-    arg_preview = _tool_arg_preview(args)
+    name = format_public_tool_activity(tool_name, pending=False).rstrip(".")
     status = "failed" if exit_code not in (None, 0) else ""
-    label = f"{name}({arg_preview})" if arg_preview else name
-    return f"{label} {status}".strip()
-
-
-def _tool_arg_preview(args: dict[str, Any]) -> str:
-    for key in ("cmd", "command", "path", "file", "query", "pattern", "url"):
-        if key in args:
-            return _short_preview(args[key])
-    if not args:
-        return ""
-    return _short_preview(next(iter(args.values())))
-
-
-def _short_preview(value: Any, *, limit: int = 48) -> str:
-    text = str(value or "").strip().replace("\n", " ")
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."
+    return f"{name} {status}".strip()
 
 
 def _copyable_text(message: ChatMessage) -> str | None:
@@ -597,6 +568,8 @@ def _copyable_text(message: ChatMessage) -> str | None:
             return message.tool_event.full_content or message.tool_event.content or None
         body = str(message.tool_result or message.body or "").strip()
         return body or None
+    if message.kind != MessageKind.AGENT:
+        return None
     body = str(message.body or "").strip()
     return body or None
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from types import SimpleNamespace
 import unittest
 
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
@@ -156,6 +157,31 @@ class CanonicalEventLoggerTests(unittest.TestCase):
         # actor_type should be "agent" for llm.* events
         last_event = llm_events[-1]
         self.assertEqual(last_event.get("actor_type"), "agent")
+
+    def test_emit_llm_call_includes_runtime_provider_identity(self) -> None:
+        from openminion.modules.brain.diagnostics.events import CanonicalEventLogger
+
+        llm_api = SimpleNamespace(
+            get_provider_identity=lambda: {
+                "provider_name": "minimax",
+                "service_vendor": "minimax",
+            }
+        )
+        logger = CanonicalEventLogger(
+            session_api=self._store,
+            session_id=self._sid,
+            agent_id="agent.main",
+            llm_api=llm_api,
+        )
+
+        logger.emit("llm.call.completed", {"model": "MiniMax-M2.7"})
+
+        event = self._store.get_events(
+            self._sid, after_seq=-1, types=["llm.call.completed"]
+        )[-1]
+        self.assertEqual(event["payload"]["provider"], "minimax")
+        self.assertEqual(event["payload"]["provider_name"], "minimax")
+        self.assertEqual(event["payload"]["service_vendor"], "minimax")
 
     def test_emit_tool_event_uses_tool_actor_type(self) -> None:
         try:

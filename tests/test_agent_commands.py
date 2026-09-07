@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from openminion.cli.commands.agent.delegation import (
     AgentDelegateRequest,
+    request_from_slash_args,
     run_agent_delegate_request,
 )
 from openminion.cli.commands.agent.control import (
@@ -271,6 +272,18 @@ def test_agent_delegate_lifecycle_modes_use_task_id(capsys) -> None:
         "resume",
         "cancel",
     ]
+
+
+def test_focus_delegate_accept_parses_artifact_json() -> None:
+    request = request_from_slash_args(
+        'accept \'{"subtask_id": "child-1", "artifact": {"status": "stored"}}\''
+    )
+
+    assert request.mode == "accept"
+    assert request.child_artifact == {
+        "subtask_id": "child-1",
+        "artifact": {"status": "stored"},
+    }
 
 
 def test_visible_agent_delegate_command_uses_operator_seam(capsys, monkeypatch) -> None:
