@@ -15,6 +15,11 @@ make dev-install
 make hooks-install
 ```
 
+On Windows PowerShell, use `.venv\Scripts\Activate.ps1`, then run the same
+`make` targets from an environment that provides GNU Make. For ordinary use,
+`pipx install openminion` or `uv tool install openminion` avoids checkout
+tooling entirely.
+
 If you are running the CLI locally, also set:
 
 ```bash
@@ -42,12 +47,17 @@ When the normal default config already exists, this opens the default terminal
 directly. When the default config is missing and a terminal is available,
 OpenMinion launches setup, guides you through hosted, local, or import setup,
 writes the canonical config at
-`<OPENMINION_HOME>/.openminion/agents.json`, runs `doctor`, and then enters the
-interactive CLI. A useful first task is:
+`~/.openminion/agents.json` (or `<OPENMINION_HOME>/.openminion/agents.json`
+when that root is set), runs `doctor`, and then enters the interactive CLI.
+The hosted-provider connection check is recommended and selected by pressing
+Enter; it sends one short request that may consume quota. A useful first task
+is:
 
 ```text
-Give me one safe read-only command to inspect the current directory.
+List this workspace using the file tools.
 ```
+
+A later bare launch reuses the same config and opens the terminal directly.
 
 An explicit `--dir` trusts that workspace for the current process. Without it,
 an ordinary Git worktree is trusted, another directory starts Read only, and a

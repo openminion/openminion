@@ -28,7 +28,7 @@ package-internal surface is:
   `OnboardingInspectionRequest`, `OnboardingStatus`,
   `OnboardingPlan`, `OnboardingSurfaceRoute`.
 - `onboarding.resolve_surface_onboarding_route(...)`,
-  `build_inline_setup_args(...)`, `format_fail_fast_message(...)`.
+  `format_fail_fast_message(...)`.
 - `paths.py` — bootstrap-time path names, separate from canonical resolution in
   `base/config/paths.py`.
 

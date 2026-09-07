@@ -403,8 +403,10 @@ def _prompt_provider_check(preset: ProviderSetupPreset) -> bool:
             "Optional connection test: contacts Ollama and may load the selected model."
         )
         return _prompt_confirm("Test Ollama now?", default=True)
-    print("Optional connection test: sends one short request and may consume quota.")
-    return _prompt_confirm("Test this provider now?", default=False)
+    print("Recommended connection test: sends one short request and may consume quota.")
+    return _prompt_confirm(
+        "Test this provider before entering OpenMinion?", default=True
+    )
 
 
 def _run_setup_doctor(*, config_path: Path) -> int:
@@ -466,12 +468,18 @@ def _launch_post_setup_interactive(args, *, config_path: Path) -> int:
         home_root=getattr(args, "home_root", None),
         data_root=getattr(args, "data_root", None),
         agent=getattr(args, "agent", None),
-        session="onboarding-first-run",
-        dir=str(Path.cwd()),
-        theme=None,
+        session=getattr(args, "session", None) or "onboarding-first-run",
+        dir=getattr(args, "dir", None) or str(Path.cwd()),
+        add_dir=list(getattr(args, "add_dir", []) or []),
+        theme=getattr(args, "theme", None),
+        color=getattr(args, "color", None),
         no_interactive=False,
-        no_context=False,
-        no_update_check=False,
+        no_context=bool(getattr(args, "no_context", False)),
+        no_update_check=bool(getattr(args, "no_update_check", False)),
+        animation_provider=getattr(args, "animation_provider", None),
+        animation=getattr(args, "animation", None),
+        verbosity=getattr(args, "verbosity", None),
+        progress=getattr(args, "progress", None),
     )
     return int(run_interactive(interactive_args) or 0)
 

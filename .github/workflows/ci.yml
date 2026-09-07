@@ -15,6 +15,64 @@ permissions:
   contents: read
 
 jobs:
+  first-run:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install package
+        run: python -m pip install .
+
+      - name: Exercise clone-to-first-response setup
+        shell: bash
+        run: |
+          provider_config="$RUNNER_TEMP/minimax.json"
+          provider_output="$RUNNER_TEMP/minimax-output.txt"
+          export MINIMAX_API_KEY="fixture-minimax-key-not-for-network-use"
+          python -m openminion --config "$provider_config" setup \
+            --provider minimax --model MiniMax-M2.7 --no-focus \
+            >"$provider_output"
+          python -m openminion --config "$provider_config" doctor --json \
+            >>"$provider_output"
+
+          demo_config="$RUNNER_TEMP/demo.json"
+          python -m openminion --config "$demo_config" config init \
+            --provider echo --force
+          python -m openminion --config "$demo_config" verify smoke
+          python -m openminion --config "$demo_config" doctor --json
+          response="$(python -m openminion --config "$demo_config" run \
+            --session first-run "hello" 2>&1)"
+
+          PROVIDER_CONFIG="$provider_config" \
+          PROVIDER_OUTPUT="$provider_output" \
+          RESPONSE="$response" python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          config = Path(os.environ["PROVIDER_CONFIG"]).read_text(encoding="utf-8")
+          output = Path(os.environ["PROVIDER_OUTPUT"]).read_text(encoding="utf-8")
+          response = os.environ["RESPONSE"]
+          payload = json.loads(config)
+          provider = payload["providers"]["openai"]
+          assert provider["model"] == "MiniMax-M2.7"
+          assert provider["api_key"] == ""
+          assert "fixture-minimax-key" not in config + output
+          assert "hello" in response.lower(), response
+          assert " INFO " not in response, response
+          PY
+
   lint:
     runs-on: ubuntu-latest
 

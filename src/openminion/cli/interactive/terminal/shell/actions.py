@@ -863,6 +863,7 @@ def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
     from openminion import __version__
     from openminion.cli.presentation.header import (
         format_runtime_adapter,
+        format_runtime_permission_posture,
         format_runtime_provider,
         shorten_working_dir,
     )
@@ -873,6 +874,7 @@ def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
     provider = format_runtime_provider(runtime)
     adapter = format_runtime_adapter(runtime)
     cwd_label = shorten_working_dir(working_dir) or working_dir or "."
+    permission_posture = format_runtime_permission_posture(runtime)
     body_lines = [
         Text.assemble(
             ("OpenMinion CLI", token_rich_style(StyleToken.INFO, bold=True)),
@@ -913,6 +915,7 @@ def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
                 ("agent:       ", _MUTED_STYLE),
                 (agent, _SYSTEM_STYLE),
             ),
+            Text(f"permissions: {permission_posture}", style=_SYSTEM_STYLE),
         ]
     )
     project_context = getattr(runtime, "project_context", None)

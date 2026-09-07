@@ -121,6 +121,14 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
+On Windows PowerShell, activate the same environment with:
+
+```powershell
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
 For isolated local data during development:
 
 ```bash
@@ -139,7 +147,9 @@ openminion --dir "$PWD"
 
 Setup asks for a provider, model, and credential. For built-in providers,
 OpenMinion selects the API adapter automatically. For example, MiniMax remains
-the provider when it uses an OpenAI-compatible API.
+the provider when it uses an OpenAI-compatible API. Press Enter at the hosted
+provider check to send one recommended test request before Focus opens; the
+request may consume a small amount of quota.
 
 An explicit `--dir` trusts that workspace for the current process. A bare
 launch also trusts an ordinary Git worktree; another implicit directory starts
@@ -158,8 +168,9 @@ commands then use the OpenMinion process's OS permissions and are not confined
 to workspace roots; command policy and approvals still apply. A native local
 sandbox and approval-free command parity are not provided yet.
 
-When setup finishes and the interactive CLI opens, ask: `Give me one safe
-read-only command to inspect the current directory.`
+When setup finishes and the interactive CLI opens, ask: `List this workspace
+using the file tools.` The default config is saved at
+`~/.openminion/agents.json`, so the next bare launch reuses it.
 
 For a credential-free product tour, create an explicit echo/demo config:
 
