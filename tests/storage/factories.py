@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 from faker import Faker
@@ -15,7 +16,10 @@ def reset_seed(seed: int = 42) -> None:
 
 
 def _iso() -> str:
-    return _FAKER.date_time_this_year().isoformat(timespec="seconds")
+    return _FAKER.date_time_between(
+        start_date=datetime(2026, 1, 1),
+        end_date=datetime(2026, 12, 31, 23, 59, 59),
+    ).isoformat(timespec="seconds")
 
 
 def _apply_overrides(row: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
