@@ -9,7 +9,6 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_SKILL_INGEST_URL,
     MODEL_SKILL_INSPECT,
     MODEL_SKILL_LIST,
-    MODEL_SKILL_REMOVE,
     MODEL_SKILL_PROPOSE,
 )
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
@@ -22,7 +21,6 @@ from .schemas import (
     SkillIngestUrlArgs,
     SkillInspectArgs,
     SkillListArgs,
-    SkillRemoveArgs,
     SkillProposeArgs,
 )
 from .url_ingest import ingest_skill_url
@@ -277,31 +275,6 @@ def _h_skill_get(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     }
 
 
-def _h_skill_remove(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    skill = getattr(ctx, "skill_api", None)
-    if skill is None:
-        return _error("SKILL_UNAVAILABLE", _SKILL_UNAVAILABLE_MESSAGE)
-
-    try:
-        parsed_args = SkillRemoveArgs.model_validate(args)
-    except ValidationError as exc:
-        return _invalid_args_error(exc)
-
-    skill_id = parsed_args.skill_id
-    version_hash = parsed_args.version_hash
-
-    try:
-        deleted = skill.delete_skill(skill_id=skill_id, version_hash=version_hash)
-    except Exception as exc:
-        return _error(str(getattr(exc, "code", "SKILL_REMOVE_FAILED")), str(exc))
-
-    return {
-        "ok": True,
-        "skill_id": skill_id,
-        "deleted": sum(deleted.values()),
-    }
-
-
 def register(registry: ToolRegistry) -> None:
     registry.add(
         ToolSpec(
@@ -378,19 +351,4 @@ def register(registry: ToolRegistry) -> None:
             capabilities=("skill",),
         )
     )
-    registry.add(
-        ToolSpec(
-            name=MODEL_SKILL_REMOVE,
-            args_model=SkillRemoveArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_skill_remove,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "skill"),
-            capabilities=("skill",),
-            block_under_readonly=True,
-        )
-    )
-
-
 __all__ = ["register"]

@@ -6,7 +6,6 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_SKILL_INGEST_URL,
     MODEL_SKILL_INSPECT,
     MODEL_SKILL_LIST,
-    MODEL_SKILL_REMOVE,
     MODEL_SKILL_PROPOSE,
 )
 from openminion.modules.tool.contracts.runtime_ids import (
@@ -15,7 +14,6 @@ from openminion.modules.tool.contracts.runtime_ids import (
     RUNTIME_SKILL_INGEST_URL,
     RUNTIME_SKILL_INSPECT,
     RUNTIME_SKILL_LIST,
-    RUNTIME_SKILL_REMOVE,
     RUNTIME_SKILL_PROPOSE,
 )
 
@@ -61,11 +59,6 @@ _TOOL_DEFINITIONS = (
         MODEL_SKILL_GET,
         "Get one stored skill by ID and optional version hash. When the skill lists a bundled reference, asset, or script, call this tool again with resource_path and the same version_hash to read that resource before using it.",
         RUNTIME_SKILL_GET,
-    ),
-    (
-        MODEL_SKILL_REMOVE,
-        "Remove a stored skill (all versions or a specific version).",
-        RUNTIME_SKILL_REMOVE,
     ),
 )
 

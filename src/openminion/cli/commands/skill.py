@@ -645,10 +645,31 @@ def _run_skill_remove(args, app: Any | None = None) -> int:
         )
         return 1
     try:
+        reason = str(args.reason or "").strip()
+        if not reason:
+            raise SkillError("INVALID_ARGUMENT", "--reason is required for remove")
         ctl = Skill(args.config)
         try:
-            counts = ctl.delete_skill(skill_id=args.skill_id, version_hash=args.version)
-            print_json_payload({"ok": True, "deleted": counts}, sort_keys=False)
+            package = ctl.get_skill(args.skill_id, args.version)
+            target = {
+                "skill_id": package.skill_id,
+                "version_hash": package.version_hash if args.version else None,
+                "reason": reason,
+            }
+            if not args.apply:
+                print_json_payload(
+                    {"ok": True, "dry_run": True, "would_remove": target},
+                    sort_keys=False,
+                )
+                return 0
+            target["deleted_counts"] = ctl.delete_skill(
+                skill_id=args.skill_id,
+                version_hash=args.version,
+            )
+            print_json_payload(
+                {"ok": True, "dry_run": False, "removed": target},
+                sort_keys=False,
+            )
             return 0
         finally:
             ctl.close()
@@ -946,7 +967,11 @@ def _register_skill_show_subcommand(skill_subcommands) -> None:
 def _register_skill_remove_subcommand(skill_subcommands) -> None:
     parser = skill_subcommands.add_parser("remove", help="Remove an ingested skill")
     parser.add_argument("skill_id", help="Skill ID to remove")
+    parser.add_argument("--reason", required=True, help="Reason for removal")
     parser.add_argument("--version", default=None, help="Specific version to remove")
+    parser.add_argument(
+        "--apply", action="store_true", help="Apply removal instead of a dry-run"
+    )
     _add_skill_config_arg(parser)
     parser.set_defaults(handler=_run_skill_remove, needs_app=False)
 

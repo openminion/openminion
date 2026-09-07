@@ -407,7 +407,7 @@ src/openminion/tools/search/providers/serpapi/provider.py	1	0	current broad-hand
 src/openminion/tools/search/providers/serper/provider.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/search/providers/tavily/search.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/search/providers/tinyfish/provider.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/tools/skill/plugin.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/tools/skill/plugin.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/skill/url_ingest.py	5	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/task/plugin.py	5	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/task/scheduled_task/runtime.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

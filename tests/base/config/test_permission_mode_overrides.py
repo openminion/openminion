@@ -155,7 +155,7 @@ def test_readonly_blocks_write_tools() -> None:
     assert is_tool_blocked_by_readonly("task.schedule")
     assert is_tool_blocked_by_readonly("task.cancel")
     assert is_tool_blocked_by_readonly("skill.ingest")
-    assert is_tool_blocked_by_readonly("skill.remove")
+    assert is_tool_blocked_by_readonly("skill.propose")
     assert is_tool_blocked_by_readonly("tool.author")
     assert is_tool_blocked_by_readonly("tool.register")
 
@@ -227,7 +227,7 @@ def test_readonly_blocked_tools_are_owned_by_tool_specs() -> None:
         "task.resume",
         "skill.ingest",
         "skill.ingest_url",
-        "skill.remove",
+        "skill.propose",
         "tool.author",
         "tool.register",
         # task.delegate (sub-agent delegation) is gated under

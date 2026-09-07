@@ -9,9 +9,9 @@ from openminion.tools.skill.plugin import (
     _h_skill_ingest,
     _h_skill_ingest_url,
     _h_skill_list,
-    _h_skill_remove,
     _h_skill_propose,
 )
+from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.skill.storage import SQLiteSkillStore
 from openminion.tools.skill.registrar import REGISTRAR
 from openminion.tools.skill.schemas import SkillGetArgs, SkillProposeArgs
@@ -126,31 +126,17 @@ def test_skill_get_reads_requested_resource_with_pinned_version() -> None:
     ]
 
 
-def test_skill_remove_success_deleted_count() -> None:
-    api = SimpleNamespace(
-        delete_skill=lambda skill_id, version_hash=None: {
-            "skills": 1,
-            "versions": 2,
-            "index": 0,
-            "runs": 3,
-        }
+def test_skill_remove_is_not_model_exposed() -> None:
+    registry = ToolRegistry()
+    _skill_plugin.register(registry)
+    manifest = REGISTRAR.get_manifest(SimpleNamespace())
+
+    assert "skill.remove" not in registry.list()
+    assert all(item.model_tool_id != "skill.remove" for item in manifest.model_tools)
+    assert all(
+        item.runtime_binding_id != "runtime.skill.remove"
+        for item in manifest.runtime_bindings
     )
-    ctx = SimpleNamespace(skill_api=api)
-    result = _h_skill_remove({"skill_id": "deploy"}, ctx)
-    assert result["ok"] is True
-    assert result["skill_id"] == "deploy"
-    assert result["deleted"] == 6
-
-
-def test_skill_remove_error_path() -> None:
-    def _raise(*args, **kwargs):
-        raise _SkillError("SKILL_REMOVE_FAILED", "remove failed")
-
-    api = SimpleNamespace(delete_skill=_raise)
-    ctx = SimpleNamespace(skill_api=api)
-    result = _h_skill_remove({"skill_id": "deploy"}, ctx)
-    assert result["ok"] is False
-    assert result["error"]["code"] == "SKILL_REMOVE_FAILED"
 
 
 def test_skill_ingest_url_unavailable_error() -> None:

@@ -190,11 +190,56 @@ def test_skill_cli_ingest_list_show_remove(tmp_path: Path, monkeypatch) -> None:
         Namespace(
             skill_id=skill_id,
             version=None,
+            reason="test cleanup",
+            apply=False,
             config=str(config_path),
         ),
     )
     assert code == 0
     assert payload["ok"] is True
+    assert payload["dry_run"] is True
+
+    code, payload = _run(
+        _run_skill_list,
+        Namespace(
+            status=None,
+            scope=None,
+            agent_id=None,
+            tag=None,
+            tool=None,
+            config=str(config_path),
+            json=True,
+        ),
+    )
+    assert code == 0
+    assert skill_id in [item["skill_id"] for item in payload["skills"]]
+
+    code, payload = _run(
+        _run_skill_remove,
+        Namespace(
+            skill_id=skill_id,
+            version=None,
+            reason="   ",
+            apply=True,
+            config=str(config_path),
+        ),
+    )
+    assert code == 1
+    assert payload["error"]["code"] == "INVALID_ARGUMENT"
+
+    code, payload = _run(
+        _run_skill_remove,
+        Namespace(
+            skill_id=skill_id,
+            version=None,
+            reason="test cleanup",
+            apply=True,
+            config=str(config_path),
+        ),
+    )
+    assert code == 0
+    assert payload["ok"] is True
+    assert payload["dry_run"] is False
 
     code, payload = _run(
         _run_skill_list,

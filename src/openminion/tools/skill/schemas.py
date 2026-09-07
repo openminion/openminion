@@ -144,10 +144,3 @@ class SkillGetArgs(BaseModel):
         le=1_000_000,
         description="Maximum resource characters returned when resource_path is set.",
     )
-
-
-class SkillRemoveArgs(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    skill_id: str = Field(..., min_length=1, max_length=256)
-    version_hash: str | None = Field(default=None, max_length=256)
