@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -12,6 +11,8 @@ from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
+
+import psutil
 
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.cli.transport.daemon_client import (
@@ -160,9 +161,10 @@ def daemon_stop(
         return 0
 
     try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError as exc:
-        print(f"Failed to signal daemon process {pid}: {exc}")
+        process = psutil.Process(pid)
+        process.terminate()
+    except psutil.Error as exc:
+        print(f"Failed to terminate daemon process {pid}: {exc}")
         return 1
 
     deadline = time.time() + 10
@@ -174,9 +176,11 @@ def daemon_stop(
         time.sleep(0.1)
 
     try:
-        os.kill(pid, signal.SIGKILL)
-    except OSError as exc:
-        print(f"Daemon pid={pid} did not stop within timeout and SIGKILL failed: {exc}")
+        process.kill()
+    except psutil.Error as exc:
+        print(
+            f"Daemon pid={pid} did not stop within timeout and force kill failed: {exc}"
+        )
         return 1
 
     kill_deadline = time.time() + 5
@@ -187,7 +191,7 @@ def daemon_stop(
             return 0
         time.sleep(0.1)
 
-    print(f"Daemon pid={pid} did not stop within timeout (including SIGKILL).")
+    print(f"Daemon pid={pid} did not stop within timeout (including force kill).")
     return 1
 
 

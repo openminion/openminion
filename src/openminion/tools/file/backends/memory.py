@@ -195,7 +195,11 @@ class InMemoryStorageBackend:
             name = Path(entry).name
             if not include_hidden and self._has_hidden_component(entry, root):
                 continue
-            if fnmatch.fnmatch(name, pattern):
+            relative_path = Path(entry).relative_to(root).as_posix()
+            basename_pattern = pattern.removeprefix("**/")
+            if fnmatch.fnmatch(name, basename_pattern) or fnmatch.fnmatch(
+                relative_path, pattern
+            ):
                 matches.append(
                     MatchInfo(name=name, path=entry, size=len(content.encode("utf-8")))
                 )

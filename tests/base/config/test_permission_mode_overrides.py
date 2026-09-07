@@ -218,6 +218,7 @@ def test_readonly_blocked_tools_are_owned_by_tool_specs() -> None:
         "git.fetch",
         "git.push",
         "git.tag",
+        "graph.refresh",
         "host.inventory_report",
         "memory.write",
         "memory.forget",

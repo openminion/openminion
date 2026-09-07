@@ -144,6 +144,7 @@ def _build_tool_runtime_context(
         repositories=build_runtime_repositories(context_metadata=metadata),
         artifactctl=resolve_artifactctl(),
         memory_service=context.memory_service,
+        knowledge_graph_service=context.knowledge_graph_service,
         sandbox_runner=context.sandbox_runner,
         authored_tools_api=context.authored_tools_api,
         a2a_delegate_api=context.a2a_delegate_api,

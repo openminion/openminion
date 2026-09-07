@@ -9,6 +9,8 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Sequence, cast
 
+import psutil
+
 from openminion.api.server import build_api_server
 from openminion.base.config import (
     ConfigManager,
@@ -300,13 +302,7 @@ def read_pid(pid_file: Path) -> int | None:
 
 
 def process_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
+    return pid > 0 and psutil.pid_exists(pid)
 
 
 def run_server(

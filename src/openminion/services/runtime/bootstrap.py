@@ -29,12 +29,16 @@ from openminion.modules.context.knowledge import (
     KnowledgeGraphRegistry,
     PROVIDER_GRAPHIFY,
     PROVIDER_PRAGMAGRAPH,
+    PROVIDER_SOPHIAGRAPH_WORKSPACE,
 )
 from openminion.modules.context.knowledge.adapters.graphify import (
     GraphifyKnowledgeGraphSource,
 )
 from openminion.modules.context.knowledge.adapters.pragmagraph import (
     PragmaGraphKnowledgeGraphSource,
+)
+from openminion.modules.context.knowledge.adapters.sophiagraph_workspace import (
+    SophiagraphWorkspaceKnowledgeGraphSource,
 )
 from openminion.modules.context.knowledge.service import (
     KnowledgeGraphService,
@@ -107,6 +111,10 @@ def _runtime_secret_service(service: Any, config: OpenMinionConfig) -> Any | Non
         config=config,
         data_root=service._context.home_paths.data_root,
     )
+
+
+def _runtime_knowledge_graphs(service: Any) -> Any | None:
+    return getattr(service._runtime_handle, "knowledge_graphs", None)
 
 
 def build_daytona_runner(
@@ -204,6 +212,13 @@ def build_knowledge_graph_source_service(
     registry.register(
         PROVIDER_PRAGMAGRAPH,
         cast(KnowledgeGraphProviderFactory, PragmaGraphKnowledgeGraphSource),
+    )
+    registry.register(
+        PROVIDER_SOPHIAGRAPH_WORKSPACE,
+        cast(
+            KnowledgeGraphProviderFactory,
+            SophiagraphWorkspaceKnowledgeGraphSource,
+        ),
     )
     return build_configured_knowledge_graph_service(config, registry=registry)
 
@@ -588,7 +603,6 @@ def _build_a2a_runtime_apis(
 def build_brain_runner_bundle(service: Any) -> Any:
     """BBSE-02: canonical bootstrap path for the bridge's runner bundle."""
     from pathlib import Path as _Path
-
     import openminion.services.brain.service as bridge_module
     from openminion.base.config import configured_agent_ids
     from openminion.modules.session.storage.repository import (
@@ -739,6 +753,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         skill_api=skill_api,
         secret_service=_runtime_secret_service(service, config),
         memory_service=memory_api,
+        knowledge_graph_service=_runtime_knowledge_graphs(service),
         policy_ctl=service._action_policy_service,
         a2a_delegate_api=a2a_delegate_api,
         agent_query=getattr(service._runtime_handle, "agent_discovery_snapshot", None),

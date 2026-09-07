@@ -44,6 +44,7 @@ ALLOWED_TOP_LEVEL_DIRS = {
     "git",
     "github",
     "gitops",
+    "graph",
     "gws",
     "host",
     "iac",

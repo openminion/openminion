@@ -242,8 +242,12 @@ class LocalStorageBackend:
                     files = [f for f in files if not f.startswith(".")]
 
                 for name in files:
-                    if fnmatch.fnmatch(name, pattern):
-                        full_path = Path(root) / name
+                    full_path = Path(root) / name
+                    relative_path = full_path.relative_to(target).as_posix()
+                    basename_pattern = pattern.removeprefix("**/")
+                    if fnmatch.fnmatch(name, basename_pattern) or fnmatch.fnmatch(
+                        relative_path, pattern
+                    ):
                         matches.append(
                             MatchInfo(
                                 name=name,

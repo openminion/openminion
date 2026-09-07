@@ -71,6 +71,7 @@ class ExecutionResources:
     def build_context(self) -> ToolExecutionContext:
         inbound = self._runtime.inbound
         config = self._service_port.config
+        runtime_handle = getattr(self._runtime, "runtime_handle", None)
         runtime_cfg = getattr(config, "runtime", None)
         tool_metadata = dict(inbound.metadata or {})
         runtime_env = getattr(runtime_cfg, "env", None)
@@ -107,6 +108,7 @@ class ExecutionResources:
             session_id=inbound.metadata.get("session_id", ""),
             metadata=tool_metadata,
             memory_service=self._resolve_memory_tool_service(),
+            knowledge_graph_service=getattr(runtime_handle, "knowledge_graphs", None),
             sandbox_runner=getattr(self._runtime, "sandbox_runner", None),
             authored_tools_api=getattr(self._runtime, "authored_tools", None),
             a2a_delegate_api=self._resolve_a2a_delegate_api(),

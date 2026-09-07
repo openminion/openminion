@@ -16,6 +16,32 @@ def render_graph_command(args: str) -> str:
         return _usage()
     if action == "status":
         return _command("openminion", "graph", "status", *rest)
+    if action == "query" and len(rest) >= 2:
+        return _command(
+            "openminion",
+            "graph",
+            "query",
+            " ".join(rest[1:]),
+            "--provider",
+            rest[0],
+        )
+    if action == "neighborhood" and len(rest) == 2:
+        return _command(
+            "openminion",
+            "graph",
+            "neighborhood",
+            rest[1],
+            "--provider",
+            rest[0],
+        )
+    if action == "refresh" and len(rest) == 1:
+        return _command(
+            "openminion",
+            "graph",
+            "refresh",
+            "--provider",
+            rest[0],
+        )
     if action == "current":
         return _command("openminion", "graph", "view", "--current", *rest)
     if action in {"dry-run", "json"}:
@@ -54,7 +80,9 @@ def render_graph_command(args: str) -> str:
             *rest[1:],
         )
     return (
-        "Graph viewer: use /graph, /graph status, /graph current, "
+        "Graph: use /graph, /graph status, /graph query <source> <text>, "
+        "/graph neighborhood <source> <entity>, /graph refresh <source>, "
+        "/graph current, "
         "/graph dry-run, /graph html [path], or /graph third <provider>."
     )
 
@@ -68,6 +96,9 @@ def _usage() -> str:
         (
             "Graph viewer:",
             "  status   openminion graph status",
+            "  query    openminion graph query <text> --provider <source>",
+            "  neighborhood  openminion graph neighborhood <entity> --provider <source>",
+            "  refresh  openminion graph refresh --provider <source>",
             "  current  openminion graph view --current",
             "  dry-run  openminion graph view --current --dry-run --json",
             "  json     openminion graph view --current --dry-run --json",

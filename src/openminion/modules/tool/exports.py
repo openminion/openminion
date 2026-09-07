@@ -51,6 +51,7 @@ PUBLIC_EXPORTS = [
     "preferred_artifact_ref",
     "reorder_runtime_chain",
     "resolve_binding_for_call",
+    "resolve_knowledge_graph_service",
     "resolve_path",
     "resolve_relative_base_dir",
     "resolve_runtime_tool_config",
@@ -119,6 +120,10 @@ LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "RuntimeBindingPolicy": (".runtime.policy", "RuntimeBindingPolicy"),
     "RuntimeBootstrap": (".bootstrap", "RuntimeBootstrap"),
     "RuntimeContext": (".runtime", "RuntimeContext"),
+    "resolve_knowledge_graph_service": (
+        ".runtime.context",
+        "resolve_knowledge_graph_service",
+    ),
     "Tool": (".base", "Tool"),
     "ToolBindingPolicyManager": (".runtime.policy", "ToolBindingPolicyManager"),
     "ToolExecutionBatch": (".registry", "ToolExecutionBatch"),

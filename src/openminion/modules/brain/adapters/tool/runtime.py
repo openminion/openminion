@@ -115,6 +115,7 @@ class ToolAdapter:
         skill_api: Any | None = None,
         secret_service: Any | None = None,
         memory_service: Any | None = None,
+        knowledge_graph_service: Any | None = None,
         a2a_delegate_api: Any | None = None,
         agent_query: Callable[[], list[dict[str, Any]]] | None = None,
         agent_id: str | None = None,
@@ -134,6 +135,7 @@ class ToolAdapter:
         self.skill_api = skill_api
         self.secret_service = secret_service
         self.memory_service = memory_service
+        self.knowledge_graph_service = knowledge_graph_service
         self.a2a_delegate_api = a2a_delegate_api
         self.agent_query = agent_query
         self.agent_profile = agent_profile
@@ -538,7 +540,6 @@ class ToolAdapter:
                 extra_adapter=extra_adapter,
             )
         )
-
         context_metadata = _policy_context_metadata(policy_for_run)
         enforce_watch_target_binding(validated_args, context_metadata)
         ctx = RuntimeContext(
@@ -557,6 +558,7 @@ class ToolAdapter:
             telemetryctl=self.telemetryctl,
             artifactctl=self.artifactctl,
             memory_service=self.memory_service,
+            knowledge_graph_service=self.knowledge_graph_service,
             a2a_delegate_api=self.a2a_delegate_api,
             agent_query=self.agent_query,
             telemetry_session_id=session_id,

@@ -19,6 +19,7 @@ from openminion.modules.storage.migrations.models import (
     RehydrateReport,
     VerificationReport,
 )
+from openminion.modules.storage.migrations.backup import backup_online
 from openminion.modules.storage.migrations.module_ids import (
     MODULE_APPLICATION_IDS,
     get_module_application_id,
@@ -88,6 +89,35 @@ def _build_ops(tmp_path: Path, *, module_id: str = "secret") -> StorageModuleOps
         module_application_id=app_id,
         snapshot_root=tmp_path / "snapshots",
     )
+
+
+def test_online_backup_closes_connections(monkeypatch: pytest.MonkeyPatch) -> None:
+    connections = []
+
+    class Connection:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def backup(self, destination) -> None:
+            assert destination is connections[1]
+
+        def commit(self) -> None:
+            pass
+
+        def close(self) -> None:
+            self.closed = True
+
+    def connect(_path: str) -> Connection:
+        connection = Connection()
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr("sqlite3.connect", connect)
+
+    backup_online(Path("source.sqlite"), Path("snapshot.sqlite"))
+
+    assert len(connections) == 2
+    assert all(connection.closed for connection in connections)
 
 
 class TestInterfaceCompatibility:

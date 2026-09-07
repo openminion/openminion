@@ -111,6 +111,9 @@ RUNTIME_SKILL_REMOVE = "runtime.skill.remove"
 RUNTIME_MEMORY_WRITE = "runtime.memory.write"
 RUNTIME_MEMORY_SEARCH = "runtime.memory.search"
 RUNTIME_MEMORY_FORGET = "runtime.memory.forget"
+RUNTIME_GRAPH_QUERY = "runtime.graph.query"
+RUNTIME_GRAPH_NEIGHBORHOOD = "runtime.graph.neighborhood"
+RUNTIME_GRAPH_REFRESH = "runtime.graph.refresh"
 RUNTIME_GIT_STATUS = "runtime.git.status"
 RUNTIME_GIT_DIFF = "runtime.git.diff"
 RUNTIME_GIT_LOG = "runtime.git.log"
@@ -218,6 +221,9 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_MEMORY_WRITE,
     RUNTIME_MEMORY_SEARCH,
     RUNTIME_MEMORY_FORGET,
+    RUNTIME_GRAPH_QUERY,
+    RUNTIME_GRAPH_NEIGHBORHOOD,
+    RUNTIME_GRAPH_REFRESH,
     RUNTIME_GIT_STATUS,
     RUNTIME_GIT_DIFF,
     RUNTIME_GIT_LOG,

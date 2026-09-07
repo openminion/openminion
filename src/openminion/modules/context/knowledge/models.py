@@ -403,3 +403,13 @@ class GraphRefreshResult:
             ),
         )
         _set_mapping_proxy(self, "diagnostics", self.diagnostics)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "layer": self.layer,
+            "ok": self.ok,
+            "refreshed_at": self.refreshed_at,
+            "counts": dict(self.counts),
+            "diagnostics": dict(self.diagnostics),
+        }

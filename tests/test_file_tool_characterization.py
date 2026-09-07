@@ -411,6 +411,21 @@ def test_find_files_returns_matches(tmp_path: Path):
     assert result["count"] == 2
 
 
+def test_find_files_matches_recursive_pattern_with_spaced_filename(tmp_path: Path):
+    ctx = _ctx(tmp_path)
+    notes = ctx.workspace / "notes"
+    notes.mkdir()
+    (notes / "Research Note.md").write_text("OVGA", encoding="utf-8")
+
+    result = _h_find_files(
+        {"path": ".", "pattern": "**/Research Note*"},
+        ctx,
+    )
+
+    assert result["ok"] is True
+    assert [match["name"] for match in result["matches"]] == ["Research Note.md"]
+
+
 def test_find_files_skips_hidden_by_default(tmp_path: Path):
     ctx = _ctx(tmp_path)
     hidden = ctx.workspace / ".hidden"

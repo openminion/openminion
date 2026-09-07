@@ -265,3 +265,39 @@ def test_build_knowledge_graph_source_service_wires_pragmagraph(tmp_path) -> Non
     service = build_knowledge_graph_source_service(config=config)
 
     assert [source.name for source in service.list_sources()] == ["repo_pragmas"]
+
+
+@pytest.mark.package_integration
+def test_build_knowledge_graph_source_service_wires_sophiagraph_workspace(
+    tmp_path,
+) -> None:
+    from sophiagraph import MemoryNamespace, initialize_workspace
+
+    workspace_root = tmp_path / "sophia-workspace"
+    source_root = tmp_path / "vault"
+    source_root.mkdir()
+    initialize_workspace(
+        workspace_root,
+        scope="agent:openminion",
+        namespace=MemoryNamespace(agent_id="openminion", graph_id="vault"),
+        vault_id="ovga-vault",
+    )
+    config = _build_config()
+    config.module_configs["knowledge_graphs"] = {
+        "provider": {
+            "active": ["vault_graph"],
+            "providers": {
+                "vault_graph": {
+                    "provider": "sophiagraph_workspace",
+                    "options": {
+                        "workspace_root": str(workspace_root),
+                        "source_root": str(source_root),
+                    },
+                }
+            },
+        }
+    }
+
+    service = build_knowledge_graph_source_service(config=config)
+
+    assert [source.name for source in service.list_sources()] == ["vault_graph"]

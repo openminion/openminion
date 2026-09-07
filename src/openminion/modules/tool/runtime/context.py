@@ -1,12 +1,14 @@
 """Tool runtime context and dependency resolvers."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, cast
 
 from openminion.base.time import utc_now_iso as iso_now
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
@@ -28,6 +30,9 @@ from .repositories import (
     build_runtime_repositories,
 )
 
+if TYPE_CHECKING:
+    from openminion.modules.context.knowledge import KnowledgeGraphService
+
 
 __all__ = [
     "RuntimeContext",
@@ -38,6 +43,7 @@ __all__ = [
     "resolve_a2a_delegate_api",
     "resolve_identity_repository",
     "resolve_memory_service",
+    "resolve_knowledge_graph_service",
 ]
 
 
@@ -176,6 +182,16 @@ def resolve_memory_service(ctx: "RuntimeContext") -> MemoryToolRuntimeService | 
     return None
 
 
+def resolve_knowledge_graph_service(
+    ctx: RuntimeContext,
+) -> KnowledgeGraphService | None:
+    """Resolve the configured knowledge-graph service for graph tools."""
+    service: KnowledgeGraphService | None = getattr(
+        ctx, "knowledge_graph_service", None
+    )
+    return service
+
+
 def resolve_a2a_delegate_api(ctx: "RuntimeContext") -> A2ADelegateApi | None:
     """Resolve the approved typed A2A-delegation seam for tool handlers."""
     seam = getattr(ctx, "a2a_delegate_api", None)
@@ -242,6 +258,7 @@ class RuntimeContext:
     task_manager: Any | None = None
     artifactctl: Optional[Any] = None
     memory_service: MemoryToolRuntimeService | None = None
+    knowledge_graph_service: KnowledgeGraphService | None = None
     sandbox_runner: Any | None = None
     authored_tools_api: Any | None = None
     a2a_delegate_api: A2ADelegateApi | None = None

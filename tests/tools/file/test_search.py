@@ -88,6 +88,20 @@ def test_file_search_literal_match(workspace):
     assert any("hello.txt" in p for p in paths)
 
 
+def test_file_search_handles_markdown_filename_with_spaces(workspace):
+    (workspace / "Linked Note.md").write_text("OVGA-SPACED-MARKER\n")
+    ctx = _FakeCtx(workspace)
+
+    result = _h_search_files(
+        {"path": str(workspace), "query": "OVGA-SPACED-MARKER"},
+        ctx,
+    )
+
+    assert result["ok"] is True
+    assert len(result["matches"]) == 1
+    assert result["matches"][0]["path"].endswith("/Linked Note.md")
+
+
 def test_resolve_workspace_root_handles_envless_context(workspace):
     ctx = _FakeCtx(workspace)
     delattr(ctx, "env")
