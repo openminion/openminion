@@ -1,6 +1,7 @@
 import shutil
 import sqlite3
 import subprocess
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -111,8 +112,8 @@ def backup_online(source_db_path: Path, destination_path: Path) -> None:
 
     try:
         with (
-            sqlite3.connect(str(source_db_path)) as source_conn,
-            sqlite3.connect(str(destination_path)) as dest_conn,
+            closing(sqlite3.connect(str(source_db_path))) as source_conn,
+            closing(sqlite3.connect(str(destination_path))) as dest_conn,
         ):
             source_conn.backup(dest_conn)
             dest_conn.commit()
@@ -131,7 +132,7 @@ def backup_vacuum_into(source_db_path: Path, destination_path: Path) -> None:
     sql = f"VACUUM INTO '{escaped_target}'"
 
     try:
-        with sqlite3.connect(str(source_db_path)) as source_conn:
+        with closing(sqlite3.connect(str(source_db_path))) as source_conn:
             source_conn.execute(sql)
             source_conn.commit()
     except Exception as exc:  # noqa: BLE001
