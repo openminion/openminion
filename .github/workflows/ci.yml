@@ -235,6 +235,10 @@ jobs:
         if: matrix.python-version == '3.11'
         run: make test-ci
 
+      - name: Run provider-free E2E regression slice (3.11)
+        if: matrix.python-version == '3.11'
+        run: make test-e2e-ci
+
       - name: Run standalone CLI smoke (3.12)
         if: matrix.python-version == '3.12'
         shell: bash

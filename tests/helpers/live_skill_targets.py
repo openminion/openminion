@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from openminion.base.config import configured_agent_ids, load_config
-from tests.helpers.live_e2e_profiles import agents_from_bundle, resolve_live_config_path
+from tests.helpers.live_e2e_profiles import resolve_live_config_path
 
 MATRIX_TYPE_SIMPLE = "skill_simple"
 MATRIX_TYPE_DENSE = "skill_dense"
@@ -56,24 +56,6 @@ def _target(
     )
 
 
-def _bundle_targets(*, bundle_filename: str) -> tuple[SkillLiveTarget, ...]:
-    profiles = agents_from_bundle(bundle_filename, framework_root=framework_root())
-    return tuple(
-        SkillLiveTarget(
-            target_id=profile.profile_id,
-            config_path=resolve_live_config_path(
-                profile.config_path,
-                framework_root(),
-            ),
-            agent_id=str(profile.agent_id or "").strip(),
-            matrix_type=MATRIX_TYPE_SIMPLE,
-            surface_kind=SURFACE_KIND_BUNDLE,
-        )
-        for profile in profiles
-        if str(profile.agent_id or "").strip()
-    )
-
-
 def skill_simple_targets() -> tuple[SkillLiveTarget, ...]:
     return (
         _target(
@@ -118,8 +100,6 @@ def skill_simple_targets() -> tuple[SkillLiveTarget, ...]:
             matrix_type=MATRIX_TYPE_SIMPLE,
             surface_kind=SURFACE_KIND_SKILL_E2E,
         ),
-        *_bundle_targets(bundle_filename="agents-alibaba.json"),
-        *_bundle_targets(bundle_filename="agents-openrouter.json"),
     )
 
 

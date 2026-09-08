@@ -122,15 +122,10 @@ def _run_skill_cli_smoke(
     return result.session_id, result.transcript_path, result.transcript
 
 
-def test_skill_matrix_bundle_agents_resolve_from_canonical_registry() -> None:
-    bundle_targets = [
-        target
-        for target in skill_simple_targets()
-        if target.target_id.startswith("bundle:")
-    ]
-    assert bundle_targets, "canonical skill registry must publish bundle targets"
-    for target in bundle_targets:
-        validate_skill_live_target(target)
+def test_skill_matrix_default_targets_do_not_expand_external_bundles() -> None:
+    assert all(
+        not target.target_id.startswith("bundle:") for target in skill_simple_targets()
+    )
 
 
 @pytest.mark.e2e

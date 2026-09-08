@@ -19,12 +19,7 @@ if str(ROOT) not in sys.path:
 
 from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
-CATALOG_PATH = (
-    ROOT.parent
-    / "docs"
-    / "reference"
-    / "openminion-day-to-day-assistant-scenario-catalog-2026-07-23.md"
-)
+CATALOG_PATH = ROOT / "tests" / "e2e" / "fixtures" / "daily_assistant" / "catalog.md"
 DISPOSITIONS = frozenset(
     {
         "pass",

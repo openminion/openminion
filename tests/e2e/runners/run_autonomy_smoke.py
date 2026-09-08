@@ -143,6 +143,7 @@ class AutonomySmokeSuite:
         self.db_path = self.output_dir / "openminion.db"
         self.session_id = args.session_id
         self.agent_id = args.agent_id
+        self.runtime_source = args.runtime_source
         self.timeout_seconds = float(args.timeout_seconds)
         self.checks: list[dict[str, Any]] = []
 
@@ -222,7 +223,8 @@ class AutonomySmokeSuite:
                 "details": details,
             }
         )
-        print(f"[{'PASS' if ok else 'FAIL'}] {check_id}: {summary}", flush=True)
+        status = "PASS" if ok else "FAIL" if required else "OPTIONAL"
+        print(f"[{status}] {check_id}: {summary}", flush=True)
 
     def _run_baseline_checks(self) -> None:
         init_result = self._run_cli(
@@ -238,6 +240,13 @@ class AutonomySmokeSuite:
             ],
         )
         init_ok = init_result["exit_code"] == 0
+        if init_ok:
+            config_payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+            config_payload["runtime"]["daemon_auto_start"] = False
+            self.config_path.write_text(
+                json.dumps(config_payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
         self._record_check(
             check_id="config-init",
             required=True,
@@ -256,6 +265,8 @@ class AutonomySmokeSuite:
                 "--agent",
                 self.agent_id,
                 "--json",
+                "--runtime-source",
+                self.runtime_source,
             ],
         )
         run_payload = run_turn.get("payload") or {}
@@ -267,6 +278,7 @@ class AutonomySmokeSuite:
         run_ok = bool(
             run_turn["exit_code"] == 0
             and run_payload.get("ok") is True
+            and run_payload.get("runtime_source") == self.runtime_source
             and ((run_payload.get("turn") or {}).get("session_id") == self.session_id)
         )
         self._record_check(
@@ -288,12 +300,15 @@ class AutonomySmokeSuite:
                 self.agent_id,
                 "--stream",
                 "--json",
+                "--runtime-source",
+                self.runtime_source,
             ],
         )
         stream_payload = run_stream.get("payload") or {}
         stream_ok = bool(
             run_stream["exit_code"] == 0
             and stream_payload.get("ok") is True
+            and stream_payload.get("runtime_source") == self.runtime_source
             and (
                 (stream_payload.get("turn") or {}).get("session_id") == self.session_id
             )
@@ -316,6 +331,8 @@ class AutonomySmokeSuite:
                 '{"path":"."}',
                 "--session",
                 self.session_id,
+                "--runtime-source",
+                self.runtime_source,
             ],
         )
         tool_payload = tool_run.get("payload") or {}
@@ -323,6 +340,7 @@ class AutonomySmokeSuite:
         artifact_ok = bool(
             tool_run["exit_code"] == 0
             and tool_payload.get("ok") is True
+            and tool_payload.get("runtime_source") == self.runtime_source
             and isinstance(artifact_refs, list)
             and len(artifact_refs) >= 1
         )
@@ -585,6 +603,7 @@ class AutonomySmokeSuite:
             "with_api": bool(self.args.with_api),
             "require_api": bool(self.args.require_api),
             "require_mission_endpoints": bool(self.args.require_mission_endpoints),
+            "runtime_source": self.runtime_source,
             "checks": self.checks,
             "summary": {
                 "total_checks": len(self.checks),
@@ -624,6 +643,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=60.0,
         help="CLI command timeout in seconds (default: 60).",
+    )
+    parser.add_argument(
+        "--runtime-source",
+        choices=("inproc", "daemon"),
+        default="inproc",
+        help="Runtime source for run and tool checks (default: inproc).",
     )
     parser.add_argument(
         "--with-api", action="store_true", help="Run API startup and endpoint probes."

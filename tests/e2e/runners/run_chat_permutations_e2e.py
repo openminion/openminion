@@ -17,8 +17,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-OPENMINION_DIR = REPO_ROOT / "openminion"
+OPENMINION_DIR = Path(__file__).resolve().parents[3]
 OPENMINION_SRC = OPENMINION_DIR / "src"
 if str(OPENMINION_DIR) not in sys.path:
     sys.path.insert(0, str(OPENMINION_DIR))
@@ -60,8 +59,7 @@ def _auto_confirm_limit() -> int:
 
 
 RELEASE_GATE_CONVERSATION = (
-    REPO_ROOT
-    / "openminion"
+    OPENMINION_DIR
     / "tests"
     / "e2e"
     / "fixtures"
@@ -69,8 +67,7 @@ RELEASE_GATE_CONVERSATION = (
     / "e2e_chat_tool_calling_release_gate.txt"
 )
 EXTERNAL_SERVICES_CONVERSATION = (
-    REPO_ROOT
-    / "openminion"
+    OPENMINION_DIR
     / "tests"
     / "e2e"
     / "fixtures"
@@ -78,8 +75,7 @@ EXTERNAL_SERVICES_CONVERSATION = (
     / "e2e_chat_tool_calling_external_services.txt"
 )
 DIAGNOSTIC_CONVERSATION = (
-    REPO_ROOT
-    / "openminion"
+    OPENMINION_DIR
     / "tests"
     / "e2e"
     / "fixtures"
@@ -88,8 +84,7 @@ DIAGNOSTIC_CONVERSATION = (
 )
 DEFAULT_CONVERSATIONS = [RELEASE_GATE_CONVERSATION]
 EDGECASE_CONVERSATION = (
-    REPO_ROOT
-    / "openminion"
+    OPENMINION_DIR
     / "tests"
     / "e2e"
     / "fixtures"
@@ -97,8 +92,7 @@ EDGECASE_CONVERSATION = (
     / "e2e_chat_tool_calling_edgecases.txt"
 )
 CHAOS_CONVERSATION = (
-    REPO_ROOT
-    / "openminion"
+    OPENMINION_DIR
     / "tests"
     / "e2e"
     / "fixtures"
