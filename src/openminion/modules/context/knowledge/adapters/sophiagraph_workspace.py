@@ -145,6 +145,7 @@ class SophiagraphWorkspaceKnowledgeGraphSource:
     def neighborhood(self, request: GraphNeighborhoodRequest) -> GraphQueryResult:
         sophia, status, store, upstream_error = self._workspace()
         limit = request.max_results or self._config.retrieval.max_results
+        graph_id = status.import_profile.vault_id
         try:
             graph = store.get_local_graph(
                 sophia.LocalGraphOptions(
@@ -156,11 +157,67 @@ class SophiagraphWorkspaceKnowledgeGraphSource:
                     max_edges=max(limit, limit * 2),
                 )
             )
+            nodes = tuple(
+                node
+                for node in graph.nodes
+                if (record := store.get_record(node.record_id)) is not None
+                and _vault_id(record) == graph_id
+            )
         except upstream_error as exc:
             self._raise_workspace_error(exc)
-        graph_id = status.import_profile.vault_id
-        items = tuple(self._node_item(node, graph_id) for node in graph.nodes)
-        edges = tuple(_edge_mapping(edge) for edge in graph.edges)
+        node_ids = {str(node.record_id) for node in nodes}
+        if request.entity_id not in node_ids:
+            nodes = ()
+            node_ids = set()
+        graph_edges = tuple(
+            edge
+            for edge in graph.edges
+            if str(edge.source_record_id) in node_ids
+            and (
+                edge.target_record_id is None or str(edge.target_record_id) in node_ids
+            )
+        )
+        connected_ids = {request.entity_id}
+        frontier = connected_ids.copy()
+        while frontier:
+            adjacent_ids: set[str] = set()
+            for edge in graph_edges:
+                if edge.target_record_id is None:
+                    continue
+                source_id = str(edge.source_record_id)
+                target_id = str(edge.target_record_id)
+                if source_id in frontier:
+                    adjacent_ids.add(target_id)
+                if target_id in frontier:
+                    adjacent_ids.add(source_id)
+            frontier = adjacent_ids - connected_ids
+            connected_ids.update(frontier)
+        nodes = tuple(node for node in nodes if str(node.record_id) in connected_ids)
+        node_ids = connected_ids
+        graph_edges = tuple(
+            edge
+            for edge in graph_edges
+            if str(edge.source_record_id) in node_ids
+            and (
+                edge.target_record_id is None or str(edge.target_record_id) in node_ids
+            )
+        )
+        degree_in = {node_id: 0 for node_id in node_ids}
+        degree_out = {node_id: 0 for node_id in node_ids}
+        for edge in graph_edges:
+            if edge.target_record_id is not None:
+                degree_out[str(edge.source_record_id)] += 1
+                degree_in[str(edge.target_record_id)] += 1
+        items = tuple(
+            self._node_item(
+                node,
+                graph_id,
+                degree_in=degree_in[str(node.record_id)],
+                degree_out=degree_out[str(node.record_id)],
+            )
+            for node in nodes
+        )
+        edges = tuple(_edge_mapping(edge) for edge in graph_edges)
         paths = (
             (GraphPathEvidence(provider=self.name, nodes=items, edges=edges),)
             if items or edges
@@ -274,7 +331,14 @@ class SophiagraphWorkspaceKnowledgeGraphSource:
             },
         )
 
-    def _node_item(self, node: Any, graph_id: str) -> GraphContextItem:
+    def _node_item(
+        self,
+        node: Any,
+        graph_id: str,
+        *,
+        degree_in: int,
+        degree_out: int,
+    ) -> GraphContextItem:
         return GraphContextItem(
             provider=self.name,
             source_graph_id=graph_id,
@@ -285,9 +349,9 @@ class SophiagraphWorkspaceKnowledgeGraphSource:
                 "kind": "note",
                 "title": str(node.title or ""),
                 "tags": list(node.tags or ()),
-                "degree_in": node.degree_in,
-                "degree_out": node.degree_out,
-                "orphan": node.orphan,
+                "degree_in": degree_in,
+                "degree_out": degree_out,
+                "orphan": degree_in == 0 and degree_out == 0,
             },
         )
 

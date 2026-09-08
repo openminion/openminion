@@ -180,6 +180,118 @@ def test_neighborhood_preserves_provider_node_and_edge_identity(tmp_path: Path) 
     assert edge["target_record_id"]
 
 
+def test_neighborhood_filters_nodes_and_edges_to_the_workspace_vault(
+    tmp_path: Path,
+) -> None:
+    from sophiagraph import (
+        MemoryRecord,
+        StructuralLink,
+        load_workspace_status,
+        open_workspace_store,
+    )
+
+    workspace_root, source_root = _initialized_workspace(tmp_path)
+    _write_linked_notes(source_root)
+    source = _source(workspace_root, source_root)
+    source.refresh(GraphRefreshRequest())
+    hub_id = next(
+        item.node_or_edge_id
+        for item in source.query(GraphQueryRequest(query="Hub")).items
+        if item.source_ref.path == "Hub.md"
+    )
+    store = open_workspace_store(workspace_root)
+    namespace = load_workspace_status(workspace_root).metadata.namespace
+    store.put_record(
+        MemoryRecord(
+            id="other-vault-record",
+            scope="agent:openminion",
+            type="artifact_digest",
+            title="Other vault",
+            content={"text": "Other vault"},
+            created_at="2026-09-06T00:00:00+00:00",
+            updated_at="2026-09-06T00:00:00+00:00",
+            namespace=namespace,
+            meta={
+                "document": {"path": "Other.md", "title": "Other vault"},
+                "vault": {"vault_id": "other-vault", "path": "Other.md"},
+            },
+        )
+    )
+    store.put_record(
+        MemoryRecord(
+            id="isolated-vault-record",
+            scope="agent:openminion",
+            type="artifact_digest",
+            title="Isolated vault note",
+            content={"text": "Isolated vault note"},
+            created_at="2026-09-06T00:00:00+00:00",
+            updated_at="2026-09-06T00:00:00+00:00",
+            namespace=namespace,
+            meta={
+                "document": {"path": "Isolated.md", "title": "Isolated vault note"},
+                "vault": {"vault_id": "ovga-vault", "path": "Isolated.md"},
+            },
+        )
+    )
+    store.put_link(
+        StructuralLink(
+            link_id="cross-vault-link",
+            source_record_id=hub_id,
+            target_record_id="other-vault-record",
+            raw_target="Other",
+            link_kind="wikilink",
+            resolution_status="resolved",
+            namespace=namespace,
+        )
+    )
+    store.put_link(
+        StructuralLink(
+            link_id="isolated-cross-vault-link",
+            source_record_id="isolated-vault-record",
+            target_record_id="other-vault-record",
+            raw_target="Other",
+            link_kind="wikilink",
+            resolution_status="resolved",
+            namespace=namespace,
+        )
+    )
+
+    result = source.neighborhood(
+        GraphNeighborhoodRequest(entity_id=hub_id, depth=2, max_results=10)
+    )
+    foreign = source.neighborhood(
+        GraphNeighborhoodRequest(
+            entity_id="other-vault-record",
+            depth=1,
+            max_results=10,
+        )
+    )
+    isolated = source.neighborhood(
+        GraphNeighborhoodRequest(
+            entity_id="isolated-vault-record",
+            depth=1,
+            max_results=10,
+        )
+    )
+
+    assert {item.source_ref.path for item in result.items} == {"Hub.md", "Detail.md"}
+    assert result.paths
+    assert all(
+        edge["source_record_id"] != "other-vault-record"
+        and edge["target_record_id"] != "other-vault-record"
+        for edge in result.paths[0].edges
+    )
+    hub = next(item for item in result.items if item.node_or_edge_id == hub_id)
+    assert hub.metadata["degree_out"] == 1
+    assert foreign.items == ()
+    assert foreign.paths == ()
+    assert len(isolated.items) == 1
+    assert isolated.items[0].metadata["degree_in"] == 0
+    assert isolated.items[0].metadata["degree_out"] == 0
+    assert isolated.items[0].metadata["orphan"] is True
+    assert isolated.paths[0].edges == ()
+
+
 def test_adapter_conforms_and_reopens_same_workspace_without_duplicate_sync(
     tmp_path: Path,
 ) -> None:
