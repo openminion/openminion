@@ -10,7 +10,7 @@ from openminion.modules.llm import RuntimeLLMHandle
 from openminion.api.core.bootstrap import RuntimeBootstrapMixin
 from openminion.api.core.exposure import RuntimeToolExposureMixin
 from openminion.api.core.lifecycle import (
-    close_runtime_components,
+    close_unregistered_runtime_components,
     initialize_runtime_components,
 )
 from openminion.api.core.profiles import RuntimeProfilesMixin
@@ -163,21 +163,9 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
         close_external_a2a_runtime(self)
         finalizer = getattr(self, "_finalizer", None)
         if finalizer is not None and finalizer.alive:
-            finalizer.detach()
-        close_runtime_components(
-            channel_supervisor=getattr(self, "channel_supervisor", None),
-            retrieve_ctl=getattr(self, "retrieve_ctl", None),
-            action_policy=getattr(self, "action_policy", None),
-            runtime_manager=getattr(self, "runtime_manager", None),
-            lifecycle_bridge=getattr(self, "_lifecycle_event_bridge", None),
-            tools=getattr(self, "tools", None),
-            runtime_storage=getattr(self, "runtime_storage", None),
-            sandbox_runner=getattr(self, "sandbox_runner", None),
-            authored_tools=getattr(self, "authored_tools", None),
-            ops_service=getattr(self, "ops_service", None),
-            telemetry_service=getattr(self, "telemetry_service", None),
-            agent_services=getattr(self, "_agent_services", None),
-        )
+            finalizer()
+        elif finalizer is None:
+            close_unregistered_runtime_components(self)
         self._closed = True
 
 

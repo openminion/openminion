@@ -84,6 +84,39 @@ class AgentServiceLifecycleTests(AgentServiceTestCase):
         self.assertIn("- enabled_tools: exec.run, file.read", prompt)
         self.assertIn("enabled_tools list above is authoritative", prompt)
 
+    def test_runtime_grounding_describes_enabled_persistent_memory(self) -> None:
+        class _Tools:
+            @staticmethod
+            def model_provider_specs() -> list[ProviderToolSpec]:
+                return [
+                    ProviderToolSpec(
+                        name="memory.search",
+                        description="Search memory",
+                        parameters={},
+                    ),
+                    ProviderToolSpec(
+                        name="memory.write",
+                        description="Write memory",
+                        parameters={},
+                    ),
+                ]
+
+        prompt = append_grounding_blocks(
+            system_prompt="BASE",
+            facts=build_grounding_facts(
+                runtime_env=None,
+                home_root=None,
+                workspace_root="/workspace",
+                inbound_metadata={},
+                tools=_Tools(),
+                include_session_working_state=False,
+            ),
+        )
+
+        self.assertIn("persistent agent memory", prompt)
+        self.assertIn("No records were recalled here", prompt)
+        self.assertIn("do not say persistent memory is unavailable", prompt)
+
     def test_plugins_transform_message(self) -> None:
         config = OpenMinionConfig()
         _csc_install_default_agent(config)

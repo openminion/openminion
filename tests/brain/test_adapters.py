@@ -1199,6 +1199,7 @@ class SessctlAdapterTests(unittest.TestCase):
             db_path = Path(tmp) / "mock.db"
             adapter = create_session_adapter(mode="strict", db_path=db_path)
 
+            self.assertEqual(adapter.list_turns("missing-session"), [])
             sid = adapter.store.create_session()
 
             adapter.append_turn(sid, "user", "hi")
@@ -1459,6 +1460,31 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
         unrealized.close()
         self.assertIsNone(unrealized._identity_ctl)
         self.assertIsNone(unrealized._skill_client)
+
+    def test_context_session_bridge_persists_canonical_events(self) -> None:
+        from openminion.modules.brain.adapters.context.bridges import (
+            BridgeSessionClient,
+        )
+
+        store = MagicMock()
+        store.emit_canonical_event.return_value = "event-1"
+        bridge = BridgeSessionClient(backing_store=store)
+
+        event_id = bridge.emit_canonical_event(
+            session_id="session-1",
+            event_type="context.manifest.created",
+            payload={"pack_version": "pack-1"},
+            actor_id="agent-1",
+        )
+
+        self.assertEqual(event_id, "event-1")
+        store.emit_canonical_event.assert_called_once_with(
+            session_id="session-1",
+            event_type="context.manifest.created",
+            payload={"pack_version": "pack-1"},
+            actor_type="system",
+            actor_id="agent-1",
+        )
 
     def test_context_adapter_derives_prompt_and_runtime_tools_from_single_bundle(
         self,

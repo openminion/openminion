@@ -658,11 +658,14 @@ class RuntimeProfilesMixin:
         if not normalized:
             return
         evicted_services: list[AgentService] = []
+        evicted_gateways: list[GatewayService] = []
         evicted_memory: list[Any] = []
         with self._agent_runtime_lock:
             for cache_key in tuple(self._gateways):
                 if cache_key == normalized or cache_key.startswith(f"{normalized}||"):
-                    self._gateways.pop(cache_key, None)
+                    gateway = self._gateways.pop(cache_key, None)
+                    if gateway is not None:
+                        evicted_gateways.append(gateway)
             for cache_key in tuple(self._agent_services):
                 if cache_key == normalized or cache_key.startswith(f"{normalized}||"):
                     service = self._agent_services.pop(cache_key, None)
@@ -673,6 +676,8 @@ class RuntimeProfilesMixin:
                     assembly = self._memory_assemblies.pop(cache_key, None)
                     if assembly is not None:
                         evicted_memory.append(assembly)
+        for gateway in evicted_gateways:
+            gateway.close()
         for service in evicted_services:
             service.close()
         for assembly in evicted_memory:

@@ -177,6 +177,7 @@ def _build_context(
     memory_dynamic_retrieval_enabled: bool = False,
     memory: _SilentMemory | None = None,
     events: list[dict[str, Any]] | None = None,
+    contextctl_adapter: object | None = None,
 ):
     return build_turn_context(
         history=[
@@ -204,6 +205,7 @@ def _build_context(
         memory_capsule_cache={},
         memory_dynamic_retrieval_enabled=memory_dynamic_retrieval_enabled,
         knowledge_graphs=knowledge_graphs,
+        contextctl_adapter=contextctl_adapter,
     )
 
 
@@ -371,31 +373,23 @@ def test_shared_evidence_packing_runs_once_independent_of_full_build_flag(
             ),
         )
     )
-    env = MagicMock()
-    env.get_bool.return_value = full_build_enabled
     adapter = MagicMock()
     adapter.is_enabled = True
     adapter.build_ctxctl_messages.return_value = [object()]
     adapter.select_history.return_value = []
     original = ContextCtlService.pack_evidence_items
 
-    with (
-        patch("openminion.services.config.resolve_services_env", return_value=env),
-        patch(
-            "openminion.services.context.adapter.ContextCtlGatewayAdapter.from_env",
-            return_value=adapter,
-        ),
-        patch.object(
-            ContextCtlService,
-            "pack_evidence_items",
-            wraps=original,
-        ) as pack_items,
-    ):
+    with patch.object(
+        ContextCtlService,
+        "pack_evidence_items",
+        wraps=original,
+    ) as pack_items:
         context = _build_context(
             knowledge_graphs=graph,
             memory_strategy=MEMORY_CAPSULE_STRATEGY_DYNAMIC_TURN,
             memory_dynamic_retrieval_enabled=True,
             memory=memory,
+            contextctl_adapter=adapter if full_build_enabled else None,
         )
 
     assert memory.selection_calls == 1

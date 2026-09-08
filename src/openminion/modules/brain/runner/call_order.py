@@ -1,5 +1,5 @@
-from time import time
 from typing import Any, TYPE_CHECKING
+from time import time
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..runner import BrainRunner
@@ -23,8 +23,7 @@ def track_manifest_emitted(runner: "BrainRunner", llm_call_id: str) -> None:
 
 
 def track_call_completed(runner: "BrainRunner", llm_call_id: str) -> None:
-    if llm_call_id in runner._call_order_tracker:
-        runner._call_order_tracker[llm_call_id]["completed_at"] = time()
+    runner._call_order_tracker.pop(llm_call_id, None)
 
 
 def validate_call_order(

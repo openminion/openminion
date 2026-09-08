@@ -1,5 +1,7 @@
 import json
-from typing import Mapping
+import sqlite3
+from pathlib import Path
+from typing import Any, Mapping
 
 from openminion.modules.context.schemas import (
     SessionSlice,
@@ -11,6 +13,59 @@ from openminion.base.constants import STATE_KEY_ACTIVE
 
 RUNTIME_SESSION_SLICE_BRIDGE_VERSION = "runtime-bridge:v1"
 SUMMARY_SHORT_SOURCE = "session_context.summary_short"
+
+
+class RuntimeMappedSessionClient:
+    """Context session client backed by the runtime session store."""
+
+    contract_version = "v1"
+
+    def __init__(
+        self,
+        sqlite_path: Path | None = None,
+        *,
+        store: Any | None = None,
+    ) -> None:
+        self._sqlite_path = sqlite_path
+        self._migrated = store is not None
+        self._connection: sqlite3.Connection | None = None
+        self._store: Any | None = store
+
+    def _ensure_ready(self) -> Any:
+        from openminion.modules.storage.runtime.migrations import migrate_database
+        from openminion.modules.storage.runtime.sqlite import connect_database
+
+        if self._store is not None:
+            return self._store
+        if self._sqlite_path is None:
+            raise RuntimeError("runtime session storage is unavailable")
+        if not self._migrated:
+            migrate_database(self._sqlite_path)
+            self._migrated = True
+        if self._connection is None:
+            self._connection = connect_database(self._sqlite_path)
+            self._store = SessionStore(self._connection)
+        return self._store
+
+    def get_slice(
+        self, *, session_id: str, purpose: str, limits: dict[str, int]
+    ) -> Any:
+        del purpose
+        return build_session_slice_from_runtime_store(
+            store=self._ensure_ready(),
+            session_id=session_id,
+            limits=limits,
+            slice_version="runtime-map:v1",
+        )
+
+    def close(self) -> None:
+        if self._connection is None:
+            return
+        try:
+            self._connection.close()
+        finally:
+            self._connection = None
+            self._store = None
 
 
 def build_session_slice_from_runtime_store(

@@ -157,12 +157,17 @@ def _render_memory_capability_text(facts: GroundingFacts) -> str:
             "remember or what kind of memory you have, describe the recalled "
             "facts currently in your context — do not say you have no memory."
         )
+    elif {"memory.search", "memory.write"}.intersection(facts.enabled_tool_names):
+        base = (
+            "memory_capability: You have current-session history and persistent agent "
+            "memory through enabled memory tools. Agent-scoped records can cross sessions. "
+            "No records were recalled here; do not say persistent memory is unavailable."
+        )
     else:
         base = (
-            "memory_capability: You have session-scoped memory for this "
-            "conversation. Cross-session memory may be available if durable "
-            "records exist from prior sessions. When asked about your memory, "
-            "describe what is currently in your context."
+            "memory_capability: You have session-scoped memory for this conversation. "
+            "Cross-session memory may be available if durable records exist from prior "
+            "sessions. When asked about your memory, describe the current context."
         )
     return (
         base + "\n"

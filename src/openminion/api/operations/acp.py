@@ -35,6 +35,7 @@ from acp.schema import (
 )
 
 from openminion import __version__
+from openminion.api.core.lifecycle import close_runtime_session
 from openminion.base.config.core import resolve_default_agent_id
 
 _PROTOCOL_VERSION = 1
@@ -157,10 +158,7 @@ class OpenMinionACPAgent:
         self, session_id: str, **_kwargs: Any
     ) -> CloseSessionResponse:
         self._session(session_id)
-        self._runtime.sessions.close_session(
-            session_id=session_id,
-            reason="acp_client_close",
-        )
+        close_runtime_session(self._runtime, session_id, reason="acp_client_close")
         return CloseSessionResponse()
 
     async def fork_session(

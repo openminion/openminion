@@ -24,9 +24,10 @@ class _SessionStore:
 
 
 def _ctx(events: list[dict]) -> APIRouteContext:
+    sessions = _SessionStore(events)
     return APIRouteContext(
         config_path=None,
-        runtime=SimpleNamespace(sessions=_SessionStore(events)),
+        runtime=SimpleNamespace(sessions=sessions, context_trace_store=sessions),
         runtime_bootstrap_error=None,
         request_headers=None,
         request_id="req-test",

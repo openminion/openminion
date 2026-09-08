@@ -499,6 +499,7 @@ def build_gateway_service(
         session_context=resolved_session_context,
         agent_memory=resolved_memory,
         knowledge_graphs=knowledge_graphs,
+        context_token_budget=max(0, int(config.runtime.session_context_token_budget)),
         brain_integration_mode=getattr(
             config.gateway,
             "brain_integration_mode",

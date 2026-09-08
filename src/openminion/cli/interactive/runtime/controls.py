@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
+from openminion.api.core.lifecycle import close_runtime_session
 from openminion.base.config import RunProfileOverrides
 from openminion.base.config.action_policy import (
     ACTION_POLICY_SESSION_OVERRIDE_KEY,
@@ -44,6 +45,7 @@ class RuntimeControlsMixin:
     _permission_overrides: dict[str, str]
     _read_only_mode: bool
     _rt: Any
+    _session_id: str | None
     _statusline_command: str
     _target: str
     _working_dir: str | None
@@ -63,9 +65,24 @@ class RuntimeControlsMixin:
 
         def create_new_session(self) -> str: ...
 
+        def _reset_token_usage_accounting(self) -> None: ...
+
+        def _sync_conversation_id(self) -> None: ...
+
         def token_usage_snapshot(self) -> Any: ...
 
         def token_usage_report(self) -> str: ...
+
+    def close_current_session(self) -> str:
+        if not self.is_bound:
+            raise ValueError("no active session")
+        session_id = self.session_id
+        close_runtime_session(self._rt, session_id, reason="focus_user_close")
+        self._session_id = None
+        self._sync_conversation_id()
+        self._project_context_pending = False
+        self._reset_token_usage_accounting()
+        return session_id
 
     def list_models(self) -> list[ModelSelection]:
         catalog = getattr(self._rt, "model_connection_catalog", None)

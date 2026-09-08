@@ -17,6 +17,7 @@ def test_terminal_catalog_preserves_supported_commands_and_aliases() -> None:
     commands = set(terminal_slash_commands())
 
     for command in (
+        "/close",
         "/new",
         "/resume",
         "/sessions",

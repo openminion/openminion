@@ -96,6 +96,10 @@ async def _cancel_gateway_stream_worker(
 class GatewayService:
     _METHOD_HANDLE_MESSAGE = "gateway.handle_message"
 
+    @property
+    def agent_id(self) -> str:
+        return self._agent_id
+
     def __init__(
         self,
         agent: AgentService,
@@ -112,6 +116,8 @@ class GatewayService:
         knowledge_graphs: object | None = None,
         brain_integration_mode: str = _BRAIN_INTEGRATION_MODE_AUTHORITATIVE,
         retrieval_service: RetrievalService | None = None,
+        contextctl_adapter: Any | None = None,
+        context_token_budget: int = 0,
     ) -> None:
         from openminion.services.agent.memory.gateway_adapter import (
             DisabledMemoryGatewayAdapter,
@@ -137,6 +143,20 @@ class GatewayService:
         )
         self._knowledge_graphs = knowledge_graphs
         self._retrieval_service = retrieval_service
+        if contextctl_adapter is None:
+            from openminion.modules.context.memory_client import (
+                ContextMemoryClientAdapter,
+            )
+            from openminion.services.context.adapter import ContextCtlGatewayAdapter
+
+            contextctl_adapter = ContextCtlGatewayAdapter.from_env(
+                agent_id=agent_id,
+                runtime_token_budget=context_token_budget,
+                session_client=self._sessions,
+                memory_client=ContextMemoryClientAdapter(self._agent_memory),
+                logger=logger.getChild("contextctl"),
+            )
+        self._contextctl_adapter = contextctl_adapter
         normalized_mode = str(brain_integration_mode or "").strip().lower()
         if normalized_mode == _BRAIN_INTEGRATION_MODE_LEGACY_ALIAS:
             normalized_mode = _BRAIN_INTEGRATION_MODE_AUTHORITATIVE
@@ -173,6 +193,7 @@ class GatewayService:
             memory_capsule_strategy=self._memory_capsule_strategy,
             memory_capsule_cache=self._memory_capsule_cache,
             memory_dynamic_retrieval_enabled=self._memory_dynamic_retrieval_enabled,
+            contextctl_adapter=self._contextctl_adapter,
             emit_run_state=self._emit_run_state,
             emit_invocation_lifecycle=getattr(
                 self._agent, "emit_invocation_lifecycle_sync", None
@@ -181,6 +202,23 @@ class GatewayService:
 
     def flush_memory_followups(self, *, session_id: str | None = None) -> None:
         self._turn_runner.flush_memory_followups(session_id=session_id)
+
+    def release_session(self, session_id: str) -> None:
+        self._turn_runner.release_session(session_id)
+        self._contextctl_adapter.release_session(session_id)
+        release_agent_session = getattr(self._agent, "release_session", None)
+        if callable(release_agent_session):
+            release_agent_session(session_id)
+
+    def close_session(self, session_id: str, *, reason: str) -> None:
+        self._session_context.on_session_close(session_id=session_id)
+        self._sessions.close_session(session_id=session_id, reason=reason)
+        self.release_session(session_id)
+
+    def close(self) -> None:
+        self.flush_memory_followups()
+        self._memory_capsule_cache.clear()
+        self._contextctl_adapter.close()
 
     def repair_invocation_lifecycle(self, *, session_id: str) -> dict[str, object]:
         report = InvocationLifecycleReconciler.for_runtime(

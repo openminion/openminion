@@ -556,6 +556,7 @@ from .context import (  # noqa: E402
     _resolve_turn_session_ids,
     _runner_turn_signatures,
     _runtime_system_prompt,
+    _source_turn_signature,
     _turn_signature,
 )
 from .followup import (  # noqa: E402
@@ -621,6 +622,7 @@ BrainBridgeTurnMixin._apply_runtime_system_prompt_override = staticmethod(
     _apply_runtime_system_prompt_override
 )
 BrainBridgeTurnMixin._runner_turn_signatures = _runner_turn_signatures
+BrainBridgeTurnMixin._source_turn_signature = _source_turn_signature  # type: ignore[attr-defined]
 BrainBridgeTurnMixin._turn_signature = _turn_signature
 BrainBridgeTurnMixin._normalize_turn_content = _normalize_turn_content
 BrainBridgeTurnMixin._is_state_machine_error_text = staticmethod(

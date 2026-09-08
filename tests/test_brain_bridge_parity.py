@@ -24,6 +24,24 @@ class _DummySessionApi:
     def __init__(self) -> None:
         self.state = {}
         self.events: dict[str, list[dict[str, object]]] = {}
+        self.turns: dict[str, list[dict[str, object]]] = {}
+
+    def append_turn(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        attachments=None,
+        meta=None,
+    ):
+        del attachments
+        self.turns.setdefault(session_id, []).append(
+            {"role": role, "content": content, "meta": dict(meta or {})}
+        )
+        return f"{session_id}-{len(self.turns[session_id])}"
+
+    def list_turns(self, session_id: str):
+        return list(self.turns.get(session_id, []))
 
     def get_latest_working_state(
         self,
@@ -70,26 +88,7 @@ class _DummySessionApi:
 
 
 class _CaptureSessionApi(_DummySessionApi):
-    def __init__(self) -> None:
-        super().__init__()
-        self.turns: dict[str, list[dict[str, object]]] = {}
-
-    def append_turn(
-        self,
-        session_id: str,
-        role: str,
-        content: str,
-        attachments=None,
-        meta=None,
-    ):
-        del attachments
-        self.turns.setdefault(session_id, []).append(
-            {"role": role, "content": content, "meta": dict(meta or {})}
-        )
-        return f"{session_id}-{len(self.turns[session_id])}"
-
-    def list_turns(self, session_id: str):
-        return list(self.turns.get(session_id, []))
+    pass
 
 
 class _DummyRunner:
@@ -2174,6 +2173,7 @@ def test_brain_hydrates_gateway_history_into_runner_session():
     assert ("assistant", "assistant prior response") in hydrated_pairs
     user_turn = next(item for item in hydrated if item["role"] == "user")
     assert user_turn["meta"] == {
+        "message_id": history[1].id,
         "run_id": "run-1",
         "source": "gateway_history_bridge",
         "trace_id": "trace-1",
@@ -2212,6 +2212,39 @@ def test_brain_hydration_dedupes_prefixed_assistant_content():
     turns = capture_api.list_turns("s-dedupe")
     assistant_turns = [item for item in turns if item.get("role") == "assistant"]
     assert len(assistant_turns) == 1
+
+
+def test_brain_hydration_preserves_repeated_content_with_distinct_message_ids():
+    service = _build_service(
+        _make_step_out(ok=True),
+        _FakeProvider(follow_text="final", follow_model="follow-model"),
+    )
+    capture_api = _CaptureSessionApi()
+    service._runner = _DummyRunner(step_out=_make_step_out(ok=True))
+    service._runner.session_api = capture_api
+    history = [
+        Message(
+            channel="console",
+            target="me",
+            body="continue",
+            metadata={"role": "user", "message_id": message_id},
+            id=message_id,
+        )
+        for message_id in ("message-1", "message-2")
+    ]
+
+    service._hydrate_runner_session_context(
+        runner=service._runner,
+        session_id="s-repeat",
+        history=history,
+    )
+
+    turns = capture_api.list_turns("s-repeat")
+    assert [turn["content"] for turn in turns] == ["continue", "continue"]
+    assert [turn["meta"]["message_id"] for turn in turns] == [
+        "message-1",
+        "message-2",
+    ]
 
 
 def test_reset_state_for_new_input_supersedes_active_plan():

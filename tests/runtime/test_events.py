@@ -239,3 +239,19 @@ def test_native_canonical_runtime_lifecycle_events_use_stable_component_ids() ->
     assert agent_started["component"]["host_component_id"] == "primary"
     assert agent_stopped["component"]["component_id"] == "canon-agent"
     assert agent_stopped["reason"] == "test"
+
+
+def test_runtime_manager_heartbeat_is_not_persisted_on_every_unchanged_sweep() -> None:
+    events, hook = _collect_events()
+    manager = AgentRuntimeManager(
+        turn_executor=_simple_executor,
+        on_runtime_event=hook,
+    )
+
+    manager._sweep_once()
+    manager._sweep_once()
+
+    heartbeats = [
+        payload for event_type, payload in events if event_type == "component.heartbeat"
+    ]
+    assert len(heartbeats) == 1

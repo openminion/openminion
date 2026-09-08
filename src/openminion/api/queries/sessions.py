@@ -180,6 +180,7 @@ def list_session_context_traces(
     config_path: str | None,
     *,
     session_id: str,
+    trace_session_id: str | None = None,
     turn_id: str | None = None,
     limit: int = 50,
     runtime: APIRuntime | None = None,
@@ -188,14 +189,46 @@ def list_session_context_traces(
         config_path=config_path,
         runtime=runtime,
     )
+    trace_store = getattr(active_runtime, "context_trace_store", None)
+    own_trace_store = trace_store is None
     try:
+        if active_runtime.sessions.get_session(session_id) is None:
+            raise SessionQueryError(
+                f"Session '{session_id}' was not found.",
+                code="session_not_found",
+            )
+        if trace_store is None:
+            from openminion.modules.brain.paths import resolve_brain_sessions_db_path
+            from openminion.modules.session.runtime.factory import (
+                build_module_session_store,
+            )
+            from openminion.modules.storage.engine import StorageEngineConfig
+
+            session_path = resolve_brain_sessions_db_path(
+                storage_path=active_runtime.storage_path
+            )
+            trace_store = build_module_session_store(
+                config=StorageEngineConfig(
+                    root_dir=session_path.parent,
+                    sqlite_path=session_path,
+                    fallback_root=session_path.parent,
+                    record_backend=active_runtime.config.storage.record_backend(),
+                    record_backend_options=(
+                        active_runtime.config.storage.record_backend_options()
+                    ),
+                ),
+                database_path=session_path,
+                env=active_runtime.config_manager.env,
+            )
         return list_context_traces(
-            active_runtime.sessions,
-            session_id=session_id,
+            trace_store,
+            session_id=str(trace_session_id or session_id).strip(),
             turn_id=turn_id,
             limit=limit,
         )
     except ContextTraceLookupError as exc:
         raise SessionQueryError(str(exc), code=exc.code) from exc
     finally:
+        if own_trace_store and trace_store is not None:
+            trace_store.close()
         close_api_runtime_if_owned(active_runtime, own_runtime=own_runtime)

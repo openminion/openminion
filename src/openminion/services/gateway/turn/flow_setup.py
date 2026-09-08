@@ -29,6 +29,8 @@ from .flow_models import _RoutingResult
 
 
 class GatewayTurnSetupMixin:
+    _contextctl_adapter: Any
+
     def _resolve_invocation_id(self, *, lifecycle: Any) -> tuple[str, str, str]:
         prior_invocation_id = str(lifecycle.invocation_id or "").strip()
         if not prior_invocation_id:
@@ -263,6 +265,7 @@ class GatewayTurnSetupMixin:
             memory_capsule_cache=self._memory_capsule_cache,
             memory_dynamic_retrieval_enabled=self._memory_dynamic_retrieval_enabled,
             knowledge_graphs=self._knowledge_graphs,
+            contextctl_adapter=self._contextctl_adapter,
         )
 
     def _build_gtgs_terminal_resolver(

@@ -10,12 +10,15 @@ from openminion.modules.context.knowledge.models import (
 )
 from openminion.modules.context.pack.budgeting import _estimate_tokens
 from openminion.modules.context.schemas import (
+    ArtifactDigest,
     ContextBudgets,
     ContextEvidenceItem,
     ContextEvidenceOmission,
     ContextEvidencePack,
+    ContextSegment,
     default_budgets_for,
 )
+from openminion.modules.context.segment.trim import position_aware_v1
 from openminion.modules.memory.surfacing.evidence import (
     MemoryRetrievalEvidenceSelection,
 )
@@ -98,6 +101,29 @@ def pack_evidence_items(
         omissions=tuple(omissions),
         estimated_tokens=total_tokens,
     )
+
+
+def apply_evidence_priority_ordering(
+    *,
+    segments: list[ContextSegment],
+    artifact_digests: list[ArtifactDigest],
+) -> None:
+    evidence_segments = [
+        (index, segment)
+        for index, segment in enumerate(segments)
+        if segment.bucket == "evidence_refs" and segment.content.strip()
+    ]
+    if len(evidence_segments) <= 1:
+        return
+    indexes = [index for index, _segment in evidence_segments]
+    selected = [segment for _index, segment in evidence_segments]
+    score_by_ref = {artifact.ref: artifact.score for artifact in artifact_digests}
+    scores = [
+        score_by_ref.get(segment.refs[0], 0.5) if segment.refs else 0.0
+        for segment in selected
+    ]
+    for index, segment in zip(indexes, position_aware_v1(selected, scores)):
+        segments[index] = segment
 
 
 def map_memory_evidence(

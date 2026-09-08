@@ -71,3 +71,7 @@ class ContextSummaryState:
 
     def get_summary_deltas(self, session_id: str) -> list[SummaryDelta]:
         return list(self._summary_deltas.get(session_id, []))
+
+    def release_session(self, session_id: str) -> None:
+        self._summary_base.pop(session_id, None)
+        self._summary_deltas.pop(session_id, None)

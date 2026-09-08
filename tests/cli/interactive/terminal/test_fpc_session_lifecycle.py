@@ -23,6 +23,7 @@ class _FakeRuntime:
     def __init__(self) -> None:
         self.created: list[str] = []
         self.bound: list[str] = []
+        self.closed: list[str] = []
         self._next_session_id = "focus-new-001"
         self._directory_sessions = [
             _SessionRecord(id="focus-empty", label="focus-empty", message_count=0),
@@ -36,6 +37,10 @@ class _FakeRuntime:
     def create_new_session(self) -> str:
         self.created.append(self._next_session_id)
         return self._next_session_id
+
+    def close_current_session(self) -> str:
+        self.closed.append("focus-live")
+        return "focus-live"
 
     def list_directory_sessions(self, *, limit: int = 50):
         return list(self._directory_sessions[:limit])
@@ -86,6 +91,7 @@ async def _dispatch(
 
 def test_new_and_resume_added_to_catalog() -> None:
     assert "/new" in _SLASH_COMMANDS
+    assert "/close" in _SLASH_COMMANDS
     assert "/resume" in _SLASH_COMMANDS
 
 
@@ -110,6 +116,23 @@ def test_new_starts_session_and_clears_transcript() -> None:
     assert transcript._truncated_blocks == []
     assert transcript._live_narrated_call_ids == set()
     assert "started new session" in out
+
+
+def test_close_closes_session_and_clears_transcript() -> None:
+    runtime = _FakeRuntime()
+    overlay = _StubOverlay(None)
+    console, _ = _make_console()
+    transcript = TerminalTranscript(console)
+    transcript.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body="x"))
+
+    transcript, out, should_exit = asyncio.run(
+        _dispatch("/close", runtime=runtime, overlay=overlay, transcript=transcript)
+    )
+
+    assert should_exit is False
+    assert runtime.closed == ["focus-live"]
+    assert transcript._messages == []
+    assert "closed session: focus-live" in out
 
 
 def test_resume_filters_to_non_empty_sessions_and_reloads_history() -> None:

@@ -18,95 +18,30 @@ from openminion.base.runtime.constants import (
     RUNTIME_TURN_STATUS_FAILED,
     RUNTIME_TURN_STATUS_STARTED,
 )
-from openminion.modules.runtime.contracts import TURN_STREAM_SCHEMA_VERSION
+from openminion.modules.runtime.contracts import (
+    AgentHandle as AgentHandle,
+    AgentStatus as AgentStatus,
+    ToolCallSummary as ToolCallSummary,
+    TURN_STREAM_SCHEMA_VERSION,
+    TurnChunk as TurnChunk,
+    TurnError as TurnError,
+    TurnRequest as TurnRequest,
+    TurnResponse as TurnResponse,
+    TurnTelemetry as TurnTelemetry,
+)
 from openminion.base.runtime.interfaces import RUNTIME_INTERFACE_VERSION
 from openminion.modules.telemetry.lifecycle import (
     build_agent_runtime_component_identity,
     build_runtime_manager_component_identity,
 )
 from .events import emit_runtime_operation
-from .constants import TURN_STREAM_HISTORY_LIMIT
+from .constants import RUNTIME_HEARTBEAT_INTERVAL_SECONDS, TURN_STREAM_HISTORY_LIMIT
 
 from openminion.base.time import utc_now_iso as _utc_now_iso
 
 
 def _new_trace_id() -> str:
     return uuid4().hex
-
-
-@dataclass(frozen=True)
-class ToolCallSummary:
-    name: str
-    count: int = 1
-    status: str = "unknown"
-    duration_ms: int = 0
-
-
-@dataclass(frozen=True)
-class TurnTelemetry:
-    tokens_in: int = 0
-    tokens_out: int = 0
-    duration_ms: int = 0
-    retries: int = 0
-    queue_wait_ms: int = 0
-
-
-@dataclass(frozen=True)
-class TurnError:
-    code: str
-    message: str
-    retryable: bool = False
-    details: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class TurnResponse:
-    final_text: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-    stats: dict[str, Any] = field(default_factory=dict)
-    artifacts: list[dict[str, Any]] = field(default_factory=list)
-    tool_calls_summary: list[ToolCallSummary] = field(default_factory=list)
-    memory_write_intents: list[dict[str, Any]] = field(default_factory=list)
-    telemetry: TurnTelemetry = field(default_factory=TurnTelemetry)
-    errors: list[TurnError] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class TurnChunk:
-    trace_id: str
-    kind: str
-    data: dict[str, Any] = field(default_factory=dict)
-    ts: str = field(default_factory=_utc_now_iso)
-    schema_version: str = TURN_STREAM_SCHEMA_VERSION
-    sequence: int = 0
-    event_id: str = ""
-
-
-@dataclass(frozen=True)
-class TurnRequest:
-    trace_id: str
-    agent_id: str
-    session_id: str
-    input_text: str
-    attachments: list[str] = field(default_factory=list)
-    mode: str = "oneshot"
-    stream: bool = False
-    meta: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class AgentStatus:
-    agent_id: str
-    created_at: str
-    last_used_at: str
-    queued_turns: int
-    active_turns: int
-    turns_handled: int
-
-
-@dataclass(frozen=True)
-class AgentHandle:
-    agent_id: str
 
 
 TurnExecutor = Callable[[TurnRequest, Callable[[TurnChunk], None], Event], TurnResponse]
@@ -329,6 +264,8 @@ class AgentRuntimeManager:
         self._stopped = False
         self._sweeper_thread: Thread | None = None
         self._lifecycle_sequence = 0
+        self._last_heartbeat_at_monotonic = 0.0
+        self._last_heartbeat_metrics: tuple[int, int] | None = None
 
     def _emit_runtime_operation(
         self,
@@ -601,6 +538,16 @@ class AgentRuntimeManager:
             self._evict_over_limit_locked()
         for agent_id, reason in candidates:
             self._evict_agent(agent_id=agent_id, reason=reason, force=False)
+        heartbeat_metrics = (active_agents, active_traces)
+        heartbeat_due = (
+            heartbeat_metrics != self._last_heartbeat_metrics
+            or now - self._last_heartbeat_at_monotonic
+            >= RUNTIME_HEARTBEAT_INTERVAL_SECONDS
+        )
+        if not heartbeat_due:
+            return
+        self._last_heartbeat_metrics = heartbeat_metrics
+        self._last_heartbeat_at_monotonic = now
         self._emit_lifecycle(
             event_type="component.heartbeat",
             component=self._runtime_manager_component(),
@@ -987,11 +934,10 @@ class AgentRuntimeManager:
         return build_agent_runtime_component_identity(agent_id.strip())
 
 
-def _iso_to_monotonic_delta(ts: str, now_mono: float) -> float:
+def _iso_to_monotonic_delta(timestamp: str, now_monotonic: float) -> float:
     try:
-        value = datetime.fromisoformat(ts)
+        value = datetime.fromisoformat(timestamp)
     except ValueError:
-        return now_mono
-    now_utc = datetime.now(timezone.utc)
-    delta = (now_utc - value).total_seconds()
-    return max(0.0, now_mono - delta)
+        return now_monotonic
+    elapsed = (datetime.now(timezone.utc) - value).total_seconds()
+    return max(0.0, now_monotonic - elapsed)
