@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 concurrency:
@@ -149,8 +149,43 @@ jobs:
 
       - name: Run blocking lint gate
         run: |
+          make workflow-check
           make format-check
           make lint
+
+  critical-path:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare isolated runtime roots
+        run: |
+          {
+            echo "OPENMINION_HOME=$RUNNER_TEMP/openminion-home"
+            echo "OPENMINION_DATA_ROOT=$RUNNER_TEMP/openminion-data"
+            echo "PYTHONPYCACHEPREFIX=$RUNNER_TEMP/openminion-pycache"
+          } >> "$GITHUB_ENV"
+          mkdir -p \
+            "$RUNNER_TEMP/openminion-home" \
+            "$RUNNER_TEMP/openminion-data" \
+            "$RUNNER_TEMP/openminion-pycache"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Bootstrap repo venv
+        shell: bash
+        run: |
+          python -m venv .venv
+          .venv/bin/python3.11 -m pip install --upgrade pip setuptools wheel
+          .venv/bin/python3.11 -m pip install -e ".[dev]"
+
+      - name: Run fast critical-path regressions
+        run: make test-critical
 
   test:
     runs-on: ubuntu-latest

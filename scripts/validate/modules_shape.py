@@ -14,6 +14,10 @@ from scripts.common.terminal_output import emit_json_report  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MODULES_ROOT = REPO_ROOT / "src" / "openminion" / "modules"
+TESTS_ROOT = REPO_ROOT / "tests"
+TEST_OWNER_OVERRIDES = {
+    "prompting": Path("services/prompting/test_prompting_contracts.py"),
+}
 ALLOWED_ROOT_FILES = {
     "__init__.py",
     "README.md",
@@ -90,11 +94,29 @@ def validate_subsystem(path: Path) -> list[str]:
     return errors
 
 
+def validate_test_owner(name: str, tests_root: Path = TESTS_ROOT) -> list[str]:
+    owner = tests_root / TEST_OWNER_OVERRIDES.get(name, Path(name))
+    if owner.is_file():
+        has_test = owner.stat().st_size > 0
+    else:
+        has_test = any(
+            path.is_file() and path.stat().st_size for path in owner.rglob("test_*.py")
+        )
+    if has_test:
+        return []
+    try:
+        display_path = owner.relative_to(REPO_ROOT)
+    except ValueError:
+        display_path = owner
+    return [f"module {name!r} has no non-empty test owner under {display_path}"]
+
+
 def main() -> int:
     errors = validate_root_files()
     subsystems = _iter_subsystems(MODULES_ROOT)
     for subsystem in subsystems:
         errors.extend(validate_subsystem(subsystem))
+        errors.extend(validate_test_owner(subsystem.name))
     result = {
         "ok": not errors,
         "allowed_root_files": sorted(ALLOWED_ROOT_FILES),
@@ -106,6 +128,7 @@ def main() -> int:
         summary=(
             ("modules root", MODULES_ROOT),
             ("subsystems checked", len(subsystems)),
+            ("test owners checked", len(subsystems)),
             ("required markers", len(REQUIRED_MARKERS) + len(REQUIRED_MARKER_DIRS)),
         ),
         findings=errors,

@@ -18,6 +18,7 @@ def _load_validator_module():
 _validator = _load_validator_module()
 validate_root_files = _validator.validate_root_files
 validate_subsystem = _validator.validate_subsystem
+validate_test_owner = _validator.validate_test_owner
 
 
 def test_validate_root_files_flags_unexpected_file(tmp_path: Path) -> None:
@@ -53,3 +54,46 @@ def test_validate_subsystem_requires_readme_and_marker(tmp_path: Path) -> None:
 
     assert errors
     assert "missing README.md charter" in errors[0]
+
+
+def test_validate_test_owner_accepts_nonempty_test_file(tmp_path: Path) -> None:
+    owner = tmp_path / "demo"
+    owner.mkdir()
+    (owner / "test_demo.py").write_text("def test_demo(): pass\n", encoding="utf-8")
+
+    assert validate_test_owner("demo", tmp_path) == []
+
+
+def test_validate_test_owner_reports_missing_owner(tmp_path: Path) -> None:
+    errors = validate_test_owner("demo", tmp_path)
+
+    assert errors == [
+        f"module 'demo' has no non-empty test owner under {tmp_path / 'demo'}"
+    ]
+
+
+def test_validate_test_owner_rejects_empty_test_file(tmp_path: Path) -> None:
+    owner = tmp_path / "demo"
+    owner.mkdir()
+    (owner / "test_demo.py").touch()
+
+    assert validate_test_owner("demo", tmp_path)
+
+
+def test_validate_test_owner_rejects_non_test_content(tmp_path: Path) -> None:
+    owner = tmp_path / "demo"
+    owner.mkdir()
+    (owner / "README.md").write_text("# Demo\n", encoding="utf-8")
+
+    assert validate_test_owner("demo", tmp_path)
+
+
+def test_validate_test_owner_accepts_prompting_override(tmp_path: Path) -> None:
+    owner = tmp_path / "services" / "prompting"
+    owner.mkdir(parents=True)
+    (owner / "test_prompting_contracts.py").write_text(
+        "def test_prompting(): pass\n",
+        encoding="utf-8",
+    )
+
+    assert validate_test_owner("prompting", tmp_path) == []

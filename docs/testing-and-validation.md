@@ -66,10 +66,18 @@ Run the provider-free pull-request sequence with:
 make ci-check
 ```
 
-This composes `format-check`, `lint`, and `test-ci`. `test-ci` excludes live,
+This composes `workflow-check`, `format-check`, `lint`, `test-critical`, and
+`test-ci`. The fast critical slice gives early coverage across turn execution,
+session continuity, memory, tools, tasks, delegation, scheduling, and approval;
+`test-ci` remains the authoritative provider-free suite. It excludes live,
 external-service, Postgres, package-integration, benchmark, E2E, and slow
 markers. `make test` and `make check` remain broader local commands and are not
 interchangeable with the pull-request selection.
+
+GitHub runs these deterministic workflows for pushes and pull requests on both
+`dev` and `main`. Release publication remains limited to `main`, tags, and
+explicit dispatch. A workflow appearing in GitHub does not by itself mean the
+repository currently requires that check for merge.
 
 ## Focused regression tests
 

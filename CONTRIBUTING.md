@@ -67,9 +67,9 @@ boundary summary than the broader docs.
     in the channel database.
 
 For the provider-free pull-request sequence, run `make ci-check`. It composes
-`format-check`, `lint`, and `test-ci`. `make test` and `make check` remain the
-broader local suites; live providers and external services keep their existing
-opt-in gates.
+workflow syntax, formatting, lint, the fast cross-component regression slice,
+and `test-ci`. `make test` and `make check` remain the broader local suites;
+live providers and external services keep their existing opt-in gates.
 
 Commit message guidance:
 
