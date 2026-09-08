@@ -8,6 +8,11 @@ PRE_COMMIT := $(PYTHON) -m pre_commit
 PYTEST := $(PYTHON) -m pytest
 RUFF := $(PYTHON) -m ruff
 BROWSER_TOOL_FAMILY_VALIDATOR ?= $(REPO_ROOT)/../docs/scripts/validate_browser_tool_family_contract.py
+CRITICAL_TEST_MANIFEST := $(REPO_ROOT)/tests/ci/critical-path.tsv
+CRITICAL_TESTS := $(shell \
+	awk -F '\t' 'NR > 1 && NF == 2 {print "$(REPO_ROOT)/" $$2}' \
+	"$(CRITICAL_TEST_MANIFEST)" \
+)
 
 # I-17 (2026-06-02): parallel `validate-patterns` job count. Defaults to the
 # host CPU count (capped at 8 to keep output readable on big servers).
@@ -232,15 +237,7 @@ test: $(DEV_STAMP)
 
 test-critical: $(DEV_STAMP)
 	PYTHONPATH="$(REPO_ROOT)/src" \
-	$(PYTEST) -q \
-		"$(REPO_ROOT)/tests/integration/test_openminion_brain_client_real_runtime.py" \
-		"$(REPO_ROOT)/tests/controlplane/test_session_resume_across_restart.py" \
-		"$(REPO_ROOT)/tests/integration/test_success_path_memory_creation.py" \
-		"$(REPO_ROOT)/tests/brain/tool_loops/test_engine.py" \
-		"$(REPO_ROOT)/tests/task/test_lifecycle.py" \
-		"$(REPO_ROOT)/tests/brain/modes/test_delegate_e2e.py" \
-		"$(REPO_ROOT)/tests/runtime/test_cron_project_cycle.py" \
-		"$(REPO_ROOT)/tests/integration/test_action_approval_e2e.py"
+	$(PYTEST) -q $(CRITICAL_TESTS)
 
 test-ci: $(DEV_STAMP)
 	PYTHONPATH="$(REPO_ROOT)/src" \

@@ -45,8 +45,9 @@ make ci-check
 ```
 
 `ci-check` composes workflow syntax, formatting, lint, the fast
-cross-component regression slice, and `test-ci`. The broader `test` and
-`check` targets remain available for integration owners.
+cross-component regression slice, the full provider-free suite, and the
+bounded provider-free E2E slice. The broader `test` and `check` targets remain
+available for integration owners.
 
 GitHub runs the deterministic package workflows for pushes and pull requests
 on both `dev` and `main`. Required-check policy is a repository setting and is
