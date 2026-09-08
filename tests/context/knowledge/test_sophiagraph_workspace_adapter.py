@@ -485,6 +485,10 @@ def test_file_write_vault_and_repo_graphs_compose_without_memory_promotion(
         GraphRefreshRequest(), provider_names=("vault_graph",)
     )[0]
 
+    assert [source.name for source in service.list_sources()] == [
+        "vault_graph",
+        "repo_graph",
+    ]
     assert vault.provider == "vault_graph"
     assert {item.source_ref.path for item in vault.items} == {"Hub.md", "Detail.md"}
     assert repo.provider == "repo_graph"
