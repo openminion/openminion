@@ -14,6 +14,7 @@ from openminion.api.server.app import (
     reset_api_metrics,
 )
 from openminion.api.runtime import APIRuntime
+from openminion.api.server.client_auth import build_client_auth_service
 from openminion.api.server.auth import require_ipc_token_for_bind
 from openminion.api.turns import run_turn
 from openminion.api.core.validation import parse_json_request_body
@@ -39,6 +40,13 @@ def build_api_server(
         _OpenMinionAPIHandler,
         config_path=config_path,
         bootstrap=bootstrap,
+    )
+    handler_cls.client_auth = build_client_auth_service(
+        bootstrap=bootstrap,
+        config_path=config_path,
+        home_root=home_root,
+        data_root=data_root,
+        bind_host=host,
     )
     return _OpenMinionThreadingHTTPServer(
         (host, int(port)),
@@ -93,15 +101,6 @@ def dispatch_request(
 
 
 __all__ = [
-    "_OpenMinionAPIHandler",
-    "_OpenMinionThreadingHTTPServer",
-    "APIRuntime",
-    "build_api_server",
-    "dispatch_request",
-    "get_api_metrics_consistency_stamp",
-    "get_api_metrics_snapshot",
-    "reset_api_metrics",
-    "perf_counter",
-    "run_turn",
-    "parse_json_request_body",
-]
+    "_OpenMinionAPIHandler", "_OpenMinionThreadingHTTPServer", "APIRuntime", "build_api_server", "dispatch_request",
+    "get_api_metrics_consistency_stamp", "get_api_metrics_snapshot", "reset_api_metrics", "perf_counter", "run_turn", "parse_json_request_body",
+]  # fmt: skip

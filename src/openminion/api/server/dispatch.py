@@ -12,6 +12,7 @@ from openminion.api.routes import (
     handle_admin_request,
     handle_agent_request,
     handle_cron_request,
+    handle_client_request,
     handle_debug_request,
     handle_health_request,
     handle_memory_request,
@@ -26,6 +27,10 @@ from openminion.api.routes.approve_pending import (
     handle_request as handle_approval_request,
 )
 from openminion.api.runtime import APIRuntime
+from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
+from openminion.api.server.client_artifacts import ClientArtifactCoordinator
+from openminion.api.server.client_approvals import ClientApprovalCoordinator
+from openminion.api.server.client_media import ClientMediaCoordinator
 from openminion.api.server.observability import finalize_api_response
 
 
@@ -55,6 +60,11 @@ def dispatch_request(
     runtime_bootstrap_error: str | None = None,
     request_headers: Mapping[str, str] | None = None,
     request_id: str | None = None,
+    client_auth: ClientAuthService | None = None,
+    client_identity: ClientIdentity | None = None,
+    client_artifacts: ClientArtifactCoordinator | None = None,
+    client_approvals: ClientApprovalCoordinator | None = None,
+    client_media: ClientMediaCoordinator | None = None,
 ) -> tuple[HTTPStatus, dict[str, Any]]:
     from openminion.api import server
 
@@ -75,6 +85,11 @@ def dispatch_request(
             runtime_bootstrap_error=runtime_bootstrap_error,
             request_headers=request_headers,
             request_id=resolved_request_id,
+            client_auth=client_auth,
+            client_identity=client_identity,
+            client_artifacts=client_artifacts,
+            client_approvals=client_approvals,
+            client_media=client_media,
         ),
         method_name=method_name,
         path=path,
@@ -109,6 +124,14 @@ def _select_route(
         body=body,
         query=query,
     )
+    if result is None:
+        result = handle_client_request(
+            ctx,
+            method_name=method_name,
+            path=path,
+            body=body,
+            query=query,
+        )
     if result is None:
         result = handle_runtime_request(
             ctx,

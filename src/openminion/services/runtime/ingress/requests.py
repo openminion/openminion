@@ -1,9 +1,10 @@
 """Request shaping and validation for runtime ingress."""
 
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
 from openminion.base.config import combine_run_profile_overrides, resolve_agent_identity
+from openminion.services.runtime.interfaces import DesktopApprovalRequester
 from openminion.services.runtime.manager import TurnRequest
 
 from .payloads import (
@@ -30,7 +31,6 @@ def runtime_turn_request_from_payload(
     message = str(payload.get("message", "")).strip()
     if not message:
         raise TurnRequestError("`message` is required and must be a non-empty string.")
-
     agent_id_raw = payload.get("agent_id")
     requested_agent_id = (
         str(agent_id_raw).strip() if isinstance(agent_id_raw, str) else None
@@ -61,13 +61,10 @@ def runtime_turn_request_from_payload(
         session_id=_optional_text(payload.get("session_id")),
         request_id=request_id,
         idempotency_key=_optional_text(payload.get("idempotency_key")),
-        inbound_metadata=(
-            MappingProxyType(dict(inbound_metadata))
-            if inbound_metadata is not None
-            else None
-        ),
+        inbound_metadata=_immutable_metadata(inbound_metadata),
         deliver=resolve_deliver(payload.get("deliver")),
         forced_tools=tuple(parse_forced_tools(payload.get("forced_tools")) or ()),
+        attachments=(),
         capability_category=resolve_capability_category(
             explicit_category=payload.get("capability_category"),
         ),
@@ -79,6 +76,8 @@ def build_manager_turn_request(
     payload: dict[str, Any],
     *,
     default_agent_id: str,
+    desktop_approval_requester: DesktopApprovalRequester | None = None,
+    resolved_attachment_refs: tuple[str, ...] = (),
 ) -> TurnRequest:
     trace_id = _optional_text(payload.get("trace_id")) or ""
     agent_id = _optional_text(payload.get("agent_id")) or default_agent_id
@@ -91,23 +90,16 @@ def build_manager_turn_request(
         raise ValueError("`session_id` is required.")
     if not input_text and not _is_pae_idle_tick(payload):
         raise ValueError("`input_text` is required.")
-
-    attachments_raw = payload.get("attachments", [])
-    attachments: list[str] = []
-    if isinstance(attachments_raw, list):
-        attachments = [
-            str(item).strip() for item in attachments_raw if str(item).strip()
-        ]
-    mode = _optional_text(payload.get("mode")) or "oneshot"
     return TurnRequest(
         trace_id=trace_id,
         agent_id=agent_id,
         session_id=session_id,
         input_text=input_text,
-        attachments=attachments,
-        mode=mode,
+        attachments=list(resolved_attachment_refs),
+        mode=_optional_text(payload.get("mode")) or "oneshot",
         stream=bool(payload.get("stream")),
         meta=_manager_meta_from_payload(payload),
+        desktop_approval_requester=desktop_approval_requester,
     )
 
 
@@ -128,6 +120,10 @@ def runtime_turn_request_from_manager_request(
     if "timeout_seconds" in meta:
         timeout_payload["timeout_seconds"] = meta.get("timeout_seconds")
     inbound_metadata = _managed_inbound_metadata(runtime=runtime, meta=meta)
+    managed_session_id = str(request.session_id or "").strip()
+    if managed_session_id:
+        inbound_metadata = dict(inbound_metadata or {})
+        inbound_metadata["brain_session_id"] = managed_session_id
     return RuntimeTurnRequest(
         agent_id=agent_resolution.public_agent_id,
         profile_agent_id=agent_profile.name,
@@ -144,13 +140,10 @@ def runtime_turn_request_from_manager_request(
         session_id=str(request.session_id or "").strip() or None,
         request_id=str(request.trace_id or "").strip() or None,
         idempotency_key=str(meta.get("idempotency_key", "")).strip() or None,
-        inbound_metadata=(
-            MappingProxyType(dict(inbound_metadata))
-            if inbound_metadata is not None
-            else None
-        ),
+        inbound_metadata=_immutable_metadata(inbound_metadata),
         deliver=resolve_deliver(meta.get("deliver")),
         forced_tools=tuple(parse_forced_tools(meta.get("forced_tools")) or ()),
+        attachments=tuple(str(item) for item in request.attachments),
         capability_category=resolve_capability_category(
             explicit_category=meta.get("capability_category"),
         ),
@@ -170,6 +163,10 @@ def apply_workspace_root(
         updated["workspace_root"] = str(runtime_workspace_root)
         return updated
     return inbound_metadata
+
+
+def _immutable_metadata(value: dict[str, str] | None) -> Mapping[str, str] | None:
+    return MappingProxyType(dict(value)) if value is not None else None
 
 
 def _direct_inbound_metadata(

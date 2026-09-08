@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from openminion.base.config import EnvironmentConfig, RunProfileOverrides
 from openminion.modules.llm import RuntimeLLMHandle
@@ -10,18 +10,19 @@ from openminion.modules.llm import RuntimeLLMHandle
 from openminion.api.core.bootstrap import RuntimeBootstrapMixin
 from openminion.api.core.exposure import RuntimeToolExposureMixin
 from openminion.api.core.lifecycle import (
-    close_runtime_components,
-    initialize_runtime_components,
-)
+    close_runtime_components, initialize_runtime_components,
+)  # fmt: skip
 from openminion.api.core.profiles import RuntimeProfilesMixin
+from openminion.api.core.session_artifacts import RuntimeSessionArtifactsMixin
+
+if TYPE_CHECKING:
+    from openminion.services.runtime.ingress import RuntimeTurnHandle
+    from openminion.services.runtime.interfaces import DesktopApprovalRequester
 
 _CANONICAL_TURN_PATH = (
-    "services/runtime/ingress.run_turn_payload",
-    "services/request_orchestrator.run_turn",
-    "GatewayService.run_once",
-    "BrainBridgeService.run_turn",
-    "BrainRunner.run",
-)
+    "services/runtime/ingress.run_turn_payload", "services/request_orchestrator.run_turn",
+    "GatewayService.run_once", "BrainBridgeService.run_turn", "BrainRunner.run",
+)  # fmt: skip
 _CANONICAL_TURN_PATH_REF = "openminion.api.runtime.APIRuntime.runtime_posture"
 _EXECUTION_BOUNDARY_POLICY_REF = (
     "openminion.modules.policy.adapters.tool.build_execution_boundary_policy_adapter"
@@ -31,7 +32,12 @@ _DISABLE_SECURITY_POLICY_ENV = "OPENMINION_DISABLE_SECURITY_POLICY"
 
 
 @dataclass
-class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposureMixin):
+class APIRuntime(
+    RuntimeBootstrapMixin,
+    RuntimeProfilesMixin,
+    RuntimeSessionArtifactsMixin,  # type: ignore[misc]
+    RuntimeToolExposureMixin,
+):
     @staticmethod
     def _security_policy_disabled(runtime_env: object) -> bool:
         environment = EnvironmentConfig.from_sources(runtime_env=runtime_env)
@@ -141,10 +147,10 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
             cancel_event=cancel_event,
         )
 
-    def submit_turn(self, *, payload: dict[str, object]) -> Any:
+    def submit_turn(self, *, payload: dict[str, object], desktop_approval_requester: "DesktopApprovalRequester | None" = None, resolved_attachment_refs: tuple[str, ...] = ()) -> "RuntimeTurnHandle":  # fmt: skip
         from openminion.services.runtime.ingress import submit_turn_payload
 
-        return submit_turn_payload(runtime=self, payload=payload)
+        return submit_turn_payload(runtime=self, payload=dict(payload), desktop_approval_requester=desktop_approval_requester, resolved_attachment_refs=resolved_attachment_refs)  # fmt: skip
 
     def evict_agent(self, agent_id: str, *, reason: str = "manual") -> bool:
         if not (normalized := agent_id.strip()):

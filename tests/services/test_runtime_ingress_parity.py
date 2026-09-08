@@ -62,7 +62,9 @@ def test_direct_and_managed_ingress_requests_match_for_equivalent_payload() -> N
     assert managed.timeout_seconds == direct.timeout_seconds
     assert managed.forced_tools == direct.forced_tools
     assert managed.capability_category == direct.capability_category
-    assert dict(managed.inbound_metadata or {}) == dict(direct.inbound_metadata or {})
+    managed_metadata = dict(managed.inbound_metadata or {})
+    assert managed_metadata.pop("brain_session_id") == "session-parity"
+    assert managed_metadata == dict(direct.inbound_metadata or {})
     assert direct.inbound_metadata is not None
     assert direct.inbound_metadata["turn_tool_allowlist"] == "web.search,web.fetch"
     assert direct.inbound_metadata["turn_tool_allowlist_supplied"] == "true"

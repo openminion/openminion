@@ -34,6 +34,16 @@ from ...tools.parser import normalize_tool_name_for_brain
 from .context import TickRunContext, _runner_delegate
 
 
+def _append_replay_turn(runner: Any, tick_ctx: TickRunContext) -> None:
+    runner.session_api.append_turn(
+        tick_ctx.session_id,
+        "user",
+        tick_ctx.user_input,
+        attachments=tick_ctx.attachments,
+        meta={"ts": iso_now()},
+    )
+
+
 def handle_pending_replay(
     *,
     runner,
@@ -48,9 +58,7 @@ def handle_pending_replay(
     ):
         if state.trace_id is None:
             state.trace_id = tick_ctx.trace_id or new_uuid()
-        runner.session_api.append_turn(
-            tick_ctx.session_id, "user", tick_ctx.user_input, meta={"ts": iso_now()}
-        )
+        _append_replay_turn(runner, tick_ctx)
         tick_ctx.skip_initial_append = True
         tick_ctx.skip_initial_interpret = True
         choice = parse_feasibility_choice(tick_ctx.user_input)
@@ -123,9 +131,7 @@ def handle_pending_replay(
     ):
         if state.trace_id is None:
             state.trace_id = tick_ctx.trace_id or new_uuid()
-        runner.session_api.append_turn(
-            tick_ctx.session_id, "user", tick_ctx.user_input, meta={"ts": iso_now()}
-        )
+        _append_replay_turn(runner, tick_ctx)
         tick_ctx.skip_initial_append = True
         tick_ctx.skip_initial_interpret = True
         choice = parse_continuation_choice(tick_ctx.user_input)
@@ -191,9 +197,7 @@ def handle_pending_replay(
     ):
         if state.trace_id is None:
             state.trace_id = tick_ctx.trace_id or new_uuid()
-        runner.session_api.append_turn(
-            tick_ctx.session_id, "user", tick_ctx.user_input, meta={"ts": iso_now()}
-        )
+        _append_replay_turn(runner, tick_ctx)
         tick_ctx.skip_initial_append = True
         tick_ctx.skip_initial_interpret = True
         tick_ctx.masked_resume_cursor = int(getattr(state, "cursor", 0) or 0)
@@ -266,6 +270,7 @@ def process_user_input(*, runner, state, logger, tick_ctx: TickRunContext):
                 tick_ctx.session_id,
                 "user",
                 str(tick_ctx.original_user_input or user_input),
+                attachments=tick_ctx.attachments,
                 meta={"ts": iso_now()},
             )
             raw_user_message = str(tick_ctx.original_user_input or user_input)

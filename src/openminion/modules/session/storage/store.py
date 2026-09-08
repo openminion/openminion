@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 import sqlite3
 import tempfile
@@ -18,6 +17,10 @@ from openminion.modules.config import (
     resolve_module_data_root,
     resolve_module_home_root,
 )
+from ..artifact_lifecycle import (
+    apply_artifact_decision as _apply_artifact_decision,
+    get_detached_artifact_refs as _get_detached_artifact_refs,
+)
 from ..interfaces import (
     SESSION_INTERFACE_VERSION,
     SESSION_REPOSITORY_INTERFACE_VERSION,
@@ -29,7 +32,7 @@ from openminion.modules.storage.runtime.module_integrity import (
 from .base import SessionStore
 from .component_wiring import build_store_components
 from .context import RunStore
-from .json_utils import to_json
+from .json_utils import stable_hash as _stable_hash
 from .migrations import MIGRATIONS, list_migrations
 from .queries import (
     _CLOSED_TASK_STATUSES as _SLICE_CLOSED_TASK_STATUSES,
@@ -135,10 +138,6 @@ def _resolve_session_storage_roots(
             else:
                 return (resolved_data_root / "storage").resolve(), resolved_data_root
     return (db_path.parent / "storage").resolve(), db_path.parent.resolve()
-
-
-def _stable_hash(value: Any) -> str:
-    return hashlib.sha256(to_json(value).encode()).hexdigest()
 
 
 _MODULE_ID = module_id_from_package(__package__)
@@ -533,24 +532,17 @@ class SQLiteSessionStore(SessionStore):
             for migration in MIGRATIONS:
                 for statement in migration.statements:
                     self._record_store.execute_count(statement)
-            _ensure_store_column(
-                self._record_store,
-                table_name="sessions",
-                column_name="active_profile_version",
-                ddl_tail="TEXT",
-            )
-            _ensure_store_column(
-                self._record_store,
-                table_name="run_records",
-                column_name="invocation_id",
-                ddl_tail="TEXT",
-            )
-            _ensure_store_column(
-                self._record_store,
-                table_name="run_records",
-                column_name="thread_id",
-                ddl_tail="TEXT",
-            )
+            for table_name, column_name in (
+                ("sessions", "active_profile_version"),
+                ("run_records", "invocation_id"),
+                ("run_records", "thread_id"),
+            ):
+                _ensure_store_column(
+                    self._record_store,
+                    table_name=table_name,
+                    column_name=column_name,
+                    ddl_tail="TEXT",
+                )
 
     def create_session(
         self,
@@ -795,6 +787,47 @@ class SQLiteSessionStore(SessionStore):
 
     def latest_event_seq(self, session_id: str) -> int:
         return self._latest_event_seq(session_id)
+
+    def get_artifact_catalog_event_page(
+        self,
+        session_id: str,
+        *,
+        after_seq: int,
+        high_water: int,
+        limit: int,
+    ) -> dict[str, Any]:
+        return self._event_store.get_artifact_catalog_event_page(
+            session_id,
+            after_seq=after_seq,
+            high_water=high_water,
+            limit=limit,
+        )
+
+    def get_detached_artifact_refs(
+        self,
+        session_id: str,
+        *,
+        limit: int = 256,
+    ) -> list[str]:
+        return _get_detached_artifact_refs(self, session_id, limit=limit)
+
+    def apply_artifact_decision(
+        self,
+        session_id: str,
+        *,
+        artifact_ref: str,
+        detached: bool,
+        reason_code: str,
+        request_id: str,
+    ) -> str:
+        return _apply_artifact_decision(
+            self,
+            session_id,
+            artifact_ref=artifact_ref,
+            detached=detached,
+            reason_code=reason_code,
+            request_id=request_id,
+        )
 
     def get_recent_tool_events(
         self, session_id: str, limit: int

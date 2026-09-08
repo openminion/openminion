@@ -1,6 +1,25 @@
 """Contracts consumed by runtime composition services."""
 
-from typing import Any, Protocol
+from __future__ import annotations
+
+from threading import Event
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Protocol
+
+if TYPE_CHECKING:
+    from .manager import TurnChunk
+
+
+class DesktopApprovalRequest(NamedTuple):
+    session_id: str
+    trace_id: str
+    tool_name: str
+    call_id: str
+    argument_keys: tuple[str, ...]
+    emit_chunk: Callable[[TurnChunk], None]
+    cancel_event: Event
+
+
+DesktopApprovalRequester = Callable[[DesktopApprovalRequest], bool]
 
 
 class RuntimeFacade(Protocol):
@@ -28,4 +47,4 @@ class RuntimeFacade(Protocol):
     ) -> Any: ...
 
 
-__all__ = ["RuntimeFacade"]
+__all__ = ["DesktopApprovalRequest", "DesktopApprovalRequester", "RuntimeFacade"]

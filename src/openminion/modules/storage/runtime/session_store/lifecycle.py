@@ -94,6 +94,42 @@ class RuntimeSessionStoreLifecycle:
                 payload=payload,
             )
 
+    def append_cancel_request_once(
+        self,
+        *,
+        session_id: str,
+        request_id: str,
+        run_id: str | None,
+    ) -> tuple[EventRecord, bool]:
+        with self._backend.transaction():
+            latest = self.latest_run_event_for_request(
+                session_id=session_id,
+                request_id=request_id,
+            )
+            if latest is not None and latest.event_type in {
+                "run.completed",
+                "run.failed",
+                "run.cancelled",
+            }:
+                return latest, False
+            existing = self._cancel_request(
+                session_id=session_id,
+                request_id=request_id,
+            )
+            if existing is not None:
+                return existing, False
+            payload = {"request_id": request_id, "trace_id": request_id}
+            if run_id:
+                payload["run_id"] = run_id
+            return (
+                self._insert_event_locked(
+                    session_id=session_id,
+                    event_type="run.cancel_requested",
+                    payload=payload,
+                ),
+                True,
+            )
+
     def get_event_by_canonical_id(self, canonical_event_id: str) -> EventRecord | None:
         canonical_id = canonical_event_id.strip()
         if not canonical_id:
@@ -442,6 +478,57 @@ class RuntimeSessionStoreLifecycle:
             (session_id,),
         )
         return 0 if row is None else int(row["high_water"])
+
+    def event_cursor_exists(self, *, session_id: str, event_id: int) -> bool:
+        if event_id == 0:
+            return True
+        row = self._backend.query_one(
+            "SELECT 1 AS present FROM events WHERE session_id = ? AND id = ?",
+            (session_id, event_id),
+        )
+        return row is not None
+
+    def latest_run_event_for_request(
+        self,
+        *,
+        session_id: str,
+        request_id: str,
+    ) -> EventRecord | None:
+        row = self._backend.query_one(
+            """
+            SELECT id, session_id, event_type, payload_json, created_at
+            FROM events
+            WHERE session_id = ?
+              AND event_type IN (
+                'run.queued', 'run.running', 'run.waiting_tool',
+                'run.responding', 'run.completed', 'run.failed', 'run.cancelled'
+              )
+              AND json_extract(payload_json, '$.request_id') = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (session_id, request_id),
+        )
+        return None if row is None else row_to_event(row)
+
+    def _cancel_request(
+        self,
+        *,
+        session_id: str,
+        request_id: str,
+    ) -> EventRecord | None:
+        row = self._backend.query_one(
+            """
+            SELECT id, session_id, event_type, payload_json, created_at
+            FROM events
+            WHERE session_id = ?
+              AND event_type = 'run.cancel_requested'
+              AND json_extract(payload_json, '$.request_id') = ?
+            LIMIT 1
+            """,
+            (session_id, request_id),
+        )
+        return None if row is None else row_to_event(row)
 
     def list_events_after_id(
         self,

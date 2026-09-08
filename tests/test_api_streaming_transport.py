@@ -721,10 +721,16 @@ class APIStreamingNegotiationTests(unittest.TestCase):
             "/v1/turn/stream",
             "cfg.json",
             body={"message": "hello"},
+            query="",
             runtime=None,
             runtime_bootstrap_error=None,
             request_headers=handler.headers,
             request_id="req-json-1",
+            client_auth=None,
+            client_identity=None,
+            client_artifacts=None,
+            client_approvals=None,
+            client_media=None,
         )
         handler._write_json.assert_called_once_with(HTTPStatus.OK, {"ok": True})  # type: ignore[attr-defined]
 
@@ -907,6 +913,7 @@ class APIIPCAuthenticationTests(unittest.TestCase):
         handler.runtime = None
         handler.runtime_bootstrap_error = None
         handler.ipc_token = "configured-secret"
+        handler.close_connection = False
         handler.wfile = io.BytesIO()
         handler.send_response = mock.Mock()
         handler.send_header = mock.Mock()

@@ -17,6 +17,8 @@ from openminion.services.security.policy import (
     derive_plugin_activation_risk,
     evaluate_plugin_trust_policy,
 )
+from openminion.modules.tool.registry import ToolRegistry
+from openminion.tools.browser.tool import BrowserTool
 
 
 def test_service_policy_surface_is_canonical_module_owner() -> None:
@@ -71,6 +73,47 @@ class SecurityPolicyEngineTests(unittest.TestCase):
                     verb="execute",
                     risk=RISK_HIGH,
                     tool_name="weather.openmeteo.current",
+                ),
+                context=SecurityPolicyContext(),
+            )
+        )
+        self.assertEqual(decision.decision, DECISION_REQUIRE_APPROVAL)
+        self.assertEqual(decision.reason_code, "approval_required_high_risk")
+
+    def test_registered_browser_high_risk_profile_requires_approval(self) -> None:
+        registry = ToolRegistry([BrowserTool(router=object())])
+        profile = registry.policy_for("browser")
+        self.assertEqual(profile.risk, RISK_HIGH)
+
+        decision = SecurityPolicyEngine().evaluate(
+            SecurityPolicyCheck(
+                actor=SecurityPolicyActor(
+                    role="operator",
+                    scopes=set(profile.required_scopes_all),
+                    agent_id="openminion",
+                ),
+                action=SecurityPolicyAction(
+                    resource="tool",
+                    verb="execute",
+                    risk=profile.risk,
+                    tool_name=profile.tool_name,
+                    required_scopes_all=profile.required_scopes_all,
+                ),
+                context=SecurityPolicyContext(),
+            )
+        )
+        self.assertEqual(decision.decision, DECISION_REQUIRE_APPROVAL)
+        self.assertEqual(decision.reason_code, "approval_required_high_risk")
+
+    def test_critical_tool_risk_also_requires_approval(self) -> None:
+        decision = SecurityPolicyEngine().evaluate(
+            SecurityPolicyCheck(
+                actor=default_internal_actor("openminion"),
+                action=SecurityPolicyAction(
+                    resource="tool",
+                    verb="execute",
+                    risk="critical",
+                    tool_name="browser",
                 ),
                 context=SecurityPolicyContext(),
             )

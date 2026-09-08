@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .constants import (
     LLM_TOOL_CALL_STATUS_REQUESTED,
@@ -13,7 +13,7 @@ from .errors import ErrorCode
 Role = Literal["system", "user", "assistant", "tool"]
 ToolCallStatus = Literal["requested", "parsed", "blocked", "error"]
 ToolResultStatus = Literal["success", "error", "blocked", "timeout"]
-ImageSourceType = Literal["path", "url", "base64"]
+ImageSourceType = Literal["path", "url", "base64", "artifact"]
 ImageDetailLevel = Literal["auto", "low", "high"]
 TotalTokensSource = Literal["provider", "derived"]
 CostSource = Literal["provider", "estimated"]
@@ -53,11 +53,32 @@ class ImageContentPart(BaseModel):
     path: Optional[str] = None
     url: Optional[str] = None
     data_base64: Optional[str] = None
+    artifact_ref: Optional[str] = None
     detail_level: ImageDetailLevel = "auto"
     block_kind: Optional[PromptBlockKind] = None
     cache_eligible: bool = False
     segment_ids: list[str] = Field(default_factory=list)
     refs: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_artifact_source(self) -> ImageContentPart:
+        artifact_ref = str(self.artifact_ref or "").strip()
+        if self.source != "artifact":
+            if artifact_ref:
+                raise ValueError(  # allow-bare-raise: Pydantic validation contract
+                    "artifact_ref requires source=artifact"
+                )
+            return self
+        if not artifact_ref:
+            raise ValueError(  # allow-bare-raise: Pydantic validation contract
+                "artifact image source requires artifact_ref"
+            )
+        if self.path is not None or self.url is not None or self.data_base64 is not None:
+            raise ValueError(  # allow-bare-raise: Pydantic validation contract
+                "artifact image source forbids path, url, and data_base64"
+            )
+        self.artifact_ref = artifact_ref
+        return self
 
 
 MessageContentPart = Annotated[

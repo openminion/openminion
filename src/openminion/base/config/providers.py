@@ -10,6 +10,8 @@ class OpenAIProviderConfig:
     provider_identity: dict[str, str] = field(default_factory=dict)
     timeout_seconds: int = 60
     http_connection_reuse_enabled: bool = True
+    enable_vision_input: bool = False
+
     temperature: float = 0.2
     tool_call_strategy: str = "hybrid"
 
@@ -117,9 +119,7 @@ class CortensorProviderConfig:
 class ProvidersConfig:
     openai: OpenAIProviderConfig = field(default_factory=OpenAIProviderConfig)
     anthropic: AnthropicProviderConfig = field(default_factory=AnthropicProviderConfig)
-    openrouter: OpenRouterProviderConfig = field(
-        default_factory=OpenRouterProviderConfig
-    )
+    openrouter: OpenRouterProviderConfig = field(default_factory=OpenRouterProviderConfig)  # fmt: skip
     cerebras: CerebrasProviderConfig = field(default_factory=CerebrasProviderConfig)
     groq: GroqProviderConfig = field(default_factory=GroqProviderConfig)
     ollama: OllamaProviderConfig = field(default_factory=OllamaProviderConfig)

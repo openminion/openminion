@@ -119,26 +119,32 @@ class GatewayTurnAgentExecutionMixin:
         channel: str,
         target: str,
         body: str,
+        attachments: list[str] | None = None,
         run_id: str,
         authenticity_decision: Any,
         participant_id: str,
     ) -> Message:
+        inbound_metadata = routing.normalized_inbound_metadata
+        brain_session_metadata = (
+            {"brain_session_id": routing.session.id}
+            if inbound_metadata.get("brain_session_id", "").strip()
+            == routing.session.id
+            else {}
+        )
         return Message(
             channel=channel,
             target=target,
             body=body,
+            attachments=list(attachments or []),
             metadata={
-                **_extract_ephemeral_prompt_metadata(
-                    routing.normalized_inbound_metadata
-                ),
+                **_extract_ephemeral_prompt_metadata(inbound_metadata),
                 "session_id": routing.session.id,
+                **brain_session_metadata,
                 **capture_identity_metadata(
                     runtime_session_id=routing.session.id, root_turn_id=run_id
                 ),
                 "run_id": run_id,
-                "invocation_id": routing.normalized_inbound_metadata.get(
-                    "invocation_id", ""
-                ),
+                "invocation_id": inbound_metadata.get("invocation_id", ""),
                 "request_id": routing.normalized_request_id,
                 "thread_decision_action": routing.routing_action,
                 "thread_decision_reason": routing.routing_reason,
@@ -231,14 +237,9 @@ class GatewayTurnAgentExecutionMixin:
         )
         response.metadata.setdefault("thread_decision_action", routing.routing_action)
         response.metadata.setdefault("thread_decision_reason", routing.routing_reason)
-        response.metadata.setdefault(
-            "thread_state_before",
-            routing.lifecycle.thread_state,
-        )
-        response.metadata.setdefault(
-            "thread_state_qualifier",
-            routing.lifecycle.qualifier,
-        )
+        lifecycle = routing.lifecycle
+        response.metadata.setdefault("thread_state_before", lifecycle.thread_state)
+        response.metadata.setdefault("thread_state_qualifier", lifecycle.qualifier)
 
     def _emit_agent_progress_states(
         self,
@@ -290,6 +291,7 @@ class GatewayTurnAgentExecutionMixin:
         channel: str,
         target: str,
         body: str,
+        attachments: list[str] | None = None,
         run_id: str,
         lifecycle_payload: dict[str, Any],
         history: list[Message],
@@ -333,6 +335,7 @@ class GatewayTurnAgentExecutionMixin:
             channel=channel,
             target=target,
             body=body,
+            attachments=attachments,
             run_id=run_id,
             authenticity_decision=authenticity_decision,
             participant_id=participant_id,

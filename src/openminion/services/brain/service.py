@@ -23,6 +23,7 @@ from openminion.modules.tool import ToolRegistry
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.brain.runner.lifecycle import close_owned_runner_bundle
 from openminion.modules.brain.interfaces import (
+    SessionArtifactAPI,
     ensure_adapter_compatibility,
     ensure_runner_compatibility,
 )
@@ -512,6 +513,19 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
 
         self._runner = build_brain_runner_bundle(self)
         return self._runner
+
+    def session_artifact_facade(self) -> Any:
+        from openminion.services.brain.session_artifacts import (
+            SessionArtifactFacade,
+            SessionArtifactUnavailable,
+        )
+
+        session_api = self._get_runner().session_api
+        if not isinstance(session_api, SessionArtifactAPI):
+            raise SessionArtifactUnavailable(
+                "Session artifact operations are not supported by this runtime."
+            )
+        return SessionArtifactFacade(session_api)
 
     def extract_memory_capture_candidates(
         self,

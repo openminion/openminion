@@ -173,6 +173,52 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(messages[0].metadata["source"], "user")
         self.assertEqual(messages[1].metadata["source"], "agent")
 
+    def test_client_message_cursor_helpers_are_session_bound(self) -> None:
+        first_session = self.store.resolve_session(
+            agent_id="main", channel="console", target="api-user", session_id="one"
+        )
+        second_session = self.store.resolve_session(
+            agent_id="main", channel="console", target="api-user", session_id="two"
+        )
+        first = self.store.append_message(
+            session_id=first_session.id,
+            role="inbound",
+            body="one",
+        )
+        second = self.store.append_message(
+            session_id=first_session.id,
+            role="outbound",
+            body="two",
+        )
+
+        self.assertEqual(
+            [
+                item.id
+                for item in self.store.list_messages_after_rowid(
+                    session_id=first_session.id,
+                    after_rowid=first.rowid,
+                    limit=10,
+                )
+            ],
+            [second.id],
+        )
+        self.assertEqual(
+            self.store.message_high_water(session_id=first_session.id),
+            second.rowid,
+        )
+        self.assertTrue(
+            self.store.message_cursor_exists(
+                session_id=first_session.id,
+                rowid=first.rowid,
+            )
+        )
+        self.assertFalse(
+            self.store.message_cursor_exists(
+                session_id=second_session.id,
+                rowid=first.rowid,
+            )
+        )
+
     def test_append_and_list_events(self) -> None:
         session = self.store.resolve_session(
             agent_id="main", channel="console", target="chat"
@@ -391,6 +437,82 @@ class SessionStoreTests(unittest.TestCase):
                 "memory.capture.result.v1:second-result"
             )
         )
+
+    def test_client_event_cursor_and_cancellation_correlation_helpers(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main",
+            channel="console",
+            target="api-user",
+            session_id="desktop-session",
+        )
+        queued = self.store.append_event(
+            session_id=session.id,
+            event_type="run.queued",
+            payload={
+                "run_id": "run-1",
+                "request_id": "trace-1",
+                "state": "queued",
+            },
+        )
+        completed = self.store.append_event(
+            session_id=session.id,
+            event_type="run.completed",
+            payload={
+                "run_id": "run-1",
+                "request_id": "trace-1",
+                "state": "completed",
+            },
+        )
+        self.store.append_event(
+            session_id=session.id,
+            event_type="run.cancel_requested",
+            payload={"run_id": "run-1", "request_id": "trace-1"},
+        )
+
+        self.assertEqual(
+            [
+                item.id
+                for item in self.store.list_events_after_id(
+                    session_id=session.id,
+                    after_id=queued.id,
+                    high_water_id=completed.id,
+                    limit=10,
+                )
+            ],
+            [completed.id],
+        )
+        self.assertTrue(
+            self.store.event_cursor_exists(session_id=session.id, event_id=queued.id)
+        )
+        latest = self.store.latest_run_event_for_request(
+            session_id=session.id,
+            request_id="trace-1",
+        )
+        self.assertIsNotNone(latest)
+        assert latest is not None
+        self.assertEqual(latest.event_type, "run.completed")
+
+        terminal, inserted = self.store.append_cancel_request_once(
+            session_id=session.id,
+            request_id="trace-1",
+            run_id="run-1",
+        )
+        self.assertEqual(terminal.event_type, "run.completed")
+        self.assertFalse(inserted)
+
+        first_cancel, inserted = self.store.append_cancel_request_once(
+            session_id=session.id,
+            request_id="trace-2",
+            run_id=None,
+        )
+        duplicate_cancel, duplicate_inserted = self.store.append_cancel_request_once(
+            session_id=session.id,
+            request_id="trace-2",
+            run_id=None,
+        )
+        self.assertEqual(first_cancel.id, duplicate_cancel.id)
+        self.assertTrue(inserted)
+        self.assertFalse(duplicate_inserted)
 
     def test_list_events_supports_prefix_and_descending_order(self) -> None:
         session = self.store.resolve_session(

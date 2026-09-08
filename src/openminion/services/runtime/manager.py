@@ -21,17 +21,13 @@ from openminion.base.runtime.constants import (
 from openminion.modules.runtime.contracts import TURN_STREAM_SCHEMA_VERSION
 from openminion.base.runtime.interfaces import RUNTIME_INTERFACE_VERSION
 from openminion.modules.telemetry.lifecycle import (
-    build_agent_runtime_component_identity,
-    build_runtime_manager_component_identity,
-)
+    build_agent_runtime_component_identity, build_runtime_manager_component_identity,
+)  # fmt: skip
 from .events import emit_runtime_operation
 from .constants import TURN_STREAM_HISTORY_LIMIT
+from .interfaces import DesktopApprovalRequester
 
 from openminion.base.time import utc_now_iso as _utc_now_iso
-
-
-def _new_trace_id() -> str:
-    return uuid4().hex
 
 
 @dataclass(frozen=True)
@@ -92,6 +88,7 @@ class TurnRequest:
     mode: str = "oneshot"
     stream: bool = False
     meta: dict[str, Any] = field(default_factory=dict)
+    desktop_approval_requester: DesktopApprovalRequester | None = None
 
 
 @dataclass(frozen=True)
@@ -204,6 +201,7 @@ class TurnHandle:
         self._next_sequence = 1
         self._primary_stream_claimed = False
         self._latest_phase_status: dict[str, Any] | None = None
+        self._done_callbacks: list[Callable[[], None]] = []
 
     @property
     def cancel_event(self) -> Event:
@@ -265,11 +263,27 @@ class TurnHandle:
                 self._latest_phase_status = dict(sequenced.data)
             self._stream_cv.notify_all()
 
+    def add_done_callback(self, callback: Callable[[], None]) -> None:
+        with self._stream_cv:
+            invoke_now = self._result_ready.is_set()
+            if not invoke_now:
+                self._done_callbacks.append(callback)
+        if invoke_now:
+            callback()
+
     def _set_result(self, response: TurnResponse) -> None:
         with self._stream_cv:
+            if self._result_ready.is_set():
+                return
             self._result = response
+            callbacks, self._done_callbacks = self._done_callbacks, []
             self._result_ready.set()
             self._stream_cv.notify_all()
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                continue
 
     def _iter_chunks(
         self,
@@ -371,11 +385,10 @@ class AgentRuntimeManager:
             reason="manager_started",
             status="ok",
             metrics={
-                "max_agents_hot": self._max_agents_hot,
-                "max_global_concurrency": self._max_global_concurrency,
+                "max_agents_hot": self._max_agents_hot, "max_global_concurrency": self._max_global_concurrency,
                 "sweep_interval_seconds": self._sweep_interval_seconds,
             },
-        )
+        )  # fmt: skip
 
     def shutdown(self, grace_s: float = 10) -> None:
         with self._lock:
@@ -416,11 +429,8 @@ class AgentRuntimeManager:
             component=self._runtime_manager_component(),
             reason="manual_stop",
             status="ok",
-            metrics={
-                "active_traces": active_trace_count,
-                "active_agents": active_agent_count,
-            },
-        )
+            metrics={"active_traces": active_trace_count, "active_agents": active_agent_count},
+        )  # fmt: skip
 
     def get_or_create_agent(self, agent_id: str) -> AgentHandle:
         normalized_agent_id = str(agent_id or "").strip()
@@ -441,11 +451,10 @@ class AgentRuntimeManager:
                 self._emit(
                     "runtime.agent.created",
                     {
-                        "agent_id": normalized_agent_id,
-                        "created_at": instance.created_at,
+                        "agent_id": normalized_agent_id, "created_at": instance.created_at,
                         "native_lifecycle_emitted": True,
                     },
-                )
+                )  # fmt: skip
                 self._emit_lifecycle(
                     event_type="component.started",
                     component=self._agent_runtime_component(normalized_agent_id),
@@ -495,8 +504,7 @@ class AgentRuntimeManager:
             self.start()
         if not self._accepting:
             raise RuntimeError("runtime manager is not accepting new turns")
-
-        trace_id = str(req.trace_id or "").strip() or _new_trace_id()
+        trace_id = str(req.trace_id or "").strip() or uuid4().hex
         request = TurnRequest(
             trace_id=trace_id,
             agent_id=str(req.agent_id or "").strip(),
@@ -506,6 +514,7 @@ class AgentRuntimeManager:
             mode=str(req.mode or "oneshot"),
             stream=bool(req.stream),
             meta=dict(req.meta or {}),
+            desktop_approval_requester=req.desktop_approval_requester,
         )
         if not request.agent_id:
             raise ValueError("agent_id must be non-empty")
@@ -513,7 +522,6 @@ class AgentRuntimeManager:
             raise ValueError("session_id must be non-empty")
         if not request.input_text.strip():
             raise ValueError("input_text must be non-empty")
-
         self.get_or_create_agent(request.agent_id)
         background = bool(str(request.meta.get("cron_run_id", "") or "").strip())
         handle = TurnHandle(
@@ -533,28 +541,32 @@ class AgentRuntimeManager:
             self._emit(
                 "runtime.turn.enqueued",
                 {
-                    "trace_id": request.trace_id,
-                    "agent_id": request.agent_id,
-                    "session_id": request.session_id,
-                    "queued_at": _utc_now_iso(),
+                    "trace_id": request.trace_id, "agent_id": request.agent_id,
+                    "session_id": request.session_id, "queued_at": _utc_now_iso(),
                 },
-            )
+            )  # fmt: skip
         return handle
 
     def cancel_turn(self, trace_id: str) -> bool:
+        return self.cancel_session_turn(trace_id, "") != "not_active"
+
+    def cancel_session_turn(self, trace_id: str, session_id: str) -> str:
         normalized = str(trace_id or "").strip()
-        if not normalized:
-            return False
         with self._lock:
             handle = self._traces.get(normalized)
             if handle is None:
-                return False
+                return "not_active"
+            if session_id and handle.session_id != str(session_id).strip():
+                return "session_mismatch"
+            state = "already_requested" if handle.cancel_event.is_set() else "requested"
             handle.cancel_event.set()
+        if state == "already_requested":
+            return state
         self._emit(
             "runtime.turn.cancelled",
             {"trace_id": normalized, "requested_at": _utc_now_iso()},
         )
-        return True
+        return state
 
     def kill_switch(self, grace_s: float = 2.0) -> None:
         with self._lock:
@@ -566,11 +578,10 @@ class AgentRuntimeManager:
         self._emit(
             "runtime.manager.kill",
             {
-                "active_traces": len(traces),
-                "at": _utc_now_iso(),
+                "active_traces": len(traces), "at": _utc_now_iso(),
                 "native_lifecycle_emitted": True,
             },
-        )
+        )  # fmt: skip
         self._emit_lifecycle(
             event_type="component.crashed",
             component=self._runtime_manager_component(),
@@ -607,11 +618,10 @@ class AgentRuntimeManager:
             reason="heartbeat",
             status="ok",
             metrics={
-                "active_agents": active_agents,
-                "active_traces": active_traces,
+                "active_agents": active_agents, "active_traces": active_traces,
                 "sweep_interval_seconds": self._sweep_interval_seconds,
             },
-        )
+        )  # fmt: skip
 
     def _evict_over_limit_locked(self) -> None:
         overflow = max(0, len(self._instances) - self._max_agents_hot)
@@ -673,12 +683,10 @@ class AgentRuntimeManager:
         self._emit(
             "runtime.agent.evicted",
             {
-                "agent_id": agent_id,
-                "reason": reason,
-                "at": _utc_now_iso(),
+                "agent_id": agent_id, "reason": reason, "at": _utc_now_iso(),
                 "native_lifecycle_emitted": True,
             },
-        )
+        )  # fmt: skip
         self._emit_lifecycle(
             event_type="component.stopped",
             component=self._agent_runtime_component(agent_id),
@@ -966,19 +974,14 @@ class AgentRuntimeManager:
         self._emit(
             event_type,
             {
-                "component": dict(component),
-                "module_id": "openminion-runtime",
+                "component": dict(component), "module_id": "openminion-runtime",
                 "session_id": f"lifecycle:{component_kind}:{component_id}",
-                "turn_id": (
-                    f"{component_kind}:{component_id}:{event_type.rsplit('.', 1)[-1]}:{self._lifecycle_sequence}"
-                ),
-                "reason": reason,
-                "status": status,
-                "metrics": dict(metrics or {}),
-                "evidence": dict(evidence or {}),
+                "turn_id": f"{component_kind}:{component_id}:{event_type.rsplit('.', 1)[-1]}:{self._lifecycle_sequence}",
+                "reason": reason, "status": status,
+                "metrics": dict(metrics or {}), "evidence": dict(evidence or {}),
                 "source_classification": "native_canonical",
             },
-        )
+        )  # fmt: skip
 
     def _runtime_manager_component(self) -> dict[str, Any]:
         return build_runtime_manager_component_identity()

@@ -13,7 +13,12 @@ from openminion.modules.llm.providers.base import (
     ProviderToolSpec,
 )
 from openminion.modules.llm.providers.normalization import normalize_provider_response
-from openminion.modules.llm.schemas import Message, ToolCall, UsageInfo
+from openminion.modules.llm.schemas import (
+    Message,
+    MessageContentPart,
+    ToolCall,
+    UsageInfo,
+)
 from openminion.modules.llm.thinking import serialize_thinking_blocks
 from openminion.modules.prompting.continuation import (
     ACTIVE_TASK_CONTINUATION_PROMPT,
@@ -40,6 +45,7 @@ _STRUCTURED_RESPONSE_FIELD_NAMES: tuple[str, ...] = (
     "task_plan_abandoned",
     "task_plan_completed",
 )
+_NormalizedMessage = tuple[str, str, dict[str, Any], list[MessageContentPart]]
 
 
 def extract_structured_response_fields(raw_response: Any) -> dict[str, Any]:
@@ -157,11 +163,11 @@ def metadata_user_prompt(metadata: dict[str, str]) -> str:
 
 
 def successful_tool_names_from_history(
-    history_entries: list[tuple[str, str, dict[str, Any]]],
+    history_entries: list[_NormalizedMessage],
 ) -> tuple[str, ...]:
     successful: list[str] = []
     call_names: dict[str, str] = {}
-    for role, content, meta in history_entries:
+    for role, content, meta, _content_parts in history_entries:
         if role == "assistant":
             for call in meta.get("tool_calls", []):
                 if not isinstance(call, dict):
@@ -194,7 +200,7 @@ def successful_tool_names_from_history(
 def continuation_prompt_with_history(
     *,
     metadata: dict[str, str],
-    history_entries: list[tuple[str, str, dict[str, Any]]],
+    history_entries: list[_NormalizedMessage],
 ) -> str:
     return build_successful_tool_continuation_prompt(
         base_prompt=metadata_user_prompt(metadata),
@@ -210,12 +216,13 @@ def request_metadata(req: Any) -> dict[str, str]:
     }
 
 
-def normalized_messages(req: Any) -> list[tuple[str, str, dict[str, Any]]]:
-    normalized: list[tuple[str, str, dict[str, Any]]] = []
+def normalized_messages(req: Any) -> list[_NormalizedMessage]:
+    normalized: list[_NormalizedMessage] = []
     for message in list(getattr(req, "messages", []) or []):
         role = str(getattr(message, "role", "")).strip().lower()
         content = str(getattr(message, "content", "")).strip()
         meta = dict(getattr(message, "meta", {}) or {})
+        content_parts = list(getattr(message, "content_parts", []) or [])
         tool_calls = list(getattr(message, "tool_calls", []) or [])
         tool_call_id = str(getattr(message, "tool_call_id", "") or "").strip()
         tool_status = str(getattr(message, "tool_status", "") or "").strip()
@@ -248,11 +255,11 @@ def normalized_messages(req: Any) -> list[tuple[str, str, dict[str, Any]]]:
             meta["tool_output"] = tool_output
         if tool_error is not None:
             meta["tool_error"] = dict(tool_error)
-        if not content and not tool_calls and not tool_call_id:
+        if not content and not content_parts and not tool_calls and not tool_call_id:
             continue
         if role not in {"system", "user", "assistant", "tool"}:
             role = "user"
-        normalized.append((role, content, meta))
+        normalized.append((role, content, meta, content_parts))
     return normalized
 
 
@@ -262,10 +269,12 @@ def provider_history_payload(message: ProviderHistoryMessage) -> dict[str, Any] 
         role = "user"
     content = message.content.strip()
     tool_call_id = str(message.tool_call_id or "").strip()
-    if not content and not message.tool_calls and not tool_call_id:
+    if not content and not message.content_parts and not message.tool_calls and not tool_call_id:
         return None
 
     payload: dict[str, Any] = {"role": role, "content": content}
+    if message.content_parts:
+        payload["content_parts"] = list(message.content_parts)
     if message.meta:
         payload["meta"] = dict(message.meta)
     if message.tool_calls:
@@ -304,15 +313,15 @@ def response_telemetry_event_fields(response: Any) -> dict[str, Any]:
 
 
 def split_system_and_conversation(
-    messages: list[tuple[str, str, dict[str, Any]]],
-) -> tuple[str, list[tuple[str, str, dict[str, Any]]]]:
+    messages: list[_NormalizedMessage],
+) -> tuple[str, list[_NormalizedMessage]]:
     system_chunks: list[str] = []
-    conversational: list[tuple[str, str, dict[str, Any]]] = []
-    for role, content, meta in messages:
+    conversational: list[_NormalizedMessage] = []
+    for role, content, meta, content_parts in messages:
         if role == "system":
             system_chunks.append(content)
         else:
-            conversational.append((role, content, meta))
+            conversational.append((role, content, meta, content_parts))
     return "\n\n".join(
         chunk for chunk in system_chunks if chunk.strip()
     ).strip(), conversational
@@ -320,15 +329,17 @@ def split_system_and_conversation(
 
 def latest_prompt_and_history(
     *,
-    conversational: list[tuple[str, str, dict[str, Any]]],
+    conversational: list[_NormalizedMessage],
     metadata: dict[str, str],
-) -> tuple[str, list[ProviderHistoryMessage]]:
+) -> tuple[str, list[MessageContentPart], list[ProviderHistoryMessage]]:
     latest_msg = ""
+    latest_content_parts: list[MessageContentPart] = []
     prompt_index = -1
     for idx in range(len(conversational) - 1, -1, -1):
-        role, content, _meta = conversational[idx]
+        role, content, _meta, content_parts = conversational[idx]
         if role == "user":
             latest_msg = content
+            latest_content_parts = list(content_parts)
             prompt_index = idx
             break
     if prompt_index == len(conversational) - 1:
@@ -341,16 +352,11 @@ def latest_prompt_and_history(
             metadata=metadata,
             history_entries=history_entries,
         )
+        latest_content_parts = []
     else:
         history_entries = []
-    while (
-        history_entries
-        and history_entries[-1][0] == "user"
-        and history_entries[-1][1].strip() == latest_msg.strip()
-    ):
-        history_entries.pop()
     history = []
-    for role, content, meta in history_entries:
+    for role, content, meta, content_parts in history_entries:
         meta_value = dict(meta or {})
         tool_calls = []
         for raw_call in meta_value.pop("tool_calls", []):
@@ -381,6 +387,7 @@ def latest_prompt_and_history(
             ProviderHistoryMessage(
                 role=role,
                 content=content,
+                content_parts=list(content_parts),
                 meta=meta_value,
                 tool_calls=tool_calls,
                 tool_call_id=tool_call_id,
@@ -389,7 +396,7 @@ def latest_prompt_and_history(
                 tool_error=raw_tool_error if isinstance(raw_tool_error, dict) else None,
             )
         )
-    return latest_msg, history
+    return latest_msg, latest_content_parts, history
 
 
 def provider_tools_from_request(req: Any) -> list[ProviderToolSpec]:

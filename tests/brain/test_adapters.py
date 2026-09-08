@@ -49,6 +49,12 @@ def _find_retry_message(messages: list[object]) -> str:
     raise AssertionError("missing retry system message")
 
 
+def _context_session_store(turns: list[dict[str, object]] | None = None) -> MagicMock:
+    store = MagicMock()
+    store.list_turns.return_value = list(turns or [])
+    return store
+
+
 class LocalSessionStoreTests(unittest.TestCase):
     def test_working_state_serialization_and_versioning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1389,13 +1395,414 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
 
         from openminion.modules.brain.adapters.context import ContextCtlAdapter
 
-        mock_pack = fake_context_pack({"pack_version": "123"})
+        mock_pack = fake_context_pack(
+            {
+                "pack_version": "123",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "hello",
+                        "meta": {"segment_ids": ["turn:t-user"]},
+                    },
+                    {
+                        "role": "user",
+                        "content": "current text only",
+                        "meta": {"segment_ids": ["turn:t-current"]},
+                    },
+                ],
+            }
+        )
         mock_svc = fake_context_service(pack=mock_pack)
 
-        adapter = ContextCtlAdapter(mock_svc)
+        session_store = _context_session_store(
+            [
+                {
+                    "turn_id": "t-user",
+                    "role": "user",
+                    "content": "hello",
+                    "attachments": ["artifact-ref"],
+                },
+                {
+                    "turn_id": "t-trimmed",
+                    "role": "user",
+                    "content": "trimmed",
+                    "attachments": ["must-not-cross"],
+                },
+                {
+                    "turn_id": "t-current",
+                    "role": "user",
+                    "content": "current text only",
+                    "attachments": [],
+                },
+            ]
+        )
+        adapter = ContextCtlAdapter(mock_svc, session_store=session_store)
         res = adapter.build(session_id="s1", agent_id="a1", purpose="decide", budget={})
-        self.assertEqual(res, {"pack_version": "123"})
+        self.assertEqual(
+            res,
+            {
+                "pack_version": "123",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "hello",
+                        "meta": {"segment_ids": ["turn:t-user"]},
+                    },
+                    {
+                        "role": "user",
+                        "content": "current text only",
+                        "meta": {"segment_ids": ["turn:t-current"]},
+                    },
+                ],
+                "turns": [
+                    {
+                        "turn_id": "t-user",
+                        "role": "user",
+                        "content": "hello",
+                        "attachments": ["artifact-ref"],
+                    },
+                    {
+                        "turn_id": "t-current",
+                        "role": "user",
+                        "content": "current text only",
+                        "attachments": [],
+                    },
+                ],
+            },
+        )
         mock_svc.build_pack.assert_called_once()
+        session_store.list_turns.assert_called_once_with("s1")
+
+    def test_context_adapter_keeps_latest_attachment_without_text_inference(
+        self,
+    ) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+
+        mock_svc = fake_context_service(
+            pack=fake_context_pack(
+                {
+                    "pack_version": "123",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "mission objective",
+                            "meta": {"segment_ids": ["turn_input"]},
+                        }
+                    ],
+                }
+            )
+        )
+        session_store = _context_session_store(
+            [
+                {
+                    "turn_id": "t-old",
+                    "role": "user",
+                    "content": "mission objective",
+                    "attachments": ["must-not-cross"],
+                },
+                {
+                    "turn_id": "t-repeated",
+                    "role": "user",
+                    "content": "original request",
+                    "attachments": ["must-not-cross-either"],
+                },
+                {
+                    "turn_id": "t-current",
+                    "role": "user",
+                    "content": "original request",
+                    "attachments": ["artifact-ref"],
+                },
+            ]
+        )
+
+        result = ContextCtlAdapter(
+            mock_svc,
+            session_store=session_store,
+        ).build(session_id="s1", agent_id="a1", purpose="decide", budget={})
+
+        self.assertEqual(
+            result["turns"],
+            [
+                {
+                    "turn_id": "t-current",
+                    "role": "user",
+                    "content": "original request",
+                    "attachments": ["artifact-ref"],
+                }
+            ],
+        )
+
+    def test_context_adapter_aligns_independent_recent_turn_ids_by_occurrence(
+        self,
+    ) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+
+        mock_svc = fake_context_service(
+            pack=fake_context_pack(
+                {
+                    "pack_version": "123",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "same request",
+                            "meta": {"segment_ids": ["turn:gateway-old"]},
+                        },
+                        {
+                            "role": "user",
+                            "content": "same request",
+                            "meta": {"segment_ids": ["turn:gateway-new"]},
+                        },
+                        {
+                            "role": "user",
+                            "content": "current text",
+                            "meta": {"segment_ids": ["turn:gateway-current"]},
+                        },
+                    ],
+                }
+            )
+        )
+        session_store = _context_session_store(
+            [
+                {
+                    "turn_id": "brain-old",
+                    "role": "user",
+                    "content": "same request",
+                    "attachments": ["artifact-old"],
+                },
+                {
+                    "turn_id": "brain-new",
+                    "role": "user",
+                    "content": "same request",
+                    "attachments": ["artifact-new"],
+                },
+                {
+                    "turn_id": "brain-current",
+                    "role": "user",
+                    "content": "current text",
+                    "attachments": [],
+                },
+            ]
+        )
+        session_store.get_detached_artifact_refs.return_value = ["artifact-old"]
+
+        result = ContextCtlAdapter(
+            mock_svc,
+            session_store=session_store,
+        ).build(session_id="s1", agent_id="a1", purpose="decide", budget={})
+
+        self.assertEqual(
+            result["turns"],
+            [
+                {
+                    "turn_id": "brain-old",
+                    "role": "user",
+                    "content": "same request",
+                    "attachments": [],
+                    "context_segment_id": "gateway-old",
+                },
+                {
+                    "turn_id": "brain-new",
+                    "role": "user",
+                    "content": "same request",
+                    "attachments": ["artifact-new"],
+                    "context_segment_id": "gateway-new",
+                },
+                {
+                    "turn_id": "brain-current",
+                    "role": "user",
+                    "content": "current text",
+                    "attachments": [],
+                    "context_segment_id": "gateway-current",
+                },
+            ],
+        )
+
+    def test_context_adapter_does_not_alias_multiple_turn_segments(self) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+
+        mock_svc = fake_context_service(
+            pack=fake_context_pack(
+                {
+                    "pack_version": "123",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "historical",
+                            "meta": {
+                                "segment_ids": ["turn:gateway-a", "turn:gateway-b"]
+                            },
+                        },
+                        {
+                            "role": "user",
+                            "content": "current",
+                            "meta": {"segment_ids": ["turn:gateway-current"]},
+                        },
+                    ],
+                }
+            )
+        )
+        session_store = _context_session_store(
+            [
+                {
+                    "turn_id": "brain-historical",
+                    "role": "user",
+                    "content": "historical",
+                    "attachments": ["must-not-cross"],
+                },
+                {
+                    "turn_id": "brain-current",
+                    "role": "user",
+                    "content": "current",
+                    "attachments": [],
+                },
+            ]
+        )
+
+        result = ContextCtlAdapter(
+            mock_svc,
+            session_store=session_store,
+        ).build(session_id="s1", agent_id="a1", purpose="decide", budget={})
+
+        self.assertEqual(
+            result["turns"],
+            [
+                {
+                    "turn_id": "brain-current",
+                    "role": "user",
+                    "content": "current",
+                    "attachments": [],
+                    "context_segment_id": "gateway-current",
+                }
+            ],
+        )
+
+    def test_context_adapter_filters_detached_refs_under_gateway_lease(self) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+
+        mock_svc = fake_context_service(
+            pack=fake_context_pack(
+                {
+                    "pack_version": "123",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "current",
+                            "meta": {"segment_ids": ["turn:t-current"]},
+                        }
+                    ],
+                }
+            )
+        )
+        detached = f"artifact://sha256/{'a' * 64}"
+        retained = f"artifact://sha256/{'b' * 64}"
+        session_store = _context_session_store(
+            [
+                {
+                    "turn_id": "t-current",
+                    "role": "user",
+                    "content": "current",
+                    "attachments": [detached, retained],
+                }
+            ]
+        )
+        session_store.get_detached_artifact_refs.return_value = [detached]
+
+        result = ContextCtlAdapter(
+            mock_svc,
+            session_store=session_store,
+        ).build(session_id="s1", agent_id="a1", purpose="decide", budget={})
+
+        self.assertEqual(result["turns"][0]["attachments"], [retained])
+        session_store.get_detached_artifact_refs.assert_called_once_with("s1")
+        session_store.acquire_session_turn_lease.assert_not_called()
+
+    def test_context_adapter_uses_canonical_projection_under_real_gateway_lease(
+        self,
+    ) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+        from openminion.modules.brain.adapters.session.runtime import SessctlAdapter
+        from openminion.modules.session.artifact_lifecycle import (
+            ArtifactLifecycleError,
+        )
+        from openminion.modules.session.storage.sqlite_store import (
+            SQLiteSessionStore,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLiteSessionStore(Path(tmp) / "sessions.db")
+            session_id = store.create_session(initial_agent_id="agent-1")
+            detached = f"artifact://sha256/{'a' * 64}"
+            retained = f"artifact://sha256/{'b' * 64}"
+            turn_id = store.append_turn(
+                session_id,
+                "user",
+                "current",
+                attachments=[detached, retained],
+            )
+            store.apply_artifact_decision(
+                session_id,
+                artifact_ref=detached,
+                detached=True,
+                reason_code="desktop_user_action",
+                request_id="decision-before-turn",
+            )
+            lease = store.acquire_session_turn_lease(
+                session_id,
+                owner="gateway",
+                request_id="gateway-turn",
+            )
+            adapter = SessctlAdapter(store)
+            mock_svc = fake_context_service(
+                pack=fake_context_pack(
+                    {
+                        "pack_version": "123",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "current",
+                                "meta": {"segment_ids": [f"turn:{turn_id}"]},
+                            }
+                        ],
+                    }
+                )
+            )
+            try:
+                result = ContextCtlAdapter(
+                    mock_svc,
+                    session_store=adapter,
+                ).build(
+                    session_id=session_id,
+                    agent_id="agent-1",
+                    purpose="decide",
+                    budget={},
+                )
+                self.assertEqual(result["turns"][0]["attachments"], [retained])
+                with self.assertRaises(ArtifactLifecycleError) as raised:
+                    adapter.apply_artifact_decision(
+                        session_id,
+                        artifact_ref=retained,
+                        detached=True,
+                        reason_code="desktop_user_action",
+                        request_id="decision-during-turn",
+                    )
+                self.assertEqual(raised.exception.code, "session_turn_active")
+            finally:
+                store.release_session_turn_lease(
+                    session_id,
+                    owner="gateway",
+                    fence_token=int(lease.fence_token),
+                )
+
+            self.assertEqual(
+                adapter.apply_artifact_decision(
+                    session_id,
+                    artifact_ref=retained,
+                    detached=True,
+                    reason_code="desktop_user_action",
+                    request_id="decision-after-turn",
+                ),
+                "applied",
+            )
 
     def test_context_adapter_close_delegates_to_service(self) -> None:
         from openminion.modules.brain.adapters.context import ContextCtlAdapter
@@ -1467,7 +1874,7 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
 
         mock_pack = fake_context_pack({"pack_version": "123"})
         mock_svc = fake_context_service(pack=mock_pack)
-        adapter = ContextCtlAdapter(mock_svc)
+        adapter = ContextCtlAdapter(mock_svc, session_store=_context_session_store())
 
         raw_runtime = [
             {
@@ -1522,7 +1929,7 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
 
         mock_pack = fake_context_pack({"pack_version": "123"})
         mock_svc = fake_context_service(pack=mock_pack)
-        adapter = ContextCtlAdapter(mock_svc)
+        adapter = ContextCtlAdapter(mock_svc, session_store=_context_session_store())
 
         adapter.build(
             session_id="s1",
@@ -1558,7 +1965,7 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
 
         mock_pack = fake_context_pack({"pack_version": "123"})
         mock_svc = fake_context_service(pack=mock_pack)
-        adapter = ContextCtlAdapter(mock_svc)
+        adapter = ContextCtlAdapter(mock_svc, session_store=_context_session_store())
 
         adapter.build(
             session_id="s1",
@@ -1592,7 +1999,11 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
 
         mock_pack = fake_context_pack({"pack_version": "123"})
         mock_svc = fake_context_service(pack=mock_pack)
-        adapter = ContextCtlAdapter(mock_svc, runtime_token_budget=1200)
+        adapter = ContextCtlAdapter(
+            mock_svc,
+            session_store=_context_session_store(),
+            runtime_token_budget=1200,
+        )
 
         adapter.build(
             session_id="s1",
@@ -1823,6 +2234,16 @@ class AdapterInterfaceContractTests(unittest.TestCase):
             self.skipTest("factory adapter not importable")
 
         class _SessionStore:
+            def list_turns(self, session_id: str):
+                return [
+                    {
+                        "turn_id": "t-user",
+                        "role": "user",
+                        "content": "hello",
+                        "attachments": ["artifact://sha256/" + "a" * 64],
+                    }
+                ]
+
             def get_slice(
                 self, *, session_id: str, purpose: str, limits: dict[str, int]
             ):
@@ -1853,6 +2274,10 @@ class AdapterInterfaceContractTests(unittest.TestCase):
 
         self.assertEqual(payload.get("session_id"), "s-ctx")
         self.assertIn("messages", payload)
+        self.assertEqual(
+            payload["turns"][0]["attachments"],
+            ["artifact://sha256/" + "a" * 64],
+        )
         rendered = "\n".join(
             str(item.get("content", ""))
             for item in payload.get("messages", [])
@@ -1871,6 +2296,10 @@ class AdapterInterfaceContractTests(unittest.TestCase):
             self.skipTest("factory adapter not importable")
 
         class _SessionStore:
+            def list_turns(self, session_id: str):
+                del session_id
+                return []
+
             def get_slice(
                 self, *, session_id: str, purpose: str, limits: dict[str, int]
             ):
@@ -1933,6 +2362,10 @@ class AdapterInterfaceContractTests(unittest.TestCase):
 
             class _SessionStore:
                 sqlite_path = str(session_db)
+
+                def list_turns(self, session_id: str):
+                    del session_id
+                    return []
 
                 def get_slice(
                     self, *, session_id: str, purpose: str, limits: dict[str, int]
@@ -2065,6 +2498,10 @@ class AdapterInterfaceContractTests(unittest.TestCase):
             self.skipTest("factory adapter not importable")
 
         class _SessionStore:
+            def list_turns(self, session_id: str):
+                del session_id
+                return []
+
             def get_slice(
                 self, *, session_id: str, purpose: str, limits: dict[str, int]
             ):

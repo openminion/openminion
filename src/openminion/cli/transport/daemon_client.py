@@ -9,6 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from openminion.cli.bootstrap.loader import load_config_with_path
+from openminion.services.config import resolve_services_roots
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,9 @@ class DaemonEndpoint:
     host: str
     port: int
     token: str = ""
+    home_root: str = ""
+    data_root: str = ""
+    client_token: str = ""
 
     @property
     def base_url(self) -> str:
@@ -48,11 +52,19 @@ def resolve_daemon_endpoint(
     )
     host, port = resolve_ipc_bind(config)
     token = str(config.runtime.ipc_token or "").strip()
+    roots = resolve_services_roots(
+        runtime_env=config.runtime.env,
+        config_path=resolved,
+        home_root=home_root,
+        data_root=data_root,
+    )
     return DaemonEndpoint(
         config_path=str(resolved),
         host=host,
         port=port,
         token=token,
+        home_root=str(roots.home_root),
+        data_root=str(roots.data_root),
     )
 
 
@@ -105,6 +117,7 @@ def daemon_request(
     path: str,
     payload: dict[str, Any] | None = None,
     timeout_s: float = 30.0,
+    max_response_bytes: int | None = None,
 ) -> tuple[int, dict[str, Any]]:
     request = _build_daemon_request(
         endpoint=endpoint,
@@ -116,10 +129,17 @@ def daemon_request(
 
     try:
         with urlopen(request, timeout=timeout_s) as response:  # noqa: S310
-            raw_body = response.read().decode("utf-8")
+            raw_body = _read_response_body(
+                response,
+                max_response_bytes=max_response_bytes,
+            )
             return int(response.status), _parse_json_response(raw_body)
     except HTTPError as exc:
-        raw_body = exc.read().decode("utf-8") if exc.fp is not None else ""
+        raw_body = (
+            _read_response_body(exc, max_response_bytes=max_response_bytes)
+            if exc.fp is not None
+            else ""
+        )
         return int(exc.code), _parse_json_response(raw_body)
     except (URLError, TimeoutError, socket.timeout, OSError) as exc:
         reason = str(getattr(exc, "reason", exc))
@@ -178,7 +198,9 @@ def _build_daemon_request(
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    if endpoint.token:
+    if endpoint.client_token:
+        headers["X-OpenMinion-Client-Token"] = endpoint.client_token
+    elif endpoint.token:
         headers["X-IPC-Token"] = endpoint.token
     if last_event_id:
         headers["Last-Event-ID"] = last_event_id
@@ -213,6 +235,22 @@ def _parse_json_response(raw_body: str) -> dict[str, Any]:
         "ok": False,
         "error": {"code": "invalid_payload", "message": "non-object response"},
     }
+
+
+def _read_response_body(response: Any, *, max_response_bytes: int | None) -> str:
+    raw: bytes
+    if max_response_bytes is None:
+        raw = response.read()
+    else:
+        raw = response.read(max_response_bytes + 1)
+        if len(raw) > max_response_bytes:
+            raise RuntimeError(
+                f"daemon response exceeds the {max_response_bytes}-byte limit"
+            )
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("daemon response is not valid UTF-8") from exc
 
 
 def _decode_sse_event_payload(data_lines: list[str]) -> object:

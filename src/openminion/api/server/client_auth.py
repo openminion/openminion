@@ -1,0 +1,792 @@
+"""Feature-local authentication for OpenMinion desktop client leases."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import ipaddress
+import json
+import logging
+import re
+import secrets
+import threading
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from importlib.metadata import PackageNotFoundError, version
+from http import HTTPStatus
+from os import PathLike
+from pathlib import Path
+from time import perf_counter
+from typing import Any, Iterable, cast
+
+from openminion.api.core.validation import parse_json_request_body
+from openminion.api.responses.serialization import error_response, normalize_request_id
+from openminion.api.server.observability import finalize_api_response
+from openminion.base.config import ConfigManager, ConfigManagerError
+
+
+MASTER_TOKEN_HEADER = "X-IPC-Token"
+CLIENT_TOKEN_HEADER = "X-OpenMinion-Client-Token"
+PROTOCOL_VERSION = 1
+MIN_TTL_SECONDS = 60
+MAX_TTL_SECONDS = 43_200
+DEFAULT_TTL_SECONDS = MAX_TTL_SECONDS
+
+_CLIENT_CAPABILITIES = (
+    "daemon.health",
+    "daemon.ready",
+    "client.capabilities",
+    "client.lease.renew",
+    "client.lease.revoke",
+    "sessions.list",
+    "sessions.create",
+    "sessions.load",
+    "sessions.close",
+    "sessions.events",
+    "turns.submit",
+    "turns.cancel",
+    "turns.tool_progress",
+    "approvals.decide",
+    "media.upload",
+    "media.read",
+    "media.release",
+    "artifacts.catalog.v1",
+    "artifacts.content.v1",
+    "artifacts.detach_restore.v1",
+    "tool_outputs.read.v1",
+)
+_CLIENT_BODY_LIMITS = {
+    "/v1/client/leases": 16 * 1024,
+    "/v1/client/leases/renew": 4 * 1024,
+    "/v1/client/leases/current": 4 * 1024,
+}
+_SESSION_PATH = re.compile(r"/v1/client/sessions/[^/]+")
+_SESSION_EVENTS_PATH = re.compile(r"/v1/client/sessions/[^/]+/events")
+_TURN_CANCEL_PATH = re.compile(r"/v1/turn/[^/]+/cancel")
+_APPROVAL_PATH = re.compile(r"/v1/client/sessions/[^/]+/turns/[^/]+/approvals/[^/]+")
+_MEDIA_COLLECTION_PATH = re.compile(r"/v1/client/sessions/[^/]+/media")
+_MEDIA_ITEM_PATH = re.compile(r"/v1/client/sessions/[^/]+/media/[^/]+")
+_ARTIFACT_CATALOG_PATH = re.compile(r"/v1/client/sessions/[^/]+/artifacts")
+_ARTIFACT_ITEM_PATH = re.compile(r"/v1/client/sessions/[^/]+/artifacts/[^/]+")
+_ARTIFACT_DECISION_PATH = re.compile(
+    r"/v1/client/sessions/[^/]+/artifacts/[^/]+/(detach|restore)"
+)
+_DEFAULT_CLIENT_RESPONSE_LIMIT = 64 * 1024
+_ADMITTED_HEADERS = frozenset(
+    {
+        "accept",
+        "content-type",
+        "x-request-id",
+        "x-ipc-token",
+        "x-openminion-client-token",
+        "host",
+        "content-length",
+        "connection",
+        "accept-encoding",
+        "user-agent",
+        "transfer-encoding",
+        "x-openminion-media-name",
+    }
+)
+
+
+def build_config_id(
+    config_path: str | Path,
+    home_root: str | Path,
+    data_root: str | Path,
+) -> str:
+    parts = (
+        "openminion-config-v1",
+        str(Path(config_path).expanduser().resolve(strict=False)),
+        str(Path(home_root).expanduser().resolve(strict=False)),
+        str(Path(data_root).expanduser().resolve(strict=False)),
+    )
+    return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()
+
+
+def is_loopback(value: str) -> bool:
+    try:
+        return ipaddress.ip_address(str(value).split("%", 1)[0]).is_loopback
+    except ValueError:
+        return False
+
+
+@dataclass(frozen=True)
+class ClientIdentity:
+    client_id: str
+    config_id: str
+    protocol: int
+    capabilities: tuple[str, ...]
+
+
+@dataclass
+class _ClientLease:
+    identity: ClientIdentity
+    token_digest: bytes
+    issued_at: datetime
+    expires_at: datetime
+    revoked: bool = False
+
+
+class ClientAuthError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class ClientAuthService:
+    """Daemon-local lease owner; intentionally in-memory and feature-specific."""
+
+    def __init__(
+        self,
+        *,
+        master_token: str,
+        config_path: str | Path,
+        home_root: str | Path,
+        data_root: str | Path,
+        bind_host: str,
+        daemon_version: str,
+    ) -> None:
+        self._master_token = str(master_token or "").strip()
+        self.config_id = build_config_id(config_path, home_root, data_root)
+        self.bind_host = str(bind_host or "").strip()
+        self.daemon_version = str(daemon_version or "").strip()
+        self._cursor_key = secrets.token_bytes(32)
+        self._leases: dict[str, _ClientLease] = {}
+        self._lock = threading.Lock()
+
+    @property
+    def desktop_enabled(self) -> bool:
+        return bool(self._master_token)
+
+    def authorize(
+        self,
+        *,
+        method: str,
+        path: str,
+        master_tokens: Iterable[str],
+        client_tokens: Iterable[str],
+        peer_host: str,
+    ) -> ClientIdentity | None:
+        masters = tuple(master_tokens)
+        clients = tuple(client_tokens)
+        if len(masters) > 1 or len(clients) > 1 or (masters and clients):
+            raise self._forbidden()
+        if masters:
+            self._require_loopback(peer_host)
+            token = masters[0].strip()
+            if not token or not self._master_token:
+                if path == "/v1/client/leases" and not self._master_token:
+                    raise ClientAuthError(
+                        "desktop_ipc_token_required",
+                        "Desktop admission requires a configured runtime.ipc_token.",
+                    )
+                raise self._forbidden()
+            if not hmac.compare_digest(token, self._master_token):
+                raise self._forbidden()
+            return None
+        if clients:
+            self._require_loopback(peer_host)
+            identity = self._authenticate_client(clients[0])
+            capability = _client_route_capability(method, path)
+            if capability is None or capability not in identity.capabilities:
+                raise self._forbidden()
+            return identity
+        if path == "/v1/client/leases" and not self._master_token:
+            raise ClientAuthError(
+                "desktop_ipc_token_required",
+                "Desktop admission requires a configured runtime.ipc_token.",
+            )
+        if self._master_token:
+            raise self._forbidden()
+        return None
+
+    def mint(
+        self,
+        *,
+        protocol_min: int,
+        protocol_max: int,
+        ttl_seconds: int,
+    ) -> dict[str, object]:
+        if not self.desktop_enabled:
+            raise ClientAuthError(
+                "desktop_ipc_token_required",
+                "Desktop admission requires a configured runtime.ipc_token.",
+            )
+        if not protocol_min <= PROTOCOL_VERSION <= protocol_max:
+            raise ClientAuthError(
+                "unsupported_protocol", "No supported protocol overlaps."
+            )
+        if not MIN_TTL_SECONDS <= ttl_seconds <= MAX_TTL_SECONDS:
+            raise ClientAuthError(
+                "invalid_request", "requested_ttl_seconds is out of range."
+            )
+        token = secrets.token_urlsafe(32)
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(seconds=ttl_seconds)
+        identity = ClientIdentity(
+            client_id=secrets.token_urlsafe(18),
+            config_id=self.config_id,
+            protocol=PROTOCOL_VERSION,
+            capabilities=_CLIENT_CAPABILITIES,
+        )
+        digest = self._token_digest(token)
+        with self._lock:
+            self._leases[identity.client_id] = _ClientLease(
+                identity=identity,
+                token_digest=digest,
+                issued_at=now,
+                expires_at=expires_at,
+            )
+        return self._lease_payload(identity, token, now, expires_at)
+
+    def renew(self, identity: ClientIdentity) -> dict[str, object]:
+        with self._lock:
+            lease = self._lease_for_identity(identity)
+            now = datetime.now(UTC)
+            lease.issued_at = now
+            lease.expires_at = now + timedelta(seconds=DEFAULT_TTL_SECONDS)
+            return self._lease_payload(identity, None, now, lease.expires_at)
+
+    def revoke(self, identity: ClientIdentity) -> None:
+        with self._lock:
+            self._lease_for_identity(identity).revoked = True
+
+    def is_active(self, identity: ClientIdentity) -> bool:
+        with self._lock:
+            try:
+                lease = self._lease_for_identity(identity)
+            except ClientAuthError:
+                return False
+            return lease.identity == identity
+
+    def is_client_active(self, client_id: str) -> bool:
+        with self._lock:
+            now = datetime.now(UTC)
+            return any(
+                lease.identity.client_id == client_id
+                and not lease.revoked
+                and lease.expires_at > now
+                and lease.identity.config_id == self.config_id
+                for lease in self._leases.values()
+            )
+
+    def lease_expires_at(self, identity: ClientIdentity) -> datetime:
+        with self._lock:
+            return self._lease_for_identity(identity).expires_at
+
+    def capabilities(self, identity: ClientIdentity) -> dict[str, object]:
+        return {
+            "protocol_min": PROTOCOL_VERSION,
+            "protocol_max": PROTOCOL_VERSION,
+            "protocol": identity.protocol,
+            "daemon_version": self.daemon_version,
+            "config_id": self.config_id,
+            "capabilities": list(identity.capabilities),
+        }
+
+    def sign_cursor(self, payload: bytes) -> bytes:
+        return hmac.digest(self._cursor_key, payload, "sha256")
+
+    def verify_cursor(self, payload: bytes, signature: bytes) -> bool:
+        return hmac.compare_digest(self.sign_cursor(payload), signature)
+
+    def _authenticate_client(self, token: str) -> ClientIdentity:
+        normalized = str(token or "").strip()
+        if not normalized:
+            raise self._forbidden()
+        digest = self._token_digest(normalized)
+        with self._lock:
+            lease = None
+            for candidate in self._leases.values():
+                if hmac.compare_digest(digest, candidate.token_digest):
+                    lease = candidate
+            if lease is None:
+                raise self._forbidden()
+            if lease.revoked or lease.expires_at <= datetime.now(UTC):
+                raise self._forbidden()
+            if lease.identity.config_id != self.config_id:
+                raise self._forbidden()
+            return lease.identity
+
+    def _lease_for_identity(self, identity: ClientIdentity) -> _ClientLease:
+        for lease in self._leases.values():
+            if lease.identity.client_id == identity.client_id:
+                if lease.revoked or lease.expires_at <= datetime.now(UTC):
+                    break
+                return lease
+        raise self._forbidden()
+
+    def _require_loopback(self, peer_host: str) -> None:
+        if not is_loopback(self.bind_host) or not is_loopback(peer_host):
+            raise self._forbidden()
+
+    @staticmethod
+    def _lease_payload(
+        identity: ClientIdentity,
+        token: str | None,
+        issued_at: datetime,
+        expires_at: datetime,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "client_id": identity.client_id,
+            "protocol": identity.protocol,
+            "issued_at": issued_at.isoformat().replace("+00:00", "Z"),
+            "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+            "config_id": identity.config_id,
+            "capabilities": list(identity.capabilities),
+        }
+        if token is not None:
+            payload["client_token"] = token
+        return payload
+
+    @staticmethod
+    def _token_digest(token: str) -> bytes:
+        return hashlib.sha256(token.encode("utf-8")).digest()
+
+    @staticmethod
+    def _forbidden() -> ClientAuthError:
+        return ClientAuthError("forbidden", "Request is not authorized.")
+
+
+def _validate_media_header_scope(
+    headers: Any,
+    clients: tuple[str, ...],
+    method: str,
+    path: str,
+) -> None:
+    if headers.get("X-OpenMinion-Media-Name") is not None and not (
+        clients and method.upper() == "POST" and _MEDIA_COLLECTION_PATH.fullmatch(path)
+    ):
+        raise ClientAuthError("forbidden", "Request is not authorized.")
+
+
+def _handle_authenticated_media(
+    handler: Any,
+    method: str,
+    path: str,
+    query: str | None,
+    request_id: str | None,
+) -> bool:
+    from openminion.api.server.client_media import handle_media_http
+
+    return cast(
+        bool,
+        handle_media_http(
+            handler,
+            method=method.upper(),
+            path=path,
+            query=query or "",
+            request_id=request_id,
+        ),
+    )
+
+
+class ClientAuthHTTPMixin:
+    """Small HTTP adapter that keeps client policy out of the base API transport."""
+
+    client_auth: ClientAuthService | None = None
+    client_identity: ClientIdentity | None = None
+    headers: Any
+    rfile: Any
+    client_address: tuple[str, int]
+    client_request_path: str = ""
+    client_request_method: str = ""
+    client_response_limited: bool = False
+    client_body_limited: bool = False
+    close_connection: bool
+    config_path: str | None
+    runtime: Any
+
+    def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    def _write_sse_event(self, *, event: str, data: object) -> None:
+        raise NotImplementedError
+
+    def _client_dispatch_context(self) -> dict[str, Any]:
+        return {
+            "client_auth": self.client_auth,
+            "client_identity": self.client_identity,
+            "client_artifacts": getattr(self, "client_artifacts", None),
+            "client_approvals": getattr(self, "client_approvals", None),
+            "client_media": getattr(self, "client_media", None),
+        }
+
+    def _client_stream_context(self) -> dict[str, Any]:
+        coordinator = getattr(self, "client_approvals", None)
+        requester = (
+            coordinator.bind(self.client_identity)
+            if coordinator is not None and self.client_identity is not None
+            else None
+        )
+        return {
+            "desktop_approval_requester": requester,
+            "client_media": getattr(self, "client_media", None),
+            "client_identity": self.client_identity,
+        }
+
+    def _authorize_request(
+        self,
+        method: str,
+        path: str,
+        request_id: str | None,
+        *,
+        started_at: float,
+        query: str | None = None,
+    ) -> bool:
+        from openminion.api.server.auth import authorize_ipc_request
+
+        if not self.headers.get(CLIENT_TOKEN_HEADER) and not authorize_ipc_request(
+            self,
+            method=method,
+            path=path,
+            request_id=request_id,
+            started_at=started_at,
+        ):
+            return False
+        return self._authenticate_request(method, path, request_id, query=query)
+
+    def _handle_client_turn_stream(
+        self, *, body: dict[str, Any], request_id: str | None
+    ) -> None:
+        from openminion.api.server import observability
+        from openminion.api.server.client_streaming import handle_turn_stream_request
+        from openminion.api.server.streaming import start_sse_stream_response
+
+        handle_turn_stream_request(
+            body=body,
+            request_id=request_id,
+            config_path=self.config_path,
+            runtime=self.runtime,
+            start_sse_response=lambda: start_sse_stream_response(self, request_id),
+            write_sse_event=self._write_sse_event,
+            write_json=self._write_json,
+            observe_request_metrics=observability.observe_request_metrics,
+            log_request_done=observability.log_request_done,
+            perf_counter=perf_counter,
+            desktop_client=self.client_identity is not None,
+            **self._client_stream_context(),
+        )
+
+    def _authenticate_request(
+        self,
+        method: str,
+        path: str,
+        request_id: str | None,
+        *,
+        query: str | None = None,
+    ) -> bool:
+        if self.client_auth is None:
+            self.client_identity = None
+            self.client_response_limited = False
+            self.client_body_limited = False
+            return True
+        masters = _header_values(self.headers, MASTER_TOKEN_HEADER)
+        clients = _header_values(self.headers, CLIENT_TOKEN_HEADER)
+        self.client_request_path, self.client_request_method = path, method.upper()
+        self.client_response_limited = bool(clients) or path == "/v1/client/leases"
+        self.client_body_limited = bool(clients) or path == "/v1/client/leases"
+        try:
+            if (masters or clients or path == "/v1/client/leases") and any(
+                name.lower() not in _ADMITTED_HEADERS for name in self.headers.keys()
+            ):
+                raise ClientAuthError("forbidden", "Request is not authorized.")
+            _validate_media_header_scope(self.headers, clients, method, path)
+            self.client_identity = self.client_auth.authorize(
+                method=method,
+                path=path,
+                master_tokens=masters,
+                client_tokens=clients,
+                peer_host=_peer_host(self),
+            )
+            if (
+                clients
+                and method.upper() == "POST"
+                and path == "/v1/turn/stream"
+                and query
+            ):
+                raise ClientAuthError(
+                    "invalid_request",
+                    "Desktop turn streams do not accept query fields.",
+                )
+            if (
+                clients
+                and method.upper() == "POST"
+                and path == "/v1/turn/stream"
+                and not self._accepts_event_stream()
+            ):
+                raise ClientAuthError(
+                    "invalid_request",
+                    "Desktop turn streams require Accept: text/event-stream.",
+                )
+            if clients and method.upper() == "GET":
+                content_length = _client_get_content_length(self)
+                transfer_encoding = self.headers.get("Transfer-Encoding")
+                if transfer_encoding or content_length != 0:
+                    if not transfer_encoding and 0 < content_length <= 4 * 1024:
+                        self.rfile.read(content_length)
+                    self.close_connection = True
+                    raise ClientAuthError(
+                        "invalid_request", "GET does not accept a body."
+                    )
+            if _handle_authenticated_media(self, method, path, query, request_id):
+                return False
+            return True
+        except ClientAuthError as exc:
+            status = (
+                HTTPStatus.BAD_REQUEST
+                if exc.code in {"desktop_ipc_token_required", "invalid_request"}
+                else HTTPStatus.FORBIDDEN
+            )
+            resolved_status, payload = error_response(
+                status,
+                code=exc.code,
+                message=str(exc),
+                details={"path": path},
+                retryable=False,
+            )
+            response = finalize_api_response(
+                payload=payload,
+                status=resolved_status,
+                method=method,
+                path=path,
+                request_id=normalize_request_id(request_id),
+                started_at=perf_counter(),
+                logger=logging.getLogger("openminion.api"),
+            )
+            self._write_json(resolved_status, response)
+            return False
+
+    def _accepts_event_stream(self) -> bool:
+        return "text/event-stream" in str(self.headers.get("Accept", "") or "").lower()
+
+    def _bounded_json_response(
+        self,
+        status: HTTPStatus,
+        payload: dict[str, Any],
+    ) -> tuple[HTTPStatus, bytes]:
+        encoded = _compact_json(payload)
+        response_limit = _client_response_limit(
+            self.client_request_method,
+            self.client_request_path,
+        )
+        if not self.client_response_limited or len(encoded) <= response_limit:
+            return status, encoded
+        bounded_status, bounded = error_response(
+            HTTPStatus.BAD_GATEWAY,
+            code="response_too_large",
+            message="Authenticated client response exceeded its size limit.",
+            details={"limit_bytes": response_limit},
+            retryable=False,
+        )
+        meta = payload.get("meta")
+        if isinstance(meta, dict):
+            bounded["meta"] = {
+                key: meta[key]
+                for key in ("request_id", "method", "path")
+                if key in meta
+            }
+        return bounded_status, _compact_json(bounded)
+
+    def _read_optional_json_body(self, *, path: str) -> dict[str, Any]:
+        body_limit = _client_body_limit(path) if self.client_body_limited else None
+        if body_limit is not None and self.headers.get("Transfer-Encoding"):
+            raise ValueError("Chunked client request bodies are not supported.")
+        content_length_raw = self.headers.get("Content-Length", "0")
+        try:
+            content_length = int(content_length_raw)
+        except ValueError as exc:
+            raise ValueError("Invalid Content-Length header.") from exc
+        if content_length < 0:
+            raise ValueError("Invalid Content-Length header.")
+        if body_limit is not None and content_length > body_limit:
+            raise ValueError(f"Request body exceeds the {body_limit}-byte limit.")
+        if content_length == 0:
+            return {}
+        if body_limit is not None:
+            content_type = str(self.headers.get("Content-Type", "") or "").lower()
+            if content_type.split(";", 1)[0].strip() != "application/json":
+                raise ValueError("Content-Type must be application/json.")
+            compact_type = content_type.replace(" ", "")
+            if ";" in content_type and "charset=utf-8" not in compact_type:
+                raise ValueError("Client JSON must use UTF-8.")
+        try:
+            raw_body = self.rfile.read(content_length).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("Request body must be valid UTF-8.") from exc
+        return cast(
+            dict[str, Any],
+            parse_json_request_body(
+                content_length_raw=content_length_raw,
+                raw_body=raw_body,
+            ),
+        )
+
+
+def _client_get_content_length(handler: Any) -> int:
+    try:
+        return int(handler.headers.get("Content-Length", "0"))
+    except ValueError as exc:
+        handler.close_connection = True
+        raise ClientAuthError("invalid_request", "Invalid request body.") from exc
+
+
+def _header_values(headers: object, name: str) -> tuple[str, ...]:
+    get_all = getattr(headers, "get_all", None)
+    if callable(get_all):
+        return tuple(str(value) for value in (get_all(name) or ()))
+    get = getattr(headers, "get", None)
+    value = get(name) if callable(get) else None
+    return (str(value),) if value is not None else ()
+
+
+def _client_route_capability(method: str, path: str) -> str | None:
+    exact = {
+        ("GET", "/v1/health"): "daemon.health",
+        ("GET", "/v1/ready"): "daemon.ready",
+        ("GET", "/v1/client/capabilities"): "client.capabilities",
+        ("POST", "/v1/client/leases/renew"): "client.lease.renew",
+        ("DELETE", "/v1/client/leases/current"): "client.lease.revoke",
+        ("GET", "/v1/client/sessions"): "sessions.list",
+        ("POST", "/v1/client/sessions"): "sessions.create",
+        ("POST", "/v1/turn/stream"): "turns.submit",
+    }
+    method_name = method.upper()
+    if capability := exact.get((method_name, path)):
+        return capability
+    if _SESSION_EVENTS_PATH.fullmatch(path) and method_name == "GET":
+        return "sessions.events"
+    if _SESSION_PATH.fullmatch(path):
+        return {"GET": "sessions.load", "DELETE": "sessions.close"}.get(method_name)
+    if _TURN_CANCEL_PATH.fullmatch(path) and method_name == "POST":
+        return "turns.cancel"
+    if _APPROVAL_PATH.fullmatch(path) and method_name == "POST":
+        return "approvals.decide"
+    if _MEDIA_COLLECTION_PATH.fullmatch(path) and method_name == "POST":
+        return "media.upload"
+    if _MEDIA_ITEM_PATH.fullmatch(path):
+        return {"GET": "media.read", "DELETE": "media.release"}.get(method_name)
+    if _ARTIFACT_CATALOG_PATH.fullmatch(path) and method_name == "GET":
+        return "artifacts.catalog.v1"
+    if _ARTIFACT_ITEM_PATH.fullmatch(path) and method_name == "GET":
+        return "artifacts.content.v1"
+    if _ARTIFACT_DECISION_PATH.fullmatch(path) and method_name == "POST":
+        return "artifacts.detach_restore.v1"
+    return None
+
+
+def _client_body_limit(path: str) -> int | None:
+    if path in _CLIENT_BODY_LIMITS:
+        return _CLIENT_BODY_LIMITS[path]
+    if path == "/v1/client/sessions":
+        return 32 * 1024
+    if path == "/v1/turn/stream":
+        return 256 * 1024
+    if _SESSION_PATH.fullmatch(path):
+        return 8 * 1024
+    if _TURN_CANCEL_PATH.fullmatch(path):
+        return 16 * 1024
+    if _APPROVAL_PATH.fullmatch(path):
+        return 8 * 1024
+    if _ARTIFACT_DECISION_PATH.fullmatch(path):
+        return 8 * 1024
+    return None
+
+
+def _client_response_limit(method: str, path: str) -> int:
+    if method == "GET" and path == "/v1/client/sessions":
+        return 256 * 1024
+    if method == "GET" and _SESSION_PATH.fullmatch(path):
+        return 512 * 1024
+    if method == "GET" and _SESSION_EVENTS_PATH.fullmatch(path):
+        return 1024 * 1024
+    if method == "GET" and _ARTIFACT_CATALOG_PATH.fullmatch(path):
+        return 256 * 1024
+    if method == "GET" and _ARTIFACT_ITEM_PATH.fullmatch(path):
+        return 128 * 1024
+    return _DEFAULT_CLIENT_RESPONSE_LIMIT
+
+
+def _peer_host(handler: object) -> str:
+    client_address = getattr(handler, "client_address", None)
+    if isinstance(client_address, tuple) and client_address:
+        return str(client_address[0])
+    return "127.0.0.1"
+
+
+def _compact_json(payload: object) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def build_client_auth_service(
+    *,
+    bootstrap: object,
+    config_path: str | None,
+    home_root: str | PathLike[str] | None,
+    data_root: str | PathLike[str] | None,
+    bind_host: str,
+) -> ClientAuthService | None:
+    runtime = getattr(bootstrap, "runtime", None)
+    if runtime is not None:
+        config = runtime.config
+        resolved_config = runtime.config_path
+        resolved_home = runtime.home_root
+        resolved_data = runtime.data_root
+    else:
+        try:
+            manager = ConfigManager.load(
+                config_path,
+                home_root=_resolved_optional_path(home_root),
+                data_root=_resolved_optional_path(data_root),
+            )
+        except (ConfigManagerError, OSError, ValueError):
+            return None
+        config = manager.base_config
+        resolved_config = manager.config_path
+        resolved_home = manager.home_root
+        resolved_data = manager.data_root
+    if resolved_config is None:
+        return None
+    return ClientAuthService(
+        master_token=str(config.runtime.ipc_token or ""),
+        config_path=resolved_config,
+        home_root=resolved_home,
+        data_root=resolved_data,
+        bind_host=bind_host,
+        daemon_version=_package_version(),
+    )
+
+
+def _resolved_optional_path(value: str | PathLike[str] | None) -> Path | None:
+    if value is None or not str(value).strip():
+        return None
+    return Path(value).expanduser().resolve(strict=False)
+
+
+def _package_version() -> str:
+    try:
+        return version("openminion")
+    except PackageNotFoundError:
+        return "0.0.0"
+
+
+__all__ = [
+    "CLIENT_TOKEN_HEADER",
+    "ClientAuthError",
+    "ClientAuthHTTPMixin",
+    "ClientAuthService",
+    "ClientIdentity",
+    "DEFAULT_TTL_SECONDS",
+    "MASTER_TOKEN_HEADER",
+    "MAX_TTL_SECONDS",
+    "MIN_TTL_SECONDS",
+    "PROTOCOL_VERSION",
+    "build_config_id",
+    "build_client_auth_service",
+    "is_loopback",
+]

@@ -7,13 +7,13 @@ from time import perf_counter
 from typing import Any
 from urllib.parse import urlparse
 
-from openminion.api.core.validation import parse_json_request_body
 from openminion.api.responses.serialization import error_response, normalize_request_id
 from openminion.api.runtime import APIRuntime
-from openminion.api.server.auth import authorize_ipc_request
+from openminion.api.server import client_approvals, client_artifacts, client_media
+from openminion.api.server.client_auth import ClientAuthHTTPMixin
 from openminion.api.server.dispatch import dispatch_request
 from openminion.api.server.observability import (
-    finalize_api_response as _finalize_api_response,
+    finalize_api_response,
     get_api_metrics_consistency_stamp,
     get_api_metrics_snapshot,
     reset_api_metrics,
@@ -25,58 +25,62 @@ from openminion.api.server.streaming import (
 )
 
 
-class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
+class _OpenMinionAPIHandler(
+    ClientAuthHTTPMixin,  # type: ignore[misc]
+    BaseHTTPRequestHandler,
+):
     config_path: str | None = None
     runtime: APIRuntime | None = None
     runtime_bootstrap_error: str | None = None
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         parsed = urlparse(self.path)
+        path = parsed.path
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
-        if not authorize_ipc_request(
-            self,
-            method="GET",
-            path=parsed.path,
-            request_id=request_id,
-            started_at=started_at,
+        if not self._authorize_request(
+            "GET", path, request_id, started_at=started_at, query=parsed.query
         ):
             return
-        if try_handle_turn_stream_attach(self, parsed=parsed, request_id=request_id):
+        if self.client_identity is None and try_handle_turn_stream_attach(
+            self, parsed=parsed, request_id=request_id
+        ):
             return
         status, payload = dispatch_request(
             "GET",
-            parsed.path,
+            path,
             self.config_path,
             query=parsed.query,
             runtime=self.runtime,
             runtime_bootstrap_error=self.runtime_bootstrap_error,
             request_headers=dict(self.headers.items()),
             request_id=request_id,
+            **self._client_dispatch_context(),
         )
         self._write_json(status, payload)
 
     def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
-        if not authorize_ipc_request(
-            self,
-            method="POST",
-            path=path,
-            request_id=request_id,
-            started_at=started_at,
+        if not self._authorize_request(
+            "POST", path, request_id, started_at=started_at, query=parsed.query
         ):
             return
         try:
-            payload = self._read_optional_json_body()
+            payload = self._read_optional_json_body(path=path)
         except ValueError as exc:
             self._write_invalid_json("POST", path, request_id, started_at, exc)
             return
 
-        accept_header = (self.headers.get("Accept") or "").lower()
-        if path == "/v1/turn/stream" and "text/event-stream" in accept_header:
-            handle_http_turn_stream_request(self, body=payload, request_id=request_id)
+        if path == "/v1/turn/stream" and self._accepts_event_stream():
+            if self.client_identity is None:
+                handle_http_turn_stream_request(
+                    self, body=payload, request_id=request_id
+                )
+            else:
+                self._handle_client_turn_stream(body=payload, request_id=request_id)
             return
 
         status, response_payload = dispatch_request(
@@ -84,33 +88,32 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             path,
             self.config_path,
             body=payload,
+            query=parsed.query,
             runtime=self.runtime,
             runtime_bootstrap_error=self.runtime_bootstrap_error,
             request_headers=dict(self.headers.items()),
             request_id=request_id,
+            **self._client_dispatch_context(),
         )
         self._write_json(status, response_payload)
 
     def do_DELETE(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         parsed = urlparse(self.path)
+        path = parsed.path
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
-        if not authorize_ipc_request(
-            self,
-            method="DELETE",
-            path=parsed.path,
-            request_id=request_id,
-            started_at=started_at,
+        if not self._authorize_request(
+            "DELETE", path, request_id, started_at=started_at, query=parsed.query
         ):
             return
         try:
-            payload = self._read_optional_json_body()
+            payload = self._read_optional_json_body(path=path)
         except ValueError as exc:
-            self._write_invalid_json("DELETE", parsed.path, request_id, started_at, exc)
+            self._write_invalid_json("DELETE", path, request_id, started_at, exc)
             return
         status, response_payload = dispatch_request(
             "DELETE",
-            parsed.path,
+            path,
             self.config_path,
             body=payload,
             query=parsed.query,
@@ -118,22 +121,9 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             runtime_bootstrap_error=self.runtime_bootstrap_error,
             request_headers=dict(self.headers.items()),
             request_id=request_id,
+            **self._client_dispatch_context(),
         )
         self._write_json(status, response_payload)
-
-    def _read_optional_json_body(self) -> dict[str, Any]:
-        content_length_raw = self.headers.get("Content-Length", "0")
-        try:
-            content_length = int(content_length_raw)
-        except ValueError as exc:
-            raise ValueError("Invalid Content-Length header.") from exc
-        if content_length <= 0:
-            return {}
-        raw_body = self.rfile.read(content_length).decode("utf-8")
-        return parse_json_request_body(
-            content_length_raw=content_length_raw,
-            raw_body=raw_body,
-        )
 
     def _write_invalid_json(
         self,
@@ -143,6 +133,7 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         started_at: float,
         exc: ValueError,
     ) -> None:
+        self.close_connection = True
         status, payload = error_response(
             HTTPStatus.BAD_REQUEST,
             code="invalid_json",
@@ -150,7 +141,7 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             details={"path": path},
             retryable=False,
         )
-        response = _finalize_api_response(
+        response = finalize_api_response(
             payload=payload,
             status=status,
             method=method,
@@ -176,6 +167,7 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         )
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
+        status, encoded = self._bounded_json_response(status, payload)
         self.send_response(int(status))
         self.send_header("Content-Type", "application/json")
         meta = payload.get("meta", {})
@@ -187,13 +179,16 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             self.send_header("Retry-After", str(max(1, int(retry_after_ms) // 1000)))
         if meta.get("path") == "/metrics":
             self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(encoded)))
+        if getattr(self, "close_connection", False):
+            self.send_header("Connection", "close")
         response_headers = meta.get("response_headers")
         if isinstance(response_headers, dict):
             for key, value in response_headers.items():
                 if key in {"Cache-Control", "Referrer-Policy"}:
                     self.send_header(str(key), str(value))
         self.end_headers()
-        self.wfile.write(_json_dumps(payload).encode("utf-8"))
+        self.wfile.write(encoded)
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A003
         return
@@ -214,9 +209,21 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
     ) -> None:
         super().__init__(server_address, handler_cls)
         self._runtime = runtime
+        approvals = client_approvals.install_approvals(handler_cls, runtime)
+        try:
+            media = client_media.install_media(handler_cls, runtime)
+            artifacts = client_artifacts.install_artifacts(handler_cls, runtime)
+            self._client_state = approvals, media, artifacts
+        except Exception:
+            client_media.close_media(locals().get("media"))
+            client_approvals.close_approvals(approvals)
+            raise
 
     def server_close(self) -> None:
         try:
+            client_artifacts.close_artifacts(self._client_state[2])
+            client_media.close_media(self._client_state[1])
+            client_approvals.close_approvals(self._client_state[0])
             if self._runtime is not None:
                 self._runtime.close()
         finally:
@@ -224,9 +231,7 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
 
 
 __all__ = [
-    "_OpenMinionAPIHandler",
-    "dispatch_request",
-    "get_api_metrics_consistency_stamp",
-    "get_api_metrics_snapshot",
+    "_OpenMinionAPIHandler", "dispatch_request",
+    "get_api_metrics_consistency_stamp", "get_api_metrics_snapshot",
     "reset_api_metrics",
-]
+]  # fmt: skip

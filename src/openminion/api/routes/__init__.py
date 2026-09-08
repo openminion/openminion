@@ -4,6 +4,7 @@ from .contracts import APIRouteContext, RouteResult
 
 _HANDLER_MODULES = {
     "handle_a2a_request": ".a2a",
+    "handle_client_request": ".client",
     "handle_admin_request": ".admin",
     "handle_agent_request": ".agent",
     "handle_cron_request": ".cron",
@@ -31,11 +32,9 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "APIRouteContext",
-    "RouteResult",
-    "handle_a2a_request",
-    "handle_admin_request",
-    "handle_agent_request",
+    "APIRouteContext", "RouteResult",
+    "handle_a2a_request", "handle_client_request",
+    "handle_admin_request", "handle_agent_request",
     "handle_cron_request",
     "handle_debug_request",
     "handle_health_request",
@@ -46,4 +45,4 @@ __all__ = [
     "handle_tasks_request",
     "handle_tools_request",
     "handle_turns_request",
-]
+]  # fmt: skip

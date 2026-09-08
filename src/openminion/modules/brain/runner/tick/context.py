@@ -191,6 +191,7 @@ def _apply_pending_confirmation_metadata_for_replay(state: Any) -> None:
 class TickRunContext:
     session_id: str
     user_input: str | None = None
+    attachments: list[str] | None = None
     trace_id: str | None = None
     forced_tools: list[str] | None = None
     capability_category: str | None = None
@@ -211,6 +212,7 @@ def build_tick_run_context(
     *,
     session_id: str,
     user_input: str | None,
+    attachments: list[str] | None,
     trace_id: str | None,
     forced_tools: list[str] | None,
     capability_category: str | None,
@@ -218,6 +220,7 @@ def build_tick_run_context(
     return TickRunContext(
         session_id=session_id,
         user_input=user_input,
+        attachments=list(attachments or []),
         trace_id=trace_id,
         forced_tools=forced_tools,
         capability_category=capability_category,

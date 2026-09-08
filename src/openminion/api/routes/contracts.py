@@ -1,10 +1,16 @@
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 from urllib.parse import parse_qs
 
 from openminion.api.responses.serialization import error_response
 from openminion.api.runtime import APIRuntime
+
+if TYPE_CHECKING:
+    from openminion.api.server.client_artifacts import ClientArtifactCoordinator
+    from openminion.api.server.client_approvals import ClientApprovalCoordinator
+    from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
+    from openminion.api.server.client_media import ClientMediaCoordinator
 
 
 @dataclass(frozen=True)
@@ -14,6 +20,11 @@ class APIRouteContext:
     runtime_bootstrap_error: str | None
     request_headers: Mapping[str, str] | None
     request_id: str
+    client_auth: "ClientAuthService | None" = None
+    client_identity: "ClientIdentity | None" = None
+    client_artifacts: "ClientArtifactCoordinator | None" = None
+    client_approvals: "ClientApprovalCoordinator | None" = None
+    client_media: "ClientMediaCoordinator | None" = None
 
 
 @dataclass(frozen=True)

@@ -185,12 +185,13 @@ def test_normalized_messages_keeps_empty_structured_assistant_turn() -> None:
                     }
                 ]
             },
+            [],
         )
     ]
 
 
 def test_provider_history_keeps_structured_tool_fields_out_of_metadata() -> None:
-    latest, history = latest_prompt_and_history(
+    latest, latest_parts, history = latest_prompt_and_history(
         conversational=[
             (
                 "assistant",
@@ -205,6 +206,7 @@ def test_provider_history_keeps_structured_tool_fields_out_of_metadata() -> None
                         }
                     ],
                 },
+                [],
             ),
             (
                 "tool",
@@ -215,12 +217,14 @@ def test_provider_history_keeps_structured_tool_fields_out_of_metadata() -> None
                     "tool_status": "success",
                     "tool_output": "now",
                 },
+                [],
             ),
         ],
         metadata={"user_input": "What time is it?"},
     )
 
     assert latest
+    assert latest_parts == []
     assert history[0].tool_calls[0].id == "call-1"
     assert history[0].meta == {"transcript_lane": "canonical_events"}
     assert history[1].tool_call_id == "call-1"
@@ -230,9 +234,9 @@ def test_provider_history_keeps_structured_tool_fields_out_of_metadata() -> None
 
 
 def test_provider_history_preserves_user_before_completed_tool_exchange() -> None:
-    latest, history = latest_prompt_and_history(
+    latest, latest_parts, history = latest_prompt_and_history(
         conversational=[
-            ("user", "Inspect the file.", {}),
+            ("user", "Inspect the file.", {}, []),
             (
                 "assistant",
                 "",
@@ -245,17 +249,20 @@ def test_provider_history_preserves_user_before_completed_tool_exchange() -> Non
                         }
                     ]
                 },
+                [],
             ),
             (
                 "tool",
                 '{"status":"success","output":"hello"}',
                 {"tool_call_id": "call-1", "tool_status": "success"},
+                [],
             ),
         ],
         metadata={"user_input": "Inspect the file."},
     )
 
     assert latest
+    assert latest_parts == []
     assert [message.role for message in history] == ["user", "assistant", "tool"]
     assert history[1].tool_calls[0].id == "call-1"
     assert history[2].tool_call_id == "call-1"

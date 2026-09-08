@@ -39,6 +39,10 @@ AGENT_HANDOFF_FAILED = "agent.handoff.failed"
 CLIENT_ATTACH = "client.attach"
 CLIENT_DETACHED = "client.detached"
 CLIENT_EXIT_CLEAN = "client.exit_clean"
+DESKTOP_APPROVAL_REQUESTED = "desktop.approval.requested"
+DESKTOP_APPROVAL_RESOLVED = "desktop.approval.resolved"
+DESKTOP_ARTIFACT_DETACHED = "desktop.artifact.detached"
+DESKTOP_ARTIFACT_RESTORED = "desktop.artifact.restored"
 SESSION_CLOSED = "session.closed"
 SESSION_COMPACTION_ARCHIVE = "session.compaction.archive"
 SESSION_CONTEXT_BUDGET = "session.context.budget"
@@ -271,6 +275,10 @@ EVENT_TYPES: frozenset[str] = frozenset(
         CLIENT_ATTACH,
         CLIENT_DETACHED,
         CLIENT_EXIT_CLEAN,
+        DESKTOP_APPROVAL_REQUESTED,
+        DESKTOP_APPROVAL_RESOLVED,
+        DESKTOP_ARTIFACT_DETACHED,
+        DESKTOP_ARTIFACT_RESTORED,
         SESSION_CLOSED,
         SESSION_COMPACTION_ARCHIVE,
         SESSION_CONTEXT_BUDGET,
@@ -525,6 +533,10 @@ __all__ = [
     "CLIENT_ATTACH",
     "CLIENT_DETACHED",
     "CLIENT_EXIT_CLEAN",
+    "DESKTOP_APPROVAL_REQUESTED",
+    "DESKTOP_APPROVAL_RESOLVED",
+    "DESKTOP_ARTIFACT_DETACHED",
+    "DESKTOP_ARTIFACT_RESTORED",
     "SESSION_CLOSED",
     "SESSION_COMPACTION_ARCHIVE",
     "SESSION_CONTEXT_BUDGET",

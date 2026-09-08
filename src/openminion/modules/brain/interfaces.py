@@ -131,6 +131,35 @@ class SessionAPI(Protocol):
 
 
 @runtime_checkable
+class SessionArtifactAPI(Protocol):
+    def get_artifact_catalog_event_page(
+        self,
+        session_id: str,
+        *,
+        after_seq: int,
+        high_water: int,
+        limit: int,
+    ) -> dict[str, Any]: ...
+
+    def get_detached_artifact_refs(
+        self,
+        session_id: str,
+        *,
+        limit: int = 256,
+    ) -> list[str]: ...
+
+    def apply_artifact_decision(
+        self,
+        session_id: str,
+        *,
+        artifact_ref: str,
+        detached: bool,
+        reason_code: str,
+        request_id: str,
+    ) -> str: ...
+
+
+@runtime_checkable
 class ContextAPI(Protocol):
     contract_version: str
 

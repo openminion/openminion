@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Callable
 from collections.abc import Mapping
 
 from openminion.base.config import RunProfileOverrides
@@ -33,6 +33,7 @@ class RuntimeTurnRequest:
     inbound_metadata: Mapping[str, str] | None = None
     deliver: bool = True
     forced_tools: tuple[str, ...] = ()
+    attachments: tuple[str, ...] = ()
     capability_category: str | None = None
     run_profile_overrides: RunProfileOverrides = field(
         default_factory=RunProfileOverrides
@@ -91,11 +92,15 @@ class RuntimeTurnHandle:
     def cancel(self) -> bool:
         return bool(self.handle.cancel())
 
+    def add_done_callback(self, callback: Callable[[], None]) -> None:
+        self.handle.add_done_callback(callback)
+
 
 @dataclass(frozen=True)
 class TurnContext:
     message: str
     forced_tools: tuple[str, ...]
+    attachments: tuple[str, ...]
     inbound_metadata: Mapping[str, str] | None
 
 

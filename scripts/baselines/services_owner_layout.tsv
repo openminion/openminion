@@ -16,6 +16,8 @@ scope	max_python_files	max_loc
 # lifecycle emission, and owner-emitted policy, safety, tool, and telemetry facts.
 # LRTE (2026-08-19) adds one concrete project worker and the bounded cron
 # composition that invokes the same worker for one fenced cycle per wake.
+# ODG-01 (2026-08-20) adds the bounded session-artifact facade used by the
+# authenticated desktop catalog, content, detach, and restore routes.
 # Client contract work (2026-08-30) adds bounded active-turn replay and
 # versioned terminal status facts to the existing runtime manager.
 # MCRR (2026-09-01) adds terminal capture assurance, policy-bound recovery,
@@ -31,7 +33,7 @@ scope	max_python_files	max_loc
 # task-outcome callback and one shared schedule operation.
 # OVGA (2026-09-06) carries the existing knowledge-graph service through the
 # current brain and agent tool-context assembly.
-services	206	40758
+services	207	40921
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

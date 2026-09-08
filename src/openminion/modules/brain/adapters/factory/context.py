@@ -73,6 +73,7 @@ def create_context_adapter(
         )
         return ContextCtlAdapter(
             service=service,
+            session_store=session_store,
             runtime_token_budget=runtime_token_budget,
             owned_identity_client=identity_client,
             owned_memory_client=memory_client,

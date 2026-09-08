@@ -1,4 +1,6 @@
+import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import asdict
 from functools import partial
@@ -14,23 +16,19 @@ from openminion.services.runtime.manager import (
     TurnResponse,
     TurnTelemetry,
 )
+from openminion.services.runtime.interfaces import DesktopApprovalRequest
 from openminion.modules.brain.diagnostics.status import phase_status_payload
 from openminion.modules.telemetry.lifecycle import (
-    lifecycle_event_from_payload,
-    map_cron_event_to_lifecycle_event,
+    lifecycle_event_from_payload, map_cron_event_to_lifecycle_event,
     map_runtime_event_to_lifecycle_event,
-)
+)  # fmt: skip
 from openminion.modules.telemetry.service import TelemetryService
 from openminion.modules.telemetry.trace import phase_timing
 from openminion.base.logging import format_structured_event, get_logger
 from openminion.services.runtime.ingress import (
-    _emit_chat_phase_timing,
-    build_manager_turn_request,
-    execute_runtime_turn,
-    runtime_turn_request_from_manager_request,
-    TurnRequestError,
-    TurnTimeoutError,
-)
+    _emit_chat_phase_timing, build_manager_turn_request, execute_runtime_turn,
+    runtime_turn_request_from_manager_request, TurnRequestError, TurnTimeoutError,
+)  # fmt: skip
 from openminion.services.runtime.cron.delivery import CronDeliveryBridge
 from openminion.services.runtime.cron.executor import CronTurnExecutor
 
@@ -48,7 +46,6 @@ _CRONCTL_LOGGER = get_logger("cronctl")
 class _LifecycleTelemetryBridge:
     def __init__(self, runtime: "RuntimeFacade") -> None:
         self._runtime = runtime
-        # reuse the runtime's pre-built TelemetryService so the
         existing = getattr(runtime, "telemetry_service", None)
         if existing is not None:
             self._telemetry: TelemetryService = existing
@@ -144,10 +141,7 @@ def build_runtime_manager(runtime: "RuntimeFacade") -> Any:
 
 
 def build_turn_request(payload: dict[str, Any], *, default_agent_id: str) -> Any:
-    return build_manager_turn_request(
-        payload,
-        default_agent_id=default_agent_id,
-    )
+    return build_manager_turn_request(payload, default_agent_id=default_agent_id)
 
 
 def attach_cron_scheduler(
@@ -231,12 +225,7 @@ def _cron_scheduler_components() -> tuple[Any, Any, Any, Any]:
     from openminion.modules.storage.runtime.sqlite import resolve_database_path
     from openminion.services.cron.scheduler import CronScheduler
 
-    return (
-        resolve_database_path,
-        resolve_brain_sessions_db_path,
-        SQLiteSessionStore,
-        CronScheduler,
-    )
+    return (resolve_database_path, resolve_brain_sessions_db_path, SQLiteSessionStore, CronScheduler)  # fmt: skip
 
 
 def _cron_store_for_runtime(
@@ -335,6 +324,9 @@ def execute_turn(
             request=request,
             timer=timer,
             progress_callback=emit_phase_status,
+            approval_callback=_desktop_approval_callback(
+                request, emit_chunk, cancel_event
+            ),
         )
     except TurnRequestError as exc:
         return _turn_error_response(
@@ -344,12 +336,8 @@ def execute_turn(
             duration_ms=_duration_since_ms(started),
         )
     except TurnTimeoutError as exc:
-        return _turn_error_response(
-            code="turn_timeout",
-            message=str(exc),
-            retryable=True,
-            duration_ms=_duration_since_ms(started),
-        )
+        cancel_event.set()
+        return _turn_error_response(code="turn_timeout", message=str(exc), retryable=True, duration_ms=_duration_since_ms(started))  # fmt: skip
     except Exception as exc:
         return _turn_error_response(
             code="turn_failed",
@@ -378,7 +366,9 @@ def _execute_runtime_turn_with_timer(
     request: Any,
     timer: phase_timing.ChatPhaseTimer,
     progress_callback: Any,
+    approval_callback: Any,
 ) -> tuple[Any, Any]:
+    approval_options = {"approval_callback": approval_callback} if approval_callback else {}  # fmt: skip
     with phase_timing.use_chat_phase_timer(timer):
         with phase_timing.active_chat_phase("provider_request_build"):
             ingress_request = runtime_turn_request_from_manager_request(
@@ -389,8 +379,23 @@ def _execute_runtime_turn_with_timer(
             runtime=runtime,
             request=ingress_request,
             progress_callback=progress_callback,
+            **approval_options,
         )
     return turn_result, ingress_request
+
+
+def _desktop_approval_callback(request: Any, emit_chunk: Any, cancel_event: Any) -> Any:
+    if (requester := getattr(request, "desktop_approval_requester", None)) is None:
+        return None
+
+    async def approve(tool_name: str, args: dict[str, Any], call_id: str) -> bool:
+        if not isinstance(args, dict) or any(not isinstance(key, str) for key in args):
+            return False
+        approval = DesktopApprovalRequest(request.session_id, request.trace_id, str(tool_name or ""), str(call_id or ""), tuple(sorted(args)), emit_chunk, cancel_event)  # fmt: skip
+        future = ThreadPoolExecutor(max_workers=1).submit(requester, approval)
+        return bool(await asyncio.wrap_future(future))
+
+    return approve
 
 
 def _turn_error_response(

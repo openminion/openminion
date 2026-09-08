@@ -349,9 +349,9 @@ class BrainBridgeTurnMixin:
         progress_callback=None,
         approval_callback=None,
     ) -> Any:
-        # cron-scheduled idle ticks arrive with a `pae_idle_tick`
         metadata_source = getattr(message, "metadata", {}) or {}
         capture_kwargs = capture_run_kwargs(metadata_source)
+        attachments = list(getattr(message, "attachments", ()) or ()) or None
         self._bind_inbound_permission_metadata(
             runner=runner,
             metadata_source=metadata_source,
@@ -404,6 +404,7 @@ class BrainBridgeTurnMixin:
                 runner,
                 session_id=session_id,
                 user_input=message.body,
+                attachments=attachments,
                 trace_id=request_id,
                 forced_tools=forced_tools,
                 capability_category=capability_category,
@@ -430,6 +431,7 @@ class BrainBridgeTurnMixin:
         return runner.run(
             session_id=session_id,
             user_input=message.body,
+            **({"attachments": attachments} if attachments else {}),
             trace_id=request_id,
             forced_tools=forced_tools,
             capability_category=capability_category,

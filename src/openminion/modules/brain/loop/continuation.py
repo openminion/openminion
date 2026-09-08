@@ -320,6 +320,7 @@ def run_with_autonomous_continuation(
     *,
     session_id: str,
     user_input: str | None = None,
+    attachments: list[str] | None = None,
     trace_id: str | None = None,
     forced_tools: list[str] | None = None,
     capability_category: str | None = None,
@@ -333,9 +334,11 @@ def run_with_autonomous_continuation(
     capture_event_id: str | None = None,
     capture_id: str | None = None,
 ) -> Any:
+    attachment_options = {"attachments": attachments} if attachments is not None else {}
     result = runner.run(
         session_id=session_id,
         user_input=user_input,
+        **attachment_options,
         trace_id=trace_id,
         forced_tools=forced_tools,
         capability_category=capability_category,
