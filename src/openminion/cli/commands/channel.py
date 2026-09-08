@@ -5,7 +5,6 @@ import getpass
 import json
 import logging
 import sqlite3
-import subprocess
 import sys
 import threading
 import time
@@ -20,7 +19,7 @@ from openminion.base.config import (
     save_config,
 )
 from openminion.base.config.env import resolve_environment_config
-from openminion.cli.config import load_cli_config, resolve_cli_roots
+from openminion.cli.config import is_git_tracked, load_cli_config, resolve_cli_roots
 from openminion.cli.transport.daemon_client import (
     probe_daemon_endpoint,
     resolve_daemon_endpoint,
@@ -165,7 +164,7 @@ def telegram_setup(args: argparse.Namespace) -> int:
         except (TelegramAPIError, TelegramTransportError) as exc:
             command_menu_error = str(exc)
 
-    if raw_secret and _is_git_tracked(config_path) and not args.allow_tracked_secret:
+    if raw_secret and is_git_tracked(config_path) and not args.allow_tracked_secret:
         print(
             "Refusing to write a raw Telegram bot token into a git-tracked config. "
             "Use --bot-token-ref env:TELEGRAM_BOT_TOKEN or pass --allow-tracked-secret."
@@ -910,19 +909,6 @@ def _print_get_updates_conflict(action: str) -> None:
         "Use known IDs with: "
         "openminion channel telegram pair --user-id ... --chat-id ..."
     )
-
-
-def _is_git_tracked(path: Path) -> bool:
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(path.parent), "ls-files", "--error-unmatch", path.name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    except OSError:
-        return False
-    return result.returncode == 0
 
 
 def _path_parent_writable(raw_path: str) -> bool:

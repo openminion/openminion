@@ -1,7 +1,7 @@
 # OpenMinion Runtime Surfaces
 
 Status: active
-Last updated: 2026-09-06
+Last updated: 2026-09-07
 
 Purpose: give developers one package-local map of the public `openminion`
 surfaces and when to use each one.
@@ -61,7 +61,39 @@ Best for:
 2. request/response adaptation,
 3. runtime composition that should stay outside the interactive CLI.
 
-### 4. Companion operator CLIs
+### 4. Local Desktop client
+
+Use:
+
+1. `openminion daemon desktop-setup`
+2. `openminion daemon status --json`
+
+Best for:
+
+1. enabling the local OpenMinion Desktop client,
+2. checking whether the selected daemon configuration is ready for Desktop,
+3. rotating the local Desktop access token while the daemon is stopped.
+
+Notes:
+
+1. Desktop setup updates an existing OpenMinion configuration; it does not
+   create a new runtime configuration,
+2. initial token creation and `--rotate` require the selected daemon endpoint
+   to be stopped,
+3. on POSIX, the token is written atomically with owner-only permissions and is
+   never printed; repeat setup is idempotent unless `--rotate` is passed,
+4. writing a token to a git-tracked configuration requires the explicit
+   `--allow-tracked-secret` acknowledgement,
+5. `openminion daemon status --json` reports configuration readiness only;
+   successful Desktop admission is established by the authenticated bootstrap
+   handshake,
+6. `openminion daemon desktop-bootstrap` is an internal launcher contract that
+   writes its private lease to file descriptor 3; it is not a manual operator
+   command,
+7. protocol capabilities are additive, and clients must verify that their
+   required capability set is present before using the session.
+
+### 5. Companion operator CLIs
 
 Use when you need narrower subsystem control:
 
@@ -92,7 +124,7 @@ Best for:
 2. subsystem inspection,
 3. explicit local maintenance flows.
 
-### 5. Visual graph inspection
+### 6. Visual graph inspection
 
 Use:
 

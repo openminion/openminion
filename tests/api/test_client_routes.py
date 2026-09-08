@@ -84,10 +84,26 @@ def test_mint_uses_canonical_response_envelope_and_scoped_routes(
     assert capabilities["config_id"] == service.config_id
 
 
-def test_mint_rejects_unknown_fields_protocol_and_ttl(tmp_path: Path) -> None:
+def test_mint_rejects_unknown_fields_version_protocol_and_ttl(tmp_path: Path) -> None:
     service = _service(tmp_path)
     cases = [
         _mint_body(extra=True),
+        _mint_body(
+            client={
+                "kind": "desktop",
+                "version": "",
+                "protocol_min": 1,
+                "protocol_max": 1,
+            }
+        ),
+        _mint_body(
+            client={
+                "kind": "desktop",
+                "version": "v" * 129,
+                "protocol_min": 1,
+                "protocol_max": 1,
+            }
+        ),
         _mint_body(
             client={
                 "kind": "desktop",

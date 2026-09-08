@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import subprocess
 import sys
 import time
@@ -22,8 +23,10 @@ from openminion.cli.transport.daemon_client import (
     probe_daemon_endpoint,
     resolve_daemon_endpoint,
 )
-from openminion.api.server.client_auth import build_config_id
+from openminion.api.server.client_auth import PROTOCOL_VERSION, build_config_id
 from openminion.cli.bootstrap.loader import load_config
+from openminion.cli.config import is_git_tracked
+from openminion.services.bootstrap.provider_setup import atomic_save_setup_config
 
 _PROBE_STATUS_MISMATCH: str = "mismatch"
 
@@ -70,6 +73,14 @@ def run_daemon(args: Any) -> int:
             args.config,
             lines=lines,
             follow=bool(getattr(args, "follow", False)),
+            home_root=getattr(args, "home_root", None),
+            data_root=getattr(args, "data_root", None),
+        )
+    if action == "desktop-setup":
+        return daemon_desktop_setup(
+            args.config,
+            rotate=bool(getattr(args, "rotate", False)),
+            allow_tracked_secret=bool(getattr(args, "allow_tracked_secret", False)),
             home_root=getattr(args, "home_root", None),
             data_root=getattr(args, "data_root", None),
         )
@@ -233,6 +244,13 @@ def daemon_status(
             print(f"config mismatch: running={remote_config_path}")
         print(f"pid_file: {payload['pid_file']}")
         print(f"log_file: {payload['log_file']}")
+        desktop = payload["desktop"]
+        if isinstance(desktop, dict):
+            print(
+                "desktop: "
+                f"configured={desktop['configured']} reason={desktop['reason']} "
+                f"protocol={desktop['protocol_min']}..{desktop['protocol_max']}"
+            )
     return 0 if bool(payload.get("reachable", False)) else 1
 
 
@@ -301,12 +319,34 @@ def _build_daemon_status_payload(
             reachable=probe_status in {"ok", _PROBE_STATUS_MISMATCH},
             identity_matches=identity_matches,
         ),
+        "desktop": _desktop_configuration_status(endpoint),
         "host": endpoint.host,
         "port": endpoint.port,
         "config_path": endpoint.config_path,
         "pid_file": str(pid_file),
         "log_file": str(resolve_daemon_log_file(config)),
     }
+
+
+def _desktop_configuration_status(endpoint: DaemonEndpoint) -> dict[str, object]:
+    token_configured = bool(endpoint.token)
+    loopback = _desktop_endpoint_is_loopback(endpoint)
+    if not token_configured:
+        reason = "ipc_token_missing"
+    elif not loopback:
+        reason = "non_loopback_endpoint"
+    else:
+        reason = "ready"
+    return {
+        "configured": token_configured and loopback,
+        "reason": reason,
+        "protocol_min": PROTOCOL_VERSION,
+        "protocol_max": PROTOCOL_VERSION,
+    }
+
+
+def _desktop_endpoint_is_loopback(endpoint: DaemonEndpoint) -> bool:
+    return endpoint.host in {"127.0.0.1", "::1"}
 
 
 def daemon_logs(
@@ -400,6 +440,67 @@ def daemon_desktop_bootstrap(
     except (OSError, RuntimeError, TypeError, ValueError):
         print("desktop bootstrap failed: daemon_bootstrap_failed", file=sys.stderr)
         return 1
+    return 0
+
+
+def daemon_desktop_setup(
+    config_path: str | None,
+    *,
+    rotate: bool = False,
+    allow_tracked_secret: bool = False,
+    home_root: str | Path | None = None,
+    data_root: str | Path | None = None,
+) -> int:
+    endpoint = resolve_daemon_endpoint(
+        config_path,
+        home_root=home_root,
+        data_root=data_root,
+    )
+    target = Path(endpoint.config_path)
+    if not _desktop_endpoint_is_loopback(endpoint):
+        print("Desktop setup requires an explicit loopback daemon endpoint.")
+        return 1
+    config = load_config(endpoint.config_path)
+    if endpoint.token and not rotate:
+        try:
+            if os.name == "posix":
+                target.chmod(0o600)
+        except OSError as exc:
+            print(f"Unable to secure Desktop access in {target}: {exc}")
+            return 1
+        print(f"Desktop access is already configured in {target}.")
+        print("Next: launch or restart OpenMinion Desktop.")
+        return 0
+    from openminion.daemon import process_alive, read_pid, resolve_daemon_pid_file
+
+    pid = read_pid(resolve_daemon_pid_file(config))
+    if pid and process_alive(pid):
+        print("Desktop setup requires the selected daemon to be stopped.")
+        return 1
+    endpoint_status, _payload = probe_daemon_endpoint(endpoint)
+    if endpoint_status != "unreachable":
+        print("Desktop setup requires the selected daemon to be stopped.")
+        print(
+            "Stop the daemon, repeat `openminion daemon desktop-setup`, "
+            "then launch or restart OpenMinion Desktop."
+        )
+        return 1
+    if is_git_tracked(target) and not allow_tracked_secret:
+        print(
+            "Refusing to write a Desktop access token into a git-tracked config. "
+            "Move the config outside the repository or pass --allow-tracked-secret."
+        )
+        return 1
+    config.runtime.ipc_token = secrets.token_urlsafe(32)
+    try:
+        atomic_save_setup_config(config, target)
+    except OSError as exc:
+        print(f"Unable to update Desktop access in {target}: {exc}")
+        return 1
+    action = "Rotated" if rotate else "Enabled"
+    print(f"{action} Desktop access in {target}.")
+    print("Token: [redacted]")
+    print("Next: launch or restart OpenMinion Desktop.")
     return 0
 
 
@@ -682,6 +783,22 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Keep streaming appended daemon log lines",
     )
     daemon_logs_cmd.set_defaults(handler=run_daemon, needs_app=False)
+
+    desktop_setup = daemon_subcommands.add_parser(
+        "desktop-setup",
+        help="Configure secure local Desktop access",
+    )
+    desktop_setup.add_argument(
+        "--rotate",
+        action="store_true",
+        help="Replace the existing Desktop access token while the daemon is stopped",
+    )
+    desktop_setup.add_argument(
+        "--allow-tracked-secret",
+        action="store_true",
+        help="Allow storing the token in a git-tracked config",
+    )
+    desktop_setup.set_defaults(handler=run_daemon, needs_app=False)
 
     desktop_bootstrap = daemon_subcommands.add_parser(
         "desktop-bootstrap",

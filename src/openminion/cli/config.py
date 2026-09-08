@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+import subprocess
 from typing import Any
 
 from openminion.base.config import ConfigManager, OpenMinionConfig
@@ -36,6 +37,19 @@ def infer_workspace_home_root(cwd: Path) -> Path | None:
         ).is_dir():
             return parent
     return None
+
+
+def is_git_tracked(path: Path) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(path.parent), "ls-files", "--error-unmatch", path.name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
 
 
 def resolve_cli_tool_provider_specs_and_dispatch_map(
@@ -250,6 +264,7 @@ __all__ = [
     "CLIEnv",
     "CLIRoots",
     "infer_workspace_home_root",
+    "is_git_tracked",
     "load_cli_config",
     "load_cli_config_from_args",
     "load_cli_config_with_path",

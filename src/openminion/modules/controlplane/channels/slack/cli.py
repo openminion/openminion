@@ -6,7 +6,6 @@ import argparse
 import getpass
 import json
 import sqlite3
-import subprocess
 import sys
 import threading
 from datetime import datetime, timezone
@@ -15,7 +14,7 @@ from typing import Any, Callable
 
 from openminion.base.config import OpenMinionConfig, resolve_config_path, save_config
 from openminion.base.config.env import resolve_environment_config
-from openminion.cli.config import load_cli_config, resolve_cli_roots
+from openminion.cli.config import is_git_tracked, load_cli_config, resolve_cli_roots
 from openminion.cli.transport.daemon_client import (
     daemon_is_reachable,
     resolve_daemon_endpoint,
@@ -92,7 +91,7 @@ def slack_setup(args: argparse.Namespace) -> int:
     )
     if (
         (bot_raw or app_raw or signing_raw)
-        and _is_git_tracked(config_path)
+        and is_git_tracked(config_path)
         and not args.allow_tracked_secret
     ):
         print(
@@ -541,19 +540,6 @@ def _daemon_reachable(config_path: str | None) -> bool:
         return daemon_is_reachable(endpoint)
     except Exception:
         return False
-
-
-def _is_git_tracked(path: Path) -> bool:
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(path.parent), "ls-files", "--error-unmatch", path.name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    except OSError:
-        return False
-    return result.returncode == 0
 
 
 def _env_snapshot() -> dict[str, str]:
