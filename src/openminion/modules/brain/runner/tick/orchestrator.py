@@ -102,7 +102,6 @@ def _run_pre_dispatch_checks(
         runner=runner,
         state=state,
         user_input=tick_ctx.user_input,
-        attachments=tick_ctx.attachments,
         trace_id=tick_ctx.trace_id,
         logger=logger,
         session_id=session_id,
@@ -233,7 +232,6 @@ def run_step(
     *,
     session_id: str,
     user_input: str | None = None,
-    attachments: list[str] | None = None,
     trace_id: str | None = None,
     forced_tools: list[str] | None = None,
     capability_category: str | None = None,
@@ -255,7 +253,6 @@ def run_step(
     tick_ctx = build_tick_run_context(
         session_id=session_id,
         user_input=user_input,
-        attachments=attachments,
         trace_id=trace_id,
         forced_tools=forced_tools,
         capability_category=capability_category,

@@ -85,38 +85,6 @@ class ProviderFactoryTests(unittest.TestCase):
             else:
                 os.environ["TEST_OPENAI_KEY_OVERRIDE"] = previous
 
-    def test_openai_vision_input_opt_in_reaches_both_runtime_paths(self) -> None:
-        self.assertFalse(OpenMinionConfig().providers.openai.enable_vision_input)
-        config = OpenMinionConfig.from_dict(
-            {
-                "providers": {
-                    "openai": {
-                        "api_key": "fixture-key",
-                        "enable_vision_input": True,
-                    }
-                },
-                "agents": {"openminion": {"provider": "openai"}},
-                "default_agent": "openminion",
-            }
-        )
-
-        self.assertTrue(config.providers.openai.enable_vision_input)
-        self.assertTrue(
-            config.to_dict()["providers"]["openai"]["enable_vision_input"]
-        )
-        bridge = build_provider(config, logger=_logger())
-        runtime = build_runtime_llm_handle(config, logger=_logger())
-        try:
-            self.assertTrue(bridge._provider_config["enable_vision_input"])
-            self.assertTrue(
-                runtime.client.llmctl.config.providers[
-                    "openai"
-                ].enable_vision_input
-            )
-        finally:
-            bridge.close()
-            runtime.close()
-
     def test_openai_provider_requires_key(self) -> None:
         config = OpenMinionConfig()
         _csc_install_default_agent(config, provider="openai")

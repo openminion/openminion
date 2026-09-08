@@ -9,7 +9,6 @@ from ..message_payloads import (
     _dedupe_thinking_blocks,
     _extract_message_text,
     _image_part_bytes,
-    _validate_artifact_image_aggregate,
 )
 from ..tool_calling import (
     build_fallback_tool_call_instruction,
@@ -182,7 +181,6 @@ def _messages_anthropic(
     enable_vision_input: bool = False,
     supports_vision_input: bool = False,
 ) -> tuple[str | list[dict[str, Any]], list[dict[str, Any]]]:
-    _validate_artifact_image_aggregate(request)
     system_chunks: list[str] = []
     system_blocks: list[dict[str, Any]] = []
     fallback_instruction = ""

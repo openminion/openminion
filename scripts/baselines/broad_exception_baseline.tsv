@@ -17,10 +17,6 @@ src/openminion/api/routes/debug.py	1	0	current broad-handler baseline; ratchet b
 src/openminion/api/routes/runtime.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/api/routes/turns.py	3	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/api/runtime.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/api/server/app.py	1	0	ODCP server setup must unwind partially installed client coordinators on any startup failure
-src/openminion/api/server/client_approvals.py	5	1	ODCP approval waits isolate runtime callbacks, durable events, and terminal cleanup failures
-src/openminion/api/server/client_media.py	2	0	ODCP media reservations must roll back storage and completion callbacks on any backend failure
-src/openminion/api/server/client_streaming.py	2	0	ODCP streaming translates unknown runtime failures and unwinds pre-SSE media bindings
 src/openminion/api/server/streaming.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/base/debug.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/base/logging.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -63,7 +59,6 @@ src/openminion/modules/a2a/runtime.py	3	0	current broad-handler baseline; ratche
 src/openminion/modules/a2a/storage/__init__.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/a2a/storage/archive.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/artifact/control.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/artifact/refs.py	2	0	ODCP artifact reference updates translate backend failures at the storage contract boundary
 src/openminion/modules/brain/adapters/a2a/runtime.py	9	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/adapters/artifact/runtime.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/adapters/context/bridges/artifact.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -363,7 +358,7 @@ src/openminion/services/runtime/daemon.py	6	0	current broad-handler baseline; ra
 src/openminion/services/runtime/engine.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/ingress/payloads.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/ingress/timing.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/runtime/manager.py	4	2	ODCP completion callbacks are isolated so observer failures cannot break turn finalization
+src/openminion/services/runtime/manager.py	3	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/memory.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/plugins/discovery.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/plugins/hook_runner.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

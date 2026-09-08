@@ -1,9 +1,8 @@
 from typing import Any, cast
 
 from openminion.modules.brain.interfaces import (
-    BRAIN_ADAPTER_INTERFACE_VERSION,
     ContextAPI,
-    SessionArtifactAPI,
+    BRAIN_ADAPTER_INTERFACE_VERSION,
 )
 from openminion.modules.context.pack.semantics import (
     resolve_context_total_token_budget,
@@ -35,96 +34,6 @@ def _dict_hint(hints: dict[str, Any], key: str) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _turn_segment_ids(message: dict[str, Any]) -> list[str]:
-    meta = message.get("meta")
-    if not isinstance(meta, dict):
-        return []
-    return [
-        normalized[5:]
-        for item in meta.get("segment_ids", [])
-        if (normalized := str(item or "").strip()).startswith("turn:")
-        and len(normalized) > 5
-    ]
-
-
-def _normalized_role(value: Any) -> str:
-    role = str(value or "").strip().lower()
-    if role in {"agent", "outbound"}:
-        return "assistant"
-    if role == "inbound":
-        return "user"
-    return role
-
-
-def _selected_pack_turns(*, payload: dict[str, Any], turns: list[Any]) -> list[Any]:
-    messages = [
-        message for message in payload.get("messages", []) if isinstance(message, dict)
-    ]
-    selected: dict[int, dict[str, Any]] = {}
-    unused = {index for index, turn in enumerate(turns) if isinstance(turn, dict)}
-    upper_bound = len(turns)
-    for message in reversed(messages):
-        segment_ids = _turn_segment_ids(message)
-        exact_index = next(
-            (
-                index
-                for index in range(upper_bound - 1, -1, -1)
-                if index in unused
-                and str(turns[index].get("turn_id") or "").strip() in segment_ids
-            ),
-            None,
-        )
-        matched_index = exact_index
-        alias = None
-        if matched_index is None and len(segment_ids) == 1:
-            message_role = _normalized_role(message.get("role"))
-            message_content = str(message.get("content") or "").strip()
-            matched_index = next(
-                (
-                    index
-                    for index in range(upper_bound - 1, -1, -1)
-                    if index in unused
-                    and _normalized_role(turns[index].get("role")) == message_role
-                    and str(turns[index].get("content") or "").strip()
-                    == message_content
-                ),
-                None,
-            )
-            alias = segment_ids[0] if matched_index is not None else None
-        if matched_index is None:
-            continue
-        copied = dict(turns[matched_index])
-        if alias is not None:
-            copied["context_segment_id"] = alias
-        selected[matched_index] = copied
-        unused.remove(matched_index)
-        upper_bound = matched_index
-
-    for index in range(len(turns) - 1, -1, -1):
-        turn = turns[index]
-        if not isinstance(turn, dict):
-            continue
-        if _normalized_role(turn.get("role")) == "user":
-            selected.setdefault(index, dict(turn))
-            break
-    return [selected[index] for index in sorted(selected)]
-
-
-def _without_detached_artifacts(turns: list[Any], detached_refs: set[str]) -> list[Any]:
-    filtered: list[Any] = []
-    for turn in turns:
-        if not isinstance(turn, dict):
-            continue
-        copied = dict(turn)
-        attachments = copied.get("attachments")
-        if isinstance(attachments, list):
-            copied["attachments"] = [
-                ref for ref in attachments if str(ref) not in detached_refs
-            ]
-        filtered.append(copied)
-    return filtered
-
-
 class ContextCtlAdapter(ContextAPI):
     contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
@@ -132,7 +41,6 @@ class ContextCtlAdapter(ContextAPI):
         self,
         service: Any,
         *,
-        session_store: Any | None = None,
         runtime_token_budget: int | None = None,
         owned_identity_client: Any | None = None,
         owned_memory_client: Any | None = None,
@@ -140,7 +48,6 @@ class ContextCtlAdapter(ContextAPI):
         owned_skill_client: Any | None = None,
     ) -> None:
         self.service = service
-        self._session_store = session_store
         self._runtime_token_budget = runtime_token_budget
         self._owned_identity_client = owned_identity_client
         self._owned_memory_client = owned_memory_client
@@ -234,17 +141,6 @@ class ContextCtlAdapter(ContextAPI):
         )
         pack = self.service.build_pack(req)
         result = cast(dict[str, Any], pack.model_dump())
-        if self._session_store is not None:
-            selected_turns = _selected_pack_turns(
-                payload=result,
-                turns=list(self._session_store.list_turns(session_id)),
-            )
-            if isinstance(self._session_store, SessionArtifactAPI):
-                selected_turns = _without_detached_artifacts(
-                    selected_turns,
-                    set(self._session_store.get_detached_artifact_refs(session_id)),
-                )
-            result["turns"] = selected_turns
         if hints:
             result["hints"] = hints
         return result

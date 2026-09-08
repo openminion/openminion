@@ -101,7 +101,6 @@ def run_until_idle(
     *,
     session_id: str,
     user_input: str | None,
-    attachments: list[str] | None = None,
     trace_id: str | None,
     forced_tools: list[str] | None,
     capability_category: str | None,
@@ -135,7 +134,6 @@ def run_until_idle(
     last = runner.step(
         session_id=session_id,
         user_input=user_input,
-        attachments=attachments,
         trace_id=trace_id,
         forced_tools=forced_tools,
         capability_category=capability_category,

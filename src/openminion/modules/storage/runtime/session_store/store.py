@@ -143,19 +143,6 @@ class SessionStore:
             metadata_filter=metadata_filter,
         )
 
-    def list_client_sessions(
-        self,
-        *,
-        limit: int,
-        before_updated_at: str | None = None,
-        before_session_id: str | None = None,
-    ) -> list[SessionRecord]:
-        return self._sessions.list_client_sessions(
-            limit=limit,
-            before_updated_at=before_updated_at,
-            before_session_id=before_session_id,
-        )
-
     def add_participant(
         self,
         *,
@@ -368,15 +355,6 @@ class SessionStore:
             thread_id=thread_id,
         )
 
-    def message_high_water(self, *, session_id: str) -> int:
-        return self._messages.message_high_water(session_id=session_id)
-
-    def message_cursor_exists(self, *, session_id: str, rowid: int) -> bool:
-        return self._messages.message_cursor_exists(
-            session_id=session_id,
-            rowid=rowid,
-        )
-
     def append_event(
         self,
         *,
@@ -440,36 +418,6 @@ class SessionStore:
 
     def event_high_water(self, *, session_id: str) -> int:
         return self._lifecycle.event_high_water(session_id=session_id)
-
-    def event_cursor_exists(self, *, session_id: str, event_id: int) -> bool:
-        return self._lifecycle.event_cursor_exists(
-            session_id=session_id,
-            event_id=event_id,
-        )
-
-    def latest_run_event_for_request(
-        self,
-        *,
-        session_id: str,
-        request_id: str,
-    ) -> EventRecord | None:
-        return self._lifecycle.latest_run_event_for_request(
-            session_id=session_id,
-            request_id=request_id,
-        )
-
-    def append_cancel_request_once(
-        self,
-        *,
-        session_id: str,
-        request_id: str,
-        run_id: str | None,
-    ) -> tuple[EventRecord, bool]:
-        return self._lifecycle.append_cancel_request_once(
-            session_id=session_id,
-            request_id=request_id,
-            run_id=run_id,
-        )
 
     def list_events_after_id(
         self,

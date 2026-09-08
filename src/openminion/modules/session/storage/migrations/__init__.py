@@ -57,5 +57,4 @@ def list_migrations() -> list[str]:
         BASELINE_REVISION,
         "0002_run_invocation",
         "0003_cron_coordination",
-        "0004_session_detached_artifacts",
     ]

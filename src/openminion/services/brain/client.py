@@ -227,7 +227,7 @@ class OpenMinionLLMClient:
         sys_prompt, conversational = _split_system_and_conversation(
             _normalized_request_messages(req)
         )
-        latest_msg, latest_content_parts, history = _latest_prompt_and_history(
+        latest_msg, history = _latest_prompt_and_history(
             conversational=conversational,
             metadata=metadata_payload,
         )
@@ -242,10 +242,10 @@ class OpenMinionLLMClient:
                 history=history,
                 purpose=purpose,
             )
+
         provider_req = ProviderRequest(
             user_message=latest_msg,
             system_prompt=sys_prompt,
-            user_content_parts=latest_content_parts,
             history=history,
             tools=tools,
             tool_choice=tool_choice,

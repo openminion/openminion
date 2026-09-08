@@ -528,20 +528,20 @@ class AgentService(AgentTurnFlowMixin):
         messages: list[dict[str, Any]] = []
         if str(request.system_prompt or "").strip():
             messages.append({"role": "system", "content": str(request.system_prompt)})
+
         for item in list(request.history or []):
             payload = provider_history_payload(item)
             if payload is not None:
                 messages.append(payload)
+
         # PIDF: route user_message through the typed boundary owner.
         _user_rendered, _ = _pidf_route_and_ledger(
             "user_message",
             str(request.user_message or ""),
             seam_id="services.agent.service.user_message",
         )
-        user_payload: dict[str, Any] = {"role": "user", "content": _user_rendered}
-        if request.user_content_parts:
-            user_payload["content_parts"] = list(request.user_content_parts)
-        messages.append(user_payload)
+        messages.append({"role": "user", "content": _user_rendered})
+
         tools = [
             {
                 "name": str(spec.name),

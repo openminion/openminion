@@ -1,14 +1,9 @@
-import hashlib
 import json
 from typing import Any
 
 
 def to_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
-
-
-def stable_hash(value: Any) -> str:
-    return hashlib.sha256(to_json(value).encode()).hexdigest()
 
 
 def parse_json(raw: str | None, fallback: Any) -> Any:

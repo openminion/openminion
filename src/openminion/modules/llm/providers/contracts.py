@@ -8,7 +8,6 @@ from openminion.modules.llm.constants import (
     LLM_TOOL_CALL_STRATEGY_HYBRID,
     LLM_TOOL_CHOICE_AUTO,
 )
-from openminion.modules.llm.schemas import MessageContentPart
 from openminion.modules.tool.contracts import (
     ProviderToolCall,
     ProviderToolSpec,
@@ -53,7 +52,6 @@ class ProviderError(RuntimeError):
 class ProviderRequest:
     user_message: str
     system_prompt: str
-    user_content_parts: list[MessageContentPart] = field(default_factory=list)
     thinking: str = "minimal"
     history: list["ProviderHistoryMessage"] = field(default_factory=list)
     tools: list[ProviderToolSpec] = field(default_factory=list)
@@ -66,7 +64,6 @@ class ProviderRequest:
 class ProviderHistoryMessage:
     role: str
     content: str
-    content_parts: list[MessageContentPart] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
     tool_calls: list[ProviderToolCall] = field(default_factory=list)
     tool_call_id: str | None = None

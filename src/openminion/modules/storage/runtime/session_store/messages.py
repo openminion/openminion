@@ -220,19 +220,3 @@ class RuntimeSessionStoreMessages:
             after_rowid=after_rowid,
         )
         return [row_to_message(row) for row in rows]
-
-    def message_high_water(self, *, session_id: str) -> int:
-        row = self._backend.query_one(
-            "SELECT COALESCE(MAX(rowid), 0) AS high_water FROM messages WHERE session_id = ?",
-            (session_id,),
-        )
-        return 0 if row is None else int(row["high_water"])
-
-    def message_cursor_exists(self, *, session_id: str, rowid: int) -> bool:
-        if rowid == 0:
-            return True
-        row = self._backend.query_one(
-            "SELECT 1 AS present FROM messages WHERE session_id = ? AND rowid = ?",
-            (session_id, rowid),
-        )
-        return row is not None

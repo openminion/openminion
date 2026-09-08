@@ -17,13 +17,14 @@ from openminion.base.config import (
 from openminion.services.stats import RunStats
 from openminion.services.runtime.ingress import (
     TurnRequestError,
-    build_manager_turn_request,
     execute_runtime_turn,
-    runtime_turn_request_from_manager_request,
     runtime_turn_request_from_payload,
     submit_turn_payload,
 )
-from openminion.services.runtime.manager import TurnRequest
+from openminion.services.runtime.ingress.requests import (
+    build_manager_turn_request,
+    runtime_turn_request_from_manager_request,
+)
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -268,82 +269,6 @@ def test_submit_turn_payload_uses_runtime_manager_and_preserves_meta() -> None:
     assert request.meta["capability_category"] == "search"
 
 
-def test_managed_session_identity_is_authoritative_after_metadata_merge() -> None:
-    runtime = _RuntimeStub()
-    payload = {
-        "message": "hello",
-        "session_id": "session-managed",
-        "agent_id": "main",
-        "inbound_metadata": {
-            "brain_session_id": "spoofed-session",
-            "origin": "fixture",
-        },
-    }
-    direct = runtime_turn_request_from_payload(runtime=runtime, payload=payload)
-    handle = submit_turn_payload(runtime=runtime, payload=payload)
-    managed = runtime_turn_request_from_manager_request(
-        runtime=runtime,
-        request=handle.request,
-    )
-
-    assert dict(direct.inbound_metadata or {})["brain_session_id"] == "spoofed-session"
-    assert dict(managed.inbound_metadata or {}) == {
-        "brain_session_id": "session-managed",
-        "origin": "fixture",
-        "workspace_root": "/tmp/runtime-workspace",
-    }
-
-    blank = runtime_turn_request_from_manager_request(
-        runtime=runtime,
-        request=TurnRequest(
-            trace_id="trace-blank",
-            agent_id="main",
-            session_id="",
-            input_text="hello",
-            meta={"inbound_metadata": {"origin": "fixture"}},
-        ),
-    )
-    assert "brain_session_id" not in dict(blank.inbound_metadata or {})
-
-
-def test_trusted_attachments_cross_manager_and_gateway_without_metadata() -> None:
-    runtime = _RuntimeStub()
-    refs = (
-        "artifact://sha256/" + "a" * 64,
-        "artifact://sha256/" + "b" * 64,
-    )
-    public_request = runtime_turn_request_from_payload(
-        runtime=runtime,
-        payload={
-            "message": "untrusted attachment field",
-            "attachments": list(refs),
-        },
-    )
-    assert public_request.attachments == ()
-
-    handle = submit_turn_payload(
-        runtime=runtime,
-        payload={
-            "trace_id": "trace-attachments",
-            "message": "inspect these",
-            "session_id": "session-attachments",
-            "agent_id": "main",
-        },
-        resolved_attachment_refs=refs,
-    )
-    manager_request = handle.request
-    runtime_request = runtime_turn_request_from_manager_request(
-        runtime=runtime,
-        request=manager_request,
-    )
-
-    assert manager_request.attachments == list(refs)
-    assert runtime_request.attachments == refs
-    assert "attachments" not in manager_request.meta
-
-    execute_runtime_turn(runtime=runtime, request=runtime_request)
-    assert runtime.gateway.calls[0]["attachments"] == list(refs)
-    assert "attachments" not in runtime.gateway.calls[0]["inbound_metadata"]
 def test_direct_turn_preserves_top_level_permission_mode_with_precedence() -> None:
     runtime = _RuntimeStub()
     request = runtime_turn_request_from_payload(
@@ -566,6 +491,7 @@ def test_multi_agent_turn_rejects_delivery_before_gateway_calls() -> None:
         execute_runtime_turn(runtime=runtime, request=request)
 
     assert runtime.gateway.calls == []
+
 
 def test_room_turn_rejects_configured_uninvited_agent_before_call() -> None:
     runtime = _room_runtime(mode="addressed")

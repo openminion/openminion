@@ -10,6 +10,7 @@ from openminion.base.time import utc_now
 class MessageStats(Protocol):
     @property
     def has_any_data(self) -> bool: ...
+
     def as_payload(self) -> dict[str, int]: ...
 
 
@@ -22,7 +23,6 @@ class Message:
     stats: MessageStats | None = None
     id: str = field(default_factory=lambda: uuid4().hex)
     timestamp: datetime = field(default_factory=utc_now)
-    attachments: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

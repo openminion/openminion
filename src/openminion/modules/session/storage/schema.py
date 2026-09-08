@@ -151,21 +151,6 @@ EVENT_SOURCED_SCHEMA: tuple[str, ...] = (
     ON session_events(task_id)
     """,
     """
-    CREATE TABLE IF NOT EXISTS session_detached_artifacts (
-      session_id        TEXT NOT NULL,
-      artifact_ref      TEXT NOT NULL,
-      event_id          TEXT NOT NULL,
-      event_seq         INTEGER NOT NULL,
-      updated_at        TEXT NOT NULL,
-      PRIMARY KEY(session_id, artifact_ref),
-      FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_session_detached_artifacts_session_seq
-    ON session_detached_artifacts(session_id, event_seq)
-    """,
-    """
     CREATE TABLE IF NOT EXISTS session_snapshots (
       snapshot_id       TEXT PRIMARY KEY,
       session_id        TEXT NOT NULL,

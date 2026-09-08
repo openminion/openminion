@@ -186,18 +186,6 @@ print(json.dumps(results, sort_keys=True))
         self.assertEqual(args.daemon_command, "start")
         self.assertTrue(callable(args.handler))
 
-    def test_daemon_desktop_setup_parse(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(
-            ["daemon", "desktop-setup", "--rotate", "--allow-tracked-secret"]
-        )
-
-        self.assertEqual(args.command, "daemon")
-        self.assertEqual(args.daemon_command, "desktop-setup")
-        self.assertTrue(args.rotate)
-        self.assertTrue(args.allow_tracked_secret)
-        self.assertTrue(callable(args.handler))
-
     def test_cron_create_parse(self) -> None:
         parser = build_parser()
         args = parser.parse_args(

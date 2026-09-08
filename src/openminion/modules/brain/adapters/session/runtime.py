@@ -51,54 +51,6 @@ class SessctlAdapter:
         del session_id
         self._telemetry_turn_id = str(turn_id or "").strip() or None
 
-    def get_artifact_catalog_event_page(
-        self,
-        session_id: str,
-        *,
-        after_seq: int,
-        high_water: int,
-        limit: int,
-    ) -> dict[str, Any]:
-        return cast(
-            dict[str, Any],
-            self.store.get_artifact_catalog_event_page(
-                session_id,
-                after_seq=after_seq,
-                high_water=high_water,
-                limit=limit,
-            ),
-        )
-
-    def get_detached_artifact_refs(
-        self,
-        session_id: str,
-        *,
-        limit: int = 256,
-    ) -> list[str]:
-        return cast(
-            list[str], self.store.get_detached_artifact_refs(session_id, limit=limit)
-        )
-
-    def apply_artifact_decision(
-        self,
-        session_id: str,
-        *,
-        artifact_ref: str,
-        detached: bool,
-        reason_code: str,
-        request_id: str,
-    ) -> str:
-        return cast(
-            str,
-            self.store.apply_artifact_decision(
-                session_id,
-                artifact_ref=artifact_ref,
-                detached=detached,
-                reason_code=reason_code,
-                request_id=request_id,
-            ),
-        )
-
     def _emit_session_operation(
         self,
         *,

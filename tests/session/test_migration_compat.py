@@ -87,14 +87,6 @@ def test_existing_v1_schema_is_migrated_transparently(tmp_path) -> None:
         }
         assert "active_profile_version" in columns
 
-        tables = {
-            row["name"]
-            for row in store._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            ).fetchall()
-        }
-        assert "session_detached_artifacts" in tables
-
         applied_migrations = {
             row["version"]
             for row in store._conn.execute("SELECT version FROM migrations").fetchall()
