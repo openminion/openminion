@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -186,6 +187,34 @@ def test_text_view_cache_ignores_unrelated_table_limit(tmp_path):
         assert len(ctl.list_views(ref.sha256)) == 1
 
 
+def test_text_view_bound_skips_auto_generation_and_changes_cache_identity(tmp_path):
+    data = b"text longer than the reduced bound"
+    initial = {"artifactctl": {"views": {"text_max_chars": 100}}}
+    with artifact_ctl(tmp_path, initial) as ctl:
+        ref = ctl.ingest_bytes(data, mime="text/plain")
+        ctl.ensure_view(ref.sha256, "text")
+
+    reduced = {"artifactctl": {"views": {"text_max_chars": 5}}}
+    with artifact_ctl(tmp_path, reduced) as ctl:
+        with pytest.raises(ArtifactCtlError) as exc:
+            ctl.ensure_view(ref.sha256, "text")
+        assert exc.value.code == "VIEW_TOO_LARGE"
+        assert ctl.read_bytes(ref.sha256) == data
+
+
+def test_oversized_text_auto_generation_keeps_digest(tmp_path):
+    overrides = {"artifactctl": {"views": {"text_max_chars": 5}}}
+    with artifact_ctl(tmp_path, overrides) as ctl:
+        ref = ctl.ingest_bytes(b"one\ntwo\nthree", mime="text/plain")
+
+        views = ctl.list_views(ref.sha256)
+        assert [view.view_type for view in views] == ["digest"]
+        assert ctl.read_bytes(ref.sha256) == b"one\ntwo\nthree"
+        with pytest.raises(ArtifactCtlError) as exc:
+            ctl.ensure_view(ref.sha256, "text")
+        assert exc.value.code == "VIEW_TOO_LARGE"
+
+
 def test_json_view_rejects_large_payload(tmp_path):
     large_json = "{" + ",".join(f'"k{i}":{i}' for i in range(1000)) + "}"
     overrides = {"artifactctl": {"views": {"json_max_chars": 100}}}
@@ -217,3 +246,14 @@ def test_redaction_preserves_sha256_and_timestamps() -> None:
     assert timestamp in redacted
     assert card not in redacted
     assert "[REDACTED_NUMBER]" in redacted
+
+
+def test_email_redaction_is_bounded_for_long_ordinary_token() -> None:
+    text = "a" * 100_000
+
+    started = time.process_time()
+    redacted = _redact_text(text)
+    elapsed = time.process_time() - started
+
+    assert redacted == text
+    assert elapsed < 1.0

@@ -758,6 +758,22 @@ def test_loopback_media_upload_read_release_uses_opaque_id(
         assert response.status == 200
         assert response.getheader("Content-Type") == "image/png"
         assert response.read() == _PNG
+
+        media_owner = loopback_media.server._client_state[1]
+        artifact_ref = media_owner._records[media_id].artifact_ref
+        media_owner._artifactctl.delete(artifact_ref)
+        connection.request(
+            "GET",
+            f"/v1/client/sessions/{loopback_media.session_id}/media/{media_id}",
+            headers={"X-OpenMinion-Client-Token": loopback_media.token},
+        )
+        response = connection.getresponse()
+        missing = json.loads(response.read())
+        assert (response.status, missing["error"]["code"]) == (
+            404,
+            "media_not_found",
+        )
+
         status, released = _json_request(
             connection,
             "DELETE",
@@ -1080,9 +1096,9 @@ def test_desktop_image_media_reaches_provider_payload(
         assert prefix == "data:image/png;base64"
         assert base64.b64decode(encoded_image) == _PNG
 
-        artifact_ref = loopback_media.server._client_state[1]._records[
-            media_id
-        ].artifact_ref
+        artifact_ref = (
+            loopback_media.server._client_state[1]._records[media_id].artifact_ref
+        )
         session_api = loopback_media.server._runtime.gateway._agent._runner.session_api
         turns = session_api.list_turns(loopback_media.session_id)
         user_turns = [turn for turn in turns if turn.get("role") == "user"]

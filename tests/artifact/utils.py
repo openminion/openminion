@@ -35,6 +35,7 @@ def make_config(
                 "table_max_rows": 200,
                 "digest_max_chars": 2000,
                 "digest_max_lines": 80,
+                "text_max_chars": 20000,
                 "json_max_chars": 20000,
             },
             "aliases": {

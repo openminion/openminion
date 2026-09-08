@@ -27,6 +27,7 @@ def test_load_config_defaults_when_file_missing(tmp_path: Path) -> None:
     assert cfg.index.sqlite_path == str(expected_root / "index.db")
     assert cfg.blob_store.max_ingest_bytes == 104_857_600
     assert cfg.views.auto_generate == ["digest", "text"]
+    assert cfg.views.text_max_chars == 20_000
 
 
 def test_load_config_from_json_applies_overrides(tmp_path: Path) -> None:
@@ -38,6 +39,7 @@ def test_load_config_from_json_applies_overrides(tmp_path: Path) -> None:
             },
             "views": {
                 "auto_generate": ["DIGEST", "TEXT", "TABLE"],
+                "text_max_chars": 256,
                 "json_max_chars": 512,
             },
             "aliases": {"expire_default_days": 5},
@@ -49,6 +51,7 @@ def test_load_config_from_json_applies_overrides(tmp_path: Path) -> None:
     assert cfg.blob_store.root_dir.endswith("custom-root")
     assert cfg.blob_store.max_ingest_bytes == 2048
     assert cfg.views.auto_generate == ["digest", "text", "table"]
+    assert cfg.views.text_max_chars == 256
     assert cfg.views.json_max_chars == 512
     assert cfg.aliases.expire_default_days == 5
 

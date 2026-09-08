@@ -29,6 +29,31 @@ def test_alias_set_respects_overwrite_flag(tmp_path):
         assert resolved.sha256 == ref_b.sha256
 
 
+def test_alias_and_reference_targets_must_be_active(tmp_path) -> None:
+    with artifact_ctl(tmp_path) as ctl:
+        active = ctl.ingest_bytes(b"active", original_name="active.txt")
+        deleted = ctl.ingest_bytes(b"deleted", original_name="deleted.txt")
+        ctl.ref_add("session", "s1", deleted.sha256)
+        ctl.delete(deleted.sha256)
+
+        for target in ("f" * 64, deleted.sha256):
+            with pytest.raises(ArtifactCtlError) as alias_error:
+                ctl.alias_set("new-alias", target)
+            assert alias_error.value.code == "NOT_FOUND"
+
+            with pytest.raises(ArtifactCtlError) as ref_error:
+                ctl.ref_add("session", "s2", target)
+            assert ref_error.value.code == "NOT_FOUND"
+
+        ctl.alias_set("existing-alias", active.sha256)
+        with pytest.raises(ArtifactCtlError) as existing_error:
+            ctl.alias_set("existing-alias", deleted.sha256, overwrite=False)
+        assert existing_error.value.code == "ALREADY_EXISTS"
+
+        ctl.ref_remove("session", "s1", deleted.sha256)
+        assert deleted.sha256 not in ctl.index.active_reference_shas()
+
+
 def test_alias_expiry_filters_list_and_resolve(tmp_path):
     with artifact_ctl(tmp_path) as ctl:
         ref = ctl.ingest_bytes(b"payload", original_name="payload.bin")

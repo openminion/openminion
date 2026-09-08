@@ -42,6 +42,7 @@ class ViewsConfig:
     table_max_rows: int = 200
     digest_max_chars: int = 2000
     digest_max_lines: int = 80
+    text_max_chars: int = 20_000
     json_max_chars: int = 20_000
 
 
@@ -152,6 +153,7 @@ def load_config(
             table_max_rows=int(views.get("table_max_rows", 200)),
             digest_max_chars=int(views.get("digest_max_chars", 2000)),
             digest_max_lines=int(views.get("digest_max_lines", 80)),
+            text_max_chars=int(views.get("text_max_chars", 20_000)),
             json_max_chars=int(views.get("json_max_chars", 20_000)),
         ),
         aliases=AliasesConfig(

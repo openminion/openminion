@@ -19,6 +19,7 @@ from openminion.api.responses.serialization import error_response, normalize_req
 from openminion.api.server.observability import finalize_api_response
 from openminion.modules.artifact.config import from_base_config
 from openminion.modules.artifact.control import ArtifactCtl
+from openminion.modules.artifact.errors import ArtifactCtlError
 
 from .client_auth import ClientAuthService, ClientIdentity, _header_values
 
@@ -248,6 +249,12 @@ class ClientMediaCoordinator:
             record = self._owned_record_locked(identity, session_id, media_id)
             try:
                 stream = self._artifactctl.open(record.artifact_ref)
+            except ArtifactCtlError as exc:
+                if exc.code == "NOT_FOUND":
+                    raise _media_error(HTTPStatus.NOT_FOUND, "media_not_found") from exc
+                raise _media_error(
+                    HTTPStatus.INTERNAL_SERVER_ERROR, "media_storage_failed"
+                ) from exc
             except Exception as exc:
                 raise _media_error(
                     HTTPStatus.INTERNAL_SERVER_ERROR, "media_storage_failed"
