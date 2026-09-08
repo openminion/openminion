@@ -107,6 +107,7 @@ def _tool_execution_metadata(app: APIRuntime, args) -> tuple[dict[str, object], 
         "origin": "openminion.cron",
         "tool_call_origin": "cli",
         "allow_runtime_direct": "1",
+        "storage_path": str(app.storage_path),
         "runtime_env": dict(getattr(runtime_config, "env", {}) or {}),
         **build_runtime_tool_routing_metadata(getattr(runtime_config, "tools", None)),
         **ToolSelectionService(

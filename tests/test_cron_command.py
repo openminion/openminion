@@ -35,7 +35,11 @@ class CronCommandTests(unittest.TestCase):
                 tool_selection=SimpleNamespace(),
             )
         )
-        return SimpleNamespace(config=config, tools=tools)
+        return SimpleNamespace(
+            config=config,
+            tools=tools,
+            storage_path="/tmp/openminion/state/openminion.db",
+        )
 
     def test_build_schedule_payload_every_ms(self) -> None:
         args = Namespace(every_ms=60_000, cron_expr="", at_iso="", timezone="")
@@ -116,6 +120,10 @@ class CronCommandTests(unittest.TestCase):
         )
         self.assertEqual(context.session_id, "cron-cli")
         self.assertEqual(context.metadata["agent_id"], "ops")
+        self.assertEqual(
+            context.metadata["storage_path"],
+            "/tmp/openminion/state/openminion.db",
+        )
 
     def test_run_cron_pause_dispatches_task_pause(self) -> None:
         app = self._mock_app(ok=True, data={"task_id": "job-123", "enabled": False})
