@@ -134,7 +134,6 @@ class CronScheduler:
                 raise RuntimeError("cron scheduler has been stopped")
             if self._started:
                 return
-            self._record_task_outcome(None)
             self._started = True
             self._stop_event.clear()
             self._loop_thread = Thread(
@@ -200,22 +199,21 @@ class CronScheduler:
 
             if capacity > 0:
                 try:
-                    runs = recover_and_acquire_cron_runs(
-                        store=self._store,
-                        daemon_id=self._daemon_id,
-                        lease_ttl_seconds=self._lease_ttl_seconds,
-                        capacity=capacity,
-                        can_start_background_work=self._can_start_background_work,
-                        emit=self._emit,
-                    )
-                    self._record_task_outcome(None)
-                    for run in runs:
-                        self._start_worker(run)
+                    try:
+                        self._record_task_outcome(None)
+                    finally:
+                        runs = recover_and_acquire_cron_runs(
+                            store=self._store,
+                            daemon_id=self._daemon_id,
+                            lease_ttl_seconds=self._lease_ttl_seconds,
+                            capacity=capacity,
+                            can_start_background_work=self._can_start_background_work,
+                            emit=self._emit,
+                        )
+                        for run in runs:
+                            self._start_worker(run)
                 except Exception as exc:
-                    self._emit(
-                        "cron.scheduler.error",
-                        {"error": str(exc)},
-                    )
+                    self._emit("cron.scheduler.error", {"error": str(exc)})
 
             with self._lock:
                 active_runs = len(self._workers)
@@ -259,13 +257,9 @@ class CronScheduler:
 
     def _reap_workers(self) -> None:
         with self._lock:
-            done = [
-                run_id
-                for run_id, worker in self._workers.items()
-                if not worker.thread.is_alive()
-            ]
-            for run_id in done:
-                self._workers.pop(run_id, None)
+            for run_id, worker in list(self._workers.items()):
+                if not worker.thread.is_alive():
+                    self._workers.pop(run_id, None)
 
     def _worker_main(self, *, run: dict[str, Any], stop_event: Event) -> None:
         run_id = str(run.get("run_id", "")).strip()
@@ -352,9 +346,8 @@ class CronScheduler:
             )
 
     def _record_task_outcome(self, job_id: str | None) -> None:
-        if self._record_task_outcomes is None:
-            return
-        self._record_task_outcomes(job_id)
+        if self._record_task_outcomes is not None:
+            self._record_task_outcomes(job_id)
 
     def _lease_renewer(self, *, run_id: str, stop_event: Event) -> None:
         interval_s = max(1.0, self._lease_ttl_seconds / 2.0)
@@ -441,9 +434,7 @@ class CronScheduler:
         job: dict[str, Any] | None,
         result: CronExecutionResult,
     ) -> None:
-        if job is None:
-            return
-        if not bool(result.output.get("watch_terminal", False)):
+        if job is None or not bool(result.output.get("watch_terminal", False)):
             return
         job_id = str(job.get("job_id", "") or "").strip()
         if not job_id:

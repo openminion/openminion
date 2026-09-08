@@ -206,9 +206,14 @@ def test_confirm_without_handler_records_pending_resume_pointer_when_cursor_pres
     result = engine.execute_tool_call(_make_exec_call(), ctx)
 
     assert result.outcome == "blocked"
+    paused = task_ctl.list_events()[0]
+    assert paused["payload"]["agent_id"] == "agent-1"
+    assert paused["payload"]["session_id"] == "sess-1"
     resumed = task_ctl.resume_pending_action(
         policy_request_id="pr-confirm",
         decision_id="decision-1",
+        agent_id="agent-1",
+        session_id="sess-1",
         trace_id="tr-1",
     )
     assert resumed.task_id == "task-1"

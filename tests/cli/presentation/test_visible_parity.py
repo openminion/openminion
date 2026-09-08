@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 from openminion.cli.status.token_usage import TokenUsageSnapshot
 from openminion.cli.presentation.visible_parity import (
@@ -300,7 +301,9 @@ def test_render_tasks_report_uses_active_agent_and_session_scope() -> None:
     assert "task-1: Scoped task" in render_tasks_report(runtime)
 
 
-def test_render_tasks_report_applies_exact_lifecycle_actions(tmp_path) -> None:
+def test_render_tasks_report_applies_exact_lifecycle_actions(
+    tmp_path, monkeypatch
+) -> None:
     from openminion.modules.session.storage.repository import (
         create_sqlite_cron_repository,
     )
@@ -314,11 +317,34 @@ def test_render_tasks_report_applies_exact_lifecycle_actions(tmp_path) -> None:
         payload={"kind": "agentTurn", "message": "work"},
         agent_id="agent-1",
     )
-    runtime = type(
-        "Runtime",
-        (),
-        {"task_manager": manager, "agent_id": "agent-1", "session_id": "session-1"},
-    )()
+    config_path = tmp_path / "openminion.json"
+    data_root = tmp_path / "data"
+    api_runtime = SimpleNamespace(
+        task_manager=manager,
+        config_path=config_path,
+        home_root=tmp_path,
+        data_root=data_root,
+    )
+    runtime = SimpleNamespace(
+        _rt=api_runtime,
+        agent_id="agent-1",
+        session_id="session-1",
+    )
+    heartbeat = datetime.now(timezone.utc).isoformat()
+    from openminion.cli.commands import daemon as daemon_command
+
+    monkeypatch.setattr(
+        daemon_command,
+        "build_daemon_status_payload",
+        lambda *_args, **_kwargs: {
+            "scheduler": {
+                "state": "ready",
+                "hosted_by": "daemon",
+                "last_heartbeat_at": heartbeat,
+                "reason": None,
+            }
+        },
+    )
 
     paused = render_tasks_report(runtime, f"pause {record.task_id}")
     resumed = render_tasks_report(runtime, f"resume {record.task_id}")
@@ -326,7 +352,7 @@ def test_render_tasks_report_applies_exact_lifecycle_actions(tmp_path) -> None:
 
     assert "status: WAITING" in paused
     assert "schedule: every:60000ms" in paused
-    assert "scheduler: unknown" in paused
+    assert "scheduler: ready" in paused
     assert "status: ACTIVE" in resumed
     assert "status: CANCELED" in cancelled
 

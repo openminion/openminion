@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 import time
 
 import pytest
@@ -45,6 +47,57 @@ def test_focus_pty_renders_durable_token_report(
         )
         assert "no token usage events" in transcript
         write_transcript(artifact_root(tmp_path), "local-tokens", transcript)
+
+
+def test_focus_pty_manages_scheduled_task_and_restores_prompt(
+    focus_probe: FocusProbe,
+) -> None:
+    env = os.environ.copy()
+    env.update(focus_probe.environment())
+    created = subprocess.run(
+        [
+            str(focus_probe.python_bin),
+            "-m",
+            "openminion",
+            "--config",
+            str(focus_probe.config_path),
+            "--profile",
+            focus_probe.agent_id,
+            "--session",
+            focus_probe.session_id,
+            "--dir",
+            str(focus_probe.workdir),
+            "--no-update-check",
+            "schedule",
+            "create",
+            "--instruction",
+            "Focus task lifecycle test",
+            "--every-ms",
+            "60000",
+            "--name",
+            "STLU Focus PTY",
+            "--agent-id",
+            focus_probe.agent_id,
+            "--json",
+        ],
+        cwd=focus_probe.openminion_root,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    task_id = str(json.loads(created.stdout)["data"]["task_id"])
+
+    with focus_probe.session() as session:
+        focus_probe.wait_ready(session)
+        for command, marker in (
+            (f"/tasks {task_id}", "status: ACTIVE"),
+            (f"/tasks pause {task_id}", "status: WAITING"),
+            (f"/tasks resume {task_id}", "status: ACTIVE"),
+            (f"/tasks cancel {task_id}", "status: CANCELED"),
+        ):
+            focus_probe.run_slash(session, command, marker=marker)
+            focus_probe.wait_ready(session)
 
 
 def test_focus_pty_submits_after_composer_is_ready(

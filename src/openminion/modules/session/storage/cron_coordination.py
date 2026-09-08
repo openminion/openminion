@@ -51,6 +51,32 @@ class CronCoordinationStore:
         )
         return bool(row and int(row["c"]) > 0)
 
+    def _finish_expired_run_locked(
+        self,
+        row: dict[str, Any],
+        *,
+        state: str,
+        error: dict[str, Any],
+        now_iso: str,
+    ) -> dict[str, Any]:
+        run_id = str(row["run_id"])
+        self._execute_count(
+            """
+            UPDATE cron_runs
+            SET state = ?, error_json = ?, lease_owner = NULL,
+                lease_expires_at = NULL, finished_at = ?, updated_at = ?
+            WHERE run_id = ? AND state = 'running'
+            """,
+            (state, to_json(error), now_iso, now_iso, run_id),
+        )
+        return {
+            "run_id": run_id,
+            "job_id": row["job_id"],
+            "state": state,
+            "attempts": int(row["attempts"] or 0),
+            "error": error,
+        }
+
     def _recover_expired_cron_runs_locked(
         self,
         *,
@@ -60,7 +86,7 @@ class CronCoordinationStore:
     ) -> list[dict[str, Any]]:
         rows = self._record_store.query_dicts(
             """
-            SELECT r.*, j.max_attempts, j.retry_backoff_s
+            SELECT r.*, j.enabled, j.max_attempts, j.retry_backoff_s
             FROM cron_runs AS r
             JOIN cron_jobs AS j ON j.job_id = r.job_id
             WHERE r.state = 'running'
@@ -76,30 +102,34 @@ class CronCoordinationStore:
             run_id = str(row["run_id"])
             attempts = int(row["attempts"] or 0)
             attempt_limit = max(1, int(row["max_attempts"] or 3))
+            if not bool(int(row["enabled"] or 0)):
+                disabled_error: dict[str, Any] = {
+                    "code": "cron_job_disabled",
+                    "message": "cron job was disabled while the run was active",
+                }
+                recovered.append(
+                    self._finish_expired_run_locked(
+                        row,
+                        state="cancelled",
+                        error=disabled_error,
+                        now_iso=now_iso,
+                    )
+                )
+                continue
             if attempts >= attempt_limit:
-                error = {
+                exhausted_error: dict[str, Any] = {
                     "code": "cron_lease_expired_max_attempts",
                     "message": "cron run lease expired after the final attempt",
                     "attempts": attempts,
                     "max_attempts": attempt_limit,
                 }
-                self._execute_count(
-                    """
-                    UPDATE cron_runs
-                    SET state = 'failed', error_json = ?, lease_owner = NULL,
-                        lease_expires_at = NULL, finished_at = ?, updated_at = ?
-                    WHERE run_id = ? AND state = 'running'
-                    """,
-                    (to_json(error), now_iso, now_iso, run_id),
-                )
                 recovered.append(
-                    {
-                        "run_id": run_id,
-                        "job_id": row["job_id"],
-                        "state": "failed",
-                        "attempts": attempts,
-                        "error": error,
-                    }
+                    self._finish_expired_run_locked(
+                        row,
+                        state="failed",
+                        error=exhausted_error,
+                        now_iso=now_iso,
+                    )
                 )
                 continue
 
@@ -108,7 +138,7 @@ class CronCoordinationStore:
                 base_backoff_s=max(1, int(row["retry_backoff_s"] or 30)),
             )
             available_at = to_iso_utc(now_dt + timedelta(seconds=delay_s))
-            error = {
+            retry_error: dict[str, Any] = {
                 "code": "cron_lease_expired_retry",
                 "message": "cron run lease expired; delayed retry scheduled",
                 "attempts": attempts,
@@ -123,7 +153,7 @@ class CronCoordinationStore:
                     updated_at = ?
                 WHERE run_id = ? AND state = 'running'
                 """,
-                (available_at, to_json(error), now_iso, run_id),
+                (available_at, to_json(retry_error), now_iso, run_id),
             )
             recovered.append(
                 {
@@ -132,7 +162,7 @@ class CronCoordinationStore:
                     "state": "queued",
                     "attempts": attempts,
                     "available_at": available_at,
-                    "error": error,
+                    "error": retry_error,
                 }
             )
         return recovered
@@ -167,7 +197,7 @@ class CronCoordinationStore:
         with self._lock, self._record_store.transaction():
             row = self._query_one(
                 """
-                SELECT r.*, j.max_attempts, j.retry_backoff_s
+                SELECT r.*, j.enabled, j.max_attempts, j.retry_backoff_s
                 FROM cron_runs AS r
                 LEFT JOIN cron_jobs AS j ON j.job_id = r.job_id
                 WHERE r.run_id = ?
@@ -178,7 +208,21 @@ class CronCoordinationStore:
                 return None
             attempts = int(row["attempts"] or 0)
             attempt_limit = max(1, int(row.get("max_attempts") or 1))
-            if attempts >= attempt_limit:
+            if row.get("enabled") is not None and not bool(int(row["enabled"])):
+                disabled_error: dict[str, Any] = {
+                    "code": "cron_job_disabled",
+                    "message": "cron job was disabled while the run was active",
+                }
+                self._execute_count(
+                    """
+                    UPDATE cron_runs
+                    SET state = 'cancelled', error_json = ?, lease_owner = NULL,
+                        lease_expires_at = NULL, finished_at = ?, updated_at = ?
+                    WHERE run_id = ? AND state = 'running'
+                    """,
+                    (to_json(disabled_error), now, now, rid),
+                )
+            elif attempts >= attempt_limit:
                 terminal_error = dict(error)
                 terminal_error.setdefault("attempts", attempts)
                 terminal_error.setdefault("max_attempts", attempt_limit)

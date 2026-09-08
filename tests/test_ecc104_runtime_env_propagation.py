@@ -501,7 +501,6 @@ def test_os_adapter_task_cancel_respects_configured_agent_id(tmp_path, monkeypat
         payload={"kind": "agentTurn", "message": "cancel me"},
         agent_id="agent-cancel",
         session_target="isolated",
-        delete_after_run=False,
         misfire_policy="skip",
     )
 

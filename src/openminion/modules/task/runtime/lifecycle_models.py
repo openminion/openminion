@@ -7,6 +7,9 @@ from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 from collections.abc import Mapping
 
+from openminion.base.redaction import redact_mapping, redact_sensitive_text
+from openminion.modules.task.constants import TASK_RUN_ERROR_DETAILS_MAX_JSON_CHARS
+
 
 @runtime_checkable
 class TaskCronStoreProtocol(Protocol):
@@ -53,13 +56,24 @@ _TERMINAL_TASK_STATES = {
 def bounded_task_run_error(error: Any) -> dict[str, Any] | None:
     if not isinstance(error, Mapping):
         return None
+    code, _ = redact_sensitive_text(str(error.get("code") or "failed"))
+    message, _ = redact_sensitive_text(str(error.get("message") or ""))
     result: dict[str, Any] = {
-        "code": str(error.get("code") or "failed")[:100],
-        "message": str(error.get("message") or "")[:500],
+        "code": code[:100],
+        "message": message[:500],
     }
     details = error.get("details")
     if isinstance(details, Mapping):
-        result["details"] = dict(list(details.items())[:20])
+        redacted, _ = redact_mapping(details)
+        encoded = json.dumps(redacted, ensure_ascii=True, default=str, sort_keys=True)
+        encoded, _ = redact_sensitive_text(encoded)
+        if len(encoded) > TASK_RUN_ERROR_DETAILS_MAX_JSON_CHARS:
+            result["details"] = {
+                "summary": encoded[:TASK_RUN_ERROR_DETAILS_MAX_JSON_CHARS],
+                "truncated": True,
+            }
+        else:
+            result["details"] = json.loads(encoded)
     return result
 
 

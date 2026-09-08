@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
-
 import pytest
 
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
@@ -324,9 +323,12 @@ def test_disabled_job_does_not_reacquire_lease_recovery(
 
     recovered = store.recover_expired_cron_runs(now_iso=recovery_at)
 
-    assert recovered[0]["state"] == "queued"
+    assert recovered[0]["state"] == "cancelled"
     acquire_at = to_iso_utc(parse_iso_datetime(recovery_at) + timedelta(seconds=2))
     assert store.acquire_cron_runs("daemon-new", now_iso=acquire_at) == []
+    persisted = store.list_cron_runs(job_id=job_id, limit=1)[0]
+    assert persisted["state"] == "cancelled"
+    assert persisted["finished_at"] is not None
 
 
 def test_expired_running_run_fails_after_attempt_limit(
@@ -405,7 +407,8 @@ def test_disabled_job_does_not_reacquire_worker_retry(
     )
 
     assert retried is not None
-    assert retried["state"] == "queued"
+    assert retried["state"] == "cancelled"
+    assert retried["finished_at"] is not None
     acquire_at = to_iso_utc(parse_iso_datetime(started_at) + timedelta(seconds=2))
     assert store.acquire_cron_runs("daemon-worker", now_iso=acquire_at) == []
 

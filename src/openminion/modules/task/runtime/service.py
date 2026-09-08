@@ -283,6 +283,9 @@ class InMemoryTaskCtl:
             raise TaskNotFoundError(f"task not found: {task_id}")
         return task
 
+    def find_task(self, task_id: str) -> TaskRecord | None:
+        return self._tasks.get(task_id)
+
     def get_digest(
         self, *, agent_id: str, session_id: str, limit: int = 5
     ) -> TaskDigest:
@@ -319,15 +322,25 @@ class InMemoryTaskCtl:
         *,
         policy_request_id: str,
         cursor: ResumePointer,
+        agent_id: str,
+        session_id: str,
         reason: str | None = None,
     ) -> PendingAction:
+        owner_agent = str(agent_id or "").strip()
+        owner_session = str(session_id or "").strip()
+        if not owner_agent or not owner_session:
+            raise ValueError("agent_id and session_id are required")
         existing = self._pending_by_policy_id.get(policy_request_id)
         if existing is not None and existing.resolved_at is None:
+            if existing.agent_id != owner_agent or existing.session_id != owner_session:
+                raise ValueError("policy request is owned by another agent or session")
             return existing
 
         pending = PendingAction(
             policy_request_id=policy_request_id,
             reason=reason,
+            agent_id=owner_agent,
+            session_id=owner_session,
             cursor=cursor,
             created_at=_utc_now(),
         )
@@ -341,9 +354,43 @@ class InMemoryTaskCtl:
             payload={
                 "policy_request_id": policy_request_id,
                 "reason": reason,
+                "agent_id": owner_agent,
+                "session_id": owner_session,
                 "pending_backlog_count": self._pending_backlog_count(),
             },
         )
+        return pending
+
+    def list_pending_actions(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        limit: int = 500,
+    ) -> list[PendingAction]:
+        safe_limit = max(1, min(int(limit), 1000))
+        return [
+            pending
+            for pending in self._pending_by_policy_id.values()
+            if pending.resolved_at is None
+            and pending.agent_id == agent_id
+            and pending.session_id == session_id
+        ][:safe_limit]
+
+    def get_pending_action(
+        self,
+        policy_request_id: str,
+        *,
+        agent_id: str,
+        session_id: str,
+    ) -> PendingAction | None:
+        pending = self._pending_by_policy_id.get(policy_request_id)
+        if (
+            pending is None
+            or pending.agent_id != agent_id
+            or pending.session_id != session_id
+        ):
+            return None
         return pending
 
     def resume_pending_action(
@@ -351,6 +398,8 @@ class InMemoryTaskCtl:
         *,
         policy_request_id: str,
         decision_id: str,
+        agent_id: str,
+        session_id: str,
         trace_id: str | None = None,
     ) -> ResumePointer:
         pending = self._pending_by_policy_id.get(policy_request_id)
@@ -358,27 +407,33 @@ class InMemoryTaskCtl:
             raise PendingActionNotFoundError(
                 f"policy request not found: {policy_request_id}"
             )
+        if pending.agent_id != agent_id or pending.session_id != session_id:
+            raise ValueError("policy request is owned by another agent or session")
 
-        if pending.resolved_at is None:
-            resolved_at = _utc_now()
-            latency_ms = int((resolved_at - pending.created_at).total_seconds() * 1000)
-            pending = pending.model_copy(
-                update={"resolved_at": resolved_at, "decision_id": decision_id}
-            )
-            self._pending_by_policy_id[policy_request_id] = pending
-            self._emit(
-                "mission.resumed",
-                task_id=pending.cursor.task_id,
-                plan_id=pending.cursor.plan_id,
-                step_id=pending.cursor.step_id,
-                trace_id=trace_id or pending.cursor.trace_id,
-                payload={
-                    "policy_request_id": policy_request_id,
-                    "decision_id": decision_id,
-                    "pending_backlog_count": self._pending_backlog_count(),
-                    "resume_latency_ms": latency_ms,
-                },
-            )
+        if pending.resolved_at is not None:
+            if pending.decision_id != decision_id:
+                raise ValueError("policy request was already resolved differently")
+            return pending.cursor
+
+        resolved_at = _utc_now()
+        latency_ms = int((resolved_at - pending.created_at).total_seconds() * 1000)
+        pending = pending.model_copy(
+            update={"resolved_at": resolved_at, "decision_id": decision_id}
+        )
+        self._pending_by_policy_id[policy_request_id] = pending
+        self._emit(
+            "mission.resumed",
+            task_id=pending.cursor.task_id,
+            plan_id=pending.cursor.plan_id,
+            step_id=pending.cursor.step_id,
+            trace_id=trace_id or pending.cursor.trace_id,
+            payload={
+                "policy_request_id": policy_request_id,
+                "decision_id": decision_id,
+                "pending_backlog_count": self._pending_backlog_count(),
+                "resume_latency_ms": latency_ms,
+            },
+        )
 
         return pending.cursor
 

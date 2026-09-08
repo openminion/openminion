@@ -256,21 +256,25 @@ class SqlTaskRepository:
         policy_request_id: str,
         state: str,
         reason: str | None,
+        agent_id: str,
+        session_id: str,
         cursor: ResumePointer,
         created_at: datetime,
     ) -> None:
         self._store.execute_count(
             """
             INSERT INTO pending_actions
-            (pending_action_id, policy_request_id, state, reason,
+            (pending_action_id, policy_request_id, state, reason, agent_id, session_id,
              task_id, plan_id, step_id, attempt, trace_id, turn_id, pack_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 pending_action_id,
                 policy_request_id,
                 state,
                 reason,
+                agent_id,
+                session_id,
                 cursor.task_id,
                 cursor.plan_id,
                 cursor.step_id,
@@ -288,6 +292,24 @@ class SqlTaskRepository:
             (policy_request_id,),
         )
 
+    def list_pending_actions(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        limit: int = 500,
+    ) -> list[Mapping[str, Any]]:
+        safe_limit = max(1, min(int(limit), 1000))
+        return self._store.query_dicts(
+            """
+            SELECT * FROM pending_actions
+            WHERE resolved_at IS NULL AND agent_id = ? AND session_id = ?
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (agent_id, session_id, safe_limit),
+        )
+
     def count_pending_actions(self) -> int:
         rows = self._store.query_dicts(
             "SELECT COUNT(*) AS count FROM pending_actions WHERE resolved_at IS NULL"
@@ -301,7 +323,7 @@ class SqlTaskRepository:
         policy_request_id: str,
         resolved_at: datetime | None,
         decision_id: str | None = None,
-    ) -> None:
+    ) -> bool:
         query = """
             UPDATE pending_actions
             SET decision_id = ?
@@ -312,10 +334,10 @@ class SqlTaskRepository:
             query = """
                 UPDATE pending_actions
                 SET resolved_at = ?, decision_id = ?
-                WHERE policy_request_id = ?
+                WHERE policy_request_id = ? AND resolved_at IS NULL
                 """
             params = (resolved_at.isoformat(), decision_id, policy_request_id)
-        self._store.execute_count(query, params)
+        return int(self._store.execute_count(query, params)) == 1
 
     def record_idempotency(
         self,

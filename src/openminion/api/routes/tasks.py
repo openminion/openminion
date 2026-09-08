@@ -274,6 +274,6 @@ def _task_scope_denied(exc: PermissionError, *, task_id: str) -> RouteResult:
 
 def _safe_int(value: str, *, default: int) -> int:
     try:
-        return max(1, int(value))
+        return max(1, min(int(value), 100))
     except ValueError:
         return default

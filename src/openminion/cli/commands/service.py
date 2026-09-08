@@ -137,12 +137,12 @@ def _run_sidecar_lifecycle(args: Any, *, action: str) -> int:
 def _service_status_payload(args: Any, *, service_id: str) -> dict[str, Any]:
     descriptor = _service_descriptor(service_id)
     if service_id == "daemon":
-        from openminion.cli.commands.daemon import _build_daemon_status_payload
+        from openminion.cli.commands.daemon import build_daemon_status_payload
 
         try:
             return {
                 **descriptor,
-                **_build_daemon_status_payload(
+                **build_daemon_status_payload(
                     getattr(args, "config", None),
                     home_root=getattr(args, "home_root", None),
                     data_root=getattr(args, "data_root", None),
@@ -151,9 +151,9 @@ def _service_status_payload(args: Any, *, service_id: str) -> dict[str, Any]:
         except RuntimeError as exc:
             return {**descriptor, "ok": False, "status": "error", "message": str(exc)}
     if service_id == "cron":
-        from openminion.cli.commands.daemon import _build_daemon_status_payload
+        from openminion.cli.commands.daemon import build_daemon_status_payload
 
-        daemon = _build_daemon_status_payload(
+        daemon = build_daemon_status_payload(
             getattr(args, "config", None),
             home_root=getattr(args, "home_root", None),
             data_root=getattr(args, "data_root", None),

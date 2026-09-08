@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from threading import RLock
 from typing import Any
-from collections.abc import Mapping
 
 from openminion.base.time import utc_now_iso as _utc_now_iso
 
@@ -179,21 +179,105 @@ class TaskLifecycleRepository(
             ).fetchone()
         return self._row_to_record(row)
 
-    def list(self, *, limit: int = 100) -> list[TaskLifecycleRecord]:
+    def list(
+        self, *, limit: int = 100, agent_id: str | None = None
+    ) -> list[TaskLifecycleRecord]:
         safe_limit = max(1, min(int(limit), 1000))
+        normalized_agent_id = str(agent_id or "").strip()
+        where_sql = "WHERE agent_id = ?" if normalized_agent_id else ""
+        params: tuple[Any, ...] = (
+            (normalized_agent_id, safe_limit) if normalized_agent_id else (safe_limit,)
+        )
         with self._lock:
             rows = self._conn.execute(
-                """
+                f"""
                 SELECT *
                 FROM scheduled_tasks
+                {where_sql}
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
-                (safe_limit,),
+                params,
             ).fetchall()
         return [
             record for row in rows if (record := self._row_to_record(row)) is not None
         ]
+
+    def list_reconciliation_candidates(
+        self,
+        *,
+        limit: int,
+        after: tuple[str, str] | None = None,
+    ) -> Sequence[TaskLifecycleRecord]:
+        safe_limit = max(1, min(int(limit), 1000))
+        where_sql = "WHERE state IN ('active', 'paused')"
+        params: tuple[Any, ...] = (safe_limit,)
+        if after is not None:
+            where_sql += " AND (created_at > ? OR (created_at = ? AND task_id > ?))"
+            params = (after[0], after[0], after[1], safe_limit)
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT * FROM scheduled_tasks
+                {where_sql}
+                ORDER BY created_at ASC, task_id ASC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [
+            record for row in rows if (record := self._row_to_record(row)) is not None
+        ]
+
+    def cancel_scheduled_task(
+        self,
+        *,
+        task_id: str,
+        expected_state: TaskLifecycleState,
+    ) -> TaskLifecycleRecord:
+        normalized = str(task_id or "").strip()
+        if not normalized:
+            raise ValueError("task_id is required")
+        now = _utc_now_iso()
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT * FROM scheduled_tasks WHERE task_id = ?",
+                (normalized,),
+            ).fetchone()
+            record = self._row_to_record(row)
+            if record is None:
+                raise KeyError(f"task not found: {task_id}")
+            if record.state == TaskLifecycleState.CANCELLED:
+                return record
+            if expected_state not in {
+                TaskLifecycleState.ACTIVE,
+                TaskLifecycleState.PAUSED,
+            }:
+                raise ValueError(
+                    "invalid task state transition: "
+                    f"{expected_state.value} -> cancelled"
+                )
+            updated = self._conn.execute(
+                """
+                UPDATE scheduled_tasks
+                SET state = 'cancelled', updated_at = ?, cancelled_at = ?
+                WHERE task_id = ? AND state IN (?, 'done', 'failed')
+                """,
+                (
+                    now,
+                    record.cancelled_at or now,
+                    record.task_id,
+                    expected_state.value,
+                ),
+            ).rowcount
+            if updated != 1:
+                current = _require_task_record(
+                    self.get(record.task_id), task_id=record.task_id
+                )
+                raise ValueError(
+                    f"invalid task state transition: {current.state.value} -> cancelled"
+                )
+        return _require_task_record(self.get(record.task_id), task_id=record.task_id)
 
     def transition(
         self,
@@ -230,7 +314,7 @@ class TaskLifecycleRepository(
             persisted_reason = str(failure_reason or "").strip() or "failed"
 
         with self._lock:
-            self._conn.execute(
+            updated = self._conn.execute(
                 """
                 UPDATE scheduled_tasks
                 SET state = ?,
@@ -240,7 +324,7 @@ class TaskLifecycleRepository(
                     failed_at = ?,
                     failure_reason = ?,
                     metadata = ?
-                WHERE task_id = ?
+                WHERE task_id = ? AND state = ?
                 """,
                 (
                     normalized_to_state.value,
@@ -251,9 +335,19 @@ class TaskLifecycleRepository(
                     persisted_reason,
                     _dump_metadata(record.metadata),
                     record.task_id,
+                    record.state.value,
                 ),
-            )
+            ).rowcount
             self._conn.commit()
+        if updated != 1:
+            current = _require_task_record(
+                self.get(record.task_id),
+                task_id=record.task_id,
+            )
+            raise ValueError(
+                "invalid task state transition: "
+                f"{current.state.value} -> {normalized_to_state.value}"
+            )
         return _require_task_record(self.get(record.task_id), task_id=record.task_id)
 
     def record_scheduled_outcome(

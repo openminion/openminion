@@ -4,11 +4,6 @@ from typing import Any
 from uuid import uuid4
 
 from openminion.modules.brain.runtime.goal.policy import authorize_goal_action
-from openminion.modules.task.scheduling.schedule import (
-    normalize_schedule,
-    parse_iso_datetime,
-    utc_now,
-)
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_TASK_CONSOLIDATE_MEMORY,
     MODEL_TASK_CANCEL,
@@ -35,6 +30,9 @@ from openminion.modules.task.constants import (
     TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
 )
 from openminion.modules.task.scheduling.coordination import (
+    ExpiredOneShotTaskError,
+    ScheduleIntervalTooShortError,
+    schedule_user_task,
     scheduler_readiness_from_health,
 )
 
@@ -322,27 +320,6 @@ def _coerce_schedule_aliases(schedule: Mapping[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _enforce_every_schedule_floor(schedule: Mapping[str, Any]) -> None:
-    if _safe_str(schedule, "kind") != "every":
-        return
-    every_ms = int(schedule.get("every_ms", 0) or 0)
-    if every_ms >= DEFAULT_TASK_MIN_EVERY_MS:
-        return
-    raise _tool_error(
-        "INVALID_ARGUMENT",
-        message=(
-            "Recurring task cadence is below the minimum allowed interval of "
-            f"{DEFAULT_TASK_MIN_EVERY_MS} ms"
-        ),
-        reason_code=TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
-        details={
-            "field": "schedule.every_ms",
-            "every_ms": every_ms,
-            "minimum_every_ms": DEFAULT_TASK_MIN_EVERY_MS,
-        },
-    )
-
-
 def _paused_reason_from_payload(payload: Mapping[str, Any] | None) -> str | None:
     if not isinstance(payload, Mapping):
         return None
@@ -404,41 +381,49 @@ def _h_task_schedule(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
     )
     instruction = validated.instruction
     raw_schedule = _coerce_schedule_aliases(validated.schedule or {})
-    task_name = _derive_task_name(name=validated.name, instruction=instruction)
-
+    manager = _resolve_task_manager(ctx)
     try:
-        normalized_schedule = normalize_schedule(raw_schedule)
-    except Exception as exc:
+        with _storage_operation(
+            message="Failed to create scheduled task",
+            passthrough=(ValueError,),
+        ):
+            created = schedule_user_task(
+                manager,
+                name=validated.name,
+                instruction=instruction,
+                schedule=raw_schedule,
+                agent_id=_agent_id_from_context(ctx),
+                origin=_origin_delivery_context(ctx),
+            )
+    except ScheduleIntervalTooShortError as exc:
+        raise _tool_error(
+            "INVALID_ARGUMENT",
+            message=str(exc),
+            reason_code=TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
+            details={
+                "field": "schedule.every_ms",
+                "every_ms": exc.every_ms,
+                "minimum_every_ms": DEFAULT_TASK_MIN_EVERY_MS,
+            },
+        ) from exc
+    except ValueError as exc:
         raise ToolRuntimeError(
             "INVALID_ARGUMENT",
             f"Invalid schedule: {exc}",
             {"field": "schedule"},
         ) from exc
-    _enforce_every_schedule_floor(normalized_schedule)
-
-    origin = _origin_delivery_context(ctx)
-    agent_id = _agent_id_from_context(ctx)
-    manager = _resolve_task_manager(ctx)
-    with _storage_operation(message="Failed to create scheduled task"):
-        created = manager.schedule_user_task(
-            name=task_name,
-            instruction=instruction,
-            schedule=normalized_schedule,
-            agent_id=agent_id,
-            origin=origin,
-        )
-        task_row = created["record"]
-        job = created["job"]
-        task_id = task_row.task_id
-        deduped = bool(created["deduped"])
+    task_row = created["record"]
+    job = created["job"]
+    task_id = task_row.task_id
+    deduped = bool(created["deduped"])
 
     return {
         "ok": True,
         "task_id": task_id,
         "deduped": deduped,
-        "name": _safe_str(job, "name", task_name),
+        "name": _safe_str(job, "name"),
         "enabled": bool(job.get("enabled", True)),
-        "schedule": dict(job.get("schedule") or normalized_schedule),
+        "schedule": dict(job.get("schedule") or {}),
         "session_target": _safe_str(job, "session_target", "isolated"),
         "next_due_at": job.get("next_due_at"),
         "delete_after_run": bool(job.get("delete_after_run", False)),
@@ -511,7 +496,6 @@ def _h_task_watch(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             agent_id=agent_id,
             session_target="isolated",
             delivery=_watch_delivery_payload(validated.delivery, origin),
-            delete_after_run=False,
             misfire_policy="skip",
             max_concurrency=1,
             job_id=job_id,
@@ -625,7 +609,6 @@ def _h_task_consolidate_memory(
             agent_id=agent_id,
             session_target="isolated",
             delivery={"mode": "none"},
-            delete_after_run=False,
             misfire_policy="skip",
             max_concurrency=1,
             concurrency_key=f"memory-consolidation:{target_scope}",
@@ -733,40 +716,25 @@ def _h_task_resume(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     task_id = validated.task_id
     caller_agent_id = _agent_id_from_context(ctx)
     manager = _resolve_task_manager(ctx)
-    job = _owned_job_or_error(
+    _owned_job_or_error(
         manager=manager,
         task_id=task_id,
         caller_agent_id=caller_agent_id,
     )
-    schedule = dict(job.get("schedule") or {})
-    if _safe_str(schedule, "kind") == "at":
-        at_raw = _text(schedule.get("at"))
-        if at_raw:
-            try:
-                if parse_iso_datetime(at_raw) <= utc_now():
-                    raise _tool_error(
-                        "INVALID_ARGUMENT",
-                        message="One-shot task is already expired and cannot be resumed",
-                        reason_code=TASK_REASON_RESUME_EXPIRED_ONE_SHOT,
-                        details={"task_id": task_id},
-                    )
-            except ToolRuntimeError:
-                raise
-            except Exception:
-                pass
-    updated_payload = _apply_pause_metadata(
-        job.get("payload"),
-        reason=None,
-        source=None,
-    )
-    with _storage_operation(
-        message="Failed to resume scheduled task",
-        details={"task_id": task_id},
-        passthrough=(KeyError,),
-    ):
-        if updated_payload != dict(job.get("payload") or {}):
-            manager.replace_cron_job_payload(task_id, updated_payload)
-        _, resumed_job = manager.resume_task(task_id)
+    try:
+        with _storage_operation(
+            message="Failed to resume scheduled task",
+            details={"task_id": task_id},
+            passthrough=(KeyError, ExpiredOneShotTaskError),
+        ):
+            _, resumed_job = manager.resume_task(task_id)
+    except ExpiredOneShotTaskError as exc:
+        raise _tool_error(
+            "INVALID_ARGUMENT",
+            message=str(exc),
+            reason_code=TASK_REASON_RESUME_EXPIRED_ONE_SHOT,
+            details={"task_id": task_id},
+        ) from exc
     return {
         "ok": True,
         "task_id": task_id,

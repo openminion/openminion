@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from openminion.modules.task.schemas import (
     PlanDraft,
     PlanStepDraft,
@@ -83,14 +85,26 @@ def test_pending_action_resume_returns_same_cursor() -> None:
     pending = ctl.record_pending_action(
         policy_request_id="policy-123",
         cursor=cursor,
+        agent_id="agent-1",
+        session_id="session-1",
         reason="exec requires approval",
     )
     assert pending.policy_request_id == "policy-123"
     assert pending.resolved_at is None
 
+    with pytest.raises(ValueError, match="owned by another agent or session"):
+        ctl.resume_pending_action(
+            policy_request_id="policy-123",
+            decision_id="decision-other",
+            agent_id="agent-other",
+            session_id="session-1",
+        )
+
     resumed = ctl.resume_pending_action(
         policy_request_id="policy-123",
         decision_id="decision-9",
+        agent_id="agent-1",
+        session_id="session-1",
         trace_id="trace-2",
     )
 
@@ -134,6 +148,8 @@ def test_pending_action_resume_survives_controller_restart(tmp_path) -> None:
         pending = first_ctl.record_pending_action(
             policy_request_id="policy-123",
             cursor=cursor,
+            agent_id="agent-1",
+            session_id="session-1",
             reason="exec requires approval",
         )
         assert pending.cursor == cursor
@@ -146,16 +162,35 @@ def test_pending_action_resume_survives_controller_restart(tmp_path) -> None:
     second_store = RecordStoreSQLite(db_path, wal=False)
     second_ctl = SqlTaskCtl(second_store)
     try:
+        pending_rows = second_ctl.list_pending_actions(
+            agent_id="agent-1",
+            session_id="session-1",
+        )
+        assert len(pending_rows) == 1
+        pending = pending_rows[0]
+        assert pending.agent_id == "agent-1"
+        assert pending.session_id == "session-1"
         resumed = second_ctl.resume_pending_action(
             policy_request_id="policy-123",
             decision_id="decision-9",
+            agent_id="agent-1",
+            session_id="session-1",
             trace_id="trace-2",
         )
         repeated = second_ctl.resume_pending_action(
             policy_request_id="policy-123",
             decision_id="decision-9",
+            agent_id="agent-1",
+            session_id="session-1",
             trace_id="trace-2",
         )
+        with pytest.raises(ValueError, match="already resolved differently"):
+            second_ctl.resume_pending_action(
+                policy_request_id="policy-123",
+                decision_id="decision-other",
+                agent_id="agent-1",
+                session_id="session-1",
+            )
     finally:
         events = second_ctl.list_events()
         second_store.close()

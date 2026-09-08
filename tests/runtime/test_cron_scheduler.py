@@ -231,6 +231,36 @@ def test_scheduler_reconciles_task_outcomes_on_tick_and_completion() -> None:
     assert "job-task" in reconciled
 
 
+def test_scheduler_starts_acquired_runs_when_tick_reconciliation_fails() -> None:
+    store = FakeCronStore()
+    store.add_job(
+        job_id="job-task",
+        payload={"kind": "agentTurn", "message": "work"},
+    )
+    store.seed_due("job-task")
+
+    def _record(job_id: str | None) -> int:
+        if job_id is None:
+            raise RuntimeError("reconciliation unavailable")
+        return 0
+
+    scheduler = CronScheduler(
+        store=store,
+        daemon_id="daemon-task",
+        tick_seconds=0.05,
+        execute_agent_turn=lambda _job, _run: "done",
+        record_task_outcomes=_record,
+    )
+    scheduler.start()
+    try:
+        assert store.finished.wait(timeout=3.0)
+    finally:
+        scheduler.shutdown(grace_s=1.0)
+
+    run = next(iter(store.runs.values()))
+    assert run["state"] == "finished"
+
+
 def test_scheduler_preserves_terminal_run_when_task_outcome_callback_fails() -> None:
     store = FakeCronStore()
     store.add_job(

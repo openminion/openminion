@@ -1,14 +1,14 @@
-from typing import Any
+from typing import Any, cast
 
-from openminion.modules.task.constants import DEFAULT_TASK_MIN_EVERY_MS
 from openminion.modules.task.scheduling.coordination import (
+    schedule_user_task,
     scheduler_readiness_from_health,
 )
-from openminion.modules.task.scheduling.schedule import normalize_schedule
 from openminion.modules.task.surface import (
     build_task_surface,
     resolve_task_surface_source,
 )
+from openminion.services.health.service import collect_health_snapshot
 
 
 def create_task(
@@ -24,34 +24,22 @@ def create_task(
     if unknown_fields:
         raise ValueError(f"unknown task fields: {', '.join(unknown_fields)}")
     instruction = str(body.get("instruction") or "").strip()
-    name = " ".join(str(body.get("name") or instruction).split())
-    if len(name) > 60:
-        name = f"{name[:57].rstrip()}..."
     schedule = body.get("schedule")
     if not instruction:
         raise ValueError("instruction is required")
     if not isinstance(schedule, dict):
         raise ValueError("schedule is required")
     owner = resolve_task_surface_source(runtime)
-    create = getattr(owner, "schedule_user_task", None)
-    if not callable(create):
-        raise RuntimeError("task scheduling is unavailable")
     origin = {"channel": "api"}
     if session_id:
         origin["session_id"] = session_id
-    normalized_schedule = normalize_schedule(schedule)
-    if (
-        normalized_schedule["kind"] == "every"
-        and int(normalized_schedule["every_ms"]) < DEFAULT_TASK_MIN_EVERY_MS
-    ):
-        raise ValueError(
-            f"recurring interval must be at least {DEFAULT_TASK_MIN_EVERY_MS} ms"
-        )
-    created = create(
-        name=name,
+    scheduler = _scheduler_readiness(runtime)
+    created = schedule_user_task(
+        owner,
         instruction=instruction,
-        schedule=normalized_schedule,
+        schedule=schedule,
         agent_id=agent_id,
+        name=str(body.get("name") or "") or None,
         origin=origin,
     )
     record = created["record"]
@@ -65,12 +53,26 @@ def create_task(
         ).show_task(record.task_id),
         "deduped": bool(created["deduped"]),
         "job_id": job.get("job_id"),
-        "scheduler": scheduler_readiness_from_health(
-            {},
-            reachable=True,
-            identity_matches=None,
-        ),
+        "scheduler": scheduler,
     }
+
+
+def _scheduler_readiness(runtime: Any) -> dict[str, Any]:
+    try:
+        health_payload = collect_health_snapshot(
+            config_path=str(runtime.config_path),
+            runtime=runtime,
+        )
+    except (AttributeError, OSError, RuntimeError, ValueError):
+        health_payload = {}
+    return cast(
+        dict[str, Any],
+        scheduler_readiness_from_health(
+            health_payload,
+            reachable=True,
+            identity_matches=True,
+        ),
+    )
 
 
 def apply_task_action(

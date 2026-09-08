@@ -98,6 +98,8 @@ def test_task_repository_round_trip(task_repository_case) -> None:
         policy_request_id="req-1",
         state="NEEDS_APPROVAL",
         reason="approval",
+        agent_id="agent-1",
+        session_id="session-1",
         cursor=ResumePointer(
             task_id="task-1",
             plan_id="plan-1",

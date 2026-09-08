@@ -26,6 +26,8 @@ class PendingAction(_StrictTaskModel):
     policy_request_id: str
     state: Literal["NEEDS_APPROVAL"] = "NEEDS_APPROVAL"
     reason: str | None = None
+    agent_id: str
+    session_id: str
     cursor: ResumePointer
     created_at: datetime
     resolved_at: datetime | None = None

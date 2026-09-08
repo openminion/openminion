@@ -284,9 +284,6 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
         build_task_surface,
         resolve_task_surface_source,
     )
-    from openminion.modules.task.scheduling.coordination import (
-        scheduler_readiness_from_health,
-    )
 
     surface = build_task_surface(
         resolve_task_surface_source(runtime),
@@ -321,14 +318,11 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
         if task.get("schedule_summary"):
             lines.append(f"schedule: {task.get('schedule_summary')}")
         if task.get("daemon_required"):
-            scheduler = scheduler_readiness_from_health(
-                {},
-                reachable=True,
-                identity_matches=None,
-            )
-            lines.append(
-                f"scheduler: {scheduler['state']} (check: {scheduler['check_command']})"
-            )
+            scheduler = _focus_scheduler_readiness(runtime)
+            scheduler_line = f"scheduler: {scheduler['state']}"
+            if check_command := scheduler.get("check_command"):
+                scheduler_line += f" (check: {check_command})"
+            lines.append(scheduler_line)
         if task.get("last_run"):
             last_run = task["last_run"]
             lines.append(
@@ -372,6 +366,18 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
                 f"- {action.get('decision_id')}: task={action.get('task_id') or '-'}"
             )
     return "\n".join(lines)
+
+
+def _focus_scheduler_readiness(runtime: Any) -> dict[str, Any]:
+    api_runtime = getattr(runtime, "_rt", runtime)
+    from openminion.cli.commands.daemon import build_daemon_status_payload
+
+    daemon = build_daemon_status_payload(
+        str(api_runtime.config_path),
+        home_root=api_runtime.home_root,
+        data_root=api_runtime.data_root,
+    )
+    return dict(daemon.get("scheduler") or {})
 
 
 def handle_effort_command(runtime: Any, arg: str) -> str:

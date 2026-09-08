@@ -378,6 +378,8 @@ class RuntimeEngine:
             policy_request_id=decision.policy_request_id,
             cursor=cursor,
             reason="policy_confirm",
+            agent_id=ctx.agent_id,
+            session_id=ctx.session_id,
         )
 
     def _dispatch(

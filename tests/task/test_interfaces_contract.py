@@ -35,16 +35,38 @@ class _ValidTaskCtl:
         del task_id
         return None
 
+    def find_task(self, task_id):
+        del task_id
+        return None
+
     def get_digest(self, *, agent_id, session_id, limit=5):
         del agent_id, session_id, limit
         return None
 
-    def record_pending_action(self, *, policy_request_id, cursor, reason=None):
-        del policy_request_id, cursor, reason
+    def record_pending_action(
+        self, *, policy_request_id, cursor, agent_id, session_id, reason=None
+    ):
+        del policy_request_id, cursor, agent_id, session_id, reason
         return None
 
-    def resume_pending_action(self, *, policy_request_id, decision_id, trace_id=None):
-        del policy_request_id, decision_id, trace_id
+    def list_pending_actions(self, *, agent_id, session_id, limit=500):
+        del agent_id, session_id, limit
+        return []
+
+    def get_pending_action(self, policy_request_id, *, agent_id, session_id):
+        del policy_request_id, agent_id, session_id
+        return None
+
+    def resume_pending_action(
+        self,
+        *,
+        policy_request_id,
+        decision_id,
+        agent_id,
+        session_id,
+        trace_id=None,
+    ):
+        del policy_request_id, decision_id, agent_id, session_id, trace_id
         return None
 
     def list_events(self):
@@ -52,6 +74,7 @@ class _ValidTaskCtl:
 
 
 def test_valid_task_controller_passes() -> None:
+    assert TASK_INTERFACE_VERSION == "v2"
     success, errors = ensure_task_compatibility(_ValidTaskCtl(), strict=False)
     assert success is True
     assert errors == []

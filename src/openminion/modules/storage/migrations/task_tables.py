@@ -84,6 +84,8 @@ def _create_task_tables(store: RecordStore) -> None:
             policy_request_id TEXT UNIQUE NOT NULL,
             state TEXT NOT NULL CHECK(state = 'NEEDS_APPROVAL'),
             reason TEXT,
+            agent_id TEXT NOT NULL DEFAULT '',
+            session_id TEXT NOT NULL DEFAULT '',
             task_id TEXT NOT NULL,
             plan_id TEXT NOT NULL,
             step_id TEXT NOT NULL,
@@ -142,8 +144,18 @@ def _ensure_task_optional_columns(store: RecordStore) -> None:
         ("plans", "created_by_mode"),
         ("plans", "root_goal_id"),
         ("plan_steps", "executing_mode"),
+        ("pending_actions", "agent_id"),
+        ("pending_actions", "session_id"),
     ):
-        _ensure_optional_column(store, table=table, column=column, column_sql="TEXT")
+        column_sql = (
+            "TEXT NOT NULL DEFAULT ''" if table == "pending_actions" else "TEXT"
+        )
+        _ensure_optional_column(
+            store,
+            table=table,
+            column=column,
+            column_sql=column_sql,
+        )
 
 
 def migrate_v2_to_v3(store: RecordStore) -> None:

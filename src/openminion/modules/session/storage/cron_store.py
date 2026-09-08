@@ -104,24 +104,6 @@ class CronStore(CronCoordinationStore):
     ) -> int:
         return self._record_store.execute_count(sql, params)
 
-    def _is_task_owned_job(self, job_id: str) -> bool:
-        table = self._query_one(
-            """
-            SELECT 1 AS present
-            FROM sqlite_master
-            WHERE type = 'table' AND name = 'scheduled_tasks'
-            """
-        )
-        if table is None:
-            return False
-        return (
-            self._query_one(
-                "SELECT 1 AS present FROM scheduled_tasks WHERE cron_job_id = ?",
-                (job_id,),
-            )
-            is not None
-        )
-
     def add_cron_job(
         self,
         *,
@@ -478,7 +460,7 @@ class CronStore(CronCoordinationStore):
             and str(job.get("misfire_policy") or "").strip() == "skip"
             and not due_points
             and next_due is None
-            and self._is_task_owned_job(job_id)
+            and not bool(job.get("delete_after_run"))
         ):
             return
         due_iso = str(job.get("next_due_at") or now)

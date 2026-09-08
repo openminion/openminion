@@ -31,6 +31,7 @@ class TaskManager(TaskManagerProgressMixin, TaskManagerScheduleMixin):
         self._cron_repository = cron_repository
         self._lifecycle_repository = lifecycle_repository
         self._owns_lifecycle_repository = owns_lifecycle_repository
+        self._reconciliation_cursor: tuple[str, str] | None = None
 
     @property
     def lifecycle_repository(self) -> TaskLifecycleRepository:

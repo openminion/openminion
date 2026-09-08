@@ -197,6 +197,8 @@ class SqlTaskCtl:
             policy_request_id=str(row["policy_request_id"]),
             state=str(row["state"]),  # Using the literal string value
             reason=row["reason"],
+            agent_id=str(row.get("agent_id") or ""),
+            session_id=str(row.get("session_id") or ""),
             cursor=cursor,
             created_at=parse_datetime(row["created_at"]),
             resolved_at=parse_datetime(row["resolved_at"]),
@@ -461,6 +463,12 @@ class SqlTaskCtl:
             raise TaskNotFoundError(f"task not found: {task_id}")
         return self._dict_to_task_record(task_row)
 
+    def find_task(self, task_id: str) -> TaskRecord | None:
+        task_row = self._repo.get_task(task_id)
+        return (
+            self._dict_to_task_record(dict(task_row)) if task_row is not None else None
+        )
+
     def get_digest(
         self, *, agent_id: str, session_id: str, limit: int = 5
     ) -> TaskDigest:
@@ -501,11 +509,20 @@ class SqlTaskCtl:
         *,
         policy_request_id: str,
         cursor: ResumePointer,
+        agent_id: str,
+        session_id: str,
         reason: str | None = None,
     ) -> PendingAction:
+        owner_agent = str(agent_id or "").strip()
+        owner_session = str(session_id or "").strip()
+        if not owner_agent or not owner_session:
+            raise ValueError("agent_id and session_id are required")
         existing = self._repo.get_pending_action(policy_request_id)
         if existing is not None and existing.get("resolved_at") is None:
-            return self._dict_to_pending_action(existing)
+            pending = self._dict_to_pending_action(dict(existing))
+            if pending.agent_id != owner_agent or pending.session_id != owner_session:
+                raise ValueError("policy request is owned by another agent or session")
+            return pending
 
         now = _utc_now()
         pending_action_id = _new_id("pa")
@@ -515,6 +532,8 @@ class SqlTaskCtl:
             policy_request_id=policy_request_id,
             state="NEEDS_APPROVAL",
             reason=reason,
+            agent_id=owner_agent,
+            session_id=owner_session,
             cursor=cursor,
             created_at=now,
         )
@@ -523,6 +542,8 @@ class SqlTaskCtl:
             pending_action_id=pending_action_id,
             policy_request_id=policy_request_id,
             reason=reason,
+            agent_id=owner_agent,
+            session_id=owner_session,
             cursor=cursor,
             created_at=now,
         )
@@ -536,9 +557,42 @@ class SqlTaskCtl:
             payload={
                 "policy_request_id": policy_request_id,
                 "reason": reason,
+                "agent_id": owner_agent,
+                "session_id": owner_session,
                 "pending_backlog_count": self._repo.count_pending_actions(),
             },
         )
+        return pending
+
+    def list_pending_actions(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        limit: int = 500,
+    ) -> list[PendingAction]:
+        return [
+            self._dict_to_pending_action(dict(row))
+            for row in self._repo.list_pending_actions(
+                agent_id=agent_id,
+                session_id=session_id,
+                limit=limit,
+            )
+        ]
+
+    def get_pending_action(
+        self,
+        policy_request_id: str,
+        *,
+        agent_id: str,
+        session_id: str,
+    ) -> PendingAction | None:
+        row = self._repo.get_pending_action(policy_request_id)
+        if row is None:
+            return None
+        pending = self._dict_to_pending_action(dict(row))
+        if pending.agent_id != agent_id or pending.session_id != session_id:
+            return None
         return pending
 
     def resume_pending_action(
@@ -546,6 +600,8 @@ class SqlTaskCtl:
         *,
         policy_request_id: str,
         decision_id: str,
+        agent_id: str,
+        session_id: str,
         trace_id: str | None = None,
     ) -> ResumePointer:
         pending_row = self._repo.get_pending_action(policy_request_id)
@@ -553,40 +609,42 @@ class SqlTaskCtl:
             raise PendingActionNotFoundError(
                 f"policy request not found: {policy_request_id}"
             )
+        pending = self._dict_to_pending_action(dict(pending_row))
+        if pending.agent_id != agent_id or pending.session_id != session_id:
+            raise ValueError("policy request is owned by another agent or session")
 
-        if pending_row.get("resolved_at") is None:
-            resolved_at = _utc_now()
-            pending = self._dict_to_pending_action(pending_row)
-            latency_ms = int((resolved_at - pending.created_at).total_seconds() * 1000)
-            self._repo.update_pending_action(
-                policy_request_id=policy_request_id,
-                resolved_at=resolved_at,
-                decision_id=decision_id,
-            )
+        if pending.resolved_at is not None:
+            if pending.decision_id != decision_id:
+                raise ValueError("policy request was already resolved differently")
+            return pending.cursor
 
-            self._emit(
-                "mission.resumed",
-                task_id=pending.cursor.task_id,
-                plan_id=pending.cursor.plan_id,
-                step_id=pending.cursor.step_id,
-                trace_id=trace_id or pending.cursor.trace_id,
-                payload={
-                    "policy_request_id": policy_request_id,
-                    "decision_id": decision_id,
-                    "pending_backlog_count": self._repo.count_pending_actions(),
-                    "resume_latency_ms": latency_ms,
-                },
-            )
-
-        return ResumePointer(
-            task_id=pending_row["task_id"],
-            plan_id=pending_row["plan_id"],
-            step_id=pending_row["step_id"],
-            attempt=int(pending_row["attempt"]),
-            trace_id=pending_row["trace_id"],
-            turn_id=pending_row.get("turn_id"),
-            pack_id=pending_row.get("pack_id"),
+        resolved_at = _utc_now()
+        latency_ms = int((resolved_at - pending.created_at).total_seconds() * 1000)
+        claimed = self._repo.update_pending_action(
+            policy_request_id=policy_request_id,
+            resolved_at=resolved_at,
+            decision_id=decision_id,
         )
+        if not claimed:
+            current = self._repo.get_pending_action(policy_request_id)
+            if current is None or current.get("decision_id") != decision_id:
+                raise ValueError("policy request was already resolved differently")
+            return pending.cursor
+
+        self._emit(
+            "mission.resumed",
+            task_id=pending.cursor.task_id,
+            plan_id=pending.cursor.plan_id,
+            step_id=pending.cursor.step_id,
+            trace_id=trace_id or pending.cursor.trace_id,
+            payload={
+                "policy_request_id": policy_request_id,
+                "decision_id": decision_id,
+                "pending_backlog_count": self._repo.count_pending_actions(),
+                "resume_latency_ms": latency_ms,
+            },
+        )
+        return pending.cursor
 
     def list_events(self) -> list[dict[str, object]]:
         return [event.model_dump(mode="json") for event in self._events]

@@ -82,7 +82,7 @@ class TaskSurface:
                 _STATUS_ORDER.get(str(item.get("status", "")).upper(), 9),
                 str(item.get("id", "")),
             ),
-        )
+        )[: self.limit]
 
     def show_task(self, task_id: str) -> dict[str, Any] | None:
         normalized = str(task_id or "").strip()
@@ -91,15 +91,26 @@ class TaskSurface:
         for task in self.list_tasks():
             if str(task.get("id", "")) == normalized:
                 return task
-        return _task_from_lifecycle_record(
+        if getattr(self.source, "lifecycle_repository", None) is not None:
+            return _task_from_lifecycle_record(
+                self.source,
+                normalized,
+                agent_id=self.agent_id,
+            )
+        return _task_from_digest_record(
             self.source,
             normalized,
             agent_id=self.agent_id,
+            session_id=self.session_id,
+            event_limit=self.event_limit,
         )
 
     def list_pending_actions(self) -> list[dict[str, Any]]:
         _, pending_by_id = _pending_actions_index(
-            self.source, event_limit=self.event_limit
+            self.source,
+            agent_id=self.agent_id,
+            session_id=self.session_id,
+            event_limit=self.event_limit,
         )
         return sorted(
             pending_by_id.values(),
@@ -120,11 +131,16 @@ class TaskSurface:
                 self.source,
                 outcome=normalized_action,
                 decision_id=decision_id,
+                agent_id=self.agent_id,
                 session_id=self.session_id,
             )
         normalized_task_id = str(task_id or "").strip()
-        if self.show_task(normalized_task_id) is None:
+        task = self.show_task(normalized_task_id)
+        if task is None:
             raise KeyError(f"task not found: {normalized_task_id}")
+        if "valid_actions" in task and normalized_action not in task["valid_actions"]:
+            state = str(task.get("lifecycle_state") or "unknown")
+            raise ValueError(f"cannot {normalized_action} task in {state} state")
         return _apply_lifecycle_action(
             self.source,
             task_id=normalized_task_id,
@@ -144,7 +160,7 @@ def build_task_surface(
         source=source,
         agent_id=str(agent_id or "").strip(),
         session_id=str(session_id or "").strip(),
-        limit=max(1, int(limit)),
+        limit=max(1, min(int(limit), 100)),
         event_limit=max(1, int(event_limit)),
     )
 
@@ -211,43 +227,23 @@ def _tasks_from_digest_source(
     limit: int,
     event_limit: int,
 ) -> list[dict[str, Any]]:
-    digest = _safe_get_digest(
-        source, agent_id=agent_id, session_id=session_id, limit=limit
+    digest = _get_digest(source, agent_id=agent_id, session_id=session_id, limit=limit)
+    pending_by_task, _ = _pending_actions_index(
+        source,
+        agent_id=agent_id,
+        session_id=session_id,
+        event_limit=event_limit,
     )
-    pending_by_task, _ = _pending_actions_index(source, event_limit=event_limit)
     tasks_by_id: dict[str, dict[str, Any]] = {}
 
     for digest_task in _iter_digest_tasks(digest):
         task_id = str(_value(digest_task, "task_id") or "").strip()
         if not task_id:
             continue
-        status = _normalize_status(_value(digest_task, "status", "PENDING"))
-        due_at = _normalize_due(_value(digest_task, "due_at"))
-        next_step_id = str(_value(digest_task, "next_step_id") or "").strip()
-        next_step_title = str(_value(digest_task, "next_step_title") or "").strip()
-        steps: list[dict[str, Any]] = []
-        if next_step_id or next_step_title:
-            steps.append(
-                {
-                    "order_index": 1,
-                    "title": next_step_title or next_step_id,
-                    "status": "ACTIVE" if status == "ACTIVE" else "PENDING",
-                }
-            )
-
-        payload: dict[str, Any] = {
-            "id": task_id,
-            "title": str(_value(digest_task, "title") or task_id),
-            "status": status,
-            "due_at": due_at,
-            "steps": steps,
-            "pending_actions": list(pending_by_task.get(task_id, [])),
-        }
-        payload.update(_operator_projection(status, payload["pending_actions"]))
-        project = _project_payload(_value(digest_task, "metadata", {}))
-        if project:
-            payload["project"] = project
-        tasks_by_id[task_id] = payload
+        tasks_by_id[task_id] = _digest_task_payload(
+            digest_task,
+            pending_actions=list(pending_by_task.get(task_id, [])),
+        )
 
     for task_id, pending_actions in pending_by_task.items():
         tasks_by_id.setdefault(
@@ -264,16 +260,72 @@ def _tasks_from_digest_source(
     return list(tasks_by_id.values())
 
 
-def _safe_get_digest(
+def _task_from_digest_record(
+    source: Any | None,
+    task_id: str,
+    *,
+    agent_id: str,
+    session_id: str,
+    event_limit: int,
+) -> dict[str, Any] | None:
+    find_task = getattr(source, "find_task", None)
+    if not callable(find_task):
+        return None
+    task = find_task(task_id)
+    if task is None:
+        return None
+    pending_by_task, _ = _pending_actions_index(
+        source,
+        agent_id=agent_id,
+        session_id=session_id,
+        event_limit=event_limit,
+    )
+    return _digest_task_payload(
+        task,
+        pending_actions=list(pending_by_task.get(task_id, [])),
+    )
+
+
+def _digest_task_payload(
+    task: Any,
+    *,
+    pending_actions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    task_id = str(_value(task, "task_id") or "").strip()
+    status = _normalize_status(_value(task, "status", "PENDING"))
+    next_step_id = str(_value(task, "next_step_id") or "").strip()
+    next_step_title = str(_value(task, "next_step_title") or "").strip()
+    steps: list[dict[str, Any]] = []
+    if next_step_id or next_step_title:
+        steps.append(
+            {
+                "order_index": 1,
+                "title": next_step_title or next_step_id,
+                "status": "ACTIVE" if status == "ACTIVE" else "PENDING",
+            }
+        )
+    payload: dict[str, Any] = {
+        "id": task_id,
+        "title": str(_value(task, "title") or task_id),
+        "status": status,
+        "due_at": _normalize_due(_value(task, "due_at")),
+        "steps": steps,
+        "pending_actions": pending_actions,
+    }
+    payload.update(_operator_projection(status, pending_actions))
+    project = _project_payload(_value(task, "metadata", {}))
+    if project:
+        payload["project"] = project
+    return payload
+
+
+def _get_digest(
     source: Any | None, *, agent_id: str, session_id: str, limit: int
 ) -> Any | None:
     get_digest = getattr(source, "get_digest", None)
     if not callable(get_digest):
         return None
-    try:
-        return get_digest(agent_id=agent_id, session_id=session_id, limit=limit)
-    except (AttributeError, TypeError, ValueError, RuntimeError):
-        return None
+    return get_digest(agent_id=agent_id, session_id=session_id, limit=limit)
 
 
 def _iter_digest_tasks(digest: Any | None) -> list[Any]:
@@ -304,10 +356,7 @@ def _tasks_from_lifecycle_source(
     list_records = getattr(repository, "list", None)
     if not callable(list_records):
         return []
-    try:
-        records = list_records(limit=limit)
-    except (AttributeError, TypeError, ValueError, RuntimeError):
-        return []
+    records = list_records(limit=limit, agent_id=agent_id)
     return [
         _lifecycle_record_payload(source, record)
         for record in records
@@ -324,10 +373,7 @@ def _task_from_lifecycle_record(
     get_task = getattr(source, "get_task", None)
     if not callable(get_task):
         return None
-    try:
-        record = get_task(task_id)
-    except (AttributeError, TypeError, ValueError, RuntimeError):
-        return None
+    record = get_task(task_id)
     if record is None:
         return None
     if not _agent_matches(record, agent_id):
@@ -344,7 +390,7 @@ def _agent_matches(record: Any, agent_id: str) -> bool:
 def _lifecycle_record_payload(source: Any | None, record: Any) -> dict[str, Any]:
     metadata = dict(_value(record, "metadata", {}) or {})
     task_id = str(_value(record, "task_id") or "").strip()
-    job = _safe_get_job(source, str(_value(record, "cron_job_id") or task_id).strip())
+    job = _get_job(source, str(_value(record, "cron_job_id") or task_id).strip())
     title = _task_title(task_id, metadata, job=job)
     scheduled_due = (job or {}).get("next_due_at")
     due_at = (
@@ -373,7 +419,7 @@ def _lifecycle_record_payload(source: Any | None, record: Any) -> dict[str, Any]
         payload["schedule_summary"] = _schedule_summary(schedule)
         payload["enabled"] = bool(job.get("enabled", True))
         payload["task_kind"] = _scheduled_task_kind(schedule)
-        runs = _safe_list_runs(source, str(payload["cron_job_id"]), limit=5)
+        runs = _list_runs(source, str(payload["cron_job_id"]), limit=5)
         payload["recent_runs"] = runs
         if runs:
             payload["last_run"] = {
@@ -439,7 +485,7 @@ def _schedule_summary(schedule: Any) -> str:
     return kind
 
 
-def _safe_list_runs(
+def _list_runs(
     source: Any | None,
     job_id: str,
     *,
@@ -448,10 +494,7 @@ def _safe_list_runs(
     list_runs = getattr(source, "list_scheduled_runs", None)
     if not callable(list_runs):
         return []
-    try:
-        runs = list_runs(job_id=job_id, limit=max(1, min(limit, 20)))
-    except (AttributeError, TypeError, ValueError, RuntimeError):
-        return []
+    runs = list_runs(job_id=job_id, limit=max(1, min(limit, 20)))
     return [
         {
             "run_id": run.get("run_id"),
@@ -495,14 +538,11 @@ def _progress_steps(metadata: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [{"order_index": 1, "title": checkpoint, "status": "ACTIVE"}]
 
 
-def _safe_get_job(source: Any | None, job_id: str) -> dict[str, Any] | None:
+def _get_job(source: Any | None, job_id: str) -> dict[str, Any] | None:
     get_job = getattr(source, "get_scheduled_job", None)
     if not callable(get_job) or not job_id:
         return None
-    try:
-        job = get_job(job_id)
-    except (AttributeError, TypeError, ValueError, RuntimeError):
-        return None
+    job = get_job(job_id)
     return dict(job) if isinstance(job, Mapping) else None
 
 
@@ -548,68 +588,77 @@ def _operator_projection(
 
 
 def _pending_actions_index(
-    source: Any | None, *, event_limit: int
+    source: Any | None,
+    *,
+    agent_id: str,
+    session_id: str,
+    event_limit: int,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]]]:
     pending_by_id: dict[str, dict[str, Any]] = {}
     pending_by_task: dict[str, list[dict[str, Any]]] = {}
-    list_events = getattr(source, "list_events", None)
-    if not callable(list_events):
+    if not agent_id or not session_id:
         return pending_by_task, pending_by_id
-    try:
-        events = list_events()
-    except (AttributeError, TypeError, ValueError, RuntimeError):
+    list_pending = getattr(source, "list_pending_actions", None)
+    if not callable(list_pending):
         return pending_by_task, pending_by_id
-    if not isinstance(events, list):
-        return pending_by_task, pending_by_id
+    pending_actions = list_pending(
+        agent_id=agent_id,
+        session_id=session_id,
+        limit=event_limit,
+    )
+    if not isinstance(pending_actions, list):
+        raise TypeError("pending actions must be a list")
 
-    for event in events[-event_limit:]:
-        event_type = str(
-            _value(event, "type") or _value(event, "event_type") or ""
-        ).strip()
-        payload = _value(event, "payload", {})
-        if not isinstance(payload, dict):
-            payload = {}
-        task_id = str(_value(event, "task_id") or payload.get("task_id") or "").strip()
-        policy_request_id = str(payload.get("policy_request_id") or "").strip()
-        if event_type == "mission.paused" and policy_request_id:
-            action = {
-                "decision_id": policy_request_id,
-                "reason": str(payload.get("reason") or "").strip(),
-                "tool": str(payload.get("tool") or "").strip(),
-                "task_id": task_id,
-            }
-            pending_by_id[policy_request_id] = action
-            if task_id:
-                pending_by_task.setdefault(task_id, []).append(action)
+    for pending in pending_actions:
+        policy_request_id = str(_value(pending, "policy_request_id") or "").strip()
+        cursor = _value(pending, "cursor")
+        task_id = str(_value(cursor, "task_id") or "").strip()
+        if not policy_request_id:
             continue
-        if event_type == "mission.resumed" and policy_request_id:
-            removed = pending_by_id.pop(policy_request_id, None)
-            if removed is None:
-                continue
-            removed_task_id = str(removed.get("task_id", ""))
-            if removed_task_id and removed_task_id in pending_by_task:
-                pending_by_task[removed_task_id] = [
-                    item
-                    for item in pending_by_task[removed_task_id]
-                    if str(item.get("decision_id", "")) != policy_request_id
-                ]
-                if not pending_by_task[removed_task_id]:
-                    pending_by_task.pop(removed_task_id, None)
+        action = {
+            "decision_id": policy_request_id,
+            "reason": str(_value(pending, "reason") or "").strip(),
+            "tool": "",
+            "task_id": task_id,
+        }
+        pending_by_id[policy_request_id] = action
+        if task_id:
+            pending_by_task.setdefault(task_id, []).append(action)
     return pending_by_task, pending_by_id
 
 
 def _resolve_pending_action(
-    source: Any | None, *, outcome: str, decision_id: str, session_id: str
+    source: Any | None,
+    *,
+    outcome: str,
+    decision_id: str,
+    agent_id: str,
+    session_id: str,
 ) -> dict[str, Any]:
     decision = str(decision_id or "").strip()
     if not decision:
         raise ValueError("decision_id is required for allow/deny")
+    if not agent_id or not session_id:
+        raise ValueError("agent_id and session_id are required for allow/deny")
+    get_pending = getattr(source, "get_pending_action", None)
+    if (
+        not callable(get_pending)
+        or get_pending(
+            decision,
+            agent_id=agent_id,
+            session_id=session_id,
+        )
+        is None
+    ):
+        raise ValueError("pending action not found for agent and session")
     resume_pending_action = getattr(source, "resume_pending_action", None)
     if not callable(resume_pending_action):
         raise NotImplementedError("pending action resolution is unavailable")
     resume_pending_action(
         policy_request_id=decision,
         decision_id=f"task-surface:{outcome}:{decision}",
+        agent_id=agent_id,
+        session_id=session_id,
         trace_id=f"task-surface:{session_id}",
     )
     return {"ok": True, "action": outcome, "decision_id": decision}

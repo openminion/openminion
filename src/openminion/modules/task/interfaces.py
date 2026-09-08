@@ -14,7 +14,7 @@ from .schemas import (
 )
 
 
-TASK_INTERFACE_VERSION = "v1"
+TASK_INTERFACE_VERSION = "v2"
 
 
 @runtime_checkable
@@ -54,6 +54,8 @@ class TaskCtlInterface(Protocol):
 
     def get_task(self, task_id: str) -> TaskRecord: ...
 
+    def find_task(self, task_id: str) -> TaskRecord | None: ...
+
     def get_digest(
         self, *, agent_id: str, session_id: str, limit: int = 5
     ) -> TaskDigest: ...
@@ -63,14 +65,34 @@ class TaskCtlInterface(Protocol):
         *,
         policy_request_id: str,
         cursor: ResumePointer,
+        agent_id: str,
+        session_id: str,
         reason: str | None = None,
     ) -> PendingAction: ...
+
+    def list_pending_actions(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        limit: int = 500,
+    ) -> list[PendingAction]: ...
+
+    def get_pending_action(
+        self,
+        policy_request_id: str,
+        *,
+        agent_id: str,
+        session_id: str,
+    ) -> PendingAction | None: ...
 
     def resume_pending_action(
         self,
         *,
         policy_request_id: str,
         decision_id: str,
+        agent_id: str,
+        session_id: str,
         trace_id: str | None = None,
     ) -> ResumePointer: ...
 
@@ -94,6 +116,8 @@ def ensure_task_compatibility(
         "get_task",
         "get_digest",
         "record_pending_action",
+        "list_pending_actions",
+        "get_pending_action",
         "resume_pending_action",
         "list_events",
     )
