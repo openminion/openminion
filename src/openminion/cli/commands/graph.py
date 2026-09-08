@@ -202,6 +202,9 @@ def _print_operation(
             record = _dict_payload(item)
             source_ref = _dict_payload(record.get("source_ref"))
             print(f"  {record.get('snippet', '')}")
+            record_id = str(record.get("node_or_edge_id") or "")
+            if record_id:
+                print(f"    Record ID: {record_id}")
             path = str(source_ref.get("path") or "")
             if path:
                 print(f"    Citation: {path}")

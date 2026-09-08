@@ -39,7 +39,9 @@ from openminion.modules.artifact.storage import (
 )
 
 _SCHEMA_VERSION = "v1"
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_EMAIL_RE = re.compile(
+    r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+)
 _LONG_NUM_RE = re.compile(r"(?<![0-9A-Fa-f])\d{12,19}(?![0-9A-Fa-f])")
 _ISO_TIMESTAMP_RE = re.compile(
     r"\d{4}-?\d{2}-?\d{2}T\d{2,14}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
@@ -134,7 +136,8 @@ class ArtifactCtl:
         src = Path(path).expanduser().resolve(strict=True)
         self._enforce_ingest_size(src.stat().st_size, source=str(src))
         sha256, size_bytes = _hash_file(src)
-        sniff = _read_sample(src)
+        sample = _read_sample(src, 256000)
+        sniff = sample[:4096]
         inferred_mime = _determine_mime(provided=mime, path=src, sample=sniff)
         encoding = _detect_encoding(sniff)
 
@@ -165,7 +168,7 @@ class ArtifactCtl:
         self._emit_retrieve_ingest_event(
             retrieve_ctl=retrieve_ctl,
             artifact_ref=ref,
-            artifact_text=_extract_ingest_text_from_file(src),
+            artifact_text=_extract_ingest_text_from_bytes(sample),
             meta=meta,
             fallback_title=label or src.name,
         )
@@ -179,7 +182,7 @@ class ArtifactCtl:
         return meta
 
     def open(self, ref_or_sha: str) -> BinaryIO:
-        sha = self._resolve_sha(ref_or_sha)
+        sha = self._resolve_active_sha(ref_or_sha)
         if not self.blob_store.exists(sha):
             raise ArtifactCtlError("NOT_FOUND", f"Blob is missing for artifact: {sha}")
         return self.blob_store.get_stream(sha)
@@ -214,7 +217,10 @@ class ArtifactCtl:
                 "digest_max_lines": self.config.views.digest_max_lines,
                 "table_max_rows": self.config.views.table_max_rows,
             },
-            "text": {"redaction_enabled": self.config.security.redaction_enabled},
+            "text": {
+                "redaction_enabled": self.config.security.redaction_enabled,
+                "text_max_chars": self.config.views.text_max_chars,
+            },
             "json": {"json_max_chars": self.config.views.json_max_chars},
             "table": {"table_max_rows": self.config.views.table_max_rows},
         }
@@ -301,7 +307,7 @@ class ArtifactCtl:
         if existing and not overwrite:
             raise ArtifactCtlError("ALREADY_EXISTS", f"Alias already exists: {alias}")
 
-        sha = self._resolve_sha(ref_or_sha)
+        sha = self._resolve_active_sha(ref_or_sha)
         if expires_at is None and self.config.aliases.expire_default_days > 0:
             expires_at = (
                 datetime.now(timezone.utc)
@@ -504,7 +510,7 @@ class ArtifactCtl:
                 issues.append(VerifyIssue(sha256=row.sha256, issue="missing_blob"))
                 continue
 
-            actual = _sha256_path(Path(self.blob_store.path_for(row.sha256)))
+            actual, _ = _hash_file(Path(self.blob_store.path_for(row.sha256)))
             if actual != row.sha256:
                 issues.append(
                     VerifyIssue(
@@ -525,7 +531,7 @@ class ArtifactCtl:
 
     def ref_add(self, owner_type: str, owner_id: str, ref_or_sha: str) -> None:
         self._validate_owner_type(owner_type)
-        sha = self._resolve_sha(ref_or_sha)
+        sha = self._resolve_active_sha(ref_or_sha)
         self.index.add_reference(owner_type, owner_id, sha)
 
     def ref_remove(self, owner_type: str, owner_id: str, ref_or_sha: str) -> None:
@@ -621,6 +627,8 @@ class ArtifactCtl:
         if "artifact" not in tags:
             tags.insert(0, "artifact")
 
+        if self.config.security.redaction_enabled:
+            artifact_text = _redact_text(artifact_text)
         payload = {
             "artifact_ref": artifact_ref.ref,
             "text": artifact_text,
@@ -630,8 +638,10 @@ class ArtifactCtl:
         }
         try:
             retrieve_ctl.ingest_event("artifact.created", payload)
-        except Exception:
-            return
+        except Exception as exc:
+            logger.warning(
+                "retrieve ingest failed: %s (%s)", artifact_ref.ref, type(exc).__name__
+            )
 
     def _resolve_sha(self, ref_or_sha: str) -> str:
         raw = (ref_or_sha or "").strip()
@@ -649,6 +659,12 @@ class ArtifactCtl:
             raise ArtifactCtlError(
                 "NOT_FOUND", f"Unknown artifact ref/sha/alias: {ref_or_sha}"
             )
+
+    def _resolve_active_sha(self, ref_or_sha: str) -> str:
+        sha = self._resolve_sha(ref_or_sha)
+        if self.index.get_artifact(sha, include_deleted=False) is None:
+            raise ArtifactCtlError("NOT_FOUND", f"Artifact not found: {ref_or_sha}")
+        return sha
 
     def _auto_generate_views(self, sha256: str) -> None:
         if not self.config.views.auto_generate:
@@ -689,6 +705,12 @@ class ArtifactCtl:
 
         if view_type == "text":
             text, _warnings = _decode_text(raw)
+            if len(text) > self.config.views.text_max_chars:
+                raise ArtifactCtlError(
+                    "VIEW_TOO_LARGE",
+                    "Text view input exceeds configured limit",
+                    {"text_max_chars": self.config.views.text_max_chars},
+                )
             if self.config.security.redaction_enabled:
                 text = _redact_text(text)
             return text.encode("utf-8"), "text/plain"
@@ -812,17 +834,6 @@ def _hash_file(path: Path) -> tuple[str, int]:
     return hasher.hexdigest(), size
 
 
-def _sha256_path(path: Path) -> str:
-    hasher = hashlib.sha256()
-    with path.open("rb") as fh:
-        while True:
-            chunk = fh.read(1024 * 1024)
-            if not chunk:
-                break
-            hasher.update(chunk)
-    return hasher.hexdigest()
-
-
 def _read_sample(path: Path, n: int = 4096) -> bytes:
     with path.open("rb") as fh:
         return fh.read(n)
@@ -888,23 +899,11 @@ def _extract_ingest_text_from_bytes(data: bytes, *, max_chars: int = 20000) -> s
     return text[:max_chars].strip()
 
 
-def _extract_ingest_text_from_file(
-    path: Path, *, max_bytes: int = 256000, max_chars: int = 20000
-) -> str:
-    with path.open("rb") as fh:
-        data = fh.read(max_bytes)
-    return _extract_ingest_text_from_bytes(data, max_chars=max_chars)
-
-
 def _is_probably_text(sample: bytes) -> bool:
     if not sample:
         return True
-    printable = 0
-    for b in sample:
-        if b in {9, 10, 13} or 32 <= b <= 126:
-            printable += 1
-    ratio = printable / len(sample)
-    return ratio >= 0.85
+    printable = sum(b in {9, 10, 13} or 32 <= b <= 126 for b in sample)
+    return printable / len(sample) >= 0.85
 
 
 def _bounded_excerpt(
@@ -912,7 +911,7 @@ def _bounded_excerpt(
 ) -> tuple[str, list[str]]:
     warnings: list[str] = []
     if not text:
-        return "", warnings
+        return "", []
 
     lines = text.splitlines()
     if len(lines) > max_lines:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from openminion.modules.artifact.control import ArtifactCtl
+from openminion.modules.artifact.errors import ArtifactCtlError
 
 
 def _cfg(tmp_path: Path) -> dict:
@@ -143,6 +145,37 @@ def test_verify_detects_corruption(tmp_path: Path) -> None:
         assert report.issues[0].issue == "digest_mismatch"
     finally:
         ctl.close()
+
+
+def test_soft_deleted_artifact_metadata_remains_but_payload_is_unreadable(
+    tmp_path: Path,
+) -> None:
+    with ArtifactCtl(_cfg(tmp_path)) as ctl:
+        ref = ctl.ingest_bytes(b"payload", original_name="payload.txt")
+
+        ctl.delete(ref.sha256)
+
+        assert ctl.get(ref.sha256).deleted_at is not None
+        with pytest.raises(ArtifactCtlError) as exc:
+            ctl.read_bytes(ref.sha256)
+        assert exc.value.code == "NOT_FOUND"
+
+
+def test_payload_access_requires_metadata_row_even_when_blob_exists(
+    tmp_path: Path,
+) -> None:
+    with ArtifactCtl(_cfg(tmp_path)) as ctl:
+        data = b"orphan blob"
+        sha256 = hashlib.sha256(data).hexdigest()
+        ctl.blob_store.put_bytes(sha256, data)
+
+        with pytest.raises(ArtifactCtlError) as open_error:
+            ctl.open(sha256)
+        assert open_error.value.code == "NOT_FOUND"
+
+        with pytest.raises(ArtifactCtlError) as read_error:
+            ctl.read_bytes(sha256)
+        assert read_error.value.code == "NOT_FOUND"
 
 
 def test_artifactctl_context_manager(tmp_path: Path) -> None:

@@ -4028,6 +4028,7 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
                     "auto_generate": [],
                     "digest_max_lines": 50,
                     "digest_max_chars": 2000,
+                    "text_max_chars": 20000,
                     "table_max_chars": 50000,
                     "table_max_rows": 100,
                 },
@@ -4057,6 +4058,26 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
             )
             self.assertEqual(res_read["status"], "success")
             self.assertEqual(res_read["outputs"]["content"], "hello world")
+
+            oversized = adapter.execute(
+                command={
+                    "tool_name": "create_artifact",
+                    "args": {"content": "x" * 20001, "mime": "text/plain"},
+                },
+                session_id="s1",
+                trace_id="t2",
+            )
+            oversized_read = adapter.execute(
+                command={
+                    "tool_name": "read_artifact",
+                    "args": {"id": oversized["outputs"]["id"]},
+                },
+                session_id="s1",
+                trace_id="t2",
+            )
+            self.assertEqual(oversized_read["status"], "error")
+            self.assertEqual(oversized_read["error"]["code"], "ARTIFACT_ERROR")
+            self.assertIn("VIEW_TOO_LARGE", oversized_read["error"]["message"])
 
     def test_artifact_adapter_unknown_tool_contract(self) -> None:
         from unittest.mock import MagicMock

@@ -1,0 +1,10 @@
+# area	pytest_path
+guardrail	tests/ci/test_critical_path_manifest.py
+brain-loop	tests/integration/test_openminion_brain_client_real_runtime.py
+session-continuity	tests/controlplane/test_session_resume_across_restart.py
+memory	tests/integration/test_success_path_memory_creation.py
+tool-loop	tests/brain/tool_loops/test_engine.py
+task-lifecycle	tests/task/test_lifecycle.py
+delegation	tests/brain/modes/test_delegate_e2e.py
+scheduling	tests/runtime/test_cron_project_cycle.py
+approval	tests/integration/test_action_approval_e2e.py

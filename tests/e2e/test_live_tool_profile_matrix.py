@@ -73,18 +73,15 @@ _PER_AGENT_PROFILES: tuple[_LiveAgent, ...] = (
     ),
 )
 
-_DEFAULT_AGENT_PROFILES: tuple[_LiveAgent, ...] = (
-    *_PER_AGENT_PROFILES,
-    *_agents_from_bundle("agents-alibaba.json", framework_root=_agent_framework_root()),
-    *_agents_from_bundle(
-        "agents-openrouter.json", framework_root=_agent_framework_root()
-    ),
-)
+_DEFAULT_AGENT_PROFILES: tuple[_LiveAgent, ...] = _PER_AGENT_PROFILES
+_LIVE_TARGET_SELECTION = str(os.getenv("OPENMINION_LIVE_TOOL_E2E_TARGETS", "")).strip()
 _ENV_AGENT_PROFILES: tuple[_LiveAgent, ...] = parse_live_agent_targets_env(
     "OPENMINION_LIVE_TOOL_E2E_TARGETS",
     framework_root=_agent_framework_root(),
 )
-_AGENT_PROFILES: tuple[_LiveAgent, ...] = _ENV_AGENT_PROFILES or _DEFAULT_AGENT_PROFILES
+_AGENT_PROFILES: tuple[_LiveAgent, ...] = (
+    _ENV_AGENT_PROFILES if _LIVE_TARGET_SELECTION else _DEFAULT_AGENT_PROFILES
+)
 
 _OPENAI_PARITY_PROFILE = _LiveAgent(
     "openrouter-gpt-5.4", Path("per-agent-openrouter-gpt-5-4.json")
@@ -434,6 +431,11 @@ def test_live_profile_matrix_resolves_default_agent_ids_from_current_configs() -
     if _using_env_profile_overrides():
         pytest.skip("env-selected live tool targets override the built-in default set")
     framework_root = _agent_framework_root()
+    if any(
+        not resolve_live_config_path(profile.config_path, framework_root).exists()
+        for profile in _PER_AGENT_PROFILES
+    ):
+        pytest.skip("built-in live tool configs are not present")
     resolved = {
         profile.profile_id: _resolve_agent_id(
             resolve_live_config_path(profile.config_path, framework_root),
@@ -454,13 +456,14 @@ def test_live_profile_matrix_bundle_agents_resolve_from_aggregate_configs() -> N
         for target in str(os.getenv("OPENMINION_LIVE_TOOL_E2E_TARGETS", "")).split(",")
         if target.strip().startswith("bundle:")
     )
-    if _using_env_profile_overrides() and not selected_bundle_targets:
-        pytest.skip("env-selected live tool targets do not include bundle configs")
-    bundle_names = (
-        selected_bundle_targets
-        if _using_env_profile_overrides()
-        else ("agents-alibaba.json", "agents-openrouter.json")
-    )
+    if not selected_bundle_targets:
+        pytest.skip("no live tool bundle config was selected")
+    bundle_names = selected_bundle_targets
+    for bundle_name in bundle_names:
+        if not resolve_live_config_path(bundle_name, framework_root).exists():
+            pytest.skip(
+                f"selected live tool bundle config is not present: {bundle_name}"
+            )
     bundle_agents = tuple(
         agent
         for bundle_name in bundle_names
@@ -477,6 +480,12 @@ def test_live_profile_matrix_bundle_agents_resolve_from_aggregate_configs() -> N
         assert agent.agent_id in configured, (
             f"agent_id={agent.agent_id} not in configured ids={configured}"
         )
+
+
+def test_live_profile_matrix_explicit_empty_selection_does_not_use_defaults() -> None:
+    if not _LIVE_TARGET_SELECTION or _ENV_AGENT_PROFILES:
+        pytest.skip("requires an explicit target selection that resolves no profiles")
+    assert _AGENT_PROFILES == ()
 
 
 def test_live_tool_profile_provider_unavailable_classifier_covers_retired_models() -> (

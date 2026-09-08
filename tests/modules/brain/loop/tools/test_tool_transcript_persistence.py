@@ -13,8 +13,10 @@ from openminion.modules.brain.loop.tools.transcript import (
     replay_tool_messages,
 )
 from openminion.modules.brain.schemas import ActionError, ActionResult, ArtifactRef
+from openminion.modules.artifact.control import ArtifactCtl
 from openminion.modules.llm.schemas import ToolCall
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
+from tests.artifact.utils import make_config as make_artifact_config
 
 
 def test_runtime_emitter_persists_batch_order_and_completion_order(
@@ -203,7 +205,10 @@ def test_local_session_adapter_preserves_parent_linkage_and_replay(
 def test_security_tool_transcript_persists_only_structural_facts(
     tmp_path: Path,
 ) -> None:
-    store = SQLiteSessionStore(tmp_path / "security-transcript.db")
+    artifactctl = ArtifactCtl(make_artifact_config(tmp_path))
+    store = SQLiteSessionStore(
+        tmp_path / "security-transcript.db", artifactctl=artifactctl
+    )
     try:
         session_id = store.create_session(
             initial_agent_id="security-researcher-readonly",
@@ -214,7 +219,7 @@ def test_security_tool_transcript_persists_only_structural_facts(
             state=SimpleNamespace(session_id=session_id),
         )
         loop_state = SimpleNamespace(scratchpad={})
-        report_ref = "artifact://sha256/" + ("a" * 64)
+        report_ref = artifactctl.ingest_bytes(b"security report").ref
         call = ToolCall(
             id="call-report",
             name="security.publish_report",
@@ -277,7 +282,7 @@ def test_security_tool_transcript_persists_only_structural_facts(
             name="security.scan_code",
             arguments={"target": "/private/source"},
         )
-        scan_ref = "artifact://sha256/" + ("c" * 64)
+        scan_ref = artifactctl.ingest_bytes(b"scan report").ref
         persist_requested_tool_calls(
             loop_ctx,
             loop_state=loop_state,
@@ -313,6 +318,7 @@ def test_security_tool_transcript_persists_only_structural_facts(
         assert "failure-secret" not in str(blocked)
     finally:
         store.close()
+        artifactctl.close()
 
 
 def test_security_profile_persists_file_reads_as_structural_facts(

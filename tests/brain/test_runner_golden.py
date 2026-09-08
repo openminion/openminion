@@ -79,6 +79,10 @@ def test_golden_no_tool_turn_event_order(tmp_path: Path) -> None:
     assert "brain.entry" in types
     assert "summary.updated" in types
 
+    summary = next(event for event in events if event["type"] == "summary.updated")
+    assert summary["payload"]["delta_ref"]
+    assert summary["artifact_refs"] == []
+
     completed = next(
         event
         for event in events

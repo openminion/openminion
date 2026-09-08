@@ -8,6 +8,11 @@ PRE_COMMIT := $(PYTHON) -m pre_commit
 PYTEST := $(PYTHON) -m pytest
 RUFF := $(PYTHON) -m ruff
 BROWSER_TOOL_FAMILY_VALIDATOR ?= $(REPO_ROOT)/../docs/scripts/validate_browser_tool_family_contract.py
+CRITICAL_TEST_MANIFEST := $(REPO_ROOT)/tests/ci/critical-path.tsv
+CRITICAL_TESTS := $(shell \
+	awk -F '\t' 'NR > 1 && NF == 2 {print "$(REPO_ROOT)/" $$2}' \
+	"$(CRITICAL_TEST_MANIFEST)" \
+)
 
 # I-17 (2026-06-02): parallel `validate-patterns` job count. Defaults to the
 # host CPU count (capped at 8 to keep output readable on big servers).
@@ -115,7 +120,7 @@ VALIDATE_PATTERN_SCRIPTS := \
 
 _VP_TARGETS := $(addprefix _vp-, $(VALIDATE_PATTERN_MODULES)) _vp-validate.direct_env_calls _vp-direct-env-calls
 
-.PHONY: help venv dev-install hooks-install hooks-run fix format format-check lint lint-advisory validate-patterns typecheck typecheck-strict test test-ci ci-check bench check release-check eval $(_VP_TARGETS)
+.PHONY: help venv dev-install hooks-install hooks-run fix format format-check workflow-check lint lint-advisory validate-patterns typecheck typecheck-strict test test-critical test-ci test-e2e-ci ci-check bench check release-check eval $(_VP_TARGETS)
 
 help:
 	@printf '%s\n' \
@@ -126,6 +131,7 @@ help:
 		'  make fix           Apply local Ruff formatting and autofixes' \
 		'  make format        Run Ruff formatter' \
 		'  make format-check  Check formatting without changing files' \
+		'  make workflow-check Validate GitHub workflows with the pinned actionlint hook' \
 		'  make lint          Run Ruff plus blocking repo validation scripts (incl. typecheck)' \
 		'                     - I-17: validate-patterns runs in parallel via JOBS=$(JOBS).' \
 		'                       Override with `make JOBS=N lint` or force serial with JOBS=1.' \
@@ -135,8 +141,10 @@ help:
 		'  make eval          G-06: run the 5 starter EvalCases via openminion-eval' \
 		'                     Override category: make eval ARGS="--category coding"' \
 		'  make test          Run the OpenMinion pytest suite (excluding benchmarks)' \
+		'  make test-critical Run the fast cross-component regression suite' \
 		'  make test-ci       Run the provider-free Python 3.11 pull-request suite' \
-		'  make ci-check      Run format-check, lint, and test-ci' \
+		'  make test-e2e-ci   Run the bounded provider-free E2E regression slice' \
+		'  make ci-check      Run workflow, format, lint, critical, provider-free, and E2E gates' \
 		'  make bench         Run storage benchmark regression harness' \
 		'  make check         Run format-check, lint, and test' \
 		'  make release-check Build distribution artifacts and validate package metadata'
@@ -166,6 +174,9 @@ format: $(DEV_STAMP)
 
 format-check: $(DEV_STAMP)
 	$(RUFF) format --check "$(REPO_ROOT)"
+
+workflow-check: $(DEV_STAMP)
+	$(PRE_COMMIT) run actionlint --all-files
 
 lint: $(DEV_STAMP)
 	$(RUFF) check "$(REPO_ROOT)"
@@ -224,17 +235,30 @@ test: $(DEV_STAMP)
 	PYTHONPATH="$(REPO_ROOT)/src" \
 	$(PYTEST) -q -m "not benchmark" "$(REPO_ROOT)/tests"
 
+test-critical: $(DEV_STAMP)
+	PYTHONPATH="$(REPO_ROOT)/src" \
+	$(PYTEST) -q $(CRITICAL_TESTS)
+
 test-ci: $(DEV_STAMP)
 	PYTHONPATH="$(REPO_ROOT)/src" \
 	$(PYTEST) -q -m "not benchmark and not e2e and not postgres and not memory_eval_benchmark and not mcp_live and not package_integration and not telegram_live and not slack_live and not slow" "$(REPO_ROOT)/tests"
 
-ci-check: format-check lint test-ci
+test-e2e-ci: $(DEV_STAMP)
+	PYTHONPATH="$(REPO_ROOT)/src" \
+	$(PYTEST) -q \
+		"$(REPO_ROOT)/tests/e2e/cli/focus/test_local.py" \
+		"$(REPO_ROOT)/tests/e2e/project_worker/test_completion.py" \
+		"$(REPO_ROOT)/tests/e2e/test_memory_capture_recall_reliability.py" \
+		"$(REPO_ROOT)/tests/e2e/test_tool_transcript_continuity.py" \
+		"$(REPO_ROOT)/tests/e2e/test_project_learning_instruction_loop.py"
+
+ci-check: format-check workflow-check lint test-critical test-ci test-e2e-ci
 
 bench: $(DEV_STAMP)
 	PYTHONPATH="$(REPO_ROOT)/src" \
 	$(PYTEST) -q "$(REPO_ROOT)/tests/storage/benchmarks" -m benchmark -s
 
-check: format-check lint test
+check: format-check workflow-check lint test
 
 release-check: $(DEV_STAMP)
 	cd "$(REPO_ROOT)" && $(PYTHON) -m build

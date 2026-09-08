@@ -48,6 +48,9 @@ openminion --config /absolute/path/to/local-profile.json \
   graph neighborhood RECORD_ID --provider vault_graph
 ```
 
+The human query output prints each result's `Record ID`; copy that value into
+the neighborhood command. JSON output exposes the same typed record identity.
+
 Inside Focus, `/graph` prints the equivalent copyable commands and points to
 `openminion graph status` for configured Source/Adapter mappings and viewer
 readiness. The model uses the generic `graph.query`, `graph.neighborhood`, and

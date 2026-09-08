@@ -115,9 +115,10 @@ validator's explicit `--emit-baseline` command to record only the lower value;
 normal update commands reject increases, mixed increases, and new debt owners.
 
 Use `make ci-check` for the provider-free pull-request sequence. It runs
-`format-check`, `lint`, and `test-ci`. Keep live providers, external services,
-Postgres, package integrations, benchmarks, and slow suites in their existing
-integration or release lanes.
+workflow syntax, formatting, lint, the fast critical-path tests, the full
+provider-free suite, and the bounded provider-free E2E slice. Keep live
+providers, external services, Postgres, package integrations, benchmarks, and
+slow suites in their existing integration or release lanes.
 
 Public validator catalog:
 

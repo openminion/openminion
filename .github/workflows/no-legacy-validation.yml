@@ -2,9 +2,9 @@ name: No-Legacy Deep Validation
 
 on:
   push:
-    branches: [main, module-first-cutover, "**/module-first/**"]
+    branches: [main, dev, module-first-cutover, "**/module-first/**"]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 concurrency:

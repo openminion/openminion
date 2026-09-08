@@ -338,10 +338,10 @@ def test_service_coenables_graphify_shaped_and_imported_fake_provider():
     )
 
     assert [source.name for source in service.list_sources()] == [
-        "imported_docs",
         "repo_graph",
+        "imported_docs",
     ]
     assert [
         result.provider
         for result in service.query(GraphQueryRequest(query="runtime graph"))
-    ] == ["imported_docs", "repo_graph"]
+    ] == ["repo_graph", "imported_docs"]

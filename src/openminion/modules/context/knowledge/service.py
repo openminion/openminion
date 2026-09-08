@@ -60,7 +60,7 @@ class KnowledgeGraphService:
     def list_sources(
         self, *, layer: str | None = None
     ) -> tuple[KnowledgeGraphSource, ...]:
-        values = tuple(self.sources[name] for name in sorted(self.sources))
+        values = tuple(self.sources.values())
         if layer is None:
             return values
         return tuple(source for source in values if source.layer == layer)

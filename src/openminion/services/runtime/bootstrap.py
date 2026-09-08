@@ -113,10 +113,6 @@ def _runtime_secret_service(service: Any, config: OpenMinionConfig) -> Any | Non
     )
 
 
-def _runtime_knowledge_graphs(service: Any) -> Any | None:
-    return getattr(service._runtime_handle, "knowledge_graphs", None)
-
-
 def build_daytona_runner(
     *,
     config: OpenMinionConfig,
@@ -632,7 +628,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         config=llm_payload,
         telemetryctl=service._telemetryctl,
     )
-
     if hasattr(service, "_provider") and service._provider:
         from openminion.modules.brain.adapters.llm import LlmctlAdapter
         from openminion.services.brain.client import OpenMinionLLMClient
@@ -744,6 +739,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
     )
     cron_repository = create_sqlite_cron_repository(db_path=service.db_path)
     task_manager = TaskManager.from_cron_repository(cron_repository)
+    runtime_handle = service._runtime_handle
     tool_api = bridge_module.create_tool_api(
         mode=service.mode,
         workspace_root=service._context.workspace_root,
@@ -753,10 +749,10 @@ def build_brain_runner_bundle(service: Any) -> Any:
         skill_api=skill_api,
         secret_service=_runtime_secret_service(service, config),
         memory_service=memory_api,
-        knowledge_graph_service=_runtime_knowledge_graphs(service),
+        knowledge_graph_service=getattr(runtime_handle, "knowledge_graphs", None),
         policy_ctl=service._action_policy_service,
         a2a_delegate_api=a2a_delegate_api,
-        agent_query=getattr(service._runtime_handle, "agent_discovery_snapshot", None),
+        agent_query=getattr(runtime_handle, "agent_discovery_snapshot", None),
         agent_profile=default_profile,
         task_manager=task_manager,
         telemetryctl=service._telemetryctl,

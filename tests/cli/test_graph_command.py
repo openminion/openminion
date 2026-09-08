@@ -109,6 +109,7 @@ def test_graph_query_human_output_names_layer_tags_and_citation(
     assert "Source: vault_graph" in output
     assert "Layer: provider" in output
     assert "Tags: document_graph" in output
+    assert "Record ID: note-hub" in output
     assert "Citation: Hub.md" in output
 
 

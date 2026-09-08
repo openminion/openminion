@@ -52,6 +52,17 @@ def _close_bootstrap(bootstrap) -> None:
         manager.close()
 
 
+def _wait_for_stderr_tail(bootstrap) -> str:
+    session = bootstrap.mcp_manager._sessions["fixture"]  # noqa: SLF001
+    deadline = time.monotonic() + session.server_config.startup_timeout_seconds
+    while time.monotonic() < deadline:
+        tail = session._transport.stderr_tail()  # noqa: SLF001
+        if tail:
+            return tail
+        time.sleep(0.001)
+    raise AssertionError("fixture stderr was not captured before timeout")
+
+
 def test_stderr_buffer_config_bounds_are_enforced() -> None:
     with pytest.raises(ConfigError, match="stderr_buffer_bytes"):
         MCPServerConfig(name="Low", command=["echo"], stderr_buffer_bytes=1)
@@ -94,6 +105,7 @@ def test_stderr_tail_is_attached_to_tool_runtime_error_details() -> None:
         strict=True,
     )
     try:
+        assert "stderr boom" in _wait_for_stderr_tail(bootstrap)
         tool = bootstrap.registry.list()["mcp.fixture.stderr_error_tool"]
         with pytest.raises(ToolRuntimeError) as excinfo:
             tool.handler({}, None)
@@ -111,6 +123,7 @@ def test_ring_buffer_truncates_large_stderr_output() -> None:
         strict=True,
     )
     try:
+        _wait_for_stderr_tail(bootstrap)
         tool = bootstrap.registry.list()["mcp.fixture.stderr_error_tool"]
         with pytest.raises(ToolRuntimeError) as excinfo:
             tool.handler({}, None)

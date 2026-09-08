@@ -578,7 +578,6 @@ def compact(
         "summary.updated",
         {"delta_ref": delta_ref},
         trace_id=state.trace_id,
-        artifact_refs=[delta_ref],
     )
     runner.context_api.maybe_compact(
         session_id=state.session_id, agent_id=state.agent_id

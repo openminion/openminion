@@ -425,6 +425,7 @@ class StatusCommandTests(unittest.TestCase):
             args = Namespace(
                 config=str(config_path),
                 status_command="tools",
+                runtime_source="inproc",
                 json=True,
             )
             buf = io.StringIO()
@@ -434,7 +435,7 @@ class StatusCommandTests(unittest.TestCase):
 
             payload = json.loads(buf.getvalue())
             self.assertTrue(payload["ok"])
-            self.assertIn(payload["source"], {"daemon", "inproc"})
+            self.assertEqual(payload["source"], "inproc")
             self.assertGreater(payload["tool_count"], 0)
             self.assertIsInstance(payload["tools"], list)
 
@@ -465,6 +466,7 @@ class StatusCommandTests(unittest.TestCase):
             args = Namespace(
                 config=str(config_path),
                 status_command="capabilities",
+                runtime_source="inproc",
                 json=True,
             )
             buf = io.StringIO()
@@ -474,7 +476,7 @@ class StatusCommandTests(unittest.TestCase):
 
             payload = json.loads(buf.getvalue())
             self.assertTrue(payload["ok"])
-            self.assertIn(payload["source"], {"daemon", "inproc"})
+            self.assertEqual(payload["source"], "inproc")
             capabilities = payload["capabilities"]
             self.assertEqual(capabilities["providers"]["selected"], "echo")
             self.assertIn("delegate", capabilities["modes"]["blocked_reasons"])
@@ -502,6 +504,7 @@ class StatusCommandTests(unittest.TestCase):
             args = Namespace(
                 config=str(config_path),
                 status_command="runtime",
+                runtime_source="inproc",
                 json=True,
             )
             buf = io.StringIO()
@@ -511,7 +514,7 @@ class StatusCommandTests(unittest.TestCase):
 
             payload = json.loads(buf.getvalue())
             self.assertTrue(payload["ok"])
-            self.assertIn(payload["source"], {"daemon", "inproc"})
+            self.assertEqual(payload["source"], "inproc")
             runtime = payload["runtime"]
             self.assertEqual(runtime["runtime_mode"], "brain")
             self.assertTrue(runtime["brain_bridge_active"])

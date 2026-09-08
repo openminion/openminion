@@ -6,6 +6,8 @@ import re
 
 import pytest
 
+from openminion.base.config import OpenMinionConfig, save_config
+from tests._csc_fixtures import _csc_install_default_agent
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus.harness.artifacts import artifact_root
 from tests.e2e.cli.focus.harness.probe import focus_session_id
@@ -30,16 +32,28 @@ def python_bin(openminion_root: Path) -> Path:
 
 
 @pytest.fixture(scope="session")
-def minimax_config_path(framework_root: Path) -> Path:
-    override = str(os.getenv("OPENMINION_CLI_FOCUS_E2E_CONFIG", "")).strip()
-    if override:
-        return Path(override).expanduser()
-    return framework_root / "test-configs" / "per-agent-minimax-official.json"
+def minimax_agent_id() -> str:
+    return str(os.getenv("OPENMINION_CLI_FOCUS_E2E_AGENT", "minimax-m2-7")).strip()
 
 
 @pytest.fixture(scope="session")
-def minimax_agent_id() -> str:
-    return str(os.getenv("OPENMINION_CLI_FOCUS_E2E_AGENT", "minimax-m2-7")).strip()
+def minimax_config_path(
+    minimax_agent_id: str,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path:
+    override = str(os.getenv("OPENMINION_CLI_FOCUS_E2E_CONFIG", "")).strip()
+    if override:
+        return Path(override).expanduser()
+    if str(os.getenv("OPENMINION_LIVE_CLI_FOCUS_E2E", "")).strip() == "1":
+        pytest.skip("live Focus E2E requires OPENMINION_CLI_FOCUS_E2E_CONFIG")
+    config_root = tmp_path_factory.mktemp("focus-config")
+    config_path = config_root / "config.json"
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config, name=minimax_agent_id, provider="echo")
+    config.runtime.log_level = "ERROR"
+    config.storage.path = str(config_root / "openminion.db")
+    save_config(config, str(config_path))
+    return config_path
 
 
 @pytest.fixture

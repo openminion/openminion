@@ -623,7 +623,7 @@ def test_bootstrap_passes_default_profile_into_create_tool_api() -> None:
     )
     assert "memory_service=memory_api" in text
     assert "agent_query=getattr(" in text
-    assert 'service._runtime_handle, "agent_discovery_snapshot", None' in text
+    assert 'getattr(runtime_handle, "agent_discovery_snapshot", None)' in text
 
 
 def test_brain_cli_passes_profile_into_create_tool_adapter() -> None:
