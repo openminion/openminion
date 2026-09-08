@@ -742,12 +742,9 @@ def test_chat_permutations_runner_artifacts_use_generated_root(
     monkeypatch, tmp_path: Path
 ) -> None:
     runner = _load_chat_permutations_module()
-    framework_root = tmp_path / "framework"
-    framework_root.mkdir()
-    openminion_home = framework_root / "openminion"
+    openminion_home = tmp_path / "openminion"
     openminion_home.mkdir()
 
-    monkeypatch.setattr(runner, "REPO_ROOT", framework_root)
     monkeypatch.setattr(runner, "OPENMINION_DIR", openminion_home)
     data_root = tmp_path / "isolated-data"
     monkeypatch.setenv(OPENMINION_DATA_ROOT_ENV, str(data_root))
