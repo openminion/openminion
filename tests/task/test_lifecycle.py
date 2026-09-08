@@ -17,9 +17,14 @@ from openminion.modules.task import (
 from openminion.modules.task.constants import (
     TASK_INTERNAL_PAUSE_REASON_KEY,
     TASK_INTERNAL_PAUSE_SOURCE_KEY,
+    TASK_INTERNAL_SCHEDULE_KEY,
 )
 from openminion.modules.task.scheduling.coordination import ExpiredOneShotTaskError
-from openminion.modules.task.scheduling.schedule import to_iso_utc, utc_now
+from openminion.modules.task.scheduling.schedule import (
+    parse_iso_datetime,
+    to_iso_utc,
+    utc_now,
+)
 
 
 def _manager(tmp_path: Path) -> TaskManager:
@@ -49,6 +54,34 @@ def test_task_manager_closes_only_owned_lifecycle_repository() -> None:
     owned.close()
     owned.close()
     assert close_calls == ["close"]
+
+
+def test_user_schedule_dedup_backfills_task_ownership_marker(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    repository = getattr(manager, "_cron_repository")
+    job_id = repository.add_cron_job(
+        name="legacy-user-schedule",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "work"},
+        agent_id="agent-a",
+        session_target="isolated",
+        delete_after_run=False,
+        misfire_policy="skip",
+    )
+
+    result = manager.schedule_user_task(
+        name="legacy-user-schedule",
+        instruction="work",
+        schedule={"kind": "every", "every_ms": 60_000, "jitter_ms": 0},
+        agent_id="agent-a",
+    )
+
+    assert result["deduped"] is True
+    assert result["record"].cron_job_id == job_id
+    assert (
+        repository.get_cron_job(job_id)["payload"][TASK_INTERNAL_SCHEDULE_KEY] is True
+    )
+    assert len(repository.list_cron_jobs(limit=10)) == 1
 
 
 def test_resume_rejects_expired_one_time_task_without_mutation(tmp_path: Path) -> None:
@@ -448,6 +481,66 @@ def test_paused_task_adopts_only_the_allowed_in_flight_outcome(
     assert record.metadata["last_run"]["run_id"] == run_id
 
 
+def test_paused_task_retains_in_flight_worker_failure(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    created = manager.schedule_task(
+        name="paused-worker-failure",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "run"},
+        agent_id="agent-a",
+    )
+    repository = getattr(manager, "_cron_repository")
+    run_id = repository.trigger_cron_run(created.cron_job_id)
+    repository.acquire_cron_runs("daemon-a", limit=1)
+    manager.pause_task(created.task_id)
+
+    failed = repository.retry_cron_run(
+        run_id,
+        error={"code": "provider_503", "message": "provider unavailable"},
+    )
+
+    assert failed is not None
+    assert failed["state"] == "failed"
+    assert failed["error"]["code"] == "provider_503"
+    assert manager.reconcile_scheduled_outcomes(created.cron_job_id) == 1
+    record = manager.get_task(created.task_id)
+    assert record is not None
+    assert record.state == TaskLifecycleState.PAUSED
+    assert record.metadata["last_run"]["last_error"]["code"] == "provider_503"
+
+
+def test_paused_task_retains_in_flight_lease_expiry(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    created = manager.schedule_task(
+        name="paused-lease-expiry",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "run"},
+        agent_id="agent-a",
+    )
+    repository = getattr(manager, "_cron_repository")
+    repository.trigger_cron_run(created.cron_job_id)
+    started_at = to_iso_utc(utc_now())
+    repository.acquire_cron_runs(
+        "daemon-a",
+        lease_ttl_s=1,
+        now_iso=started_at,
+    )
+    manager.pause_task(created.task_id)
+    recovery_at = to_iso_utc(parse_iso_datetime(started_at) + timedelta(seconds=2))
+
+    recovered = repository.recover_expired_cron_runs(now_iso=recovery_at)
+
+    assert recovered[0]["state"] == "failed"
+    assert recovered[0]["error"]["code"] == "cron_lease_expired_job_disabled"
+    assert manager.reconcile_scheduled_outcomes(created.cron_job_id) == 1
+    record = manager.get_task(created.task_id)
+    assert record is not None
+    assert record.state == TaskLifecycleState.PAUSED
+    assert record.metadata["last_run"]["last_error"]["code"] == (
+        "cron_lease_expired_job_disabled"
+    )
+
+
 def test_paused_queued_one_time_task_ignores_administrative_cancellation(
     tmp_path: Path,
 ) -> None:
@@ -631,6 +724,35 @@ def test_stale_one_time_skip_records_failed_run_and_task(tmp_path: Path) -> None
     assert len(runs) == 1
     assert runs[0]["attempts"] == 0
     assert runs[0]["error"]["code"] == "schedule_missed"
+
+
+def test_legacy_short_interval_task_auto_pauses_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    created = manager.schedule_task(
+        name="legacy-short",
+        schedule={"kind": "every", "every_ms": 1_000},
+        payload={"kind": "agentTurn", "message": "legacy-short"},
+        agent_id="agent-a",
+    )
+    repository = getattr(manager, "_cron_repository")
+    overdue = to_iso_utc(utc_now() - timedelta(seconds=5))
+    repository._store._conn.execute(
+        "UPDATE cron_jobs SET next_due_at = ? WHERE job_id = ?",
+        (overdue, created.cron_job_id),
+    )
+    repository._store._conn.commit()
+
+    assert repository.enqueue_due_cron_runs("daemon-short", max_jobs=10) == []
+    job = manager.get_scheduled_job(created.cron_job_id)
+    assert job is not None
+    assert job["enabled"] is False
+    assert job["payload"][TASK_INTERNAL_SCHEDULE_KEY] is True
+    assert (
+        job["payload"][TASK_INTERNAL_PAUSE_REASON_KEY]
+        == "TASK_SCHEDULE_INTERVAL_TOO_SHORT"
+    )
 
 
 def test_pause_resume_updates_lifecycle_without_deleting_job(tmp_path: Path) -> None:
@@ -935,6 +1057,36 @@ def test_reconcile_cursor_advances_past_tasks_without_terminal_runs(
     assert manager.reconcile_scheduled_outcomes(limit=1) == 0
     assert manager.reconcile_scheduled_outcomes(limit=1) == 1
     assert manager.get_task(target.task_id).state == TaskLifecycleState.DONE
+
+
+def test_reconcile_cursor_does_not_skip_unprocessed_terminal_task(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    records = [
+        manager.schedule_task(
+            name=f"terminal-{index}",
+            schedule={
+                "kind": "at",
+                "at": to_iso_utc(utc_now() + timedelta(hours=1)),
+            },
+            payload={"kind": "agentTurn", "message": "run"},
+            agent_id="agent-a",
+            job_id=f"terminal-{index}",
+        )
+        for index in range(2)
+    ]
+    repository = getattr(manager, "_cron_repository")
+    for record in records:
+        run_id = repository.trigger_cron_run(record.cron_job_id)
+        repository.finish_cron_run(run_id, state="finished")
+
+    assert manager.reconcile_scheduled_outcomes(limit=1) == 1
+    assert manager.reconcile_scheduled_outcomes(limit=1) == 1
+    assert [manager.get_task(record.task_id).state for record in records] == [
+        TaskLifecycleState.DONE,
+        TaskLifecycleState.DONE,
+    ]
 
 
 def test_task_owned_one_time_job_is_retained_with_separate_databases(

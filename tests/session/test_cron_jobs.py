@@ -7,7 +7,6 @@ import pytest
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 from openminion.modules.task.constants import (
     TASK_INTERNAL_PAUSE_REASON_KEY,
-    TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
 )
 from openminion.modules.task.scheduling.schedule import (
     parse_iso_datetime,
@@ -224,7 +223,7 @@ def test_pause_resume_preserves_history_and_resumes_without_burst(
     assert len(store.list_cron_runs(job_id=job_id, limit=10)) == 1
 
 
-def test_legacy_short_interval_job_auto_pauses_before_dispatch(
+def test_raw_short_interval_job_remains_enabled(
     store: SQLiteSessionStore,
 ) -> None:
     job_id = store.add_cron_job(
@@ -241,15 +240,31 @@ def test_legacy_short_interval_job_auto_pauses_before_dispatch(
     store._conn.commit()
 
     queued = store.enqueue_due_cron_runs("daemon-short", lease_ttl_s=30, max_jobs=10)
-    assert queued == []
+    assert len(queued) == 1
     job = store.get_cron_job(job_id)
     assert job is not None
-    assert job["enabled"] is False
-    assert job["next_due_at"] is None
-    assert (
-        job["payload"].get(TASK_INTERNAL_PAUSE_REASON_KEY)
-        == TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT
+    assert job["enabled"] is True
+    assert TASK_INTERNAL_PAUSE_REASON_KEY not in job["payload"]
+
+
+def test_raw_retained_one_shot_misfire_does_not_gain_task_lifecycle(
+    store: SQLiteSessionStore,
+) -> None:
+    job_id = store.add_cron_job(
+        name="raw-retained-misfire",
+        schedule={"kind": "at", "at": to_iso_utc(utc_now() - timedelta(hours=1))},
+        payload={"kind": "systemEvent", "event_text": "raw one-shot"},
+        delete_after_run=False,
+        misfire_policy="skip",
+        max_lateness_s=1,
     )
+
+    assert store.enqueue_due_cron_runs("daemon-raw", max_jobs=10) == []
+    assert store.list_cron_runs(job_id=job_id, limit=10) == []
+    job = store.get_cron_job(job_id)
+    assert job is not None
+    assert job["enabled"] is True
+    assert job["next_due_at"] is None
 
 
 def test_expired_running_run_requeues_after_persisted_backoff(
@@ -408,6 +423,7 @@ def test_disabled_job_does_not_reacquire_worker_retry(
 
     assert retried is not None
     assert retried["state"] == "cancelled"
+    assert retried["error"]["code"] == "cron_job_disabled"
     assert retried["finished_at"] is not None
     acquire_at = to_iso_utc(parse_iso_datetime(started_at) + timedelta(seconds=2))
     assert store.acquire_cron_runs("daemon-worker", now_iso=acquire_at) == []

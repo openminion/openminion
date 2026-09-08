@@ -26,6 +26,7 @@ from openminion.modules.task.constants import (
     DEFAULT_TASK_MIN_EVERY_MS,
     TASK_INTERNAL_PAUSE_REASON_KEY,
     TASK_INTERNAL_PAUSE_SOURCE_KEY,
+    TASK_INTERNAL_SCHEDULE_KEY,
     TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
 )
 from openminion.modules.session.constants import (
@@ -37,6 +38,20 @@ from openminion.modules.storage.record_store import RecordStore
 from .cron_coordination import CronCoordinationStore
 from .json_utils import parse_json, to_json
 from .rows import row_to_cron_job, row_to_cron_run
+
+
+def _is_task_owned(job: Mapping[str, Any]) -> bool:
+    return bool((job.get("payload") or {}).get(TASK_INTERNAL_SCHEDULE_KEY))
+
+
+def _is_short_interval_task(
+    job: Mapping[str, Any], schedule: Mapping[str, Any]
+) -> bool:
+    return (
+        str(schedule.get("kind") or "").strip() == "every"
+        and int(schedule.get("every_ms", 0) or 0) < DEFAULT_TASK_MIN_EVERY_MS
+        and _is_task_owned(job)
+    )
 
 
 def _initial_next_due(
@@ -460,7 +475,7 @@ class CronStore(CronCoordinationStore):
             and str(job.get("misfire_policy") or "").strip() == "skip"
             and not due_points
             and next_due is None
-            and not bool(job.get("delete_after_run"))
+            and _is_task_owned(job)
         ):
             return
         due_iso = str(job.get("next_due_at") or now)
@@ -530,11 +545,7 @@ class CronStore(CronCoordinationStore):
             for row in rows:
                 job = row_to_cron_job(row)
                 schedule = dict(job.get("schedule") or {})
-                if (
-                    str(schedule.get("kind") or "").strip() == "every"
-                    and int(schedule.get("every_ms", 0) or 0)
-                    < DEFAULT_TASK_MIN_EVERY_MS
-                ):
+                if _is_short_interval_task(job, schedule):
                     self._auto_pause_legacy_short_interval_job(job=job, now_iso=now)
                     continue
                 coordination_key = str(job.get("concurrency_key") or "").strip()

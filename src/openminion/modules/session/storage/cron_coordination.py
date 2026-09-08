@@ -7,6 +7,7 @@ from typing import Any
 
 from openminion.modules.session.constants import MAX_CRON_RETRY_BACKOFF_SECONDS
 from openminion.modules.storage.record_store import RecordStore
+from openminion.modules.task.constants import TASK_INTERNAL_SCHEDULE_KEY
 from openminion.modules.task.scheduling.schedule import (
     parse_iso_datetime,
     to_iso_utc,
@@ -77,6 +78,36 @@ class CronCoordinationStore:
             "error": error,
         }
 
+    def _finish_disabled_expired_run_locked(
+        self,
+        row: dict[str, Any],
+        *,
+        task_owned: bool,
+        now_iso: str,
+    ) -> dict[str, Any]:
+        if task_owned:
+            error = {
+                "code": "cron_lease_expired_job_disabled",
+                "message": "cron run lease expired after the task was disabled",
+                "attempts": int(row["attempts"] or 0),
+                "max_attempts": max(1, int(row["max_attempts"] or 3)),
+            }
+            return self._finish_expired_run_locked(
+                row,
+                state="failed",
+                error=error,
+                now_iso=now_iso,
+            )
+        return self._finish_expired_run_locked(
+            row,
+            state="cancelled",
+            error={
+                "code": "cron_job_disabled",
+                "message": "cron job was disabled while the run was active",
+            },
+            now_iso=now_iso,
+        )
+
     def _recover_expired_cron_runs_locked(
         self,
         *,
@@ -86,7 +117,8 @@ class CronCoordinationStore:
     ) -> list[dict[str, Any]]:
         rows = self._record_store.query_dicts(
             """
-            SELECT r.*, j.enabled, j.max_attempts, j.retry_backoff_s
+            SELECT r.*, j.enabled, j.max_attempts, j.retry_backoff_s,
+                   j.payload_json
             FROM cron_runs AS r
             JOIN cron_jobs AS j ON j.job_id = r.job_id
             WHERE r.state = 'running'
@@ -102,16 +134,14 @@ class CronCoordinationStore:
             run_id = str(row["run_id"])
             attempts = int(row["attempts"] or 0)
             attempt_limit = max(1, int(row["max_attempts"] or 3))
+            task_owned = bool(
+                parse_json(row.get("payload_json"), {}).get(TASK_INTERNAL_SCHEDULE_KEY)
+            )
             if not bool(int(row["enabled"] or 0)):
-                disabled_error: dict[str, Any] = {
-                    "code": "cron_job_disabled",
-                    "message": "cron job was disabled while the run was active",
-                }
                 recovered.append(
-                    self._finish_expired_run_locked(
+                    self._finish_disabled_expired_run_locked(
                         row,
-                        state="cancelled",
-                        error=disabled_error,
+                        task_owned=task_owned,
                         now_iso=now_iso,
                     )
                 )
@@ -197,7 +227,8 @@ class CronCoordinationStore:
         with self._lock, self._record_store.transaction():
             row = self._query_one(
                 """
-                SELECT r.*, j.enabled, j.max_attempts, j.retry_backoff_s
+                SELECT r.*, j.enabled, j.max_attempts, j.retry_backoff_s,
+                       j.payload_json
                 FROM cron_runs AS r
                 LEFT JOIN cron_jobs AS j ON j.job_id = r.job_id
                 WHERE r.run_id = ?
@@ -208,7 +239,14 @@ class CronCoordinationStore:
                 return None
             attempts = int(row["attempts"] or 0)
             attempt_limit = max(1, int(row.get("max_attempts") or 1))
-            if row.get("enabled") is not None and not bool(int(row["enabled"])):
+            task_owned = bool(
+                parse_json(row.get("payload_json"), {}).get(TASK_INTERNAL_SCHEDULE_KEY)
+            )
+            if (
+                row.get("enabled") is not None
+                and not bool(int(row["enabled"]))
+                and not task_owned
+            ):
                 disabled_error: dict[str, Any] = {
                     "code": "cron_job_disabled",
                     "message": "cron job was disabled while the run was active",
@@ -222,7 +260,9 @@ class CronCoordinationStore:
                     """,
                     (to_json(disabled_error), now, now, rid),
                 )
-            elif attempts >= attempt_limit:
+            elif attempts >= attempt_limit or (
+                row.get("enabled") is not None and not bool(int(row["enabled"]))
+            ):
                 terminal_error = dict(error)
                 terminal_error.setdefault("attempts", attempts)
                 terminal_error.setdefault("max_attempts", attempt_limit)

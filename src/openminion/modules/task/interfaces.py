@@ -114,6 +114,7 @@ def ensure_task_compatibility(
         "transition_task",
         "apply_ops",
         "get_task",
+        "find_task",
         "get_digest",
         "record_pending_action",
         "list_pending_actions",

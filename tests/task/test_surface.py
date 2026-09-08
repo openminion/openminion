@@ -201,6 +201,23 @@ def test_task_surface_lists_and_controls_lifecycle_tasks() -> None:
     assert "activity" not in without_activity
 
 
+def test_task_surface_does_not_fallback_when_scheduled_job_is_missing() -> None:
+    manager = TaskManager.for_lifecycle_db(db_path=":memory:")
+    record = manager.create_linked_task(
+        linked_job_id="missing-job",
+        agent_id="agent",
+        task_id="missing-job",
+    )
+
+    with pytest.raises(KeyError, match="task not found"):
+        build_task_surface(manager, agent_id="agent").apply_action(
+            task_id=record.task_id,
+            action="pause",
+        )
+
+    assert manager.get_task(record.task_id).state == TaskLifecycleState.ACTIVE
+
+
 def test_task_surface_quotes_activity_route_segments() -> None:
     manager = TaskManager.for_lifecycle_db(db_path=":memory:")
     manager.create_task(

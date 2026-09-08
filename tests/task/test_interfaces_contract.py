@@ -89,6 +89,16 @@ def test_missing_method_fails() -> None:
     assert any("Missing required member" in e for e in errors)
 
 
+def test_find_task_must_be_callable() -> None:
+    ctl = _ValidTaskCtl()
+    ctl.find_task = None  # type: ignore[method-assign,assignment]
+
+    success, errors = ensure_task_compatibility(ctl, strict=False)
+
+    assert success is False
+    assert "Member is not callable: find_task" in errors
+
+
 def test_version_mismatch_strict_raises() -> None:
     class _WrongVersionTaskCtl(_ValidTaskCtl):
         contract_version = "v999"

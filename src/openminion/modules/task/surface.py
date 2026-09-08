@@ -145,6 +145,7 @@ class TaskSurface:
             self.source,
             task_id=normalized_task_id,
             action=normalized_action,
+            scheduled=_is_scheduled_lifecycle_task(self.source, task),
         )
 
 
@@ -665,10 +666,17 @@ def _resolve_pending_action(
 
 
 def _apply_lifecycle_action(
-    source: Any | None, *, task_id: str, action: str
+    source: Any | None,
+    *,
+    task_id: str,
+    action: str,
+    scheduled: bool,
 ) -> dict[str, Any]:
     if not task_id:
         raise ValueError("task_id is required")
+    if not scheduled:
+        record = _transition_task(source, task_id=task_id, action=action)
+        return _task_action_result(source, action=action, record=record)
     method_name = {
         "pause": "pause_task",
         "resume": "resume_task",
@@ -676,17 +684,23 @@ def _apply_lifecycle_action(
     }[action]
     method = getattr(source, method_name, None)
     if not callable(method):
-        record = _transition_task(source, task_id=task_id, action=action)
-        return _task_action_result(source, action=action, record=record)
-    try:
-        result = method(task_id)
-    except KeyError as exc:
-        record = _transition_task(
-            source, task_id=task_id, action=action, missing_exc=exc
-        )
-        return _task_action_result(source, action=action, record=record)
+        raise NotImplementedError(f"scheduled task {action} is unavailable")
+    result = method(task_id)
     record = result[0] if isinstance(result, tuple) else result
     return _task_action_result(source, action=action, record=record)
+
+
+def _is_scheduled_lifecycle_task(source: Any | None, task: Mapping[str, Any]) -> bool:
+    if str(task.get("task_kind") or "").startswith("scheduled_"):
+        return True
+    if "cron_job_id" not in task:
+        return False
+    get_task = getattr(source, "get_task", None)
+    if not callable(get_task):
+        return True
+    record = get_task(str(task.get("id") or ""))
+    metadata = dict(_value(record, "metadata", {}) or {})
+    return not bool(str(metadata.get("kind") or "").strip())
 
 
 def _transition_task(
@@ -694,12 +708,9 @@ def _transition_task(
     *,
     task_id: str,
     action: str,
-    missing_exc: Exception | None = None,
 ) -> Any:
     transition = getattr(source, "transition_task", None)
     if not callable(transition):
-        if missing_exc is not None:
-            raise missing_exc
         raise NotImplementedError(f"task {action} is unavailable")
     return transition(task_id=task_id, to_state=_ACTION_STATES[action])
 

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from openminion.modules.task.constants import (
     TASK_INTERNAL_PAUSE_REASON_KEY,
     TASK_INTERNAL_PAUSE_SOURCE_KEY,
+    TASK_INTERNAL_SCHEDULE_KEY,
 )
 from openminion.modules.task.scheduling.coordination import ExpiredOneShotTaskError
 from openminion.modules.task.scheduling.schedule import parse_iso_datetime, utc_now
@@ -41,10 +42,12 @@ class TaskManagerScheduleMixin:
         retry_backoff_s: int = 30,
         job_id: str | None = None,
     ) -> TaskLifecycleRecord:
+        task_payload = dict(payload)
+        task_payload[TASK_INTERNAL_SCHEDULE_KEY] = True
         created_job_id = self._cron_repository.add_cron_job(
             name=name,
             schedule=schedule,
-            payload=payload,
+            payload=task_payload,
             description=description,
             enabled=enabled,
             agent_id=agent_id,
@@ -89,6 +92,7 @@ class TaskManagerScheduleMixin:
         }
         if origin:
             payload["_openminion_origin"] = dict(origin)
+        payload[TASK_INTERNAL_SCHEDULE_KEY] = True
         for job in self.list_scheduled_jobs(limit=1000):
             if not bool(job.get("enabled")):
                 continue
@@ -98,8 +102,17 @@ class TaskManagerScheduleMixin:
                 continue
             if dict(job.get("schedule") or {}) != dict(schedule):
                 continue
-            if dict(job.get("payload") or {}) != payload:
+            stored_payload = dict(job.get("payload") or {})
+            comparable_stored = dict(stored_payload)
+            comparable_stored.pop(TASK_INTERNAL_SCHEDULE_KEY, None)
+            comparable_expected = dict(payload)
+            comparable_expected.pop(TASK_INTERNAL_SCHEDULE_KEY, None)
+            if comparable_stored != comparable_expected:
                 continue
+            if not bool(stored_payload.get(TASK_INTERNAL_SCHEDULE_KEY)):
+                stored_payload[TASK_INTERNAL_SCHEDULE_KEY] = True
+                self.replace_cron_job_payload(str(job["job_id"]), stored_payload)
+                job = {**job, "payload": stored_payload}
             self.ensure_task_record_for_job(job)
             return {
                 "record": self.get_task_by_job(str(job["job_id"])),
@@ -334,13 +347,10 @@ class TaskManagerScheduleMixin:
                 limit=page_limit,
                 after=self._reconciliation_cursor,
             )
-            self._reconciliation_cursor = (
-                (records[-1].created_at, records[-1].task_id)
-                if len(records) == page_limit
-                else None
-            )
         reconciled = 0
+        last_examined = None
         for record in records:
+            last_examined = record
             if record is None or record.state in {
                 TaskLifecycleState.DONE,
                 TaskLifecycleState.FAILED,
@@ -370,6 +380,16 @@ class TaskManagerScheduleMixin:
             reconciled += 1
             if reconciled >= max(1, min(limit, 1000)):
                 break
+        if not normalized_job_id:
+            if last_examined is not None and (
+                reconciled >= max(1, min(limit, 1000)) or len(records) == page_limit
+            ):
+                self._reconciliation_cursor = (
+                    last_examined.created_at,
+                    last_examined.task_id,
+                )
+            else:
+                self._reconciliation_cursor = None
         return reconciled
 
     def cancel_task(self, task_id: str) -> TaskLifecycleRecord:
