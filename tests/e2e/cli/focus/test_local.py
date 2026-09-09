@@ -47,6 +47,26 @@ def test_focus_pty_renders_durable_token_report(
         write_transcript(artifact_root(tmp_path), "local-tokens", transcript)
 
 
+def test_focus_pty_handles_advertised_slash_aliases(
+    focus_probe: FocusProbe,
+    tmp_path,
+) -> None:
+    aliases = ("/cls", "/session", "/agent", "/tool", "/task")
+    with focus_probe.session() as session:
+        focus_probe.wait_ready(session)
+        transcripts = [
+            focus_probe.run_slash_turn(session, alias, marker=None) for alias in aliases
+        ]
+
+    assert all("Unknown command:" not in transcript for transcript in transcripts)
+    assert "file.read" in transcripts[3]
+    write_transcript(
+        artifact_root(tmp_path),
+        "local-slash-aliases",
+        "\n".join(transcripts),
+    )
+
+
 def test_focus_pty_submits_after_composer_is_ready(
     focus_probe: FocusProbe,
     tmp_path,

@@ -40,9 +40,8 @@ def test_overlay_satisfies_protocol() -> None:
 
 def test_resume_picker_returns_selected_session_id() -> None:
     console, _ = _make_console()
-    overlay = TerminalOverlayPresenter(
-        console=console, prompt_session=_StubSession(["2"])
-    )
+    session = _StubSession(["2"])
+    overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
     sessions = [
         SimpleNamespace(id="s1", label="first"),
         SimpleNamespace(id="s2", label="second"),
@@ -50,6 +49,13 @@ def test_resume_picker_returns_selected_session_id() -> None:
     ]
     result = overlay.present_resume_picker(sessions)
     assert result == "s2"
+    assert session.prompts == [
+        "Resume which session?\n"
+        "  1. first\n"
+        "  2. second\n"
+        "  3. third\n"
+        "Number (Enter to cancel): "
+    ]
 
 
 def test_resume_picker_empty_input_returns_none() -> None:
@@ -81,11 +87,11 @@ def test_approval_yes_returns_allow() -> None:
     session = _StubSession(["y"])
     overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
     assert overlay.present_approval("Run dangerous command?") == "allow"
-    assert output.getvalue() == "Run dangerous command?\n"
-    assert session.prompts == ["[y]es / [N]o / [a]lways: "]
+    assert output.getvalue() == ""
+    assert session.prompts == ["Run dangerous command?\n[y]es / [N]o / [a]lways: "]
 
 
-def test_approval_prints_full_long_command_outside_input_prompt() -> None:
+def test_approval_keeps_full_long_command_in_input_prompt() -> None:
     console, output = _make_console()
     session = _StubSession(["n"])
     overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
@@ -96,13 +102,14 @@ def test_approval_prints_full_long_command_outside_input_prompt() -> None:
 
     assert overlay.present_approval(command) == "deny"
 
-    rendered = output.getvalue()
+    assert output.getvalue() == ""
+    rendered = session.prompts[0]
     assert "BatchMode=yes" in rendered
     assert "ConnectTimeout=3" in rendered
     assert "StrictHostKeyChecking=yes" in rendered
     assert 'localhost true")' in rendered
     assert "…" not in rendered
-    assert session.prompts == ["[y]es / [N]o / [a]lways: "]
+    assert rendered.endswith("\n[y]es / [N]o / [a]lways: ")
 
 
 def test_approval_always_returns_always() -> None:

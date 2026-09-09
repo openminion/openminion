@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from openminion.cli.presentation.slash_commands import (
     SLASH_COMMANDS,
+    canonical_slash_command,
+    canonical_slash_command_name,
     slash_command_runs_while_busy,
     terminal_slash_commands,
     unknown_slash_command_message,
@@ -16,28 +18,21 @@ def test_slash_metadata_has_unique_primary_names() -> None:
 def test_terminal_catalog_preserves_supported_commands_and_aliases() -> None:
     commands = set(terminal_slash_commands())
 
-    for command in (
-        "/close",
-        "/new",
-        "/resume",
-        "/sessions",
-        "/context-review",
-        "/overview",
-        "/copy",
-        "/memory",
-        "/graph",
-        "/tasks",
-        "/skills",
-        "/statusline",
-        "/details",
-        "/export",
-        "/editor",
-        "/quit",
-    ):
-        assert command in commands
+    expected = {
+        name for command in SLASH_COMMANDS for name in (command.name, *command.aliases)
+    }
+    assert commands == expected
 
     assert "/animation" not in commands
     assert "/debug" not in commands
+
+
+def test_advertised_aliases_resolve_to_primary_commands() -> None:
+    for command in SLASH_COMMANDS:
+        for alias in command.aliases:
+            assert canonical_slash_command_name(alias) == command.name
+
+    assert canonical_slash_command("/tool file.read") == "/tools file.read"
 
 
 def test_busy_slash_policy_allows_reads_and_blocks_changes() -> None:

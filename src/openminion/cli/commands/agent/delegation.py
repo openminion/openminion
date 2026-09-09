@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 import json
 from pathlib import Path
-import shlex
 from types import SimpleNamespace
 from typing import Any
 
@@ -168,40 +167,49 @@ def request_from_operator_args(args: Any) -> AgentDelegateRequest:
 
 
 def request_from_slash_args(args: str) -> AgentDelegateRequest:
-    try:
-        parts = shlex.split(args or "")
-    except ValueError as exc:
-        raise ValueError(f"/delegate: {exc}") from exc
-    if not parts:
+    raw = str(args or "").strip()
+    if not raw:
         raise ValueError(
             "Usage: /delegate <agent> <instruction...> | "
             "/delegate async <agent> <instruction...> | "
             "/delegate status|result|resume|cancel <task-id> | "
             "/delegate accept|reject '<child-artifact-json>'"
         )
-    action = parts[0].lower()
+    first, *remainder_parts = raw.split(maxsplit=1)
+    remainder = remainder_parts[0] if remainder_parts else ""
+    action = first.lower()
     if action in {"status", "result", "resume", "cancel"}:
-        if len(parts) != 2:
+        task_ids = remainder.split()
+        if len(task_ids) != 1:
             raise ValueError(f"Usage: /delegate {action} <task-id>")
-        return AgentDelegateRequest(mode=action, task_id=parts[1])
+        return AgentDelegateRequest(mode=action, task_id=task_ids[0])
     if action in {"accept", "reject"}:
-        if len(parts) < 2:
+        if not remainder:
             raise ValueError(f"Usage: /delegate {action} '<child-artifact-json>'")
+        artifact_json = remainder
+        if artifact_json.startswith("'") and artifact_json.endswith("'"):
+            artifact_json = artifact_json[1:-1]
         try:
-            child_artifact = json.loads(" ".join(parts[1:]))
+            child_artifact = json.loads(artifact_json)
         except json.JSONDecodeError as exc:
             raise ValueError(f"/delegate {action}: invalid artifact JSON") from exc
         if not isinstance(child_artifact, dict):
             raise ValueError(f"/delegate {action}: artifact JSON must be an object")
         return AgentDelegateRequest(mode=action, child_artifact=child_artifact)
     mode = action if action in {"sync", "async"} else "sync"
-    offset = 1 if action in {"sync", "async"} else 0
-    if len(parts) <= offset + 1:
+    if action in {"sync", "async"}:
+        target_parts = remainder.split(maxsplit=1)
+        if len(target_parts) != 2:
+            raise ValueError("Usage: /delegate [sync|async] <agent> <instruction...>")
+        target_agent_id, instruction = target_parts
+    else:
+        target_agent_id, instruction = first, remainder
+    if not instruction:
         raise ValueError("Usage: /delegate [sync|async] <agent> <instruction...>")
     return AgentDelegateRequest(
         mode=mode,
-        target_agent_id=parts[offset],
-        instruction=" ".join(parts[offset + 1 :]),
+        target_agent_id=target_agent_id,
+        instruction=instruction,
     )
 
 

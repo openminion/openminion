@@ -28,10 +28,11 @@ _MUTED_ITALIC_STYLE = f"italic {token_rich_style(StyleToken.MUTED)}"
 
 PROMPT_SAFE_OUTPUT_SLASHES = frozenset(
     """
-    / /agents /browser /compact /context /context-review /copy /cost /delegate /details /editor /effort
-    /export /goal /graph /help /mcp /memory /model /normal /permissions /queue /quiet
-    /readonly /new /overview /resume /review /sessions /skills /status /statusline /tasks
-    /telemetry /theme /tokens /tools /trace /undo /verbose
+    /activate /agents /browser /close /compact /context /context-review /copy /cost
+    /delegate /details /diff /editor /effort /expand /export /goal /graph /help /init
+    /invite /kick /mcp /memory /model /normal /participants /permissions /project /queue
+    /quiet /readonly /new /overview /resume /review /routing /sessions /skills /status
+    /statusline /tasks /telemetry /theme /tokens /tools /trace /undo /verbose
     """.split()
 )
 

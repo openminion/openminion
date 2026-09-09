@@ -17,6 +17,18 @@ _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 
 
+def delegation_start_message(text: str) -> str:
+    parts = text.split(maxsplit=1)
+    arg = parts[1] if len(parts) > 1 else ""
+    try:
+        request = request_from_slash_args(arg)
+    except ValueError:
+        return ""
+    if request.mode not in {"sync", "async"} or not request.target_agent_id:
+        return ""
+    return f"Delegating to {request.target_agent_id}..."
+
+
 def handle_slash_delegate(
     text: str,
     *,
@@ -84,4 +96,8 @@ async def run_slash_delegate(
     )
 
 
-__all__ = ["handle_slash_delegate", "run_slash_delegate"]
+__all__ = [
+    "delegation_start_message",
+    "handle_slash_delegate",
+    "run_slash_delegate",
+]

@@ -28,10 +28,15 @@ from openminion.cli.interactive.terminal.shell.sessions import resume_session
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.interactive.models import ModelSelection
+from openminion.cli.presentation.slash_commands import (
+    SLASH_COMMANDS,
+    canonical_slash_command_name,
+)
 
 
 class _StubOverlay:
-    pass
+    def present_approval(self, _prompt: str) -> str:
+        return "deny"
 
 
 class _ResumeOverlay:
@@ -227,7 +232,7 @@ def _extract_implemented_slashes() -> set[str]:
 
 
 def test_slash_catalog_matches_implementation() -> None:
-    cataloged = set(_SLASH_COMMANDS)
+    cataloged = {canonical_slash_command_name(name) for name in _SLASH_COMMANDS}
     implemented = _extract_implemented_slashes()
     missing = cataloged - implemented
     assert not missing, (
@@ -373,6 +378,12 @@ def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> N
         assert buf.getvalue().strip() or len(transcript._messages) > before, (
             f"{slash} accepted input but produced no visible terminal output"
         )
+
+
+def test_every_non_control_slash_uses_prompt_safe_output() -> None:
+    expected = {command.name for command in SLASH_COMMANDS} - {"/clear", "/exit"}
+
+    assert PROMPT_SAFE_OUTPUT_SLASHES == expected
 
 
 def test_context_review_forwards_explicit_paths(monkeypatch, tmp_path: Path) -> None:
