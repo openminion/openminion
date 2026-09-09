@@ -286,6 +286,17 @@ class TestCodingHandlerPureHelperBehavior:
         [ordinary] = handler._build_tool_specs(frozenset({"exec.run"}))
         assert "verification_target_id" not in ordinary.input_schema["properties"]
 
+    def test_implement_phase_exposes_optional_verification_targets(self) -> None:
+        specs = handler._build_tool_specs(
+            frozenset({"exec.run"}),
+            verification_targets={"criterion": ("tests-pass",)},
+            require_verification_target=False,
+        )
+
+        schema = specs[0].input_schema
+        assert schema["properties"]["verification_target_id"]["enum"] == ["tests-pass"]
+        assert "verification_target_id" not in schema["required"]
+
     def test_verify_phase_allowed_tools_drop_mutating_writers(self) -> None:
         runner = CodingProfileRunner()
         runner._coding_plan = CodingPlan.fallback(

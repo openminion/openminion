@@ -17,6 +17,7 @@ from openminion.modules.task.runtime.lifecycle import TaskLifecycleState, TaskMa
 
 from . import checkpoints as project_checkpoints
 from .models import ProjectCheckpoint, ProjectCycleDecision, ProjectVerificationState
+from .verification import ProjectDomainVerificationStatus
 
 
 class AutonomyLoopConditionKind(StrEnum):
@@ -148,6 +149,172 @@ def classify_autonomy_loop_condition(
         terminal=True,
         reason_code="terminal_inability",
         evidence_refs=evidence_refs,
+    )
+
+
+def cycle_disposition(
+    cycle_limit: int,
+    *,
+    cycle_number: int,
+    condition: AutonomyLoopConditionKind,
+    has_error: bool,
+    condition_evidence_refs: tuple[str, ...],
+    closure_status: ProjectDomainVerificationStatus,
+    previous_replans: int,
+    has_new_progress: bool,
+    verification_waived: bool,
+    task_plan_incomplete: bool,
+) -> project_checkpoints.ProjectCycleDisposition:
+    plan_disposition = project_checkpoints.task_plan_incomplete_disposition(
+        cycle_limit,
+        cycle_number,
+        closure_status,
+        has_error,
+        task_plan_incomplete,
+        previous_replans,
+    )
+    if plan_disposition is not None:
+        return plan_disposition
+    if closure_status == ProjectDomainVerificationStatus.VERIFIED and not has_error:
+        return _productive_disposition(
+            cycle_limit,
+            cycle_number=cycle_number,
+            closure_status=closure_status,
+            previous_replans=previous_replans,
+            has_new_progress=has_new_progress,
+            verification_waived=verification_waived,
+        )
+    judgment = classify_autonomy_loop_condition(
+        condition=condition,
+        evidence_refs=condition_evidence_refs,
+    )
+    if condition != AutonomyLoopConditionKind.PRODUCTIVE:
+        return _nonproductive_disposition(
+            cycle_limit,
+            cycle_number=cycle_number,
+            judgment=judgment,
+            previous_replans=previous_replans,
+        )
+    return _productive_disposition(
+        cycle_limit,
+        cycle_number=cycle_number,
+        closure_status=closure_status,
+        previous_replans=previous_replans,
+        has_new_progress=has_new_progress,
+        verification_waived=verification_waived,
+    )
+
+
+def _nonproductive_disposition(
+    cycle_limit: int,
+    *,
+    cycle_number: int,
+    judgment: AutonomyLoopJudgment,
+    previous_replans: int,
+) -> project_checkpoints.ProjectCycleDisposition:
+    if judgment.requires_operator:
+        decision = (
+            ProjectCycleDecision.NEEDS_INPUT
+            if judgment.run_status == AutonomyRunStatus.WAITING_FOR_INPUT
+            else ProjectCycleDecision.BLOCKED
+        )
+        return (
+            decision,
+            judgment.run_status,
+            AutonomyRunPhase.RECOVER,
+            ProjectVerificationState.BLOCKED,
+            previous_replans,
+            judgment.reason_code,
+        )
+    if judgment.terminal:
+        return (
+            ProjectCycleDecision.BLOCKED,
+            judgment.run_status,
+            AutonomyRunPhase.CLOSED,
+            ProjectVerificationState.FAILED,
+            previous_replans,
+            judgment.reason_code,
+        )
+    if cycle_number < cycle_limit and (
+        judgment.bounded_retry_allowed
+        or (judgment.requires_model_replan and previous_replans < 1)
+    ):
+        return (
+            ProjectCycleDecision.CONTINUE,
+            AutonomyRunStatus.RUNNING,
+            AutonomyRunPhase.RECOVER,
+            ProjectVerificationState.IN_PROGRESS,
+            previous_replans + int(judgment.requires_model_replan),
+            judgment.reason_code,
+        )
+    return (
+        ProjectCycleDecision.BLOCKED,
+        AutonomyRunStatus.BLOCKED,
+        AutonomyRunPhase.CLOSED,
+        ProjectVerificationState.BLOCKED,
+        previous_replans,
+        judgment.reason_code,
+    )
+
+
+def _productive_disposition(
+    cycle_limit: int,
+    *,
+    cycle_number: int,
+    closure_status: ProjectDomainVerificationStatus,
+    previous_replans: int,
+    has_new_progress: bool,
+    verification_waived: bool,
+) -> project_checkpoints.ProjectCycleDisposition:
+    if closure_status == ProjectDomainVerificationStatus.VERIFIED:
+        verification_state = (
+            ProjectVerificationState.WAIVED
+            if verification_waived
+            else ProjectVerificationState.VERIFIED
+        )
+        return (
+            ProjectCycleDecision.STOP,
+            AutonomyRunStatus.COMPLETED,
+            AutonomyRunPhase.CLOSED,
+            verification_state,
+            previous_replans,
+            "verified",
+        )
+    if closure_status == ProjectDomainVerificationStatus.NEEDS_USER:
+        return (
+            ProjectCycleDecision.NEEDS_INPUT,
+            AutonomyRunStatus.WAITING_FOR_INPUT,
+            AutonomyRunPhase.RECOVER,
+            ProjectVerificationState.BLOCKED,
+            previous_replans,
+            "needs_user",
+        )
+    if has_new_progress and cycle_number < cycle_limit:
+        return (
+            ProjectCycleDecision.CONTINUE,
+            AutonomyRunStatus.RUNNING,
+            AutonomyRunPhase.RECOVER,
+            ProjectVerificationState.IN_PROGRESS,
+            0,
+            "verification_progress",
+        )
+    if previous_replans < 1 and cycle_number < cycle_limit:
+        return (
+            ProjectCycleDecision.CONTINUE,
+            AutonomyRunStatus.RUNNING,
+            AutonomyRunPhase.RECOVER,
+            ProjectVerificationState.IN_PROGRESS,
+            previous_replans + 1,
+            "verification_replan",
+        )
+    failed = closure_status == ProjectDomainVerificationStatus.FAILED
+    return (
+        ProjectCycleDecision.BLOCKED,
+        AutonomyRunStatus.BLOCKED,
+        AutonomyRunPhase.CLOSED,
+        ProjectVerificationState.FAILED if failed else ProjectVerificationState.BLOCKED,
+        previous_replans,
+        "verification_failed" if failed else "verification_blocked",
     )
 
 
@@ -353,6 +520,7 @@ __all__ = [
     "AutonomyLoopConditionKind",
     "AutonomyLoopJudgment",
     "begin_next_repository_check",
+    "cycle_disposition",
     "classify_autonomy_loop_condition",
     "finish_repository_check",
     "observe_repository_checks",

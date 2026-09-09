@@ -13,6 +13,28 @@ from tests.e2e.cli.focus.harness.scenarios import BASE_LIVE_SCENARIOS
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(300)]
 
 
+def _structured_trace_path(trace_listing: str) -> str:
+    rendered = "".join(line.strip() for line in trace_listing.splitlines())
+    suffix = "-structured.json"
+    for item in rendered.split("llm/")[1:]:
+        candidate = f"llm/{item}"
+        if suffix in candidate:
+            return candidate[: candidate.index(suffix) + len(suffix)]
+    raise AssertionError("selected invocation has no structured trace")
+
+
+def test_structured_trace_path_rejoins_terminal_wrapping() -> None:
+    listing = """trace files:
+  llm/invocation/step01-call01-http-response.json
+  llm/invocation/step01-call01-struct
+ured.json
+"""
+
+    assert _structured_trace_path(listing) == (
+        "llm/invocation/step01-call01-structured.json"
+    )
+
+
 def _seed_foreign_invocation(focus_probe: FocusProbe) -> str:
     invocation_id = "foreign-focus-telemetry-invocation"
     service = TelemetryService(env=focus_probe.environment())
@@ -78,10 +100,25 @@ def test_live_focus_basic_turn(
             focus_probe.run_slash(
                 session,
                 "/telemetry failed",
-                marker="telemetry: empty",
+                marker="No failed model runs in this session.",
             )
         )
         assert foreign_invocation_id not in failed
+
+        tokens = visible_text(
+            focus_probe.run_slash(session, "/tokens", marker="Token usage")
+        )
+        assert "No model calls in this session yet." not in tokens
+        assert "Tokens:" in tokens
+
+        history = visible_text(
+            focus_probe.run_slash(
+                session,
+                "/tokens recent 3",
+                marker="Token history",
+            )
+        )
+        assert "sessions with model calls" in history
 
         trace_listing = visible_text(
             focus_probe.run_slash(session, "/trace list", marker="trace files:")
@@ -89,15 +126,7 @@ def test_live_focus_basic_turn(
         assert "trace files: none" not in trace_listing
         assert "-http-response.json" in trace_listing
         assert "-structured.json" in trace_listing
-        trace_root = focus_probe.data_root / "traces"
-        compact_listing = "".join(trace_listing.split())
-        structured_traces = sorted(
-            path
-            for path in trace_root.rglob("*-structured.json")
-            if path.relative_to(trace_root).as_posix() in compact_listing
-        )
-        assert structured_traces
-        trace_path = structured_traces[-1].relative_to(trace_root).as_posix()
+        trace_path = _structured_trace_path(trace_listing)
         trace_summary = visible_text(
             focus_probe.run_slash(
                 session,

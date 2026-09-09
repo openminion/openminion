@@ -172,11 +172,14 @@ class _FakeSessions:
         limit: int = 100,
         newest_first: bool = True,
         agent_id: str | None = None,
+        channel: str | None = None,
         target: str | None = None,
         metadata_filter: dict[str, object] | None = None,
     ) -> list[_SessionRecord]:
         del newest_first, agent_id
         items = list(self._by_id.values())
+        if channel:
+            items = [item for item in items if item.channel == channel]
         if target:
             items = [item for item in items if item.target == target]
         if metadata_filter:
@@ -241,6 +244,7 @@ class _FakeContextTraceStore:
         *,
         event_type: str | None = None,
         limit: int = 100,
+        **_: object,
     ) -> list[SimpleNamespace]:
         self.requests.append(session_id)
         events = self._events.get(session_id, [])
@@ -1304,7 +1308,7 @@ def test_openminion_runtime_context_trace_payload_reports_lookup_error() -> None
 def test_openminion_runtime_renders_durable_token_usage() -> None:
     rt = _FakeRuntime()
     tui_rt = OpenMinionRuntime(rt)
-    rt.sessions.add_event(
+    rt.context_trace_store.add_event(
         tui_rt.session_id,
         "llm.call.completed",
         {
@@ -1318,8 +1322,74 @@ def test_openminion_runtime_renders_durable_token_usage() -> None:
 
     report = tui_rt.token_usage_report()
 
-    assert "provider=10" in report
-    assert "provider_cost=$0.001" in report
+    assert "10 total" in report
+    assert "$0.001 provider" in report
+
+
+def test_openminion_focus_runtime_reads_conversation_token_usage() -> None:
+    rt = _FakeRuntime()
+    tui_rt = OpenMinionRuntime(rt, target="focus")
+    event_session_id = f"{tui_rt.session_id}::conv:focus-{tui_rt.session_id}"
+    rt.context_trace_store.add_event(
+        event_session_id,
+        "llm.call.completed",
+        {
+            "provider": "openai",
+            "model": "gpt-test",
+            "usage": {"input_tokens": 8, "output_tokens": 2, "total_tokens": 10},
+        },
+    )
+
+    current = tui_rt.token_usage_report()
+    history = tui_rt.token_usage_report(recent=10)
+
+    assert "10 total" in current
+    assert "10 model" in history
+    assert rt.context_trace_store.requests == [event_session_id, event_session_id]
+
+
+def test_openminion_runtime_opens_durable_brain_token_store(tmp_path: Path) -> None:
+    from openminion.modules.brain.paths import resolve_brain_sessions_db_path
+    from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
+
+    rt = _FakeRuntime()
+    del rt.context_trace_store
+    rt.storage_path = tmp_path / "state" / "openminion.db"
+    rt.storage_path.parent.mkdir(parents=True)
+    rt.config.storage = OpenMinionConfig().storage
+    rt.config_manager = SimpleNamespace(
+        env={
+            "OPENMINION_HOME": str(tmp_path),
+            "OPENMINION_DATA_ROOT": str(tmp_path),
+        }
+    )
+    tui_rt = OpenMinionRuntime(rt, target="focus")
+    event_session_id = f"{tui_rt.session_id}::conv:focus-{tui_rt.session_id}"
+    db_path = resolve_brain_sessions_db_path(storage_path=rt.storage_path)
+    db_path.parent.mkdir(parents=True)
+    store = SQLiteSessionStore(db_path)
+    try:
+        store.create_session(session_id=event_session_id)
+        store.append_event(
+            event_session_id,
+            event_type="llm.call.completed",
+            payload={
+                "provider": "openai",
+                "model": "gpt-test",
+                "usage": {
+                    "input_tokens": 8,
+                    "output_tokens": 2,
+                    "total_tokens": 10,
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    report = tui_rt.token_usage_report()
+
+    assert "10 total" in report
+    assert "openai/gpt-test" in report
 
 
 @pytest.mark.asyncio
@@ -1375,10 +1445,10 @@ async def test_openminion_runtime_throttles_live_usage_updates() -> None:
     observed_turn_totals: list[int | None] = []
     ticks = itertools.chain([1.0, 1.1, 1.2, 1.3, 1.8, 2.0, 2.0], itertools.repeat(2.0))
 
-    from openminion.cli.interactive import runtime as runtime_module
+    from openminion.cli.interactive.runtime import token_usage as token_usage_module
 
-    original_monotonic = runtime_module.time.monotonic
-    runtime_module.time.monotonic = lambda: next(ticks)
+    original_monotonic = token_usage_module.time.monotonic
+    token_usage_module.time.monotonic = lambda: next(ticks)
     try:
         _ = [
             chunk
@@ -1390,7 +1460,7 @@ async def test_openminion_runtime_throttles_live_usage_updates() -> None:
             )
         ]
     finally:
-        runtime_module.time.monotonic = original_monotonic
+        token_usage_module.time.monotonic = original_monotonic
 
     assert observed_turn_totals == [120, 120, 550]
     snapshot = tui_rt.token_usage_snapshot()

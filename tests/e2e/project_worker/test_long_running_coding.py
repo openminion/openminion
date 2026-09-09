@@ -41,6 +41,40 @@ def _run_cli(args: list[str]) -> dict[str, object]:
     return json.loads(output.getvalue())
 
 
+def _task_plan_metadata(plan_id: str, turn: int) -> dict[str, str]:
+    if turn == 1:
+        return {
+            "task_plan": json.dumps(
+                {
+                    "plan_id": plan_id,
+                    "objective": "Complete and verify the coding task",
+                    "criterion_ids": ["verification:coding"],
+                    "steps": [{"step_id": "repair", "description": "Repair the code"}],
+                    "continue_plan_autonomously": True,
+                }
+            )
+        }
+    return {
+        "task_plan.revision": json.dumps(
+            {
+                "plan_id": plan_id,
+                "revision_id": f"{plan_id}-1",
+                "criterion_ids": ["verification:coding"],
+                "verifier_refs": ["verification:cycle-1:failed"],
+                "revised_steps": [
+                    {
+                        "step_id": "repair",
+                        "description": "Finish the verified repair",
+                        "status": "completed",
+                    }
+                ],
+                "continue_plan_autonomously": True,
+            }
+        ),
+        "task_plan.completed": json.dumps({"plan_id": plan_id}),
+    }
+
+
 def test_coding_project_replans_repairs_and_resumes_from_committed_checkpoint(
     tmp_path: Path,
     monkeypatch,
@@ -99,12 +133,17 @@ def test_coding_project_replans_repairs_and_resumes_from_committed_checkpoint(
                             {
                                 "step_id": "repair",
                                 "description": "Correct the remaining sum failure",
+                                "status": "completed",
                             }
                         ],
                     }
                 )
             }
         )
+        if turns > 1:
+            plan_metadata["task_plan.completed"] = json.dumps(
+                {"plan_id": "repair-total"}
+            )
         return {
             "final_text": f"coding cycle {turns}",
             "metadata": {
@@ -179,7 +218,9 @@ def test_coding_project_replans_repairs_and_resumes_from_committed_checkpoint(
     assert turns == 2
 
 
-def test_project_checkpoint_resumes_across_real_cli_processes(tmp_path: Path) -> None:
+def test_replay_response_does_not_forge_plan_across_cli_processes(
+    tmp_path: Path,
+) -> None:
     root_args = _root_args(tmp_path)
     failed_verify = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(1)'"
     passed_verify = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(0)'"
@@ -231,10 +272,11 @@ def test_project_checkpoint_resumes_across_real_cli_processes(tmp_path: Path) ->
         capture_output=True,
         text=True,
     )
-    completed = json.loads(resumed.stdout)["run"]
+    blocked = json.loads(resumed.stdout)["run"]
 
-    assert completed["status"] == "completed"
-    assert completed["checkpoint_id"].endswith(":cycle:2")
+    assert blocked["status"] == "blocked"
+    assert blocked["checkpoint_id"].endswith(":cycle:2")
+    assert blocked["last_error"]["code"] == "PROJECT_TASK_PLAN_INCOMPLETE"
 
 
 def test_oacc_coding_repair_uses_frozen_typed_turns(
@@ -277,6 +319,7 @@ def test_oacc_coding_repair_uses_frozen_typed_turns(
                 "artifact_refs": turn["evidence_refs"],
                 "evidence_kinds": turn["evidence_kinds"],
                 "effect_refs": turn["effect_refs"],
+                **_task_plan_metadata("oacc-coding-repair", turns),
             },
         }
 
@@ -336,6 +379,7 @@ def test_oacc_coding_resume_preserves_checkpoint_artifacts(
                 "artifact_refs": turn["evidence_refs"],
                 "evidence_kinds": turn["evidence_kinds"],
                 "effect_refs": turn["effect_refs"],
+                **_task_plan_metadata("oacc-context-resume", turns),
             },
         }
 

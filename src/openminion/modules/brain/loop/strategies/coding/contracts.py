@@ -12,6 +12,7 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_NEEDS_USER,
     AdaptiveToolLoopLLMRuntime,
 )
+from openminion.modules.brain.loop.tools.plan_control import PLAN_TOOL_NAME
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_AGENT_GET,
     MODEL_AGENT_LIST,
@@ -88,6 +89,7 @@ CODING_ALLOWED_TOOLS: frozenset[str] = frozenset(
 
 PROJECT_CORE_ADDITIONAL_TOOLS: frozenset[str] = frozenset(
     (
+        PLAN_TOOL_NAME,
         MODEL_GIT_STATUS,
         MODEL_GIT_DIFF,
         MODEL_GIT_LOG,

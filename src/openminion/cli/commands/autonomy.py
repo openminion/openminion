@@ -11,7 +11,7 @@ from openminion.base.types import Message
 from openminion.cli.commands.autonomy_project import (
     apply_resume_overrides,
     build_project_launch_request,
-    configured_cron_store,
+    cancel_project_task_wake,
     launch_project,
     persisted_verification_waiver,
     project_task_manager,
@@ -58,7 +58,8 @@ from openminion.modules.task.project import (
     render_project_operator_inbox_item,
     run_project_verification_commands,
 )
-from openminion.modules.task.project.checkpoints import project_cycle_summaries
+from openminion.modules.task.project import checkpoints as project_checkpoints
+from openminion.modules.task.project.budget import evaluate_continuation_budget
 from openminion.modules.task.project.reports import (
     build_project_report_from_task,
     render_project_report,
@@ -131,7 +132,10 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         agent_id=_clean(getattr(args, "agent", None)) or "default",
         workspace_boundary=workspace_boundary,
         repository=repository,
+        require_git_repository=bool(raw_repository),
         max_iterations=max(0, int(getattr(args, "max_iterations", 1))),
+        max_wall_clock_ms=getattr(args, "max_wall_clock_ms", None),
+        max_tool_calls=getattr(args, "max_tool_calls", None),
         permission_profile_id=_clean(getattr(args, "permission_profile", None))
         or "local-safe",
         config_ref=_clean(getattr(args, "config", None)) or None,
@@ -144,7 +148,7 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         verification_timeout_seconds=verification_timeout_seconds,
         verification_waiver_reason=waiver.reason if waiver is not None else None,
         goal_id=_clean(getattr(args, "goal_id", None)) or None,
-        task_plan_required=bool(raw_repository),
+        task_plan_required=True,
         expected_checks=tuple(getattr(args, "expected_check", ()) or ()),
     )
     run = request.run
@@ -233,7 +237,7 @@ def _resume(args: argparse.Namespace, store: AutonomyRunStore) -> int:
             blocked,
             validation_summary="Blocked before provider execution by verifier preflight.",
             final_operator_summary="Autonomy run blocked by verifier preflight.",
-            cycle_summaries=project_cycle_summaries(
+            cycle_summaries=project_checkpoints.project_cycle_summaries(
                 manager,
                 task_id=run.task_id or "",
             ),
@@ -289,7 +293,7 @@ def _run_foreground_project(
             interrupted,
             validation_summary="Foreground project execution was interrupted.",
             final_operator_summary="Autonomy project interrupted by operator.",
-            cycle_summaries=project_cycle_summaries(
+            cycle_summaries=project_checkpoints.project_cycle_summaries(
                 manager,
                 task_id=run.task_id or "",
             ),
@@ -302,25 +306,7 @@ def _cancel(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     run = store.require(str(args.run_id))
     manager = project_task_manager(args) if run.task_id else None
     if manager is not None:
-        task = manager.get_task(run.task_id)
-        if task is not None and task.state in {
-            TaskLifecycleState.ACTIVE,
-            TaskLifecycleState.PAUSED,
-        }:
-            linked_job_id = str(task.metadata.get("linked_cron_job_id") or "").strip()
-            manager.transition_task(
-                task_id=run.task_id,
-                to_state=TaskLifecycleState.CANCELLED,
-            )
-            if linked_job_id:
-                cron_store = configured_cron_store(
-                    args,
-                    config_ref=run.execution_selectors.config_ref,
-                )
-                try:
-                    cron_store.delete_cron_job(linked_job_id)
-                finally:
-                    cron_store.close()
+        cancel_project_task_wake(args, run, manager)
     cancelled = store.transition(
         run.run_id,
         status=AutonomyRunStatus.CANCELLED,
@@ -335,7 +321,9 @@ def _cancel(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         validation_summary="Cancelled by operator request.",
         final_operator_summary="Autonomy run cancelled by operator.",
         cycle_summaries=(
-            project_cycle_summaries(manager, task_id=run.task_id or "")
+            project_checkpoints.project_cycle_summaries(
+                manager, task_id=run.task_id or ""
+            )
             if manager is not None
             else ()
         ),
@@ -362,8 +350,18 @@ def _execute_project(
         claim_ttl_seconds=project_cycle_claim_ttl_seconds(run),
     )
     checkpoint = load_latest_project_checkpoint(manager, task_id=str(run.task_id))
-    committed = checkpoint.project_run.committed_cycle_count if checkpoint else 0
-    remaining = max(1, run.continuation_policy.max_iterations - committed)
+    task = manager.get_task(run.task_id or "")
+    if checkpoint is None or task is None:
+        raise RuntimeError("project state is missing before execution")
+    metrics = project_checkpoints.repository_lifecycle_metrics(checkpoint)
+    budget = evaluate_continuation_budget(
+        run.continuation_policy,
+        metadata=task.metadata,
+        iterations=metrics["cycle_count"],
+        wall_clock_ms=max(0, now_ms() - run.created_at_ms),
+        tool_calls=metrics["tool_call_count"],
+    )
+    remaining = max(1, budget.remaining["iterations"])
     try:
         result = worker.run(run.run_id, max_cycles=remaining)
     except Exception as exc:
@@ -384,7 +382,7 @@ def _execute_project(
             failed,
             validation_summary="Project worker execution failed.",
             final_operator_summary="Autonomy project failed.",
-            cycle_summaries=project_cycle_summaries(
+            cycle_summaries=project_checkpoints.project_cycle_summaries(
                 manager,
                 task_id=run.task_id or "",
             ),
@@ -431,7 +429,7 @@ def _finalize_project_result(
 ) -> ProjectWorkerResult:
     run = result.run
     error = None
-    if result.decision in {
+    if run.last_error is None and result.decision in {
         ProjectCycleDecision.BLOCKED,
         ProjectCycleDecision.NEEDS_INPUT,
     }:
@@ -466,7 +464,7 @@ def _finalize_project_result(
             run,
             validation_summary=_validation_summary(result.verification, waiver=waiver),
             final_operator_summary=run.operator_summary or "Autonomy project closed.",
-            cycle_summaries=project_cycle_summaries(
+            cycle_summaries=project_checkpoints.project_cycle_summaries(
                 manager,
                 task_id=run.task_id or "",
             ),
@@ -806,7 +804,7 @@ def _add_execution_proof_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--replay-response",
         default="",
-        help="Deterministic response used for replay-backed autonomy proof",
+        help="Deterministic summary-only response used for replay-backed proof",
     )
     parser.add_argument(
         "--verify-command",
@@ -936,11 +934,13 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Exact required GitHub check name (repeat for each check)",
     )
     start.add_argument("--max-iterations", type=int, default=1)
+    start.add_argument("--max-wall-clock-ms", type=int, default=None)
+    start.add_argument("--max-tool-calls", type=int, default=None)
     start.add_argument("--permission-profile", default="local-safe")
     start.add_argument(
         "--verification-domain",
         choices=("coding", "research", "operations", "cross_application"),
-        default="cross_application",
+        default="coding",
     )
     start.add_argument(
         "--unattended",
@@ -977,6 +977,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     resume.add_argument("run_id")
     resume.add_argument("--agent", default=None, help="Agent id for runtime execution")
     resume.add_argument("--max-iterations", type=int, default=None)
+    resume.add_argument("--max-wall-clock-ms", type=int, default=None)
+    resume.add_argument("--max-tool-calls", type=int, default=None)
     resume.add_argument(
         "--verification-domain",
         choices=("coding", "research", "operations", "cross_application"),

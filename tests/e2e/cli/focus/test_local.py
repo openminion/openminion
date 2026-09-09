@@ -7,6 +7,7 @@ import time
 import pytest
 
 from tests.e2e.cli.focus.harness import FocusProbe, PtySession
+from tests.e2e.cli.focus.harness.assertions import visible_text
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
 from tests.e2e.runners.run_cli_focus_e2e import suite_names
 
@@ -41,10 +42,34 @@ def test_focus_pty_renders_durable_token_report(
         transcript = focus_probe.run_slash(
             session,
             "/tokens",
-            marker="status tokens:",
+            marker="Token usage",
         )
-        assert "no token usage events" in transcript
+        assert "No model calls in this session yet." in transcript
+        history = focus_probe.run_slash(
+            session,
+            "/tokens recent 3",
+            marker="Token history",
+        )
+        assert "No model calls in the newest" in history
+        telemetry = focus_probe.run_slash(
+            session,
+            "/telemetry",
+            marker="Telemetry",
+        )
+        assert "No model runs in this session yet." in telemetry
+        context = visible_text(
+            focus_probe.run_slash(
+                session,
+                "/context",
+                marker="Context usage:",
+            )
+        )
+        assert "none observed in this terminal yet" in context
+        assert "use /tokens for saved session totals" in context
         write_transcript(artifact_root(tmp_path), "local-tokens", transcript)
+        write_transcript(artifact_root(tmp_path), "local-token-history", history)
+        write_transcript(artifact_root(tmp_path), "local-telemetry-empty", telemetry)
+        write_transcript(artifact_root(tmp_path), "local-context-empty", context)
 
 
 def test_focus_pty_handles_advertised_slash_aliases(

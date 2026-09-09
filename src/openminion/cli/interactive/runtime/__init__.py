@@ -1,6 +1,5 @@
 import inspect
 import json
-import time
 from pathlib import Path
 from sqlite3 import Error as SQLiteError
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, cast
@@ -12,11 +11,7 @@ from openminion.base.config.action_policy import ACTION_POLICY_SESSION_OVERRIDE_
 from openminion.base.config.runtime.profile import PERMISSION_MODE_DEFAULT
 from openminion.base.types import Message
 from openminion.cli.status import (
-    TokenUsageSnapshot,
     TokenUsageTotals,
-    accumulate_usage,
-    build_token_usage_snapshot,
-    usage_totals_from_mapping,
 )
 from openminion.cli.parser.contracts import CLI_INTERFACE_VERSION
 from openminion.cli.presentation.models import ChatMessage
@@ -43,9 +38,9 @@ from .messages import (
     RuntimeMessageMixin,
 )
 from .project import RuntimeProjectMixin
+from .token_usage import RuntimeTokenUsageMixin
 
 ApprovalCallback = Callable[[str, dict[str, Any], Any], Awaitable[bool]]
-_LIVE_USAGE_THROTTLE_SECONDS = 0.5
 
 
 def _session_sort_key(session: Any) -> str:
@@ -62,6 +57,7 @@ class OpenMinionRuntime(
     RuntimeMCPMixin,
     RuntimeMessageMixin,
     RuntimeProjectMixin,
+    RuntimeTokenUsageMixin,
 ):
     """ChatRuntimeAPI adapter over APIRuntime."""
 
@@ -237,45 +233,6 @@ class OpenMinionRuntime(
             Path,
             resolve_brain_runtime_db_path(storage_path=self._rt.storage_path),
         )
-
-    def token_usage_snapshot(self) -> TokenUsageSnapshot:
-        turn_usage = self._current_turn_usage or self._last_turn_usage
-        session_usage = self._completed_session_usage
-        if self._current_turn_usage is not None:
-            session_usage = (
-                accumulate_usage(session_usage, self._current_turn_usage)
-                or TokenUsageTotals()
-            )
-        turn_elapsed_seconds = self._last_turn_elapsed_seconds
-        if self._current_turn_started_at_monotonic is not None:
-            turn_elapsed_seconds = max(
-                0.0,
-                time.monotonic() - self._current_turn_started_at_monotonic,
-            )
-        context_limit = self._context_limit_tokens()
-        context_used = getattr(session_usage, "total_tokens", None)
-        if context_limit is None:
-            context_used = None
-        return build_token_usage_snapshot(
-            turn=turn_usage,
-            session=session_usage,
-            context_used_tokens=context_used,
-            context_limit_tokens=context_limit,
-            has_live_deltas=self._current_turn_has_live_deltas,
-            turn_elapsed_seconds=turn_elapsed_seconds,
-            updated_at_monotonic=self._usage_updated_at_monotonic,
-        )
-
-    def token_usage_report(self) -> str:
-        if not self.is_bound:
-            return "No active session."
-        from openminion.cli.commands.status.token_report import format_token_summary
-        from openminion.modules.telemetry.usage import StatsService
-
-        summary = StatsService(self._rt.sessions).get_session_token_usage(
-            self.session_id
-        )
-        return format_token_summary(summary)
 
     def context_budget_snapshot(self) -> dict[str, Any]:
         if not self.is_bound:
@@ -811,26 +768,6 @@ class OpenMinionRuntime(
             self._apply_focus_turn_metadata(merged)
         return merged or None
 
-    def _begin_turn_usage_tracking(self) -> None:
-        self._current_turn_usage = None
-        self._current_turn_has_live_deltas = False
-        self._last_live_usage_update_at = None
-        started_at = time.monotonic()
-        self._current_turn_started_at_monotonic = started_at
-        self._usage_updated_at_monotonic = started_at
-
-    def _wrap_progress_callback(
-        self,
-        progress_callback: Callable[[dict[str, Any]], None] | None,
-    ) -> Callable[[dict[str, Any]], None]:
-        def _wrapped(payload: dict[str, Any]) -> None:
-            self._consume_live_usage_payload(payload)
-            if progress_callback is not None:
-                progress_callback(payload)
-
-        setattr(_wrapped, "__self__", getattr(progress_callback, "__self__", None))
-        return _wrapped
-
     def _progress_payload_from_stream_event(self, event: Any) -> dict[str, Any]:
         kind = str(getattr(event, "kind", "") or "")
         if kind == "tool_call_started":
@@ -896,58 +833,6 @@ class OpenMinionRuntime(
             return payload
         return {}
 
-    def _consume_live_usage_payload(self, payload: Mapping[str, Any] | None) -> None:
-        turn_usage = usage_totals_from_mapping(payload)
-        if turn_usage is None:
-            return
-        now = time.monotonic()
-        last_updated = self._last_live_usage_update_at
-        if (
-            last_updated is not None
-            and (now - last_updated) < _LIVE_USAGE_THROTTLE_SECONDS
-        ):
-            return
-        self._current_turn_usage = turn_usage
-        self._current_turn_has_live_deltas = True
-        self._last_live_usage_update_at = now
-        self._usage_updated_at_monotonic = now
-
-    def _finalize_turn_usage(
-        self,
-        metadata: Mapping[str, Any] | None,
-        *,
-        succeeded: bool,
-    ) -> None:
-        now = time.monotonic()
-        turn_started_at = self._current_turn_started_at_monotonic
-        if turn_started_at is not None:
-            self._last_turn_elapsed_seconds = max(0.0, now - turn_started_at)
-        final_turn_usage = (
-            usage_totals_from_mapping(metadata) or self._current_turn_usage
-        )
-        if succeeded and final_turn_usage is not None:
-            self._last_turn_usage = final_turn_usage
-            self._completed_session_usage = (
-                accumulate_usage(self._completed_session_usage, final_turn_usage)
-                or TokenUsageTotals()
-            )
-        self._current_turn_usage = None
-        self._current_turn_has_live_deltas = False
-        self._current_turn_started_at_monotonic = None
-        self._last_live_usage_update_at = None
-        self._usage_updated_at_monotonic = now
-
-    def _reset_token_usage_accounting(self) -> None:
-        self._completed_session_usage = TokenUsageTotals()
-        self._last_turn_usage = TokenUsageTotals()
-        self._current_turn_usage = None
-        self._current_turn_has_live_deltas = False
-        self._current_turn_started_at_monotonic = None
-        self._last_turn_elapsed_seconds = None
-        self._last_chat_phase_timing_payload = None
-        self._last_live_usage_update_at = None
-        self._usage_updated_at_monotonic = None
-
     def _sync_conversation_id(self) -> None:
         session_id = str(self._session_id or "").strip()
         if (
@@ -958,16 +843,6 @@ class OpenMinionRuntime(
             self._conversation_id = f"focus-{session_id}"
             return
         self._conversation_id = ""
-
-    def _context_limit_tokens(self) -> int | None:
-        try:
-            runtime_cfg = getattr(getattr(self._rt, "config", None), "runtime", None)
-            value = getattr(runtime_cfg, "session_context_token_budget", None)
-            if value in (None, "", 0, "0"):
-                return None
-            return max(0, int(value))
-        except (TypeError, ValueError):
-            return None
 
     def _ensure_agent_resolved(self) -> None:
         if self._gateway is not None and self._agent_id:

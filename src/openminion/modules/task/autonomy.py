@@ -80,7 +80,7 @@ class TestEvidenceStatus(StrEnum):
 
 class ContinuationPolicy(_StrictAutonomyModel):
     max_iterations: int = Field(default=1, ge=0)
-    max_wall_clock_ms: int | None = Field(default=None, ge=1)
+    max_wall_clock_ms: int | None = Field(default=None, ge=0)
     max_tool_calls: int | None = Field(default=None, ge=0)
     resume_on_daemon_restart: bool = False
     require_operator_after_blocked: bool = True
@@ -286,6 +286,8 @@ def build_autonomy_run(
     session_id: str,
     workspace_ref: str | None,
     max_iterations: int,
+    max_wall_clock_ms: int | None = None,
+    max_tool_calls: int | None = None,
     permission_profile_id: str = "local-safe",
     agent_id: str = "default",
     config_ref: str | None = None,
@@ -301,6 +303,8 @@ def build_autonomy_run(
     timestamp = now_ms()
     policy = ContinuationPolicy(
         max_iterations=max_iterations,
+        max_wall_clock_ms=max_wall_clock_ms,
+        max_tool_calls=max_tool_calls,
         permission_profile_id=permission_profile_id,
     )
     return AutonomyRun(

@@ -41,7 +41,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     SlashCommandMetadata("/context-review", "Review memory and context evidence"),
     SlashCommandMetadata("/overview", "Show the read-only operations overview"),
     SlashCommandMetadata("/goal", "Create, bind, inspect, or run a session goal"),
-    SlashCommandMetadata("/project", "Start a durable repository project"),
+    SlashCommandMetadata("/project", "Start durable coding or research work"),
     SlashCommandMetadata("/effort", "Show or set per-turn effort"),
     SlashCommandMetadata("/memory", "Show memory health and inventory"),
     SlashCommandMetadata("/graph", "Query, refresh, or view configured graphs"),

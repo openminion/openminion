@@ -22,9 +22,12 @@ def render_context_report(runtime: Any) -> str:
     lines = ["Context usage:"]
     if snapshot is None:
         lines.append("  tokens   unavailable")
+    elif not snapshot.has_any_usage:
+        lines.append("  tokens   none observed in this terminal yet")
+        lines.append("  durable  use /tokens for saved session totals")
     else:
         summary = format_token_usage_summary(snapshot)
-        lines.append(f"  tokens   {summary or 'no usage yet'}")
+        lines.append(f"  tokens   {summary}")
         used = getattr(snapshot, "context_used_tokens", None)
         limit = getattr(snapshot, "context_limit_tokens", None)
         if used is not None and limit:

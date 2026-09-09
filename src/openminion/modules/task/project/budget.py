@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from openminion.modules.task.autonomy import ContinuationPolicy
 from openminion.modules.task.runtime.lifecycle import TaskManager
 
 from .models import (
@@ -56,6 +57,51 @@ def evaluate_project_budget(
     )
 
 
+def evaluate_continuation_budget(
+    policy: ContinuationPolicy,
+    *,
+    metadata: dict[str, object],
+    iterations: int,
+    wall_clock_ms: int,
+    tool_calls: int,
+) -> ProjectBudgetCheckResult:
+    extensions = metadata.get("budget_extensions")
+    limits = {
+        "iterations": policy.max_iterations
+        + _metadata_int(extensions, "extra_iterations")
+    }
+    if policy.max_wall_clock_ms is not None:
+        limits["wall_clock_ms"] = policy.max_wall_clock_ms + _metadata_int(
+            extensions, "extra_wall_clock_ms"
+        )
+    if policy.max_tool_calls is not None:
+        limits["tool_calls"] = policy.max_tool_calls + _metadata_int(
+            extensions, "extra_tool_calls"
+        )
+    used = {
+        "iterations": max(0, iterations),
+        "wall_clock_ms": max(0, wall_clock_ms),
+        "tool_calls": max(0, tool_calls),
+    }
+    remaining = {key: max(0, limit - used[key]) for key, limit in limits.items()}
+    exceeded = next((key for key, limit in limits.items() if used[key] > limit), None)
+    if exceeded is not None:
+        return ProjectBudgetCheckResult(
+            decision=ProjectPermissionDecision.BUDGET_EXCEEDED,
+            reason=f"{exceeded} budget exceeded",
+            limits=limits,
+            used=used,
+            remaining=remaining,
+        )
+    return ProjectBudgetCheckResult(
+        decision=ProjectPermissionDecision.ALLOWED,
+        reason="within continuation policy",
+        limits=limits,
+        used=used,
+        remaining=remaining,
+    )
+
+
 def _project_budget_limits_with_extensions(
     budget: ProjectBudgetPolicy,
     metadata: dict[str, object],
@@ -82,4 +128,4 @@ def _metadata_int(metadata: object, key: str) -> int:
         return 0
 
 
-__all__ = ["evaluate_project_budget"]
+__all__ = ["evaluate_continuation_budget", "evaluate_project_budget"]

@@ -12,7 +12,11 @@ from ....constants import (
     BRAIN_TERMINAL_STATES,
     BRAIN_STATE_WAITING_USER,
 )
-from ....diagnostics.events import CanonicalEventLogger
+from ....diagnostics.events import (
+    CanonicalEventLogger,
+    PLAN_REVIEW_REQUESTED_EVENT,
+    PLAN_REVIEW_RESOLVED_EVENT,
+)
 from ....diagnostics.telemetry import emit_request_readiness_operation
 from ....diagnostics.transitions import transition
 from ....loop.clarify import sync_llm_clarify_context_from_decision
@@ -40,79 +44,12 @@ def dispatch(*, runner: Any, state: Any, logger: CanonicalEventLogger, request: 
         None if request.consume_user_input_for_command else request.user_input
     )
     try:
-        validation_attempts = 0
-        fixed_act_profile = fixed_act_profile_from_profile(
-            getattr(runner, "profile", None)
-        )
-        disabled_wait = _disabled_handoff_wait_response(
-            runner=runner,
-            state=state,
-            logger=logger,
-            user_input=effective_user_input,
-        )
-        if disabled_wait is not None:
-            return disabled_wait
-        while True:
-            if not request.skip_decide:
-                request.decision = _run_decide_phase(
-                    runner=runner,
-                    state=state,
-                    logger=logger,
-                    request=request,
-                    user_input=effective_user_input,
-                )
-            raw_entry_act_profile = (
-                str(getattr(request.decision, "act_profile", "") or "").strip() or None
-            )
-            _bootstrap_act_route(
-                runner=runner,
-                state=state,
-                logger=logger,
-                request=request,
-                user_input=effective_user_input,
-                fixed_act_profile=fixed_act_profile,
-            )
-            _emit_entry_event(
-                state=state,
-                logger=logger,
-                decision=request.decision,
-                raw_act_profile=raw_entry_act_profile,
-            )
-            override = _maybe_return_meta_override(
-                runner=runner,
-                state=state,
-                logger=logger,
-                request=request,
-                user_input=effective_user_input,
-            )
-            if override is not None:
-                return override
-            validation_decision = _decision_for_validation(
-                state=state,
-                request=request,
-                user_input=effective_user_input,
-                fixed_act_profile=fixed_act_profile,
-            )
-            accepted = _accept_or_redecide(
-                runner=runner,
-                state=state,
-                logger=logger,
-                request=request,
-                user_input=effective_user_input,
-                validation_decision=validation_decision,
-                validation_attempts=validation_attempts,
-            )
-            if accepted is True:
-                break
-            if isinstance(accepted, int):
-                validation_attempts = accepted
-                continue
-            return accepted
-        return _invoke_and_finalize(
+        return _dispatch_request(
             runner=runner,
             state=state,
             logger=logger,
             request=request,
+            user_input=effective_user_input,
         )
     except ProviderError as exc:
         if exc.code == "EMPTY_PROVIDER_RESPONSE":
@@ -132,6 +69,105 @@ def dispatch(*, runner: Any, state: Any, logger: CanonicalEventLogger, request: 
             user_input=effective_user_input,
             exc=exc,
         )
+
+
+def _dispatch_request(
+    *,
+    runner: Any,
+    state: Any,
+    logger: CanonicalEventLogger,
+    request: Any,
+    user_input: str | None,
+) -> Any:
+    validation_attempts = 0
+    fixed_act_profile = fixed_act_profile_from_profile(getattr(runner, "profile", None))
+    if (
+        not str(user_input or "").strip()
+        and getattr(getattr(state, "request_readiness", None), "state", None)
+        == "needs_plan_review"
+    ):
+        return _plan_review_wait_response(
+            runner=runner,
+            state=state,
+            logger=logger,
+            emit_requested=False,
+        )
+    disabled_wait = _disabled_handoff_wait_response(
+        runner=runner,
+        state=state,
+        logger=logger,
+        user_input=user_input,
+    )
+    if disabled_wait is not None:
+        return disabled_wait
+    while True:
+        if not request.skip_decide:
+            request.decision = _run_decide_phase(
+                runner=runner,
+                state=state,
+                logger=logger,
+                request=request,
+                user_input=user_input,
+            )
+        raw_act_profile = (
+            str(getattr(request.decision, "act_profile", "") or "").strip() or None
+        )
+        _bootstrap_act_route(
+            runner=runner,
+            state=state,
+            logger=logger,
+            request=request,
+            user_input=user_input,
+            fixed_act_profile=fixed_act_profile,
+        )
+        _emit_entry_event(
+            state=state,
+            logger=logger,
+            decision=request.decision,
+            raw_act_profile=raw_act_profile,
+        )
+        override = _maybe_return_meta_override(
+            runner=runner,
+            state=state,
+            logger=logger,
+            request=request,
+            user_input=user_input,
+        )
+        if override is not None:
+            return override
+        accepted = _accept_or_redecide(
+            runner=runner,
+            state=state,
+            logger=logger,
+            request=request,
+            user_input=user_input,
+            validation_decision=_decision_for_validation(
+                state=state,
+                request=request,
+                user_input=user_input,
+                fixed_act_profile=fixed_act_profile,
+            ),
+            validation_attempts=validation_attempts,
+        )
+        if accepted is True:
+            plan_review = _plan_review_wait_response(
+                runner=runner,
+                state=state,
+                logger=logger,
+            )
+            if plan_review is not None:
+                return plan_review
+            break
+        if isinstance(accepted, int):
+            validation_attempts = accepted
+            continue
+        return accepted
+    return _invoke_and_finalize(
+        runner=runner,
+        state=state,
+        logger=logger,
+        request=request,
+    )
 
 
 def _disabled_handoff_wait_response(
@@ -172,6 +208,47 @@ def _disabled_handoff_wait_response(
         logger=logger,
         message="Request handoff is disabled for this in-flight waiting state.",
         status=status,
+    )
+
+
+def _plan_review_wait_response(
+    *,
+    runner: Any,
+    state: Any,
+    logger: CanonicalEventLogger,
+    emit_requested: bool = True,
+) -> Any | None:
+    readiness = getattr(state, "request_readiness", None)
+    if str(getattr(readiness, "state", "") or "").strip() != "needs_plan_review":
+        return None
+    if emit_requested:
+        logger.emit(
+            PLAN_REVIEW_REQUESTED_EVENT,
+            {"requested_outcome": getattr(readiness, "requested_outcome", None)},
+            trace_id=state.trace_id,
+        )
+    steps = [
+        (
+            item.strip()
+            if isinstance(item, str)
+            else str(getattr(item, "description", "") or "").strip()
+        )
+        for item in getattr(state, "decision_sub_intents", ())
+    ]
+    plan = "\n".join(
+        f"{index}. {step}"
+        for index, step in enumerate((step for step in steps if step), start=1)
+    )
+    return _runner_delegate(
+        "_respond_with_meta",
+        runner,
+        state=state,
+        logger=logger,
+        message=(
+            f"Proposed plan:\n{plan}\n\n"
+            "Review it, then approve or revise it before I act."
+        ),
+        status=BRAIN_STATE_WAITING_USER,
     )
 
 
@@ -472,6 +549,11 @@ def _record_accepted_decision(
 ) -> None:
     entry_barrel = _entry_barrel()
     if hasattr(request.decision, "route"):
+        prior_readiness = getattr(state, "request_readiness", None)
+        prior_sub_intents = list(getattr(state, "decision_sub_intents", []) or [])
+        prior_sub_intent_refs = list(
+            getattr(state, "decision_sub_intent_refs", []) or []
+        )
         decision_plan = (
             state.plan
             if str(getattr(request.decision, "reason_code", "") or "").strip()
@@ -488,6 +570,22 @@ def _record_accepted_decision(
             plan=decision_plan,
             capability_category=request.capability_category,
         )
+        current_readiness = _preserve_pending_plan_review(
+            state=state,
+            decision=request.decision,
+            prior_readiness=prior_readiness,
+            prior_sub_intents=prior_sub_intents,
+            prior_sub_intent_refs=prior_sub_intent_refs,
+        )
+        if (
+            getattr(prior_readiness, "state", None) == "needs_plan_review"
+            and getattr(current_readiness, "state", None) != "needs_plan_review"
+        ):
+            logger.emit(
+                PLAN_REVIEW_RESOLVED_EVENT,
+                {"state": getattr(current_readiness, "state", None)},
+                trace_id=state.trace_id,
+            )
         try:
             emit_request_readiness_operation(
                 telemetryctl=getattr(runner, "telemetryctl", None),
@@ -527,6 +625,37 @@ def _record_accepted_decision(
             state.decision_memory_refs.extend(
                 ref for ref in decision_memory_refs if ref not in existing_refs
             )
+
+
+def _preserve_pending_plan_review(
+    *,
+    state: Any,
+    decision: Any,
+    prior_readiness: Any,
+    prior_sub_intents: list[Any],
+    prior_sub_intent_refs: list[Any],
+) -> Any:
+    current = getattr(state, "request_readiness", None)
+    if getattr(prior_readiness, "state", None) != "needs_plan_review":
+        return current
+    if current is None:
+        state.request_readiness = prior_readiness.model_copy(deep=True)
+        state.decision_sub_intents = prior_sub_intents
+        state.decision_sub_intent_refs = prior_sub_intent_refs
+        return state.request_readiness
+    plan_changed = (
+        getattr(current, "state", None) == "ready"
+        and getattr(decision, "route", None) == BRAIN_DECISION_ROUTE_ACT
+        and getattr(current, "requested_outcome", None) == "execute"
+        and list(getattr(state, "decision_sub_intents", []) or []) != prior_sub_intents
+    )
+    if not plan_changed:
+        return current
+    state.request_readiness = prior_readiness.model_copy(deep=True)
+    if not state.decision_sub_intents:
+        state.decision_sub_intents = prior_sub_intents
+        state.decision_sub_intent_refs = prior_sub_intent_refs
+    return state.request_readiness
 
 
 def _redecide_after_validation_failure(

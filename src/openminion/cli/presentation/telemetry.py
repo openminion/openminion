@@ -205,7 +205,27 @@ def _render_card(
         return f"telemetry: error\nerror: {report.error.code}"
     invocation = report.invocation
     if invocation is None:
-        return "telemetry: empty"
+        no_failed = any(
+            diagnostic.code == "NO_FAILED_INVOCATION"
+            for diagnostic in report.diagnostics
+        )
+        return "\n".join(
+            (
+                "Telemetry",
+                (
+                    "No failed model runs in this session."
+                    if no_failed
+                    else "No model runs in this session yet."
+                ),
+                _export_health_line(report),
+                *_capture_lines(exact_capture_enabled),
+                (
+                    "Next: /telemetry latest"
+                    if no_failed
+                    else "Next: send a prompt, then run /telemetry."
+                ),
+            )
+        )
     usage = invocation.usage
     duration = (
         f"{invocation.duration_ms / 1000:.1f}s"
@@ -235,8 +255,7 @@ def _render_card(
             f"trace files: {invocation.trace_count if invocation.trace_count is not None else '-'}",
             _export_health_line(report),
             _export_queue_line(report),
-            "exact payload capture: "
-            + ("enabled" if exact_capture_enabled else "disabled"),
+            *_capture_lines(exact_capture_enabled),
             _next_actions(report),
         )
     )
@@ -244,7 +263,9 @@ def _render_card(
 
 def _export_health_line(report: TelemetryDebugReport) -> str:
     health = report.export_health
-    protocol = f" ({health.protocol})" if health.protocol else ""
+    protocol = f" ({health.protocol})" if health.enabled and health.protocol else ""
+    if health.enabled and health.state == "unavailable":
+        return f"external export: configured{protocol}; live health unavailable"
     return f"external export: {health.state}{protocol}"
 
 
@@ -260,11 +281,11 @@ def _export_queue_line(report: TelemetryDebugReport) -> str:
     )
 
 
-def _runtime_exporter_config(runtime: Any) -> OTELExporterConfig | None:
-    owner = getattr(runtime, "api_runtime", runtime)
-    config = getattr(getattr(owner, "config", None), "runtime", None)
-    exporter_config = getattr(config, "telemetry_exporter", None)
-    return exporter_config if isinstance(exporter_config, OTELExporterConfig) else None
+def _capture_lines(enabled: bool) -> tuple[str, ...]:
+    lines = ["Exact payload capture: " + ("enabled" if enabled else "disabled")]
+    if not enabled:
+        lines.append("Capture setup: restart with OPENMINION_TRACE_REQUESTS=1")
+    return tuple(lines)
 
 
 def _runtime_export_queue_stats(runtime: Any) -> dict[str, int] | None:
@@ -275,11 +296,19 @@ def _runtime_export_queue_stats(runtime: Any) -> dict[str, int] | None:
     )
 
 
+def _runtime_exporter_config(runtime: Any) -> OTELExporterConfig:
+    owner = getattr(runtime, "api_runtime", runtime)
+    config = getattr(getattr(owner, "config", None), "runtime", None)
+    exporter = getattr(config, "telemetry_exporter", None)
+    return (
+        exporter if isinstance(exporter, OTELExporterConfig) else OTELExporterConfig()
+    )
+
+
 def _runtime_trace_capture_enabled(runtime: Any) -> bool:
     owner = getattr(runtime, "api_runtime", runtime)
     config = getattr(getattr(owner, "config", None), "runtime", None)
-    env = getattr(config, "env", None)
-    return bool(trace_requests_enabled(env=env))
+    return trace_requests_enabled(env=getattr(config, "env", {}))
 
 
 def _card_title(report: TelemetryDebugReport) -> str:
