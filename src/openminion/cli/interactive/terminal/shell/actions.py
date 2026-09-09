@@ -20,11 +20,10 @@ from openminion.cli.presentation.models import (
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.detail_modes import resolve_details_mode
-from .delegation import delegation_start_message, run_slash_delegate
+from .delegation import run_slash_delegate
 from .labels import _runtime_label
 from .model_setup import handle_model_setup
 from openminion.cli.presentation.slash_commands import (
-    canonical_slash_command,
     slash_help_rows,
     terminal_slash_commands,
     unknown_slash_command_message,
@@ -617,7 +616,6 @@ async def _handle_slash(
     working_dir: str,
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> bool:
-    text = canonical_slash_command(text)
     cmd = text.split(maxsplit=1)[0]
 
     if cmd in ("/exit", "/quit"):
@@ -636,16 +634,7 @@ async def _handle_slash(
     ):
         return False
     if cmd == "/delegate":
-        start_message = delegation_start_message(text)
-        if start_message:
-            transcript.push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=start_message,
-                )
-            )
-        await run_slash_delegate(text, runtime, console, approval_callback)
+        await run_slash_delegate(text, runtime, console, approval_callback, transcript)
         return False
     if cmd == "/project":
         await run_slash_project(
