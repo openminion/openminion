@@ -4,8 +4,9 @@ import io
 import json
 import shlex
 import sys
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -14,6 +15,7 @@ from openminion.cli.commands.autonomy_project import run_project_turn
 from openminion.cli.parser.base import build_parser
 from openminion.modules.task import (
     AutonomyRunError,
+    TaskLifecycleState,
     TaskManager,
     build_project_run_projection,
     build_autonomy_run,
@@ -22,6 +24,7 @@ from openminion.modules.task import (
     ProjectCycleDecision,
 )
 from openminion.modules.task.project import AutonomyLoopConditionKind
+from openminion.modules.task.plan import TaskPlan, TaskPlanStep
 from openminion.modules.llm.providers.contracts import ProviderError
 from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
@@ -29,9 +32,38 @@ from openminion.services.runtime.project_worker import (
 )
 
 
-def _run_cli(args: list[str]) -> tuple[int, str]:
+def _run_cli(
+    args: list[str],
+    *,
+    typed_replay: bool = True,
+) -> tuple[int, str]:
     buf = io.StringIO()
-    with redirect_stdout(buf):
+    replay = (
+        args[args.index("--replay-response") + 1]
+        if "--replay-response" in args
+        else None
+    )
+    turn = ProjectTurnResult(
+        summary=replay or "replay",
+        task_plan=TaskPlan(
+            plan_id="replay-plan",
+            objective="Replay fixture",
+            status="completed",
+            steps=[
+                TaskPlanStep(
+                    step_id="replay",
+                    description="Complete the replay fixture",
+                    status="completed",
+                )
+            ],
+        ),
+    )
+    context = (
+        patch("openminion.cli.commands.autonomy.run_project_turn", return_value=turn)
+        if replay is not None and typed_replay
+        else nullcontext()
+    )
+    with context, redirect_stdout(buf):
         try:
             code = main(args)
         except SystemExit as exc:
@@ -96,6 +128,30 @@ def test_autonomy_parser_registers_list_show_start_resume_cancel() -> None:
     assert project_args.autonomy_command == "project"
     assert project_args.project_command == "reprioritize"
     assert callable(list_args.handler)
+
+
+def test_summary_only_replay_does_not_fake_task_plan_completion(tmp_path: Path) -> None:
+    code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "prove replay semantics",
+            "--replay-response",
+            "done",
+            "--verification-waiver",
+            "deterministic fixture",
+            "--json",
+        ],
+        typed_replay=False,
+    )
+
+    run = json.loads(output)["run"]
+    assert code == 0
+    assert run["status"] == "blocked"
+    assert run["last_error"]["code"] == "PROJECT_TASK_PLAN_INCOMPLETE"
+    assert run["next_action_hint"] == "Resume with a model-produced task plan."
 
 
 def test_project_turn_uses_canonical_successful_tool_results_as_progress(
@@ -990,7 +1046,21 @@ def test_autonomy_start_interrupts_to_resumable_blocked_run(
 
     monkeypatch.setattr(
         "openminion.cli.commands.autonomy.run_project_turn",
-        lambda *_args, **_kwargs: ProjectTurnResult(summary="resumed successfully"),
+        lambda *_args, **_kwargs: ProjectTurnResult(
+            summary="resumed successfully",
+            task_plan=TaskPlan(
+                plan_id="resume-plan",
+                objective="resume after operator interruption",
+                status="completed",
+                steps=[
+                    TaskPlanStep(
+                        step_id="resume",
+                        description="Resume the interrupted project",
+                        status="completed",
+                    )
+                ],
+            ),
+        ),
     )
     resume_code, resume_output = _run_cli(
         [
@@ -1008,6 +1078,61 @@ def test_autonomy_start_interrupts_to_resumable_blocked_run(
     assert resume_code == 0
     assert resumed["run_id"] == run["run_id"]
     assert resumed["status"] == "completed"
+
+
+def test_autonomy_resume_uses_approved_iteration_extension(tmp_path: Path) -> None:
+    counter = tmp_path / "verification-count"
+    script = (
+        "from pathlib import Path; "
+        f"p=Path({str(counter)!r}); "
+        "n=int(p.read_text())+1 if p.exists() else 1; "
+        "p.write_text(str(n)); raise SystemExit(n < 3)"
+    )
+    verify = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+    _code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "finish after an approved extension",
+            "--max-iterations",
+            "1",
+            "--replay-response",
+            "first attempt",
+            "--verify-command",
+            verify,
+            "--json",
+        ]
+    )
+    blocked = json.loads(output)["run"]
+    assert blocked["status"] == "blocked"
+
+    extend_code, _extend_output = _run_project_cli(
+        tmp_path,
+        tmp_path / "data/task/task.db",
+        "extend-budget",
+        "--extra-iterations",
+        "2",
+        task_id=blocked["task_id"],
+    )
+    resume_code, resume_output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "resume",
+            blocked["run_id"],
+            "--replay-response",
+            "continued attempt",
+            "--json",
+        ]
+    )
+
+    resumed = json.loads(resume_output)["run"]
+    assert extend_code == 0
+    assert resume_code == 0
+    assert resumed["status"] == "completed"
+    assert counter.read_text(encoding="utf-8") == "3"
 
 
 def test_autonomy_resume_interrupts_to_resumable_blocked_run(
@@ -1167,10 +1292,6 @@ def test_unattended_autonomy_schedules_one_cycle_and_cancel_removes_it(
         "openminion.cli.commands.autonomy_project.configured_cron_store",
         lambda _args, config_ref: cron_store,
     )
-    monkeypatch.setattr(
-        "openminion.cli.commands.autonomy.configured_cron_store",
-        lambda _args, config_ref: cron_store,
-    )
     verify_command = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(0)'"
     code, output = _run_cli(
         [
@@ -1209,6 +1330,68 @@ def test_unattended_autonomy_schedules_one_cycle_and_cancel_removes_it(
 
     assert cancel_code == 0
     assert json.loads(cancelled_output)["run"]["status"] == "cancelled"
+    assert cron_store.jobs == {}
+
+
+def test_unattended_cancel_retries_linked_wake_deletion(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class CronStore:
+        def __init__(self) -> None:
+            self.jobs: dict[str, dict[str, object]] = {}
+            self.fail_delete = False
+
+        def add_cron_job(self, *, job_id, **kwargs):  # noqa: ANN001, ANN003
+            self.jobs[job_id] = kwargs
+            return job_id
+
+        def delete_cron_job(self, job_id):  # noqa: ANN001
+            if self.fail_delete:
+                self.fail_delete = False
+                raise RuntimeError("delete unavailable")
+            self.jobs.pop(job_id, None)
+
+        def close(self) -> None:
+            return None
+
+    cron_store = CronStore()
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.configured_cron_store",
+        lambda _args, config_ref: cron_store,
+    )
+    verify = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(0)'"
+    _code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "cancel reliably",
+            "--verify-command",
+            verify,
+            "--unattended",
+            "--json",
+        ]
+    )
+    run = json.loads(output)["run"]
+    cron_store.fail_delete = True
+
+    first_code, _first_output = _run_cli(
+        [*_root_args(tmp_path), "autonomy", "cancel", run["run_id"]]
+    )
+    assert first_code != 0
+
+    manager = TaskManager.for_lifecycle_db(db_path=tmp_path / "data/task/task.db")
+    task = manager.get_task(run["task_id"])
+    assert task is not None and task.state == TaskLifecycleState.CANCELLED
+    assert cron_store.jobs
+
+    code, retry_output = _run_cli(
+        [*_root_args(tmp_path), "autonomy", "cancel", run["run_id"], "--json"]
+    )
+    assert code == 0
+    assert json.loads(retry_output)["run"]["status"] == "cancelled"
     assert cron_store.jobs == {}
 
 

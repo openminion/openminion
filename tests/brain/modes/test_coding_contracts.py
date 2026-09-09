@@ -70,6 +70,7 @@ def test_v1_allowlist_contains_expected_tools() -> None:
 
 def test_project_allowlists_match_the_accepted_repository_sets() -> None:
     expected_core = {
+        "plan",
         "git.status",
         "git.diff",
         "git.log",

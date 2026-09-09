@@ -158,6 +158,7 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         timeout=1200,
         requires_approval=True,
         max_auto_approvals=8,
+        max_auto_continuations=2,
         approval_reply="session",
         use_scratch_workspace=True,
         include_project_context=False,

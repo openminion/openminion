@@ -17,6 +17,7 @@ from openminion.modules.brain.schemas import (
     BudgetCounters,
     ClarifyContext,
     RespondDecision,
+    RequestReadiness,
     StepOutput,
     ToolCommand,
     WorkingState,
@@ -165,6 +166,246 @@ def _state(*, session_id: str = "s-decision-readiness") -> WorkingState:
 
 def _event_types(logger: MagicMock) -> list[str]:
     return [call.args[0] for call in logger.emit.call_args_list]
+
+
+def test_plan_review_waits_before_invoke_then_ready_decision_runs(
+    monkeypatch,
+) -> None:
+    state = _state(session_id="s-plan-review")
+    review = build_seeded_act_decision(
+        command=ToolCommand(
+            title="Write file",
+            tool_name="file.write",
+            args={"path": "README.md", "content": "ready"},
+        ),
+        request_readiness={
+            "posture": "review_before_act",
+            "requested_outcome": "execute",
+            "state": "needs_plan_review",
+        },
+        sub_intents=["Write the requested file"],
+    )
+    ready = review.model_copy(
+        update={
+            "request_readiness": RequestReadiness(
+                posture="brief_plan",
+                requested_outcome="execute",
+                state="ready",
+            )
+        },
+        deep=True,
+    )
+    ready._seeded_commands = review._seeded_commands
+    omitted = ready.model_copy(update={"request_readiness": None}, deep=True)
+    omitted._seeded_commands = review._seeded_commands
+    manager = _FakeDirectDispatchHarness()
+    _install_direct_dispatch_capture(monkeypatch, manager)
+    logger = MagicMock()
+
+    waiting = dispatch(
+        runner=_FakeRunner([review]),
+        state=state,
+        logger=logger,
+        request=build_execution_entry_request(
+            user_input="implement this after I review the plan",
+            forced_tools=None,
+            capability_category=None,
+        ),
+    )
+    revised = dispatch(
+        runner=_FakeRunner([omitted]),
+        state=state,
+        logger=logger,
+        request=build_execution_entry_request(
+            user_input="revise the second step",
+            forced_tools=None,
+            capability_category=None,
+        ),
+    )
+    assert revised.status == BRAIN_STATE_WAITING_USER
+    assert manager.invoke_calls == []
+
+    completed = dispatch(
+        runner=_FakeRunner([ready]),
+        state=state,
+        logger=logger,
+        request=build_execution_entry_request(
+            user_input="the plan is approved",
+            forced_tools=None,
+            capability_category=None,
+        ),
+    )
+
+    assert waiting.status == BRAIN_STATE_WAITING_USER
+    assert "1. Write the requested file" in waiting.message
+    assert manager.invoke_calls == [ready]
+    assert completed.status == "done"
+    assert "brain.plan_review.requested" in _event_types(logger)
+    assert "brain.plan_review.resolved" in _event_types(logger)
+
+
+def test_plan_review_keeps_reviewed_steps_when_readiness_is_omitted(
+    monkeypatch,
+) -> None:
+    state = _state(session_id="s-plan-review-omitted")
+    state.request_readiness = RequestReadiness(
+        posture="review_before_act",
+        requested_outcome="execute",
+        state="needs_plan_review",
+    )
+    state.decision_sub_intents = ["Change A"]
+    omitted = build_seeded_act_decision(
+        command=ToolCommand(
+            title="Write file",
+            tool_name="file.write",
+            args={"path": "README.md", "content": "ready"},
+        ),
+        request_readiness=None,
+        sub_intents=[],
+    )
+    manager = _FakeDirectDispatchHarness()
+    _install_direct_dispatch_capture(monkeypatch, manager)
+
+    output = dispatch(
+        runner=_FakeRunner([omitted]),
+        state=state,
+        logger=MagicMock(),
+        request=build_execution_entry_request(
+            user_input="revise the wording",
+            forced_tools=None,
+            capability_category=None,
+        ),
+    )
+
+    assert output.status == BRAIN_STATE_WAITING_USER
+    assert "1. Change A" in output.message
+    assert state.decision_sub_intents == ["Change A"]
+    assert manager.invoke_calls == []
+
+
+def test_plan_review_requires_changed_ready_steps_to_be_reviewed_again(
+    monkeypatch,
+) -> None:
+    state = _state(session_id="s-plan-review-changed")
+    state.request_readiness = RequestReadiness(
+        posture="review_before_act",
+        requested_outcome="execute",
+        state="needs_plan_review",
+    )
+    state.decision_sub_intents = ["Change A"]
+    changed = build_seeded_act_decision(
+        command=ToolCommand(
+            title="Write file",
+            tool_name="file.write",
+            args={"path": "README.md", "content": "ready"},
+        ),
+        request_readiness={
+            "posture": "brief_plan",
+            "requested_outcome": "execute",
+            "state": "ready",
+        },
+        sub_intents=["Change B"],
+    )
+    manager = _FakeDirectDispatchHarness()
+    _install_direct_dispatch_capture(monkeypatch, manager)
+
+    output = dispatch(
+        runner=_FakeRunner([changed]),
+        state=state,
+        logger=MagicMock(),
+        request=build_execution_entry_request(
+            user_input="approve with this change",
+            forced_tools=None,
+            capability_category=None,
+        ),
+    )
+
+    assert output.status == BRAIN_STATE_WAITING_USER
+    assert "1. Change B" in output.message
+    assert state.request_readiness.state == "needs_plan_review"
+    assert manager.invoke_calls == []
+
+
+def test_plan_review_keeps_visible_steps_when_ready_decision_omits_them(
+    monkeypatch,
+) -> None:
+    state = _state(session_id="s-plan-review-empty-ready")
+    state.request_readiness = RequestReadiness(
+        posture="review_before_act",
+        requested_outcome="execute",
+        state="needs_plan_review",
+    )
+    state.decision_sub_intents = ["Change A"]
+    ready = build_seeded_act_decision(
+        command=ToolCommand(
+            title="Write file",
+            tool_name="file.write",
+            args={"path": "README.md", "content": "ready"},
+        ),
+        request_readiness={
+            "posture": "brief_plan",
+            "requested_outcome": "execute",
+            "state": "ready",
+        },
+        sub_intents=[],
+    )
+    manager = _FakeDirectDispatchHarness()
+    _install_direct_dispatch_capture(monkeypatch, manager)
+
+    output = dispatch(
+        runner=_FakeRunner([ready]),
+        state=state,
+        logger=MagicMock(),
+        request=build_execution_entry_request(
+            user_input="approve",
+            forced_tools=None,
+            capability_category=None,
+        ),
+    )
+
+    assert output.status == BRAIN_STATE_WAITING_USER
+    assert "1. Change A" in output.message
+    assert manager.invoke_calls == []
+
+
+def test_pending_plan_review_ignores_no_input_tick(monkeypatch) -> None:
+    state = _state(session_id="s-plan-review-tick")
+    state.request_readiness = RequestReadiness(
+        posture="review_before_act",
+        requested_outcome="execute",
+        state="needs_plan_review",
+    )
+    state.decision_sub_intents = ["Write the requested file"]
+    ready = build_seeded_act_decision(
+        command=ToolCommand(
+            title="Write file",
+            tool_name="file.write",
+            args={"path": "README.md", "content": "ready"},
+        ),
+        request_readiness={
+            "posture": "brief_plan",
+            "requested_outcome": "execute",
+            "state": "ready",
+        },
+    )
+    runner = _FakeRunner([ready])
+    manager = _FakeDirectDispatchHarness()
+    _install_direct_dispatch_capture(monkeypatch, manager)
+
+    waiting = dispatch(
+        runner=runner,
+        state=state,
+        logger=MagicMock(),
+        request=build_execution_entry_request(
+            user_input=None,
+            forced_tools=None,
+            capability_category=None,
+        ),
+    )
+
+    assert waiting.status == BRAIN_STATE_WAITING_USER
+    assert manager.invoke_calls == []
+    assert len(runner._decisions) == 1
 
 
 def test_dispatch_redecides_before_mode_validation_on_placeholder_tool_args(

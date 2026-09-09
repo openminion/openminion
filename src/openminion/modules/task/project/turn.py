@@ -51,6 +51,7 @@ class ProjectTurnRequest:
     milestone: str
     prompt: str
     allowed_tools: tuple[str, ...] = ()
+    project_tool_calls_remaining: int | None = None
 
 
 @dataclass(frozen=True)
@@ -269,6 +270,10 @@ def project_turn_inbound_metadata(
             turn_tool_allowlist=",".join(request.allowed_tools),
             turn_tool_allowlist_supplied="true",
         )
+    if request.project_tool_calls_remaining is not None:
+        metadata["project_tool_calls_remaining"] = str(
+            request.project_tool_calls_remaining
+        )
     return metadata
 
 
@@ -390,14 +395,11 @@ def _project_tool_results(
 def _project_checkpoint_revision(
     metadata: Mapping[str, object],
 ) -> TaskPlanRevision | None:
-    revision = _project_metadata_model(
+    return _project_metadata_model(
         metadata,
         "task_plan.revision",
         TaskPlanRevision,
     )
-    if revision is None or not revision.revision_id or not revision.verifier_refs:
-        return None
-    return revision
 
 
 def _project_tool_call_count(

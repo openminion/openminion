@@ -15,6 +15,7 @@ from openminion.modules.brain.loop.strategies.coding.contracts import (
 from openminion.modules.config import resolve_module_data_root, resolve_module_home_root
 from openminion.modules.task import (
     AutonomyRun,
+    AutonomyRunError,
     AutonomyRunPhase,
     AutonomyRunStatus,
     AutonomyRunStore,
@@ -33,12 +34,10 @@ from openminion.modules.task.autonomy import now_ms
 from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.task.project import (
     AutonomyLoopConditionKind,
-    AutonomyLoopJudgment,
     ProjectDomainVerificationStatus,
     ProjectTurnRequest,
     ProjectTurnResult,
     build_project_terminal_proof,
-    classify_autonomy_loop_condition,
     commit_project_run_checkpoint,
     evaluate_project_turn_verification,
     project_condition_from_metadata,
@@ -51,6 +50,7 @@ from openminion.modules.task.project import (
     project_workspace,
     run_project_verification_commands,
 )
+from openminion.modules.task.project.budget import evaluate_continuation_budget
 from openminion.modules.task.project import (
     checkpoints as project_cp,
     effects as project_effects,
@@ -159,6 +159,7 @@ class _CycleEvaluation:
     verification_state: ProjectVerificationState
     replan_count: int
     reason: str
+    cycle_limit: int
 
 
 class ProjectWorker:
@@ -227,6 +228,8 @@ class ProjectWorker:
         )
         if inactive is not None:
             return inactive
+        if run.execution_selectors.verification_domain not in {"coding", "research"}:
+            return self._domain_blocked(run, checkpoint.project_run)
         check_events: tuple[dict[str, object], ...] = ()
         checkpoint, check_event, waiting = project_progress.observe_repository_checks(
             run,
@@ -258,9 +261,21 @@ class ProjectWorker:
                     verification=(),
                     check_events=check_events,
                 )
-        cycle_number = checkpoint.project_run.committed_cycle_count + 1
-        if cycle_number > run.continuation_policy.max_iterations:
+        metrics = project_cp.repository_lifecycle_metrics(checkpoint)
+        budget = evaluate_continuation_budget(
+            run.continuation_policy,
+            metadata=task.metadata,
+            iterations=metrics["cycle_count"],
+            wall_clock_ms=max(0, now_ms() - run.created_at_ms),
+            tool_calls=metrics["tool_call_count"],
+        )
+        depleted = next(
+            (key for key, remaining in budget.remaining.items() if remaining == 0),
+            None,
+        )
+        if not budget.allowed or depleted is not None:
             return self._budget_blocked(run, checkpoint.project_run)
+        cycle_number = checkpoint.project_run.committed_cycle_count + 1
         claim = self._task_manager.lifecycle_repository.acquire_project_cycle_claim(
             task_id=task.task_id,
             owner_id=self._owner_id,
@@ -277,6 +292,8 @@ class ProjectWorker:
                 cycle_number=cycle_number,
                 triggering_cron_job_id=triggering_cron_job_id,
                 check_events=check_events,
+                project_tool_calls_remaining=budget.remaining.get("tool_calls"),
+                cycle_limit=budget.limits["iterations"],
             )
         finally:
             self._task_manager.lifecycle_repository.release_project_cycle_claim(claim)
@@ -292,8 +309,16 @@ class ProjectWorker:
         cycle_number: int,
         triggering_cron_job_id: str | None,
         check_events: tuple[dict[str, object], ...],
+        project_tool_calls_remaining: int | None,
+        cycle_limit: int,
     ) -> ProjectWorkerResult:
-        evaluation = self._evaluate_cycle(run, checkpoint, cycle_number=cycle_number)
+        evaluation = self._evaluate_cycle(
+            run,
+            checkpoint,
+            cycle_number=cycle_number,
+            project_tool_calls_remaining=project_tool_calls_remaining,
+            cycle_limit=cycle_limit,
+        )
         checkpoint = cast(
             ProjectCheckpoint,
             load_latest_project_checkpoint(
@@ -503,10 +528,28 @@ class ProjectWorker:
         checkpoint: ProjectCheckpoint,
         *,
         cycle_number: int,
+        project_tool_calls_remaining: int | None,
+        cycle_limit: int,
     ) -> _CycleEvaluation:
         project_run = checkpoint.project_run
         cycle_id = f"{project_run.project_run_id}:cycle:{cycle_number}"
         milestone = project_run.current_milestone or run.goal_text
+        allowed_tools: tuple[str, ...] = ()
+        if run.execution_selectors.verification_domain != "research":
+            allowed_tools = tuple(
+                sorted(
+                    select_coding_allowed_tools(
+                        project_launch_approved=(
+                            project_policy.repository_project_launch_approved(
+                                checkpoint
+                            )
+                        ),
+                        release_approved=(
+                            project_policy.repository_release_tools_approved(checkpoint)
+                        ),
+                    )
+                )
+            )
         request = ProjectTurnRequest(
             run_id=run.run_id,
             project_run_id=project_run.project_run_id,
@@ -523,20 +566,8 @@ class ProjectWorker:
                     project_cp.repository_check_observation(checkpoint)
                 ),
             ),
-            allowed_tools=tuple(
-                sorted(
-                    select_coding_allowed_tools(
-                        project_launch_approved=(
-                            project_policy.repository_project_launch_approved(
-                                checkpoint
-                            )
-                        ),
-                        release_approved=(
-                            project_policy.repository_release_tools_approved(checkpoint)
-                        ),
-                    )
-                )
-            ),
+            allowed_tools=allowed_tools,
+            project_tool_calls_remaining=project_tool_calls_remaining,
         )
         self._log_cycle("project.cycle.started", run, project_run, cycle_id=cycle_id)
         turn_result = self._turn(request)
@@ -553,8 +584,8 @@ class ProjectWorker:
             checkpoint,
             turn_result,
         )
-        disposition = self._cycle_disposition(
-            run,
+        disposition = project_progress.cycle_disposition(
+            cycle_limit,
             cycle_number=cycle_number,
             condition=turn_result.condition,
             has_error=turn_result.error is not None,
@@ -567,14 +598,21 @@ class ProjectWorker:
             ),
             task_plan_incomplete=task_plan_incomplete,
         )
+        decision, status, phase, verification_state, replan_count, reason = disposition
         return _CycleEvaluation(
-            cycle_id,
-            turn_result,
-            verification,
-            closure.status,
-            closure.model_dump(mode="json"),
-            next_milestone,
-            *disposition,
+            cycle_id=cycle_id,
+            turn=turn_result,
+            verification=verification,
+            closure_status=closure.status,
+            closure_payload=closure.model_dump(mode="json"),
+            next_milestone=next_milestone,
+            decision=decision,
+            status=status,
+            phase=phase,
+            verification_state=verification_state,
+            replan_count=replan_count,
+            reason=reason,
+            cycle_limit=cycle_limit,
         )
 
     def _updated_project_run(
@@ -617,7 +655,7 @@ class ProjectWorker:
                 "verification_state": evaluation.verification_state,
                 "task_state": task.state,
                 "committed_cycle_count": project_run.committed_cycle_count + 1,
-                "cycle_limit": run.continuation_policy.max_iterations,
+                "cycle_limit": evaluation.cycle_limit,
                 "progress_refs": tuple(
                     dict.fromkeys(
                         (*project_run.progress_refs, *evaluation.turn.evidence_refs)
@@ -659,7 +697,11 @@ class ProjectWorker:
                 "phase": evaluation.phase,
                 "operator_summary": operator_summary,
                 "next_action_hint": (
-                    "Resume the project after resolving the verifier blocker."
+                    (
+                        "Resume with a model-produced task plan."
+                        if evaluation.reason == "task_plan_incomplete"
+                        else "Resume the project after resolving the verifier blocker."
+                    )
                     if evaluation.decision == ProjectCycleDecision.BLOCKED
                     else None
                 ),
@@ -755,197 +797,6 @@ class ProjectWorker:
         self._autonomy_store.write_proof_packet(packet)
 
     @staticmethod
-    def _cycle_disposition(
-        run: AutonomyRun,
-        *,
-        cycle_number: int,
-        condition: AutonomyLoopConditionKind,
-        has_error: bool,
-        condition_evidence_refs: tuple[str, ...],
-        closure_status: ProjectDomainVerificationStatus,
-        previous_replans: int,
-        has_new_progress: bool,
-        verification_waived: bool,
-        task_plan_incomplete: bool,
-    ) -> project_cp.ProjectCycleDisposition:
-        plan_disposition: project_cp.ProjectCycleDisposition | None = (
-            project_cp.task_plan_incomplete_disposition(
-                run,
-                cycle_number,
-                closure_status,
-                has_error,
-                task_plan_incomplete,
-                previous_replans,
-            )
-        )
-        if plan_disposition is not None:
-            return plan_disposition
-        if closure_status == ProjectDomainVerificationStatus.VERIFIED and not has_error:
-            return ProjectWorker._productive_disposition(
-                run,
-                cycle_number=cycle_number,
-                closure_status=closure_status,
-                previous_replans=previous_replans,
-                has_new_progress=has_new_progress,
-                verification_waived=verification_waived,
-            )
-        judgment = classify_autonomy_loop_condition(
-            condition=condition,
-            evidence_refs=condition_evidence_refs,
-        )
-        if condition != AutonomyLoopConditionKind.PRODUCTIVE:
-            return ProjectWorker._nonproductive_disposition(
-                run,
-                cycle_number=cycle_number,
-                judgment=judgment,
-                previous_replans=previous_replans,
-            )
-        return ProjectWorker._productive_disposition(
-            run,
-            cycle_number=cycle_number,
-            closure_status=closure_status,
-            previous_replans=previous_replans,
-            has_new_progress=has_new_progress,
-            verification_waived=verification_waived,
-        )
-
-    @staticmethod
-    def _nonproductive_disposition(
-        run: AutonomyRun,
-        *,
-        cycle_number: int,
-        judgment: AutonomyLoopJudgment,
-        previous_replans: int,
-    ) -> tuple[
-        ProjectCycleDecision,
-        AutonomyRunStatus,
-        AutonomyRunPhase,
-        ProjectVerificationState,
-        int,
-        str,
-    ]:
-        if judgment.requires_operator:
-            decision = (
-                ProjectCycleDecision.NEEDS_INPUT
-                if judgment.run_status == AutonomyRunStatus.WAITING_FOR_INPUT
-                else ProjectCycleDecision.BLOCKED
-            )
-            return (
-                decision,
-                judgment.run_status,
-                AutonomyRunPhase.RECOVER,
-                ProjectVerificationState.BLOCKED,
-                previous_replans,
-                judgment.reason_code,
-            )
-        if judgment.terminal:
-            return (
-                ProjectCycleDecision.BLOCKED,
-                judgment.run_status,
-                AutonomyRunPhase.CLOSED,
-                ProjectVerificationState.FAILED,
-                previous_replans,
-                judgment.reason_code,
-            )
-        if cycle_number < run.continuation_policy.max_iterations and (
-            judgment.bounded_retry_allowed
-            or (judgment.requires_model_replan and previous_replans < 1)
-        ):
-            return (
-                ProjectCycleDecision.CONTINUE,
-                AutonomyRunStatus.RUNNING,
-                AutonomyRunPhase.RECOVER,
-                ProjectVerificationState.IN_PROGRESS,
-                previous_replans + int(judgment.requires_model_replan),
-                judgment.reason_code,
-            )
-        return (
-            ProjectCycleDecision.BLOCKED,
-            AutonomyRunStatus.BLOCKED,
-            AutonomyRunPhase.CLOSED,
-            ProjectVerificationState.BLOCKED,
-            previous_replans,
-            judgment.reason_code,
-        )
-
-    @staticmethod
-    def _productive_disposition(
-        run: AutonomyRun,
-        *,
-        cycle_number: int,
-        closure_status: ProjectDomainVerificationStatus,
-        previous_replans: int,
-        has_new_progress: bool,
-        verification_waived: bool,
-    ) -> tuple[
-        ProjectCycleDecision,
-        AutonomyRunStatus,
-        AutonomyRunPhase,
-        ProjectVerificationState,
-        int,
-        str,
-    ]:
-        if closure_status == ProjectDomainVerificationStatus.VERIFIED:
-            return (
-                ProjectCycleDecision.STOP,
-                AutonomyRunStatus.COMPLETED,
-                AutonomyRunPhase.CLOSED,
-                (
-                    ProjectVerificationState.WAIVED
-                    if verification_waived
-                    else ProjectVerificationState.VERIFIED
-                ),
-                previous_replans,
-                "verified",
-            )
-        if closure_status == ProjectDomainVerificationStatus.NEEDS_USER:
-            return (
-                ProjectCycleDecision.NEEDS_INPUT,
-                AutonomyRunStatus.WAITING_FOR_INPUT,
-                AutonomyRunPhase.RECOVER,
-                ProjectVerificationState.BLOCKED,
-                previous_replans,
-                "needs_user",
-            )
-        if has_new_progress and cycle_number < run.continuation_policy.max_iterations:
-            return (
-                ProjectCycleDecision.CONTINUE,
-                AutonomyRunStatus.RUNNING,
-                AutonomyRunPhase.RECOVER,
-                ProjectVerificationState.IN_PROGRESS,
-                0,
-                "verification_progress",
-            )
-        if (
-            previous_replans < 1
-            and cycle_number < run.continuation_policy.max_iterations
-        ):
-            return (
-                ProjectCycleDecision.CONTINUE,
-                AutonomyRunStatus.RUNNING,
-                AutonomyRunPhase.RECOVER,
-                ProjectVerificationState.IN_PROGRESS,
-                previous_replans + 1,
-                "verification_replan",
-            )
-        return (
-            ProjectCycleDecision.BLOCKED,
-            AutonomyRunStatus.BLOCKED,
-            AutonomyRunPhase.CLOSED,
-            (
-                ProjectVerificationState.FAILED
-                if closure_status == ProjectDomainVerificationStatus.FAILED
-                else ProjectVerificationState.BLOCKED
-            ),
-            previous_replans,
-            (
-                "verification_failed"
-                if closure_status == ProjectDomainVerificationStatus.FAILED
-                else "verification_blocked"
-            ),
-        )
-
-    @staticmethod
     def _checkpoint_decision(payload: dict[str, object]) -> ProjectCycleDecision:
         return ProjectCycleDecision(str(payload.get("decision") or "blocked"))
 
@@ -958,11 +809,43 @@ class ProjectWorker:
             update={
                 "status": AutonomyRunStatus.BLOCKED,
                 "phase": AutonomyRunPhase.CLOSED,
-                "operator_summary": "Project cycle budget exhausted.",
-                "next_action_hint": "Resume with an explicitly extended cycle budget.",
+                "operator_summary": "Project budget exhausted.",
+                "next_action_hint": "Resume with an explicitly extended project budget.",
             }
         )
         self._autonomy_store.save(blocked)
+        return ProjectWorkerResult(
+            run=blocked,
+            project_run=project_run,
+            decision=ProjectCycleDecision.BLOCKED,
+            verification=(),
+        )
+
+    def _domain_blocked(
+        self,
+        run: AutonomyRun,
+        project_run: ProjectRun,
+    ) -> ProjectWorkerResult:
+        domain = run.execution_selectors.verification_domain
+        blocked = run.model_copy(
+            update={
+                "status": AutonomyRunStatus.BLOCKED,
+                "phase": AutonomyRunPhase.CLOSED,
+                "operator_summary": "Project domain is not configured.",
+                "next_action_hint": "Start a coding or research project.",
+                "last_error": AutonomyRunError(
+                    code="project_domain_not_configured",
+                    message=f"Project domain is not configured: {domain}",
+                ),
+                "updated_at_ms": now_ms(),
+            }
+        )
+        self._autonomy_store.save(blocked)
+        if run.task_id:
+            self._task_manager.transition_task(
+                task_id=run.task_id,
+                to_state=TaskLifecycleState.PAUSED,
+            )
         return ProjectWorkerResult(
             run=blocked,
             project_run=project_run,

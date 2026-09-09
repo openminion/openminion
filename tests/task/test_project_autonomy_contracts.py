@@ -92,6 +92,7 @@ def test_project_turn_metadata_carries_the_exact_selected_tool_scope() -> None:
         milestone="milestone-1",
         prompt="continue",
         allowed_tools=("git.status", "github.fetch_checks"),
+        project_tool_calls_remaining=0,
     )
 
     metadata = project_turn_inbound_metadata(request)
@@ -99,6 +100,19 @@ def test_project_turn_metadata_carries_the_exact_selected_tool_scope() -> None:
     assert metadata["linked_task_id"] == "task-1"
     assert metadata["turn_tool_allowlist"] == "git.status,github.fetch_checks"
     assert metadata["turn_tool_allowlist_supplied"] == "true"
+    assert metadata["project_tool_calls_remaining"] == "0"
+    assert "project_tool_calls_remaining" not in project_turn_inbound_metadata(
+        ProjectTurnRequest(
+            run_id="run-2",
+            project_run_id="project-2",
+            task_id="task-2",
+            goal_id="goal-2",
+            session_id="session-2",
+            cycle_id="cycle-2",
+            milestone="milestone-2",
+            prompt="continue",
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -219,7 +233,9 @@ def test_project_turn_decodes_typed_plan_metadata() -> None:
         '"revised_steps":[{"step_id":"build","description":"Repair"}]}',
     ),
 )
-def test_project_turn_ignores_non_checkpoint_plan_revisions(revision: str) -> None:
+def test_project_turn_preserves_revisions_for_checkpoint_validation(
+    revision: str,
+) -> None:
     request = ProjectTurnRequest(
         run_id="run-1",
         project_run_id="project-1",
@@ -240,7 +256,7 @@ def test_project_turn_ignores_non_checkpoint_plan_revisions(revision: str) -> No
         },
     )
 
-    assert result.task_plan_revision is None
+    assert result.task_plan_revision is not None
 
 
 @pytest.mark.parametrize(

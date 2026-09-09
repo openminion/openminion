@@ -193,6 +193,22 @@ def advance_repository_lifecycle_payload(
     return {REPOSITORY_LIFECYCLE_PAYLOAD_KEY: lifecycle}
 
 
+def repository_lifecycle_metrics(checkpoint: ProjectCheckpoint) -> dict[str, int]:
+    lifecycle = cast(
+        dict[str, object],
+        checkpoint.payload[REPOSITORY_LIFECYCLE_PAYLOAD_KEY],
+    )
+    metrics = cast(
+        dict[str, int],
+        lifecycle[checkpoint.project_run.metrics_summary_ref],
+    )
+    return {
+        "cycle_count": metrics["cycle_count"],
+        "tool_call_count": metrics["tool_call_count"],
+        "verification_count": metrics["verification_count"],
+    }
+
+
 def repository_check_request(
     checkpoint: ProjectCheckpoint,
 ) -> dict[str, object] | None:
@@ -634,7 +650,7 @@ def repository_task_plan_progress(
 
 
 def task_plan_incomplete_disposition(
-    run: AutonomyRun,
+    cycle_limit: int,
     cycle_number: int,
     closure_status: ProjectDomainVerificationStatus,
     has_error: bool,
@@ -647,7 +663,7 @@ def task_plan_incomplete_disposition(
         and not has_error
     ):
         return None
-    if cycle_number < run.continuation_policy.max_iterations:
+    if cycle_number < cycle_limit:
         return (
             ProjectCycleDecision.CONTINUE,
             AutonomyRunStatus.RUNNING,

@@ -44,6 +44,11 @@ async def run_slash_project(
     console: Console,
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None,
 ) -> None:
+    from openminion.cli.commands.autonomy_project import focus_project_help
+
+    if text.strip() in {"/project", "/project help", "/project start --help"}:
+        console.print(Text(focus_project_help(), style=_SYSTEM_STYLE))
+        return
     if approval_callback is None:
         console.print(Text("(/project: approval is unavailable)", style=_ERR_STYLE))
         return

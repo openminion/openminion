@@ -3,9 +3,16 @@ from __future__ import annotations
 import json
 import shlex
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 from openminion.modules.storage.runtime.sqlite import resolve_database_path
+from openminion.cli.commands.autonomy_project import (
+    launch_project,
+    parse_focus_project_launch,
+    schedule_project_wake,
+)
+from openminion.cli.commands.autonomy import _cancel
 from openminion.modules.task import (
     AutonomyRunPhase,
     AutonomyRunStatus,
@@ -104,6 +111,9 @@ class _CronStore:
 
     def delete_cron_job(self, job_id: str) -> None:
         self.jobs.pop(job_id, None)
+
+    def close(self) -> None:
+        return None
 
 
 def _request_builder(payload: dict[str, object], agent_id: str) -> object:
@@ -335,6 +345,97 @@ def test_project_cycle_schedules_one_deterministic_wake_and_reconciles_retry(
         "file.move": "bypass",
         "file.write": "bypass",
     }
+
+
+def test_focus_created_wake_advances_then_cancelled_stale_wake_is_inert(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    data = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_HOME", str(home))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data))
+    monkeypatch.setenv("OPENMINION_GENERATED_ROOT", str(data / "runtime"))
+    command = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(1)'"
+    request = parse_focus_project_launch(
+        f'/project start --goal "finish background work" --max-iterations 3 '
+        f'--verify-command "{command}"',
+        workspace_boundary=tmp_path,
+        session_id="focus-session",
+        agent_id="agent-main",
+        config_ref=None,
+    )
+    store = AutonomyRunStore()
+    cron_store = _CronStore()
+    task_db = resolve_database_path(
+        DEFAULT_INTEGRATED_SQLITE_SUBPATH,
+        env={"OPENMINION_HOME": str(home), "OPENMINION_DATA_ROOT": str(data)},
+    )
+    manager = TaskManager(
+        cron_repository=cron_store,
+        lifecycle_repository=TaskLifecycleRepository(db_path=task_db),
+    )
+    run = launch_project(request, store=store, manager=manager)
+    run = schedule_project_wake(
+        cron_store=cron_store,
+        store=store,
+        manager=manager,
+        run=run,
+        cycle_interval_seconds=17,
+    )
+    initial_job_id = f"prun_{run.run_id}:wake:0"
+    initial_job = cron_store.jobs.pop(initial_job_id)
+    before = load_latest_project_checkpoint(manager, task_id=run.task_id or "")
+    assert before is not None
+
+    runtime_manager = _RuntimeManager()
+    runtime = SimpleNamespace(
+        config=SimpleNamespace(
+            runtime=SimpleNamespace(
+                env={
+                    "OPENMINION_HOME": str(home),
+                    "OPENMINION_DATA_ROOT": str(data),
+                }
+            ),
+            agents={"agent-main": SimpleNamespace(name="agent-main")},
+            default_agent="agent-main",
+        ),
+        runtime_manager=runtime_manager,
+        tools=ToolRegistry(),
+        sessions=_Sessions(),
+        telemetry_service=_Telemetry(),
+        list_registered_agents=lambda: ["agent-main"],
+        resolve_agent_service=lambda _agent_id: SimpleNamespace(_runner=None),
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=cron_store,
+        request_builder=_request_builder,
+        timeout_s=10,
+        max_attempts=1,
+    )
+
+    first = executor.execute(initial_job, {"run_id": "cron-focus-1"})
+    next_job_id = first["metadata"]["next_wake_job_id"]
+    stale_job = dict(cron_store.jobs[next_job_id])
+    after = load_latest_project_checkpoint(manager, task_id=run.task_id or "")
+    assert after is not None
+    assert after.project_run.committed_cycle_count == 1
+    assert before.project_run.committed_cycle_count == 0
+    assert len(runtime_manager.submitted) == 1
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.configured_cron_store",
+        lambda _args, config_ref: cron_store,
+    )
+    _cancel(
+        SimpleNamespace(run_id=run.run_id, task_db=str(task_db), json=False),
+        store,
+    )
+    stale = executor.execute(stale_job, {"run_id": "cron-focus-stale"})
+
+    assert stale["metadata"]["decision"] == "stop"
+    assert len(runtime_manager.submitted) == 1
 
 
 def test_verified_project_cycle_finishes_without_another_wake(
