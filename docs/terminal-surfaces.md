@@ -146,8 +146,17 @@ Interactive sessions show a compact live token line when the active runtime has
 usage facts. Inside the interactive CLI, `/cost` shows the current session,
 last turn, context-window, and available provider or configured-rate cost
 estimate. It says cost is unavailable when neither source can supply one.
-`/tokens` renders the durable
-token report for the active session in either interactive terminal.
+`/tokens` renders a compact durable token report for the active session.
+`/tokens recent` shows the newest 10 sessions for the active agent, and
+`/tokens recent <count>` accepts 1 through 20. Before the first model call,
+`/telemetry`, `/tokens`, and `/context` explain that no turn data exists and
+tell the operator what to do next instead of showing an empty or dash-only
+report. `/telemetry` still shows external-export and exact local-capture posture
+before the first invocation. Exact request and response capture is opt-in: set
+`OPENMINION_TRACE_REQUESTS=1` before starting the CLI. After a model run, use
+`/trace list` and `/trace show <relative-path>` for a safe summary. The summary
+prints the explicit `telemetryctl trace show <relative-path> --raw` command when
+full local content is needed.
 
 For persisted session inspection, use the status surface:
 

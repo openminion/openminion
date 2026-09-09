@@ -85,6 +85,17 @@ def test_render_context_report_includes_grid_and_inventory() -> None:
     assert max(map(len, body.splitlines())) <= 80
 
 
+def test_render_context_report_explains_empty_usage() -> None:
+    runtime = _Runtime()
+    runtime.token_usage_snapshot = lambda: TokenUsageSnapshot(context_limit_tokens=100)
+
+    body = render_context_report(runtime)
+
+    assert "none observed in this terminal yet" in body
+    assert "use /tokens for saved session totals" in body
+    assert "turn —" not in body
+
+
 def test_render_memory_report_uses_runtime_rows() -> None:
     body = render_memory_report(_Runtime())
 

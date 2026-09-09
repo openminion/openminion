@@ -78,10 +78,25 @@ def test_live_focus_basic_turn(
             focus_probe.run_slash(
                 session,
                 "/telemetry failed",
-                marker="telemetry: empty",
+                marker="No failed model runs in this session.",
             )
         )
         assert foreign_invocation_id not in failed
+
+        tokens = visible_text(
+            focus_probe.run_slash(session, "/tokens", marker="Token usage")
+        )
+        assert "No model calls in this session yet." not in tokens
+        assert "Tokens:" in tokens
+
+        history = visible_text(
+            focus_probe.run_slash(
+                session,
+                "/tokens recent 3",
+                marker="Token history",
+            )
+        )
+        assert "sessions with model calls" in history
 
         trace_listing = visible_text(
             focus_probe.run_slash(session, "/trace list", marker="trace files:")

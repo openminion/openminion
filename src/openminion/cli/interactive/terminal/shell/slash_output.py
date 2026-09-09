@@ -20,6 +20,7 @@ from openminion.cli.presentation.telemetry import (
     render_telemetry_slash,
     render_trace_slash,
 )
+from openminion.cli.presentation.tokens import render_tokens_slash
 from ..overlays import TerminalOverlayPresenter
 from ..status_line import TerminalStatusLine
 from ..transcript import TerminalTranscript
@@ -46,7 +47,7 @@ def render_context_review(runtime: Any, args: str) -> str:
     try:
         tokens = shlex.split(args)
     except ValueError:
-        tokens = ()
+        tokens = []
     for token in tokens:
         key, separator, value = token.partition("=")
         if not separator:
@@ -94,8 +95,13 @@ def handle_debug_output_slash(
         cost_renderer(runtime=runtime, console=console)
         return True
     if cmd == "/tokens":
-        report = runtime.token_usage_report().strip()
-        console.print(report or "(no durable token usage data)")
+        parts = text.split(maxsplit=1)
+        console.print(
+            render_tokens_slash(
+                parts[1] if len(parts) > 1 else "",
+                runtime=runtime,
+            )
+        )
         return True
     if cmd == "/telemetry":
         renderer = render_telemetry_slash
