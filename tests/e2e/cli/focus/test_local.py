@@ -80,7 +80,12 @@ def test_focus_pty_handles_advertised_slash_aliases(
     with focus_probe.session() as session:
         focus_probe.wait_ready(session)
         transcripts = [
-            focus_probe.run_slash_turn(session, alias, marker=None) for alias in aliases
+            focus_probe.run_slash_turn(
+                session,
+                alias,
+                marker=r"file\.read" if alias == "/tool" else None,
+            )
+            for alias in aliases
         ]
 
     assert all("Unknown command:" not in transcript for transcript in transcripts)
