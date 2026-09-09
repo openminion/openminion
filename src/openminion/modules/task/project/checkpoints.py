@@ -596,12 +596,13 @@ def updated_checkpoint_task_plan(
         revision = incoming.model_copy(
             update={"criterion_ids": incoming.criterion_ids or plan.criterion_ids}
         )
-        plan = revision.to_task_plan(
-            fallback_objective=plan.objective,
-            fallback_workflow_id=plan.workflow_id,
-            fallback_workflow_version_hash=plan.workflow_version_hash,
-            fallback_criterion_ids=plan.criterion_ids,
-        )
+        if incoming_plan is None:
+            plan = revision.to_task_plan(
+                fallback_objective=plan.objective,
+                fallback_workflow_id=plan.workflow_id,
+                fallback_workflow_version_hash=plan.workflow_version_hash,
+                fallback_criterion_ids=plan.criterion_ids,
+            )
         revision_count += 1
 
     plan = apply_task_plan_signals(
