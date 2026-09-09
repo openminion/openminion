@@ -51,6 +51,19 @@ def test_resolver_stops_at_vcs_root(tmp_path: Path) -> None:
     assert target.path == repo / "OPENMINION.md"
 
 
+def test_resolver_stops_when_working_directory_is_vcs_root(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text("outer", encoding="utf-8")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+
+    target = resolve_project_instruction_target(repo)
+
+    assert target.exists is False
+    assert target.project_root == repo
+    assert target.path == repo / "OPENMINION.md"
+
+
 def test_resolver_rejects_unsupported_target_name(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unsupported_project_instruction_target"):
         resolve_project_instruction_target(tmp_path, target_name="README.md")

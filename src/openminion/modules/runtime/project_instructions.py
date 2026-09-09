@@ -90,7 +90,7 @@ def _search_roots(probe: Path, project_root: Path) -> tuple[Path, ...]:
     roots: list[Path] = []
     for current in (probe, *probe.parents):
         roots.append(current)
-        if project_root != probe and current == project_root:
+        if current == project_root and (project_root / ".git").exists():
             break
     return tuple(roots)
 
