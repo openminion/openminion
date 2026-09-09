@@ -294,9 +294,7 @@ class TestCodingHandlerPureHelperBehavior:
         )
 
         schema = specs[0].input_schema
-        assert schema["properties"]["verification_target_id"]["enum"] == [
-            "tests-pass"
-        ]
+        assert schema["properties"]["verification_target_id"]["enum"] == ["tests-pass"]
         assert "verification_target_id" not in schema["required"]
 
     def test_verify_phase_allowed_tools_drop_mutating_writers(self) -> None:
