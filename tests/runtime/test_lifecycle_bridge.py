@@ -175,3 +175,21 @@ def test_lifecycle_bridge_warns_instead_of_raising_on_sink_failure(
 
     assert "lifecycle telemetry emit failed" in caplog.text
     assert "component.heartbeat" in caplog.text
+
+
+def test_lifecycle_bridge_ignores_events_after_close(tmp_path) -> None:
+    recorded = []
+    telemetry = SimpleNamespace(record_event_sync=recorded.append)
+    runtime = SimpleNamespace(
+        telemetry_service=telemetry,
+        home_root=tmp_path,
+        config=SimpleNamespace(runtime=SimpleNamespace(env={})),
+    )
+    bridge = runtime_daemon._LifecycleTelemetryBridge(runtime)
+
+    bridge.close()
+    bridge._record(  # noqa: SLF001
+        SimpleNamespace(event_type="component.heartbeat", data={})
+    )
+
+    assert recorded == []

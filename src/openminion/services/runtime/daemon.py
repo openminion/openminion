@@ -3,6 +3,7 @@ from contextlib import suppress
 from dataclasses import asdict
 from functools import partial
 import hashlib
+from threading import Lock
 from time import perf_counter
 from typing import Any
 
@@ -65,15 +66,15 @@ class _LifecycleTelemetryBridge:
             )
             self._owns_telemetry = True
         self._logger = _LIFECYCLE_LOGGER
-
-    @property
-    def telemetry(self) -> TelemetryService:
-        return self._telemetry
+        self._lock = Lock()
+        self._closed = False
 
     def close(self) -> None:
-        if self._owns_telemetry:
-            with suppress(Exception):
-                self._telemetry.close_sync()
+        with self._lock:
+            self._closed = True
+            if self._owns_telemetry:
+                with suppress(Exception):
+                    self._telemetry.close_sync()
 
     def handle_runtime_event(self, event_type: str, payload: dict[str, Any]) -> None:
         canonical = lifecycle_event_from_payload(event_type, payload)
@@ -102,20 +103,23 @@ class _LifecycleTelemetryBridge:
         )
 
     def _record(self, event: Any) -> None:
-        try:
-            self._telemetry.record_event_sync(event)
-        except Exception as exc:  # noqa: BLE001
-            self._logger.warning(
-                "lifecycle telemetry emit failed for %s: %s", event.event_type, exc
+        with self._lock:
+            if self._closed:
+                return
+            try:
+                self._telemetry.record_event_sync(event)
+            except Exception as exc:  # noqa: BLE001
+                self._logger.warning(
+                    "lifecycle telemetry emit failed for %s: %s", event.event_type, exc
+                )
+                return
+            self._logger.info(
+                format_structured_event(
+                    event.event_type,
+                    source=event.data.get("source_event_type", ""),
+                    component=json.dumps(event.data.get("component", {}), sort_keys=True),
+                )
             )
-            return
-        self._logger.info(
-            format_structured_event(
-                event.event_type,
-                source=event.data.get("source_event_type", ""),
-                component=json.dumps(event.data.get("component", {}), sort_keys=True),
-            )
-        )
 
 
 def build_runtime_manager(runtime: "RuntimeFacade") -> Any:
