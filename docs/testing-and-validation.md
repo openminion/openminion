@@ -18,9 +18,18 @@ Recommended local setup from the package root:
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -e .
+make dev-install
 ```
+
+Use a separate `.venv` for each checkout that installs OpenMinion. A worktree
+may reuse another environment for read-only validation with `PYTHONPATH=src`,
+but must not install into that shared environment. The canonical
+`make dev-install` target rejects a symlinked `.venv` and repairs an editable
+binding that points at a different checkout.
+
+Use `make run-local ARGS="..."` when execution must be anchored to the current
+checkout. The target launches `python -m openminion` with the checkout's `src`
+first, independent of editable-install metadata.
 
 ## First-user smoke flow
 
