@@ -199,6 +199,17 @@ def _record_successful_plan_action(
         loop_state.task_plan = dict(outputs["task_plan"])
     if isinstance(outputs.get("task_plan.revision"), dict):
         loop_state.task_plan_revision = dict(outputs["task_plan.revision"])
+    action = str(arguments.get("action", "") or "").strip()
+    if action == "complete":
+        loop_state.task_plan_completed = {
+            "plan_id": arguments.get("plan_id"),
+            "reason": arguments.get("reason", ""),
+        }
+    elif action == "abandon":
+        loop_state.task_plan_abandoned = {
+            "plan_id": arguments.get("plan_id"),
+            "reason": arguments.get("reason", ""),
+        }
 
 
 def _autonomous_plan_continuation_result(
