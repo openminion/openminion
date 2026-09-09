@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import json
 from io import BytesIO
+from pathlib import Path
 from urllib import error as urllib_error
 from urllib.parse import parse_qsl, urlsplit
 from unittest.mock import patch
 
 from openminion.modules.llm.providers.transport.http import http_json_get
-from openminion.modules.llm.providers.transport.trace import trace_http_json_request
+from openminion.modules.llm.providers.transport.trace import (
+    trace_http_json_request,
+    trace_http_json_response,
+    trace_http_sse_response,
+)
 from openminion.modules.llm.providers.openai.adapter import OpenAIProvider
 from openminion.modules.llm.providers.openrouter.adapter import OpenRouterProvider
 from openminion.modules.llm.schemas import LLMRequest
@@ -40,6 +45,128 @@ class _FakeSSEHTTPResponse:
     def __iter__(self):
         for line in self._lines:
             yield line.encode("utf-8")
+
+
+def test_http_trace_write_failures_are_noncritical_and_metadata_only(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "openminion.modules.llm.providers.transport.trace.write_protected_trace_file",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("secret path and payload must not leak")
+        ),
+    )
+    metadata = {
+        "session_id": "sess",
+        "turn_id": "turn",
+        "trace_label": "call01",
+    }
+
+    trace_http_json_request(
+        trace_metadata=metadata,
+        provider_name="provider",
+        url="https://provider.example/path?token=secret",
+        body_json='{"content":"secret"}',
+        payload={"content": "secret"},
+        headers={"Authorization": "secret"},
+        timeout_seconds=10,
+        transport="urllib",
+    )
+    trace_http_json_response(
+        trace_metadata=metadata,
+        provider_name="provider",
+        url="https://provider.example/path?token=secret",
+        status_code=200,
+        body_text="secret response",
+        transport="urllib",
+    )
+    trace_http_sse_response(
+        trace_metadata=metadata,
+        provider_name="provider",
+        url="https://provider.example/path?token=secret",
+        status_code=200,
+        request_id="request-secret",
+        lines=["data: secret"],
+        complete=True,
+        transport="urllib",
+    )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert {"http_request", "http_response", "http_sse_response"}.issubset(
+        {message.split("artifact_kind=", 1)[1].split()[0] for message in messages}
+    )
+    assert all("secret" not in message for message in messages)
+    assert all("error_type=OSError" in message for message in messages)
+
+
+def test_http_trace_collision_ignores_unsafe_trace_id(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS_DIR", str(tmp_path))
+    kwargs = {
+        "trace_metadata": {
+            "session_id": "sess",
+            "turn_id": "turn",
+            "trace_label": "call01",
+            "trace_id": "../unsafe/name",
+        },
+        "provider_name": "provider",
+        "url": "https://provider.example/v1/chat",
+        "body_json": "{}",
+        "payload": {},
+        "headers": {},
+        "timeout_seconds": 10,
+        "transport": "urllib",
+    }
+
+    trace_http_json_request(**kwargs)
+    trace_http_json_request(**kwargs)
+
+    trace_dir = tmp_path / "llm" / "sess" / "turn-sess"
+    traces = sorted(trace_dir.glob("step00-call01-http*.json"))
+    assert len(traces) == 2
+    assert all(path.parent == trace_dir for path in traces)
+
+
+def test_http_trace_directory_and_serialization_failures_are_noncritical(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS_DIR", str(tmp_path))
+    metadata = {"session_id": "sess", "turn_id": "turn", "trace_label": "call"}
+    original_mkdir = Path.mkdir
+    monkeypatch.setattr(
+        Path,
+        "mkdir",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("private path")),
+    )
+    trace_http_json_request(
+        trace_metadata=metadata,
+        provider_name="provider",
+        url="https://provider.example/v1/chat",
+        body_json="{}",
+        payload={},
+        headers={},
+        timeout_seconds=10,
+        transport="urllib",
+    )
+    monkeypatch.setattr(Path, "mkdir", original_mkdir)
+    trace_http_json_request(
+        trace_metadata=metadata,
+        provider_name="provider",
+        url="https://provider.example/v1/chat",
+        body_json="{}",
+        payload={"not_json": object()},
+        headers={},
+        timeout_seconds=10,
+        transport="urllib",
+    )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("error_type=OSError" in message for message in messages)
+    assert any("error_type=TypeError" in message for message in messages)
+    assert all("private path" not in message for message in messages)
 
 
 def test_http_trace_redacts_fixed_credential_surfaces(tmp_path, monkeypatch) -> None:
@@ -176,6 +303,8 @@ def test_http_payload_trace_file_contains_exact_body(tmp_path, monkeypatch) -> N
     traced = json.loads(trace_path.read_text(encoding="utf-8"))
     response_traced = json.loads(response_trace_path.read_text(encoding="utf-8"))
     assert traced["provider"] == "openai"
+    assert traced["trace_format_version"] == "openminion.llm_trace.v1"
+    assert traced["artifact_kind"] == "http_request"
     assert traced["method"] == "POST"
     assert traced["url"].endswith("/chat/completions")
     assert traced["json_body"] == sent_body["json"]
@@ -184,6 +313,8 @@ def test_http_payload_trace_file_contains_exact_body(tmp_path, monkeypatch) -> N
     assert traced["headers"]["Authorization"] == "<redacted>"
     assert traced["headers"]["User-Agent"] == "OpenMinion/1.0"
     assert response_traced["provider"] == "openai"
+    assert response_traced["trace_format_version"] == "openminion.llm_trace.v1"
+    assert response_traced["artifact_kind"] == "http_response"
     assert response_traced["status_code"] == 200
     assert response_traced["json"] == response_payload
     assert response_traced["json_parse_error"] == ""
@@ -244,8 +375,13 @@ def test_http_payload_trace_file_is_emitted_for_streaming(
     assert delta_events[0].delta_text == "hi"
 
     trace_path = tmp_path / "llm" / "sess" / "turn-sess" / "step01-call01-http.json"
+    sse_trace_path = (
+        tmp_path / "llm" / "sess" / "turn-sess" / "step01-call01-http-sse-response.json"
+    )
     assert trace_path.exists()
+    assert sse_trace_path.exists()
     traced = json.loads(trace_path.read_text(encoding="utf-8"))
+    sse_traced = json.loads(sse_trace_path.read_text(encoding="utf-8"))
     assert traced["provider"] == "openrouter"
     assert traced["method"] == "POST"
     assert traced["url"].endswith("/chat/completions")
@@ -253,6 +389,8 @@ def test_http_payload_trace_file_is_emitted_for_streaming(
     assert traced["json"] == json.loads(sent_body["json"])
     assert traced["headers"]["Authorization"] == "<redacted>"
     assert traced["headers"]["User-Agent"] == "OpenMinion/1.0"
+    assert sse_traced["trace_format_version"] == "openminion.llm_trace.v1"
+    assert sse_traced["artifact_kind"] == "http_sse_response"
     assert sent_headers["user-agent"] == "OpenMinion/1.0"
 
 

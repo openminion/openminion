@@ -5,6 +5,7 @@ from pathlib import Path, PurePosixPath
 import shlex
 from typing import Any
 
+from openminion.base.config import OTELExporterConfig
 from openminion.modules.telemetry.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.telemetry.inspection import (
     TELEMETRY_INSPECTION_EXCEPTIONS,
@@ -18,6 +19,8 @@ from openminion.modules.telemetry.invocation_inspection import (
     read_safe_invocation_event_rows,
 )
 from openminion.modules.telemetry.schemas import TelemetryDebugReport
+from openminion.modules.telemetry.service import TelemetryService
+from openminion.modules.telemetry.trace.structured import trace_requests_enabled
 
 TELEMETRY_USAGE = (
     "usage: /telemetry "
@@ -53,7 +56,10 @@ def render_telemetry_slash(args: str, *, runtime: Any) -> str:
             "_interactive_telemetry_invocation_id",
             report.selection.selected_invocation_id,
         )
-    return _render_card(report)
+    return _render_card(
+        report,
+        exact_capture_enabled=_runtime_trace_capture_enabled(runtime),
+    )
 
 
 def render_trace_slash(args: str, *, runtime: Any) -> str:
@@ -129,6 +135,8 @@ def load_telemetry_report(
                 selector_kind=selector_kind,
                 invocation_id=invocation_id,
                 trace_root=data_root / "traces",
+                exporter_config=_runtime_exporter_config(runtime),
+                live_queue_stats=_runtime_export_queue_stats(runtime),
                 session_id=session_id,
             )
     except TELEMETRY_INSPECTION_EXCEPTIONS as exc:
@@ -188,7 +196,11 @@ def _render_event_rows(runtime: Any, limit: int) -> str:
     return "\n".join(lines)
 
 
-def _render_card(report: TelemetryDebugReport) -> str:
+def _render_card(
+    report: TelemetryDebugReport,
+    *,
+    exact_capture_enabled: bool,
+) -> str:
     if report.error:
         return f"telemetry: error\nerror: {report.error.code}"
     invocation = report.invocation
@@ -221,9 +233,53 @@ def _render_card(report: TelemetryDebugReport) -> str:
             f"tokens: input={input_tokens} output={output_tokens} cost={cost}",
             f"failure: {failure}",
             f"trace files: {invocation.trace_count if invocation.trace_count is not None else '-'}",
+            _export_health_line(report),
+            _export_queue_line(report),
+            "exact payload capture: "
+            + ("enabled" if exact_capture_enabled else "disabled"),
             _next_actions(report),
         )
     )
+
+
+def _export_health_line(report: TelemetryDebugReport) -> str:
+    health = report.export_health
+    protocol = f" ({health.protocol})" if health.protocol else ""
+    return f"external export: {health.state}{protocol}"
+
+
+def _export_queue_line(report: TelemetryDebugReport) -> str:
+    if not report.export_health.enabled:
+        return "export queue: disabled"
+    queue = report.export_health.queue
+    if queue.get("source") != "in_process":
+        return "export queue: unavailable"
+    return (
+        f"export queue: depth={queue['depth']}/{queue['capacity']} "
+        f"drops={queue['drops']} flush_failures={queue['flush_failures']}"
+    )
+
+
+def _runtime_exporter_config(runtime: Any) -> OTELExporterConfig | None:
+    owner = getattr(runtime, "api_runtime", runtime)
+    config = getattr(getattr(owner, "config", None), "runtime", None)
+    exporter_config = getattr(config, "telemetry_exporter", None)
+    return exporter_config if isinstance(exporter_config, OTELExporterConfig) else None
+
+
+def _runtime_export_queue_stats(runtime: Any) -> dict[str, int] | None:
+    owner = getattr(runtime, "api_runtime", runtime)
+    service = getattr(owner, "telemetry_service", None)
+    return (
+        service.export_queue_stats() if isinstance(service, TelemetryService) else None
+    )
+
+
+def _runtime_trace_capture_enabled(runtime: Any) -> bool:
+    owner = getattr(runtime, "api_runtime", runtime)
+    config = getattr(getattr(owner, "config", None), "runtime", None)
+    env = getattr(config, "env", None)
+    return bool(trace_requests_enabled(env=env))
 
 
 def _card_title(report: TelemetryDebugReport) -> str:

@@ -7,6 +7,7 @@ from threading import Thread
 import pytest
 
 from openminion.base.config import OTELExporterConfig
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.telemetry.export.attributes import attributes_for_event
 from openminion.modules.telemetry.export.otel import OpenTelemetryTraceExporter
 from openminion.modules.telemetry.export.sdk import (
@@ -107,6 +108,26 @@ def test_unknown_protocol_disables_export(
 
     assert sink is None
     assert "Unsupported OpenTelemetry protocol" in caplog.text
+
+
+def test_sdk_sink_reports_service_and_instrumentation_versions() -> None:
+    sink = create_otel_trace_sink(
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://127.0.0.1:9",
+            noncritical_queue_capacity=0,
+        ),
+        logger=logging.getLogger(__name__),
+    )
+    assert sink is not None
+    try:
+        assert sink._trace_provider.resource.attributes["service.version"] == (
+            OPENMINION_VERSION
+        )
+        for instrument in (sink._tracer, sink._meter, sink._logger):
+            assert instrument._instrumentation_scope.version == OPENMINION_VERSION
+    finally:
+        sink.close()
 
 
 def test_failed_agent_event_has_canonical_error_attributes() -> None:

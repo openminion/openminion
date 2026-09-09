@@ -5,18 +5,45 @@ import io
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from rich.console import Console
 
+from openminion.base.config import OTELExporterConfig
 from openminion.cli.interactive.terminal.shell.actions import _handle_slash
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.modules.telemetry.schemas import TelemetryEvent
+from openminion.modules.telemetry.export.otel import (
+    OpenTelemetryTraceExporter,
+    RecordingOTELTraceSink,
+)
 from openminion.modules.telemetry.service import TelemetryService
 
 
+@pytest.fixture(autouse=True)
+def _bind_runtime_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path))
+
+
 class _Runtime:
-    def __init__(self, data_root: Path, session_id: str = "session-1") -> None:
-        self.api_runtime = SimpleNamespace(data_root=data_root)
+    def __init__(
+        self,
+        data_root: Path,
+        session_id: str = "session-1",
+        *,
+        exporter_config: OTELExporterConfig | None = None,
+        telemetry_service: TelemetryService | None = None,
+        env: dict[str, str] | None = None,
+    ) -> None:
+        config = exporter_config or OTELExporterConfig()
+        self.api_runtime = SimpleNamespace(
+            data_root=data_root,
+            config=SimpleNamespace(
+                runtime=SimpleNamespace(telemetry_exporter=config, env=env or {})
+            ),
+            telemetry_service=telemetry_service,
+        )
         self.session_id = session_id
 
 
@@ -145,6 +172,69 @@ def test_terminal_telemetry_labels_latest_completed_invocation(
     )
     assert "shell: telemetryctl invocation show invocation-completed" in output
     assert "next: telemetryctl" not in output
+
+
+def test_terminal_telemetry_uses_loaded_export_config_and_live_queue(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path / "different-home"))
+    _record_invocation(
+        tmp_path,
+        "invocation-export-health",
+        terminal_event="agent.invocation.completed",
+    )
+    exporter_config = OTELExporterConfig(
+        enabled=True,
+        endpoint="http://collector:4318",
+        protocol="http/protobuf",
+        noncritical_queue_capacity=0,
+    )
+    exporter = OpenTelemetryTraceExporter(
+        exporter_config,
+        sink=RecordingOTELTraceSink(),
+    )
+    service = TelemetryService(
+        tmp_path / "telemetry" / "telemetry.db",
+        env={"OPENMINION_DATA_ROOT": str(tmp_path)},
+        otel_exporter_config=exporter_config,
+        external_exporter=exporter,
+    )
+    runtime = _Runtime(
+        tmp_path,
+        exporter_config=exporter_config,
+        telemetry_service=service,
+    )
+
+    try:
+        output = _run_slash("/telemetry", runtime, tmp_path)
+    finally:
+        service.close_sync()
+
+    assert "external export: ready (http/protobuf)" in output
+    assert "export queue: depth=0/0 drops=0 flush_failures=0" in output
+
+
+def test_terminal_telemetry_states_exact_capture_posture(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _record_invocation(
+        tmp_path,
+        "invocation-capture-posture",
+        terminal_event="agent.invocation.completed",
+    )
+    monkeypatch.delenv("OPENMINION_TRACE_REQUESTS", raising=False)
+    disabled = _run_slash("/telemetry", _Runtime(tmp_path), tmp_path)
+    enabled = _run_slash(
+        "/telemetry",
+        _Runtime(tmp_path, env={"OPENMINION_TRACE_REQUESTS": "1"}),
+        tmp_path,
+    )
+
+    assert "exact payload capture: disabled" in disabled
+    assert "export queue: disabled" in disabled
+    assert "exact payload capture: enabled" in enabled
 
 
 def test_terminal_trace_show_labels_explicit_raw_shell_access(

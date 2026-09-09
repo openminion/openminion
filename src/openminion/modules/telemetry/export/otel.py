@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
+from dataclasses import replace
+from threading import Lock
 from typing import Any
 
 from openminion.base.config import OTELExporterConfig
@@ -14,6 +16,7 @@ from .attributes import (
     span_kind_for_event as _span_kind_for_event,
     tool_span_name as _tool_span_name,
 )
+from .content_policy import external_sensitive_fields
 from .performance_metrics import (
     generic_metric_projection,
     performance_metrics_for_event,
@@ -28,6 +31,7 @@ from .sdk import (
     create_otel_trace_sink,
 )
 from ..interfaces import TelemetryExportProbeResult
+from ..trace.metadata import apply_content_policy
 
 _LOG = logging.getLogger(__name__)
 _TERMINAL_EVENT_PREFIXES = (
@@ -145,11 +149,16 @@ class OpenTelemetryTraceExporter:
         self._deferred_spans: dict[str, list[dict[str, Any]]] = {}
         self._deferred_events: dict[str, list[dict[str, Any]]] = {}
         self._deferred_logs: dict[str, list[dict[str, Any]]] = {}
+        self._state_lock = Lock()
+        self._closing = False
+        self._queue_stopped = False
+        self._active_direct_exports = 0
         self._export_queue = (
             NoncriticalExportQueue(
                 capacity=int(self._config.noncritical_queue_capacity),
                 flush_timeout_seconds=float(self._config.queue_flush_timeout_seconds),
                 export_now=self._export_now,
+                on_stopped=self._on_export_queue_stopped,
             )
             if self._sink is not None
             else None
@@ -162,17 +171,24 @@ class OpenTelemetryTraceExporter:
         return self._sink is not None and bool(self._config.enabled)
 
     def export(self, event: TelemetryEvent) -> bool:
-        if self._sink is None:
-            return False
         trace_key = _trace_key_for_event(event)
         if not _is_sampled(trace_key, self._config.sample_rate):
             return False
         event_type = str(event.event_type or "").strip()
         if _EVENT_CLASSIFICATION.get(event_type) == _CLASS_EXCLUDED:
             return False
-        if self._export_queue is not None and self._export_queue.should_queue(event):
-            return self._export_queue.enqueue(event)
-        return self._export_now(event, trace_key=trace_key, event_type=event_type)
+        with self._state_lock:
+            if self._sink is None or self._closing:
+                return False
+            if self._export_queue is not None and self._export_queue.should_queue(
+                event
+            ):
+                return self._export_queue.enqueue(event)
+            self._active_direct_exports += 1
+        try:
+            return self._export_now(event, trace_key=trace_key, event_type=event_type)
+        finally:
+            self._finish_direct_export()
 
     def queue_stats(self) -> dict[str, int]:
         if self._export_queue is None:
@@ -194,8 +210,21 @@ class OpenTelemetryTraceExporter:
         event: TelemetryEvent,
         timeout_seconds: float,
     ) -> TelemetryExportProbeResult:
-        if self._sink is None:
-            return TelemetryExportProbeResult(True, "rejected", "not_run")
+        with self._state_lock:
+            if self._sink is None or self._closing:
+                return TelemetryExportProbeResult(True, "rejected", "not_run")
+            self._active_direct_exports += 1
+        try:
+            return self._probe_now(event, timeout_seconds)
+        finally:
+            self._finish_direct_export()
+
+    def _probe_now(
+        self,
+        event: TelemetryEvent,
+        timeout_seconds: float,
+    ) -> TelemetryExportProbeResult:
+        assert self._sink is not None
         started = time.monotonic()
         attributes = {
             "openminion.event_type": str(event.event_type),
@@ -247,9 +276,20 @@ class OpenTelemetryTraceExporter:
         trace_key = trace_key or _trace_key_for_event(event)
         event_type = event_type or str(event.event_type or "").strip()
         timestamp_ns = _timestamp_ns(event.timestamp)
+        allowed_sensitive_fields = external_sensitive_fields(self._config)
+        export_data = apply_content_policy(
+            event.data,
+            allow_sensitive_content=False,
+            allowed_sensitive_fields=allowed_sensitive_fields,
+        )
+        event = replace(
+            event,
+            data=export_data,
+        )
         attributes = _attributes_for_event(
             event,
             include_assistant_body=bool(self._config.include_assistant_body),
+            allowed_sensitive_fields=allowed_sensitive_fields,
         )
         try:
             if event_type in _PAIRED_SPAN_CLASSES:
@@ -520,6 +560,11 @@ class OpenTelemetryTraceExporter:
         ):
             oldest = next(iter(self._pending_paired_spans))
             self._pending_paired_spans.pop(oldest, None)
+            if oldest.startswith("agent.execution.started:"):
+                execution_id = oldest.partition(":")[2]
+                self._deferred_spans.pop(execution_id, None)
+                self._deferred_events.pop(execution_id, None)
+                self._deferred_logs.pop(execution_id, None)
         self._pending_paired_spans[slot] = {
             "trace_key": trace_key,
             "session_id": event.session_id,
@@ -591,21 +636,49 @@ class OpenTelemetryTraceExporter:
         return True
 
     def close(self) -> None:
-        if self._sink is None:
-            return
-        if self._export_queue is not None:
-            self._export_queue.close()
-        try:
-            self._sink.close()
-        except Exception as exc:  # noqa: BLE001
-            self._logger.warning("OpenTelemetry exporter shutdown failed: %s", exc)
-        finally:
+        with self._state_lock:
+            if self._sink is None or self._closing:
+                return
+            self._closing = True
+            export_queue = self._export_queue
+            if export_queue is None:
+                self._queue_stopped = True
+        if export_queue is not None and not export_queue.close():
+            self._logger.warning(
+                "OpenTelemetry export queue did not stop before shutdown timeout"
+            )
+        self._finish_close_if_idle()
+
+    def _finish_direct_export(self) -> None:
+        with self._state_lock:
+            self._active_direct_exports -= 1
+        self._finish_close_if_idle()
+
+    def _on_export_queue_stopped(self) -> None:
+        with self._state_lock:
+            self._queue_stopped = True
+        self._finish_close_if_idle()
+
+    def _finish_close_if_idle(self) -> None:
+        with self._state_lock:
+            if (
+                not self._closing
+                or not self._queue_stopped
+                or self._active_direct_exports
+                or self._sink is None
+            ):
+                return
+            sink = self._sink
             self._sink = None
             self._export_queue = None
             self._pending_paired_spans.clear()
             self._deferred_spans.clear()
             self._deferred_events.clear()
             self._deferred_logs.clear()
+        try:
+            sink.close()
+        except Exception as exc:  # noqa: BLE001
+            self._logger.warning("OpenTelemetry exporter shutdown failed: %s", exc)
 
 
 def _execution_span_key(event: TelemetryEvent) -> str:

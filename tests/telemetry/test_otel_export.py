@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
-from threading import Event
+from threading import Event, Thread, enumerate as enumerate_threads
+
+import pytest
 
 from openminion.base.config import OTELExporterConfig
 from openminion.modules.telemetry.inspection import build_telemetry_debug_report
@@ -13,10 +15,24 @@ from openminion.modules.telemetry.export.otel import (
 from openminion.modules.telemetry.schemas import TelemetryEvent
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _exporter_workers_are_closed_by_module() -> None:
+    yield
+    assert not [
+        thread
+        for thread in enumerate_threads()
+        if thread.name == "openminion-otel-export-queue"
+    ]
+
+
 def test_tool_event_emits_span_record() -> None:
     sink = RecordingOTELTraceSink()
     exporter = OpenTelemetryTraceExporter(
-        OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=0,
+        ),
         sink=sink,
     )
 
@@ -50,7 +66,11 @@ def test_tool_event_emits_span_record() -> None:
 def test_non_tool_event_emits_root_event_and_filters_prose_by_default() -> None:
     sink = RecordingOTELTraceSink()
     exporter = OpenTelemetryTraceExporter(
-        OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=0,
+        ),
         sink=sink,
     )
 
@@ -84,6 +104,7 @@ def test_include_assistant_body_is_opt_in() -> None:
             enabled=True,
             endpoint="http://collector:4318",
             include_assistant_body=True,
+            noncritical_queue_capacity=0,
         ),
         sink=sink,
     )
@@ -108,7 +129,11 @@ def test_include_assistant_body_is_opt_in() -> None:
 def test_list_payloads_export_as_deterministic_json_strings() -> None:
     sink = RecordingOTELTraceSink()
     exporter = OpenTelemetryTraceExporter(
-        OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=0,
+        ),
         sink=sink,
     )
 
@@ -136,7 +161,11 @@ def test_list_payloads_export_as_deterministic_json_strings() -> None:
 def test_list_payloads_keep_privacy_filtering_by_default() -> None:
     sink = RecordingOTELTraceSink()
     exporter = OpenTelemetryTraceExporter(
-        OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=0,
+        ),
         sink=sink,
     )
 
@@ -192,6 +221,7 @@ def test_sampling_is_deterministic_by_trace_key() -> None:
             enabled=True,
             endpoint="http://collector:4318",
             sample_rate=0.5,
+            noncritical_queue_capacity=0,
         ),
         sink=sink,
     )
@@ -215,7 +245,11 @@ def test_sampling_is_deterministic_by_trace_key() -> None:
 def _make_exporter() -> tuple[OpenTelemetryTraceExporter, RecordingOTELTraceSink]:
     sink = RecordingOTELTraceSink()
     exporter = OpenTelemetryTraceExporter(
-        OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=0,
+        ),
         sink=sink,
     )
     return exporter, sink
@@ -373,6 +407,42 @@ def test_pending_paired_span_cap_evicts_oldest_to_bound_memory() -> None:
     assert len(exporter._pending_paired_spans) <= cap
 
 
+def test_execution_parent_eviction_discards_current_deferred_records() -> None:
+    exporter, sink = _make_exporter()
+    cap = OpenTelemetryTraceExporter._MAX_PENDING_PAIRED_SPANS
+
+    exporter.export(_event("agent.execution.started", execution_id="exec-0"))
+    exporter.export(_event("storage.query", execution_id="exec-0"))
+    exporter.export(_event("custom.event", execution_id="exec-0"))
+    exporter.export(_event("module.debug.failure", execution_id="exec-0"))
+    for i in range(1, cap + 1):
+        exporter.export(_event("agent.execution.started", execution_id=f"exec-{i}"))
+
+    assert "agent.execution.started:exec-0" not in exporter._pending_paired_spans
+    assert "exec-0" not in exporter._deferred_spans
+    assert "exec-0" not in exporter._deferred_events
+    assert "exec-0" not in exporter._deferred_logs
+    assert len(exporter._pending_paired_spans) == cap
+    assert sink.records == []
+
+
+def test_execution_completion_keeps_deferred_record_order() -> None:
+    exporter, sink = _make_exporter()
+
+    exporter.export(_event("agent.execution.started", execution_id="exec-1"))
+    exporter.export(_event("storage.query", execution_id="exec-1"))
+    exporter.export(_event("custom.event", execution_id="exec-1"))
+    exporter.export(
+        _event("agent.execution.completed", execution_id="exec-1", status="ok")
+    )
+
+    assert [(record.kind, record.name) for record in sink.records[:3]] == [
+        ("span", "invoke_agent"),
+        ("span", "storage.query"),
+        ("event", "custom.event"),
+    ]
+
+
 def test_tool_prefix_still_routes_to_span_via_legacy_fast_path() -> None:
     exporter, sink = _make_exporter()
 
@@ -436,11 +506,22 @@ class _BlockingOTELSink(RecordingOTELTraceSink):
         super().__init__()
         self.started = Event()
         self.release = Event()
+        self.closed = Event()
+        self.close_count = 0
 
     def emit_event(self, **kwargs) -> None:
         self.started.set()
         self.release.wait(timeout=1.0)
         super().emit_event(**kwargs)
+
+    def emit_log(self, **kwargs) -> None:
+        self.started.set()
+        self.release.wait(timeout=1.0)
+        super().emit_log(**kwargs)
+
+    def close(self) -> None:
+        self.close_count += 1
+        self.closed.set()
 
 
 def test_noncritical_export_queue_drops_when_capacity_is_full() -> None:
@@ -470,6 +551,57 @@ def test_noncritical_export_queue_drops_when_capacity_is_full() -> None:
     assert exporter.queue_stats()["drops"] == 1
     sink.release.set()
     exporter.close()
+
+
+def test_timed_out_queue_close_finishes_after_blocked_export_releases() -> None:
+    sink = _BlockingOTELSink()
+    exporter = OpenTelemetryTraceExporter(
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=1,
+            queue_flush_timeout_seconds=0.01,
+        ),
+        sink=sink,
+    )
+    assert exporter.export(_event("policy.applied", criticality="noncritical"))
+    assert sink.started.wait(timeout=1.0)
+
+    exporter.close()
+
+    assert sink.closed.is_set() is False
+    assert exporter.queue_stats()["flush_failures"] == 1
+    assert exporter.export(_event("policy.applied")) is False
+    sink.release.set()
+    assert sink.closed.wait(timeout=1.0)
+    assert sink.close_count == 1
+    exporter.close()
+    assert sink.close_count == 1
+
+
+def test_close_waits_for_already_started_direct_export() -> None:
+    sink = _BlockingOTELSink()
+    exporter = OpenTelemetryTraceExporter(
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=1,
+            queue_flush_timeout_seconds=0.1,
+        ),
+        sink=sink,
+    )
+    export_thread = Thread(target=lambda: exporter.export(_event("policy.applied")))
+    export_thread.start()
+    assert sink.started.wait(timeout=1.0)
+
+    exporter.close()
+
+    assert sink.closed.is_set() is False
+    assert exporter.export(_event("policy.applied")) is False
+    sink.release.set()
+    export_thread.join(timeout=1.0)
+    assert sink.closed.wait(timeout=1.0)
+    assert sink.close_count == 1
 
 
 def test_otel_04_every_catalog_event_resolves_to_a_valid_class() -> None:

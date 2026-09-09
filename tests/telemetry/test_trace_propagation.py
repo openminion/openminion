@@ -29,7 +29,11 @@ def _exporter() -> tuple[OpenTelemetryTraceExporter, RecordingOTELTraceSink]:
     sink = RecordingOTELTraceSink()
     return (
         OpenTelemetryTraceExporter(
-            OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+            OTELExporterConfig(
+                enabled=True,
+                endpoint="http://collector:4318",
+                noncritical_queue_capacity=0,
+            ),
             sink=sink,
         ),
         sink,
@@ -145,7 +149,11 @@ def test_sdk_exports_one_parented_trace_with_correlated_log() -> None:
         logger_provider=logger_provider,
     )
     exporter = OpenTelemetryTraceExporter(
-        OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=0,
+        ),
         sink=sink,
     )
 

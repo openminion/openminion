@@ -40,9 +40,11 @@ def attributes_for_event(
     event: TelemetryEvent,
     *,
     include_assistant_body: bool,
+    allowed_sensitive_fields: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     flattened: dict[str, Any] = {
         "openminion.event_type": str(event.event_type or ""),
+        "openminion.telemetry.schema_version": str(event.schema_version or ""),
         "openminion.session_id": str(event.session_id or ""),
         "openminion.turn_id": str(event.turn_id or ""),
     }
@@ -65,6 +67,7 @@ def attributes_for_event(
         prefix="openminion.payload",
         out=flattened,
         include_assistant_body=include_assistant_body,
+        allowed_sensitive_fields=allowed_sensitive_fields,
     )
     flattened.update(_gen_ai_attributes_for_event(event))
     flattened.update(tool_attributes_for_event(event))
@@ -108,8 +111,8 @@ def _gen_ai_attributes_for_event(event: TelemetryEvent) -> dict[str, Any]:
             attributes["gen_ai.usage.output_tokens"] = output_tokens
         for source_key, target_key in (
             ("cached_tokens", "gen_ai.usage.cache_read.input_tokens"),
-            ("cache_creation_tokens", "gen_ai.usage.cache_write.input_tokens"),
-            ("reasoning_tokens", "gen_ai.usage.reasoning_tokens"),
+            ("cache_creation_tokens", "gen_ai.usage.cache_creation.input_tokens"),
+            ("reasoning_tokens", "gen_ai.usage.reasoning.output_tokens"),
         ):
             value = _first_int(usage, (source_key,))
             if value is not None:
@@ -125,11 +128,7 @@ def _gen_ai_attributes_for_event(event: TelemetryEvent) -> dict[str, Any]:
 
     finish_reason = payload.get("finish_reason") or payload.get("stop_reason")
     if finish_reason:
-        attributes["gen_ai.response.finish_reasons"] = json.dumps(
-            [str(finish_reason)],
-            ensure_ascii=True,
-            separators=(",", ":"),
-        )
+        attributes["gen_ai.response.finish_reasons"] = [str(finish_reason)]
 
     for source_key, target_key in (
         ("provider_round_trip_ms", "openminion.model.provider_round_trip_ms"),
@@ -264,9 +263,13 @@ def _flatten_payload(
     prefix: str,
     out: dict[str, Any],
     include_assistant_body: bool,
+    allowed_sensitive_fields: frozenset[str],
+    parent_sensitive_allowed: bool = False,
 ) -> None:
     key_name = prefix.rsplit(".", 1)[-1].lower()
     path_parts = tuple(part.lower() for part in prefix.split("."))
+    if key_name == "sensitive_content" and "_telemetry_policy" in path_parts:
+        return
     if key_name == "error_text" or (
         "error" in path_parts[:-1] and key_name in {"message", "details"}
     ):
@@ -283,15 +286,28 @@ def _flatten_payload(
                 prefix=f"{prefix}.{clean_key}",
                 out=out,
                 include_assistant_body=include_assistant_body,
+                allowed_sensitive_fields=allowed_sensitive_fields,
+                parent_sensitive_allowed=(
+                    parent_sensitive_allowed
+                    or clean_key.lower() in allowed_sensitive_fields
+                ),
             )
         return
     if isinstance(value, (list, tuple)):
-        if not include_assistant_body and key_name in _PROSE_KEYS:
+        field_allowed = key_name in allowed_sensitive_fields
+        if (
+            not include_assistant_body
+            and key_name in _PROSE_KEYS
+            and not field_allowed
+            and not parent_sensitive_allowed
+        ):
             return
         out[prefix] = json.dumps(
             _normalize_otel_json_value(
                 list(value),
-                include_assistant_body=include_assistant_body,
+                include_assistant_body=(
+                    include_assistant_body or field_allowed or parent_sensitive_allowed
+                ),
             ),
             ensure_ascii=True,
             separators=(",", ":"),
@@ -304,7 +320,12 @@ def _flatten_payload(
     if value is None:
         return
     text = str(value)
-    if not include_assistant_body and key_name in _PROSE_KEYS:
+    if (
+        not include_assistant_body
+        and key_name in _PROSE_KEYS
+        and key_name not in allowed_sensitive_fields
+        and not parent_sensitive_allowed
+    ):
         return
     out[prefix] = text
 

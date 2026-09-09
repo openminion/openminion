@@ -20,7 +20,11 @@ def _event(event_type: str, **data: object) -> TelemetryEvent:
 def test_model_span_uses_current_name_kind_and_reported_facts() -> None:
     sink = RecordingOTELTraceSink()
     exporter = OpenTelemetryTraceExporter(
-        OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=0,
+        ),
         sink=sink,
     )
     exporter.export(
@@ -68,8 +72,10 @@ def test_model_span_uses_current_name_kind_and_reported_facts() -> None:
     assert span.attributes["gen_ai.provider.name"] == "anthropic"
     assert span.attributes["gen_ai.response.model"] == "claude-sonnet-4-20250514"
     assert span.attributes["gen_ai.usage.cache_read.input_tokens"] == 20
-    assert span.attributes["gen_ai.usage.cache_write.input_tokens"] == 10
-    assert span.attributes["gen_ai.usage.reasoning_tokens"] == 5
+    assert span.attributes["gen_ai.usage.cache_creation.input_tokens"] == 10
+    assert span.attributes["gen_ai.usage.reasoning.output_tokens"] == 5
+    assert "gen_ai.usage.cache_write.input_tokens" not in span.attributes
+    assert "gen_ai.usage.reasoning_tokens" not in span.attributes
     assert span.attributes["gen_ai.usage.cost.usd"] == 0.012
     assert span.attributes["openminion.model.cost_source"] == "provider"
 
@@ -77,7 +83,11 @@ def test_model_span_uses_current_name_kind_and_reported_facts() -> None:
 def test_failed_model_call_closes_span_with_normalized_error() -> None:
     sink = RecordingOTELTraceSink()
     exporter = OpenTelemetryTraceExporter(
-        OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=0,
+        ),
         sink=sink,
     )
     exporter.export(_event("llm.call.started", llm_call_id="call-2"))
@@ -112,6 +122,7 @@ def test_error_prose_is_not_exported_when_assistant_body_is_enabled() -> None:
             enabled=True,
             endpoint="http://collector:4318",
             include_assistant_body=True,
+            noncritical_queue_capacity=0,
         ),
         sink=sink,
     )
@@ -142,7 +153,11 @@ def test_error_prose_is_not_exported_when_assistant_body_is_enabled() -> None:
 def test_content_and_unreported_provider_facts_are_omitted() -> None:
     sink = RecordingOTELTraceSink()
     exporter = OpenTelemetryTraceExporter(
-        OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=0,
+        ),
         sink=sink,
     )
     exporter.export(

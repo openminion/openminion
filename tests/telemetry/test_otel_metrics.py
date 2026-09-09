@@ -22,7 +22,11 @@ def _event(event_type: str, **data: object) -> TelemetryEvent:
 def _metrics(event: TelemetryEvent):
     sink = RecordingOTELTraceSink()
     exporter = OpenTelemetryTraceExporter(
-        OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=0,
+        ),
         sink=sink,
     )
     exporter.export(event)
