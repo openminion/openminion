@@ -280,6 +280,8 @@ class SessctlAdapter:
         self.store.update_session_status(session_id, status)
 
     def list_turns(self, session_id: str) -> list[dict[str, Any]]:
+        if self.store.get_session(session_id) is None:
+            return []
         slice_data = self.store.get_slice(session_id, "chat", {"max_turns": 1000})
         self._emit_session_operation(
             session_id=session_id,

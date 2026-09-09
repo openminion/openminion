@@ -4,7 +4,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from .migrations import (
     DEFAULT_MIGRATIONS,
@@ -110,7 +110,13 @@ RUNTIME_ONLY_TABLES: tuple[str, ...] = (
     "sidecar_ingest_log",
     "core_events",
     "core_sidecar_rows",
+    "om_meta",
+    "tool_runtime_audit_events",
 )
+
+RUNTIME_ONLY_COLUMNS: dict[str, tuple[str, ...]] = {
+    "sessions": ("active_profile_version",),
+}
 
 
 def _normalize_type(raw: str) -> str:
@@ -204,6 +210,7 @@ def detect_schema_drift(
     live_db: sqlite3.Connection | str | Path,
     *,
     ignore_extra_tables: Sequence[str] = (),
+    ignore_extra_columns: Mapping[str, Sequence[str]] | None = None,
 ) -> SchemaDriftReport:
     """Detect schema drift helper."""
 
@@ -231,6 +238,19 @@ def detect_schema_drift(
             observed_tables=observed_tables,
         )
     )
+    ignored_columns = {
+        table: frozenset(columns)
+        for table, columns in (ignore_extra_columns or {}).items()
+    }
+    if ignored_columns:
+        findings = [
+            finding
+            for finding in findings
+            if not (
+                finding.kind is SchemaDriftKind.EXTRA_COLUMN
+                and finding.column in ignored_columns.get(finding.table, ())
+            )
+        ]
 
     if expected_schema.head_version > observed_head:
         findings.append(
@@ -362,6 +382,7 @@ __all__ = [
     "ExpectedColumn",
     "ExpectedSchema",
     "ExpectedTable",
+    "RUNTIME_ONLY_COLUMNS",
     "RUNTIME_ONLY_TABLES",
     "SchemaDriftFinding",
     "SchemaDriftKind",

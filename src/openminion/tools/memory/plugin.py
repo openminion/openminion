@@ -101,7 +101,6 @@ class MemorySearchArgs(BaseModel):
     query: str = Field(..., min_length=1, description="Literal search query")
     scopes: list[str] = Field(
         default_factory=list,
-        min_length=1,
         description=(
             "Omit to search persistent memory in the active agent scope; provide "
             "exact active agent and/or session scopes only when narrowing the search"
@@ -128,10 +127,7 @@ class MemorySearchArgs(BaseModel):
             return []
         if not isinstance(value, list):
             raise ValueError(f"{info.field_name} must be a list")
-        normalized = [str(item).strip() for item in value if str(item or "").strip()]
-        if info.field_name == "scopes" and not normalized:
-            raise ValueError("scopes must contain at least one value")
-        return normalized
+        return [str(item).strip() for item in value if str(item or "").strip()]
 
 
 class MemoryForgetArgs(BaseModel):

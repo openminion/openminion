@@ -8,9 +8,9 @@ from uuid import uuid4
 from openminion.base.types import Message
 from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
 from openminion.cli.presentation.tool.formatting import tool_call_body
-from openminion.modules.context.trace_inspection import (
-    ContextTraceLookupError,
-    list_context_traces,
+from openminion.api.queries.sessions import (
+    SessionQueryError,
+    list_session_context_traces,
 )
 from openminion.modules.storage import (
     is_room_session_key,
@@ -70,14 +70,22 @@ class RuntimeMessageMixin:
         )
 
     def context_trace_payload(self, *, session_id: str) -> dict[str, Any]:
+        trace_session_id = session_id
+        if self._target == TARGET_KIND_FOCUS and not is_room_session_key(session_id):
+            trace_session_id = f"{session_id}::conv:focus-{session_id}"
         try:
             return cast(
                 dict[str, Any],
-                list_context_traces(self._rt.sessions, session_id=session_id),
+                list_session_context_traces(
+                    None,
+                    session_id=session_id,
+                    trace_session_id=trace_session_id,
+                    runtime=self._rt,
+                ),
             )
-        except ContextTraceLookupError as exc:
+        except SessionQueryError as exc:
             return {
-                "session_id": session_id,
+                "session_id": trace_session_id,
                 "traces": [],
                 "count": 0,
                 "degraded": exc.code,

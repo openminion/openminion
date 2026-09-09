@@ -165,6 +165,9 @@ class ContextCtlAdapter(ContextAPI):
     ) -> bool:
         return bool(self.service.maybe_compact(session_id=session_id))
 
+    def release_session(self, session_id: str) -> None:
+        self.service.release_session(session_id)
+
     def close(self) -> None:
         if self._closed:
             return

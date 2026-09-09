@@ -43,8 +43,12 @@ from .pack.finalize import (
     apply_live_state_overlay as _apply_live_state_overlay_impl,
     build_runtime_cache_lookup_key as _build_runtime_cache_lookup_key_impl,
     finalize_context_pack as _finalize_context_pack_impl,
+    release_session_state as _release_session_state_impl,
 )
-from .pack.evidence import pack_evidence_items as _pack_evidence_items_impl
+from .pack.evidence import (
+    apply_evidence_priority_ordering as _apply_evidence_priority_ordering_impl,
+    pack_evidence_items as _pack_evidence_items_impl,
+)
 from .prefix import PinnedPrefixBuilder, PrefixCacheAdapter
 from .render.sections import (
     estimate_tokens as _estimate_tokens_messages_impl,
@@ -533,26 +537,9 @@ class ContextCtlService:
             skills_tokens=skills_tokens,
         )
 
-    def _apply_evidence_priority_ordering(
-        self,
-        *,
-        segments: list[ContextSegment],
-        artifact_digests: list[ArtifactDigest],
-    ) -> None:
-        ev_segs = [
-            (i, s)
-            for i, s in enumerate(segments)
-            if s.bucket == "evidence_refs" and s.content.strip()
-        ]
-        if len(ev_segs) <= 1:
-            return
-        idxs = [i for i, _ in ev_segs]
-        slist = [s for _, s in ev_segs]
-        ref_to_score = {a.ref: a.score for a in artifact_digests}
-        scores = [ref_to_score.get(s.refs[0], 0.5) if s.refs else 0.0 for s in slist]
-        ordered_ev = _position_aware_v1(slist, scores)
-        for orig_idx, new_seg in zip(idxs, ordered_ev):
-            segments[orig_idx] = new_seg
+    _apply_evidence_priority_ordering = staticmethod(
+        _apply_evidence_priority_ordering_impl
+    )
 
     def _record_built_pack(
         self,
@@ -955,10 +942,20 @@ class ContextCtlService:
     def explain_pack(self, pack_version: str) -> ContextManifest | None:
         return self._manifest_index.get(pack_version)
 
+    def release_session(self, session_id: str) -> None:
+        _release_session_state_impl(
+            session_id=session_id,
+            cache=self._cache,
+            manifest_index=self._manifest_index,
+            latest_manifest_by_session=self._latest_manifest_by_session,
+            summary_state=self._summary_state,
+        )
+
     def close(self) -> None:
         self._cache.clear()
         self._manifest_index.clear()
         self._latest_manifest_by_session.clear()
+        self._summary_state = ContextSummaryState(enabled=self._compaction_enabled)
 
     def _resolve_identity_budget_config(
         self,

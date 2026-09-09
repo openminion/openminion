@@ -18,6 +18,7 @@ from openminion.modules.storage.runtime.migrations import (
     migrate_record_store,
 )
 from openminion.modules.storage.runtime.schema_drift import (
+    RUNTIME_ONLY_COLUMNS,
     RUNTIME_ONLY_TABLES,
     SchemaDriftReport,
     derive_expected_schema,
@@ -75,6 +76,7 @@ def _maybe_check_schema_drift_sqlite(
             expected,
             connection,
             ignore_extra_tables=RUNTIME_ONLY_TABLES,
+            ignore_extra_columns=RUNTIME_ONLY_COLUMNS,
         )
     except Exception:  # noqa: BLE001
         logger.debug(

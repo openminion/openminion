@@ -46,6 +46,7 @@ class GatewayTurnRunnerFlowMixin(
         memory_dynamic_retrieval_enabled: bool,
         emit_run_state: Callable[..., Any],
         knowledge_graphs: Any | None = None,
+        contextctl_adapter: Any | None = None,
         typed_terminal_resolver: Callable[..., tuple[Any, ...] | None] | None = None,
         emit_invocation_lifecycle: Callable[[InvocationLifecycleFact], bool]
         | None = None,
@@ -69,6 +70,7 @@ class GatewayTurnRunnerFlowMixin(
             None,
         )
         self._memory_dynamic_retrieval_enabled = memory_dynamic_retrieval_enabled
+        self._contextctl_adapter = contextctl_adapter
         self._emit_run_state = emit_run_state
         self._typed_terminal_resolver = typed_terminal_resolver
         self._lifecycle_ops = _GatewayTurnLifecycleOps(
@@ -100,6 +102,10 @@ class GatewayTurnRunnerFlowMixin(
 
     def flush_memory_followups(self, *, session_id: str | None = None) -> None:
         self._memory_followup_queue.flush(session_id=session_id)
+
+    def release_session(self, session_id: str) -> None:
+        self.flush_memory_followups(session_id=session_id)
+        self._memory_capsule_cache.pop(session_id, None)
 
     def _emit_terminal_run_state(
         self,

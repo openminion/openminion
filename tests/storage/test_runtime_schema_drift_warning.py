@@ -89,6 +89,45 @@ def test_build_runtime_storage_no_warning_on_clean_db(
         ctx.close()
 
 
+def test_build_runtime_storage_ignores_owned_runtime_extensions(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openminion.modules.storage.runtime.migrations import migrate_database
+
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+    db_path = tmp_path / ".openminion" / "state" / "extensions.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    migrate_database(db_path)
+    with sqlite3.connect(str(db_path)) as connection:
+        connection.execute(
+            "ALTER TABLE sessions ADD COLUMN active_profile_version TEXT"
+        )
+        connection.execute(
+            "CREATE TABLE om_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE TABLE tool_runtime_audit_events("
+            "event_id TEXT PRIMARY KEY, ts TEXT NOT NULL, run_id TEXT, "
+            "run_root TEXT, event_json TEXT NOT NULL)"
+        )
+        connection.commit()
+
+    caplog.set_level(
+        logging.WARNING, logger="openminion.modules.storage.runtime.context"
+    )
+    ctx = build_runtime_storage(db_path)
+    try:
+        assert ctx.schema_drift_report is not None
+        assert ctx.schema_drift_report.has_drift is False
+        assert not any(
+            getattr(record, "event", None) == SCHEMA_DRIFT_WARNING_EVENT
+            for record in caplog.records
+        )
+    finally:
+        ctx.close()
+
+
 def test_build_runtime_storage_drift_check_can_be_disabled(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:

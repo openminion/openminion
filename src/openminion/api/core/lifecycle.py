@@ -12,6 +12,8 @@ class RuntimeFinalizer(Protocol):
 
     def detach(self) -> object: ...
 
+    def __call__(self) -> object: ...
+
 
 class _ExposureService(Protocol):
     def bind_event_sink(
@@ -45,11 +47,53 @@ def initialize_runtime_components(
         close_runtime_components,
         channel_supervisor=channel_supervisor,
         retrieve_ctl=getattr(runtime, "retrieve_ctl", None),
+        gateways=getattr(runtime, "_gateways", None),
+        agent_services=getattr(runtime, "_agent_services", None),
         memory_assemblies=getattr(runtime, "_memory_assemblies", None),
         action_policy=getattr(runtime, "action_policy", None),
         runtime_manager=getattr(runtime, "runtime_manager", None),
         lifecycle_bridge=getattr(runtime, "_lifecycle_event_bridge", None),
         tools=runtime_tools,
+        runtime_storage=getattr(runtime, "runtime_storage", None),
+        sandbox_runner=getattr(runtime, "sandbox_runner", None),
+        authored_tools=getattr(runtime, "authored_tools", None),
+        ops_service=getattr(runtime, "ops_service", None),
+        telemetry_service=getattr(runtime, "telemetry_service", None),
+        llm_runtime=getattr(runtime, "llm_runtime", None),
+    )
+
+
+def close_runtime_session(runtime: object, session_id: str, *, reason: str) -> None:
+    sessions = getattr(runtime, "sessions")
+    session = sessions.get_session(session_id)
+    if session is None:
+        raise ValueError(f"Session '{session_id}' was not found.")
+    gateways = tuple(getattr(runtime, "_gateways", {}).values())
+    owner = str(session.active_agent_id or session.owner_agent_id or "").strip()
+    gateway = next(
+        (item for item in gateways if item.agent_id == owner),
+        None,
+    )
+    if gateway is None:
+        sessions.close_session(session_id=session_id, reason=reason)
+    else:
+        gateway.close_session(session_id, reason=reason)
+    for item in gateways:
+        if item is not gateway:
+            item.release_session(session_id)
+
+
+def close_unregistered_runtime_components(runtime: object) -> None:
+    close_runtime_components(
+        channel_supervisor=getattr(runtime, "channel_supervisor", None),
+        retrieve_ctl=getattr(runtime, "retrieve_ctl", None),
+        gateways=getattr(runtime, "_gateways", None),
+        agent_services=getattr(runtime, "_agent_services", None),
+        memory_assemblies=getattr(runtime, "_memory_assemblies", None),
+        action_policy=getattr(runtime, "action_policy", None),
+        runtime_manager=getattr(runtime, "runtime_manager", None),
+        lifecycle_bridge=getattr(runtime, "_lifecycle_event_bridge", None),
+        tools=getattr(runtime, "tools", None),
         runtime_storage=getattr(runtime, "runtime_storage", None),
         sandbox_runner=getattr(runtime, "sandbox_runner", None),
         authored_tools=getattr(runtime, "authored_tools", None),
@@ -74,9 +118,13 @@ def close_runtime_components(
     ops_service: object | None = None,
     telemetry_service: object | None = None,
     agent_services: object | None = None,
+    gateways: object | None = None,
     llm_runtime: object | None = None,
 ) -> None:
     _call(channel_supervisor, "stop")
+    if isinstance(gateways, dict):
+        for gateway in tuple(gateways.values()):
+            _call(gateway, "close")
     if isinstance(agent_services, dict):
         for service in tuple(agent_services.values()):
             _call(service, "close")

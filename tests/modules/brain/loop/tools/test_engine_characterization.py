@@ -8594,3 +8594,37 @@ def test_action_result_to_tool_message_compacts_large_payloads() -> None:
     assert payload["outputs"]["content"].endswith("...[truncated]")
     assert payload["outputs"]["results"][-1].startswith("...[")
     assert payload["error"]["message"].endswith("...[truncated]")
+
+
+def test_action_result_to_tool_message_preserves_nested_record_scalars() -> None:
+    action_result = ActionResult(
+        command_id="memory-search",
+        status="success",
+        summary="memory search returned 1 record(s)",
+        outputs={
+            "ok": True,
+            "content": "memory search returned 1 record(s)",
+            "data": {
+                "query": "durable memory value",
+                "count": 1,
+                "records": [
+                    {
+                        "id": "memory-1",
+                        "scope": "agent:memory-agent",
+                        "type": "fact",
+                        "content": "durable-memory-value",
+                        "tags": ["smoke"],
+                    }
+                ],
+            },
+        },
+    )
+
+    message = action_result_to_tool_message(
+        "call-memory-search", "memory.search", action_result
+    )
+    payload = json.loads(message.content)
+
+    record = payload["outputs"]["data"]["records"][0]
+    assert record["content"] == "durable-memory-value"
+    assert record["tags"] == "[truncated]"

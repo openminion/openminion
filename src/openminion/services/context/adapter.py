@@ -1,5 +1,4 @@
 import logging
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, cast
@@ -12,10 +11,14 @@ from openminion.services.bootstrap.paths import (
 )
 from openminion.services.context.constants import (
     CONTEXTCTL_DUAL_RENDER_ENV,
+    CONTEXTCTL_GATEWAY_ENABLED_ENV,
     OPENMINION_SESSION_CONTEXT_TOKEN_BUDGET_ENV,
 )
 from openminion.modules.context.pack.semantics import resolve_context_total_token_budget
 from openminion.modules.context.memory_client import NullMemoryClient
+from openminion.modules.context.slices import (
+    RuntimeMappedSessionClient as _RuntimeMappedSessionClient,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -33,18 +36,22 @@ class ContextCtlGatewayAdapter:
         self,
         *,
         contextctl_dual_render: bool = False,
+        enabled: bool = True,
         agent_id: str = "",
         runtime_token_budget: int = 0,
         session_client: Any | None = None,
         memory_client: Any | None = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
-        self._enabled = True
+        self._enabled = enabled
         self._dual_render = contextctl_dual_render
         self._agent_id = agent_id
         self._runtime_token_budget = max(0, runtime_token_budget)
         self._session_client = session_client
         self._memory_client = memory_client
+        self._service: Any | None = None
+        self._identity_ctl: Any | None = None
+        self._owned_session_client: _RuntimeMappedSessionClient | None = None
         self._log = logger or _logger
         if self._dual_render:
             self._log.warning(
@@ -57,6 +64,7 @@ class ContextCtlGatewayAdapter:
         cls,
         *,
         agent_id: str = "",
+        runtime_token_budget: int | None = None,
         session_client: Any | None = None,
         memory_client: Any | None = None,
         logger: Optional[logging.Logger] = None,
@@ -74,11 +82,16 @@ class ContextCtlGatewayAdapter:
                 return 0
 
         return cls(
+            enabled=env_config.get_bool(CONTEXTCTL_GATEWAY_ENABLED_ENV, False),
             contextctl_dual_render=env_config.get_bool(
                 CONTEXTCTL_DUAL_RENDER_ENV, False
             ),
             agent_id=agent_id,
-            runtime_token_budget=_int_env(OPENMINION_SESSION_CONTEXT_TOKEN_BUDGET_ENV),
+            runtime_token_budget=(
+                _int_env(OPENMINION_SESSION_CONTEXT_TOKEN_BUDGET_ENV)
+                if runtime_token_budget is None
+                else runtime_token_budget
+            ),
             session_client=session_client,
             memory_client=memory_client,
             logger=logger,
@@ -160,11 +173,38 @@ class ContextCtlGatewayAdapter:
             Purpose,
             default_budgets_for,
         )
+
+        service = self._ensure_service(agent_id)
+        budgets_override = default_budgets_for(cast(Purpose, purpose))
+        budgets_override.total_max_tokens = resolve_context_total_token_budget(
+            purpose=purpose,
+            runtime_token_budget=self._runtime_token_budget,
+            requested_token_budget=None,
+        )
+        pack = service.build_pack(
+            BuildPackRequest(
+                session_id=session_id,
+                agent_id=agent_id,
+                purpose=cast(Purpose, purpose),
+                query=query,
+                budgets_override=budgets_override,
+            )
+        )
+        return [
+            ContextCtlMessage(role=m.role, content=m.content)
+            for m in pack.messages
+            if m.content.strip()
+        ]
+
+    def _ensure_service(self, agent_id: str) -> Any:
+        if self._service is not None:
+            return self._service
+
         from openminion.modules.context.contracts import IdentityClient
         from openminion.modules.context.service import ContextCtlService
 
-        identity_ctl_to_close: Any | None = None
-        identity_store_to_close: Any | None = None
+        identity_ctl: Any | None = None
+        identity_store: Any | None = None
         try:
             try:
                 from openminion.modules.identity.storage.store import (
@@ -177,50 +217,53 @@ class ContextCtlGatewayAdapter:
 
                 db_path = str(resolve_identity_db_from_env(env=resolve_services_env()))
 
-                identity_store_to_close = SQLiteIdentityStore(sqlite_path=db_path)
-                identity_ctl: Any = IdentityCtl(store=identity_store_to_close)
-                identity_ctl_to_close = identity_ctl
-                identity_store_to_close = None
+                identity_store = SQLiteIdentityStore(sqlite_path=db_path)
+                identity_ctl = IdentityCtl(store=identity_store)
+                identity_store = None
                 ensure_default_profile(identity_ctl, agent_id, "")
             except ImportError:
                 identity_ctl = _EchoIdentityClient(agent_id=agent_id)
 
             identity_client = cast(IdentityClient, identity_ctl)
-            session_client = self._session_client or _RuntimeMappedSessionClient(
-                sqlite_path=_resolve_runtime_sqlite_path()
-            )
+            session_client = self._session_client
+            if session_client is None:
+                self._owned_session_client = _RuntimeMappedSessionClient(
+                    sqlite_path=_resolve_runtime_sqlite_path()
+                )
+                session_client = self._owned_session_client
             memory_stub = self._memory_client or NullMemoryClient()
-            service = ContextCtlService(
+            self._service = ContextCtlService(
                 identityctl=identity_client,
                 sessctl=session_client,
                 memctl=memory_stub,
                 artifactctl=_NullArtifactClient(),
             )
-            budgets_override = default_budgets_for(cast(Purpose, purpose))
-            budgets_override.total_max_tokens = resolve_context_total_token_budget(
-                purpose=purpose,
-                runtime_token_budget=self._runtime_token_budget,
-                requested_token_budget=None,
-            )
-            pack = service.build_pack(
-                BuildPackRequest(
-                    session_id=session_id,
-                    agent_id=agent_id,
-                    purpose=cast(Purpose, purpose),
-                    query=query,
-                    budgets_override=budgets_override,
-                )
-            )
-            return [
-                ContextCtlMessage(role=m.role, content=m.content)
-                for m in pack.messages
-                if m.content.strip()
-            ]
-        finally:
-            if identity_ctl_to_close is not None:
-                identity_ctl_to_close.close()
-            elif identity_store_to_close is not None:
-                identity_store_to_close.close()
+            self._identity_ctl = identity_ctl
+            return self._service
+        except Exception:
+            if identity_ctl is not None:
+                identity_ctl.close()
+            elif identity_store is not None:
+                identity_store.close()
+            if self._owned_session_client is not None:
+                self._owned_session_client.close()
+                self._owned_session_client = None
+            raise
+
+    def release_session(self, session_id: str) -> None:
+        if self._service is not None:
+            self._service.release_session(session_id)
+
+    def close(self) -> None:
+        if self._service is not None:
+            self._service.close()
+            self._service = None
+        if self._identity_ctl is not None:
+            self._identity_ctl.close()
+            self._identity_ctl = None
+        if self._owned_session_client is not None:
+            self._owned_session_client.close()
+            self._owned_session_client = None
 
     def _contextctl_to_history(self, messages: list[ContextCtlMessage]) -> list[object]:
         from openminion.base.types import Message
@@ -279,61 +322,8 @@ class _EchoIdentityClient:
             text=f"Agent: {agent_id}",
         )
 
-
-class _RuntimeMappedSessionClient:
-    """Mapping-backed SessionClient sourced from runtime session storage."""
-
-    contract_version = "v1"
-
-    def __init__(self, sqlite_path: Path) -> None:
-        self._sqlite_path = sqlite_path
-        self._migrated = False
-        self._connection: sqlite3.Connection | None = None
-        self._store: Any | None = None
-
-    def _ensure_ready(self) -> Any:
-        """Open the migrated session store once."""
-        from openminion.modules.storage.runtime.migrations import migrate_database
-        from openminion.modules.storage.runtime.session_store import SessionStore
-        from openminion.modules.storage.runtime.sqlite import connect_database
-
-        if not self._migrated:
-            migrate_database(self._sqlite_path)
-            self._migrated = True
-        if self._connection is None:
-            self._connection = connect_database(self._sqlite_path)
-            self._store = SessionStore(self._connection)
-        return self._store
-
-    def get_slice(
-        self, *, session_id: str, purpose: str, limits: dict[str, int]
-    ) -> Any:
-        from openminion.modules.context.slices import (
-            build_session_slice_from_runtime_store,
-        )
-
-        del purpose
-        store = self._ensure_ready()
-        return build_session_slice_from_runtime_store(
-            store=store,
-            session_id=session_id,
-            limits=limits,
-            slice_version="runtime-map:v1",
-        )
-
     def close(self) -> None:
-        if self._connection is not None:
-            try:
-                self._connection.close()
-            finally:
-                self._connection = None
-                self._store = None
-
-    def __del__(self) -> None:
-        try:
-            self.close()
-        except Exception:
-            pass
+        return None
 
 
 class _NullArtifactClient:

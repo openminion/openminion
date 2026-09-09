@@ -43,6 +43,10 @@ _LLM_PURPOSES = (
 ).split()
 
 
+class GatewayHistoryHydrationError(RuntimeError):
+    code = "GATEWAY_HISTORY_HYDRATION_FAILED"
+
+
 def _resolve_turn_session_ids(*, message: Message) -> tuple[str, str]:
     runtime_session_id = str(message.metadata.get("session_id", "default")).strip()
     if not runtime_session_id:
@@ -393,8 +397,18 @@ def _pending_history_turns_to_hydrate(
             continue
         if role == "assistant" and self._is_state_machine_error_text(content):
             continue
-        signature = self._turn_signature(role=role, content=content)
-        if signature in existing_signatures:
+        message_id = str(item.metadata.get("message_id", "") or item.id).strip()
+        run_id = str(item.metadata.get("run_id", "") or "").strip()
+        source_signature = self._source_turn_signature(
+            role=role,
+            message_id=message_id,
+            run_id=run_id,
+        )
+        legacy_signature = self._turn_signature(role=role, content=content)
+        if (
+            source_signature in existing_signatures
+            or legacy_signature in existing_signatures
+        ):
             continue
         metadata = {
             key: str(item.metadata.get(key, "") or "").strip()
@@ -402,8 +416,9 @@ def _pending_history_turns_to_hydrate(
             if str(item.metadata.get(key, "") or "").strip()
         }
         metadata["source"] = "gateway_history_bridge"
+        metadata["message_id"] = message_id
         pending.append((role, content, metadata))
-        existing_signatures.add(signature)
+        existing_signatures.add(source_signature)
     return pending
 
 
@@ -428,8 +443,10 @@ def _hydrate_runner_session_context(
                 content=content,
                 meta=metadata,
             )
-        except Exception:  # noqa: BLE001
-            break
+        except Exception as exc:  # noqa: BLE001
+            raise GatewayHistoryHydrationError(
+                f"Could not hydrate gateway history for session '{session_id}'."
+            ) from exc
 
 
 def _runtime_system_prompt(self, *, user_message: str) -> str:
@@ -673,8 +690,10 @@ def _runner_turn_signatures(self, *, runner: BrainRunner, session_id: str) -> se
     signatures: set[str] = set()
     try:
         turns = runner.session_api.list_turns(session_id)
-    except Exception:  # noqa: BLE001
-        return signatures
+    except Exception as exc:  # noqa: BLE001
+        raise GatewayHistoryHydrationError(
+            f"Could not inspect hydrated history for session '{session_id}'."
+        ) from exc
 
     for item in turns:
         if not isinstance(item, dict):
@@ -693,8 +712,35 @@ def _runner_turn_signatures(self, *, runner: BrainRunner, session_id: str) -> se
         content = str(item.get("content", item.get("text", ""))).strip()
         if not content:
             continue
-        signatures.add(self._turn_signature(role=role, content=content))
+        metadata = item.get("meta", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        source_signature = self._source_turn_signature(
+            role=role,
+            message_id=str(metadata.get("message_id", "") or "").strip(),
+            run_id=str(metadata.get("run_id", "") or "").strip(),
+        )
+        signatures.add(
+            source_signature
+            if source_signature
+            else self._turn_signature(role=role, content=content)
+        )
     return signatures
+
+
+def _source_turn_signature(
+    self: Any,
+    *,
+    role: str,
+    message_id: str,
+    run_id: str,
+) -> str:
+    normalized_role = str(role).strip().lower() or "user"
+    if message_id:
+        return f"source:{normalized_role}:message:{message_id}"
+    if run_id:
+        return f"source:{normalized_role}:run:{run_id}"
+    return ""
 
 
 def _turn_signature(self, *, role: str, content: str) -> str:
@@ -751,5 +797,6 @@ __all__ = [
     "_resolve_turn_session_ids",
     "_runner_turn_signatures",
     "_runtime_system_prompt",
+    "_source_turn_signature",
     "_turn_signature",
 ]

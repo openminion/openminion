@@ -366,6 +366,10 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         self._runner = None
         super().close()
 
+    def release_session(self, session_id: str) -> None:
+        if self._runner is not None:
+            self._runner.release_session(session_id)
+
     def _init_bridge_telemetry(
         self,
         *,

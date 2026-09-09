@@ -100,6 +100,22 @@ def test_detect_schema_drift_extra_column(tmp_path: Path) -> None:
     assert any(f.table == "sessions" and f.column == "ad_hoc_label" for f in extras)
 
 
+def test_detect_schema_drift_can_ignore_one_known_extra_column(tmp_path: Path) -> None:
+    db_path = _migrated_path(tmp_path)
+    expected = derive_expected_schema()
+    with sqlite3.connect(str(db_path)) as connection:
+        connection.execute("ALTER TABLE sessions ADD COLUMN owned_extension TEXT")
+        connection.commit()
+
+    report = detect_schema_drift(
+        expected,
+        db_path,
+        ignore_extra_columns={"sessions": ("owned_extension",)},
+    )
+
+    assert report.has_drift is False
+
+
 def test_detect_schema_drift_missing_column_via_synthetic_expected() -> None:
     # Build a synthetic expected schema with one extra column. The live DB
     # (in-memory baseline migration) doesn't have it, so we expect
@@ -141,7 +157,11 @@ def test_detect_schema_drift_missing_column_via_synthetic_expected() -> None:
             (expected.head_version, "head"),
         )
         connection.commit()
-        report = detect_schema_drift(augmented, connection)
+        report = detect_schema_drift(
+            augmented,
+            connection,
+            ignore_extra_columns={"sessions": ("future_only_column",)},
+        )
     finally:
         connection.close()
 

@@ -1312,6 +1312,34 @@ class CacheBehaviorTests(unittest.TestCase):
         self.assertEqual(service._manifest_index, {})
         self.assertEqual(service._latest_manifest_by_session, {})
 
+    def test_release_session_keeps_other_session_cache(self) -> None:
+        service = _make_service()
+        released_packs = [
+            service.build_pack(_make_request(session_id="released", query=query))
+            for query in ("first", "second")
+        ]
+        kept_pack = service.build_pack(_make_request(session_id="kept"))
+        service.make_delta(
+            session_id="released",
+            agent_id="agent-test",
+            content="temporary summary",
+        )
+
+        service.release_session("released")
+
+        self.assertFalse(any(key[0] == "released" for key in service._cache))
+        self.assertTrue(
+            all(
+                service.explain_pack(pack.pack_version) is None
+                for pack in released_packs
+            )
+        )
+        manifest = service.explain_pack(kept_pack.pack_version)
+        self.assertIsNotNone(manifest)
+        assert manifest is not None
+        self.assertEqual(manifest.decision_trace.session_id, "kept")
+        self.assertEqual(service._summary_state.get_summary_deltas("released"), [])
+
     def test_live_state_overlay_bypasses_cache_and_updates_active_state(self) -> None:
         service = _make_service(
             session=_SliceSession(

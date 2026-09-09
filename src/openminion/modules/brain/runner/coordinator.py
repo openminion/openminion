@@ -158,6 +158,12 @@ class BrainRunner:
             extra=extra,
         )
 
+    def release_session(self, session_id: str) -> None:
+        self._lgmh_hydrated_sessions.discard(session_id)
+        release_context = getattr(self.context_api, "release_session", None)
+        if callable(release_context):
+            release_context(session_id)
+
     def set_meta_override(self, hook: str, result: MetaResult | None) -> None:
         if self._meta_overrides is None:
             self._meta_overrides = {}

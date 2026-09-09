@@ -156,6 +156,32 @@ def start_new_session(
     console.print(Text(message, style=_MUTED_ITALIC_STYLE))
 
 
+def close_current_session(
+    *,
+    runtime: Any,
+    console: Console,
+    transcript: TerminalTranscript,
+) -> None:
+    closer = getattr(runtime, "close_current_session", None)
+    if not callable(closer):
+        console.print(
+            Text("(runtime does not expose close_current_session)", style=_MUTED_STYLE)
+        )
+        return
+    try:
+        session_id = str(closer() or "").strip()
+    except (RuntimeError, ValueError) as exc:
+        console.print(Text(f"(could not close session: {exc})", style=_ERR_STYLE))
+        return
+    transcript.clear_messages()
+    console.print(
+        Text(
+            f"(closed session: {session_id}; use /new or /resume)",
+            style=_MUTED_ITALIC_STYLE,
+        )
+    )
+
+
 def resume_session(
     *,
     runtime: Any,

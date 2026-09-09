@@ -127,8 +127,6 @@ def test_brain_runner_afe_event_defers_candidates_to_terminal_capture(
         and event.get("payload", {}).get("llm_call_id") == llm_call_id
         for event in events
     )
-    call_order = runner._call_order_tracker[llm_call_id]  # noqa: SLF001
-    assert call_order["manifest_emitted"] is True
-    assert call_order["completed_at"] is not None
+    assert llm_call_id not in runner._call_order_tracker  # noqa: SLF001
 
     assert _candidate_payloads(memory_api) == []

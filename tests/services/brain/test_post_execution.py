@@ -2268,7 +2268,10 @@ def test_hydrate_runner_session_context_skips_duplicates_and_error_turns() -> No
             "session_id": "s1",
             "role": "user",
             "content": "new question",
-            "meta": {"source": "gateway_history_bridge"},
+            "meta": {
+                "message_id": history[2].id,
+                "source": "gateway_history_bridge",
+            },
         },
     ]
 

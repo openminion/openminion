@@ -126,6 +126,37 @@ def build_runtime_cache_lookup_key(
     )
 
 
+def release_session_state(
+    *,
+    session_id: str,
+    cache: dict[tuple[str, ...], ContextPack],
+    manifest_index: dict[str, ContextManifest],
+    latest_manifest_by_session: dict[str, ContextManifest],
+    summary_state: Any,
+) -> None:
+    for cache_key in tuple(cache):
+        if cache_key[0] == session_id:
+            cache.pop(cache_key)
+    latest_manifest_by_session.pop(session_id, None)
+    for version, manifest in tuple(manifest_index.items()):
+        trace = manifest.decision_trace
+        if trace is None or trace.session_id != session_id:
+            continue
+        replacement = next(
+            (
+                pack.context_manifest
+                for pack in cache.values()
+                if pack.pack_version == version and pack.context_manifest is not None
+            ),
+            None,
+        )
+        if replacement is None:
+            manifest_index.pop(version)
+        else:
+            manifest_index[version] = replacement
+    summary_state.release_session(session_id)
+
+
 def build_prompt_cache_key(
     *,
     prefix_builder: Any,

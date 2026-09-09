@@ -38,6 +38,25 @@ class BridgeSessionClient:
             except Exception:
                 pass
 
+    def emit_canonical_event(
+        self,
+        *,
+        session_id: str,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+        actor_type: str = "system",
+        actor_id: str | None = None,
+    ) -> str:
+        return str(
+            self._store.emit_canonical_event(
+                session_id=session_id,
+                event_type=event_type,
+                payload=payload,
+                actor_type=actor_type,
+                actor_id=actor_id,
+            )
+        )
+
     def get_slice(
         self,
         *,

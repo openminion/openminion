@@ -18,7 +18,6 @@ from openminion.cli.interactive.runtime import OpenMinionRuntime
 from openminion.cli.interactive.runtime.messages import room_result_chat_messages
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.presentation.models import MessageKind
-from openminion.modules.context.trace_inspection import ContextTraceLookupError
 from openminion.base.config.core import OpenMinionConfig
 
 
@@ -32,6 +31,7 @@ class _SessionRecord:
     session_key: str = ""
     metadata: dict[str, object] | None = None
     active_agent_id: str = ""
+    owner_agent_id: str = ""
 
 
 @dataclass
@@ -65,7 +65,13 @@ class _FakeSessions:
         if session_id:
             record = self._by_id.get(session_id)
             if record is None:
-                record = _SessionRecord(id=session_id, channel=channel, target=target)
+                record = _SessionRecord(
+                    id=session_id,
+                    channel=channel,
+                    target=target,
+                    active_agent_id=agent_id,
+                    owner_agent_id=agent_id,
+                )
                 self._by_id[session_id] = record
                 self._messages.setdefault(session_id, [])
                 self._metadata.setdefault(session_id, dict(metadata or {}))
@@ -78,7 +84,13 @@ class _FakeSessions:
 
         self._counter += 1
         sid = f"sess-{self._counter:03d}"
-        record = _SessionRecord(id=sid, channel=channel, target=target)
+        record = _SessionRecord(
+            id=sid,
+            channel=channel,
+            target=target,
+            active_agent_id=agent_id,
+            owner_agent_id=agent_id,
+        )
         self._by_id[sid] = record
         self._by_key[key] = sid
         self._messages.setdefault(sid, [])
@@ -207,13 +219,56 @@ class _FakeSessions:
     def list_events(self, *, session_id: str, **_: object) -> list[SimpleNamespace]:
         return list(self._events.get(session_id, []))
 
+    def close_session(self, *, session_id: str, reason: str) -> None:
+        del reason
+        self._by_id[session_id].status = "closed"
+
+
+class _FakeContextTraceStore:
+    def __init__(self) -> None:
+        self._events: dict[str, list[SimpleNamespace]] = {}
+        self.requests: list[str] = []
+
+    def add_event(self, session_id: str, event_type: str, payload: dict) -> None:
+        self._events.setdefault(session_id, []).insert(
+            0,
+            SimpleNamespace(event_type=event_type, payload=dict(payload)),
+        )
+
+    def list_events(
+        self,
+        session_id: str,
+        *,
+        event_type: str | None = None,
+        limit: int = 100,
+    ) -> list[SimpleNamespace]:
+        self.requests.append(session_id)
+        events = self._events.get(session_id, [])
+        if event_type:
+            events = [event for event in events if event.event_type == event_type]
+        return list(events[:limit])
+
 
 class _FakeGateway:
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, sessions: _FakeSessions) -> None:
         self._name = name
+        self._sessions = sessions
         self.calls: list[dict[str, object]] = []
         self.metadata: dict[str, str] = {}
         self.progress_events: list[dict[str, object]] = []
+        self.closed_sessions: list[tuple[str, str]] = []
+        self.released_sessions: list[str] = []
+
+    @property
+    def agent_id(self) -> str:
+        return self._name
+
+    def close_session(self, session_id: str, *, reason: str) -> None:
+        self.closed_sessions.append((session_id, reason))
+        self._sessions.close_session(session_id=session_id, reason=reason)
+
+    def release_session(self, session_id: str) -> None:
+        self.released_sessions.append(session_id)
 
     async def handle_message(
         self,
@@ -264,6 +319,7 @@ class _FakeRuntime:
             },
         )
         self.sessions = _FakeSessions()
+        self.context_trace_store = _FakeContextTraceStore()
         self.tools = SimpleNamespace(
             list=lambda: {
                 "weather": SimpleNamespace(enabled=True),
@@ -271,8 +327,8 @@ class _FakeRuntime:
             }
         )
         self._gateways = {
-            "alpha": _FakeGateway("alpha"),
-            "beta": _FakeGateway("beta"),
+            "alpha": _FakeGateway("alpha", self.sessions),
+            "beta": _FakeGateway("beta", self.sessions),
         }
 
     def list_registered_agents(self) -> list[str]:
@@ -322,6 +378,22 @@ class _FakeRuntime:
     ) -> _FakeGateway:
         name = str(agent_id or "").strip() or "alpha"
         return self._gateways[name]
+
+
+def test_close_current_session_uses_runtime_lifecycle_and_unbinds() -> None:
+    rt = _FakeRuntime()
+    session = rt.sessions.resolve_session(
+        agent_id="alpha", channel="cli", target="focus"
+    )
+    focus_rt = OpenMinionRuntime(rt, target="focus", session_id=session.id)
+
+    closed_id = focus_rt.close_current_session()
+
+    assert closed_id == session.id
+    assert rt._gateways["alpha"].closed_sessions == [(session.id, "focus_user_close")]
+    assert rt._gateways["beta"].released_sessions == [session.id]
+    assert session.status == "closed"
+    assert focus_rt.is_bound is False
 
 
 class _FakeRuntimeNoConfigAgent(_FakeRuntime):
@@ -1190,51 +1262,42 @@ def test_openminion_runtime_reports_latest_context_budget_and_compaction() -> No
     assert snapshot["compaction_reason"] == "token_pressure"
 
 
-def test_openminion_runtime_context_trace_payload_uses_session_store(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_openminion_runtime_context_trace_payload_uses_session_store() -> None:
     rt = _FakeRuntime()
-    tui_rt = OpenMinionRuntime(rt)
-    observed: dict[str, object] = {}
-
-    def _list_context_traces(sessions: object, *, session_id: str) -> dict[str, object]:
-        observed.update(sessions=sessions, session_id=session_id)
-        return {
-            "session_id": session_id,
-            "traces": [{"decision_trace": {}}],
-            "count": 1,
-        }
-
-    from openminion.cli.interactive.runtime import messages as runtime_messages
-
-    monkeypatch.setattr(runtime_messages, "list_context_traces", _list_context_traces)
+    tui_rt = OpenMinionRuntime(rt, target="focus")
+    trace_session_id = f"{tui_rt.session_id}::conv:focus-{tui_rt.session_id}"
+    rt.context_trace_store.add_event(
+        trace_session_id,
+        "context.manifest.created",
+        {"decision_trace": {"turn_id": "turn-1"}},
+    )
 
     payload = tui_rt.context_trace_payload(session_id=tui_rt.session_id)
 
     assert payload["count"] == 1
-    assert observed == {"sessions": rt.sessions, "session_id": tui_rt.session_id}
+    assert rt.context_trace_store.requests == [trace_session_id]
+    assert payload["traces"] == [
+        {
+            "event_id": "",
+            "event_type": "context.manifest.created",
+            "created_at": "",
+            "decision_trace": {"turn_id": "turn-1"},
+        }
+    ]
 
 
-def test_openminion_runtime_context_trace_payload_reports_lookup_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_openminion_runtime_context_trace_payload_reports_lookup_error() -> None:
     rt = _FakeRuntime()
-    tui_rt = OpenMinionRuntime(rt)
-
-    def _list_context_traces(*_args: object, **_kwargs: object) -> dict[str, object]:
-        raise ContextTraceLookupError("trace unavailable", code="trace_unavailable")
-
-    from openminion.cli.interactive.runtime import messages as runtime_messages
-
-    monkeypatch.setattr(runtime_messages, "list_context_traces", _list_context_traces)
+    tui_rt = OpenMinionRuntime(rt, target="focus")
+    trace_session_id = f"{tui_rt.session_id}::conv:focus-{tui_rt.session_id}"
 
     payload = tui_rt.context_trace_payload(session_id=tui_rt.session_id)
 
     assert payload == {
-        "session_id": tui_rt.session_id,
+        "session_id": trace_session_id,
         "traces": [],
         "count": 0,
-        "degraded": "trace_unavailable",
+        "degraded": "CONTEXT_TRACE_NOT_FOUND",
     }
 
 

@@ -36,7 +36,10 @@ class AdapterConstructionTests(unittest.TestCase):
         self.assertFalse(adapter.is_dual_render)
 
     def test_from_env_reads_dual_render_flag(self) -> None:
-        with patch.dict(os.environ, {"CONTEXTCTL_DUAL_RENDER": "true"}):
+        with patch.dict(
+            os.environ,
+            {"CONTEXTCTL_DUAL_RENDER": "true", "CONTEXTCTL_GATEWAY_ENABLED": "true"},
+        ):
             adapter = ContextCtlGatewayAdapter.from_env(logger=_logger())
         self.assertTrue(adapter.is_enabled)
         self.assertTrue(adapter.is_dual_render)
@@ -195,6 +198,9 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
                     messages=[SimpleNamespace(role="system", content="identity")]
                 )
 
+            def close(self) -> None:
+                return None
+
         with (
             patch.dict(
                 "os.environ",
@@ -221,9 +227,11 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
                 _FakeContextCtlService,
             ),
         ):
-            result = _adapter().build_ctxctl_messages(
+            adapter = _adapter()
+            result = adapter.build_ctxctl_messages(
                 session_id="s1", agent_id="a1", query="hello"
             )
+            adapter.close()
 
         self.assertEqual([item.content for item in result or []], ["identity"])
         self.assertEqual(closed, [True])
@@ -262,8 +270,93 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(closed, [True])
 
+    def test_reuses_context_service_and_profile_budget_across_turns(self) -> None:
+        requests: list[object] = []
+
+        class _FakeIdentityCtl:
+            def __init__(self, *, store) -> None:
+                self.store = store
+
+            def close(self) -> None:
+                return None
+
+        class _FakeContextCtlService:
+            instances = 0
+
+            def __init__(self, **_kwargs) -> None:
+                type(self).instances += 1
+
+            def build_pack(self, request):
+                requests.append(request)
+                return SimpleNamespace(messages=[])
+
+            def close(self) -> None:
+                return None
+
+        adapter = _adapter(runtime_token_budget=1234)
+        with (
+            patch(
+                "openminion.modules.identity.storage.store.SQLiteIdentityStore",
+                return_value=object(),
+            ),
+            patch(
+                "openminion.modules.identity.runtime.service.IdentityCtl",
+                _FakeIdentityCtl,
+            ),
+            patch(
+                "openminion.modules.context.service.ContextCtlService",
+                _FakeContextCtlService,
+            ),
+            patch(
+                "openminion.services.identity.bootstrap.ensure_default_profile",
+                return_value=None,
+            ),
+        ):
+            adapter.build_ctxctl_messages(session_id="s1", agent_id="a1", query="first")
+            adapter.build_ctxctl_messages(
+                session_id="s1", agent_id="a1", query="second"
+            )
+            adapter.close()
+
+        self.assertEqual(_FakeContextCtlService.instances, 1)
+        self.assertEqual(len(requests), 2)
+        self.assertTrue(
+            all(
+                request.budgets_override.total_max_tokens == 1234
+                for request in requests
+            )
+        )
+
 
 class RuntimeMappedSessionClientTests(unittest.TestCase):
+    def test_uses_injected_runtime_store_without_opening_another_connection(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "openminion.db"
+            migrate_database(db_path)
+            connection = connect_database(db_path)
+            try:
+                store = SessionStore(connection)
+                session = store.resolve_session(
+                    agent_id="main", channel="console", target="chat"
+                )
+                client = _RuntimeMappedSessionClient(store=store)
+                with patch(
+                    "openminion.modules.storage.runtime.sqlite.connect_database"
+                ) as connect_spy:
+                    result = client.get_slice(
+                        session_id=session.id,
+                        purpose="act",
+                        limits={"recent_turn_limit": 5, "tool_events_limit": 3},
+                    )
+                self.assertEqual(result.session_id, session.id)
+                connect_spy.assert_not_called()
+                client.close()
+                connection.execute("SELECT 1")
+            finally:
+                connection.close()
+
     def test_maps_runtime_session_store_into_session_slice(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "openminion.db"

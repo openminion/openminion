@@ -55,8 +55,13 @@ from .renderers import (
     _switch_theme,
     _switch_theme_variant,
 )
-from .project import run_slash_project
-from .sessions import handle_room_slash, resume_session, start_new_session
+from .project import run_slash_goal, run_slash_project
+from .sessions import (
+    close_current_session,
+    handle_room_slash,
+    resume_session,
+    start_new_session,
+)
 from .slash_output import (
     copy_latest_message,
     handle_debug_output_slash,
@@ -533,7 +538,7 @@ def _handle_visible_parity_slash(
             )
         )
     elif cmd == "/goal":
-        _handle_slash_goal(
+        run_slash_goal(
             text,
             runtime=runtime,
             console=console,
@@ -546,29 +551,6 @@ def _render_tools_command(runtime: Any, console: Console, text: str) -> None:
         _render_tools_list(runtime=runtime, console=console)
     else:
         console.print(tool_exposure_command(runtime, text))
-
-
-def _handle_slash_goal(
-    text: str,
-    *,
-    runtime: Any,
-    console: Console,
-    status_line: TerminalStatusLine,
-) -> None:
-    executor = getattr(runtime, "execute_goal_command", None)
-    if not callable(executor):
-        console.print(
-            Text("(/goal: runtime does not expose goal commands)", style=_ERR_STYLE)
-        )
-        return
-    try:
-        tone, body = executor(text)
-    except (OSError, RuntimeError, ValueError) as exc:
-        tone, body = ("error", f"/goal failed: {exc}")
-    console.print(Text(body, style=_ERR_STYLE if tone == "error" else _SYSTEM_STYLE))
-    label_getter = getattr(runtime, "goal_statusline_label", None)
-    if callable(label_getter):
-        status_line.set_state(custom=label_getter())
 
 
 async def _handle_session_slash(
@@ -592,6 +574,8 @@ async def _handle_session_slash(
         )
     elif cmd == "/new":
         start_new_session(runtime=runtime, console=console, transcript=transcript)
+    elif cmd == "/close":
+        close_current_session(runtime=runtime, console=console, transcript=transcript)
     elif cmd == "/diff":
         _handle_slash_diff(
             text,

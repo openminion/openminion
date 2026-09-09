@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from openminion.modules.telemetry.events.catalog import CONTEXT_MANIFEST_CREATED
 
@@ -55,11 +56,34 @@ def list_context_traces(
         event_type=CONTEXT_MANIFEST_CREATED,
         limit=safe_limit,
     )
+    return context_traces_from_events(
+        events,
+        session_id=normalized_session_id,
+        turn_id=turn_id,
+        limit=safe_limit,
+    )
+
+
+def context_traces_from_events(
+    events: Iterable[object],
+    *,
+    session_id: str,
+    turn_id: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Render context traces from events already loaded by their owning store."""
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_session_id:
+        raise ContextTraceLookupError(
+            "`session_id` is required.",
+            code="invalid_request",
+        )
+    safe_limit = max(1, min(int(limit or 50), 500))
     traces = [
         trace
         for event in events
         if (trace := _trace_from_event(event, turn_id=turn_id)) is not None
-    ]
+    ][:safe_limit]
     if not traces:
         raise ContextTraceLookupError(
             f"No context decision trace found for session '{normalized_session_id}'.",
@@ -75,11 +99,11 @@ def list_context_traces(
 
 
 def _trace_from_event(
-    event: Mapping[str, Any],
+    event: object,
     *,
     turn_id: str | None,
 ) -> dict[str, Any] | None:
-    payload = event.get("payload", {}) or {}
+    payload = _event_value(event, "payload") or {}
     if not isinstance(payload, Mapping):
         return None
     trace = payload.get("decision_trace")
@@ -89,16 +113,32 @@ def _trace_from_event(
     if normalized_turn_id and str(trace.get("turn_id", "") or "") != normalized_turn_id:
         return None
     return {
-        "event_id": str(event.get("id") or event.get("event_id") or ""),
-        "event_type": str(event.get("event_type") or event.get("type") or ""),
-        "created_at": str(event.get("created_at") or event.get("timestamp") or ""),
+        "event_id": str(
+            _event_value(event, "id") or _event_value(event, "event_id") or ""
+        ),
+        "event_type": str(
+            _event_value(event, "event_type") or _event_value(event, "type") or ""
+        ),
+        "created_at": str(
+            _event_value(event, "created_at")
+            or _event_value(event, "timestamp")
+            or _event_value(event, "ts")
+            or ""
+        ),
         "decision_trace": trace,
     }
+
+
+def _event_value(event: object, field: str) -> Any:
+    if isinstance(event, Mapping):
+        return event.get(field)
+    return getattr(event, field, None)
 
 
 __all__ = [
     "CONTEXT_TRACE_NOT_FOUND",
     "CONTEXT_TRACE_PERSISTENCE_FAILED",
     "ContextTraceLookupError",
+    "context_traces_from_events",
     "list_context_traces",
 ]

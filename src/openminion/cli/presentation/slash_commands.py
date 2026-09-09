@@ -19,6 +19,7 @@ class SlashCommandMetadata:
 SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     SlashCommandMetadata("/init", "Create OPENMINION.md for this project"),
     SlashCommandMetadata("/new", "Start a new session", ("/new session",)),
+    SlashCommandMetadata("/close", "Close the current session"),
     SlashCommandMetadata("/clear", "Clear chat history", ("/cls",)),
     SlashCommandMetadata("/sessions", "Pick a session", ("/session",)),
     SlashCommandMetadata("/participants", "Show room participants and routing"),

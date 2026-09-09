@@ -178,6 +178,25 @@ def test_brain_tool_adapter_preserves_memory_service(tmp_path: Path) -> None:
     )
     assert len(records) == 1
 
+    search_result = adapter.execute(
+        command={
+            "tool_name": "memory.search",
+            "args": {
+                "query": "sqlite",
+                "scopes": [],
+                "types": [],
+                "limit": 5,
+            },
+            "inputs": {"permission_mode": "bypass"},
+        },
+        session_id="memory-session",
+        trace_id="memory-trace",
+    )
+
+    assert search_result["status"] == "success"
+    assert search_result["outputs"]["data"]["count"] == 1
+    assert search_result["outputs"]["data"]["records"][0]["content"] == "sqlite"
+
 
 def test_memory_tools_require_explicit_runtime_service(tmp_path: Path) -> None:
     del tmp_path

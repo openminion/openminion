@@ -22,7 +22,9 @@ Legacy `openminion focus`, `openminion chat`, `openminion tui`, and
 forwarding layer or dashboard tombstone. Use the canonical routes above.
 
 Without `--session`, interactive startup creates a fresh session. Use
-`--session <id>` when resuming or naming a session is intentional.
+`--session <id>` when resuming or naming a session is intentional. Inside the
+interactive terminal, `/new` starts a fresh session, `/resume` selects a durable
+session, and `/close` closes the active session and releases its runtime context.
 
 The default terminal leaves mouse-wheel input with the terminal for native
 scrollback. It captures the mouse only while a clickable completion menu is
