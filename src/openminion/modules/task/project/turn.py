@@ -94,7 +94,7 @@ def project_cycle_prompt(
         lines.append(
             "Your first action must use the existing plan loop-control tool "
             "to declare a durable task plan with "
-            "continue_plan_autonomously=true, then continue with its first step."
+            "continue_plan_autonomously=false, then continue with its first step."
         )
     if project_run.verifier_refs:
         lines.append(
@@ -112,11 +112,22 @@ def project_cycle_prompt(
         if failed and isinstance(active_plan, Mapping):
             plan_id = str(active_plan.get("plan_id") or "").strip()
             verifier_refs = ", ".join(project_run.verifier_refs[-5:])
+            prior_revision = checkpoint_payload.get("task_plan_revision")
+            predecessor_id = (
+                str(prior_revision.get("revision_id") or "").strip()
+                if isinstance(prior_revision, Mapping)
+                else ""
+            )
+            predecessor_guidance = (
+                f"Set predecessor_revision_id={predecessor_id}."
+                if predecessor_id
+                else "Omit predecessor_revision_id because this is the first revision."
+            )
             lines.append(
                 "Your first action must use the existing plan loop-control "
                 f"tool with action=revise for plan_id={plan_id}. Use a new "
-                "revision_id, set continue_plan_autonomously=true, and bind "
-                f"verifier_refs to: {verifier_refs}."
+                "revision_id, set continue_plan_autonomously=false, and bind "
+                f"verifier_refs to: {verifier_refs}. {predecessor_guidance}"
             )
     if project_run.progress_refs:
         lines.append(

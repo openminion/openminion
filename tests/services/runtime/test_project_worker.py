@@ -1145,7 +1145,10 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     assert checkpoint.payload["task_plan"]["criterion_ids"] == ["criterion-tests"]
     assert checkpoint.payload["task_plan_revision"]["revision_id"] == "revision-1"
     assert "first action must use the existing plan loop-control tool" in prompts[0]
+    assert "continue_plan_autonomously=false" in prompts[0]
     assert "action=revise for plan_id=plan-1" in prompts[1]
+    assert "continue_plan_autonomously=false" in prompts[1]
+    assert "Omit predecessor_revision_id" in prompts[1]
     assert "verification:prun_" in prompts[1]
     assert "Prior verifier outcome:\nverification failed" in prompts[1]
     assert (
