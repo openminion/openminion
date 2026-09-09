@@ -29,7 +29,8 @@ _PROBE_MESSAGE = (
     'tool with action="declare" to create a plan with plan_id '
     '"pae-verify" and exactly three steps: step 1 "checkpoint one", '
     'step 2 "checkpoint two", step 3 "checkpoint three". Set '
-    "continue_plan_autonomously=true. Immediately after declaring, call "
+    "each step status to completed and continue_plan_autonomously=true. "
+    "Immediately after declaring, call "
     'the `plan` tool again with action="complete" and plan_id '
     '"pae-verify" to mark the plan done. Do this in a single turn — '
     "declare then complete — without asking me any questions."

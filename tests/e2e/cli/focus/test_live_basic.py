@@ -89,15 +89,15 @@ def test_live_focus_basic_turn(
         assert "trace files: none" not in trace_listing
         assert "-http-response.json" in trace_listing
         assert "-structured.json" in trace_listing
+        trace_root = focus_probe.data_root / "traces"
+        compact_listing = "".join(trace_listing.split())
         structured_traces = sorted(
-            (focus_probe.data_root / "traces").rglob("*-structured.json")
+            path
+            for path in trace_root.rglob("*-structured.json")
+            if path.relative_to(trace_root).as_posix() in compact_listing
         )
         assert structured_traces
-        trace_path = (
-            structured_traces[-1]
-            .relative_to(focus_probe.data_root / "traces")
-            .as_posix()
-        )
+        trace_path = structured_traces[-1].relative_to(trace_root).as_posix()
         trace_summary = visible_text(
             focus_probe.run_slash(
                 session,

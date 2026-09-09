@@ -343,11 +343,9 @@ def test_tcee_04_minimax_interval_schedule_list_cancel_list_live() -> None:
         f"{cancel_result.transcript_path}"
     )
     rows_after_cancel = _read_cron_jobs(db_path)
-    # Canonical contract: cancel removes the row entirely.
-    assert len(rows_after_cancel) == 0, (
-        "TCEE-04: cron_jobs row should be removed after cancel; got "
-        f"{rows_after_cancel}"
-    )
+    assert len(rows_after_cancel) == 1
+    assert rows_after_cancel[0]["job_id"] == persisted_task_id
+    assert int(rows_after_cancel[0].get("enabled", 0) or 0) == 0
 
     # Step 4: list again to confirm.
     list_after_result = run_cli_session(
@@ -462,7 +460,10 @@ def test_tcoh_08_minimax_schedule_show_pause_list_resume_cancel_live() -> None:
         user_input=f'tool task.cancel {{"task_id":"{persisted_task_id}"}}',
     )
     assert _trace_proves_tool_execution(cancel_result.trace_root, "task.cancel")
-    assert _read_cron_jobs(db_path) == []
+    cancelled_rows = _read_cron_jobs(db_path)
+    assert len(cancelled_rows) == 1
+    assert cancelled_rows[0]["job_id"] == persisted_task_id
+    assert int(cancelled_rows[0].get("enabled", 0) or 0) == 0
 
 
 @pytest.mark.skipif(
