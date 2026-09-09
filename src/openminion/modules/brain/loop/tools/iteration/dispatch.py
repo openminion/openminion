@@ -38,6 +38,7 @@ from ..dispatch import (
 )
 from ..evidence import _count_substantive_non_control_tool_results
 from ..messages import action_result_to_tool_message
+from ..plan import _current_active_plan
 from ..plan_control import (
     PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY,
     PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY,
@@ -182,6 +183,7 @@ def _is_plan_tool_call(tool_call: Any) -> bool:
 
 
 def _record_successful_plan_action(
+    loop_ctx: AdaptiveToolLoopContext,
     loop_state: AdaptiveToolLoopState,
     arguments: dict[str, Any],
     outputs: dict[str, Any],
@@ -199,6 +201,9 @@ def _record_successful_plan_action(
         loop_state.task_plan = dict(outputs["task_plan"])
     if isinstance(outputs.get("task_plan.revision"), dict):
         loop_state.task_plan_revision = dict(outputs["task_plan.revision"])
+    active_plan = _current_active_plan(loop_ctx)
+    if isinstance(active_plan, dict):
+        loop_state.task_plan = active_plan
     action = str(arguments.get("action", "") or "").strip()
     if action == "complete":
         loop_state.task_plan_completed = {
@@ -459,7 +464,7 @@ def _process_plan_tool_calls(
         _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
         if str(getattr(action_result, "status", "") or "") == "success":
             outputs = dict(getattr(action_result, "outputs", {}) or {})
-            _record_successful_plan_action(loop_state, arguments, outputs)
+            _record_successful_plan_action(loop_ctx, loop_state, arguments, outputs)
             if bool(outputs.get(PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY, False)):
                 autonomous_continuation_summary = str(
                     getattr(action_result, "summary", "") or ""
