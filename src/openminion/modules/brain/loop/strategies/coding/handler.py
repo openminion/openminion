@@ -319,10 +319,11 @@ class CodingProfileRunner(
             default_allowed_tools=allowed_tools
         )
         verification_targets = (
-            self._verification_targets(ctx)
-            if self._coding_plan is not None
+            self._verification_targets(ctx) if self._coding_plan is not None else None
+        )
+        require_verification_target = bool(
+            self._coding_plan is not None
             and self._coding_plan.current_phase == "verify"
-            else None
         )
         required_write_tool = str(
             loop.scratchpad.get("coding.required_write_direct_tool", "") or ""
@@ -343,11 +344,12 @@ class CodingProfileRunner(
                 ctx=ctx,
                 verification_targets=verification_targets,
             )
-        elif iteration_allowed_tools != allowed_tools:
+        elif iteration_allowed_tools != allowed_tools or verification_targets:
             iteration_tool_specs = _build_tool_specs(
                 iteration_allowed_tools,
                 ctx=ctx,
                 verification_targets=verification_targets,
+                require_verification_target=require_verification_target,
             )
 
         return (

@@ -148,6 +148,7 @@ class CodingPlanningMixin:
                 f"Open issues: {', '.join(self._coding_plan.open_issues) if self._coding_plan.open_issues else 'none'}."
             )
         else:
+            target_guidance = self._verification_target_guidance(ctx)
             write_requirement = (
                 " This phase requires a mutating implementation tool before any "
                 "final answer: call `file.write` or `code.patch` with concrete "
@@ -164,6 +165,9 @@ class CodingPlanningMixin:
                 f"Goal: {self._coding_plan.goal}. "
                 f"Steps: {', '.join(phase.steps) if phase.steps else 'advance this phase'}. "
                 f"{write_requirement} "
+                "When a read or command directly proves one verification target, "
+                "bind that tool call to its exact target; leave exploratory calls unbound. "
+                f"{target_guidance} "
                 f"Open issues: {', '.join(self._coding_plan.open_issues) if self._coding_plan.open_issues else 'none'}."
             )
         self._loop_state.messages.append(

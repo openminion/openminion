@@ -97,6 +97,8 @@ def _input_schema_for_tool(
     tool_id: str,
     runtime_schemas: dict[str, dict[str, Any]],
     verification_targets: dict[str, tuple[str, ...]] | None = None,
+    *,
+    require_verification_target: bool = True,
 ) -> dict[str, Any]:
     runtime_schema = runtime_schemas.get(tool_id, {})
     parameters = runtime_schema.get("parameters") if runtime_schema else None
@@ -134,11 +136,12 @@ def _input_schema_for_tool(
         }
     )
     required = list(schema.get("required", []) or [])
-    required.extend(
-        name
-        for name in ("verification_target_kind", "verification_target_id")
-        if name not in required
-    )
+    if require_verification_target:
+        required.extend(
+            name
+            for name in ("verification_target_kind", "verification_target_id")
+            if name not in required
+        )
     return {**schema, "properties": properties, "required": required}
 
 
@@ -147,6 +150,7 @@ def _build_tool_specs(
     *,
     ctx: ExecutionContext | None = None,
     verification_targets: dict[str, tuple[str, ...]] | None = None,
+    require_verification_target: bool = True,
 ) -> list[ToolSpec]:
     descriptions: dict[str, str] = {
         "file.list_dir": "List files and directories at a path.",
@@ -195,6 +199,7 @@ def _build_tool_specs(
                 tool_id,
                 runtime_schemas,
                 verification_targets,
+                require_verification_target=require_verification_target,
             ),
         )
         for tool_id in sorted(allowed_tools)
