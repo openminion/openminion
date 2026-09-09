@@ -224,7 +224,9 @@ def test_terminal_telemetry_states_exact_capture_posture(
     )
     monkeypatch.delenv("OPENMINION_TRACE_REQUESTS", raising=False)
     disabled = _run_slash("/telemetry", _Runtime(tmp_path), tmp_path)
-    enabled = _run_slash("/telemetry", _Runtime(tmp_path, trace_requests=True), tmp_path)
+    enabled = _run_slash(
+        "/telemetry", _Runtime(tmp_path, trace_requests=True), tmp_path
+    )
 
     assert "Exact payload capture: disabled" in disabled
     assert "export queue: disabled" in disabled

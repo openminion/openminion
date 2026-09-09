@@ -117,7 +117,9 @@ class _LifecycleTelemetryBridge:
                 format_structured_event(
                     event.event_type,
                     source=event.data.get("source_event_type", ""),
-                    component=json.dumps(event.data.get("component", {}), sort_keys=True),
+                    component=json.dumps(
+                        event.data.get("component", {}), sort_keys=True
+                    ),
                 )
             )
 
