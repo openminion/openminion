@@ -16,10 +16,6 @@ from openminion.cli.status.models import (
     build_memory_context_review,
     render_memory_context_review,
 )
-from openminion.cli.presentation.telemetry import (
-    render_telemetry_slash,
-    render_trace_slash,
-)
 from ..overlays import TerminalOverlayPresenter
 from ..status_line import TerminalStatusLine
 from ..transcript import TerminalTranscript
@@ -98,8 +94,12 @@ def handle_debug_output_slash(
         console.print(report or "(no durable token usage data)")
         return True
     if cmd == "/telemetry":
+        from openminion.cli.presentation.telemetry import render_telemetry_slash
+
         renderer = render_telemetry_slash
     elif cmd == "/trace":
+        from openminion.cli.presentation.telemetry import render_trace_slash
+
         renderer = render_trace_slash
     else:
         return False

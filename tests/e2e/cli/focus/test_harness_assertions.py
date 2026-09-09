@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import sys
 
 import pytest
@@ -12,6 +13,7 @@ from tests.e2e.cli.focus.harness.assertions import (
     turn_output_text,
 )
 from tests.e2e.cli.focus.harness.probe import (
+    _COMPOSER_READY_RE,
     FocusProbe,
     active_approval_visible,
     active_turn_busy,
@@ -46,6 +48,13 @@ def test_focus_session_id_uses_stable_sha256_digest(tmp_path: Path) -> None:
     digest = session_id.rsplit("-", maxsplit=1)[-1]
     assert len(digest) == 32
     assert all(character in "0123456789abcdef" for character in digest)
+
+
+def test_composer_ready_marker_requires_an_enabled_prompt() -> None:
+    assert _COMPOSER_READY_RE.search("\n❯ Ask anything")
+    assert _COMPOSER_READY_RE.search("\n↳ Reply, or / for commands")
+    assert _COMPOSER_READY_RE.search("Ask anything") is None
+    assert _COMPOSER_READY_RE.search("\n… Ask anything") is None
 
 
 def test_expected_markers_ignore_echoed_prompt() -> None:
@@ -783,3 +792,22 @@ def test_pty_session_owns_default_terminal_type(
         transcript = session.wait_for_after(expected, offset=0, timeout=5)
 
     assert expected in transcript
+
+
+@pytest.mark.skipif(os.name != "posix", reason="PTY process groups require POSIX")
+def test_pty_session_reaps_a_force_killed_child(tmp_path: Path) -> None:
+    command = (
+        sys.executable,
+        "-c",
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "print('ready', flush=True); time.sleep(30)",
+    )
+    session = PtySession(argv=command, cwd=tmp_path)
+    session.start()
+    process_id = session.process_id
+    session.wait_for_after("ready", offset=0, timeout=5)
+
+    session.terminate()
+
+    with pytest.raises(ChildProcessError):
+        os.waitpid(process_id, os.WNOHANG)

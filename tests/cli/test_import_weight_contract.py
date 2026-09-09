@@ -43,6 +43,30 @@ print({_MODULE_SENTINEL!r} + json.dumps(sorted(sys.modules)))
     return completed, set(json.loads(module_line.removeprefix(_MODULE_SENTINEL)))
 
 
+def _imported_modules(module_name: str) -> set[str]:
+    script = (
+        "import json, sys; "
+        f"__import__({module_name!r}); "
+        f"print({_MODULE_SENTINEL!r} + json.dumps(sorted(sys.modules)))"
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join((str(_SOURCE_ROOT), str(_REPO_ROOT)))
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=_REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    module_line = next(
+        line
+        for line in completed.stdout.splitlines()
+        if line.startswith(_MODULE_SENTINEL)
+    )
+    return set(json.loads(module_line.removeprefix(_MODULE_SENTINEL)))
+
+
 def test_root_help_avoids_runtime_and_renderer_imports() -> None:
     completed, imported = _root_help_imports()
 
@@ -63,6 +87,21 @@ def test_root_help_avoids_runtime_and_renderer_imports() -> None:
             for prefix in forbidden_prefixes
         )
     }
+
+
+def test_terminal_import_defers_command_only_owners() -> None:
+    imported = _imported_modules("openminion.cli.interactive.terminal")
+
+    deferred_modules = {
+        "openminion.cli.interactive.terminal.shell.delegation",
+        "openminion.cli.interactive.terminal.shell.model_setup",
+        "openminion.cli.interactive.terminal.shell.project",
+        "openminion.cli.interactive.tool_exposure",
+        "openminion.cli.presentation.browser",
+        "openminion.cli.presentation.graph",
+        "openminion.cli.presentation.telemetry",
+    }
+    assert deferred_modules.isdisjoint(imported)
 
 
 def test_performance_runner_owns_both_import_surface_scenarios(

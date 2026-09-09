@@ -116,6 +116,14 @@ def test_scenario_list_accepts_all_and_rejects_unknown() -> None:
         raise AssertionError("unknown scenario should fail")
 
 
+def test_warm_prompt_ready_scenario_always_has_a_warmup() -> None:
+    module = _load_module()
+
+    assert module._effective_warmup_runs("warm_focus_prompt_ready", 0) == 1
+    assert module._effective_warmup_runs("warm_focus_prompt_ready", 2) == 2
+    assert module._effective_warmup_runs("cold_focus_prompt_ready", 0) == 0
+
+
 def test_summarize_runs_records_metric_units_and_warn_only() -> None:
     module = _load_module()
     identity = module._measurement_identity(
@@ -884,6 +892,44 @@ def test_focus_startup_samples_the_subprocess(tmp_path: Path) -> None:
     assert run.metrics["availability_reasons"]["python_gc_collection_count"] == (
         "not_supported_for_subprocess"
     )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Focus prompt benchmark requires PTY")
+def test_focus_prompt_ready_measures_the_interactive_composer(tmp_path: Path) -> None:
+    module = _load_module()
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=15,
+        include_importtime=False,
+        profile=False,
+        threshold_mode="off",
+    )
+
+    summary = module.run_baseline(options, ["warm_focus_prompt_ready"])
+
+    scenario = summary["scenarios"]["warm_focus_prompt_ready"]
+    assert scenario["ok_count"] == 1
+    payload = json.loads(Path(scenario["sample_artifacts"][0]).read_text())
+    metrics = payload["metrics"]
+    assert metrics["phase"] == "prompt_ready"
+    assert metrics["prompt_ready_marker"] is True
+    assert metrics["clean_exit"] is True
+    assert metrics["phase_timings_ms"]["subprocess_exit_code"] == 0
+    assert metrics["measured_process_id"] != os.getpid()
+    assert metrics["current_rss_bytes"] > 0
+    assert metrics["wall_time_ns"] == metrics["phase_timings_ns"]["prompt_ready_ns"]
+    assert "--help" not in metrics["startup_command"]
+    assert payload["warmup_runs"] == 1
+    assert payload["measurement_identity"]["runtime_config"]["warmup_runs"] == 1
+    assert payload["comparison_identity"]["warmup_runs"] == 1
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["warmup_runs"] == 0
+    assert manifest["effective_warmup_runs_by_scenario"] == {
+        "warm_focus_prompt_ready": 1
+    }
 
 
 def test_startup_loop_uses_one_full_resource_inventory(

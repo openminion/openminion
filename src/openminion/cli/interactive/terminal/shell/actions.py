@@ -11,18 +11,11 @@ from openminion.cli.interactive.project_context import (
     find_project_context_target_root,
     write_init_template,
 )
-from openminion.cli.interactive.tool_exposure import tool_exposure_command
-from openminion.cli.presentation.models import (
-    ChatMessage,
-    MessageKind,
-    ToolEvent,
-)
+from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.detail_modes import resolve_details_mode
-from .delegation import run_slash_delegate
 from .labels import _runtime_label
-from .model_setup import handle_model_setup
 from openminion.cli.presentation.slash_commands import (
     slash_help_rows,
     terminal_slash_commands,
@@ -38,9 +31,6 @@ from openminion.cli.presentation.visible_parity import (
     render_tasks_report,
     statusline_label,
 )
-from openminion.cli.presentation.browser import render_browser_command
-from openminion.cli.presentation.graph import render_graph_command
-
 from ..overlays import TerminalOverlayPresenter
 from ..status_line import TerminalStatusLine
 from ..transcript import TerminalTranscript
@@ -55,7 +45,6 @@ from .renderers import (
     _switch_theme,
     _switch_theme_variant,
 )
-from .project import run_slash_project
 from .sessions import handle_room_slash, resume_session, start_new_session
 from .slash_output import (
     copy_latest_message,
@@ -246,12 +235,7 @@ def _handle_slash_permissions(
     except (RuntimeError, ValueError) as exc:
         console.print(Text(f"(/permissions: {exc})", style=_ERR_STYLE))
         return
-    console.print(
-        Text(
-            _permission_mode_message(mode),
-            style=_MUTED_ITALIC_STYLE,
-        )
-    )
+    console.print(Text(_permission_mode_message(mode), style=_MUTED_ITALIC_STYLE))
 
 
 def _permission_mode_message(mode: str) -> str:
@@ -504,10 +488,14 @@ def _handle_visible_parity_slash(
     elif cmd == "/memory":
         console.print(Text(render_memory_report(runtime), style=_SYSTEM_STYLE))
     elif cmd == "/graph":
+        from openminion.cli.presentation.graph import render_graph_command
+
         console.print(Text(render_graph_command(arg), style=_SYSTEM_STYLE))
     elif cmd == "/skills":
         console.print(Text(render_skills_report(runtime, arg), style=_SYSTEM_STYLE))
     elif cmd == "/browser":
+        from openminion.cli.presentation.browser import render_browser_command
+
         console.print(
             Text(
                 render_browser_command(arg, working_dir=working_dir),
@@ -545,6 +533,8 @@ def _render_tools_command(runtime: Any, console: Console, text: str) -> None:
     if text.strip() == "/tools":
         _render_tools_list(runtime=runtime, console=console)
     else:
+        from openminion.cli.interactive.tool_exposure import tool_exposure_command
+
         console.print(tool_exposure_command(runtime, text))
 
 
@@ -650,9 +640,13 @@ async def _handle_slash(
     ):
         return False
     if cmd == "/delegate":
+        from .delegation import run_slash_delegate
+
         await run_slash_delegate(text, runtime, console, approval_callback)
         return False
     if cmd == "/project":
+        from .project import run_slash_project
+
         await run_slash_project(
             text,
             runtime=runtime,
@@ -734,6 +728,8 @@ async def _handle_tool_view_slash(
         _handle_slash_theme(text, console=console)
     elif cmd == "/model":
         if _slash_arg(text).strip() == "setup":
+            from .model_setup import handle_model_setup
+
             await handle_model_setup(runtime=runtime, console=console, overlay=overlay)
         else:
             _handle_slash_model(text, runtime=runtime, console=console)

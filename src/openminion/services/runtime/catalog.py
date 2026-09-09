@@ -83,8 +83,10 @@ class ExtensionCatalog:
             )
 
         plugins.extend(_manifest_plugin_records(discovered, enabled_plugins))
+        installed_entry_points = entry_points()
         enabled_provider_name = _resolve_enabled_provider_name(config)
         provider_records = _entry_point_records(
+            entries=installed_entry_points.select(group="llmctl.providers"),
             group="llmctl.providers",
             kind="provider",
             enabled_name=enabled_provider_name,
@@ -96,12 +98,16 @@ class ExtensionCatalog:
         ):
             provider_records.extend(
                 _entry_point_records(
+                    entries=installed_entry_points.select(group=group),
                     group=group,
                     kind="tool_provider",
                     enabled_name=None,
                 )
             )
         tool_records = _entry_point_records(
+            entries=installed_entry_points.select(
+                group="openminion.modules.tool.runtime.plugins"
+            ),
             group="openminion.modules.tool.runtime.plugins",
             kind="tool_plugin",
             enabled_name=None,
@@ -187,12 +193,13 @@ def _resolve_enabled_provider_name(config: OpenMinionConfig) -> str:
 
 def _entry_point_records(
     *,
+    entries: Sequence[EntryPoint],
     group: str,
     kind: str,
     enabled_name: str | None,
 ) -> list[ExtensionRecord]:
     records: list[ExtensionRecord] = []
-    for ep in _entry_points(group):
+    for ep in sorted(entries, key=lambda item: item.name):
         name = ep.name
         enabled = bool(enabled_name and name.lower() == enabled_name.lower())
         records.append(
@@ -207,11 +214,6 @@ def _entry_point_records(
             )
         )
     return records
-
-
-def _entry_points(group: str) -> list[EntryPoint]:
-    eps = entry_points(group=group)
-    return sorted(eps, key=lambda ep: ep.name)
 
 
 def _channel_records(config: OpenMinionConfig) -> list[ExtensionRecord]:

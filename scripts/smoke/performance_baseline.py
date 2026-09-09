@@ -35,6 +35,7 @@ from openminion.modules.context.budget import (
 ARTIFACT_SCHEMA_VERSION = "pomv2.performance.v4"
 TCPL_ARTIFACT_SCHEMA_VERSION = "tcpl.performance.v1"
 STARTUP_FIXTURE_REVISION = "focus-help-v2"
+FOCUS_PROMPT_FIXTURE_REVISION = "focus-prompt-ready-v1"
 SUT_BOUNDARY_SUBPROCESS = "sut_subprocess_only"
 SUT_BOUNDARY_IN_PROCESS = "sut_in_process_fixture"
 SUT_BOUNDARY_REPLAY = "sut_replay_fixture"
@@ -42,6 +43,8 @@ LANE_ARTIFACT_DIR = "openminion-performance-observability-and-measurement-v2-202
 DEFAULT_SCENARIOS = (
     "cold_focus_startup",
     "warm_focus_startup",
+    "cold_focus_prompt_ready",
+    "warm_focus_prompt_ready",
     "terminal_import_surface",
     "interactive_runtime_import_surface",
     "simple_turn",
@@ -532,6 +535,25 @@ def _comparison_command_shape(identity: dict[str, Any]) -> dict[str, Any]:
             "entrypoint": "python -m openminion",
             "arguments": ["--data-root", "<DATA_ROOT>", "--help"],
         }
+    if scenario_id in {"cold_focus_prompt_ready", "warm_focus_prompt_ready"}:
+        return {
+            "entrypoint": "python -m openminion",
+            "arguments": [
+                "--config",
+                "<CONFIG_PATH>",
+                "--agent",
+                "performance-benchmark",
+                "--session",
+                "<SESSION_ID>",
+                "--dir",
+                "<WORKSPACE>",
+                "--no-update-check",
+                "--progress",
+                "minimal",
+                "--demo",
+                "--no-context",
+            ],
+        }
     if scenario_id in {
         "terminal_import_surface",
         "interactive_runtime_import_surface",
@@ -549,9 +571,9 @@ def _comparison_identity(measurement_identity: dict[str, Any]) -> dict[str, Any]
     environment = dict(measurement_identity.get("runtime_environment") or {})
     cache_environment = dict(environment.get("bytecode_cache_environment") or {})
     scenario_id = str(measurement_identity.get("scenario_id") or "")
-    if scenario_id == "cold_focus_startup":
+    if scenario_id in {"cold_focus_startup", "cold_focus_prompt_ready"}:
         process_posture = "cold"
-    elif scenario_id == "warm_focus_startup":
+    elif scenario_id in {"warm_focus_startup", "warm_focus_prompt_ready"}:
         process_posture = "warm"
     else:
         process_posture = "steady"
@@ -928,6 +950,27 @@ def _canonical_help_command(options: RunOptions, *, data_root: Path) -> list[str
     ]
 
 
+def _write_focus_prompt_config(config_path: Path, *, storage_path: Path) -> None:
+    from openminion.base.config import (
+        AgentProfileConfig,
+        OpenMinionConfig,
+        save_config,
+    )
+
+    config = OpenMinionConfig()
+    config.agents = {
+        "performance-benchmark": AgentProfileConfig(
+            name="performance-benchmark",
+            provider="echo",
+            default_channel="console",
+        )
+    }
+    config.default_agent = "performance-benchmark"
+    config.runtime.log_level = "ERROR"
+    config.storage.path = str(storage_path)
+    save_config(config, str(config_path))
+
+
 def _command_env(
     options: RunOptions, *, data_root: Path | None = None
 ) -> dict[str, str]:
@@ -1217,6 +1260,107 @@ def _measure_focus_startup(
             options=options,
             data_root=data_root_hint,
         ),
+        action=action,
+    )
+
+
+def _measure_focus_prompt_ready(
+    *, scenario_id: str, options: RunOptions, cold: bool
+) -> ScenarioRun:
+    run_root = (
+        options.output_root
+        / "runtime-homes"
+        / ("cold-prompt" if cold else "warm-prompt")
+    )
+    data_root = run_root / "data"
+    config_path = run_root / "config.json"
+    openminion_root = options.workspace_root / "openminion"
+    session_id = f"performance-{scenario_id}"
+
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from tests.e2e.cli.focus.harness import FocusProbe
+
+        if cold and run_root.exists():
+            shutil.rmtree(run_root)
+        data_root.mkdir(parents=True, exist_ok=True)
+        _write_focus_prompt_config(
+            config_path,
+            storage_path=run_root / "openminion.db",
+        )
+        probe = FocusProbe(
+            python_bin=options.python,
+            openminion_root=openminion_root,
+            framework_root=options.workspace_root,
+            data_root=data_root,
+            config_path=config_path,
+            agent_id="performance-benchmark",
+            workdir=openminion_root,
+            session_id=session_id,
+            include_project_context=False,
+            allow_unsandboxed_exec=False,
+        )
+        command = list(probe.command())
+        command_text = " ".join(command)
+        metrics["_command_override"] = command_text
+        metrics["_measurement_identity_override"] = _measurement_identity(
+            scenario_id=scenario_id,
+            command=command_text,
+            measured_boundary=SUT_BOUNDARY_SUBPROCESS,
+            fixture_revision=FOCUS_PROMPT_FIXTURE_REVISION,
+            options=options,
+            data_root=data_root,
+            scenario_config={
+                "agent_id": "performance-benchmark",
+                "project_context": False,
+                "provider": "echo",
+                "warmup_runs": _effective_warmup_runs(
+                    scenario_id,
+                    options.warmup_runs,
+                ),
+            },
+        )
+        metrics["startup_command"] = command
+        metrics["explicit_data_root"] = str(data_root)
+        metrics["measured_boundary"] = SUT_BOUNDARY_SUBPROCESS
+
+        started_ns = time.perf_counter_ns()
+        with probe.session() as session:
+            child_pid = session.process_id
+            metrics["rss_start_bytes"] = _current_rss_bytes(child_pid)
+            ready_at_ns = probe.wait_ready_at_ns(
+                session,
+                timeout=options.timeout_seconds,
+            )
+            prompt_ready_ns = max(0, ready_at_ns - started_ns)
+            metrics["_process_metrics_override"] = _process_metrics(child_pid)
+            session.type_line("/exit")
+            returncode = session.wait(timeout=options.timeout_seconds)
+
+        metrics["_wall_time_ns_override"] = prompt_ready_ns
+        metrics["phase"] = "prompt_ready"
+        metrics["phase_timings_ns"] = {"prompt_ready_ns": prompt_ready_ns}
+        metrics["phase_timings_ms"] = {
+            "prompt_ready_ms": _ns_to_ms(prompt_ready_ns),
+            "subprocess_exit_code": returncode,
+        }
+        metrics["prompt_ready_marker"] = True
+        metrics["clean_exit"] = returncode == 0
+        metrics["availability_reasons"]["importtime_artifact"] = (
+            "not_captured_for_interactive_pty"
+        )
+        if returncode != 0:
+            raise RuntimeError(f"Focus prompt-ready subprocess exited {returncode}")
+        return [
+            "Measures process launch through the first enabled Focus composer prompt.",
+            "Uses the local echo provider, disables project context, and exits through `/exit` without provider or network work.",
+            "The historical `openminion --help` startup scenarios remain separate for comparison continuity.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id=scenario_id,
+        command=f"focus_pty:{scenario_id}",
+        provider_variance_class=LOCAL_VARIANCE,
+        provider_profile="echo",
         action=action,
     )
 
@@ -4614,6 +4758,14 @@ def run_scenario(scenario_id: str, options: RunOptions) -> ScenarioRun:
         return _measure_focus_startup(
             scenario_id=scenario_id, options=options, cold=False
         )
+    if scenario_id == "cold_focus_prompt_ready":
+        return _measure_focus_prompt_ready(
+            scenario_id=scenario_id, options=options, cold=True
+        )
+    if scenario_id == "warm_focus_prompt_ready":
+        return _measure_focus_prompt_ready(
+            scenario_id=scenario_id, options=options, cold=False
+        )
     if scenario_id == "terminal_import_surface":
         return _measure_import_surface(
             scenario_id=scenario_id,
@@ -4867,6 +5019,8 @@ def _threshold_result(
         in {
             "cold_focus_startup",
             "warm_focus_startup",
+            "cold_focus_prompt_ready",
+            "warm_focus_prompt_ready",
             "terminal_import_surface",
             "interactive_runtime_import_surface",
         }
@@ -5148,6 +5302,7 @@ def _run_to_artifact(
 ) -> dict[str, Any]:
     metrics = dict(run.metrics)
     metrics["sample_index"] = int(run_index)
+    warmup_runs = _effective_warmup_runs(run.scenario_id, options.warmup_runs)
     measurement_identity = dict(run.measurement_identity)
     runtime_config = dict(measurement_identity.get("runtime_config") or {})
     runtime_config.update(
@@ -5156,7 +5311,7 @@ def _run_to_artifact(
             "workspace_root": str(options.workspace_root),
             "include_importtime": bool(options.include_importtime),
             "profile": bool(options.profile),
-            "warmup_runs": int(options.warmup_runs),
+            "warmup_runs": warmup_runs,
             "timeout_seconds": int(options.timeout_seconds),
         }
     )
@@ -5198,7 +5353,7 @@ def _run_to_artifact(
         "platform": platform.platform(),
         "runs_requested": int(options.runs),
         "runs_completed": 1,
-        "warmup_runs": int(options.warmup_runs),
+        "warmup_runs": warmup_runs,
         "sample_index": int(run_index),
         "command": run.command,
         "provider_profile": run.provider_profile,
@@ -5720,6 +5875,13 @@ def _write_tcpl_artifacts(
         "scenario_ids": scenarios,
         "runs": int(options.runs),
         "warmup_runs": int(options.warmup_runs),
+        "effective_warmup_runs_by_scenario": {
+            scenario_id: _effective_warmup_runs(
+                scenario_id,
+                options.warmup_runs,
+            )
+            for scenario_id in scenarios
+        },
         "threshold_mode": options.threshold_mode,
         "workspace_root": str(options.workspace_root),
         "output_root": str(options.output_root),
@@ -5858,6 +6020,12 @@ def _scenario_list(raw: str) -> list[str]:
     return scenarios
 
 
+def _effective_warmup_runs(scenario_id: str, configured_runs: int) -> int:
+    if scenario_id == "warm_focus_prompt_ready":
+        return max(1, configured_runs)
+    return configured_runs
+
+
 def run_baseline(options: RunOptions, scenarios: list[str]) -> dict[str, Any]:
     options.output_root.mkdir(parents=True, exist_ok=True)
     (options.output_root / "profiles").mkdir(exist_ok=True)
@@ -5874,9 +6042,10 @@ def run_baseline(options: RunOptions, scenarios: list[str]) -> dict[str, Any]:
 
     artifacts: list[dict[str, Any]] = []
     for scenario_id in scenarios:
-        for warmup_index in range(options.warmup_runs):
+        warmup_runs = _effective_warmup_runs(scenario_id, options.warmup_runs)
+        for warmup_index in range(warmup_runs):
             print(
-                f"[performance-baseline] {scenario_id} warmup {warmup_index + 1}/{options.warmup_runs}"
+                f"[performance-baseline] {scenario_id} warmup {warmup_index + 1}/{warmup_runs}"
             )
             run_scenario(scenario_id, options)
         for run_index in range(options.runs):

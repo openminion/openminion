@@ -17,8 +17,7 @@ from .pty import PtySession
 from .scenarios import FocusScenario
 
 _COMPOSER_READY_RE = re.compile(
-    r"Ask anything|Reply, or / for commands|input:\s*(?:send|queue next) message|"
-    r"(?:^|\n)\s*❯\s*\Z"
+    r"(?:^|\n)\s*[❯↳]\s+(?:Ask anything|Reply, or / for commands)"
 )
 _CONTENT_COMPOSER_RE = re.compile(r"Ask anything|Reply, or / for commands")
 _LEGACY_INLINE_APPROVAL_RE = re.compile(
@@ -438,19 +437,24 @@ class FocusProbe:
             on_transcript_update=on_transcript_update,
         )
 
-    def wait_ready(self, session: PtySession) -> str:
-        deadline = time.monotonic() + 60
+    def wait_ready_at_ns(self, session: PtySession, *, timeout: float = 60) -> int:
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            transcript = session.transcript
-            if _COMPOSER_READY_RE.search(session.screen_text):
+            if _COMPOSER_READY_RE.search(session.read_screen(timeout=0.005)):
+                ready_at_ns = time.perf_counter_ns()
+                transcript = session.transcript
                 assert_no_terminal_crash(transcript)
-                return transcript
-            time.sleep(0.05)
+                return ready_at_ns
+            time.sleep(0.005)
         transcript = session.transcript
         raise AssertionError(
             "timed out waiting for the enabled Focus composer\n"
             f"{visible_text(transcript)[-2000:]}"
         )
+
+    def wait_ready(self, session: PtySession, *, timeout: float = 60) -> str:
+        self.wait_ready_at_ns(session, timeout=timeout)
+        return session.transcript
 
     def run_slash(self, session: PtySession, command: str, *, marker: str) -> str:
         offset = len(session.transcript)

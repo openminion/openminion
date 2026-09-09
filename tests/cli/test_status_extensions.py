@@ -46,12 +46,14 @@ def test_status_extensions_reports_unattempted_tool_provider(tmp_path: Path) -> 
     entry_point = mock.MagicMock()
     entry_point.name = "sample-fetch"
     entry_point.module = "sample.fetch"
+    entry_points = mock.MagicMock()
+    entry_points.select.side_effect = lambda *, group: (
+        [entry_point] if group == "openminion.tool.fetch.providers" else []
+    )
     with mock.patch(
-        "openminion.services.runtime.catalog._entry_points",
-        side_effect=lambda group: (
-            [entry_point] if group == "openminion.tool.fetch.providers" else []
-        ),
-    ):
+        "openminion.services.runtime.catalog.entry_points",
+        return_value=entry_points,
+    ) as scan:
         args = Namespace(
             config=str(_write_config(tmp_path)),
             status_command="extensions",
@@ -60,6 +62,8 @@ def test_status_extensions_reports_unattempted_tool_provider(tmp_path: Path) -> 
         buf = io.StringIO()
         with redirect_stdout(buf):
             assert run_status(args) == 0
+
+    scan.assert_called_once_with()
 
     provider = json.loads(buf.getvalue())["tool_providers"][0]
     assert provider == {
