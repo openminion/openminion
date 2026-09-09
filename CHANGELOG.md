@@ -1,11 +1,27 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-09-07
+Last updated: 2026-09-08
 
 This file tracks package-facing release notes for `openminion`.
 
-## Current package line - 2026-09-07
+## Current package line - 2026-09-08
+
+- Added explicit interactive session closure and aligned close, release, and
+  resume lifecycle behavior across terminal, ACP, API, gateway, and cached
+  agent-service paths.
+- Improved memory and context evidence so active artifacts, final-use
+  attribution, runtime traces, and resumed sessions retain the same authority.
+- Enforced vault-scoped Obsidian graph navigation, preserved explicit graph
+  source priority, and clarified copyable typed record identifiers.
+- Hardened artifact access by rejecting inactive records, bounding rendered
+  views, and keeping summary hashes out of artifact references.
+- Improved local daemon setup while preserving the package ownership boundary
+  between OpenMinion and separately distributed clients.
+- Added manifest-backed critical regression gates and stabilized provider-free
+  CLI, MCP, and standalone E2E proofs.
+
+## Prior package line - 2026-09-07
 
 - Added an Obsidian vault graph workflow that composes SophiaGraph document
   sources and PragmaGraph repository sources through typed, attributable graph
