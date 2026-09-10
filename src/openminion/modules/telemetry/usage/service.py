@@ -1,7 +1,6 @@
 from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime
-import json
 from typing import Any
 
 from openminion.modules.telemetry.trace.turn_cost import (
@@ -582,18 +581,7 @@ class StatsService:
             if role not in {"assistant", "outbound"}:
                 continue
             turn_count += 1
-            metadata = getattr(message, "metadata", {}) or {}
-            if not isinstance(metadata, dict):
-                continue
-            raw_stats = metadata.get("run_stats_json")
-            if isinstance(raw_stats, str):
-                try:
-                    raw_stats = json.loads(raw_stats)
-                except ValueError:
-                    raw_stats = None
-            stats = RunStats.from_mapping(
-                raw_stats if isinstance(raw_stats, dict) else None
-            )
+            stats = RunStats.from_message_metadata(getattr(message, "metadata", None))
             if stats is not None:
                 aggregate = aggregate.add(stats)
         return turn_count, aggregate

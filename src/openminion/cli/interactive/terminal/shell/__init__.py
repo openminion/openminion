@@ -658,6 +658,8 @@ async def _run_terminal_focus_async(
         plain_spinner=plain_spinner,
         verbosity=verbosity,
         show_response_time=_show_response_time_enabled(),
+        usage_provider=runtime.token_usage_snapshot,
+        usage_display=runtime.turn_usage_display,
     )
     status_line = TerminalStatusLine()
 

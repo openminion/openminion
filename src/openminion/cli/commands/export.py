@@ -9,6 +9,7 @@ from typing import Any
 from openminion.cli.bootstrap.loader import load_config
 from openminion.modules.storage.runtime.context import build_runtime_storage
 from openminion.modules.storage.runtime.session_store import SessionStore
+from openminion.modules.telemetry.usage import RunStats
 
 
 def run_export(args) -> int:
@@ -44,6 +45,7 @@ def run_export(args) -> int:
         for message in sessions.list_messages(
             session_id=session_id, limit=unbounded_limit
         ):
+            stats = RunStats.from_message_metadata(message.metadata)
             records.append(
                 {
                     "type": "message",
@@ -51,6 +53,7 @@ def run_export(args) -> int:
                     "role": str(message.role),
                     "body": str(message.body),
                     "metadata": dict(message.metadata),
+                    "stats": stats.as_payload() if stats is not None else {},
                     "created_at": str(message.created_at),
                 }
             )

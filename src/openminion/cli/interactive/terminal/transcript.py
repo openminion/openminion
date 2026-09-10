@@ -43,12 +43,16 @@ class TerminalTranscript:
         plain_spinner: bool = False,
         verbosity: str = "normal",
         show_response_time: bool = True,
+        usage_provider: Callable[[], Any] | None = None,
+        usage_display: str = "total",
         max_retained_messages: int | None = DEFAULT_MAX_RETAINED_MESSAGES,
     ) -> None:
         self._console = console
         self._messages: list[ChatMessage] = []
         self._plain_spinner = bool(plain_spinner)
         self._show_response_time = bool(show_response_time)
+        self._usage_provider = usage_provider
+        self._usage_display = usage_display
         self._verbosity: VerbosityLevel = cast(
             VerbosityLevel,
             verbosity if verbosity in ("quiet", "normal", "verbose") else "normal",
@@ -93,6 +97,8 @@ class TerminalTranscript:
             plain=self._plain_spinner,
             footer_provider=footer_provider,
             show_response_time=self._show_response_time,
+            usage_provider=self._usage_provider,
+            usage_display=self._usage_display,
         )
         if self._terminal_writer is not None:
             handle.set_terminal_writer(self._terminal_writer)

@@ -54,7 +54,7 @@ Use this owner ladder in order:
 - zero imports from Base into `api`, `cli`, `modules`, `services`, or `tools`, including lazy and type-only imports
 - an exact reviewed Python-file inventory, so every new Base owner requires an owner-ladder review
 - downward-only per-file budgets for LOC, callable count, maximum callable LOC, and maximum parameter count
-- a 100-line callable ceiling, a 500-line default file ceiling, and a 9,500-line Base ceiling
+- a 100-line callable ceiling, a 500-line default file ceiling, and a 9,524-line Base ceiling
 
 `config/mcp.py` is the only approved large-file exception because it is a
 declarative catalog. Its budget cannot grow. The exact downward-only budgets

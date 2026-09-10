@@ -5,10 +5,12 @@ from typing import Any, Mapping
 
 from openminion.api.config import close_api_runtime_if_owned, resolve_api_runtime
 from openminion.api.runtime import APIRuntime
+from openminion.base.config import resolve_agent_config
 from openminion.modules.context.trace_inspection import (
     ContextTraceLookupError,
     list_context_traces,
 )
+from openminion.modules.telemetry.usage import RunStats
 
 
 @dataclass
@@ -48,22 +50,29 @@ def list_session_messages(
         records = active_runtime.sessions.list_messages(
             session_id=normalized_session_id, limit=safe_limit
         )
-        messages: list[dict[str, Any]] = [
-            {
-                "id": record.id,
-                "session_id": record.session_id,
-                "role": record.role,
-                "body": record.body,
-                "metadata": record.metadata,
-                "created_at": record.created_at,
-            }
-            for record in records
-        ]
+        messages: list[dict[str, Any]] = []
+        for record in records:
+            stats = RunStats.from_message_metadata(record.metadata)
+            messages.append(
+                {
+                    "id": record.id,
+                    "session_id": record.session_id,
+                    "role": record.role,
+                    "body": record.body,
+                    "metadata": record.metadata,
+                    "stats": stats.as_payload() if stats is not None else {},
+                    "created_at": record.created_at,
+                }
+            )
         return {
             "session": {
                 "id": session.id,
                 "channel": session.channel,
                 "target": session.target,
+                "turn_usage_display": resolve_agent_config(
+                    active_runtime.config,
+                    session.owner_agent_id,
+                ).turn_usage_display,
                 "created_at": session.created_at,
                 "updated_at": session.updated_at,
             },

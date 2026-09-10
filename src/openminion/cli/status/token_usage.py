@@ -25,6 +25,7 @@ _CACHED_KEYS = (
     "cached_tokens",
     "cache_read_input_tokens",
 )
+_LLM_CALL_KEYS = ("llm_calls", "llm_calls_count")
 _MAX_SINGLE_CALL_PROMPT_KEYS = (
     "max_single_call_input_tokens",
     "max_single_call_prompt_tokens",
@@ -40,6 +41,7 @@ class TokenUsageTotals:
     cached_tokens: int | None = None
     max_single_call_prompt_tokens: int | None = None
     max_single_call_total_tokens: int | None = None
+    llm_calls: int | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -50,6 +52,7 @@ class TokenUsageTotals:
             and self.cached_tokens is None
             and self.max_single_call_prompt_tokens is None
             and self.max_single_call_total_tokens is None
+            and self.llm_calls is None
         )
 
 
@@ -70,6 +73,7 @@ class TokenUsageSnapshot:
     session_cached_tokens: int | None = None
     turn_max_single_call_prompt_tokens: int | None = None
     turn_max_single_call_total_tokens: int | None = None
+    turn_llm_calls: int | None = None
 
     @property
     def context_pct(self) -> int | None:
@@ -103,6 +107,7 @@ def usage_totals_from_mapping(
     cached_tokens = _first_int(payload, _CACHED_KEYS)
     max_single_call_prompt_tokens = _first_int(payload, _MAX_SINGLE_CALL_PROMPT_KEYS)
     max_single_call_total_tokens = _first_int(payload, _MAX_SINGLE_CALL_TOTAL_KEYS)
+    llm_calls = _first_int(payload, _LLM_CALL_KEYS)
     if total_tokens is None and (
         prompt_tokens is not None or completion_tokens is not None
     ):
@@ -114,6 +119,7 @@ def usage_totals_from_mapping(
         cached_tokens=cached_tokens,
         max_single_call_prompt_tokens=max_single_call_prompt_tokens,
         max_single_call_total_tokens=max_single_call_total_tokens,
+        llm_calls=llm_calls,
     )
     return None if totals.is_empty else totals
 
@@ -138,6 +144,7 @@ def _payload_mapping(
         *_CACHED_KEYS,
         *_MAX_SINGLE_CALL_PROMPT_KEYS,
         *_MAX_SINGLE_CALL_TOTAL_KEYS,
+        *_LLM_CALL_KEYS,
     ):
         if hasattr(payload, key):
             attrs[key] = getattr(payload, key)
@@ -168,6 +175,7 @@ def accumulate_usage(
             previous.max_single_call_total_tokens,
             increment.max_single_call_total_tokens,
         ),
+        llm_calls=_sum_optional(previous.llm_calls, increment.llm_calls),
     )
 
 
@@ -199,7 +207,34 @@ def build_token_usage_snapshot(
         session_cached_tokens=session.cached_tokens,
         turn_max_single_call_prompt_tokens=turn.max_single_call_prompt_tokens,
         turn_max_single_call_total_tokens=turn.max_single_call_total_tokens,
+        turn_llm_calls=turn.llm_calls,
     )
+
+
+def format_turn_usage(
+    snapshot: TokenUsageSnapshot | None,
+    display: str,
+) -> str:
+    if snapshot is None or display == "off":
+        return ""
+    if display == "total":
+        total = _displayable_usage_value(snapshot.turn_total_tokens)
+        return f"{format_token_count(total)} tokens" if total is not None else ""
+    input_tokens = snapshot.turn_prompt_tokens
+    output_tokens = snapshot.turn_completion_tokens
+    parts: list[str] = []
+    if any(value is not None and value > 0 for value in (input_tokens, output_tokens)):
+        parts.extend(
+            (
+                f"{format_token_count(input_tokens)} in",
+                f"{format_token_count(output_tokens)} out",
+            )
+        )
+    if display == "input_output_calls":
+        calls = snapshot.turn_llm_calls
+        if calls is not None and calls > 0:
+            parts.append(f"{calls} {'call' if calls == 1 else 'calls'}")
+    return " · ".join(parts)
 
 
 def format_token_usage_summary(
@@ -399,5 +434,6 @@ __all__ = [
     "format_token_count",
     "format_token_usage_summary",
     "format_token_usage_timing",
+    "format_turn_usage",
     "usage_totals_from_mapping",
 ]

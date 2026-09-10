@@ -26,6 +26,7 @@ from openminion.cli.presentation.markers import (
     token_rich_style,
 )
 from openminion.cli.presentation.models import ToolEvent
+from openminion.cli.status.token_usage import format_turn_usage
 from openminion.cli.presentation.tool.formatting import (
     format_tool_duration,
     is_diff_result,
@@ -61,6 +62,8 @@ class TerminalTurnHandle:
         plain: bool = False,
         footer_provider: Any | None = None,
         show_response_time: bool = True,
+        usage_provider: Any | None = None,
+        usage_display: str = "total",
     ) -> None:
         self._console = console
         self._buffer = ""
@@ -74,6 +77,8 @@ class TerminalTurnHandle:
         self._status_label = ""
         self._footer_provider = footer_provider
         self._show_response_time = bool(show_response_time)
+        self._usage_provider = usage_provider
+        self._usage_display = usage_display
         self._refresh_stop = Event()
         self._refresh_thread: Thread | None = None
         self._inline_status_mode = False
@@ -248,12 +253,16 @@ class TerminalTurnHandle:
         return
 
     def _response_time_row(self, elapsed_seconds: float | None) -> Text | None:
-        if not self._show_response_time or elapsed_seconds is None:
+        parts: list[str] = []
+        if self._show_response_time and elapsed_seconds is not None:
+            parts.append(f"Done in {format_elapsed_label(elapsed_seconds)}")
+        if callable(self._usage_provider):
+            usage = format_turn_usage(self._usage_provider(), self._usage_display)
+            if usage:
+                parts.append(usage)
+        if not parts:
             return None
-        return Text(
-            f"Done in {format_elapsed_label(elapsed_seconds)}",
-            style="dim italic",
-        )
+        return Text(" · ".join(parts), style="dim italic")
 
     def _render_final_body(self, *, elapsed_seconds: float | None = None) -> Any | None:
         buffer = self._buffer or ""

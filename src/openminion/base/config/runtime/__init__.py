@@ -100,6 +100,7 @@ class RuntimeConfig:
     clarify_llm_temperature: float = 0.0
     clarify_llm_max_tokens: int = 256
     complex_request_plan_policy: str = "balanced"
+    turn_usage_display: str = "total"
     tool_selection: ToolSelectionConfig = field(default_factory=ToolSelectionConfig)
     tool_schema_shortlisting_enabled: bool | None = None
     has_tool_schema_shortlisting_enabled: bool = field(default=False, repr=False)
@@ -141,15 +142,10 @@ class RuntimeConfig:
         self.mcp_publish = coerce_mcp_publish_config(self.mcp_publish)
         self.mcp_sampling_mode = normalize_mcp_sampling_mode(self.mcp_sampling_mode)
         try:
-            self.mcp_discovery_cache_ttl_seconds = float(
-                self.mcp_discovery_cache_ttl_seconds
-            )
+            cache_ttl = float(self.mcp_discovery_cache_ttl_seconds)
         except (TypeError, ValueError):
-            self.mcp_discovery_cache_ttl_seconds = 0.0
-        self.mcp_discovery_cache_ttl_seconds = max(
-            0.0,
-            self.mcp_discovery_cache_ttl_seconds,
-        )
+            cache_ttl = 0.0
+        self.mcp_discovery_cache_ttl_seconds = max(0.0, cache_ttl)
         self.mcp_deferred_discovery_enabled = bool(self.mcp_deferred_discovery_enabled)
 
 

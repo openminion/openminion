@@ -144,6 +144,21 @@ class RunStats:
         )
         return stats if stats.has_any_data else None
 
+    @classmethod
+    def from_message_metadata(
+        cls,
+        metadata: Mapping[str, Any] | None,
+    ) -> "RunStats | None":
+        if not isinstance(metadata, Mapping):
+            return None
+        raw_stats = metadata.get("run_stats_json")
+        if isinstance(raw_stats, str):
+            try:
+                raw_stats = json.loads(raw_stats)
+            except ValueError:
+                return None
+        return cls.from_mapping(raw_stats if isinstance(raw_stats, Mapping) else None)
+
 
 @dataclass(frozen=True)
 class ToolCallCount:

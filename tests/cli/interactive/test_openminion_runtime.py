@@ -1239,6 +1239,12 @@ async def test_openminion_runtime_tracks_turn_and_session_token_usage() -> None:
     assert second.session_total_tokens == 3000
     assert second.context_used_tokens == 3000
 
+    gateway.metadata = {}
+    _ = [chunk async for chunk in tui_rt.send_message("no usage")]
+    third = tui_rt.token_usage_snapshot()
+    assert third.turn_total_tokens is None
+    assert third.session_total_tokens == 3000
+
 
 def test_openminion_runtime_reports_latest_context_budget_and_compaction() -> None:
     rt = _FakeRuntime()

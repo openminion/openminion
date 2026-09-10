@@ -82,6 +82,45 @@ class APIRuntimeTests(unittest.TestCase):
             finally:
                 runtime.close()
 
+    def test_session_history_exposes_turn_usage_and_resolved_display(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_echo_config(
+                Path(tmp),
+                turn_usage_display="input_output_calls",
+            )
+            runtime = APIRuntime.from_config_path(str(config_path))
+            try:
+                with redirect_stdout(io.StringIO()):
+                    result = run_turn(
+                        str(config_path),
+                        {"message": "usage", "session_id": "usage-session"},
+                        runtime=runtime,
+                    )
+                runtime.sessions.append_message(
+                    session_id="usage-session",
+                    role="assistant",
+                    body="old reply",
+                )
+                transcript = list_session_messages(
+                    str(config_path),
+                    session_id="usage-session",
+                    runtime=runtime,
+                )
+            finally:
+                runtime.close()
+
+            assistant_messages = [
+                item for item in transcript["messages"] if item["role"] == "outbound"
+            ]
+            old_message = next(
+                item for item in transcript["messages"] if item["body"] == "old reply"
+            )
+            self.assertEqual(
+                transcript["session"]["turn_usage_display"], "input_output_calls"
+            )
+            self.assertEqual(assistant_messages[0]["stats"], result["stats"])
+            self.assertEqual(old_message["stats"], {})
+
     def test_runtime_close_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_path = _write_echo_config(Path(tmp))
@@ -841,6 +880,7 @@ def _write_echo_config(
     tmp_path: Path,
     *,
     memory_provider: str | None = None,
+    turn_usage_display: str | None = None,
 ) -> Path:
     config_path = tmp_path / "config.json"
     config = OpenMinionConfig()
@@ -860,6 +900,8 @@ def _write_echo_config(
     if memory_provider is not None:
         config.runtime.memory_provider = memory_provider
     _csc_install_default_agent(config, provider="echo")
+    if turn_usage_display is not None:
+        config.agents[config.default_agent].turn_usage_display = turn_usage_display
     config.storage.path = str(tmp_path / "state" / "api.db")
     save_config(config, str(config_path))
     return config_path

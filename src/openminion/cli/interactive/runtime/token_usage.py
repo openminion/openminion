@@ -28,6 +28,10 @@ class RuntimeTokenUsageMixin:
     _target: str
     _usage_updated_at_monotonic: float | None
 
+    @property
+    def turn_usage_display(self) -> str:
+        return str(self._rt.resolve_agent_profile(self.agent_id).turn_usage_display)
+
     if TYPE_CHECKING:
 
         @property
@@ -149,6 +153,7 @@ class RuntimeTokenUsageMixin:
         )
 
     def _begin_turn_usage_tracking(self) -> None:
+        self._last_turn_usage = TokenUsageTotals()
         self._current_turn_usage = None
         self._current_turn_has_live_deltas = False
         self._last_live_usage_update_at = None

@@ -11,6 +11,7 @@ from openminion.cli.interactive.terminal.streaming import (
 )
 from openminion.cli.interactive.terminal.spinner import Spinner
 from openminion.cli.presentation.models import ToolEvent
+from openminion.cli.status import TokenUsageSnapshot
 
 
 def _make_console() -> tuple[Console, io.StringIO]:
@@ -67,6 +68,80 @@ def test_complete_can_hide_response_time() -> None:
     handle.append_token("untimed reply")
     handle.complete()
     assert "Done in" not in buffer.getvalue()
+
+
+def test_complete_renders_each_turn_usage_mode() -> None:
+    snapshot = TokenUsageSnapshot(
+        turn_prompt_tokens=5700,
+        turn_completion_tokens=603,
+        turn_total_tokens=6303,
+        turn_llm_calls=4,
+    )
+    expected = {
+        "off": "Done in 3s",
+        "total": "Done in 3s · 6.3k tokens",
+        "input_output": "Done in 3s · 5.7k in · 603 out",
+        "input_output_calls": "Done in 3s · 5.7k in · 603 out · 4 calls",
+    }
+    for display, footer in expected.items():
+        console, buffer = _make_console()
+        handle = TerminalTurnHandle(
+            console,
+            usage_provider=lambda: snapshot,
+            usage_display=display,
+        ).start()
+        handle._started_at = time.monotonic() - 3.4
+        handle.complete(final_text="reply")
+        assert buffer.getvalue().endswith(footer)
+
+
+def test_complete_omits_unavailable_usage_and_uses_singular_call() -> None:
+    console, buffer = _make_console()
+    unavailable = TerminalTurnHandle(
+        console,
+        usage_provider=lambda: TokenUsageSnapshot(),
+    ).start()
+    unavailable._started_at = time.monotonic() - 3.4
+    unavailable.complete(final_text="reply")
+    assert buffer.getvalue().endswith("Done in 3s")
+    assert "0 tokens" not in buffer.getvalue()
+
+    console, buffer = _make_console()
+    detailed = TerminalTurnHandle(
+        console,
+        show_response_time=False,
+        usage_provider=lambda: TokenUsageSnapshot(
+            turn_prompt_tokens=1000,
+            turn_completion_tokens=20,
+            turn_total_tokens=1020,
+            turn_llm_calls=1,
+        ),
+        usage_display="input_output_calls",
+    ).start()
+    detailed.complete(final_text="reply")
+    assert buffer.getvalue().endswith("1k in · 20 out · 1 call")
+    assert "Done in" not in buffer.getvalue()
+
+    console, buffer = _make_console()
+    zero_input = TerminalTurnHandle(
+        console,
+        usage_provider=lambda: TokenUsageSnapshot(
+            turn_prompt_tokens=0,
+            turn_completion_tokens=20,
+        ),
+        usage_display="input_output",
+    ).start()
+    zero_input.complete(final_text="reply")
+    assert buffer.getvalue().endswith("0 in · 20 out")
+
+    console, buffer = _make_console()
+    call_only = TerminalTurnHandle(
+        console,
+        usage_provider=lambda: TokenUsageSnapshot(turn_llm_calls=1),
+        usage_display="input_output_calls",
+    ).start()
+    call_only.complete(final_text="reply")
+    assert buffer.getvalue().endswith("1 call")
 
 
 def test_bounded_fallback_under_50ms_threshold() -> None:
