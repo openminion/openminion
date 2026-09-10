@@ -52,6 +52,28 @@ def test_expand_after_truncated_block_shows_full_body() -> None:
     assert "… +" not in expanded_output
 
 
+def test_expand_after_long_single_line_shows_full_body() -> None:
+    t, buf = _make_transcript()
+    body = ("x" * 1000) + "TAIL"
+    event = ToolEvent(
+        tool_name="tool.list", args={}, content=body, full_content=body, exit_code=0
+    )
+    t.push_message(
+        ChatMessage(
+            kind=MessageKind.TOOL,
+            sender="tool:tool.list",
+            body="",
+            tool_event=event,
+        )
+    )
+    assert "TAIL" not in buf.getvalue()
+
+    pre_len = len(buf.getvalue())
+    t.expand_block(1)
+
+    assert "TAIL" in buf.getvalue()[pre_len:]
+
+
 def test_expand_with_no_truncated_blocks_emits_dim_hint() -> None:
     t, buf = _make_transcript()
     pre_len = len(buf.getvalue())
