@@ -86,3 +86,13 @@ async def tick_turn_status_line(
         if callable(invalidate_prompt):
             invalidate_prompt()
         await asyncio.sleep(1.0)
+
+
+async def stop_turn_status_line_tick(task: asyncio.Task[None] | None) -> None:
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass

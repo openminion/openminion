@@ -925,9 +925,15 @@ async def _run_agent_turn(
 
     status_controller = PhaseStatusController(fallback_label="Working...")
     status_controller.start_turn()
+
+    async def _settle_status() -> None:
+        await _progress.stop_turn_status_line_tick(status_tick_task)
+        status_controller.end_turn()
+        if status_line is not None:
+            _finalize_turn_status_line(runtime, status_line)
+
     initial_status = status_controller.view_model_for(
-        None,
-        verbosity=transcript.verbosity,
+        None, verbosity=transcript.verbosity
     )
     setter = getattr(handle, "set_status_label", None)
     initial_label = str(initial_status.primary_text or status_controller.fallback_label)
@@ -968,16 +974,19 @@ async def _run_agent_turn(
                 reply += chunk_str
                 mark_active_chat_first_text()
                 handle.append_token(chunk_str)
+        await _settle_status()
         handle.complete(final_text=reply)
         push_phase_timing_report_if_enabled(runtime=runtime, transcript=transcript)
     except asyncio.CancelledError:
         try:
+            await _settle_status()
             handle.complete(final_text=reply)
         except Exception:
             _LOGGER.debug("turn handle cancellation cleanup failed", exc_info=True)
         raise
     except Exception as exc:
         try:
+            await _settle_status()
             handle.complete(final_text=reply)
         except Exception:
             _LOGGER.debug("turn handle failure cleanup failed", exc_info=True)
@@ -985,12 +994,4 @@ async def _run_agent_turn(
             ChatMessage(kind=MessageKind.ERROR, sender="error", body=str(exc))
         )
     finally:
-        if status_tick_task is not None:
-            status_tick_task.cancel()
-            try:
-                await status_tick_task
-            except asyncio.CancelledError:
-                pass
-        status_controller.end_turn()
-        if status_line is not None:
-            _finalize_turn_status_line(runtime, status_line)
+        await _settle_status()
