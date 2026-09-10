@@ -345,6 +345,8 @@ class AdaptiveToolLoopState:
     scratchpad: dict[str, Any] = field(default_factory=dict)
     task_plan: dict[str, Any] | None = None
     task_plan_revision: dict[str, Any] | None = None
+    task_plan_abandoned: dict[str, Any] | None = None
+    task_plan_completed: dict[str, Any] | None = None
     seen_signatures: list[str] = field(default_factory=list)
     direct_tool_turn: DirectToolTurnContext | None = None
     direct_tool_requested_batch_satisfied: bool = False
@@ -467,10 +469,12 @@ class AdaptiveToolLoopOutcome:
         task_plan_revision = self.task_plan_revision or self.state.task_plan_revision
         if isinstance(task_plan_revision, dict) and task_plan_revision:
             payload["task_plan.revision"] = dict(task_plan_revision)
-        if isinstance(self.task_plan_abandoned, dict) and self.task_plan_abandoned:
-            payload["task_plan.abandoned"] = dict(self.task_plan_abandoned)
-        if isinstance(self.task_plan_completed, dict) and self.task_plan_completed:
-            payload["task_plan.completed"] = dict(self.task_plan_completed)
+        task_plan_abandoned = self.task_plan_abandoned or self.state.task_plan_abandoned
+        if isinstance(task_plan_abandoned, dict) and task_plan_abandoned:
+            payload["task_plan.abandoned"] = dict(task_plan_abandoned)
+        task_plan_completed = self.task_plan_completed or self.state.task_plan_completed
+        if isinstance(task_plan_completed, dict) and task_plan_completed:
+            payload["task_plan.completed"] = dict(task_plan_completed)
         if self.watch_condition_met is not None:
             payload["watch.condition_met"] = bool(self.watch_condition_met)
         if str(self.watch_summary or "").strip():

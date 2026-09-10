@@ -77,6 +77,9 @@ def _project(
     expected_checks: tuple[str, ...] = (),
     launch_approved: bool = False,
     release_tools_approved: bool = False,
+    verification_domain: str = "coding",
+    max_wall_clock_ms: int | None = None,
+    max_tool_calls: int | None = None,
 ):
     store = AutonomyRunStore(root=tmp_path / "autonomy")
     run = build_autonomy_run(
@@ -85,8 +88,10 @@ def _project(
         session_id="session-1",
         workspace_ref=f"local:{tmp_path}#commit=abc;dirty=clean",
         max_iterations=max_iterations,
+        max_wall_clock_ms=max_wall_clock_ms,
+        max_tool_calls=max_tool_calls,
         agent_id="agent-1",
-        verification_domain="coding",
+        verification_domain=verification_domain,
         verification_commands=("verify",),
     ).model_copy(
         update={
@@ -211,6 +216,154 @@ def test_separately_approved_release_project_turn_uses_release_scope(tmp_path) -
     assert set(requests[0].allowed_tools) == (
         PROJECT_CODING_ALLOWED_TOOLS | PROJECT_RELEASE_ADDITIONAL_TOOLS
     )
+
+
+def test_research_project_uses_configured_runtime_scope(tmp_path) -> None:
+    store, manager, run = _project(tmp_path, verification_domain="research")
+    requests: list[ProjectTurnRequest] = []
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: (
+            requests.append(request) or ProjectTurnResult(summary="researched")
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+    )
+
+    worker.run_cycle(run.run_id)
+
+    assert requests[0].allowed_tools == ()
+
+
+@pytest.mark.parametrize("domain", ["operations", "cross_application"])
+def test_unconfigured_project_domain_blocks_before_turn(tmp_path, domain: str) -> None:
+    store, manager, run = _project(tmp_path, verification_domain=domain)
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: pytest.fail("unsupported domain ran a turn"),
+        verify=lambda: pytest.fail("unsupported domain ran verification"),
+    )
+
+    result = worker.run_cycle(run.run_id)
+
+    task = manager.get_task("task-1")
+    assert result.decision == ProjectCycleDecision.BLOCKED
+    assert result.run.last_error is not None
+    assert result.run.last_error.code == "project_domain_not_configured"
+    assert task is not None
+    assert task.state == TaskLifecycleState.PAUSED
+
+
+def test_project_tool_budget_is_cumulative_across_cycles(tmp_path) -> None:
+    store, manager, run = _project(tmp_path, max_iterations=2, max_tool_calls=3)
+    requests: list[ProjectTurnRequest] = []
+    results = iter(
+        (
+            ProjectTurnResult(summary="first", tool_call_count=2),
+            ProjectTurnResult(summary="second", tool_call_count=1),
+        )
+    )
+    verification = iter(
+        (
+            (_evidence(_TestEvidenceStatus.FAILED),),
+            (_evidence(_TestEvidenceStatus.PASSED),),
+        )
+    )
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: requests.append(request) or next(results),
+        verify=lambda: next(verification),
+    )
+
+    result = worker.run(run.run_id, max_cycles=2)
+
+    assert result.run.status == AutonomyRunStatus.COMPLETED
+    assert [request.project_tool_calls_remaining for request in requests] == [3, 1]
+
+
+def test_project_budget_blocks_before_expired_or_zero_allowance(tmp_path) -> None:
+    store, manager, run = _project(tmp_path, max_tool_calls=0)
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: pytest.fail("zero budget ran a turn"),
+        verify=lambda: pytest.fail("zero budget ran verification"),
+    )
+
+    zero = worker.run_cycle(run.run_id)
+    expired_run = run.model_copy(
+        update={
+            "created_at_ms": 0,
+            "continuation_policy": run.continuation_policy.model_copy(
+                update={"max_tool_calls": None, "max_wall_clock_ms": 1}
+            ),
+        }
+    )
+    store.save(expired_run)
+    expired = worker.run_cycle(run.run_id)
+
+    assert zero.decision == ProjectCycleDecision.BLOCKED
+    assert expired.decision == ProjectCycleDecision.BLOCKED
+
+
+def test_project_budget_extension_applies_before_turn(tmp_path) -> None:
+    store, manager, run = _project(tmp_path, max_tool_calls=0)
+    task = manager.get_task("task-1")
+    assert task is not None
+    metadata = dict(task.metadata)
+    metadata["budget_extensions"] = {"extra_tool_calls": 1}
+    manager.update_task_metadata(task_id="task-1", metadata=metadata)
+    requests: list[ProjectTurnRequest] = []
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: (
+            requests.append(request)
+            or ProjectTurnResult(summary="worked", tool_call_count=1)
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+    )
+
+    result = worker.run_cycle(run.run_id)
+
+    assert result.run.status == AutonomyRunStatus.COMPLETED
+    assert requests[0].project_tool_calls_remaining == 1
+
+
+def test_iteration_extension_allows_next_cycle_after_worker_reopen(tmp_path) -> None:
+    store, manager, run = _project(tmp_path, max_iterations=1)
+    task = manager.get_task("task-1")
+    assert task is not None
+    manager.update_task_metadata(
+        task_id="task-1",
+        metadata={**task.metadata, "budget_extensions": {"extra_iterations": 1}},
+    )
+    requests: list[ProjectTurnRequest] = []
+    first = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: (
+            requests.append(request)
+            or ProjectTurnResult(summary="first", evidence_refs=("file:first",))
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.FAILED),),
+    ).run_cycle(run.run_id)
+
+    second = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: (
+            requests.append(request) or ProjectTurnResult(summary="second")
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+    ).run_cycle(run.run_id)
+
+    assert first.decision == ProjectCycleDecision.CONTINUE
+    assert second.run.status == AutonomyRunStatus.COMPLETED
+    assert second.project_run.cycle_limit == 2
+    assert len(requests) == 2
 
 
 def test_project_worker_replans_once_then_commits_verified_completion(
@@ -992,7 +1145,10 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     assert checkpoint.payload["task_plan"]["criterion_ids"] == ["criterion-tests"]
     assert checkpoint.payload["task_plan_revision"]["revision_id"] == "revision-1"
     assert "first action must use the existing plan loop-control tool" in prompts[0]
+    assert "continue_plan_autonomously=false" in prompts[0]
     assert "action=revise for plan_id=plan-1" in prompts[1]
+    assert "continue_plan_autonomously=false" in prompts[1]
+    assert "Omit predecessor_revision_id" in prompts[1]
     assert "verification:prun_" in prompts[1]
     assert "Prior verifier outcome:\nverification failed" in prompts[1]
     assert (

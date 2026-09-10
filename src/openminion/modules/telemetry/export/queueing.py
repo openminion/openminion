@@ -17,10 +17,12 @@ class NoncriticalExportQueue:
         capacity: int,
         flush_timeout_seconds: float,
         export_now: Callable[[TelemetryEvent], bool],
+        on_stopped: Callable[[], None] | None = None,
     ) -> None:
         self._capacity = max(0, int(capacity or 0))
         self._flush_timeout_seconds = max(0.0, float(flush_timeout_seconds or 0.0))
         self._export_now = export_now
+        self._on_stopped = on_stopped or (lambda: None)
         self._drops = 0
         self._flush_failures = 0
         self._stop = Event()
@@ -52,7 +54,7 @@ class NoncriticalExportQueue:
         return criticality in _QUEUED_CRITICALITIES
 
     def enqueue(self, event: TelemetryEvent) -> bool:
-        if self._queue is None:
+        if self._queue is None or self._stop.is_set():
             return False
         try:
             self._queue.put_nowait(event)
@@ -87,31 +89,35 @@ class NoncriticalExportQueue:
             queue_ref.not_full.notify_all()
         return removed
 
-    def close(self) -> None:
+    def close(self) -> bool:
         worker = self._worker
         if worker is None:
-            return
+            self._on_stopped()
+            return True
         self._stop.set()
         worker.join(timeout=self._flush_timeout_seconds)
         if worker.is_alive():
             self._flush_failures += 1
-        self._queue = None
-        self._worker = None
+            return False
+        return True
 
     def _drain(self) -> None:
         self._worker_id = get_ident()
         queue_ref = self._queue
         if queue_ref is None:
             return
-        while not self._stop.is_set() or not queue_ref.empty():
-            try:
-                event = queue_ref.get(timeout=0.05)
-            except Empty:
-                continue
-            try:
-                self._export_now(event)
-            finally:
-                queue_ref.task_done()
+        try:
+            while not self._stop.is_set() or not queue_ref.empty():
+                try:
+                    event = queue_ref.get(timeout=0.05)
+                except Empty:
+                    continue
+                try:
+                    self._export_now(event)
+                finally:
+                    queue_ref.task_done()
+        finally:
+            self._on_stopped()
 
 
 __all__ = ["NoncriticalExportQueue"]

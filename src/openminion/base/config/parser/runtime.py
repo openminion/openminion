@@ -35,6 +35,7 @@ from openminion.base.config.runtime.tools import (
     tool_runtime_config_to_dict,
 )
 from openminion.base.config.tool_selection import _parse_tool_selection_config
+from openminion.base.config.usage_display import normalize_turn_usage_display
 from .profiles import _parse_trailer_guidance_variant_map
 
 _STRING_DEFAULTS = (
@@ -50,6 +51,7 @@ _STRING_DEFAULTS = (
     ("reactions_default_policy", "allow"),
     ("clarify_llm_provider", ""),
     ("clarify_llm_model", ""),
+    ("turn_usage_display", "total"),
 )
 _BOOL_DEFAULTS = (
     ("demo_mode", False),
@@ -200,6 +202,10 @@ def _runtime_special_values(payload: dict[str, Any]) -> dict[str, Any]:
         ),
         "complex_request_plan_policy": _normalize_complex_request_plan_policy(
             payload.get("complex_request_plan_policy")
+        ),
+        "turn_usage_display": normalize_turn_usage_display(
+            payload.get("turn_usage_display", "total"),
+            field_path="runtime.turn_usage_display",
         ),
         "tool_selection": _parse_tool_selection_config(payload.get("tool_selection")),
         "tools": coerce_tool_runtime_config(payload.get("tools")),

@@ -96,6 +96,17 @@ def test_needs_plan_review_requires_review_posture() -> None:
         )
 
 
+def test_needs_plan_review_decision_requires_typed_plan_steps() -> None:
+    with pytest.raises(ValidationError, match="at least one sub_intent"):
+        ActDecision(
+            request_readiness=RequestReadiness(
+                posture="review_before_act",
+                requested_outcome="execute",
+                state="needs_plan_review",
+            )
+        )
+
+
 def test_assumption_count_and_lengths_are_bounded() -> None:
     assumptions = [
         {

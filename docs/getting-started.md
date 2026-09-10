@@ -20,6 +20,19 @@ On Windows PowerShell, use `.venv\Scripts\Activate.ps1`, then run the same
 `pipx install openminion` or `uv tool install openminion` avoids checkout
 tooling entirely.
 
+Keep `.venv` checkout-local when installing. `make dev-install` confirms that
+OpenMinion imports from this checkout and repairs a stale editable binding. It
+refuses to install through a `.venv` symlink so another worktree cannot silently
+repoint the environment.
+
+For a source-guaranteed developer launch, use `make run-local ARGS="..."` from
+the package root. This places the current checkout's `src` first even if the
+environment's editable package metadata points elsewhere:
+
+```bash
+make run-local ARGS='--dir "$PWD"'
+```
+
 If you are running the CLI locally, also set:
 
 ```bash

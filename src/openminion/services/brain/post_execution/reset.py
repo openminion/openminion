@@ -130,6 +130,10 @@ def _turn_reset_preservation(
     phase = str(state_inline.get("phase", "") or "").strip().upper()
     pending_confirmation_command = state_inline.get("pending_confirmation_command")
     decision_feasibility_state = _decision_feasibility_state(state_inline=state_inline)
+    readiness = state_inline.get("request_readiness")
+    awaiting_plan_review = bool(
+        isinstance(readiness, dict) and readiness.get("state") == "needs_plan_review"
+    )
     has_pending_continuation_reply = bool(
         state_inline.get("awaiting_continuation_reply")
     )
@@ -142,12 +146,12 @@ def _turn_reset_preservation(
         decision_feasibility_state=decision_feasibility_state,
         has_executable_current_step=has_executable_current_step,
     )
-    preserve_existing_plan = _preserve_existing_plan(
+    preserve_existing_plan = awaiting_plan_review or _preserve_existing_plan(
         normalized_current_input=normalized_current_input,
         has_resumable_plan=has_resumable_plan,
         decision_feasibility_state=decision_feasibility_state,
     )
-    preserve_decision_state = _preserve_decision_state(
+    preserve_decision_state = awaiting_plan_review or _preserve_decision_state(
         normalized_current_input=normalized_current_input,
         has_resumable_plan=has_resumable_plan,
         has_pending_continuation_reply=has_pending_continuation_reply,
@@ -692,7 +696,12 @@ def _emit_confirmation_reset_preserved(
 
 
 def _reset_state_for_new_input(
-    self: Any, *, runner: BrainRunner, session_id: str, user_input: str
+    self: Any,
+    *,
+    runner: BrainRunner,
+    session_id: str,
+    user_input: str,
+    inbound_metadata: dict[str, Any] | None = None,
 ) -> None:
     if not user_input.strip():
         return
@@ -710,15 +719,17 @@ def _reset_state_for_new_input(
         state_inline=state_inline,
         user_input=user_input,
     )
-    parsed_confirmation_reply = ""
-    pending_command = state_inline.get("pending_confirmation_command")
-    if pending_command is not None:
-        try:
-            parsed_confirmation_reply = _parse_confirmation_control_response(
-                runner, user_input, pending_command
-            )
-        except Exception:  # noqa: BLE001
-            parsed_confirmation_reply = ""
+    project_tool_calls_remaining = (
+        int(inbound_metadata["project_tool_calls_remaining"])
+        if inbound_metadata is not None
+        and "project_tool_calls_remaining" in inbound_metadata
+        else None
+    )
+    parsed_confirmation_reply = _confirmation_reply_for_reset(
+        runner=runner,
+        state_inline=state_inline,
+        user_input=user_input,
+    )
     preservation = self._turn_reset_preservation(
         state_inline=state_inline,
         user_input=user_input,
@@ -776,10 +787,42 @@ def _reset_state_for_new_input(
         runner=runner,
         mission_preview=mission_preview,
     )
+    _apply_project_tool_budget(updated, project_tool_calls_remaining)
     self._write_working_state_inline(
         runner=runner,
         session_id=session_id,
         state_inline=updated,
+    )
+
+
+def _confirmation_reply_for_reset(
+    *,
+    runner: BrainRunner,
+    state_inline: dict[str, Any],
+    user_input: str,
+) -> str:
+    pending_command = state_inline.get("pending_confirmation_command")
+    if pending_command is None:
+        return ""
+    try:
+        return str(
+            _parse_confirmation_control_response(runner, user_input, pending_command)
+            or ""
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _apply_project_tool_budget(
+    updated: dict[str, Any],
+    project_tool_calls_remaining: int | None,
+) -> None:
+    if project_tool_calls_remaining is None:
+        return
+    budgets = updated["budgets_remaining"]
+    budgets["tool_calls"] = min(
+        int(budgets["tool_calls"]),
+        project_tool_calls_remaining,
     )
 
 

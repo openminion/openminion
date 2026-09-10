@@ -313,10 +313,17 @@ def test_run_sessions_show_reports_context(capsys) -> None:
     )
     args = SimpleNamespace(session_id="sess-abc", output_json=True)
 
-    with patch.object(
-        sessions_command,
-        "_load_session_storage",
-        return_value=runtime,
+    with (
+        patch.object(
+            sessions_command,
+            "_load_session_storage",
+            return_value=runtime,
+        ),
+        patch.object(
+            sessions_command,
+            "_session_turn_usage_display",
+            return_value="input_output",
+        ),
     ):
         result = sessions_command.run_sessions_show(args)
 
@@ -325,6 +332,7 @@ def test_run_sessions_show_reports_context(capsys) -> None:
     assert payload["status"] == "active"
     assert payload["context"]["summary_short"] == "fixed SSH setup"
     assert payload["context"]["compacted_message_count"] == 8
+    assert payload["turn_usage_display"] == "input_output"
 
 
 def test_session_lifecycle_commands_use_existing_store(capsys) -> None:

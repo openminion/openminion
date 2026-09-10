@@ -13,7 +13,10 @@ from openminion.modules.llm.client_call import response_cost_payload
 from openminion.modules.llm.client_call import usage_payload_from_response_usage
 from openminion.modules.llm.providers.base import ProviderError
 from openminion.modules.llm.providers.base import ProviderRequest, ProviderResponse
-from openminion.modules.telemetry.constants import TRACE_HOME_ROOT_METADATA_KEY
+from openminion.modules.telemetry.constants import (
+    LLM_TRACE_FORMAT_VERSION,
+    TRACE_HOME_ROOT_METADATA_KEY,
+)
 from openminion.modules.telemetry.execution_lifecycle import (
     InvocationLifecycleFact as InvocationLifecycleFact,
 )
@@ -29,14 +32,11 @@ from openminion.modules.telemetry.trace.layout import (
 from openminion.modules.telemetry.trace.metadata import (
     apply_content_policy,
     merge_trace_metadata,
+    warn_trace_write_failure,
 )
 from openminion.modules.telemetry.trace.structured import write_structured_trace
 from openminion.modules.llm.thinking import serialize_thinking_blocks
 from openminion.modules.tool.dispatch import get_registry_manager
-
-
-def _serialize_thinking_blocks(raw_blocks: list[Any] | None) -> list[dict[str, Any]]:
-    return serialize_thinking_blocks(raw_blocks)
 
 
 def _public_trace_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -64,9 +64,8 @@ def _trace_identity_payload(trace_context: dict[str, Any]) -> dict[str, Any]:
 
 
 def _trace_enabled() -> bool:
-    return resolve_environment_config().get(
-        OPENMINION_TRACE_REQUESTS_ENV, ""
-    ).strip().lower() in {"1", "true", "yes", "on"}
+    value = resolve_environment_config().get(OPENMINION_TRACE_REQUESTS_ENV, "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _provider_request_tools_payload(tools) -> list[dict[str, Any]]:
@@ -107,6 +106,8 @@ def _provider_request_payload(
     inference_step: int,
 ) -> dict[str, Any]:
     return {
+        "trace_format_version": LLM_TRACE_FORMAT_VERSION,
+        "artifact_kind": "provider_request",
         "label": label,
         "provider": provider_name,
         "model": str(getattr(provider_request, "model", "") or ""),
@@ -172,6 +173,8 @@ def _provider_response_payload(
     inference_step: int,
 ) -> dict[str, Any]:
     return {
+        "trace_format_version": LLM_TRACE_FORMAT_VERSION,
+        "artifact_kind": "provider_response",
         "label": label,
         "provider": provider_name,
         "model": str(getattr(provider_response, "model", "") or ""),
@@ -182,7 +185,7 @@ def _provider_response_payload(
             or getattr(provider_response, "text", "")
             or ""
         ),
-        "thinking_blocks": _serialize_thinking_blocks(
+        "thinking_blocks": serialize_thinking_blocks(
             list(getattr(provider_response, "thinking", []) or [])
         ),
         "tool_calls": _provider_response_tool_calls(provider_response),
@@ -270,7 +273,7 @@ def trace_provider_request(
         logger.debug("trace_request: wrote %s", trace_path)
     except (OSError, TypeError, ValueError) as exc:
         complete = False
-        logger.warning("trace_request: failed to write trace: %s", exc)
+        warn_trace_write_failure(logger, "provider_request", exc)
     raw_text = _provider_request_raw_text(provider_request)
     if raw_text:
         try:
@@ -279,7 +282,7 @@ def trace_provider_request(
             logger.debug("trace_request: wrote %s", raw_path)
         except (OSError, TypeError, ValueError) as exc:
             complete = False
-            logger.warning("trace_request: failed to write raw trace: %s", exc)
+            warn_trace_write_failure(logger, "provider_request", exc)
     return TraceArtifactPublication(tuple(sorted(published)), complete)
 
 
@@ -349,26 +352,24 @@ def trace_provider_response(
         logger.debug("trace_response: wrote %s", trace_path)
     except (OSError, TypeError, ValueError) as exc:
         complete = False
-        logger.warning("trace_response: failed to write trace: %s", exc)
-    try:
-        structured_relative = write_structured_trace(
-            trace_context=trace_context,
-            patch={
-                "response": {
-                    "ok": payload["ok"],
-                    "finish_reason": payload["finish_reason"],
-                    "output_text": payload["output_text"],
-                    "tool_calls": payload["tool_calls"],
-                    "thinking_blocks": payload.get("thinking_blocks", []),
-                    "error": payload["error"],
-                }
-            },
-        )
-        if structured_relative:
-            published.append(structured_relative)
-    except (OSError, TypeError, ValueError) as exc:
+        warn_trace_write_failure(logger, "provider_response", exc)
+    structured_relative = write_structured_trace(
+        trace_context=trace_context,
+        patch={
+            "response": {
+                "ok": payload["ok"],
+                "finish_reason": payload["finish_reason"],
+                "output_text": payload["output_text"],
+                "tool_calls": payload["tool_calls"],
+                "thinking_blocks": payload.get("thinking_blocks", []),
+                "error": payload["error"],
+            }
+        },
+    )
+    if structured_relative:
+        published.append(structured_relative)
+    else:
         complete = False
-        logger.warning("trace_response: failed to write structured trace: %s", exc)
     for field in (
         "http_trace_filename",
         "http_response_trace_filename",

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 from openminion.modules.telemetry.export.otel import (
     OTEL_GENAI_SEMCONV_COMMIT,
     OTEL_SEMCONV_VERSION,
@@ -39,7 +37,8 @@ def test_llm_call_completed_emits_gen_ai_attributes() -> None:
     assert attrs["gen_ai.usage.input_tokens"] == 1234
     assert attrs["gen_ai.usage.output_tokens"] == 567
     assert attrs["gen_ai.response.id"] == "call-abc"
-    assert json.loads(attrs["gen_ai.response.finish_reasons"]) == ["end_turn"]
+    assert attrs["gen_ai.response.finish_reasons"] == ["end_turn"]
+    assert attrs["openminion.telemetry.schema_version"] == event.schema_version
 
 
 def test_provider_is_omitted_when_not_reported() -> None:
@@ -86,7 +85,7 @@ def test_negative_path_failed_llm_call_finish_reason_error() -> None:
         }
     )
     attrs = _attributes_for_event(event, include_assistant_body=False)
-    assert json.loads(attrs["gen_ai.response.finish_reasons"]) == ["error"]
+    assert attrs["gen_ai.response.finish_reasons"] == ["error"]
 
 
 def test_semantic_convention_targets_are_pinned() -> None:

@@ -10,11 +10,26 @@ from openminion.cli.commands.agent.delegation import (
     render_agent_delegate_result,
     request_from_slash_args,
 )
+from openminion.cli.presentation.models import ChatMessage, MessageKind
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.styles import StyleToken
 
+from ..transcript import TerminalTranscript
+
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
+
+
+def delegation_start_message(text: str) -> str:
+    parts = text.split(maxsplit=1)
+    arg = parts[1] if len(parts) > 1 else ""
+    try:
+        request = request_from_slash_args(arg)
+    except ValueError:
+        return ""
+    if request.mode not in {"sync", "async"} or not request.target_agent_id:
+        return ""
+    return f"Delegating to {request.target_agent_id}..."
 
 
 def handle_slash_delegate(
@@ -56,7 +71,13 @@ async def run_slash_delegate(
     runtime: Any,
     console: Console,
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None,
+    transcript: TerminalTranscript | None = None,
 ) -> None:
+    start_message = delegation_start_message(text)
+    if transcript is not None and start_message:
+        transcript.push_message(
+            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=start_message)
+        )
     terminal_loop = asyncio.get_running_loop()
     delegated_approval_callback = approval_callback
     if approval_callback is not None:
@@ -84,4 +105,8 @@ async def run_slash_delegate(
     )
 
 
-__all__ = ["handle_slash_delegate", "run_slash_delegate"]
+__all__ = [
+    "delegation_start_message",
+    "handle_slash_delegate",
+    "run_slash_delegate",
+]

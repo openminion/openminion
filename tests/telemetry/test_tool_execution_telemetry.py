@@ -159,7 +159,11 @@ def test_unknown_tool_emits_one_failed_lifecycle_and_execute_tool_span() -> None
 
     sink = RecordingOTELTraceSink()
     exporter = OpenTelemetryTraceExporter(
-        OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=0,
+        ),
         sink=sink,
     )
     for event in telemetry.events:

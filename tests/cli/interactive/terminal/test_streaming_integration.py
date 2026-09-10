@@ -38,6 +38,8 @@ class _TTYStringIO(io.StringIO):
 
 
 class _ProgressRuntime:
+    turn_usage_display = "total"
+
     def token_usage_snapshot(self) -> TokenUsageSnapshot:
         return TokenUsageSnapshot(
             turn_total_tokens=1500,
@@ -59,6 +61,28 @@ class _ProgressRuntime:
             )
         yield "progress ok"
         await asyncio.sleep(0)
+
+
+class _FinalUsageRuntime:
+    turn_usage_display = "input_output_calls"
+
+    def __init__(self) -> None:
+        self.finished = False
+
+    def token_usage_snapshot(self) -> TokenUsageSnapshot:
+        if not self.finished:
+            return TokenUsageSnapshot()
+        return TokenUsageSnapshot(
+            turn_prompt_tokens=1200,
+            turn_completion_tokens=300,
+            turn_total_tokens=1500,
+            turn_llm_calls=2,
+        )
+
+    async def send_message(self, text, *, progress_callback=None):
+        del text, progress_callback
+        yield "final usage"
+        self.finished = True
 
 
 class _BlockingRuntime:
@@ -177,6 +201,25 @@ def test_single_chunk_takes_bounded_fallback() -> None:
     )
     output = buf.getvalue()
     assert "one shot" in output
+
+
+def test_agent_turn_reads_usage_after_stream_finalization() -> None:
+    runtime = _FinalUsageRuntime()
+    buf = io.StringIO()
+    transcript = TerminalTranscript(
+        Console(file=buf, force_terminal=False, width=80),
+        usage_provider=runtime.token_usage_snapshot,
+        usage_display=runtime.turn_usage_display,
+    )
+    asyncio.run(
+        _run_agent_turn(
+            text="hi",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
+        )
+    )
+    assert "1.2k in · 300 out · 2 calls" in buf.getvalue()
 
 
 def test_token_refresh_keeps_first_text_immediate_and_coalesces_bursts(

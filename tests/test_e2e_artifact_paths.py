@@ -276,6 +276,7 @@ def test_live_cli_chat_helper_requires_explicit_unsandboxed_exec_opt_in(
     )
 
     assert ("--allow-unsandboxed-exec" in captured_command) is expected_flag
+    assert captured_command[captured_command.index("--dir") + 1] == str(tmp_path)
 
 
 def test_live_cli_chat_helper_counts_probe_input_turns() -> None:

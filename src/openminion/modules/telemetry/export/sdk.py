@@ -6,6 +6,7 @@ from typing import Any, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 from openminion.base.config import OTELExporterConfig
+from openminion.base.version import OPENMINION_VERSION
 
 
 class OTELTraceSink(Protocol):
@@ -519,7 +520,10 @@ def create_otel_trace_sink(
         return None
 
     resource = Resource.create(
-        {"service.name": str(config.service_name or "openminion")}
+        {
+            "service.name": str(config.service_name or "openminion"),
+            "service.version": OPENMINION_VERSION,
+        }
     )
     trace_provider = TracerProvider(resource=resource)
     exporter_kwargs: dict[str, Any] = {}
@@ -548,12 +552,13 @@ def create_otel_trace_sink(
             log_exporter_class(endpoint=signal_endpoints["logs"], **exporter_kwargs)
         )
     )
+    version = OPENMINION_VERSION
     return OpenTelemetrySDKSink(
-        tracer=trace_provider.get_tracer("openminion.telemetry.otel"),
+        tracer=trace_provider.get_tracer("openminion.telemetry.otel", version),
         trace_provider=trace_provider,
-        meter=metric_provider.get_meter("openminion.telemetry.performance"),
+        meter=metric_provider.get_meter("openminion.telemetry.performance", version),
         metric_provider=metric_provider,
-        logger=logger_provider.get_logger("openminion.telemetry.logs"),
+        logger=logger_provider.get_logger("openminion.telemetry.logs", version),
         logger_provider=logger_provider,
     )
 

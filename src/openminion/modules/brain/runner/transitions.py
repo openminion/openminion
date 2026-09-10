@@ -17,6 +17,11 @@ def guard_waiting_state(
 ) -> StepOutput | None:
     if user_input:
         return None
+    if (
+        getattr(getattr(state, "request_readiness", None), "state", None)
+        == "needs_plan_review"
+    ):
+        return None
     message = _WAITING_MESSAGES.get(state.status)
     return (
         StepOutput(

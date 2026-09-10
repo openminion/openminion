@@ -18,7 +18,14 @@ from openminion.cli.interactive.terminal.transcript import (
 from openminion.modules.llm import ProviderError
 
 
-class _QueueRuntime:
+class _RuntimeUsage:
+    turn_usage_display = "total"
+
+    def token_usage_snapshot(self) -> None:
+        return None
+
+
+class _QueueRuntime(_RuntimeUsage):
     agent_id = "alpha"
     provider_name = "openai"
     model_name = "gpt-4.1-mini"
@@ -81,7 +88,7 @@ class _ScriptedComposer:
         raise EOFError
 
 
-class _MultiQueueRuntime:
+class _MultiQueueRuntime(_RuntimeUsage):
     agent_id = "alpha"
     provider_name = "openai"
     model_name = "gpt-4.1-mini"
@@ -137,7 +144,7 @@ class _MultiQueueComposer:
         raise EOFError
 
 
-class _BusyCommandRuntime:
+class _BusyCommandRuntime(_RuntimeUsage):
     agent_id = "alpha"
     provider_name = "openai"
     model_name = "gpt-4.1-mini"
@@ -186,7 +193,7 @@ class _BusyCommandComposer:
         raise EOFError
 
 
-class _QueueCommandRuntime:
+class _QueueCommandRuntime(_RuntimeUsage):
     agent_id = "alpha"
     provider_name = "openai"
     model_name = "gpt-4.1-mini"
@@ -256,7 +263,7 @@ class _LoopComposer:
         raise EOFError
 
 
-class _SingleTurnRuntime:
+class _SingleTurnRuntime(_RuntimeUsage):
     agent_id = "alpha"
     provider_name = "openai"
     model_name = "gpt-4.1-mini"
@@ -267,7 +274,7 @@ class _SingleTurnRuntime:
         yield "answer"
 
 
-class _TypedFailureThenResumeRuntime:
+class _TypedFailureThenResumeRuntime(_RuntimeUsage):
     agent_id = "alpha"
     provider_name = "openai"
     model_name = "gpt-4.1-mini"
@@ -292,7 +299,7 @@ class _TTYInput:
         return True
 
 
-class _ReplayRuntime:
+class _ReplayRuntime(_RuntimeUsage):
     agent_id = "alpha"
     provider_name = "openai"
     model_name = "gpt-4.1-mini"

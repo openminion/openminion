@@ -51,6 +51,7 @@ class ProjectTurnRequest:
     milestone: str
     prompt: str
     allowed_tools: tuple[str, ...] = ()
+    project_tool_calls_remaining: int | None = None
 
 
 @dataclass(frozen=True)
@@ -93,7 +94,7 @@ def project_cycle_prompt(
         lines.append(
             "Your first action must use the existing plan loop-control tool "
             "to declare a durable task plan with "
-            "continue_plan_autonomously=true, then continue with its first step."
+            "continue_plan_autonomously=false, then continue with its first step."
         )
     if project_run.verifier_refs:
         lines.append(
@@ -111,11 +112,22 @@ def project_cycle_prompt(
         if failed and isinstance(active_plan, Mapping):
             plan_id = str(active_plan.get("plan_id") or "").strip()
             verifier_refs = ", ".join(project_run.verifier_refs[-5:])
+            prior_revision = checkpoint_payload.get("task_plan_revision")
+            predecessor_id = (
+                str(prior_revision.get("revision_id") or "").strip()
+                if isinstance(prior_revision, Mapping)
+                else ""
+            )
+            predecessor_guidance = (
+                f"Set predecessor_revision_id={predecessor_id}."
+                if predecessor_id
+                else "Omit predecessor_revision_id because this is the first revision."
+            )
             lines.append(
                 "Your first action must use the existing plan loop-control "
                 f"tool with action=revise for plan_id={plan_id}. Use a new "
-                "revision_id, set continue_plan_autonomously=true, and bind "
-                f"verifier_refs to: {verifier_refs}."
+                "revision_id, set continue_plan_autonomously=false, and bind "
+                f"verifier_refs to: {verifier_refs}. {predecessor_guidance}"
             )
     if project_run.progress_refs:
         lines.append(
@@ -269,6 +281,10 @@ def project_turn_inbound_metadata(
             turn_tool_allowlist=",".join(request.allowed_tools),
             turn_tool_allowlist_supplied="true",
         )
+    if request.project_tool_calls_remaining is not None:
+        metadata["project_tool_calls_remaining"] = str(
+            request.project_tool_calls_remaining
+        )
     return metadata
 
 
@@ -390,14 +406,11 @@ def _project_tool_results(
 def _project_checkpoint_revision(
     metadata: Mapping[str, object],
 ) -> TaskPlanRevision | None:
-    revision = _project_metadata_model(
+    return _project_metadata_model(
         metadata,
         "task_plan.revision",
         TaskPlanRevision,
     )
-    if revision is None or not revision.revision_id or not revision.verifier_refs:
-        return None
-    return revision
 
 
 def _project_tool_call_count(

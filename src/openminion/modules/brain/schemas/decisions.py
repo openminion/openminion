@@ -767,6 +767,12 @@ class _DecisionBase(BaseModel):
                 )
         if (
             self.request_readiness is not None
+            and self.request_readiness.state == "needs_plan_review"
+            and not self.sub_intents
+        ):
+            raise ValueError("needs_plan_review requires at least one sub_intent")
+        if (
+            self.request_readiness is not None
             and self.request_readiness.requested_outcome == "execute"
             and self.request_readiness.state == "ready"
             and self.route != "act"

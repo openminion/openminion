@@ -84,10 +84,7 @@ class TelemetryService:
                 read_only=read_only,
             )
         else:
-            self._store = SQLiteTelemetryStore(
-                self._db_path,
-                read_only=read_only,
-            )
+            self._store = SQLiteTelemetryStore(self._db_path, read_only=read_only)
             if not read_only:
                 Path(self._db_path).chmod(0o600)
         config = otel_exporter_config or OTELExporterConfig()
@@ -115,15 +112,17 @@ class TelemetryService:
         self._external_exporter.close()
         self._store.close()
 
+    def export_queue_stats(self) -> dict[str, int] | None:
+        if not isinstance(self._external_exporter, OpenTelemetryTraceExporter):
+            return None
+        return self._external_exporter.queue_stats()
+
     async def record_event(self, event: TelemetryEvent) -> bool:
         normalized = normalize_telemetry_event(event)
-        local_event = self._content_policy_event(
+        local = self._content_policy_event(
             normalized, allow_sensitive_content=self._include_local_content
         )
-        created = await asyncio.to_thread(
-            self._store.insert_event_if_absent,
-            local_event,
-        )
+        created = await asyncio.to_thread(self._store.insert_event_if_absent, local)
         if created:
             self._external_exporter.export(
                 self._content_policy_event(

@@ -102,12 +102,48 @@ def test_project_recovers_verifies_and_proposes_delivery(tmp_path, monkeypatch) 
                 encoding="utf-8",
             )
             changed = formatting.name
+        plan_metadata = (
+            {
+                "task_plan": json.dumps(
+                    {
+                        "plan_id": "repair-report",
+                        "objective": "Repair and verify the report",
+                        "criterion_ids": ["verification:report"],
+                        "steps": [
+                            {"step_id": "repair", "description": "Repair report"}
+                        ],
+                        "continue_plan_autonomously": True,
+                    }
+                )
+            }
+            if len(prompts) == 1
+            else {
+                "task_plan.revision": json.dumps(
+                    {
+                        "plan_id": "repair-report",
+                        "revision_id": "repair-report-1",
+                        "criterion_ids": ["verification:report"],
+                        "verifier_refs": ["verification:cycle-1:failed"],
+                        "revised_steps": [
+                            {
+                                "step_id": "repair",
+                                "description": "Finish report formatting",
+                                "status": "completed",
+                            }
+                        ],
+                        "continue_plan_autonomously": True,
+                    }
+                ),
+                "task_plan.completed": json.dumps({"plan_id": "repair-report"}),
+            }
+        )
         return {
             "final_text": f"changed {changed}",
             "metadata": {
                 "artifact_refs": [f"file:{changed}"],
                 "evidence_kinds": ["artifact"],
                 "effect_refs": [f"write:{changed}"],
+                **plan_metadata,
             },
         }
 

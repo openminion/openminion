@@ -160,6 +160,7 @@ class BrainBridgeTurnMixin:
             runner=runner,
             session_id=session_id,
             user_input=message.body,
+            inbound_metadata=message.metadata,
         )
         runner._capture_excluded_for_turn = capture_is_excluded(message.metadata or {})
         runner._terminal_capture_enabled_for_turn = terminal_capture_is_enabled(

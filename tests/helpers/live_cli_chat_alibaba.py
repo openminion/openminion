@@ -649,6 +649,8 @@ def run_cli_session(
         resolved_agent_id,
         "--session",
         session_id,
+        "--dir",
+        str(workspace_root_override or openminion_root()),
         "--verbosity",
         "quiet",
         "--progress",

@@ -120,14 +120,119 @@ def _state_with_pending(*, pending: Any = _PENDING_COMMAND) -> dict[str, Any]:
     }
 
 
+def _active_mission_state() -> dict[str, Any]:
+    return {
+        "session_id": "sess-bbpc",
+        "agent_id": "test-agent",
+        "status": "waiting_user",
+        "goal": "mission objective",
+        "mission": {
+            "mission_id": "mission-1",
+            "objective": "mission objective",
+            "status": "active",
+            "budget": {
+                "total_remaining": {
+                    "ticks": 6,
+                    "tool_calls": 4,
+                    "a2a_calls": 0,
+                    "tokens": 3000,
+                    "time_ms": 12000,
+                },
+                "per_turn_max": {
+                    "ticks": 3,
+                    "tool_calls": 2,
+                    "a2a_calls": 0,
+                    "tokens": 1500,
+                    "time_ms": 6000,
+                },
+                "remaining_llm_calls_total": 9,
+                "llm_calls_per_turn_max": 5,
+            },
+            "latest_route_action": "start",
+        },
+        "budgets_remaining": {
+            "ticks": 6,
+            "tool_calls": 4,
+            "a2a_calls": 0,
+            "tokens": 3000,
+            "time_ms": 12000,
+        },
+    }
+
+
 def _run_reset(
-    *, runner: _DummyRunner, user_input: str, session_id: str = "sess-bbpc"
+    *,
+    runner: _DummyRunner,
+    user_input: str,
+    session_id: str = "sess-bbpc",
+    inbound_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     bridge = _DummyBridge()
     bridge._reset_state_for_new_input(
-        runner=runner, session_id=session_id, user_input=user_input
+        runner=runner,
+        session_id=session_id,
+        user_input=user_input,
+        inbound_metadata=inbound_metadata,
     )
     return runner.session_api.written
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    (
+        (None, 8),
+        ({"project_tool_calls_remaining": "3"}, 3),
+        ({"project_tool_calls_remaining": "0"}, 0),
+    ),
+)
+def test_project_tool_budget_clamps_the_refreshed_turn(
+    metadata: dict[str, Any] | None,
+    expected: int,
+) -> None:
+    runner = _DummyRunner(_state_with_pending(pending=None))
+
+    written = _run_reset(
+        runner=runner,
+        user_input="continue",
+        inbound_metadata=metadata,
+    )
+
+    assert written is not None
+    assert written["budgets_remaining"]["tool_calls"] == expected
+    assert runner.profile.budgets.max_tool_calls == 8
+
+
+@pytest.mark.parametrize(("remaining", "expected"), ((3, 2), (0, 0)))
+def test_project_tool_budget_clamps_active_mission_turn(
+    remaining: int,
+    expected: int,
+) -> None:
+    runner = _DummyRunner(_active_mission_state())
+
+    written = _run_reset(
+        runner=runner,
+        user_input="continue mission",
+        inbound_metadata={"project_tool_calls_remaining": str(remaining)},
+    )
+
+    assert written is not None
+    assert written["budgets_remaining"]["tool_calls"] == expected
+
+
+def test_plan_review_preserves_plan_for_model_owned_reply() -> None:
+    state = _state_with_pending(pending=None)
+    state["request_readiness"] = {
+        "posture": "review_before_act",
+        "requested_outcome": "execute",
+        "state": "needs_plan_review",
+    }
+    runner = _DummyRunner(state)
+
+    written = _run_reset(runner=runner, user_input="please adjust step two")
+
+    assert written is not None
+    assert written["plan"] == state["plan"]
+    assert written["request_readiness"] == state["request_readiness"]
 
 
 # preservation behavior

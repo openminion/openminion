@@ -634,7 +634,7 @@ async def _handle_slash(
     ):
         return False
     if cmd == "/delegate":
-        await run_slash_delegate(text, runtime, console, approval_callback)
+        await run_slash_delegate(text, runtime, console, approval_callback, transcript)
         return False
     if cmd == "/project":
         await run_slash_project(

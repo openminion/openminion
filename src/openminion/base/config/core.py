@@ -140,6 +140,7 @@ class AgentProfileConfig:
     has_allow_background_write_authorization: bool = field(default=False, repr=False)
     trailer_guidance_variant: dict[str, str] | None = None
     has_trailer_guidance_variant: bool = field(default=False, repr=False)
+    turn_usage_display: str = ""
 
     thinking_policy: ThinkingRuntimePolicyConfig | None = None
     provider_policy: ProviderRuntimePolicyConfig | None = None
@@ -225,6 +226,8 @@ class AgentProfileConfig:
         variant = self.trailer_guidance_variant
         if self.has_trailer_guidance_variant:
             payload["trailer_guidance_variant"] = dict(variant or {})
+        if turn_usage_display := self.turn_usage_display.strip():
+            payload["turn_usage_display"] = turn_usage_display
         for key, value in (
             ("thinking_policy", thinking_runtime_policy_to_dict(self.thinking_policy)),
             ("provider_policy", provider_runtime_policy_to_dict(self.provider_policy)),
@@ -428,6 +431,7 @@ def resolve_agent_config(
 
     return replace(
         profile,
+        turn_usage_display=profile.turn_usage_display or runtime.turn_usage_display,
         tool_schema_shortlisting_enabled=tss_value,
         has_tool_schema_shortlisting_enabled=tss_has,
         allow_background_write_authorization=bwa_value,

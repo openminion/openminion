@@ -25,8 +25,10 @@ class _FakeRuntime:
             raise RuntimeError("snapshot failed")
         return self._snapshot
 
-    def token_usage_report(self) -> str:
-        return "status tokens: session=session-1\ntotals: provider=42"
+    def token_usage_report(self, *, recent: int | None = None) -> str:
+        if recent is not None:
+            return f"Token history · requested={recent}"
+        return "Token usage\nTokens: 42 total"
 
 
 class _StubOverlay:
@@ -100,5 +102,17 @@ def test_slash_tokens_dispatches_durable_report() -> None:
     runtime = _FakeRuntime(snapshot=None)
     out = asyncio.run(_dispatch(runtime, "/tokens"))
 
-    assert "session=session-1" in out
-    assert "provider=42" in out
+    assert "Token usage" in out
+    assert "42 total" in out
+
+
+def test_slash_tokens_supports_recent_history() -> None:
+    runtime = _FakeRuntime(snapshot=None)
+
+    default = asyncio.run(_dispatch(runtime, "/tokens recent"))
+    explicit = asyncio.run(_dispatch(runtime, "/tokens recent 5"))
+    invalid = asyncio.run(_dispatch(runtime, "/tokens recent 21"))
+
+    assert "requested=10" in default
+    assert "requested=5" in explicit
+    assert invalid.strip() == "usage: /tokens [recent [1..20]]"

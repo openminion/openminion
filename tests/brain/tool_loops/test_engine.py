@@ -2393,6 +2393,17 @@ def test_engine_allows_consecutive_plan_lifecycle_transitions() -> None:
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "Completed all three plan steps."
+    assert outcome.telemetry_payload()["task_plan.completed"] == {
+        "plan_id": plan_id,
+        "reason": "all steps completed",
+    }
+    assert [
+        step["status"] for step in outcome.telemetry_payload()["task_plan"]["steps"]
+    ] == [
+        "completed",
+        "completed",
+        "completed",
+    ]
     assert [
         event["event_type"]
         for event in session_api.events

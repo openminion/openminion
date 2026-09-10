@@ -73,6 +73,7 @@ from .renderers import (
 from openminion.cli.presentation.styles import StyleToken, is_color_enabled
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.slash_commands import (
+    canonical_slash_command,
     slash_command_runs_while_busy,
     slash_help_rows,
 )
@@ -246,6 +247,7 @@ async def _handle_slash_input(
 ) -> bool:
     """Dispatch a slash command and return whether the shell should exit."""
 
+    text = canonical_slash_command(text)
     parts = text.split(maxsplit=1)
     cmd_name = parts[0]
     slash_arg = parts[1] if len(parts) > 1 else ""
@@ -656,6 +658,8 @@ async def _run_terminal_focus_async(
         plain_spinner=plain_spinner,
         verbosity=verbosity,
         show_response_time=_show_response_time_enabled(),
+        usage_provider=runtime.token_usage_snapshot,
+        usage_display=runtime.turn_usage_display,
     )
     status_line = TerminalStatusLine()
 

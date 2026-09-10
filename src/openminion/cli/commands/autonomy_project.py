@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import shlex
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from openminion.api.turns import run_turn
 from openminion.api.turns import TurnRequestError, TurnTimeoutError
@@ -60,6 +62,18 @@ class ProjectLaunchRequest:
     release_tools: bool
 
 
+def focus_project_help() -> str:
+    return "\n".join(
+        (
+            "usage: /project start --goal TEXT [--repository PATH] --verify-command COMMAND",
+            "       [--verification-domain coding|research] [--max-iterations N]",
+            "       [--max-wall-clock-ms N] [--max-tool-calls N]",
+            "       [--expected-check NAME] [--release-tools]",
+            "Repository is optional for non-Git work. Verification is required.",
+        )
+    )
+
+
 def resolve_project_repository(workspace_boundary: Path, value: str) -> Path:
     if not value:
         return workspace_boundary
@@ -76,10 +90,13 @@ def build_project_launch_request(
     agent_id: str,
     workspace_boundary: Path,
     repository: Path,
+    require_git_repository: bool,
     max_iterations: int = 1,
+    max_wall_clock_ms: int | None = None,
+    max_tool_calls: int | None = None,
     permission_profile_id: str = "local-safe",
     config_ref: str | None = None,
-    verification_domain: VerificationDomain = "cross_application",
+    verification_domain: VerificationDomain = "coding",
     verification_commands: tuple[str, ...] = (),
     turn_timeout_seconds: int = DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
     verification_timeout_seconds: int = DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
@@ -96,7 +113,7 @@ def build_project_launch_request(
         check_names
     ):
         raise ValueError("expected check names must be non-empty and unique")
-    if task_plan_required:
+    if require_git_repository:
         _validate_project_repository(boundary=boundary, repository=repo)
     run = build_autonomy_run(
         goal_text=goal,
@@ -104,6 +121,8 @@ def build_project_launch_request(
         session_id=session_id,
         workspace_ref=build_local_workspace_ref(repo),
         max_iterations=max_iterations,
+        max_wall_clock_ms=max_wall_clock_ms,
+        max_tool_calls=max_tool_calls,
         permission_profile_id=permission_profile_id,
         agent_id=agent_id,
         config_ref=config_ref,
@@ -146,9 +165,16 @@ def parse_focus_project_launch(
     parser.add_argument("--repository", default="")
     parser.add_argument("--goal", default="")
     parser.add_argument("--max-iterations", type=int, default=1)
+    parser.add_argument("--max-wall-clock-ms", type=int, default=None)
+    parser.add_argument("--max-tool-calls", type=int, default=None)
     parser.add_argument("--verify-command", action="append", default=[])
     parser.add_argument("--expected-check", action="append", default=[])
     parser.add_argument("--release-tools", action="store_true")
+    parser.add_argument(
+        "--verification-domain",
+        choices=("coding", "research", "operations", "cross_application"),
+        default="coding",
+    )
     try:
         tokens = shlex.split(line)
         if tokens and tokens[0] == "/project":
@@ -158,14 +184,18 @@ def parse_focus_project_launch(
     except (argparse.ArgumentError, ValueError) as exc:
         raise ValueError(str(exc)) from exc
     if command != "start" or unknown:
-        raise ValueError("usage: /project start --repository PATH --goal TEXT")
+        raise ValueError("usage: /project start --goal TEXT [--repository PATH]")
     repository = str(parsed.repository or "").strip()
     goal = str(parsed.goal or "").strip()
-    if not repository or not goal:
-        raise ValueError("usage: /project start --repository PATH --goal TEXT")
+    if not goal:
+        raise ValueError("usage: /project start --goal TEXT [--repository PATH]")
     if parsed.max_iterations < 1:
         raise ValueError("--max-iterations must be at least 1")
-    repository_path = Path(repository)
+    if parsed.verification_domain not in {"coding", "research"}:
+        raise ValueError(
+            f"Focus project domain is not configured: {parsed.verification_domain}"
+        )
+    repository_path = Path(repository) if repository else workspace_boundary
     return build_project_launch_request(
         goal=goal,
         session_id=session_id,
@@ -176,8 +206,12 @@ def parse_focus_project_launch(
             if repository_path.is_absolute()
             else workspace_boundary / repository_path
         ),
+        require_git_repository=bool(repository),
         max_iterations=parsed.max_iterations,
+        max_wall_clock_ms=parsed.max_wall_clock_ms,
+        max_tool_calls=parsed.max_tool_calls,
         config_ref=config_ref,
+        verification_domain=parsed.verification_domain,
         verification_commands=tuple(parsed.verify_command),
         task_plan_required=True,
         expected_checks=tuple(parsed.expected_check),
@@ -420,11 +454,13 @@ def apply_resume_overrides(
         selector_updates["required_evidence_kinds"] = ("verification",)
 
     policy = run.continuation_policy
-    max_iterations = getattr(args, "max_iterations", None)
-    if max_iterations is not None:
-        policy = policy.model_copy(
-            update={"max_iterations": max(0, int(max_iterations))}
-        )
+    policy_updates: dict[str, int] = {}
+    for field in ("max_iterations", "max_wall_clock_ms", "max_tool_calls"):
+        value = getattr(args, field, None)
+        if value is not None:
+            policy_updates[field] = max(0, int(value))
+    if policy_updates:
+        policy = policy.model_copy(update=policy_updates)
     updated = run.model_copy(
         update={
             "continuation_policy": policy,
@@ -481,59 +517,122 @@ def schedule_unattended_project(
         args,
         config_ref=run.execution_selectors.config_ref,
     )
-    job_id = f"prun_{run.run_id}:wake:0"
     try:
-        cron_store.add_cron_job(
-            name=f"Project cycle {run.run_id}",
-            schedule={
-                "kind": "at",
-                "at": (
-                    datetime.now(timezone.utc)
-                    + timedelta(seconds=cycle_interval_seconds)
-                ).isoformat(),
-            },
-            payload={
-                "kind": "projectCycle",
-                "run_id": run.run_id,
-                "task_id": run.task_id,
-                "goal_id": run.goal_id,
-                "session_id": run.session_id,
-                "cycle_interval_seconds": cycle_interval_seconds,
-            },
-            agent_id=run.execution_selectors.agent_id,
-            session_target="isolated",
-            delivery={"mode": "none"},
-            delete_after_run=True,
-            max_concurrency=1,
-            job_id=job_id,
+        return schedule_project_wake(
+            cron_store=cron_store,
+            store=store,
+            manager=manager,
+            run=run,
+            cycle_interval_seconds=cycle_interval_seconds,
         )
     finally:
         cron_store.close()
+
+
+def schedule_project_wake(
+    *,
+    cron_store: Any,
+    store: AutonomyRunStore,
+    manager: TaskManager,
+    run: AutonomyRun,
+    cycle_interval_seconds: int = 1,
+) -> AutonomyRun:
+    job_id = f"prun_{run.run_id}:wake:0"
     assert run.task_id is not None
     task = manager.get_task(run.task_id)
-    if task is not None:
-        metadata = dict(task.metadata)
-        metadata["linked_cron_job_id"] = job_id
-        manager.update_task_metadata(task_id=run.task_id, metadata=metadata)
-    scheduled = run.model_copy(
-        update={
-            "continuation_policy": run.continuation_policy.model_copy(
-                update={"resume_on_daemon_restart": True}
-            ),
-            "operator_summary": "Autonomy project scheduled for unattended execution.",
-            "next_action_hint": f"Waiting for project cycle {job_id}.",
-            "updated_at_ms": now_ms(),
-        }
+    prior_metadata = dict(task.metadata) if task is not None else None
+    cron_store.add_cron_job(
+        name=f"Project cycle {run.run_id}",
+        schedule={
+            "kind": "at",
+            "at": (
+                datetime.now(timezone.utc) + timedelta(seconds=cycle_interval_seconds)
+            ).isoformat(),
+        },
+        payload={
+            "kind": "projectCycle",
+            "run_id": run.run_id,
+            "task_id": run.task_id,
+            "goal_id": run.goal_id,
+            "session_id": run.session_id,
+            "cycle_interval_seconds": cycle_interval_seconds,
+        },
+        agent_id=run.execution_selectors.agent_id,
+        session_target="isolated",
+        delivery={"mode": "none"},
+        delete_after_run=True,
+        max_concurrency=1,
+        job_id=job_id,
     )
-    store.save(scheduled)
-    return scheduled
+    try:
+        if task is not None:
+            metadata = dict(task.metadata)
+            metadata["linked_cron_job_id"] = job_id
+            manager.update_task_metadata(task_id=run.task_id, metadata=metadata)
+        scheduled = run.model_copy(
+            update={
+                "continuation_policy": run.continuation_policy.model_copy(
+                    update={"resume_on_daemon_restart": True}
+                ),
+                "operator_summary": (
+                    "Autonomy project scheduled for unattended execution."
+                ),
+                "next_action_hint": f"Waiting for project cycle {job_id}.",
+                "updated_at_ms": now_ms(),
+            }
+        )
+        store.save(scheduled)
+        return scheduled
+    except (OSError, RuntimeError, ValueError, sqlite3.Error):
+        cron_store.delete_cron_job(job_id)
+        if prior_metadata is not None:
+            manager.update_task_metadata(
+                task_id=run.task_id,
+                metadata=prior_metadata,
+            )
+        raise
+
+
+def cancel_project_task_wake(
+    args: argparse.Namespace,
+    run: AutonomyRun,
+    manager: TaskManager,
+) -> None:
+    assert run.task_id is not None
+    task = manager.get_task(run.task_id)
+    if task is None:
+        return
+    linked_job_id = str(task.metadata.get("linked_cron_job_id") or "").strip()
+    if task.state in {TaskLifecycleState.ACTIVE, TaskLifecycleState.PAUSED}:
+        manager.lifecycle_repository.transition(
+            task_id=run.task_id,
+            to_state=TaskLifecycleState.CANCELLED,
+        )
+    if not linked_job_id:
+        return
+    cron_store = configured_cron_store(
+        args,
+        config_ref=run.execution_selectors.config_ref,
+    )
+    try:
+        cron_store.delete_cron_job(linked_job_id)
+    finally:
+        cron_store.close()
+    manager.update_task_metadata(
+        task_id=run.task_id,
+        metadata={
+            key: value
+            for key, value in task.metadata.items()
+            if key != "linked_cron_job_id"
+        },
+    )
 
 
 def configured_cron_store(
     args: argparse.Namespace,
     *,
     config_ref: str | None,
-):
+) -> Any:
     from openminion.cli.commands.status.session_store import build_status_session_store
     from openminion.cli.config import load_cli_manager_from_args
 
@@ -546,7 +645,9 @@ def configured_cron_store(
 
 __all__ = [
     "apply_resume_overrides",
+    "cancel_project_task_wake",
     "configured_cron_store",
+    "focus_project_help",
     "initialize_project",
     "persisted_verification_waiver",
     "project_task_manager",
@@ -554,6 +655,7 @@ __all__ = [
     "run_project_turn",
     "resume_project_task",
     "schedule_unattended_project",
+    "schedule_project_wake",
     "verifier_preflight_error",
     "workspace_path_from_ref",
 ]

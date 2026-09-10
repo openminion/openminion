@@ -41,7 +41,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     SlashCommandMetadata("/context-review", "Review memory and context evidence"),
     SlashCommandMetadata("/overview", "Show the read-only operations overview"),
     SlashCommandMetadata("/goal", "Create, bind, inspect, or run a session goal"),
-    SlashCommandMetadata("/project", "Start a durable repository project"),
+    SlashCommandMetadata("/project", "Start durable coding or research work"),
     SlashCommandMetadata("/effort", "Show or set per-turn effort"),
     SlashCommandMetadata("/memory", "Show memory health and inventory"),
     SlashCommandMetadata("/graph", "Query, refresh, or view configured graphs"),
@@ -115,7 +115,7 @@ def slash_command_runs_while_busy(text: str) -> bool:
     parts = str(text or "").strip().split(maxsplit=1)
     if not parts:
         return False
-    command = parts[0]
+    command = canonical_slash_command_name(parts[0])
     if command == "/tasks" and len(parts) > 1:
         action = parts[1].split(maxsplit=1)[0].lower()
         if action in {"pause", "resume", "cancel"}:
@@ -129,10 +129,24 @@ def terminal_slash_commands() -> tuple[str, ...]:
     names: list[str] = []
     for command in SLASH_COMMANDS:
         names.append(command.name)
-        for alias in command.aliases:
-            if command.name == "/exit" and alias == "/quit":
-                names.append(alias)
+        names.extend(command.aliases)
     return tuple(dict.fromkeys(names))
+
+
+def canonical_slash_command_name(name: str) -> str:
+    normalized = str(name or "").strip()
+    for command in SLASH_COMMANDS:
+        if normalized == command.name or normalized in command.aliases:
+            return command.name
+    return normalized
+
+
+def canonical_slash_command(text: str) -> str:
+    parts = str(text or "").strip().split(maxsplit=1)
+    if not parts:
+        return ""
+    command = canonical_slash_command_name(parts[0])
+    return f"{command} {parts[1]}" if len(parts) > 1 else command
 
 
 def slash_help_rows() -> tuple[tuple[str, str], ...]:
@@ -162,6 +176,8 @@ def unknown_slash_command_message(
 __all__ = [
     "SLASH_COMMANDS",
     "SlashCommandMetadata",
+    "canonical_slash_command",
+    "canonical_slash_command_name",
     "slash_command_runs_while_busy",
     "slash_help_rows",
     "terminal_slash_commands",

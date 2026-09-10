@@ -1,17 +1,22 @@
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from collections.abc import Mapping
 
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
+from openminion.modules.telemetry.constants import LLM_TRACE_FORMAT_VERSION
 
 from .layout import (
     build_trace_file_path,
     resolve_trace_root,
     write_protected_trace_file,
 )
-from .metadata import apply_content_policy
+from .metadata import apply_content_policy, warn_trace_write_failure
+
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -118,13 +123,25 @@ def write_structured_trace(
         suffix="-structured.json",
     )
     payload: dict[str, Any] = {}
-    if trace_path.exists():
+    try:
+        trace_exists = trace_path.exists()
+    except OSError as exc:
+        warn_trace_write_failure(_LOG, "structured_output", exc)
+        return None
+    if trace_exists:
         try:
             loaded = json.loads(trace_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                payload = loaded
-        except Exception:
-            payload = {}
+        except (OSError, json.JSONDecodeError) as exc:
+            warn_trace_write_failure(_LOG, "structured_output", exc)
+            return None
+        if not isinstance(loaded, dict):
+            warn_trace_write_failure(
+                _LOG,
+                "structured_output",
+                ValueError("structured trace root is not an object"),
+            )
+            return None
+        payload = loaded
 
     trace_patch = dict(patch)
     trace_patch.setdefault(
@@ -146,14 +163,21 @@ def write_structured_trace(
     if str(trace_meta.get("model") or "").strip():
         trace_patch.setdefault("model", str(trace_meta.get("model") or ""))
 
+    merged_payload = _merge_dicts(payload, trace_patch)
+    merged_payload["trace_format_version"] = LLM_TRACE_FORMAT_VERSION
+    merged_payload["artifact_kind"] = "structured_output"
     merged = apply_content_policy(
-        _merge_dicts(payload, trace_patch),
+        merged_payload,
         allow_sensitive_content=True,
     )
-    write_protected_trace_file(
-        trace_path,
-        json.dumps(merged, indent=2, sort_keys=True, default=str),
-    )
+    try:
+        write_protected_trace_file(
+            trace_path,
+            json.dumps(merged, indent=2, sort_keys=True, default=str),
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        warn_trace_write_failure(_LOG, "structured_output", exc)
+        return None
     return relative
 
 

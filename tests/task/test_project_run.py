@@ -422,6 +422,51 @@ def test_project_checkpoint_applies_public_task_plan_terminal_signals(tmp_path) 
     assert abandoned_payload["task_plan"]["steps"][0]["status"] == "blocked"
 
 
+def test_project_checkpoint_keeps_progress_after_same_turn_revision(tmp_path) -> None:
+    manager, project_run = _create_project_task(tmp_path)
+    initial = save_project_run_checkpoint(
+        manager,
+        project_run,
+        checkpoint_id="checkpoint-plan-revision-progress",
+        payload=project_checkpoints.initial_repository_lifecycle_payload(
+            _autonomy_run(),
+            project_run,
+            task_plan_required=True,
+        ),
+    )
+    current_plan = TaskPlan(
+        plan_id="plan-1",
+        objective="Ship",
+        steps=[
+            {
+                "step_id": "build",
+                "description": "Build it",
+                "status": "completed",
+            }
+        ],
+    )
+    revision = TaskPlanRevision(
+        plan_id="plan-1",
+        revision_id="revision-1",
+        verifier_refs=["verification:failed"],
+        revised_steps=[{"step_id": "build", "description": "Repair it"}],
+    )
+
+    payload = project_checkpoints.plan_checkpoint_payload(
+        initial,
+        ProjectTurnResult(
+            summary="done",
+            task_plan=current_plan,
+            task_plan_revision=revision,
+            task_plan_completed=TaskPlanTerminalSignal(plan_id="plan-1"),
+        ),
+    )
+
+    assert payload["task_plan"]["status"] == "completed"
+    assert payload["task_plan"]["steps"][0]["status"] == "completed"
+    assert payload["task_plan_revision"]["revision_id"] == "revision-1"
+
+
 def test_project_run_rejects_duplicate_open_worker(tmp_path) -> None:
     manager = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
     manager.create_task(

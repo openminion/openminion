@@ -31,12 +31,17 @@ class TerminalOverlayPresenter:
         if not items:
             self._console.print(Text("(no resumable sessions)", style="dim italic"))
             return None
-        self._console.print(Text("Resume which session?", style="bold"))
-        for i, item in enumerate(items, start=1):
-            label = _session_label(item)
-            self._console.print(f"  {i}. {label}")
+        choices = [
+            "Resume which session?",
+            *(
+                f"  {i}. {_session_label(item)}"
+                for i, item in enumerate(items, start=1)
+            ),
+        ]
         try:
-            text = await self._session.prompt_async("Number (Enter to cancel): ")
+            text = await self._session.prompt_async(
+                "\n".join(choices) + "\nNumber (Enter to cancel): "
+            )
         except (EOFError, KeyboardInterrupt):
             return None
         choice = (text or "").strip()
@@ -58,9 +63,10 @@ class TerminalOverlayPresenter:
     async def present_approval_async(
         self, prompt: str
     ) -> Literal["allow", "deny", "always"]:
-        self._console.print(Text(prompt))
         try:
-            text = await self._session.prompt_async("[y]es / [N]o / [a]lways: ")
+            text = await self._session.prompt_async(
+                f"{prompt}\n[y]es / [N]o / [a]lways: "
+            )
         except (EOFError, KeyboardInterrupt):
             return "deny"
         norm = (text or "").strip().lower()
@@ -74,9 +80,8 @@ class TerminalOverlayPresenter:
         return run_async_compat(self._present_completion_async(message))
 
     async def _present_completion_async(self, message: str) -> str:
-        self._console.print(Text(message))
         try:
-            text = await self._session.prompt_async("> ")
+            text = await self._session.prompt_async(f"{message}\n> ")
         except (EOFError, KeyboardInterrupt):
             return ""
         return str(text or "").strip()
@@ -87,10 +92,9 @@ class TerminalOverlayPresenter:
     async def present_confirm_async(
         self, prompt: str, *, default: bool = False
     ) -> bool:
-        self._console.print(Text(prompt, style="bold"))
         suffix = "[Y/n]: " if default else "[y/N]: "
         try:
-            text = await self._session.prompt_async(suffix)
+            text = await self._session.prompt_async(f"{prompt}\n{suffix}")
         except (EOFError, KeyboardInterrupt):
             return False
         normalized = str(text or "").strip().lower()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -43,6 +44,27 @@ class _ProjectTelemetry:
 
     def emit_module_operation(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         self.operations.append((args, kwargs))
+
+
+class _CronStore:
+    def __init__(self) -> None:
+        self.jobs: list[dict[str, object]] = []
+        self.deleted: list[str] = []
+
+    def add_cron_job(self, **job) -> None:  # noqa: ANN003
+        self.jobs.append(job)
+
+    def delete_cron_job(self, job_id: str) -> None:
+        self.deleted.append(job_id)
+        self.jobs = [job for job in self.jobs if job.get("job_id") != job_id]
+
+    def close(self) -> None:
+        pass
+
+
+class _FailingCronStore(_CronStore):
+    def add_cron_job(self, **job) -> None:  # noqa: ANN003
+        raise RuntimeError("cron unavailable")
 
 
 def _runtime(*, storage_path, session_id: str) -> OpenMinionRuntime:
@@ -122,11 +144,18 @@ def _project_runtime(
     return runtime, sessions, telemetry
 
 
-def test_terminal_project_launch_approval_persists_exact_repository(tmp_path) -> None:
+def test_terminal_project_launch_approval_persists_exact_repository(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repository = tmp_path / "repo"
     repository.mkdir()
     (repository / ".git").mkdir()
     runtime, sessions, telemetry = _project_runtime(tmp_path)
+    cron_store = _CronStore()
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.configured_cron_store",
+        lambda *_args, **_kwargs: cron_store,
+    )
     approval_args: dict[str, object] = {}
 
     async def approve(_name, args, _call_id) -> bool:  # noqa: ANN001
@@ -136,13 +165,15 @@ def test_terminal_project_launch_approval_persists_exact_repository(tmp_path) ->
     output = asyncio.run(
         _dispatch(
             f'/project start --repository "{repository}" --goal "ship it" '
+            "--max-wall-clock-ms 60000 --max-tool-calls 12 "
             '--expected-check lint --expected-check "tests (3.11)" '
-            "--release-tools",
+            f"--verify-command \"{sys.executable} -c 'print(1)'\" --release-tools",
             runtime=runtime,
             status_line=TerminalStatusLine(),
             approval_callback=approve,
         )
     )
+    assert sessions.events, output
     event = sessions.events[0]
     run_id = str(event["payload"]["autonomy_run_id"])
     run = AutonomyRunStore(
@@ -153,7 +184,7 @@ def test_terminal_project_launch_approval_persists_exact_repository(tmp_path) ->
     )
     checkpoint = load_latest_project_checkpoint(manager, task_id=run.task_id or "")
 
-    assert "Project started" in output
+    assert "Project queued" in output
     assert f"Project: prun_{run_id}" in output
     assert f"Task: {run.task_id}" in output
     assert event["event_type"] == "project.launched"
@@ -182,12 +213,166 @@ def test_terminal_project_launch_approval_persists_exact_repository(tmp_path) ->
     assert telemetry.operations[0][0][3] == "project_launch"
     assert approval_args["permission_profile_id"] == "local-safe"
     assert approval_args["max_iterations"] == 1
-    assert approval_args["verification_commands"] == []
+    assert approval_args["max_wall_clock_ms"] == 60000
+    assert approval_args["max_tool_calls"] == 12
+    assert approval_args["verification_commands"] == [f"{sys.executable} -c 'print(1)'"]
     assert approval_args["expected_checks"] == ["lint", "tests (3.11)"]
     assert approval_args["release_tools"] is True
     assert approval_args["verification_waiver_reason"] is None
     assert approval_args["turn_timeout_seconds"] > 0
     assert approval_args["verification_timeout_seconds"] > 0
+    task = manager.get_task(run.task_id or "")
+    assert task is not None
+    assert task.metadata["linked_cron_job_id"] == f"prun_{run_id}:wake:0"
+    assert run.next_action_hint == f"Waiting for project cycle prun_{run_id}:wake:0."
+    assert cron_store.jobs[0]["job_id"] == f"prun_{run_id}:wake:0"
+
+
+def test_terminal_project_missing_verifier_blocks_without_wake(tmp_path) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    (repository / ".git").mkdir()
+    runtime, sessions, _telemetry = _project_runtime(tmp_path)
+
+    async def approve(*_args) -> bool:
+        return True
+
+    output = asyncio.run(
+        _dispatch(
+            f'/project start --repository "{repository}" --goal "ship it"',
+            runtime=runtime,
+            status_line=TerminalStatusLine(),
+            approval_callback=approve,
+        )
+    )
+    run = AutonomyRunStore(
+        root=resolve_autonomy_state_root(runtime._rt.home_root)
+    ).list_runs()[0]
+
+    assert "Project blocked" in output
+    assert f"Run: {run.run_id}" in output
+    assert "rerun `/project start`" in output
+    assert run.status.value == "blocked"
+    assert sessions.events[0]["event_type"] == "project.launch_blocked"
+    manager = TaskManager.for_lifecycle_db(
+        db_path=(runtime._rt.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve()
+    )
+    assert manager.get_task(run.task_id or "") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["/project", "/project help", "/project start --help"],
+)
+def test_terminal_project_help_requires_no_approval(tmp_path, command: str) -> None:
+    runtime, _sessions, _telemetry = _project_runtime(tmp_path)
+
+    output = asyncio.run(
+        _dispatch(
+            command,
+            runtime=runtime,
+            status_line=TerminalStatusLine(),
+            approval_callback=None,
+        )
+    )
+
+    assert "/project start --goal TEXT" in output
+    assert "--verify-command COMMAND" in output
+    assert "--verification-domain coding|research" in output
+    assert "--max-wall-clock-ms" in output
+    assert "approval is unavailable" not in output
+
+
+def test_terminal_project_wake_failure_is_recoverable(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    (repository / ".git").mkdir()
+    runtime, sessions, _telemetry = _project_runtime(tmp_path)
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.configured_cron_store",
+        lambda *_args, **_kwargs: _FailingCronStore(),
+    )
+
+    async def approve(*_args) -> bool:
+        return True
+
+    output = asyncio.run(
+        _dispatch(
+            f'/project start --repository "{repository}" --goal "ship it" '
+            f"--verify-command \"{sys.executable} -c 'print(1)'\"",
+            runtime=runtime,
+            status_line=TerminalStatusLine(),
+            approval_callback=approve,
+        )
+    )
+    run = AutonomyRunStore(
+        root=resolve_autonomy_state_root(runtime._rt.home_root)
+    ).list_runs()[0]
+    manager = TaskManager.for_lifecycle_db(
+        db_path=(runtime._rt.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve()
+    )
+    task = manager.get_task(run.task_id or "")
+
+    assert "Project blocked: cron unavailable" in output
+    assert "openminion autonomy resume" in output
+    assert run.status.value == "blocked"
+    assert task is not None and task.state.value == "paused"
+    assert sessions.events[0]["payload"]["reason_code"] == "wake_schedule_failed"
+
+
+def test_terminal_project_schedule_compensates_after_metadata_failure(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    (repository / ".git").mkdir()
+    runtime, _sessions, _telemetry = _project_runtime(tmp_path)
+    cron_store = _CronStore()
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.configured_cron_store",
+        lambda *_args, **_kwargs: cron_store,
+    )
+    original_update = TaskManager.update_task_metadata
+    calls = 0
+
+    def fail_once(self, *, task_id, metadata):  # noqa: ANN001
+        nonlocal calls
+        if "linked_cron_job_id" in metadata:
+            calls += 1
+        if calls == 1 and "linked_cron_job_id" in metadata:
+            raise RuntimeError("task metadata unavailable")
+        return original_update(self, task_id=task_id, metadata=metadata)
+
+    monkeypatch.setattr(TaskManager, "update_task_metadata", fail_once)
+
+    async def approve(*_args) -> bool:
+        return True
+
+    output = asyncio.run(
+        _dispatch(
+            f'/project start --repository "{repository}" --goal "ship it" '
+            f"--verify-command \"{sys.executable} -c 'print(1)'\"",
+            runtime=runtime,
+            status_line=TerminalStatusLine(),
+            approval_callback=approve,
+        )
+    )
+
+    run = AutonomyRunStore(
+        root=resolve_autonomy_state_root(runtime._rt.home_root)
+    ).list_runs()[0]
+    manager = TaskManager.for_lifecycle_db(
+        db_path=(runtime._rt.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve()
+    )
+    task = manager.get_task(run.task_id or "")
+    assert "Project blocked: task metadata unavailable" in output
+    assert cron_store.jobs == []
+    assert cron_store.deleted == [f"prun_{run.run_id}:wake:0"]
+    assert task is not None
+    assert "linked_cron_job_id" not in task.metadata
 
 
 def test_terminal_project_denial_records_fact_without_creating_project(

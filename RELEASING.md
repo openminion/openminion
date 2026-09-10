@@ -1,7 +1,7 @@
 # OpenMinion Releasing
 
 Status: active
-Last updated: 2026-09-06
+Last updated: 2026-09-09
 
 Purpose: give maintainers a compact package-local release smoke checklist for
 the public `openminion` package surface on the active alpha line defined by
@@ -121,7 +121,9 @@ Do not rely on workspace-root repo docs alone for package-public claims.
 6. install and smoke-test the final TestPyPI artifact,
 7. push the final non-RC tag such as `v<OPENMINION_VERSION>` to publish to PyPI,
 8. create the GitHub Release using the bare version title, such as
-   `<OPENMINION_VERSION>`.
+   `<OPENMINION_VERSION>`,
+9. merge the released `main` commit back into remote `dev`, then update the
+   shared local `dev` checkout and verify it is not behind the remote branch.
 
 For `openminion`, step 7 should tag the already-reviewed remote `main` commit.
 Do not publish from a dirty local checkout just because the worktree happens to
@@ -137,6 +139,38 @@ coordinated multi-repo release.
 The repo may keep extra hosted validation around build/install/bootstrap smoke,
 but the release routing contract should not diverge from the shared family
 pattern above.
+
+## Post-release `dev` synchronization
+
+After the release merge-back lands, update the shared `dev` checkout without
+discarding local work:
+
+1. inspect the working tree and commit coherent finished changes first,
+2. if an integration operation requires a clean tree, use an include-untracked
+   stash only as a temporary recovery copy,
+3. update local `dev` from remote `dev`, reapply any temporary stash, and resolve
+   overlaps against the newer owner implementations,
+4. keep the recovery stash until the reapplied tree and validation pass,
+5. confirm released `main` is an ancestor of `dev` and local `dev` has zero
+   commits behind remote `dev`.
+
+Finally, prove that developer launches use this checkout rather than another
+editable install:
+
+```bash
+make run-local ARGS='version'
+PYTHONPATH="$PWD/src" .venv/bin/python3.11 - <<'PY'
+from pathlib import Path
+import openminion
+
+print(Path(openminion.__file__).resolve())
+print(openminion.__version__)
+PY
+```
+
+The import path must resolve under the current checkout's `src/openminion`, and
+the reported version must match `src/openminion/base/version.py`. Do not use a
+package-upgrade prompt as evidence that source-checkout execution is current.
 
 ## GitHub Actions Trusted Publishing
 

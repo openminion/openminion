@@ -16,6 +16,7 @@ from openminion.base.config.skill_selection import (
     normalize_skill_catalog,
     normalize_skill_value,
 )
+from openminion.base.config.usage_display import normalize_turn_usage_display
 from openminion.base.config.runtime.tools import coerce_tool_runtime_config
 from openminion.base.config.mcp import coerce_mcp_exposure_config
 
@@ -94,6 +95,14 @@ def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
                 else None
             ),
             command_policy=_parse_dict(agent_config.get("command_policy")),
+            turn_usage_display=(
+                normalize_turn_usage_display(
+                    get("turn_usage_display"),
+                    field_path=f"agents.{agent_id}.turn_usage_display",
+                )
+                if "turn_usage_display" in agent_config
+                else ""
+            ),
             thinking_policy=coerce_thinking_runtime_policy_config(
                 agent_config.get("thinking_policy"),
                 field_path=f"agents.{agent_id}.thinking_policy",

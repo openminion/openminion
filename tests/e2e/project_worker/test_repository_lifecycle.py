@@ -207,6 +207,7 @@ def test_repository_lifecycle_survives_review_push_ci_and_reopen(
         agent_id="project-agent",
         workspace_boundary=boundary,
         repository=repository,
+        require_git_repository=True,
         max_iterations=5,
         verification_domain="coding",
         verification_commands=("verify",),
@@ -692,14 +693,18 @@ def test_repository_lifecycle_survives_review_push_ci_and_reopen(
 @pytest.mark.skipif(_GIT is None, reason="git binary is required")
 def test_repository_launch_and_merge_keep_explicit_boundaries(tmp_path: Path) -> None:
     boundary, repository, _remote = _repository_fixture(tmp_path)
-    with pytest.raises(ValueError, match="--repository PATH"):
-        parse_focus_project_launch(
-            "/project start --goal guess-the-repository",
-            session_id="session",
-            agent_id="agent",
-            workspace_boundary=boundary,
-            config_ref=None,
-        )
+    non_repository_launch = parse_focus_project_launch(
+        "/project start --goal use-the-workspace --verification-domain research",
+        session_id="session",
+        agent_id="agent",
+        workspace_boundary=boundary,
+        config_ref=None,
+    )
+    assert non_repository_launch.repository == boundary
+    assert non_repository_launch.task_plan_required is True
+    assert (
+        non_repository_launch.run.execution_selectors.verification_domain == "research"
+    )
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / ".git").mkdir()
@@ -710,6 +715,7 @@ def test_repository_launch_and_merge_keep_explicit_boundaries(tmp_path: Path) ->
             agent_id="agent",
             workspace_boundary=boundary,
             repository=outside,
+            require_git_repository=True,
         )
     non_git = boundary / "non-git"
     non_git.mkdir()
@@ -720,6 +726,7 @@ def test_repository_launch_and_merge_keep_explicit_boundaries(tmp_path: Path) ->
             agent_id="agent",
             workspace_boundary=boundary,
             repository=non_git,
+            require_git_repository=True,
         )
 
     store = AutonomyRunStore(root=tmp_path / "autonomy-negative")
@@ -730,6 +737,7 @@ def test_repository_launch_and_merge_keep_explicit_boundaries(tmp_path: Path) ->
         agent_id="agent",
         workspace_boundary=boundary,
         repository=repository,
+        require_git_repository=True,
         max_iterations=1,
         verification_waiver_reason="Boundary-only negative proof.",
     )

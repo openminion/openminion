@@ -24,7 +24,11 @@ def _exporter() -> tuple[OpenTelemetryTraceExporter, RecordingOTELTraceSink]:
     sink = RecordingOTELTraceSink()
     return (
         OpenTelemetryTraceExporter(
-            OTELExporterConfig(enabled=True, endpoint="http://collector:4318"),
+            OTELExporterConfig(
+                enabled=True,
+                endpoint="http://collector:4318",
+                noncritical_queue_capacity=0,
+            ),
             sink=sink,
         ),
         sink,

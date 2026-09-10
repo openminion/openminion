@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 import time
 from typing import Any
@@ -6,7 +7,10 @@ from collections.abc import Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from openminion.base.config.env import EnvironmentConfig
-from openminion.modules.telemetry.constants import TRACE_HOME_ROOT_METADATA_KEY
+from openminion.modules.telemetry.constants import (
+    LLM_TRACE_FORMAT_VERSION,
+    TRACE_HOME_ROOT_METADATA_KEY,
+)
 from openminion.modules.telemetry.trace.structured import (
     trace_requests_enabled as _trace_requests_enabled,
 )
@@ -15,7 +19,9 @@ from openminion.modules.telemetry.trace.layout import (
     resolve_trace_root,
     write_protected_trace_file,
 )
+from openminion.modules.telemetry.trace.metadata import warn_trace_write_failure
 
+_LOG = logging.getLogger(__name__)
 
 _CREDENTIAL_HEADERS = {
     "api-key",
@@ -110,6 +116,7 @@ def _resolve_trace_path(
     trace: Mapping[str, Any],
     *,
     suffix: str,
+    artifact_kind: str,
 ) -> Path | None:
     trace_root = resolve_trace_root(home_root=_resolve_home_root(meta))
     trace_path, _ = build_trace_file_path(
@@ -122,11 +129,17 @@ def _resolve_trace_path(
     )
     try:
         trace_path.parent.mkdir(parents=True, exist_ok=True)
-    except Exception:
+    except OSError as exc:
+        warn_trace_write_failure(_LOG, artifact_kind, exc)
         return None
-    if trace_path.exists():
-        nonce = trace["trace_id"] or str(time.time_ns())
-        trace_path = trace_path.with_name(f"{trace_path.stem}-{nonce}.json")
+    try:
+        if trace_path.exists():
+            trace_path = trace_path.with_name(
+                f"{trace_path.stem}-{time.time_ns()}{trace_path.suffix}"
+            )
+    except OSError as exc:
+        warn_trace_write_failure(_LOG, artifact_kind, exc)
+        return None
     return trace_path
 
 
@@ -151,7 +164,12 @@ def trace_http_json_request(
     if not _trace_requests_enabled(env=env):
         return
     meta, trace = _resolve_trace_context(trace_metadata)
-    trace_path = _resolve_trace_path(meta, trace, suffix="-http.json")
+    trace_path = _resolve_trace_path(
+        meta,
+        trace,
+        suffix="-http.json",
+        artifact_kind="http_request",
+    )
     if trace_path is None:
         return
 
@@ -163,6 +181,8 @@ def trace_http_json_request(
             parsed_json = None
 
     payload_out = {
+        "trace_format_version": LLM_TRACE_FORMAT_VERSION,
+        "artifact_kind": "http_request",
         "event": "http_request",
         "provider": provider_name,
         "transport": transport,
@@ -181,8 +201,8 @@ def trace_http_json_request(
             trace_path,
             json.dumps(payload_out, indent=2, sort_keys=True),
         )
-    except Exception:
-        return
+    except (OSError, TypeError, ValueError) as exc:
+        warn_trace_write_failure(_LOG, "http_request", exc)
 
 
 def trace_http_json_response(
@@ -201,11 +221,18 @@ def trace_http_json_response(
     if not _trace_requests_enabled(env=env):
         return
     meta, trace = _resolve_trace_context(trace_metadata)
-    trace_path = _resolve_trace_path(meta, trace, suffix="-http-response.json")
+    trace_path = _resolve_trace_path(
+        meta,
+        trace,
+        suffix="-http-response.json",
+        artifact_kind="http_response",
+    )
     if trace_path is None:
         return
 
     payload_out = {
+        "trace_format_version": LLM_TRACE_FORMAT_VERSION,
+        "artifact_kind": "http_response",
         "event": "http_response",
         "provider": provider_name,
         "transport": transport,
@@ -227,8 +254,8 @@ def trace_http_json_response(
             trace_path,
             json.dumps(payload_out, indent=2, sort_keys=True),
         )
-    except Exception:
-        return
+    except (OSError, TypeError, ValueError) as exc:
+        warn_trace_write_failure(_LOG, "http_response", exc)
 
 
 def trace_http_sse_response(
@@ -252,11 +279,14 @@ def trace_http_sse_response(
         meta,
         trace,
         suffix="-http-sse-response.json",
+        artifact_kind="http_sse_response",
     )
     if trace_path is None:
         return
 
     payload_out = {
+        "trace_format_version": LLM_TRACE_FORMAT_VERSION,
+        "artifact_kind": "http_sse_response",
         "event": "http_sse_response",
         "provider": provider_name,
         "transport": transport,
@@ -273,8 +303,8 @@ def trace_http_sse_response(
             trace_path,
             json.dumps(payload_out, indent=2, sort_keys=True),
         )
-    except (OSError, TypeError, ValueError):
-        return
+    except (OSError, TypeError, ValueError) as exc:
+        warn_trace_write_failure(_LOG, "http_sse_response", exc)
 
 
 def _resolve_home_root(metadata: Mapping[str, Any]) -> Path | None:

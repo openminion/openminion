@@ -1,6 +1,7 @@
 """Stable metadata assembly for provider trace results."""
 
 import json
+import logging
 import re
 from typing import Any, cast
 
@@ -114,6 +115,8 @@ _STRUCTURAL_SECURITY_FIELDS = frozenset(
         "trace_id",
     }
 )
+
+
 _STRUCTURAL_TOOL_RESULT_FIELDS = frozenset(
     {"call_id", "data", "error_code", "ok", "source", "tool_name", "verified"}
 )
@@ -134,6 +137,18 @@ _STRUCTURAL_TOOL_DATA_FIELDS = frozenset(
     }
 )
 _CANONICAL_ARTIFACT_REF = re.compile(r"^artifact://sha256/[0-9a-f]{64}$")
+
+
+def warn_trace_write_failure(
+    logger: logging.Logger,
+    artifact_kind: str,
+    exc: Exception,
+) -> None:
+    logger.warning(
+        "exact trace write failed artifact_kind=%s error_type=%s",
+        artifact_kind,
+        type(exc).__name__,
+    )
 
 
 def _canonical_artifact_refs(value: Any) -> list[str]:
@@ -217,7 +232,7 @@ def apply_content_policy(
     removed: list[str] = []
     truncated: list[dict[str, int | str]] = []
 
-    def clean(value: Any, path: str) -> Any:
+    def clean(value: Any, path: str, *, parent_sensitive_allowed: bool = False) -> Any:
         if isinstance(value, dict):
             result: dict[str, Any] = {}
             for raw_key, item in value.items():
@@ -239,17 +254,30 @@ def apply_content_policy(
                 if field in _PROHIBITED_FIELDS or field.endswith("_secret"):
                     removed.append(item_path)
                     continue
+                field_allowed = field in allowed_sensitive_fields
                 if (
                     field in _SENSITIVE_FIELDS
                     and not allow_sensitive_content
-                    and field not in allowed_sensitive_fields
+                    and not field_allowed
+                    and not parent_sensitive_allowed
                 ):
                     removed.append(item_path)
                     continue
-                result[key] = clean(item, item_path)
+                result[key] = clean(
+                    item,
+                    item_path,
+                    parent_sensitive_allowed=parent_sensitive_allowed or field_allowed,
+                )
             return result
         if isinstance(value, list):
-            return [clean(item, f"{path}[]") for item in value]
+            return [
+                clean(
+                    item,
+                    f"{path}[]",
+                    parent_sensitive_allowed=parent_sensitive_allowed,
+                )
+                for item in value
+            ]
         if isinstance(value, str) and len(value) > max_string_length:
             truncated.append(
                 {
@@ -262,7 +290,9 @@ def apply_content_policy(
         return value
 
     cleaned = clean(dict(payload or {}), "")
+    policy = cleaned.get("_telemetry_policy")
     cleaned["_telemetry_policy"] = {
+        **(policy if isinstance(policy, dict) else {}),
         "sensitive_content": "included" if allow_sensitive_content else "omitted",
         "removed_fields": sorted(set(removed)),
         "truncations": truncated,

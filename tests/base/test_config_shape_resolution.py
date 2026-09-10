@@ -37,6 +37,44 @@ def test_agent_role_round_trips_as_explicit_profile_metadata() -> None:
     assert config.to_dict()["agents"]["researcher"]["role"] == "evidence auditor"
 
 
+def test_turn_usage_display_defaults_and_round_trips() -> None:
+    config = OpenMinionConfig.from_dict(
+        {
+            "runtime": {"turn_usage_display": "input_output"},
+            "agents": {
+                "default": {"provider": "echo"},
+                "detailed": {
+                    "provider": "echo",
+                    "turn_usage_display": "input_output_calls",
+                },
+            },
+            "default_agent": "default",
+        }
+    )
+
+    assert RuntimeConfig().turn_usage_display == "total"
+    assert resolve_agent_config(config, "default").turn_usage_display == "input_output"
+    assert resolve_agent_config(config, "detailed").turn_usage_display == (
+        "input_output_calls"
+    )
+    assert config.to_dict()["runtime"]["turn_usage_display"] == "input_output"
+    assert config.to_dict()["agents"]["detailed"]["turn_usage_display"] == (
+        "input_output_calls"
+    )
+    assert "turn_usage_display" not in config.to_dict()["agents"]["default"]
+
+
+@pytest.mark.parametrize("value", ["detailed", " TOTAL ", "Input_Output"])
+def test_turn_usage_display_rejects_unknown_value(value: str) -> None:
+    with pytest.raises(ConfigError, match="turn_usage_display"):
+        OpenMinionConfig.from_dict(
+            {
+                "runtime": {"turn_usage_display": value},
+                "agents": {"default": {"provider": "echo"}},
+            }
+        )
+
+
 def test_ollama_provider_identity_round_trips() -> None:
     identity = {
         "transport_adapter": "ollama",

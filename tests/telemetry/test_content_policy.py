@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from openminion.base.config import OTELExporterConfig
 from openminion.modules.telemetry.schemas import TelemetryEvent
+from openminion.modules.telemetry.export.otel import (
+    OpenTelemetryTraceExporter,
+    RecordingOTELTraceSink,
+)
 from openminion.modules.telemetry.service import TelemetryService
 from openminion.modules.telemetry.trace.metadata import apply_content_policy
 
@@ -21,6 +27,93 @@ class _Exporter:
 
     def delete_pending_invocation(self, invocation_id: str) -> int:
         return 0
+
+
+_EXTERNAL_CONTENT = {
+    "user_message": "input-user",
+    "input_messages": [{"role": "user", "content": "input-list"}],
+    "output_text": "output-text",
+    "output_messages": [{"role": "assistant", "content": "output-list"}],
+    "content": "assistant-body",
+    "result": {
+        "content": "tool-result",
+        "reasoning_content": "never-reasoning",
+        "credentials": "never-credentials",
+    },
+    "arguments": {"query": "tool-arguments"},
+    "api_key": "never-api-key",
+    "reasoning_summary": "never-summary",
+}
+
+
+@pytest.mark.parametrize("via_service", [False, True])
+@pytest.mark.parametrize(
+    ("flag", "expected", "excluded"),
+    [
+        (
+            "include_input_messages",
+            ("input-user", "input-list"),
+            ("output-text", "output-list", "assistant-body", "tool-result"),
+        ),
+        (
+            "include_output_messages",
+            ("output-text", "output-list"),
+            ("input-user", "input-list", "assistant-body", "tool-result"),
+        ),
+        (
+            "include_tool_content",
+            ("tool-result", "tool-arguments"),
+            ("input-user", "output-text", "assistant-body"),
+        ),
+        (
+            "include_assistant_body",
+            ("assistant-body",),
+            ("input-user", "output-text", "tool-result"),
+        ),
+        (None, (), ("input-user", "output-text", "assistant-body", "tool-result")),
+    ],
+)
+def test_external_content_flags_are_independent_through_exporter(
+    tmp_path,
+    via_service: bool,
+    flag: str | None,
+    expected: tuple[str, ...],
+    excluded: tuple[str, ...],
+) -> None:
+    options = {flag: True} if flag else {}
+    config = OTELExporterConfig(
+        enabled=True,
+        endpoint="http://collector:4318",
+        noncritical_queue_capacity=0,
+        **options,
+    )
+    sink = RecordingOTELTraceSink()
+    exporter = OpenTelemetryTraceExporter(config, sink=sink)
+    event = TelemetryEvent(
+        session_id="session-1",
+        turn_id="turn-1",
+        event_type="policy.applied",
+        data=dict(_EXTERNAL_CONTENT),
+    )
+    if via_service:
+        service = TelemetryService(
+            str(tmp_path / ".openminion" / "telemetry.db"),
+            otel_exporter_config=config,
+            external_exporter=exporter,
+        )
+        service.record_event_sync(event)
+        service.close_sync()
+    else:
+        exporter.export(event)
+        exporter.close()
+
+    exported = str(sink.records[0].attributes)
+    assert all(value in exported for value in expected)
+    assert all(value not in exported for value in excluded)
+    assert "never-reasoning" not in exported
+    assert "never-credentials" not in exported
+    assert "never-api-key" not in exported
+    assert "never-summary" not in exported
 
 
 def test_default_policy_omits_content_and_prohibited_fields() -> None:
@@ -154,6 +247,7 @@ def test_local_and_external_content_controls_are_independent(tmp_path) -> None:
     assert "error_text" not in external.data
     assert "api_key" not in local.data
     assert "api_key" not in external.data
+    assert service.export_queue_stats() is None
     service.close_sync()
 
 

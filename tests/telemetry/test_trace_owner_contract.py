@@ -131,6 +131,8 @@ def test_write_structured_trace_merges_nested_dicts_and_keeps_existing_keys(
         trace_context["structured_trace_filename"]
     )
     payload = json.loads(trace_path.read_text(encoding="utf-8"))
+    assert payload["trace_format_version"] == "openminion.llm_trace.v1"
+    assert payload["artifact_kind"] == "structured_output"
     assert payload["trace"]["trace_id"] == "trace-123"
     assert payload["trace"]["agent_id"] == "agent-xyz"
     assert payload["provider"] == "openai"
@@ -140,6 +142,67 @@ def test_write_structured_trace_merges_nested_dicts_and_keeps_existing_keys(
     assert payload["response"]["output_text"] == "ok"
     assert payload["state_snapshot"]["status"] == "active"
     assert payload["state_snapshot"]["waiting_user"] is True
+
+
+def test_write_structured_trace_preserves_malformed_existing_artifact(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
+    trace_context = trace_context_payload(
+        session_id="sess-malformed",
+        turn_id="turn-1",
+        inference_step=1,
+        label="call01",
+        home_root=tmp_path,
+    )
+    trace_path = resolve_trace_root(home_root=tmp_path) / str(
+        trace_context["structured_trace_filename"]
+    )
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    original = b'{"broken":'
+    trace_path.write_bytes(original)
+
+    relative = write_structured_trace(
+        trace_context=trace_context,
+        patch={"response": {"output_text": "must-not-overwrite"}},
+    )
+
+    assert relative is None
+    assert trace_path.read_bytes() == original
+    message = caplog.records[-1].getMessage()
+    assert "artifact_kind=structured_output" in message
+    assert "error_type=JSONDecodeError" in message
+    assert "must-not-overwrite" not in message
+    assert str(trace_path) not in message
+
+
+def test_write_structured_trace_write_failure_is_noncritical(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
+    trace_context = trace_context_payload(
+        session_id="sess-write-failure",
+        turn_id="turn-1",
+        inference_step=1,
+        label="call01",
+        home_root=tmp_path,
+    )
+    monkeypatch.setattr(
+        "openminion.modules.telemetry.trace.structured.write_protected_trace_file",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("private path")),
+    )
+
+    relative = write_structured_trace(
+        trace_context=trace_context,
+        patch={"response": {"output_text": "secret"}},
+    )
+
+    assert relative is None
+    message = caplog.records[-1].getMessage()
+    assert "artifact_kind=structured_output" in message
+    assert "error_type=OSError" in message
+    assert "private path" not in message
+    assert "secret" not in message
 
 
 def test_debug_trace_links_are_direct_bounded_facts_without_root_scan(

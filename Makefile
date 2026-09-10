@@ -120,12 +120,13 @@ VALIDATE_PATTERN_SCRIPTS := \
 
 _VP_TARGETS := $(addprefix _vp-, $(VALIDATE_PATTERN_MODULES)) _vp-validate.direct_env_calls _vp-direct-env-calls
 
-.PHONY: help venv dev-install hooks-install hooks-run fix format format-check workflow-check lint lint-advisory validate-patterns typecheck typecheck-strict test test-critical test-ci test-e2e-ci ci-check bench check release-check eval $(_VP_TARGETS)
+.PHONY: help venv dev-install run-local hooks-install hooks-run fix format format-check workflow-check lint lint-advisory validate-patterns typecheck typecheck-strict test test-critical test-ci test-e2e-ci ci-check bench check release-check eval $(_VP_TARGETS)
 
 help:
 	@printf '%s\n' \
 		'Targets:' \
 		'  make dev-install   Create/update .venv and install OpenMinion with dev extras' \
+		'  make run-local     Run this checkout source; pass CLI arguments with ARGS="..."' \
 		'  make hooks-install Install pre-commit and commit-msg hooks into .git/hooks' \
 		'  make hooks-run     Run pre-commit across the OpenMinion repo' \
 		'  make fix           Apply local Ruff formatting and autofixes' \
@@ -153,11 +154,36 @@ venv:
 	@test -x "$(PYTHON)" || python3.11 -m venv "$(VENV)"
 
 $(DEV_STAMP): pyproject.toml | venv
+	@if [ -L "$(VENV)" ]; then \
+		printf '%s\n' \
+			'Refusing to install through a shared .venv symlink.' \
+			'Create a checkout-local .venv before running make dev-install.' >&2; \
+		exit 1; \
+	fi
 	$(PIP) install --upgrade pip setuptools wheel
 	cd "$(REPO_ROOT)" && $(PIP) install -e ".[dev]"
 	@touch "$(DEV_STAMP)"
 
 dev-install: $(DEV_STAMP)
+	@if [ -L "$(VENV)" ]; then \
+		printf '%s\n' \
+			'Refusing to install through a shared .venv symlink.' \
+			'Create a checkout-local .venv before running make dev-install.' >&2; \
+		exit 1; \
+	fi
+	@expected="$(REPO_ROOT)/src/openminion"; \
+	actual="$$( $(PYTHON) -c 'from pathlib import Path; import openminion; print(Path(openminion.__file__).resolve().parent)' 2>/dev/null || true )"; \
+	if [ "$$actual" != "$$expected" ]; then \
+		printf 'Rebinding OpenMinion development install to %s\n' "$$expected"; \
+		cd "$(REPO_ROOT)" && $(PIP) install -e ".[dev]"; \
+		touch "$(DEV_STAMP)"; \
+	else \
+		printf 'OpenMinion development install: %s\n' "$$actual"; \
+	fi
+
+run-local: venv
+	PYTHONPATH="$(REPO_ROOT)/src$${PYTHONPATH:+:$${PYTHONPATH}}" \
+		$(PYTHON) -m openminion $(ARGS)
 
 hooks-install: $(DEV_STAMP)
 	$(PRE_COMMIT) install --install-hooks --hook-type pre-commit --hook-type commit-msg

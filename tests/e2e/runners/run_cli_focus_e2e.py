@@ -10,6 +10,7 @@ import time
 
 
 _ROOT = Path(__file__).resolve().parents[3]
+_CONFIG_ENV = "OPENMINION_CLI_FOCUS_E2E_CONFIG"
 _SUMMARY_ENV = "OPENMINION_CLI_FOCUS_E2E_SUMMARY_OUTPUT"
 _TIMEOUT_ENV = "OPENMINION_CLI_FOCUS_E2E_RUNNER_TIMEOUT_SECONDS"
 
@@ -219,6 +220,17 @@ def _runner_timeout_seconds(env: dict[str, str], suite: Suite) -> int | None:
     return None
 
 
+def _live_preflight(env: dict[str, str]) -> str:
+    if os.name != "posix":
+        return "live Focus E2E requires macOS or Linux for PTY support"
+    config_ref = str(env.get(_CONFIG_ENV, "")).strip()
+    if not config_ref:
+        return f"set {_CONFIG_ENV} to an existing OpenMinion config file"
+    if not Path(config_ref).expanduser().is_file():
+        return f"{_CONFIG_ENV} does not exist: {config_ref}"
+    return ""
+
+
 def _write_run_summary(
     *,
     path: Path | None,
@@ -265,6 +277,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     suite = SUITES[mode]
     if suite.live:
+        preflight_error = _live_preflight(env)
+        if preflight_error:
+            print(
+                f"OpenMinion Focus E2E preflight failed: {preflight_error}",
+                file=sys.stderr,
+            )
+            return 2
         env["OPENMINION_LIVE_CLI_FOCUS_E2E"] = "1"
     if suite.complex:
         env["OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E"] = "1"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -73,23 +75,104 @@ class RuntimeProjectMixin:
         }
 
     def launch_prepared_project(self, request: ProjectLaunchRequest) -> tuple[str, str]:
-        from openminion.cli.commands.autonomy_project import launch_project
+        from openminion.cli.commands.autonomy_project import (
+            configured_cron_store,
+            launch_project,
+            persisted_verification_waiver,
+            schedule_project_wake,
+            verifier_preflight_error,
+        )
         from openminion.modules.task import AutonomyRunStore, TaskManager
-        from openminion.modules.task.autonomy import resolve_autonomy_state_root
+        from openminion.modules.task.autonomy import (
+            AutonomyRunPhase,
+            AutonomyRunStatus,
+            resolve_autonomy_state_root,
+        )
         from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
+        from openminion.modules.task.runtime.lifecycle import TaskLifecycleState
 
         store = AutonomyRunStore(root=resolve_autonomy_state_root(self._rt.home_root))
-        manager = TaskManager.for_lifecycle_db(
-            db_path=(self._rt.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve()
+        database = (self._rt.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve()
+        manager = TaskManager.for_lifecycle_db(db_path=database)
+        error = verifier_preflight_error(
+            request.run,
+            workspace=request.repository,
+            waiver=persisted_verification_waiver(request.run),
         )
+        if error is not None:
+            store.create(request.run)
+            blocked = store.transition(
+                request.run.run_id,
+                status=AutonomyRunStatus.BLOCKED,
+                phase=AutonomyRunPhase.CLOSED,
+                operator_summary="Project blocked before execution.",
+                next_action_hint="Configure a verifier, then rerun `/project start`.",
+                error=error,
+            )
+            self._record_project_launch(
+                request,
+                event_type="project.launch_blocked",
+                status="blocked",
+                reason_code=error.code,
+            )
+            return (
+                "error",
+                f"Project blocked: {error.message}\n"
+                f"Run: {blocked.run_id}\n"
+                f"Next: {blocked.next_action_hint}",
+            )
+
         run = launch_project(request, store=store, manager=manager)
+        cron_store = None
+        try:
+            cron_store = configured_cron_store(
+                argparse.Namespace(
+                    config=str(self._rt.config_path),
+                    home_root=self._rt.home_root,
+                    data_root=self._rt.data_root,
+                ),
+                config_ref=run.execution_selectors.config_ref,
+            )
+            run = schedule_project_wake(
+                cron_store=cron_store,
+                store=store,
+                manager=manager,
+                run=run,
+            )
+        except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+            if run.task_id:
+                manager.transition_task(
+                    task_id=run.task_id,
+                    to_state=TaskLifecycleState.PAUSED,
+                )
+            blocked = store.transition(
+                run.run_id,
+                status=AutonomyRunStatus.BLOCKED,
+                phase=AutonomyRunPhase.CLOSED,
+                operator_summary="Project wake could not be scheduled.",
+                next_action_hint=(
+                    f"Resume with `openminion autonomy resume {run.run_id} "
+                    "--unattended`."
+                ),
+            )
+            self._record_project_launch(
+                request,
+                event_type="project.launch_blocked",
+                status="blocked",
+                reason_code="wake_schedule_failed",
+            )
+            return ("error", f"Project blocked: {exc}\n{blocked.next_action_hint}")
+        finally:
+            if cron_store is not None:
+                cron_store.close()
         self._record_project_launch(request, event_type="project.launched", status="ok")
         return (
             "system",
-            f"Project started: {run.run_id}\n"
+            f"Project queued: {run.run_id}\n"
             f"Project: prun_{run.run_id}\n"
             f"Task: {run.task_id}\n"
-            f"Repository: {request.repository}",
+            f"Workspace: {request.repository}\n"
+            f"Next: {run.next_action_hint}",
         )
 
     def deny_prepared_project(self, request: ProjectLaunchRequest) -> tuple[str, str]:

@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 import logging
 
@@ -18,6 +19,7 @@ from openminion.modules.telemetry.trace.structured import (
 )
 from openminion.services.agent.telemetry import (
     generate_with_provider_call_telemetry,
+    trace_provider_request,
     trace_provider_response,
 )
 
@@ -229,3 +231,89 @@ def test_response_publication_includes_existing_sse_transport_trace(
     )
 
     assert relative in publication.paths
+
+
+def test_provider_trace_write_failures_are_metadata_only(
+    monkeypatch, tmp_path, caplog
+) -> None:
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
+    monkeypatch.setattr(
+        "openminion.services.agent.telemetry.write_protected_trace_file",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("secret path and payload must not leak")
+        ),
+    )
+    logger = logging.getLogger("openminion.tests.provider-trace-failure")
+
+    request_publication = trace_provider_request(
+        provider_request=_request(),
+        label="call01",
+        provider_name="provider-1",
+        home_root=tmp_path,
+        inbound_metadata={"session_id": "session-1"},
+        turn_id="turn-1",
+        inference_step=1,
+        logger=logger,
+    )
+    response_publication = trace_provider_response(
+        provider_response=ProviderResponse(text="secret response", model="model-1"),
+        label="call01",
+        provider_name="provider-1",
+        home_root=tmp_path,
+        inbound_metadata={"session_id": "session-1"},
+        turn_id="turn-1",
+        inference_step=1,
+        logger=logger,
+    )
+
+    assert request_publication.complete is False
+    assert response_publication.complete is False
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("artifact_kind=provider_request" in message for message in messages)
+    assert any("artifact_kind=provider_response" in message for message in messages)
+    assert all("secret" not in message for message in messages)
+    assert all(str(tmp_path) not in message for message in messages)
+
+
+def test_provider_trace_artifacts_identify_format_and_kind(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
+    request_publication = trace_provider_request(
+        provider_request=_request(),
+        label="call01",
+        provider_name="provider-1",
+        home_root=tmp_path,
+        inbound_metadata={"session_id": "session-1"},
+        turn_id="turn-1",
+        inference_step=1,
+        logger=logging.getLogger(__name__),
+    )
+    response_publication = trace_provider_response(
+        provider_response=ProviderResponse(text="ok", model="model-1"),
+        label="call01",
+        provider_name="provider-1",
+        home_root=tmp_path,
+        inbound_metadata={"session_id": "session-1"},
+        turn_id="turn-1",
+        inference_step=1,
+        logger=logging.getLogger(__name__),
+    )
+
+    trace_root = resolve_trace_root(home_root=tmp_path)
+    request_path = next(
+        path for path in request_publication.paths if path.endswith(".json")
+    )
+    request_payload = json.loads(
+        (trace_root / request_path).read_text(encoding="utf-8")
+    )
+    response_path = next(
+        path for path in response_publication.paths if path.endswith("-response.json")
+    )
+    response_payload = json.loads(
+        (trace_root / response_path).read_text(encoding="utf-8")
+    )
+    assert request_payload["trace_format_version"] == "openminion.llm_trace.v1"
+    assert request_payload["artifact_kind"] == "provider_request"
+    assert response_payload["trace_format_version"] == "openminion.llm_trace.v1"
+    assert response_payload["artifact_kind"] == "provider_response"

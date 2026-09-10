@@ -6,6 +6,7 @@ import sys
 from typing import Any
 
 from openminion.api.runtime import APIRuntime
+from openminion.base.config import resolve_agent_config
 from openminion.cli.config import load_cli_manager_from_args
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
@@ -30,6 +31,11 @@ def _load_session_storage(args: Any) -> Any:
         record_backend=config.storage.record_backend(),
         record_backend_options=config.storage.record_backend_options(),
     )
+
+
+def _session_turn_usage_display(args: Any, agent_id: str) -> str:
+    config = load_cli_manager_from_args(args).base_config
+    return str(resolve_agent_config(config, agent_id).turn_usage_display)
 
 
 def run_sessions_continue(args) -> int:
@@ -285,6 +291,10 @@ def run_sessions_show(args) -> int:
     try:
         with closing(_load_session_storage(args)) as runtime:
             payload = _session_payload(runtime.sessions, session_id)
+        payload["turn_usage_display"] = _session_turn_usage_display(
+            args,
+            str(payload["agent"]),
+        )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         print(f"openminion sessions show: {exc}", file=sys.stderr)
         return 1

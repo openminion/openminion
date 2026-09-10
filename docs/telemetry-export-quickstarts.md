@@ -22,6 +22,21 @@ Free-form error messages and details are never exported to OTel, even when
 model-content export is enabled. Structural error code, type, and category
 remain available for diagnosis.
 
+## Interactive debugging
+
+In the interactive terminal, run `/telemetry` for the active invocation's safe
+summary. It shows external-export state, live queue depth and drops when the
+current process owns the exporter, and whether exact local payload capture is
+enabled. Run `/trace list` to see correlated artifact names and `/trace show
+<relative-path>` for metadata such as kind, size, and modification time.
+
+These commands never print prompt, response, or tool content. Exact local JSON
+artifacts are written only when `OPENMINION_TRACE_REQUESTS=1`. Inspect one
+explicitly from a trusted shell with `telemetryctl trace show <relative-path>
+--raw`; treat that output as sensitive. External input, output, tool-content,
+and assistant-body capture remains separately controlled by
+`runtime.telemetry_exporter` and disabled by default.
+
 ## Generic OTLP or OpenTelemetry Collector
 
 Use a Collector or backend that accepts traces, metrics, and logs on one gRPC

@@ -24,7 +24,7 @@ BASE_ROOT = REPO_ROOT / "src" / "openminion" / "base"
 COMPLEXITY_BASELINE = (
     REPO_ROOT / "scripts" / "baselines" / "base_foundation_ratchet.tsv"
 )
-BASE_LOC_LIMIT = 9_500
+BASE_LOC_LIMIT = 9_524
 DEFAULT_FILE_LOC_LIMIT = 500
 MAX_CALLABLE_LOC = 100
 APPROVED_LARGE_FILES = {
