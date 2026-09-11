@@ -93,7 +93,7 @@ def test_focus_pty_handles_advertised_slash_aliases(
         aliases = (
             ("/session", r"\bSession\b"),
             ("/agent", re.escape(focus_probe.agent_id)),
-            ("/tool", r"file\.read"),
+            ("/tool", r"\bweather\b"),
             ("/task", "Tasks"),
         )
         transcripts = [
@@ -109,7 +109,7 @@ def test_focus_pty_handles_advertised_slash_aliases(
     clear_transcript = session.visible_transcript[clear_offset:]
     assert "Unknown command:" not in clear_transcript
     assert all("Unknown command:" not in transcript for transcript in transcripts)
-    assert "file.read" in transcripts[2]
+    assert "weather" in transcripts[2]
     write_transcript(
         artifact_root(tmp_path),
         "local-slash-aliases",
