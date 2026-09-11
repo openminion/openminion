@@ -480,6 +480,7 @@ def _launch_post_setup_interactive(args, *, config_path: Path) -> int:
         animation=getattr(args, "animation", None),
         verbosity=getattr(args, "verbosity", None),
         progress=getattr(args, "progress", None),
+        onboarding_checked=True,
     )
     return int(run_interactive(interactive_args) or 0)
 

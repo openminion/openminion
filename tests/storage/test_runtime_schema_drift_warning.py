@@ -54,6 +54,8 @@ def test_build_runtime_storage_emits_typed_warning_on_drift(
             (r.levelname, r.getMessage()) for r in caplog.records
         ]
         record = matching[0]
+        assert getattr(record, "storage_path") == str(db_path.resolve())
+        assert f"database={db_path.resolve()}" in record.getMessage()
         payload = getattr(record, "schema_drift_report")
         assert payload["has_drift"] is True
         kinds = {f["kind"] for f in payload["findings"]}

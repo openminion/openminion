@@ -1118,4 +1118,5 @@ def test_setup_focus_handoff_preserves_interactive_options(tmp_path: Path) -> No
         "config": str(config_path),
         **vars(args),
         "no_interactive": False,
+        "onboarding_checked": True,
     }

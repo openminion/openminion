@@ -234,9 +234,10 @@ def run_interactive(args: argparse.Namespace) -> int:
 
     set_color_mode(getattr(args, "color", None))
 
-    gate_exit, args = _handle_focus_onboarding_gate(args)
-    if gate_exit is not None:
-        return gate_exit
+    if not bool(getattr(args, "onboarding_checked", False)):
+        gate_exit, args = _handle_focus_onboarding_gate(args)
+        if gate_exit is not None:
+            return gate_exit
 
     _silence_logging_for_interactive(args)
 
