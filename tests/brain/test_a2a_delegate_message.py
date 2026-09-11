@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from threading import Event
 
@@ -268,3 +269,53 @@ def test_configured_agent_handler_projects_only_parent_contract_metadata() -> No
         "session_id": "child-session",
         "run_id": "child-run",
     }
+
+
+def test_configured_agent_handler_projects_typed_review_result() -> None:
+    digest = "a" * 64
+    verifier_refs = ["coding-verifier:goal-1"]
+
+    class _RuntimeHandle:
+        def run_turn(self, **_kwargs: object) -> dict[str, object]:
+            return {
+                "body": "The reviewed artifact meets the supplied criteria.",
+                "metadata": {
+                    "brain_status": "done",
+                    "delegation_result_summary": json.dumps(
+                        {
+                            "summary": "Review passed.",
+                            "status": "complete",
+                            "review": {
+                                "target_digest": digest,
+                                "verifier_refs": verifier_refs,
+                                "passed": True,
+                                "findings": [],
+                            },
+                        }
+                    ),
+                },
+            }
+
+    payload = A2actlAdapter(
+        agent_id="parent",
+        runtime_resolver=lambda: _RuntimeHandle(),
+    )._configured_agent_handler(agent_id="reviewer")(
+        SimpleNamespace(
+            params={
+                "goal": "Review the child artifact.",
+                "review_target_digest": digest,
+                "review_verifier_refs": verifier_refs,
+            },
+            meta={"session_id": "parent-session"},
+            msg_id="msg-review",
+            trace_id="trace-review",
+            from_agent="parent",
+            timeout_ms=30_000,
+        )
+    )
+
+    assert payload["child_agent_id"] == "reviewer"
+    assert payload["target_digest"] == digest
+    assert payload["verifier_refs"] == verifier_refs
+    assert payload["passed"] is True
+    assert payload["findings"] == []

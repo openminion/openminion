@@ -19,8 +19,16 @@ from ..status import emit_adaptive_status
 from ..telemetry import _emit_iteration_event
 
 
-def _model_payload(value: Any) -> dict[str, Any] | None:
-    return value.model_dump(mode="json") if value is not None else None
+def _model_payload(value: Any, *, exclude_none: bool = False) -> dict[str, Any] | None:
+    return (
+        value.model_dump(mode="json", exclude_none=exclude_none)
+        if value is not None
+        else None
+    )
+
+
+def _delegation_result_payload(value: Any) -> dict[str, Any] | None:
+    return _model_payload(value, exclude_none=True)
 
 
 def _iteration_cap_evidence_fallback(
@@ -264,7 +272,7 @@ def build_no_tool_outcome(
         goal_declaration=_model_payload(goal_declaration),
         goal_revision=_model_payload(goal_revision),
         delegation_context=_model_payload(delegation_context),
-        delegation_result_summary=_model_payload(delegation_result_summary),
+        delegation_result_summary=_delegation_result_payload(delegation_result_summary),
         task_plan=_model_payload(task_plan),
         task_plan_step_completed=_model_payload(task_plan_step_completed),
         task_plan_step_blocked=_model_payload(task_plan_step_blocked),

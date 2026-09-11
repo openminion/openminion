@@ -60,6 +60,7 @@ def _respond_decision(
     reason_code: str,
     answer: str = "",
     sub_intents: list[str] | None = None,
+    delegation_result_summary: dict[str, Any] | None = None,
 ) -> RespondDecision:
     return RespondDecision(
         confidence=confidence,
@@ -67,6 +68,7 @@ def _respond_decision(
         respond_kind="answer",
         sub_intents=list(sub_intents or []),
         answer=answer,
+        delegation_result_summary=delegation_result_summary,
     )
 
 

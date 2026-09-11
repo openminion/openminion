@@ -1,4 +1,5 @@
 import hashlib
+import json
 from collections.abc import Mapping
 from uuid import uuid4
 from dataclasses import dataclass, field
@@ -13,6 +14,58 @@ from openminion.modules.tool.constants import TOOL_A2A_DELEGATE_DEFAULT_TIMEOUT_
 
 _LOG = get_logger("tool.runtime.delegation")
 _DELEGATE_METHOD = "delegate"
+
+
+def _readonly_review_instruction(
+    *,
+    objective: str,
+    criteria: list[str],
+    readable_base_repository: str,
+    bundle_ref: str,
+    target_digest: str,
+    diff: str,
+    verifier_refs: list[str],
+    repository_instructions: str,
+) -> str:
+    result_example = json.dumps(
+        {
+            "summary": "State the review outcome.",
+            "artifacts_produced": [],
+            "status": "complete",
+            "review": {
+                "target_digest": target_digest,
+                "verifier_refs": verifier_refs,
+                "passed": True,
+                "findings": [],
+            },
+        },
+        separators=(",", ":"),
+    )
+    return "\n".join(
+        (
+            f"Review objective: {objective}",
+            f"Criteria: {', '.join(criteria)}",
+            f"Readable base repository: {readable_base_repository}",
+            f"Immutable child bundle: {bundle_ref}",
+            f"Target digest: {target_digest}",
+            f"Diff: {diff}",
+            f"Verifier refs: {', '.join(verifier_refs)}",
+            f"Repository instructions: {repository_instructions}",
+            "The runtime already verified that Target digest is the SHA-256 "
+            "digest of Diff. Immutable child bundle is an evidence identity, "
+            "not a fetchable URL. Review the supplied diff and verifier refs "
+            "without fetching the bundle or calling tools.",
+            "End the response with exactly the following typed trailer, without "
+            "wrapping its JSON in another object:",
+            "<delegation_result_summary>",
+            result_example,
+            "</delegation_result_summary>",
+            "Keep passed=true and findings=[] only when every criterion passes. "
+            "Otherwise set passed=false and replace findings with typed priority, "
+            "owner, and message items. Copy Target digest and Verifier refs "
+            "exactly.",
+        )
+    )
 
 
 @dataclass
@@ -327,17 +380,15 @@ class A2aRuntimeDelegateAdapter:
                 target_digest=target_digest,
                 verifier_refs=verifier_refs,
             )
-        instruction = "\n".join(
-            (
-                f"Review objective: {objective}",
-                f"Criteria: {', '.join(criteria)}",
-                f"Readable base repository: {readable_base_repository}",
-                f"Immutable child bundle: {bundle_ref}",
-                f"Target digest: {target_digest}",
-                f"Diff: {diff}",
-                f"Verifier refs: {', '.join(verifier_refs)}",
-                f"Repository instructions: {repository_instructions}",
-            )
+        instruction = _readonly_review_instruction(
+            objective=objective,
+            criteria=criteria,
+            readable_base_repository=readable_base_repository,
+            bundle_ref=bundle_ref,
+            target_digest=target_digest,
+            diff=diff,
+            verifier_refs=verifier_refs,
+            repository_instructions=repository_instructions,
         )
         result, session_id, turn_id, handoff_payload = self._delegate_request(
             agent_id=reviewer_agent_id,
@@ -511,22 +562,30 @@ class A2aRuntimeDelegateAdapter:
         idempotency_key: str,
         observability: dict | None,
         session_id: str,
+        review_target_digest: str = "",
+        review_bundle_ref: str = "",
+        review_verifier_refs: list[str] | None = None,
     ) -> Any:
+        params = {
+            "goal": instruction,
+            "instruction": instruction,
+            "timeout_seconds": timeout,
+            "mode": mode,
+            "permission_mode": permission_mode,
+            "workspace_root": workspace_root,
+            "cwd": cwd,
+        }
+        if review_target_digest:
+            params["review_target_digest"] = review_target_digest
+            params["review_bundle_ref"] = review_bundle_ref
+            params["review_verifier_refs"] = list(review_verifier_refs or [])
         return self._a2a_call(
             command={
                 "command_id": idempotency_key,
                 "target_agent_id": target,
                 "method": _DELEGATE_METHOD,
                 "expect_async": mode == "async",
-                "params": {
-                    "goal": instruction,
-                    "instruction": instruction,
-                    "timeout_seconds": timeout,
-                    "mode": mode,
-                    "permission_mode": permission_mode,
-                    "workspace_root": workspace_root,
-                    "cwd": cwd,
-                },
+                "params": params,
                 "timeout_ms": timeout * 1000,
                 "idempotency_key": idempotency_key,
                 "observability": observability,
@@ -606,6 +665,9 @@ class A2aRuntimeDelegateAdapter:
                 idempotency_key=idem,
                 observability=observability,
                 session_id=self._delegation_session_id(),
+                review_target_digest=review_target_digest,
+                review_bundle_ref=review_bundle_ref,
+                review_verifier_refs=review_verifier_refs,
             )
         except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
             _LOG.warning("task.delegate A2A call failed: %s", exc)

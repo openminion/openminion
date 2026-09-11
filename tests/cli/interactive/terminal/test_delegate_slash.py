@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 
 import pytest
@@ -43,6 +44,41 @@ def test_terminal_slash_delegate_forwards_approval_callback() -> None:
     assert calls[0]["target_agent_id"] == "worker"
     assert calls[0]["instruction"] == "what's weather at sf?"
     assert "Delegation:" in console.export_text()
+
+
+def test_terminal_slash_delegate_forwards_review_request() -> None:
+    calls: list[dict[str, object]] = []
+
+    class _Runtime:
+        def delegate_task(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "mode": "review",
+                "status": "passed",
+                "agent_id": kwargs.get("target_agent_id"),
+            }
+
+    request = {
+        "reviewer_agent_id": "reviewer",
+        "instruction": "Review the child patch.",
+        "review_criteria": ["No blocking findings."],
+        "repository_instructions": "Follow AGENTS.md.",
+        "child_artifact": {"record_alias": "artifact-1"},
+    }
+    console = Console(record=True, force_terminal=False)
+    handle_slash_delegate(
+        "/delegate review " + json.dumps(request, separators=(",", ":")),
+        runtime=_Runtime(),
+        console=console,
+    )
+
+    assert calls[0]["target_agent_id"] == "reviewer"
+    assert calls[0]["instruction"] == "Review the child patch."
+    assert calls[0]["review_criteria"] == ("No blocking findings.",)
+    assert calls[0]["repository_instructions"] == "Follow AGENTS.md."
+    assert calls[0]["child_artifact"] == {"record_alias": "artifact-1"}
+    assert "status    passed" in console.export_text()
 
 
 @pytest.mark.asyncio

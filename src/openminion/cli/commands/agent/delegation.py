@@ -21,6 +21,8 @@ class AgentDelegateRequest:
     timeout_seconds: int = 120
     child_artifact: dict[str, Any] | None = None
     workspace_root: str = ""
+    review_criteria: tuple[str, ...] = ()
+    repository_instructions: str = ""
 
     def tool_args(self) -> dict[str, Any]:
         return {
@@ -31,6 +33,8 @@ class AgentDelegateRequest:
             "timeout_seconds": self.timeout_seconds or 120,
             "child_artifact": dict(self.child_artifact or {}),
             "workspace_root": self.workspace_root.strip(),
+            "review_criteria": list(self.review_criteria),
+            "repository_instructions": self.repository_instructions.strip(),
         }
 
 
@@ -49,6 +53,7 @@ def agent_delegate_usage() -> str:
         "  openminion agent delegate-status --task-id <task>\n"
         "  openminion agent delegate-result --task-id <task>\n"
         "  openminion agent delegate-cancel --task-id <task>\n"
+        "  /delegate review '<review-request-json>'\n"
         "  /delegate accept|reject '<child-artifact-json>'\n"
         "\nCompatibility:\n"
         "  openminion agent-ctl delegate ... remains supported."
@@ -173,6 +178,7 @@ def request_from_slash_args(args: str) -> AgentDelegateRequest:
             "Usage: /delegate <agent> <instruction...> | "
             "/delegate async <agent> <instruction...> | "
             "/delegate status|result|resume|cancel <task-id> | "
+            "/delegate review '<review-request-json>' | "
             "/delegate accept|reject '<child-artifact-json>'"
         )
     first, *remainder_parts = raw.split(maxsplit=1)
@@ -183,19 +189,57 @@ def request_from_slash_args(args: str) -> AgentDelegateRequest:
         if len(task_ids) != 1:
             raise ValueError(f"Usage: /delegate {action} <task-id>")
         return AgentDelegateRequest(mode=action, task_id=task_ids[0])
-    if action in {"accept", "reject"}:
+    if action in {"review", "accept", "reject"}:
         if not remainder:
-            raise ValueError(f"Usage: /delegate {action} '<child-artifact-json>'")
-        artifact_json = remainder
-        if artifact_json.startswith("'") and artifact_json.endswith("'"):
-            artifact_json = artifact_json[1:-1]
+            payload_name = (
+                "review-request-json" if action == "review" else "child-artifact-json"
+            )
+            raise ValueError(f"Usage: /delegate {action} '<{payload_name}>'")
+        payload_json = remainder
+        if payload_json.startswith("'") and payload_json.endswith("'"):
+            payload_json = payload_json[1:-1]
         try:
-            child_artifact = json.loads(artifact_json)
+            payload = json.loads(payload_json)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"/delegate {action}: invalid artifact JSON") from exc
-        if not isinstance(child_artifact, dict):
-            raise ValueError(f"/delegate {action}: artifact JSON must be an object")
-        return AgentDelegateRequest(mode=action, child_artifact=child_artifact)
+            raise ValueError(f"/delegate {action}: invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"/delegate {action}: JSON must be an object")
+        if action != "review":
+            return AgentDelegateRequest(mode=action, child_artifact=payload)
+        reviewer_agent_id = payload.get("reviewer_agent_id")
+        instruction = payload.get("instruction")
+        child_artifact = payload.get("child_artifact")
+        review_criteria = payload.get("review_criteria")
+        if (
+            not isinstance(reviewer_agent_id, str)
+            or not reviewer_agent_id.strip()
+            or not isinstance(instruction, str)
+            or not instruction.strip()
+            or not isinstance(child_artifact, dict)
+            or not isinstance(review_criteria, list)
+            or not review_criteria
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in review_criteria
+            )
+        ):
+            raise ValueError(
+                "/delegate review requires reviewer_agent_id, instruction, "
+                "child_artifact, and non-empty review_criteria"
+            )
+        repository_instructions = payload.get("repository_instructions", "")
+        if not isinstance(repository_instructions, str):
+            raise ValueError(
+                "/delegate review: repository_instructions must be a string"
+            )
+        return AgentDelegateRequest(
+            mode="review",
+            target_agent_id=reviewer_agent_id,
+            instruction=instruction,
+            child_artifact=child_artifact,
+            review_criteria=tuple(review_criteria),
+            repository_instructions=repository_instructions,
+        )
     mode = action if action in {"sync", "async"} else "sync"
     if action in {"sync", "async"}:
         target_parts = remainder.split(maxsplit=1)

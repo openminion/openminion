@@ -552,6 +552,92 @@ def test_decompose_debits_child_a2a_and_token_usage(monkeypatch) -> None:
     assert result.action_result.metrics.tokens_used == 1_562
 
 
+def test_decompose_does_not_complete_an_active_child(monkeypatch) -> None:
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            {"subtask_id": "a", "goal": "A", "suggested_mode": "act"},
+            {"subtask_id": "b", "goal": "B", "suggested_mode": "act"},
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code="active_child",
+                act_profile="coding",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=["a"],
+            )
+        ],
+    )
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, decision, user_input, logger, depth
+        state.budgets_remaining.ticks = 0
+        return ExecutionResult(
+            status="continue",
+            working_state=state,
+            message="Child needs another execution step.",
+            action_result=ActionResult(
+                command_id="cmd-active-child",
+                status="success",
+                summary="Child needs another execution step.",
+            ),
+        )
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+
+    result = OrchestrateMode().execute(ctx)
+
+    assert result.status == "failed"
+    subtask_results = result.action_result.outputs["subtask_results"]
+    assert subtask_results[0]["status"] == "failed"
+    assert subtask_results[0]["error"] == "Child needs another execution step."
+
+
+def test_decompose_resumes_an_active_child_within_its_budget(monkeypatch) -> None:
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            {"subtask_id": "a", "goal": "A", "suggested_mode": "act"},
+            {"subtask_id": "b", "goal": "B", "suggested_mode": "act"},
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code=label,
+                act_profile="coding",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=[label],
+            )
+            for label in ("a", "b")
+        ],
+    )
+    calls: list[str | None] = []
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, decision, logger, depth
+        calls.append(user_input)
+        if len(calls) == 1:
+            state.budgets_remaining.ticks = 1
+            return ExecutionResult(
+                status="continue",
+                working_state=state,
+                message="Continue verification.",
+            )
+        state.budgets_remaining.ticks = 0
+        return _mode_result(state, "verified child")
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+
+    result = OrchestrateMode().execute(ctx)
+
+    assert result.status == "done"
+    assert calls[0]
+    assert calls[1] is None
+    assert all(
+        item["status"] == "completed"
+        for item in result.action_result.outputs["subtask_results"]
+    )
+
+
 def test_decompose_handler_collects_results_and_synthesizes(monkeypatch) -> None:
     ctx, runner, services = _ctx(
         subtasks=[

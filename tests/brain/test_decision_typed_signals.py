@@ -46,6 +46,12 @@ def test_decision_schema_accepts_group_a_typed_signal_fields() -> None:
             "delegation_result_summary": {
                 "summary": "Found options.",
                 "status": "complete",
+                "review": {
+                    "target_digest": "a" * 64,
+                    "verifier_refs": ["coding-verifier:goal-1"],
+                    "passed": True,
+                    "findings": [],
+                },
             },
         }
     )
@@ -56,6 +62,8 @@ def test_decision_schema_accepts_group_a_typed_signal_fields() -> None:
     assert decision.meta_rule_preference is not None
     assert decision.delegation_context is not None
     assert decision.delegation_result_summary is not None
+    assert decision.delegation_result_summary.review is not None
+    assert decision.delegation_result_summary.review.passed is True
 
 
 def test_decision_schema_does_not_accept_task_plan_field() -> None:

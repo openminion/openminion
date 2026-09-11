@@ -93,7 +93,6 @@ src/openminion/modules/tool/authoring/runtime/static.py	inspect_source	134	curre
 src/openminion/modules/tool/authoring/service.py	ToolAuthoringService.register_draft	119	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/cli/runtime.py	execute_call_payload	151	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/executor.py	execute_single_call	203	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/tool/runtime/delegation.py	A2aRuntimeDelegateAdapter.review_readonly	102	OREL keeps reviewed delegation submission in the existing delegate adapter owner
 src/openminion/modules/tool/runtime/manager.py	ToolRegistryManager.compile	128	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/schema_service.py	ToolSchemaService.collect_execution_tool_schemas	146	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/gateway/service.py	GatewayService.handle_message_streaming	116	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

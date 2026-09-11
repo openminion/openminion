@@ -18,6 +18,8 @@ class RuntimeDelegationMixin:
         timeout_seconds: int = 120,
         child_artifact: dict[str, Any] | None = None,
         workspace_root: str = "",
+        review_criteria: tuple[str, ...] = (),
+        repository_instructions: str = "",
         approval_callback: Any | None = None,
     ) -> dict[str, Any]:
         from openminion.cli.commands.agent.delegation import (
@@ -43,6 +45,8 @@ class RuntimeDelegationMixin:
                 timeout_seconds=timeout_seconds,
                 child_artifact=child_artifact,
                 workspace_root=workspace_root or self.working_dir,
+                review_criteria=review_criteria,
+                repository_instructions=repository_instructions,
             ),
         )
 

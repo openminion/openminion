@@ -16,7 +16,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 from openminion.modules.brain.runtime.recovery import TCRPContext, validate_payload
 
-from .commands import Command
+from .commands import Command, DelegationReviewResult
 from .routing import (
     _flatten_branch_payloads,
     _normalize_route_name,
@@ -393,6 +393,7 @@ class DelegationResultSummary(BaseModel):
     summary: str = ""
     artifacts_produced: list[str] = Field(default_factory=list)
     status: Literal["complete", "partial", "blocked", "failed"] = "complete"
+    review: DelegationReviewResult | None = None
 
     @model_validator(mode="before")
     @classmethod

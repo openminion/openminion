@@ -286,6 +286,24 @@ def test_focus_delegate_accept_parses_artifact_json() -> None:
     }
 
 
+def test_focus_delegate_review_parses_typed_request() -> None:
+    request = request_from_slash_args(
+        "review "
+        '\'{"reviewer_agent_id":"reviewer",'
+        '"instruction":"Review the child patch.",'
+        '"review_criteria":["No blocking findings."],'
+        '"repository_instructions":"Follow AGENTS.md.",'
+        '"child_artifact":{"record_alias":"artifact-1"}}\''
+    )
+
+    assert request.mode == "review"
+    assert request.target_agent_id == "reviewer"
+    assert request.instruction == "Review the child patch."
+    assert request.review_criteria == ("No blocking findings.",)
+    assert request.repository_instructions == "Follow AGENTS.md."
+    assert request.child_artifact == {"record_alias": "artifact-1"}
+
+
 def test_visible_agent_delegate_command_uses_operator_seam(capsys, monkeypatch) -> None:
     import openminion.cli.commands.agent.control as agents_mod
 

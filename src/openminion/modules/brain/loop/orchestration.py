@@ -839,7 +839,6 @@ def decide(
     state.llm_calls_used += 1
     _runner_delegate("_debit_tokens", runner, state, {"usage": usage_payload}, logger)
     _runner_delegate("_track_call_completed", runner, llm_call_id)
-
     _trailer_session_api = getattr(runner, "session_api", None)
     if _trailer_session_api is not None:
         _trailer_service = TrailerPostprocessService()
@@ -939,6 +938,7 @@ def decide(
             confidence=0.5,
             reason_code="entry_text_response",
             answer=last_detection.response_text,
+            delegation_result_summary=response.delegation_result_summary,
         )
         recovered_decision = _recover_simple_tool_parity_decision(
             runner=runner,

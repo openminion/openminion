@@ -59,6 +59,8 @@ def handle_slash_delegate(
         timeout_seconds=request.timeout_seconds,
         child_artifact=request.child_artifact,
         workspace_root=request.workspace_root,
+        review_criteria=request.review_criteria,
+        repository_instructions=request.repository_instructions,
         approval_callback=approval_callback,
     )
     console.print(

@@ -32,6 +32,23 @@ class AgentCommand(BaseCommand):
     idempotency_key: str = Field(default_factory=new_uuid, min_length=1)
 
 
+class DelegationReviewFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    priority: str = Field(..., min_length=1)
+    owner: str = Field(..., min_length=1)
+    message: str = Field(..., min_length=1)
+
+
+class DelegationReviewResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_digest: str = Field(..., min_length=1)
+    verifier_refs: list[str] = Field(..., min_length=1)
+    passed: bool
+    findings: list[DelegationReviewFinding] = Field(default_factory=list)
+
+
 class AskUserCommand(BaseCommand):
     kind: Literal["ask_user"] = "ask_user"
     question: str = Field(..., min_length=1)

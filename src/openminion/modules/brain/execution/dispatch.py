@@ -4,6 +4,7 @@ from typing import Any, Callable
 
 from ..config import fixed_act_profile_from_profile
 from ..constants import (
+    BRAIN_ACTION_STATUS_SUCCESS,
     BRAIN_DECISION_ROUTE_ACT,
     BRAIN_DECISION_ROUTE_RESPOND,
     BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
@@ -15,6 +16,7 @@ from ..constants import (
     BRAIN_STATE_DONE,
     BRAIN_STATE_WAITING_USER,
 )
+from ..schemas.state.action import ActionResult
 from .context import build_execution_context
 from .continuation import is_resume_like_input
 from .loop_contracts import ExecutionContext, ExecutionResult
@@ -137,10 +139,24 @@ def _respond_execute(ctx: ExecutionContext) -> ExecutionResult:
     status = BRAIN_STATE_DONE
     if respond_kind == BRAIN_RESPOND_KIND_CLARIFY:
         status = BRAIN_STATE_WAITING_USER
+    action_result = None
+    result_summary = getattr(ctx.decision, "delegation_result_summary", None)
+    if result_summary is not None:
+        action_result = ActionResult(
+            command_id="respond:delegation-result-summary",
+            status=BRAIN_ACTION_STATUS_SUCCESS,
+            summary=text,
+            outputs={
+                "delegation_result_summary": result_summary.model_dump(
+                    mode="json", exclude_none=True
+                )
+            },
+        )
     return ExecutionResult.from_step_output(
         ctx.respond(
             message=text,
             status=status,
+            action_result=action_result,
         )
     )
 
