@@ -28,7 +28,6 @@ class UpdateCheckResult:
         self,
         *,
         source_checkout: bool = False,
-        python_executable: str | None = None,
     ) -> str:
         if not self.update_available:
             return ""
@@ -38,9 +37,8 @@ class UpdateCheckResult:
                 "control, then restart OpenMinion."
             )
         else:
-            executable = python_executable or sys.executable
             command = shlex.join(
-                [executable, "-m", "pip", "install", "--upgrade", "openminion"]
+                [sys.executable, "-m", "pip", "install", "--upgrade", "openminion"]
             )
             instruction = f"Run `{command}` to update."
         return (

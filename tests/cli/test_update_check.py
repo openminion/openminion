@@ -22,7 +22,7 @@ def test_update_check_reports_newer_version(tmp_path) -> None:
     assert "0.0.1 -> 0.2.0" in result.render_notice()
 
 
-def test_update_notice_uses_launching_python(tmp_path) -> None:
+def test_update_notice_uses_launching_python(tmp_path, monkeypatch) -> None:
     result = check_update_available(
         current_version="0.0.1",
         cache_path=tmp_path / "update.json",
@@ -30,9 +30,11 @@ def test_update_notice_uses_launching_python(tmp_path) -> None:
     )
 
     assert result is not None
-    notice = result.render_notice(
-        python_executable="/Applications/OpenMinion Python/bin/python3.11"
+    monkeypatch.setattr(
+        "openminion.cli.bootstrap.update.sys.executable",
+        "/Applications/OpenMinion Python/bin/python3.11",
     )
+    notice = result.render_notice()
     assert (
         "`'/Applications/OpenMinion Python/bin/python3.11' -m pip install --upgrade "
         "openminion`" in notice
