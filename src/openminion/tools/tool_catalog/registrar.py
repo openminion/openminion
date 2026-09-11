@@ -36,7 +36,10 @@ class ToolCatalogRegistrar:
             model_tools=(
                 ModelToolDef(
                     model_tool_id=MODEL_TOOL_LIST,
-                    description="List available model-facing tools, with optional filter",
+                    description=(
+                        "Inspect available model-facing tools. Omit query for a compact "
+                        "names-only inventory; use query for matching descriptions."
+                    ),
                     parameters={},
                     aliases=(MODEL_TOOL_SEARCH,),
                 ),
