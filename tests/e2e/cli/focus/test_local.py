@@ -83,7 +83,7 @@ def test_focus_pty_handles_advertised_slash_aliases(
             focus_probe.run_slash_turn(
                 session,
                 alias,
-                marker=r"file\.read" if alias == "/tool" else None,
+                marker=r"file\.read" if alias == "/tool" else re.escape(alias),
             )
             for alias in aliases
         ]
