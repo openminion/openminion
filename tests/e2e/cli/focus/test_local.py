@@ -76,24 +76,44 @@ def test_focus_pty_handles_advertised_slash_aliases(
     focus_probe: FocusProbe,
     tmp_path,
 ) -> None:
-    aliases = ("/cls", "/session", "/agent", "/tool", "/task")
     with focus_probe.session() as session:
         focus_probe.wait_ready(session)
+        focus_probe.run_slash(session, "/help", marker="Clear chat history")
+        clear_offset = len(session.visible_transcript)
+        session.type_line("/cls")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            screen = visible_text(session.screen_text)
+            if "Clear chat history" not in screen and "Ask anything" in screen:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("/cls did not clear the visible command list")
+
+        aliases = (
+            ("/session", r"\bSession\b"),
+            ("/agent", re.escape(focus_probe.agent_id)),
+            ("/tool", r"file\.read"),
+            ("/task", "Tasks"),
+        )
         transcripts = [
             focus_probe.run_slash_turn(
                 session,
                 alias,
-                marker=r"file\.read" if alias == "/tool" else re.escape(alias),
+                marker=marker,
+                timeout=15,
             )
-            for alias in aliases
+            for alias, marker in aliases
         ]
 
+    clear_transcript = session.visible_transcript[clear_offset:]
+    assert "Unknown command:" not in clear_transcript
     assert all("Unknown command:" not in transcript for transcript in transcripts)
-    assert "file.read" in transcripts[3]
+    assert "file.read" in transcripts[2]
     write_transcript(
         artifact_root(tmp_path),
         "local-slash-aliases",
-        "\n".join(transcripts),
+        "\n".join((clear_transcript, *transcripts)),
     )
 
 
