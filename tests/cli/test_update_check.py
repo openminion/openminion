@@ -22,6 +22,36 @@ def test_update_check_reports_newer_version(tmp_path) -> None:
     assert "0.0.1 -> 0.2.0" in result.render_notice()
 
 
+def test_update_notice_uses_launching_python(tmp_path) -> None:
+    result = check_update_available(
+        current_version="0.0.1",
+        cache_path=tmp_path / "update.json",
+        fetcher=lambda package, timeout: "0.2.0",
+    )
+
+    assert result is not None
+    notice = result.render_notice(
+        python_executable="/Applications/OpenMinion Python/bin/python3.11"
+    )
+    assert (
+        "`'/Applications/OpenMinion Python/bin/python3.11' -m pip install --upgrade "
+        "openminion`" in notice
+    )
+
+
+def test_update_notice_for_source_checkout_avoids_pip_instruction(tmp_path) -> None:
+    result = check_update_available(
+        current_version="0.0.1",
+        cache_path=tmp_path / "update.json",
+        fetcher=lambda package, timeout: "0.2.0",
+    )
+
+    assert result is not None
+    notice = result.render_notice(source_checkout=True)
+    assert "Local source checkout detected" in notice
+    assert "pip install" not in notice
+
+
 def test_update_check_uses_fresh_cache(tmp_path) -> None:
     cache = tmp_path / "update.json"
     cache.write_text(

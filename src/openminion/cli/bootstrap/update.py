@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 import json
+import shlex
+import sys
 import time
 from pathlib import Path
 import re
@@ -22,12 +24,28 @@ class UpdateCheckResult:
     update_available: bool
     source: str = ""
 
-    def render_notice(self) -> str:
+    def render_notice(
+        self,
+        *,
+        source_checkout: bool = False,
+        python_executable: str | None = None,
+    ) -> str:
         if not self.update_available:
             return ""
+        if source_checkout:
+            instruction = (
+                "Local source checkout detected; update this checkout from version "
+                "control, then restart OpenMinion."
+            )
+        else:
+            executable = python_executable or sys.executable
+            command = shlex.join(
+                [executable, "-m", "pip", "install", "--upgrade", "openminion"]
+            )
+            instruction = f"Run `{command}` to update."
         return (
             f"Update available! {self.current_version} -> {self.latest_version}\n"
-            "Run `python -m pip install --upgrade openminion` to update."
+            f"{instruction}"
         )
 
 

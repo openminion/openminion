@@ -154,6 +154,8 @@ def test_focus_startup_notice_preserves_single_composer(
 
         screen = session.screen_text
         assert "Update available!" in screen
+        assert "Local source checkout detected" in screen
+        assert "pip install" not in screen
         assert screen.count("Ask anything") == 1
 
 
