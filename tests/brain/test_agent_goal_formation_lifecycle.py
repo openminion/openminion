@@ -78,8 +78,8 @@ def _make_runner(*, policy: str = "suggest") -> _FakeRunner:
 
 
 def test_lifecycle_declare_stage_recall_authorize_default_suggest_policy() -> None:
-    from openminion.modules.brain.adapters.context.bridges.memory import (
-        _SESSION_START_RECALL_TYPES,
+    from openminion.modules.context.memory_client import (
+        SESSION_START_RECALL_TYPES,
     )
     from openminion.modules.brain.runtime.goal.policy import (
         authorize_goal_action,
@@ -123,7 +123,7 @@ def test_lifecycle_declare_stage_recall_authorize_default_suggest_policy() -> No
     assert staged.confidence == 0.6
     assert staged.scope.startswith("agent:")
 
-    assert "declared_goal" in _SESSION_START_RECALL_TYPES
+    assert "declared_goal" in SESSION_START_RECALL_TYPES
     recalled = runner.memory_api.search_by_type("declared_goal")
     assert len(recalled) == 1
     assert recalled[0].candidate_id == result["candidate_id"]

@@ -128,12 +128,12 @@ def test_runtime_py_has_no_new_goal_revision_regex() -> None:
 
 
 def test_goal_revision_in_recall_and_candidate_type_surfaces() -> None:
-    from openminion.modules.brain.adapters.context.bridges.memory import (
-        _SESSION_START_RECALL_TYPES,
+    from openminion.modules.context.memory_client import (
+        SESSION_START_RECALL_TYPES,
     )
     from openminion.modules.retrieve.runtime.retrieval import _candidate_type
 
-    assert "goal_revision" in _SESSION_START_RECALL_TYPES
+    assert "goal_revision" in SESSION_START_RECALL_TYPES
     assert _candidate_type(["goal_revision", "priority:medium"]) == "goal_revision"
 
 

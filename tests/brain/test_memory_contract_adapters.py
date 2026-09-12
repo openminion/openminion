@@ -385,7 +385,7 @@ def test_context_bridge_session_start_recall_lists_meta_rule_preferences() -> No
         assert "preferred_value=3" in recalled[0].text
 
 
-def test_context_bridge_session_start_retry_guidance_prefers_matching_correction() -> (
+def test_context_bridge_session_start_recall_is_query_independent_for_corrections() -> (
     None
 ):
     with tempfile.TemporaryDirectory() as tmp:
@@ -454,12 +454,11 @@ def test_context_bridge_session_start_retry_guidance_prefers_matching_correction
         )
 
         assert recalled
-        assert recalled[0].record_id == weather_id
-        assert file_read_id in {item.record_id for item in recalled}
-        assert "weather.search" in recalled[0].text
+        assert {item.record_id for item in recalled} == {weather_id, file_read_id}
+        assert any("weather.search" in item.text for item in recalled)
 
 
-def test_context_bridge_session_start_recall_prefers_semantic_session_summary_match() -> (
+def test_context_bridge_session_start_recall_lists_summaries_without_query_overlap() -> (
     None
 ):
     with tempfile.TemporaryDirectory() as tmp:
@@ -511,10 +510,10 @@ def test_context_bridge_session_start_recall_prefers_semantic_session_summary_ma
         )
 
         assert recalled
-        assert recalled[0].record_id == relevant_id
-        assert "Most relevant prior session:" in recalled[0].text
-        assert "Prior decisions:" in recalled[0].text
-        assert "Prior corrections:" in recalled[0].text
+        relevant = next(item for item in recalled if item.record_id == relevant_id)
+        assert "Most relevant prior session:" in relevant.text
+        assert "Prior decisions:" in relevant.text
+        assert "Prior corrections:" in relevant.text
 
 
 def test_context_bridge_mid_session_recall_uses_typed_state_query() -> None:

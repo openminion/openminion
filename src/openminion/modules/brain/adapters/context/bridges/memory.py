@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from openminion.modules.brain.constants import DEFAULT_MEMORY_DB_FILENAME
+from openminion.modules.context.memory_client import (
+    SESSION_START_RECALL_TYPES,
+    build_mid_session_recall_query,
+    select_recent_session_artifacts,
+)
 from openminion.modules.context.schemas import (
     FactRecord,
     MemoryCard,
@@ -44,22 +48,6 @@ def _optional_memory_storage_types() -> tuple[Any, tuple[Any, Any] | None]:
 
 
 SearchQueryOptions, ListDependencies = _optional_memory_storage_types()
-
-_SESSION_START_RECALL_TYPES = [
-    "user_preference",
-    "procedure",
-    "tool_habit",
-    "tool_outcome",
-    "strategy_outcome",
-    "meta_rule_preference",
-    "plan_snapshot",
-    "meta_insight",
-    "correction",
-    "session_summary",
-    "project_convention",
-    "declared_goal",
-    "goal_revision",
-]
 
 
 class BridgeMemoryClient:
@@ -348,124 +336,6 @@ class BridgeMemoryClient:
             )
         return mapped
 
-    def _build_mid_session_recall_query(
-        self,
-        *,
-        latest_user_message: str,
-        intent_ids: list[str],
-        intent_statuses: list[str],
-        active_skill_id: str | None,
-        resolved_skill_ids: list[str],
-        plan_cursor: int,
-        plan_step_ids: list[str],
-        recent_tool_families: list[str],
-    ) -> str:
-        tokens: list[str] = []
-        seen: set[str] = set()
-
-        def _append(values: list[str]) -> None:
-            for value in values:
-                token = str(value or "").strip()
-                if not token or token in seen:
-                    continue
-                tokens.append(token)
-                seen.add(token)
-
-        _append(latest_user_message.strip().split())
-        _append(intent_ids)
-        _append(intent_statuses)
-        if active_skill_id:
-            _append([active_skill_id])
-        _append(resolved_skill_ids)
-        if plan_cursor > 0:
-            _append([f"cursor-{plan_cursor}"])
-        _append(plan_step_ids)
-        _append(recent_tool_families)
-        return " ".join(tokens).strip()
-
-    def _parse_timestamp(self, value: Any) -> datetime | None:
-        text = str(value or "").strip()
-        if not text:
-            return None
-        try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed
-
-    def _recent_session_artifact_from_record(
-        self,
-        item: Any,
-        *,
-        current_session_id: str,
-    ) -> RecentSessionArtifactRef | None:
-        content = getattr(item, "content", None)
-        payload = content if isinstance(content, dict) else {}
-        meta = getattr(item, "meta", None)
-        meta_payload = meta if isinstance(meta, dict) else {}
-        session_id = str(
-            payload.get("session_id")
-            or payload.get("source_session_id")
-            or meta_payload.get("session_id")
-            or meta_payload.get("source_session_id")
-            or ""
-        ).strip()
-        if not session_id or session_id == current_session_id:
-            return None
-        artifact_path = str(
-            payload.get("artifact_path")
-            or payload.get("artifact_ref")
-            or meta_payload.get("artifact_path")
-            or meta_payload.get("artifact_ref")
-            or ""
-        ).strip()
-        if not artifact_path:
-            for ref in list(getattr(item, "evidence_refs", []) or []):
-                candidate = str(getattr(ref, "ref", "") or "").strip()
-                if candidate:
-                    artifact_path = candidate
-                    break
-        if not artifact_path:
-            return None
-        turn_raw = (
-            payload.get("turn_index")
-            if "turn_index" in payload
-            else meta_payload.get("turn_index")
-        )
-        try:
-            turn_index = max(0, int(turn_raw or 0))
-        except (TypeError, ValueError):
-            turn_index = 0
-        record_id = str(
-            getattr(item, "record_id", "") or getattr(item, "id", "") or ""
-        ).strip()
-        if not record_id:
-            return None
-        return RecentSessionArtifactRef(
-            record_id=record_id,
-            artifact_type=str(
-                payload.get("artifact_type")
-                or meta_payload.get("artifact_type")
-                or "artifact"
-            ).strip()
-            or "artifact",
-            artifact_path=artifact_path,
-            artifact_digest=str(
-                payload.get("artifact_digest")
-                or payload.get("digest_hash")
-                or meta_payload.get("artifact_digest")
-                or meta_payload.get("digest_hash")
-                or ""
-            ).strip(),
-            session_id=session_id,
-            turn_index=turn_index,
-            tool_name=str(
-                payload.get("tool_name") or meta_payload.get("tool_name") or ""
-            ).strip(),
-        )
-
     def query_facts(
         self,
         *,
@@ -592,39 +462,24 @@ class BridgeMemoryClient:
         if memory_ctl is None:
             return []
         scopes = self._session_start_recall_scopes(agent_id=agent_id)
-        normalized_query = str(query or "").strip()
-        records: list[Any] | None = None
-        if normalized_query and SearchQueryOptions is not None:
-            try:
-                searched = memory_ctl.search(
-                    options=SearchQueryOptions(
-                        query=normalized_query,
-                        scopes=scopes,
-                        types=list(_SESSION_START_RECALL_TYPES),
-                        limit=max(1, limit),
-                    )
+        del query
+        if ListDependencies is None:
+            return []
+        list_records = getattr(memory_ctl, "list", None)
+        if not callable(list_records):
+            return []
+        list_query_options_cls, record_order_cls = ListDependencies
+        try:
+            records = list_records(
+                list_query_options_cls(
+                    scopes=scopes,
+                    types=list(SESSION_START_RECALL_TYPES),
+                    limit=max(1, limit),
+                    order_by=record_order_cls.UPDATED_AT_DESC,
                 )
-                records = list(searched or []) or None
-            except Exception:
-                records = None
-        if records is None:
-            if ListDependencies is None:
-                return []
-            list_records = getattr(memory_ctl, "list", None)
-            if not callable(list_records):
-                return []
-            list_query_options_cls, record_order_cls = ListDependencies
-            try:
-                records = list_records(
-                    list_query_options_cls(
-                        scopes=scopes,
-                        types=list(_SESSION_START_RECALL_TYPES),
-                        limit=max(1, limit),
-                        order_by=record_order_cls.UPDATED_AT_DESC,
-                    )
-                )
-            except Exception:
-                return []
+            )
+        except Exception:
+            return []
 
         cards = self._ranked_memory_cards(list(records or []))
         deduped: list[MemoryCard] = []
@@ -656,7 +511,7 @@ class BridgeMemoryClient:
         del mode_name
         if turn_index <= 0 or SearchQueryOptions is None:
             return []
-        query = self._build_mid_session_recall_query(
+        query = build_mid_session_recall_query(
             latest_user_message=latest_user_message,
             intent_ids=intent_ids,
             intent_statuses=intent_statuses,
@@ -716,26 +571,14 @@ class BridgeMemoryClient:
             )
         except Exception:
             return []
-        cutoff: datetime | None = None
-        if max_session_age > 0:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=max_session_age)
-        refs: list[RecentSessionArtifactRef] = []
-        seen_record_ids: set[str] = set()
-        for item in records or []:
-            updated_at = self._parse_timestamp(getattr(item, "updated_at", None))
-            if cutoff is not None and updated_at is not None and updated_at < cutoff:
-                continue
-            ref = self._recent_session_artifact_from_record(
-                item,
+        return list(
+            select_recent_session_artifacts(
+                records or [],
                 current_session_id=session_id,
+                max_results=max_results,
+                max_session_age=max_session_age,
             )
-            if ref is None or ref.record_id in seen_record_ids:
-                continue
-            seen_record_ids.add(ref.record_id)
-            refs.append(ref)
-            if len(refs) >= max(1, max_results):
-                break
-        return refs
+        )
 
     def get_procedure(self, *, procedure_id: str) -> Any | None:
         """Pass through the typed `MemoryProcedure` (or `None`) from the"""

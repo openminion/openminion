@@ -147,12 +147,13 @@ class GatewayService:
             from openminion.modules.context.memory_client import (
                 ContextMemoryClientAdapter,
             )
+            from openminion.modules.context.slices import RuntimeMappedSessionClient
             from openminion.services.context.adapter import ContextCtlGatewayAdapter
 
             contextctl_adapter = ContextCtlGatewayAdapter.from_env(
                 agent_id=agent_id,
                 runtime_token_budget=context_token_budget,
-                session_client=self._sessions,
+                session_client=RuntimeMappedSessionClient(store=self._sessions),
                 memory_client=ContextMemoryClientAdapter(self._agent_memory),
                 logger=logger.getChild("contextctl"),
             )

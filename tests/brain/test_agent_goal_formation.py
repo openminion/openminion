@@ -179,11 +179,11 @@ def test_runtime_py_has_no_new_goal_declaration_regex() -> None:
 
 
 def test_session_start_recall_includes_declared_goal() -> None:
-    from openminion.modules.brain.adapters.context.bridges.memory import (
-        _SESSION_START_RECALL_TYPES,
+    from openminion.modules.context.memory_client import (
+        SESSION_START_RECALL_TYPES,
     )
 
-    assert "declared_goal" in _SESSION_START_RECALL_TYPES
+    assert "declared_goal" in SESSION_START_RECALL_TYPES
 
 
 def test_retrieval_memory_type_tags_includes_declared_goal() -> None:

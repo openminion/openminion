@@ -32,11 +32,20 @@ class SessionLifecycleMixin:
     _SESSION_SUMMARY_STRUCTURER_MIN_TURN_COUNT = 3
     _SESSION_SUMMARY_STRUCTURER_SHORT_SUMMARY_MAX_CHARS = 256
 
-    def _long_term_scopes(self) -> list[str]:
-        scopes = [f"agent:{self._agent_id}"]
+    def context_scopes(
+        self,
+        *,
+        session_id: str | None = None,
+        include_global: bool = True,
+    ) -> list[str]:
+        scopes: list[str] = []
+        if session_id:
+            scopes.append(f"session:{session_id}")
+        scopes.append(f"agent:{self._agent_id}")
         if self._project_id:
             scopes.append(f"project:{self._project_id}")
-        scopes.append("global:system")
+        if include_global:
+            scopes.append("global:system")
         return scopes
 
     def _latest_working_state_inline(self, *, session_id: str) -> dict[str, Any] | None:
