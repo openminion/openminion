@@ -76,6 +76,11 @@ def test_schedule_persists_agent_and_retains_user_task_jobs(
     monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
 
     ctx = _ctx(tmp_path, agent_id="agent-a")
+    ctx.scheduler_readiness = lambda: {
+        "state": "ready",
+        "hosted_by": "daemon",
+        "reason": None,
+    }
     store = _resolve_cron_store(ctx)
 
     every = _h_task_schedule(
@@ -117,10 +122,10 @@ def test_schedule_persists_agent_and_retains_user_task_jobs(
     assert row_cron["delete_after_run"] is False
     assert row_at["delete_after_run"] is False
     assert "scheduler_note" in every
-    assert every["scheduler"]["state"] == "unknown"
-    assert every["scheduler"]["check_command"].endswith("service status cron")
+    assert every["scheduler"]["state"] == "ready"
+    assert "check_command" not in every["scheduler"]
     assert "daemon" in every["scheduler_note"].lower()
-    assert "openminion daemon start" in every["scheduler_note"]
+    assert "openminion daemon start" not in every["scheduler_note"]
 
 
 def test_schedule_every_aliases_interval_unit_and_every(

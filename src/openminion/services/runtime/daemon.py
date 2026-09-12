@@ -185,7 +185,7 @@ def attach_cron_scheduler(
 
     try:
         lifecycle_bridge = getattr(runtime, "_lifecycle_event_bridge", None)
-        cron_store = _cron_store_for_runtime(
+        cron_store, cron_db_path = _cron_store_for_runtime(
             runtime=runtime,
             resolve_database_path=resolve_database_path,
             resolve_brain_sessions_db_path=resolve_brain_sessions_db_path,
@@ -195,7 +195,10 @@ def attach_cron_scheduler(
         delivery_bridge = CronDeliveryBridge(runtime=runtime)
         from openminion.modules.task import TaskManager
 
-        task_manager = TaskManager.from_cron_repository(cron_store)
+        task_manager = TaskManager.from_cron_repository(
+            cron_store,
+            db_path=cron_db_path,
+        )
 
         scheduler = CronScheduler(
             store=cron_store,
@@ -251,13 +254,13 @@ def _cron_store_for_runtime(
     resolve_database_path: Any,
     resolve_brain_sessions_db_path: Any,
     sqlite_session_store: Any,
-) -> Any:
+) -> tuple[Any, Any]:
     storage_path = resolve_database_path(
         runtime.config.storage.path,
         env=getattr(runtime.config.runtime, "env", None),
     )
     db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
-    return sqlite_session_store(db_path)
+    return sqlite_session_store(db_path), db_path
 
 
 def _cron_turn_executor_for_runtime(

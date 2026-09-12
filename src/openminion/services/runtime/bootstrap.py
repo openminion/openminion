@@ -690,7 +690,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         artifactctl=artifactctl,
         owns_artifactctl=artifactctl is not None,
     )
-
     memory_api = getattr(memory_assembly, "memctl", None)
     resolved_action_policy = (
         default_profile.action_policy
@@ -756,6 +755,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         agent_query=getattr(runtime_handle, "agent_discovery_snapshot", None),
         agent_profile=default_profile,
         task_manager=task_manager,
+        scheduler_readiness=getattr(runtime_handle, "scheduler_readiness", None),
         telemetryctl=service._telemetryctl,
         artifactctl=artifactctl,
     )

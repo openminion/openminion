@@ -121,6 +121,7 @@ class ToolAdapter:
         agent_id: str | None = None,
         agent_profile: Any | None = None,
         task_manager: Any | None = None,
+        scheduler_readiness: Callable[[], dict[str, Any]] | None = None,
         telemetryctl: Any | None = None,
     ) -> None:
         self.workspace_root = workspace_root
@@ -140,6 +141,7 @@ class ToolAdapter:
         self.agent_query = agent_query
         self.agent_profile = agent_profile
         self.task_manager = task_manager
+        self.scheduler_readiness = scheduler_readiness
         self.telemetryctl = telemetryctl
         self.allow_background_write_authorization = (
             _runtime_background_write_authorization_enabled(runtime_config)
@@ -524,7 +526,6 @@ class ToolAdapter:
             "github.merge_pr",
         }:
             auto_confirm = True
-
         extra_adapter = None if permission_mode == "bypass" else self.policy_adapter
         local_adapter = LocalPolicyAdapter(
             policy=policy_for_run,
@@ -567,6 +568,7 @@ class ToolAdapter:
             agent_profile=self.agent_profile,
             tool_registry=self.registry,
             task_manager=self.task_manager,
+            scheduler_readiness=self.scheduler_readiness,
         )
         ctx.session_id, ctx.trace_id = session_id, trace_id
         ctx.agent_id, ctx.run_id = self.agent_id, run_id

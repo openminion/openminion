@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -75,6 +76,27 @@ def test_api_runtime_resolve_agent_profile_fails_closed_for_unknown_profile() ->
 
     with pytest.raises(UnknownProfileError):
         APIRuntime.resolve_agent_profile(runtime, "missing-profile")
+
+
+def test_api_runtime_scheduler_readiness_uses_active_runtime_roots() -> None:
+    runtime = object.__new__(APIRuntime)
+    runtime.config_path = Path("/tmp/openminion/agents.json")
+    runtime.home_root = Path("/tmp/openminion")
+    runtime.data_root = Path("/tmp/openminion/data")
+    ready = {"state": "ready", "hosted_by": "daemon", "reason": None}
+
+    with mock.patch(
+        "openminion.cli.commands.daemon.build_daemon_status_payload",
+        return_value={"scheduler": ready},
+    ) as build_status:
+        result = APIRuntime.scheduler_readiness(runtime)
+
+    assert result == ready
+    build_status.assert_called_once_with(
+        str(runtime.config_path),
+        home_root=runtime.home_root,
+        data_root=runtime.data_root,
+    )
 
 
 def test_api_runtime_resolve_agent_profile_combines_runtime_and_call_overrides() -> (

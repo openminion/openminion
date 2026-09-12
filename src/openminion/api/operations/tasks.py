@@ -1,9 +1,6 @@
 from typing import Any
 
 from openminion.modules.task.constants import DEFAULT_TASK_MIN_EVERY_MS
-from openminion.modules.task.scheduling.coordination import (
-    scheduler_readiness_from_health,
-)
 from openminion.modules.task.scheduling.schedule import normalize_schedule
 from openminion.modules.task.surface import (
     build_task_surface,
@@ -65,11 +62,7 @@ def create_task(
         ).show_task(record.task_id),
         "deduped": bool(created["deduped"]),
         "job_id": job.get("job_id"),
-        "scheduler": scheduler_readiness_from_health(
-            {},
-            reachable=True,
-            identity_matches=None,
-        ),
+        "scheduler": runtime.scheduler_readiness(),
     }
 
 

@@ -17,7 +17,9 @@ from openminion.cli.transport.daemon_client import (
     daemon_stream_request,
 )
 from openminion.cli.commands import daemon as daemon_cmd
+from openminion.modules.task import TaskLifecycleState, TaskManager
 from openminion.modules.telemetry.lifecycle import build_component_identity
+from openminion.modules.task.scheduling.schedule import to_iso_utc, utc_now
 from openminion.services.supervision import SupervisionObservation, SupervisionService
 
 
@@ -606,6 +608,66 @@ def test_attach_cron_scheduler_rejects_unknown_job_agent(
     assert result["error"] is True
     assert "not registered" in result["summary"]
     assert runtime_manager.submitted is None
+
+
+def test_attach_cron_scheduler_reconciles_one_time_task_in_runtime_database(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _FakeScheduler:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.store = kwargs["store"]
+            self.record_task_outcomes = kwargs["record_task_outcomes"]
+
+        def start(self) -> None:
+            return None
+
+    database = tmp_path / "sessions.db"
+    runtime = SimpleNamespace(
+        config=SimpleNamespace(
+            runtime=SimpleNamespace(env={}),
+            storage=SimpleNamespace(path=str(database)),
+            agent=SimpleNamespace(name="agent-cron"),
+        ),
+        runtime_manager=None,
+    )
+    monkeypatch.setattr(
+        "openminion.modules.storage.runtime.sqlite.resolve_database_path",
+        lambda storage_path, env=None: Path(storage_path),  # noqa: ARG005
+    )
+    monkeypatch.setattr(
+        "openminion.modules.brain.paths.resolve_brain_sessions_db_path",
+        lambda storage_path: Path(storage_path),
+    )
+    monkeypatch.setattr(
+        "openminion.services.cron.scheduler.CronScheduler",
+        _FakeScheduler,
+    )
+
+    scheduler = daemon_mod.attach_cron_scheduler(
+        runtime=runtime,
+        daemon_id="daemon-task-outcome",
+    )
+    assert scheduler is not None
+
+    manager = TaskManager.from_cron_repository(scheduler.store, db_path=database)
+    record = manager.schedule_task(
+        name="one-time",
+        schedule={
+            "kind": "at",
+            "at": to_iso_utc(utc_now()),
+        },
+        payload={"kind": "agentTurn", "message": "run once"},
+        agent_id="agent-cron",
+    )
+    run_id = scheduler.store.trigger_cron_run(record.cron_job_id)
+    scheduler.store.finish_cron_run(run_id, state="finished", summary="complete")
+
+    assert scheduler.record_task_outcomes(record.cron_job_id) == 1
+    updated = manager.get_task(record.task_id)
+    assert updated is not None
+    assert updated.state == TaskLifecycleState.DONE
+    assert updated.metadata["last_run"]["run_id"] == run_id
 
 
 def test_attach_cron_scheduler_announce_delivery_writes_session_surface(

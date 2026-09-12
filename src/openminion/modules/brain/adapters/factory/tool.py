@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
 
 from .modes import mode_is_local, raise_if_strict
 
@@ -22,6 +23,7 @@ def create_tool_adapter(
     agent_id: str | None = None,
     agent_profile: Any | None = None,
     task_manager: Any | None = None,
+    scheduler_readiness: Callable[[], dict[str, Any]] | None = None,
     telemetryctl: Any | None = None,
     artifactctl: Any | None = None,
 ) -> Any:
@@ -49,6 +51,7 @@ def create_tool_adapter(
             agent_id=agent_id,
             agent_profile=agent_profile,
             task_manager=task_manager,
+            scheduler_readiness=scheduler_readiness,
             telemetryctl=telemetryctl,
             artifactctl=artifactctl,
         )

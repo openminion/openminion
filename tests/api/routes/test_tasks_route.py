@@ -60,7 +60,14 @@ def test_tasks_route_creates_and_deduplicates_user_schedule(tmp_path) -> None:
     manager = TaskManager.from_cron_repository(repository)
     ctx = APIRouteContext(
         config_path=None,
-        runtime=SimpleNamespace(task_manager=manager),
+        runtime=SimpleNamespace(
+            task_manager=manager,
+            scheduler_readiness=lambda: {
+                "state": "ready",
+                "hosted_by": "daemon",
+                "reason": None,
+            },
+        ),
         runtime_bootstrap_error=None,
         request_headers=None,
         request_id="test-request",
@@ -90,8 +97,8 @@ def test_tasks_route_creates_and_deduplicates_user_schedule(tmp_path) -> None:
     assert created.status == HTTPStatus.CREATED
     assert created.payload["task"]["agent_id"] == "agent-a"
     assert created.payload["task"]["task_kind"] == "scheduled_recurring"
-    assert created.payload["scheduler"]["state"] == "unknown"
-    assert created.payload["scheduler"]["check_command"].endswith("service status cron")
+    assert created.payload["scheduler"]["state"] == "ready"
+    assert "check_command" not in created.payload["scheduler"]
     assert duplicate is not None
     assert duplicate.status == HTTPStatus.OK
     assert duplicate.payload["job_id"] == created.payload["job_id"]

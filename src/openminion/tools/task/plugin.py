@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 from uuid import uuid4
 
@@ -22,10 +22,11 @@ from openminion.modules.tool.contracts.model_ids import (
 from openminion.modules.tool.runtime.environment import (
     agent_id_from_context as _agent_id_from_context,
 )
-from openminion.modules.tool.runtime.context import resolve_cron_repository
+from openminion.modules.tool.runtime.context import RuntimeContext, resolve_cron_repository
+from openminion.modules.tool.contracts.schemas import ErrorCode
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.registry import ToolRegistry, ToolSpec
-from openminion.modules.tool.runtime import RuntimeContext
+from openminion.modules.tool.registry import ToolRegistry
+from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.task import TaskManager
 from openminion.modules.task.constants import (
     DEFAULT_TASK_MIN_EVERY_MS,
@@ -82,7 +83,7 @@ from .watch import watch_profile_tools
 
 
 def _tool_error(
-    code: str,
+    code: ErrorCode,
     *,
     message: str,
     reason_code: str,
@@ -239,7 +240,7 @@ def _storage_operation(
     message: str,
     details: Mapping[str, Any] | None = None,
     passthrough: tuple[type[BaseException], ...] = (),
-):
+) -> Iterator[None]:
     try:
         yield
     except passthrough:
@@ -432,6 +433,16 @@ def _h_task_schedule(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         task_id = task_row.task_id
         deduped = bool(created["deduped"])
 
+    scheduler = _scheduler_readiness(ctx)
+    scheduler_note = (
+        "Task scheduled. The OpenMinion daemon scheduler is ready."
+        if scheduler["state"] == "ready"
+        else (
+            "Task scheduled. Runs will only execute while the OpenMinion daemon "
+            "is running. Start it with: openminion daemon start"
+        )
+    )
+
     return {
         "ok": True,
         "task_id": task_id,
@@ -442,16 +453,21 @@ def _h_task_schedule(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         "session_target": _safe_str(job, "session_target", "isolated"),
         "next_due_at": job.get("next_due_at"),
         "delete_after_run": bool(job.get("delete_after_run", False)),
-        "scheduler": scheduler_readiness_from_health(
-            {},
-            reachable=True,
-            identity_matches=None,
-        ),
-        "scheduler_note": (
-            "Task scheduled. Runs will only execute while the openminion daemon is running. "
-            "Start it with: openminion daemon start"
-        ),
+        "scheduler": scheduler,
+        "scheduler_note": scheduler_note,
     }
+
+
+def _scheduler_readiness(ctx: RuntimeContext) -> dict[str, Any]:
+    query: Callable[[], dict[str, Any]] | None = ctx.scheduler_readiness
+    if callable(query):
+        return query()
+    readiness: dict[str, Any] = scheduler_readiness_from_health(
+        {},
+        reachable=True,
+        identity_matches=None,
+    )
+    return readiness
 
 
 def _h_task_watch(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:

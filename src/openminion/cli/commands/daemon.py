@@ -196,7 +196,7 @@ def daemon_status(
     home_root: str | Path | None = None,
     data_root: str | Path | None = None,
 ) -> int:
-    payload = _build_daemon_status_payload(
+    payload = build_daemon_status_payload(
         config_path,
         home_root=home_root,
         data_root=data_root,
@@ -218,7 +218,7 @@ def daemon_status(
     return 0 if bool(payload.get("reachable", False)) else 1
 
 
-def _build_daemon_status_payload(
+def build_daemon_status_payload(
     config_path: str | None,
     *,
     home_root: str | Path | None = None,

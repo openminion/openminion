@@ -7,7 +7,7 @@ from openminion.cli.commands.service import _service_status_payload, run_service
 def test_cron_service_status_uses_daemon_scheduler_readiness(monkeypatch) -> None:
     monkeypatch.setattr(
         daemon_command,
-        "_build_daemon_status_payload",
+        "build_daemon_status_payload",
         lambda *_args, **_kwargs: {
             "scheduler": {
                 "state": "ready",
