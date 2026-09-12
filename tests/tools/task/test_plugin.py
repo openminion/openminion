@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.tools.ops.service import local_ops_service
+from openminion.tools.task.args import TaskScheduleArgs
 from openminion.tools.task.plugin import (
     _h_task_cancel,
     _h_task_consolidate_memory,
@@ -126,6 +128,75 @@ def test_schedule_persists_agent_and_retains_user_task_jobs(
     assert "check_command" not in every["scheduler"]
     assert "daemon" in every["scheduler_note"].lower()
     assert "openminion daemon start" not in every["scheduler_note"]
+
+
+def test_schedule_relative_one_time_uses_runtime_clock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+    monkeypatch.setattr(
+        "openminion.tools.task.plugin.utc_now",
+        lambda: datetime(2026, 9, 12, 10, 40, tzinfo=timezone.utc),
+    )
+
+    ctx = _ctx(tmp_path, agent_id="agent-a")
+    result = _h_task_schedule(
+        {
+            "instruction": "relative one-time schedule",
+            "schedule": {"kind": "at", "after_seconds": 120},
+        },
+        ctx,
+    )
+
+    assert result["schedule"] == {
+        "kind": "at",
+        "at": "2026-09-12T10:42:00+00:00",
+    }
+    assert result["next_due_at"] == "2026-09-12T10:42:00+00:00"
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        {
+            "kind": "at",
+            "at": "2030-01-01T00:00:00Z",
+            "after_seconds": 120,
+        },
+        {"kind": "at", "after_seconds": 0},
+        {"kind": "at", "after_seconds": -1},
+        {"kind": "at", "after_seconds": 1.5},
+        {"kind": "at", "after_seconds": "120"},
+    ],
+)
+def test_schedule_rejects_invalid_relative_one_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    schedule: dict[str, object],
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+
+    ctx = _ctx(tmp_path, agent_id="agent-a")
+    store = _resolve_cron_store(ctx)
+    with pytest.raises(ToolRuntimeError) as excinfo:
+        _h_task_schedule(
+            {"instruction": "invalid relative one-time schedule", "schedule": schedule},
+            ctx,
+        )
+
+    assert excinfo.value.code == "INVALID_ARGUMENT"
+    assert store.list_cron_jobs(limit=10) == []
+
+
+def test_schedule_schema_describes_relative_one_time() -> None:
+    description = TaskScheduleArgs.model_json_schema()["properties"]["schedule"][
+        "description"
+    ]
+
+    assert "after_seconds" in description
 
 
 def test_schedule_every_aliases_interval_unit_and_every(

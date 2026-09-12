@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 from collections.abc import Callable, Iterator, Mapping
+from datetime import timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -7,6 +8,7 @@ from openminion.modules.brain.runtime.goal.policy import authorize_goal_action
 from openminion.modules.task.scheduling.schedule import (
     normalize_schedule,
     parse_iso_datetime,
+    to_iso_utc,
     utc_now,
 )
 from openminion.modules.tool.contracts.model_ids import (
@@ -22,7 +24,10 @@ from openminion.modules.tool.contracts.model_ids import (
 from openminion.modules.tool.runtime.environment import (
     agent_id_from_context as _agent_id_from_context,
 )
-from openminion.modules.tool.runtime.context import RuntimeContext, resolve_cron_repository
+from openminion.modules.tool.runtime.context import (
+    RuntimeContext,
+    resolve_cron_repository,
+)
 from openminion.modules.tool.contracts.schemas import ErrorCode
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry
@@ -298,6 +303,18 @@ def _coerce_schedule_aliases(schedule: Mapping[str, Any]) -> dict[str, Any]:
         if normalized.get("at") is None and normalized.get("time") is not None:
             normalized["at"] = normalized.get("time")
             normalized.pop("time", None)
+        has_at = normalized.get("at") not in (None, "")
+        has_after = normalized.get("after_seconds") is not None
+        if has_at == has_after:
+            raise ValueError("at schedule requires exactly one of at or after_seconds")
+        if has_after:
+            delay_seconds = normalized["after_seconds"]
+            if isinstance(delay_seconds, bool) or not isinstance(delay_seconds, int):
+                raise ValueError("after_seconds must be a positive integer")
+            if delay_seconds <= 0:
+                raise ValueError("after_seconds must be greater than 0")
+            normalized["at"] = to_iso_utc(utc_now() + timedelta(seconds=delay_seconds))
+            normalized.pop("after_seconds")
         return normalized
 
     if kind != "every":
@@ -404,10 +421,10 @@ def _h_task_schedule(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         surface="task",
     )
     instruction = validated.instruction
-    raw_schedule = _coerce_schedule_aliases(validated.schedule or {})
     task_name = _derive_task_name(name=validated.name, instruction=instruction)
 
     try:
+        raw_schedule = _coerce_schedule_aliases(validated.schedule or {})
         normalized_schedule = normalize_schedule(raw_schedule)
     except Exception as exc:
         raise ToolRuntimeError(
