@@ -27,7 +27,7 @@ def _recent_artifact_segments(
 ) -> list[ContextSegment]:
     if not recent_session_artifact_refs:
         return []
-    recent_artifact_lines = ["Recent session artifacts:"]
+    recent_artifact_items: list[tuple[str, str]] = []
     for item in recent_session_artifact_refs[:6]:
         metadata = [f"type={item.artifact_type}", f"path={item.artifact_path}"]
         if item.artifact_digest:
@@ -36,10 +36,11 @@ def _recent_artifact_segments(
         metadata.append(f"turn={item.turn_index}")
         if item.tool_name:
             metadata.append(f"tool={item.tool_name}")
-        recent_artifact_lines.append("- " + " | ".join(metadata))
-    recent_artifact_text = runtime.fit_section(
+        recent_artifact_items.append((item.record_id, "- " + " | ".join(metadata)))
+    recent_artifact_text, refs = runtime.fit_record_items(
         "evidence_recent_session_artifacts",
-        "\n".join(recent_artifact_lines),
+        "Recent session artifacts:",
+        recent_artifact_items,
         runtime.budgets.artifact_tokens,
     )
     if not recent_artifact_text.strip():
@@ -49,7 +50,7 @@ def _recent_artifact_segments(
             "evidence:recent_session_artifacts",
             "evidence_refs",
             f"[RECENT SESSION ARTIFACTS]\n{recent_artifact_text}",
-            refs=[item.record_id for item in recent_session_artifact_refs],
+            refs=refs,
             is_artifact_preview=True,
         )
     ]

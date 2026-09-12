@@ -54,6 +54,9 @@ class EphemeralMemorySmokeProvider:
             "ephemeral smoke memory does not expose durable record queries"
         )
 
+    def record_context_selection(self, record_id: str) -> None:
+        del record_id
+
     def _state(self, session_id: str) -> _SessionState:
         session_key = str(session_id or "").strip() or "default"
         current = self._sessions.get(session_key)

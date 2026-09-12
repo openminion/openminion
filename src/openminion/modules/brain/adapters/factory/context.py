@@ -70,6 +70,7 @@ def create_context_adapter(
             rolling_enabled=feature_flags["rolling_enabled"],
             compaction_enabled=feature_flags["compaction_enabled"],
             compression_enabled=feature_flags["compression_enabled"],
+            record_context_selection=memory_client.record_context_selection,
         )
         return ContextCtlAdapter(
             service=service,

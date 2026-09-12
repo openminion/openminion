@@ -6,7 +6,13 @@ from types import SimpleNamespace
 import pytest
 
 from openminion.base.config import OpenMinionConfig
-from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
+from openminion.modules.memory.service import MemoryService
+from openminion.modules.memory.smoke import EphemeralMemorySmokeProvider
+from openminion.modules.memory.storage.memory import InMemoryMemoryStore
+from openminion.services.agent.memory.gateway_adapter import (
+    DisabledMemoryGatewayAdapter,
+    MemoryServiceGatewayAdapter,
+)
 from openminion.services.runtime import bootstrap
 from openminion.services.runtime.plugins import PluginManifest
 from openminion.services.runtime.errors import (
@@ -114,6 +120,49 @@ def test_summary_structurer_failure_is_observable(
     assert "session summary structurer unavailable" in caplog.text
 
 
+def test_gateway_bootstrap_wires_each_runtime_memory_recorder(
+    monkeypatch, tmp_path
+) -> None:
+    active_service = MemoryService(store=InMemoryMemoryStore())
+    memories = (
+        MemoryServiceGatewayAdapter(active_service, agent_id="agent"),
+        DisabledMemoryGatewayAdapter(agent_id="agent"),
+        EphemeralMemorySmokeProvider(agent_id="agent"),
+    )
+    captured: list[dict[str, object]] = []
+
+    def capture_gateway(*args, **kwargs):
+        del args
+        captured.append(dict(kwargs))
+        return object()
+
+    monkeypatch.setattr(bootstrap, "GatewayService", capture_gateway)
+    for memory in memories:
+        bootstrap.build_gateway_service(
+            agent_service=SimpleNamespace(),
+            profile_name="agent",
+            config=OpenMinionConfig(),
+            channels=object(),
+            sessions=object(),
+            idempotency=object(),
+            security_policy=object(),
+            channel_authenticity_policy=object(),
+            config_path=tmp_path / "config.json",
+            storage_path=tmp_path / "runtime.db",
+            memory_root=tmp_path / "memory",
+            home_root=tmp_path / "home",
+            data_root=tmp_path / "data",
+            logger=logging.getLogger("test.bootstrap.selection-recorder"),
+            session_context=object(),
+            agent_memory=memory,
+        )
+
+    assert [
+        getattr(item["record_context_selection"], "__self__", None) for item in captured
+    ] == list(memories)
+    active_service.close()
+
+
 def test_background_summary_enrichment_is_wired_only_when_enabled(
     monkeypatch, tmp_path
 ) -> None:
@@ -147,7 +196,7 @@ def test_background_summary_enrichment_is_wired_only_when_enabled(
         data_root=tmp_path / "data",
         logger=logging.getLogger("test.bootstrap.background-summary"),
         session_context=session_context,
-        agent_memory=object(),
+        agent_memory=SimpleNamespace(record_context_selection=lambda _record_id: None),
     )
 
     assert configured == [enricher]
@@ -182,7 +231,7 @@ def test_background_summary_enrichment_remains_off_by_default(
         data_root=tmp_path / "data",
         logger=logging.getLogger("test.bootstrap.background-summary-default"),
         session_context=session_context,
-        agent_memory=object(),
+        agent_memory=SimpleNamespace(record_context_selection=lambda _record_id: None),
     )
 
     assert configured == []

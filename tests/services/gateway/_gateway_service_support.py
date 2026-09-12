@@ -11,6 +11,7 @@ import time
 import unittest
 from hashlib import sha256
 from pathlib import Path
+from typing import Callable
 from unittest.mock import patch
 
 from openminion.base.channel import Channel, ChannelRegistry
@@ -366,6 +367,7 @@ class GatewayServiceTestCase(unittest.TestCase):
         history_limit: int = 20,
         session_context: object | None = None,
         agent_memory: object | None = None,
+        record_context_selection: Callable[[str], None] | None = None,
         knowledge_graphs: object | None = None,
         auto_resume: bool = True,
     ) -> tuple[GatewayService, _SinkChannel]:
@@ -396,6 +398,7 @@ class GatewayServiceTestCase(unittest.TestCase):
             history_limit=history_limit,
             session_context=session_context,  # type: ignore[arg-type]
             agent_memory=agent_memory,
+            record_context_selection=record_context_selection,
             knowledge_graphs=knowledge_graphs,
         )
         if auto_resume:

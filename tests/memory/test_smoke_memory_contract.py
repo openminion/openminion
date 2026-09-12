@@ -43,6 +43,7 @@ def test_smoke_contract_rejects_incompatible_shape() -> None:
 
 def test_smoke_provider_does_not_extract_user_facts() -> None:
     provider = EphemeralMemorySmokeProvider(agent_id="main")
+    assert provider.record_context_selection("non-durable-record") is None
     result = provider.record_turn(
         session_id="s",
         run_id="r",

@@ -598,6 +598,11 @@ class BridgeMemoryClient:
             return None
         return payload
 
+    def record_context_selection(self, record_id: str) -> None:
+        memory_ctl = self._resolve_memoryctl()
+        if memory_ctl is not None:
+            memory_ctl.touch_last_hit(record_id)
+
 
 def _import_memory_dependencies() -> tuple[Any, Any] | None:
     try:

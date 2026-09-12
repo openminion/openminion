@@ -112,7 +112,16 @@ def test_non_search_conformance_round_trip(store) -> None:
     history = store.history("session:s1", "fact", "theme")
     assert [item.id for item in history[:2]] == [upserted.id, "r1"]
 
+    before_touch = store.get(upserted.id)
+    assert before_touch is not None
     store.touch_last_hit(upserted.id)
+    store.touch_last_hit(upserted.id)
+    after_touch = store.get(upserted.id)
+    assert after_touch is not None
+    assert after_touch.access_count == before_touch.access_count + 2
+    assert after_touch.confidence == before_touch.confidence
+    assert after_touch.meta == before_touch.meta
+    assert after_touch.tier == before_touch.tier
     updated = store.apply_outcome_feedback(
         [upserted.id],
         outcome="success",

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import logging
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from openminion.base.config.env import resolve_environment_config
@@ -44,6 +44,7 @@ from .pack.finalize import (
     build_runtime_cache_lookup_key as _build_runtime_cache_lookup_key_impl,
     finalize_context_pack as _finalize_context_pack_impl,
     release_session_state as _release_session_state_impl,
+    selected_memory_record_ids as _selected_memory_record_ids,
 )
 from .pack.evidence import (
     apply_evidence_priority_ordering as _apply_evidence_priority_ordering_impl,
@@ -57,9 +58,7 @@ from .render.sections import (
     render_memory_cards as _render_memory_cards_impl,
     render_procedure_snippet as _render_procedure_snippet_impl,
 )
-from .constants import (
-    OPENMINION_STRICT_CONTEXT_CONTRACTS_ENV,
-)
+from .constants import OPENMINION_STRICT_CONTEXT_CONTRACTS_ENV
 from .schemas import (
     ArtifactDigest,
     BuildConstraints,
@@ -193,6 +192,7 @@ class ContextCtlService:
         rolling_enabled: bool = True,
         compaction_enabled: bool = True,
         compression_enabled: bool = True,
+        record_context_selection: Callable[[str], None] | None = None,
     ) -> None:
         self._identityctl = identityctl
         self._sessctl = sessctl
@@ -212,6 +212,7 @@ class ContextCtlService:
         self._rolling_enabled = bool(rolling_enabled)
         self._compaction_enabled = bool(compaction_enabled)
         self._compression_enabled = bool(compression_enabled)
+        self._record_context_selection = record_context_selection
         self._context_module_config = _load_context_module_config()
         self._memory_block_store = memory_block_store
         self._memory_blocks_enabled = (
@@ -240,11 +241,7 @@ class ContextCtlService:
         self._validate_client_contracts()
 
     def _retrieved_materials_helper(self) -> RetrievedContextMaterialsCollector:
-        helper = getattr(self, "_retrieved_materials", None)
-        if helper is None:
-            helper = RetrievedContextMaterialsCollector(self)
-            self._retrieved_materials = helper
-        return helper
+        return self._retrieved_materials
 
     def _validate_client_contracts(self) -> None:
         strict = str(
@@ -270,7 +267,7 @@ class ContextCtlService:
         for client_type, client in checks:
             try:
                 ensure_context_client_compatibility(client, client_type=client_type)
-            except Exception as exc:  # noqa: BLE001
+            except (TypeError, ValueError) as exc:
                 message = (
                     f"context client contract check failed for {client_type}: {exc}"
                 )
@@ -378,6 +375,7 @@ class ContextCtlService:
             drop_count=finalized.drop_count,
             truncation_count=finalized.truncation_count,
         )
+        self._record_selected_memory(finalized.pack)
         return finalized.pack
 
     def _prepare_build_pack_runtime_state(
@@ -505,7 +503,19 @@ class ContextCtlService:
             cache_hit=True,
             mode=request.mode_name,
         )
+        self._record_selected_memory(cached_pack)
         return cached_pack
+
+    def _record_selected_memory(self, pack: ContextPack) -> None:
+        if self._record_context_selection is None:
+            return
+        for record_id in _selected_memory_record_ids(pack.context_manifest):
+            try:
+                self._record_context_selection(record_id)
+            except Exception as exc:  # noqa: BLE001
+                _logger.warning(
+                    "context selection credit failed id=%s: %s", record_id, exc
+                )
 
     def _collect_retrieved_context_materials(
         self,
@@ -520,21 +530,6 @@ class ContextCtlService:
             constraints=constraints,
             budgets=budgets,
             session_slice=session_slice,
-        )
-
-    def _resolve_skill_snippet(
-        self,
-        *,
-        constraints: BuildConstraints,
-        purpose: str,
-        mode_name: str | None,
-        skills_tokens: int,
-    ) -> tuple[str | None, str | None]:
-        return self._retrieved_materials_helper().resolve_skill_snippet(
-            constraints=constraints,
-            purpose=purpose,
-            mode_name=mode_name,
-            skills_tokens=skills_tokens,
         )
 
     _apply_evidence_priority_ordering = staticmethod(

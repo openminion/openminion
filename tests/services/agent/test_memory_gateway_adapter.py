@@ -49,6 +49,27 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         )
         self.assertIs(adapter._retrieve_ctl, mock_ctl)  # noqa: SLF001
 
+    def test_record_context_selection_touches_existing_record(self) -> None:
+        adapter = _make_adapter()
+        now = datetime.now(timezone.utc).isoformat()
+        adapter._service._store.put(  # noqa: SLF001
+            MemoryRecord(
+                id="selected-record",
+                scope="agent:test-agent",
+                type="fact",
+                content={"text": "selected"},
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+        adapter.record_context_selection("selected-record")
+
+        stored = adapter._service._store.get("selected-record")  # noqa: SLF001
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored.access_count, 1)
+
     def test_derive_patch_id_deterministic(self) -> None:
         adapter = _make_adapter()
         pid1 = adapter.derive_patch_id(
@@ -1265,6 +1286,9 @@ class TestDisabledMemoryGatewayAdapter(unittest.TestCase):
 
     def test_enabled_is_false(self) -> None:
         self.assertFalse(self.adapter.enabled)
+
+    def test_record_context_selection_is_a_no_op(self) -> None:
+        self.assertIsNone(self.adapter.record_context_selection("record"))
 
     def test_derive_patch_id_returns_empty(self) -> None:
         pid = self.adapter.derive_patch_id(

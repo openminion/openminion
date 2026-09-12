@@ -428,6 +428,9 @@ class MemoryServiceGatewayAdapter(
     def get_procedure(self, *, procedure_id: str) -> Any | None:
         return self._service.get_procedure(procedure_id=procedure_id)
 
+    def record_context_selection(self, record_id: str) -> None:
+        self._service.touch_last_hit(record_id)
+
     def list_candidates(
         self, *, session_id: str | None = None, limit: int | None = 50
     ) -> list[Any]:
@@ -570,6 +573,9 @@ class DisabledMemoryGatewayAdapter:
     def get_procedure(self, *, procedure_id: str) -> None:
         del procedure_id
         return None
+
+    def record_context_selection(self, record_id: str) -> None:
+        del record_id
 
     def list_candidates(
         self, *, session_id: str | None = None, limit: int | None = 50

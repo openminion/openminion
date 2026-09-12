@@ -132,11 +132,17 @@ def test_characterization_search_feedback_entities_and_touch(store) -> None:
     entity_hits = store.retrieve_by_entities(["Alice"], ["session:s1"])
     assert [item.id for item in entity_hits] == ["r1"]
 
+    original = store.get("r1")
+    assert original is not None
+    store.touch_last_hit("r1")
     store.touch_last_hit("r1")
     touched = store.get("r1")
     assert touched is not None
     assert touched.last_hit_at
-    assert touched.access_count == 1
+    assert touched.access_count == 2
+    assert touched.confidence == original.confidence
+    assert touched.meta == original.meta
+    assert touched.tier == original.tier
 
     updated = store.apply_outcome_feedback(
         ["r1", "r1"],

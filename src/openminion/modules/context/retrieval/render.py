@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from ..input_boundaries import InputSource
 from ..input_boundaries import emit_boundary_event as _pidf_emit_boundary_event
 from ..schemas import BuildConstraints
 
@@ -35,7 +36,7 @@ def _append_text_segment(
     text: str,
     token_limit: int,
     refs: list[str] | None = None,
-    boundary_kind: str | None = None,
+    boundary_kind: InputSource | None = None,
     seam_id: str | None = None,
     pinned: bool = False,
 ) -> None:
@@ -51,6 +52,38 @@ def _append_text_segment(
             f"{header}\n{fitted}",
             refs=refs,
             pinned=pinned,
+        )
+    )
+
+
+def _append_record_segment(
+    runtime: Any,
+    *,
+    segment_id: str,
+    section_key: str,
+    header: str,
+    text_header: str,
+    items: list[tuple[str, str]],
+    token_limit: int,
+    boundary_kind: InputSource | None = None,
+    seam_id: str | None = None,
+) -> None:
+    text, refs = runtime.fit_record_items(
+        section_key,
+        text_header,
+        items,
+        token_limit,
+    )
+    if not text:
+        return
+    if boundary_kind and seam_id:
+        _pidf_emit_boundary_event(boundary_kind, text, seam_id=seam_id)
+    runtime.segments.append(
+        runtime.make(
+            segment_id,
+            "retrieval",
+            f"{header}\n{text}",
+            refs=refs,
         )
     )
 
@@ -92,31 +125,34 @@ def _append_fact_and_memory_segments(
     bundle: _SegmentAssemblyRetrievalBundle,
 ) -> None:
     if bundle.capped_facts:
-        fact_lines = ["Facts:"] + [
-            f"- ({fact.record_id}) {fact.text}" for fact in bundle.capped_facts
-        ]
-        _append_text_segment(
+        _append_record_segment(
             runtime,
             segment_id="retrieval:facts",
             section_key="retrieval_facts",
             header="[FACTS TABLE]",
-            text="\n".join(fact_lines),
+            text_header="Facts:",
+            items=[
+                (fact.record_id, f"- ({fact.record_id}) {fact.text}")
+                for fact in bundle.capped_facts
+            ],
             token_limit=runtime.budgets.facts_tokens,
-            refs=[fact.record_id for fact in bundle.capped_facts],
         )
     if bundle.capped_memory:
-        mem_lines = ["Memory cards:"] + [
-            f"- ({item.record_type}{'  pinned' if item.pinned else ''}) ({item.record_id}) {item.text}"
-            for item in bundle.capped_memory
-        ]
-        _append_text_segment(
+        _append_record_segment(
             runtime,
             segment_id="retrieval:memory",
             section_key="retrieval_memory",
             header="[MEMORY CARDS]",
-            text="\n".join(mem_lines),
+            text_header="Memory cards:",
+            items=[
+                (
+                    item.record_id,
+                    f"- ({item.record_type}{'  pinned' if item.pinned else ''}) "
+                    f"({item.record_id}) {item.text}",
+                )
+                for item in bundle.capped_memory
+            ],
             token_limit=runtime.budgets.memory_tokens,
-            refs=[item.record_id for item in bundle.capped_memory],
             boundary_kind="memory_recall",
             seam_id="modules.context.segment_assembly.memory_cards",
         )
@@ -162,14 +198,18 @@ def _append_special_memory_segments(
     ]
     for cards, segment_id, section_key, header, render, seam_id in special_segments:
         if cards:
-            _append_text_segment(
+            rendered_cards = [render([card]).split("\n", 1) for card in cards]
+            _append_record_segment(
                 runtime,
                 segment_id=segment_id,
                 section_key=section_key,
                 header=header,
-                text=render(cards),
+                text_header=rendered_cards[0][0],
+                items=[
+                    (card.record_id, rendered[1])
+                    for card, rendered in zip(cards, rendered_cards, strict=True)
+                ],
                 token_limit=runtime.budgets.memory_tokens,
-                refs=[card.record_id for card in cards],
                 boundary_kind="memory_recall",
                 seam_id=seam_id,
             )

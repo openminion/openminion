@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, Callable, Optional, cast
 
 from openminion.base.config.runtime import resolve_identity_db_from_env
 from openminion.services.config import resolve_services_env, resolve_services_path
@@ -41,6 +41,7 @@ class ContextCtlGatewayAdapter:
         runtime_token_budget: int = 0,
         session_client: Any | None = None,
         memory_client: Any | None = None,
+        record_context_selection: Callable[[str], None] | None = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._enabled = enabled
@@ -49,6 +50,7 @@ class ContextCtlGatewayAdapter:
         self._runtime_token_budget = max(0, runtime_token_budget)
         self._session_client = session_client
         self._memory_client = memory_client
+        self._record_context_selection = record_context_selection
         self._service: Any | None = None
         self._identity_ctl: Any | None = None
         self._owned_session_client: _RuntimeMappedSessionClient | None = None
@@ -67,6 +69,7 @@ class ContextCtlGatewayAdapter:
         runtime_token_budget: int | None = None,
         session_client: Any | None = None,
         memory_client: Any | None = None,
+        record_context_selection: Callable[[str], None] | None = None,
         logger: Optional[logging.Logger] = None,
     ) -> "ContextCtlGatewayAdapter":
         """Construct adapter from environment variable flags."""
@@ -94,6 +97,7 @@ class ContextCtlGatewayAdapter:
             ),
             session_client=session_client,
             memory_client=memory_client,
+            record_context_selection=record_context_selection,
             logger=logger,
         )
 
@@ -237,6 +241,7 @@ class ContextCtlGatewayAdapter:
                 sessctl=session_client,
                 memctl=memory_stub,
                 artifactctl=_NullArtifactClient(),
+                record_context_selection=self._record_context_selection,
             )
             self._identity_ctl = identity_ctl
             return self._service

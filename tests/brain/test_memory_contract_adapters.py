@@ -179,6 +179,43 @@ def test_context_bridge_memory_query_mapping_returns_real_records() -> None:
         assert all(not str(item.record_id).startswith("degraded:") for item in cards)
 
 
+def test_context_bridge_credits_selected_sqlite_record_on_each_return() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        state_dir = Path(tmp) / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        session_db = state_dir / "sessions.db"
+        memory_store = SQLiteMemoryStore(state_dir / "memory.db")
+        memory_service = MemoryService(store=memory_store)
+        record_id = memory_service.write_record(
+            scope="agent:ax",
+            record_type="fact",
+            title="Cobalt marker",
+            content={"text": "The cobalt marker is enabled."},
+        )
+        context = create_context_adapter(
+            mode="auto",
+            session_store=_SessionStoreWithPath(session_db),
+        )
+        request = BuildPackRequest(
+            session_id="sx",
+            agent_id="ax",
+            purpose="act",
+            query="cobalt",
+        )
+
+        try:
+            first = context.service.build_pack(request)
+            second = context.service.build_pack(request)
+        finally:
+            context.close()
+
+        assert first is second
+        selected = memory_store.get(record_id)
+        assert selected is not None
+        assert selected.access_count == 2
+        memory_service.close()
+
+
 def test_srtf_prompt_pack_omits_structured_failure_facts_only() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         state_dir = Path(tmp) / "state"

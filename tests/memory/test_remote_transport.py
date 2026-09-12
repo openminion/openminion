@@ -404,3 +404,30 @@ def test_remote_memory_store_relation_round_trip() -> None:
     )
     assert [item.id for item in related] == ["mem_2"]
     assert seen_payloads[-1]["operation"] == "get_related_records"
+
+
+def test_remote_touch_uses_one_key_per_logical_call_and_reuses_it_on_retry() -> None:
+    envelopes: list[dict[str, Any]] = []
+
+    def _sender(envelope: dict[str, Any], timeout: float) -> dict[str, Any]:
+        del timeout
+        envelopes.append(dict(envelope))
+        if len(envelopes) == 1:
+            raise TimeoutError("retry once")
+        return {"ok": True, "data": {}}
+
+    store = RemoteMemoryStore(
+        RemoteMemoryTransport(
+            endpoint="https://example.invalid/memory",
+            max_retries=1,
+            sender=_sender,
+        )
+    )
+
+    store.touch_last_hit("mem-1")
+    store.touch_last_hit("mem-1")
+
+    keys = [item["idempotency_key"] for item in envelopes]
+    assert keys[0] == keys[1]
+    assert keys[2] != keys[0]
+    assert all(key.startswith("touch:mem-1:") for key in keys)
