@@ -47,8 +47,10 @@ def test_focus_pty_handles_contextual_slash_help(
         transcripts.extend((global_help, long_help))
         for command, marker in (
             ("/help agents", "Alias: /agent"),
+            ("/help agent", "Alias: /agent"),
             ("/help /agent", "Agent selection:"),
             ("/agents ?", "/agents <agent-id-or-label>"),
+            ("/agents --help", "/agents <agent-id-or-label>"),
             ("/agent --help", "List configured agents"),
             ("/help new", "/new session"),
             ("/help new session", "/help <command>"),

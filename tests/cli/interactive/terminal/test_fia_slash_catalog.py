@@ -735,7 +735,11 @@ def test_custom_help_defaults_usage_and_description_without_guessing(
     assert "Source: user" in output
 
 
-def test_built_ins_win_custom_primary_and_alias_collisions(tmp_path: Path) -> None:
+def test_built_ins_win_custom_primary_and_alias_collisions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from openminion.cli.presentation import custom_commands as custom_module
+
     colliding = {
         name: CustomCommand(
             slash=name,
@@ -753,6 +757,22 @@ def test_built_ins_win_custom_primary_and_alias_collisions(tmp_path: Path) -> No
 
     _, transcript = _run_prompt_slash("/help", tmp_path, custom_commands=colliding)
     assert "custom collision" not in transcript._messages[-1].body
+
+    monkeypatch.setattr(
+        custom_module,
+        "render_command",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("built-in alias must win dispatch")
+        ),
+    )
+    runtime = _HelpSafetyRuntime()
+    _run_prompt_slash(
+        "/agent",
+        tmp_path,
+        runtime=runtime,
+        custom_commands=colliding,
+    )
+    assert runtime.list_agents_calls == 1
 
 
 def test_global_help_includes_non_colliding_custom_command_once(tmp_path: Path) -> None:

@@ -177,6 +177,11 @@ def test_live_focus_contextual_help_while_busy(
     require_live_focus()
     with focus_probe.session() as session:
         focus_probe.wait_ready(session)
+        before_permissions = visible_text(
+            focus_probe.run_slash(session, "/permissions", marker="permissions:")
+        )
+        before_mode = re.search(r"permissions: ([a-z]+)", before_permissions)
+        assert before_mode is not None
         turn_offset = len(session.transcript)
         focus_probe._submit_composer_line(
             session,
@@ -195,18 +200,27 @@ def test_live_focus_contextual_help_while_busy(
             )
 
         help_offset = len(session.transcript)
-        session.type_line("/agents ?")
+        session.type_line("/permissions ?")
         help_transcript = session.wait_for_after(
-            re.escape("Alias: /agent"), offset=help_offset, timeout=60
+            re.escape("Show or set the sandbox approval mode"),
+            offset=help_offset,
+            timeout=60,
         )
         session.wait_for_after(
             r"Done in \d+(?:m\d{2}s|s)", offset=turn_offset, timeout=300
         )
+        after_permissions = visible_text(
+            focus_probe.run_slash(session, "/permissions", marker="permissions:")
+        )
+        queue = visible_text(
+            focus_probe.run_slash(session, "/queue", marker="No queued messages.")
+        )
 
         output = visible_text(help_transcript)
-        assert "/agents <agent-id-or-label>" in output
-        assert "(/agents: none found)" not in output
+        assert "/permissions <default|readonly|bypass|cycle>" in output
         assert "Queued message" not in output
+        assert f"permissions: {before_mode.group(1)}" in after_permissions
+        assert "No queued messages." in queue
         write_transcript(
             artifact_root(tmp_path),
             "live-contextual-help-while-busy",
