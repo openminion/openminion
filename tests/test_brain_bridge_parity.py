@@ -76,8 +76,10 @@ class _DummySessionApi:
         )
         return f"{session_id}-event-{len(self.events[session_id])}"
 
-    def list_events(self, session_id: str, *, trace_id=None):
+    def list_events(self, session_id: str, *, event_type=None, trace_id=None):
         events = self.events.get(session_id, [])
+        if event_type is not None:
+            events = [event for event in events if event["type"] == event_type]
         if trace_id is not None:
             events = [event for event in events if event["trace_id"] == trace_id]
         return list(events)
