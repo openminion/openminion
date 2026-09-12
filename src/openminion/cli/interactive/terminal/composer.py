@@ -154,6 +154,23 @@ class _SlashAndAtCompleter(Completer):
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
+        if text.startswith("/help "):
+            prefix = text.removeprefix("/help ")
+            if " " in prefix:
+                return
+            match_prefix = prefix if prefix.startswith("/") else f"/{prefix}"
+            for slash in self._slashes:
+                if slash.startswith(match_prefix):
+                    replacement = slash if prefix.startswith("/") else slash[1:]
+                    yield Completion(
+                        replacement,
+                        start_position=-len(prefix),
+                        display=slash,
+                        display_meta=self._slash_descriptions.get(
+                            slash, "slash command"
+                        ),
+                    )
+            return
         if text.startswith("/"):
             for slash in self._slashes:
                 if slash.startswith(text):

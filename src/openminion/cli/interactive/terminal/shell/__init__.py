@@ -74,8 +74,9 @@ from openminion.cli.presentation.styles import StyleToken, is_color_enabled
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.slash_commands import (
     canonical_slash_command,
+    contextual_slash_help,
+    slash_completion_catalog,
     slash_command_runs_while_busy,
-    slash_help_rows,
 )
 from openminion.cli.presentation.visible_parity import statusline_label
 
@@ -246,6 +247,13 @@ async def _handle_slash_input(
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> bool:
     """Dispatch a slash command and return whether the shell should exit."""
+
+    help_output = contextual_slash_help(text, custom_commands, width=console.width)
+    if help_output is not None:
+        transcript.push_message(
+            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=help_output)
+        )
+        return False
 
     text = canonical_slash_command(text)
     parts = text.split(maxsplit=1)
@@ -685,14 +693,8 @@ async def _run_terminal_focus_async(
             announce=False,
         )
 
-    catalog = {
-        name: description
-        for name, description in slash_help_rows()
-        if name in _SLASH_COMMANDS
-    }
-    catalog.update({name: "custom command" for name in custom_commands})
     composer = TerminalComposer(
-        slash_commands=catalog,
+        slash_commands=slash_completion_catalog(custom_commands),
         bottom_toolbar=status_line.bottom_toolbar,
         active_status=status_line.active_status,
         history_file=_focus_history_path(runtime),

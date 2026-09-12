@@ -583,6 +583,51 @@ def test_slash_completer_opens_menu_for_bare_slash() -> None:
     assert completions[1].display_meta_text == "choose model"
 
 
+def test_slash_completer_offers_canonical_help_targets() -> None:
+    from prompt_toolkit.document import Document
+
+    composer = TerminalComposer(
+        slash_commands={
+            "/agents": "list agents",
+            "/help": "show help",
+            "/archive": "custom command",
+        }
+    )
+    completions = list(
+        composer._completer.get_completions(
+            Document(text="/help a"), complete_event=None
+        )
+    )
+
+    assert [completion.text for completion in completions] == [
+        "agents",
+        "archive",
+    ]
+    assert [completion.display_text for completion in completions] == [
+        "/agents",
+        "/archive",
+    ]
+
+
+def test_slash_completer_preserves_leading_slash_and_ignores_other_operands() -> None:
+    from prompt_toolkit.document import Document
+
+    composer = TerminalComposer(slash_commands={"/agents": "list agents"})
+    with_slash = list(
+        composer._completer.get_completions(
+            Document(text="/help /a"), complete_event=None
+        )
+    )
+    ordinary_operand = list(
+        composer._completer.get_completions(
+            Document(text="/agents a"), complete_event=None
+        )
+    )
+
+    assert [completion.text for completion in with_slash] == ["/agents"]
+    assert ordinary_operand == []
+
+
 def test_bottom_toolbar_formats_ansi_string_for_prompt_toolkit() -> None:
     c = TerminalComposer(bottom_toolbar=lambda: "\x1b[32mready\x1b[0m")
 

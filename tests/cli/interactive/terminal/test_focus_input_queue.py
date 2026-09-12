@@ -154,6 +154,7 @@ class _BusyCommandRuntime(_RuntimeUsage):
         self.sent_texts: list[str] = []
         self.first_chunk_sent = asyncio.Event()
         self.release_turn = asyncio.Event()
+        self.list_agents_calls = 0
 
     async def send_message(self, text: str, **kwargs):
         del kwargs
@@ -163,6 +164,10 @@ class _BusyCommandRuntime(_RuntimeUsage):
         await self.release_turn.wait()
         yield " done"
         await asyncio.sleep(0)
+
+    def list_agents(self) -> list[object]:
+        self.list_agents_calls += 1
+        return []
 
 
 class _BusyCommandComposer:
@@ -187,6 +192,34 @@ class _BusyCommandComposer:
             return "/memory"
         if self._calls == 4:
             return "!pwd"
+        if self._calls == 5:
+            type(self).runtime.release_turn.set()
+            raise EOFError
+        raise EOFError
+
+
+class _BusyHelpComposer:
+    runtime: _BusyCommandRuntime
+
+    def __init__(self, *args, **kwargs) -> None:
+        del args, kwargs
+        self._calls = 0
+        self.prompt_session = object()
+
+    def set_busy(self, busy: bool) -> None:
+        del busy
+
+    async def read_line(self) -> str:
+        self._calls += 1
+        if self._calls == 1:
+            return "first"
+        if self._calls == 2:
+            await type(self).runtime.first_chunk_sent.wait()
+            return "/agents ?"
+        if self._calls == 3:
+            return "/help statsu"
+        if self._calls == 4:
+            return "/exit --help"
         if self._calls == 5:
             type(self).runtime.release_turn.set()
             raise EOFError
@@ -535,6 +568,48 @@ async def test_terminal_focus_runs_safe_busy_commands_and_blocks_shell_escape(
         and "Commands are unavailable while a turn is running" in msg.body
     ]
     assert len(blocked_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_runs_contextual_help_while_turn_streams(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _BusyCommandRuntime()
+    _BusyHelpComposer.runtime = runtime
+    output = io.StringIO()
+
+    monkeypatch.setattr(terminal_shell, "TerminalComposer", _BusyHelpComposer)
+    monkeypatch.setattr(terminal_shell, "TerminalOverlayPresenter", _StubOverlay)
+    monkeypatch.setattr(terminal_shell, "TerminalTranscript", _CapturedTranscript)
+    monkeypatch.setattr(
+        terminal_shell,
+        "Console",
+        lambda: Console(file=output, force_terminal=False, width=120),
+    )
+    monkeypatch.setattr(terminal_shell, "_push_greeter", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        terminal_shell, "_schedule_startup_notice", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(terminal_shell.sys, "stdin", _TTYInput())
+    monkeypatch.setattr(terminal_shell, "statusline_label", lambda runtime: "")
+
+    result = await terminal_shell._run_terminal_focus_async(
+        runtime,
+        working_dir="/tmp/focus-terminal-busy-help",
+        agent=None,
+        session=None,
+    )
+
+    assert result == 0
+    assert runtime.sent_texts == ["first"]
+    assert runtime.list_agents_calls == 0
+    transcript = _CapturedTranscript.last_instance
+    assert transcript is not None
+    bodies = [message.body for message in transcript._messages]
+    assert any(body.startswith("/agents —") for body in bodies)
+    assert any(body.startswith("Unknown command: /statsu") for body in bodies)
+    assert any(body.startswith("/exit —") for body in bodies)
+    assert not any("Queued message" in body for body in bodies)
 
 
 @pytest.mark.asyncio
