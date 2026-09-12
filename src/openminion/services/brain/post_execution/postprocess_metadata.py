@@ -1,6 +1,7 @@
 import json
 from typing import Any
 
+from openminion.base.constants import STATE_KEY_WORKING
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
@@ -96,7 +97,17 @@ def _build_turn_response_metadata(
         metadata=metadata,
         runner=runner,
         session_id=session_id,
-        request_id=request_id,
+        request_id=(
+            str(
+                getattr(
+                    getattr(step_out, STATE_KEY_WORKING, None),
+                    "trace_id",
+                    "",
+                )
+                or ""
+            ).strip()
+            or request_id
+        ),
     )
     action_error = getattr(getattr(step_out, "action_result", None), "error", None)
     if action_error is not None:
@@ -125,24 +136,32 @@ def _attach_session_task_plan_metadata(
 
     if not request_id:
         return
-    for event in reversed(session_api.list_events(session_id, trace_id=request_id)):
-        event_type = str(event.get("type") or "")
+    revision_events = session_api.list_events(
+        session_id,
+        event_type="task_plan.revised",
+        trace_id=request_id,
+    )
+    revisions: list[dict[str, Any]] = []
+    for event in revision_events:
         payload = event.get("payload")
         if not isinstance(payload, dict):
             continue
-        if event_type == "task_plan.revised":
-            revision = payload.get("revision")
-            if isinstance(revision, dict):
-                metadata["task_plan.revision"] = json.dumps(
-                    revision,
-                    sort_keys=True,
-                )
-        elif event_type == "task_plan.declared" and "task_plan" not in metadata:
-            plan = payload.get("plan")
-            if isinstance(plan, dict):
-                metadata["task_plan"] = json.dumps(plan, sort_keys=True)
-        if "task_plan" in metadata and "task_plan.revision" in metadata:
-            break
+        revision = payload.get("revision")
+        if isinstance(revision, dict):
+            revisions.append(dict(revision))
+    if "task_plan" not in metadata:
+        declarations = session_api.list_events(
+            session_id,
+            event_type="task_plan.declared",
+            trace_id=request_id,
+        )
+        if declarations:
+            payload = declarations[-1].get("payload")
+            if isinstance(payload, dict) and isinstance(payload.get("plan"), dict):
+                metadata["task_plan"] = json.dumps(payload["plan"], sort_keys=True)
+    if revisions:
+        metadata["task_plan.revisions"] = json.dumps(revisions, sort_keys=True)
+        metadata["task_plan.revision"] = json.dumps(revisions[-1], sort_keys=True)
 
 
 def _security_events_from_tool_results(

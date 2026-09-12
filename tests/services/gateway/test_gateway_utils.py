@@ -43,6 +43,21 @@ def test_extract_ephemeral_prompt_metadata_keeps_turn_tool_scope() -> None:
     }
 
 
+def test_extract_ephemeral_prompt_metadata_keeps_project_scope() -> None:
+    extracted = _extract_ephemeral_prompt_metadata(
+        {
+            "linked_task_id": "task-1",
+            "project_tool_calls_remaining": "12",
+            "autonomy_run_id": "internal-run",
+        }
+    )
+
+    assert extracted == {
+        "linked_task_id": "task-1",
+        "project_tool_calls_remaining": "12",
+    }
+
+
 def test_extract_ephemeral_prompt_metadata_forwards_added_roots_in_memory() -> None:
     raw_roots = '["/tmp/shared"]'
 

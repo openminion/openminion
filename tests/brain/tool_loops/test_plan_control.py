@@ -75,6 +75,22 @@ class _FakeSessionAPI:
         del session_id
         return dict(self.active_plan) if isinstance(self.active_plan, dict) else None
 
+    def list_events(
+        self,
+        session_id: str,
+        *,
+        event_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": item["event_type"],
+                "payload": item["payload"],
+            }
+            for item in self.events
+            if item["session_id"] == session_id
+            and (event_type is None or item["event_type"] == event_type)
+        ]
+
 
 @dataclass
 class _FakeSkillAPI:
@@ -569,6 +585,81 @@ def test_plan_control_revise_records_full_plan_payload() -> None:
     assert session_api.events[0]["payload"]["revision"]["revision_id"] == ("revision-1")
     assert result.outputs["task_plan.revision"]["revision_id"] == "revision-1"
     assert result.outputs["task_plan.revision"]["verifier_refs"] == ["verify:failed-1"]
+
+
+def test_plan_control_revise_rejects_missing_predecessor() -> None:
+    session_api = _FakeSessionAPI(active_plan=_active_plan())
+    first = handle_plan_tool_call(
+        loop_ctx=_Ctx(session_api=session_api),
+        arguments={
+            "action": "revise",
+            "plan_id": "plan-1",
+            "revision_id": "revision-1",
+            "verifier_refs": ["verify:failed-1"],
+            "revised_steps": _active_plan()["steps"],
+        },
+    )
+    assert first.status == "success"
+
+    stale = handle_plan_tool_call(
+        loop_ctx=_Ctx(session_api=session_api),
+        arguments={
+            "action": "revise",
+            "plan_id": "plan-1",
+            "revision_id": "revision-2",
+            "predecessor_revision_id": "missing",
+            "verifier_refs": ["verify:failed-2"],
+            "revised_steps": _active_plan()["steps"],
+        },
+    )
+
+    assert stale.status == "failed"
+    assert stale.error is not None
+    assert stale.error.code == "PLAN_REVISION_PREDECESSOR_INVALID"
+    assert stale.error.details["expected_predecessor_revision_id"] == "revision-1"
+
+
+def test_plan_control_revise_rejects_id_without_verifier_refs() -> None:
+    state = _Ctx(session_api=_FakeSessionAPI()).state.model_copy(
+        update={"resume_task_id_hint": "task-1"}
+    )
+    result = handle_plan_tool_call(
+        loop_ctx=_Ctx(
+            session_api=_FakeSessionAPI(active_plan=_active_plan()),
+            state=state,
+        ),
+        arguments={
+            "action": "revise",
+            "plan_id": "plan-1",
+            "revision_id": "revision-1",
+            "revised_steps": _active_plan()["steps"],
+        },
+    )
+
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.code == "PLAN_REVISION_VERIFIER_REFS_REQUIRED"
+
+
+def test_plan_control_project_revise_requires_revision_id() -> None:
+    state = _Ctx(session_api=_FakeSessionAPI()).state.model_copy(
+        update={"resume_task_id_hint": "task-1"}
+    )
+    result = handle_plan_tool_call(
+        loop_ctx=_Ctx(
+            session_api=_FakeSessionAPI(active_plan=_active_plan()),
+            state=state,
+        ),
+        arguments={
+            "action": "revise",
+            "plan_id": "plan-1",
+            "revised_steps": _active_plan()["steps"],
+        },
+    )
+
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.code == "PLAN_REVISION_ID_REQUIRED"
 
 
 def test_plan_control_terminal_actions_record_canonical_events() -> None:

@@ -242,6 +242,8 @@ def _extract_ephemeral_prompt_metadata(
         "project_context_truncated",
         "permission_mode",
         "permission_overrides",
+        "linked_task_id",
+        "project_tool_calls_remaining",
         "subagent_context_id",
         "subagent_tool_allowlist",
         "turn_tool_allowlist",

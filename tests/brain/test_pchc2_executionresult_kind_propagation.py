@@ -166,6 +166,21 @@ def test_result_from_needs_user_status_is_waiting_user() -> None:
     assert result.status == BRAIN_STATE_WAITING_USER
 
 
+def test_result_from_needs_user_preserves_loop_outputs() -> None:
+    helper = _build_needs_user_helper()
+    state = _state()
+    state.post_action_user_message = "Continue for more iterations?"
+    outcome = SimpleNamespace(
+        action_result=None,
+        telemetry_payload=lambda: {"task_plan": {"plan_id": "plan-1"}},
+    )
+
+    result = helper(_ctx(state), outcome=outcome)
+
+    assert result.action_result.status == "needs_user"
+    assert result.action_result.outputs["task_plan"]["plan_id"] == "plan-1"
+
+
 def test_execution_context_respond_threads_kind_to_services() -> None:
     import inspect
 

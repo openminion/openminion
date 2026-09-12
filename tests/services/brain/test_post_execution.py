@@ -13,6 +13,7 @@ from openminion.modules.memory.storage.memory import InMemoryMemoryStore
 from openminion.modules.brain.loop.context.pending_turn import (
     PENDING_TURN_CONTEXT_MAX_STALE_TURNS,
 )
+from openminion.modules.brain.schemas import BudgetCounters, WorkingState
 from openminion.modules.llm.providers.base import ProviderError, ProviderResponse
 from openminion.modules.llm.schemas import UsageInfo
 from openminion.services.agent.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
@@ -101,13 +102,14 @@ class _DummySessionAPI:
         *,
         event_type: str | None = None,
         trace_id: str | None = None,
+        limit: int | None = None,
     ) -> list[dict]:
         events = [item for item in self.events if item.get("session_id") == session_id]
         if event_type is not None:
             events = [item for item in events if item.get("type") == event_type]
         if trace_id is not None:
             events = [item for item in events if item.get("trace_id") == trace_id]
-        return events
+        return events[-(limit or 100) :]
 
     def append_turn(
         self,
@@ -406,6 +408,37 @@ def test_inject_resume_task_hints_attaches_memory_consolidation_module_state() -
     assert payload["candidates"][0]["candidate_id"] == "cand-1"
 
 
+def test_inject_resume_task_hints_initializes_first_project_turn_state() -> None:
+    bridge = DummyBridge()
+    session_api = _DummySessionAPI({})
+    session_api.get_latest_working_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    state = WorkingState(
+        session_id="sess-1",
+        agent_id="test-agent",
+        budgets_remaining=BudgetCounters(
+            ticks=8,
+            tool_calls=8,
+            a2a_calls=0,
+            tokens=100000,
+            time_ms=45000,
+        ),
+    )
+    runner = SimpleNamespace(
+        session_api=session_api,
+        profile=SimpleNamespace(agent_id="test-agent"),
+        _load_or_init_state=lambda _session_id: state,
+    )
+
+    bridge._inject_resume_task_hints(
+        runner=runner,
+        session_id="sess-1",
+        inbound_metadata={"linked_task_id": "task-1"},
+    )
+
+    assert session_api.written is not None
+    assert session_api.written["resume_task_id_hint"] == "task-1"
+
+
 def test_collect_system_history_context_deduplicates_and_orders() -> None:
     bridge = DummyBridge()
     history = [
@@ -520,6 +553,63 @@ def test_build_turn_response_metadata_projects_session_plan_facts() -> None:
 
     assert json.loads(metadata["task_plan"])["plan_id"] == "plan-1"
     assert json.loads(metadata["task_plan.revision"])["revision_id"] == ("revision-1")
+
+
+def test_build_turn_response_metadata_keeps_ordered_plan_revisions() -> None:
+    bridge = DummyBridge()
+    bridge._config = SimpleNamespace(
+        agent=SimpleNamespace(name="agent-1"),
+        agents={"agent-1": SimpleNamespace(name="agent-1")},
+        default_agent="agent-1",
+    )
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    runner = _DummyRunner({})
+    for revision_id, predecessor_id in (
+        ("revision-1", None),
+        ("revision-2", "revision-1"),
+    ):
+        runner.session_api.append_event(
+            "sess-plan",
+            "task_plan.revised",
+            {
+                "revision": {
+                    "plan_id": "plan-1",
+                    "revision_id": revision_id,
+                    "predecessor_revision_id": predecessor_id,
+                    "verifier_refs": ["verify:failed"],
+                    "revised_steps": [{"step_id": "repair", "description": "Repair"}],
+                }
+            },
+            trace_id="brain-trace",
+        )
+        for _ in range(101):
+            runner.session_api.append_event(
+                "sess-plan",
+                "brain.execution_status",
+                {},
+                trace_id="brain-trace",
+            )
+
+    metadata = bridge._build_turn_response_metadata(
+        runner=runner,
+        step_out=SimpleNamespace(
+            status="done",
+            working_state=SimpleNamespace(trace_id="brain-trace"),
+            action_result=SimpleNamespace(outputs={}),
+        ),
+        session_id="sess-plan",
+        request_id="gateway-trace",
+        elapsed_ms=100.0,
+        llm_steps=1,
+        termination_reason="model_final",
+    )
+
+    revisions = json.loads(metadata["task_plan.revisions"])
+    assert [item["revision_id"] for item in revisions] == [
+        "revision-1",
+        "revision-2",
+    ]
+    assert json.loads(metadata["task_plan.revision"])["revision_id"] == "revision-2"
 
 
 def test_build_turn_response_metadata_captures_provider_error_facts() -> None:

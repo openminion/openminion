@@ -240,7 +240,7 @@ def _inject_resume_task_hints(
         session_id=session_id,
     )
     if state_inline is None:
-        return
+        state_inline = runner._load_or_init_state(session_id).model_dump(mode="json")
     if task_id:
         state_inline["resume_task_id_hint"] = task_id
     if cron_job_id:

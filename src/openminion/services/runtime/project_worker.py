@@ -321,10 +321,7 @@ class ProjectWorker:
         )
         checkpoint = cast(
             ProjectCheckpoint,
-            load_latest_project_checkpoint(
-                self._task_manager,
-                task_id=task.task_id,
-            ),
+            load_latest_project_checkpoint(self._task_manager, task_id=task.task_id),
         )
         checkpoint, next_check_event = project_progress.begin_next_repository_check(
             checkpoint,
@@ -369,6 +366,7 @@ class ProjectWorker:
             triggering_cron_job_id=triggering_cron_job_id,
             next_wake_job_id=updated_project.next_wake_job_id,
             payload=project_cycle_checkpoint_payload(
+                checkpoint,
                 evaluation.turn,
                 effect_payload=project_effects.project_effect_checkpoint_payload(
                     checkpoint
@@ -584,6 +582,10 @@ class ProjectWorker:
             checkpoint,
             turn_result,
         )
+        if checkpoint.payload.get("plan_revision_required") is True and not (
+            turn_result.task_plan_revisions or turn_result.task_plan_revision
+        ):
+            task_plan_incomplete = True
         disposition = project_progress.cycle_disposition(
             cycle_limit,
             cycle_number=cycle_number,

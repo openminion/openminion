@@ -17,6 +17,8 @@ from openminion.modules.brain.config import (
 )
 from openminion.modules.brain.config import ADAPTIVE_BUDGET_HARD_CAP
 from openminion.modules.brain.schemas import AdaptiveBudgetConfig
+from openminion.modules.brain.schemas.base import new_uuid
+from openminion.modules.brain.schemas.state.action import ActionResult
 from openminion.modules.brain.diagnostics.transitions import transition
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
@@ -173,11 +175,17 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
             and ctx.state.post_action_user_message.strip()
         ):
             needs_user_kind = RESPOND_KIND_POLICY_CONFIRMATION_PROMPT
+        action_result = outcome.action_result or ActionResult(
+            command_id=new_uuid(),
+            status="needs_user",
+            summary=message,
+            outputs=outcome.telemetry_payload(),
+        )
         return ExecutionResult(
             status=BRAIN_STATE_WAITING_USER,
             working_state=ctx.state,
             message=message,
-            action_result=outcome.action_result,
+            action_result=action_result,
             kind=needs_user_kind,
         )
 

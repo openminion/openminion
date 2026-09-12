@@ -33,6 +33,7 @@ from .plan import (
     _pae_schedule_idle_tick,
     _payload_is_active,
     _resolve_session_api,
+    _session_id,
     _set_active_plan_override,
     _success_result,
     _sync_goal_plan_declare,
@@ -579,6 +580,9 @@ def _handle_revise(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult:
             summary="Plan revision did not match the active task plan.",
             details={"plan_id": revision.plan_id},
         )
+    lineage_failure = _validate_revision_lineage(loop_ctx, revision)
+    if lineage_failure is not None:
+        return lineage_failure
     full_plan = revision.to_task_plan(
         fallback_objective=str((active_plan or {}).get("objective") or ""),
         fallback_workflow_id=_active_plan_workflow_id(active_plan),
@@ -611,6 +615,59 @@ def _handle_revise(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult:
         summary=f"Recorded plan revision: {revision.plan_id}",
         outputs=outputs,
     )
+
+
+def _validate_revision_lineage(
+    loop_ctx: Any,
+    revision: TaskPlanRevision,
+) -> ActionResult | None:
+    revision_id = str(revision.revision_id or "").strip()
+    predecessor_id = str(revision.predecessor_revision_id or "").strip()
+    is_project_turn = bool(getattr(loop_ctx.state, "resume_task_id_hint", None))
+    if not revision_id:
+        if is_project_turn:
+            return _failed_result(
+                code="PLAN_REVISION_ID_REQUIRED",
+                summary="Project plan revisions require revision_id.",
+                details={},
+            )
+        return None
+    session_api = _resolve_session_api(loop_ctx)
+    assert session_api is not None
+    events = session_api.list_events(
+        _session_id(loop_ctx),
+        event_type="task_plan.revised",
+    )
+    latest_revision_id = ""
+    for event in events:
+        payload = event.get("payload")
+        stored = payload.get("revision") if isinstance(payload, dict) else None
+        if not isinstance(stored, dict) or stored.get("plan_id") != revision.plan_id:
+            continue
+        latest_revision_id = str(stored.get("revision_id") or "").strip()
+
+    if is_project_turn and not revision.verifier_refs:
+        return _failed_result(
+            code="PLAN_REVISION_VERIFIER_REFS_REQUIRED",
+            summary="Plan revision_id requires verifier_refs.",
+            details={"revision_id": revision_id},
+        )
+    if revision_id == latest_revision_id:
+        return _failed_result(
+            code="PLAN_REVISION_DUPLICATE",
+            summary="Plan revision_id was already recorded.",
+            details={"revision_id": revision_id},
+        )
+    if predecessor_id != latest_revision_id:
+        return _failed_result(
+            code="PLAN_REVISION_PREDECESSOR_INVALID",
+            summary="Plan revision predecessor does not match the latest revision.",
+            details={
+                "expected_predecessor_revision_id": latest_revision_id,
+                "predecessor_revision_id": predecessor_id,
+            },
+        )
+    return None
 
 
 def _handle_terminal(
