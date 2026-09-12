@@ -11,6 +11,9 @@ from prompt_toolkit.output.vt100 import Vt100_Output
 from rich.console import Console
 
 from openminion.cli.interactive.terminal.composer import TerminalComposer
+from openminion.cli.interactive.terminal.prompt_output import (
+    build_prompt_safe_terminal_writer,
+)
 from openminion.cli.interactive.terminal.shell import _run_agent_turn
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
@@ -24,6 +27,20 @@ class _StubRuntime:
     async def send_message(self, text, *, progress_callback=None):
         del text, progress_callback
         yield self._reply
+
+
+class _CompletedStatusRuntime:
+    async def send_message(self, text, *, progress_callback=None):
+        del text
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "status_key": "completed",
+                    "label": "Done.",
+                    "terminal": True,
+                }
+            )
+        yield "the final response"
 
 
 def _capture_terminal_output(callback) -> str:
@@ -177,3 +194,59 @@ def test_busy_status_is_erased_before_queued_input_lands() -> None:
     assert "queued question" in screen
     assert "Status:" not in screen
     assert "Analyzing request..." not in screen
+
+
+def test_completed_status_is_erased_before_final_response_lands() -> None:
+    async def _run() -> str:
+        raw = io.StringIO()
+        output = Vt100_Output(
+            raw,
+            get_size=lambda: Size(rows=24, columns=100),
+            enable_cpr=False,
+        )
+        with create_pipe_input() as pipe:
+            status_line = TerminalStatusLine()
+            composer = TerminalComposer(active_status=status_line.active_status)
+            composer._session = PromptSession(
+                input=pipe,
+                output=output,
+                style=composer._session.style,
+            )
+            console = Console(
+                file=raw,
+                force_terminal=True,
+                color_system=None,
+                width=100,
+            )
+            transcript = TerminalTranscript(console)
+            transcript.set_terminal_writer(
+                build_prompt_safe_terminal_writer(
+                    console=console,
+                    prompt_session=composer.prompt_session,
+                )
+            )
+            composer.set_busy(True)
+            read_task = asyncio.create_task(composer.read_line())
+            await asyncio.sleep(0.05)
+
+            await _run_agent_turn(
+                text="finish",
+                runtime=_CompletedStatusRuntime(),
+                transcript=transcript,
+                status_line=status_line,
+                invalidate_prompt=composer.invalidate,
+            )
+            composer.set_busy(False)
+            await asyncio.sleep(0.05)
+            pipe.send_text("next\n")
+            await read_task
+
+        screen = pyte.Screen(100, 24)
+        pyte.Stream(screen).feed(raw.getvalue())
+        return "\n".join(screen.display)
+
+    screen = asyncio.run(_run())
+
+    assert "the final response" in screen
+    assert "Done in" in screen
+    assert "Status: Done" not in screen

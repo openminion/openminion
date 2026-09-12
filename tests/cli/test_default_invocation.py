@@ -55,6 +55,7 @@ def test_no_subcommand_with_tty_and_config_launches_interactive(monkeypatch) -> 
     assert rc == 0
     interactive_args = called.get("interactive")
     assert interactive_args is not None
+    assert interactive_args.onboarding_checked is True
 
 
 def test_retired_rich_flag_is_rejected() -> None:
@@ -112,6 +113,7 @@ def test_no_subcommand_forwards_canonical_interactive_options(monkeypatch) -> No
     assert interactive_args.no_context is True
     assert interactive_args.no_update_check is True
     assert interactive_args.verbosity == "quiet"
+    assert interactive_args.onboarding_checked is True
 
 
 def test_cli_data_root_flag_overrides_inherited_runtime_root_env(

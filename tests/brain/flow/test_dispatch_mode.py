@@ -12,6 +12,7 @@ from openminion.modules.brain.execution.loop_contracts import (
 )
 from openminion.modules.brain.execution.services import RunnerExecutionServices
 from openminion.modules.brain.execution.dispatch import (
+    _respond_execute,
     invoke_decision_direct,
     prepare_decision_direct,
 )
@@ -19,6 +20,7 @@ from openminion.modules.brain.execution.lifecycle import dispatch_execution
 from openminion.modules.brain.schemas import (
     BudgetCounters,
     RespondDecision,
+    StepOutput,
     WorkingState,
 )
 
@@ -84,6 +86,65 @@ def _ctx() -> ExecutionContext:
         command_executor=SimpleNamespace(),
         _services=_FakeServices([]),
     )
+
+
+def test_respond_execution_projects_typed_delegation_result() -> None:
+    state = WorkingState(
+        session_id="s-delegation-result",
+        agent_id="reviewer",
+        budgets_remaining=BudgetCounters(
+            ticks=5,
+            tool_calls=5,
+            a2a_calls=5,
+            tokens=1000,
+            time_ms=10_000,
+        ),
+    )
+    decision = RespondDecision(
+        confidence=0.9,
+        reason_code="entry_text_response",
+        answer="Review passed.",
+        respond_kind="answer",
+        delegation_result_summary={
+            "summary": "Review passed.",
+            "status": "complete",
+            "review": {
+                "target_digest": "a" * 64,
+                "verifier_refs": ["coding-verifier:accepted"],
+                "passed": True,
+                "findings": [],
+            },
+        },
+    )
+
+    def _respond_with_meta(**kwargs: Any) -> StepOutput:
+        return StepOutput(
+            session_id=state.session_id,
+            status=kwargs["status"],
+            message=kwargs["message"],
+            working_state=state,
+            action_result=kwargs["action_result"],
+        )
+
+    ctx = ExecutionContext(
+        state=state,
+        decision=decision,
+        user_input="review child artifact",
+        logger=SimpleNamespace(emit=lambda *args, **kwargs: None),
+        options=SimpleNamespace(),
+        llm_adapter=None,
+        command_executor=SimpleNamespace(),
+        _services=SimpleNamespace(
+            direct_response=lambda **_kwargs: decision.answer,
+            respond_with_meta=_respond_with_meta,
+        ),
+    )
+
+    result = _respond_execute(ctx)
+
+    assert result.action_result is not None
+    summary = result.action_result.outputs["delegation_result_summary"]
+    assert summary["review"]["passed"] is True
 
 
 @pytest.mark.parametrize(

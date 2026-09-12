@@ -215,9 +215,21 @@ def _resolve_update_notice(args: argparse.Namespace) -> str:
                 )
             },
         )
-        return "" if result is None else result.render_notice()
+        return (
+            ""
+            if result is None
+            else result.render_notice(source_checkout=_running_from_source_checkout())
+        )
     except Exception:
         return ""
+
+
+def _running_from_source_checkout() -> bool:
+    package_root = Path(__file__).resolve().parents[2]
+    return (
+        package_root.parent.name == "src"
+        and (package_root.parent.parent / "pyproject.toml").is_file()
+    )
 
 
 def _build_update_notice_resolver(
@@ -234,9 +246,10 @@ def run_interactive(args: argparse.Namespace) -> int:
 
     set_color_mode(getattr(args, "color", None))
 
-    gate_exit, args = _handle_focus_onboarding_gate(args)
-    if gate_exit is not None:
-        return gate_exit
+    if not bool(getattr(args, "onboarding_checked", False)):
+        gate_exit, args = _handle_focus_onboarding_gate(args)
+        if gate_exit is not None:
+            return gate_exit
 
     _silence_logging_for_interactive(args)
 

@@ -86,20 +86,23 @@ def _maybe_check_schema_drift_sqlite(
         return None
 
 
-def _emit_schema_drift_warning(report: SchemaDriftReport) -> None:
+def _emit_schema_drift_warning(report: SchemaDriftReport, *, sqlite_path: Path) -> None:
     """Warn when the typed report contains structural drift."""
 
     if not report.has_drift:
         return
     payload = report.as_dict()
     logger.warning(
-        "%s: storage schema drift detected (expected_head=%s, observed_head=%s, findings=%d)",
+        "%s: storage schema drift detected "
+        "(database=%s, expected_head=%s, observed_head=%s, findings=%d)",
         SCHEMA_DRIFT_WARNING_EVENT,
+        sqlite_path,
         payload["expected_head_version"],
         payload["observed_head_version"],
         len(payload["findings"]),
         extra={
             "event": SCHEMA_DRIFT_WARNING_EVENT,
+            "storage_path": str(sqlite_path),
             "schema_drift_report": payload,
         },
     )
@@ -155,7 +158,10 @@ def build_runtime_storage(
         if sqlite_connection is not None:
             schema_drift_report = _maybe_check_schema_drift_sqlite(sqlite_connection)
             if schema_drift_report is not None:
-                _emit_schema_drift_warning(schema_drift_report)
+                _emit_schema_drift_warning(
+                    schema_drift_report,
+                    sqlite_path=resolved_path,
+                )
 
     return RuntimeStorageContext(
         sqlite_path=resolved_path,

@@ -48,6 +48,7 @@ _BOUNDED_FALLBACK_THRESHOLD_S = 0.05
 _TOKEN_REFRESH_COALESCE_S = 0.05
 _LIVE_REFRESH_PER_SECOND = 4
 _TOOL_BLOCK_TRUNCATE_LINES = 6
+_TOOL_BLOCK_TRUNCATE_CHARS = 480
 _TOOL_BLOCK_VERBOSE_MAX_LINES = 200
 
 _ASSISTANT_MARKER = "⏺"
@@ -427,7 +428,12 @@ def _render_plain_tool_block(
             include_event_markers=include_event_markers,
             public_title=public_title,
         ),
-        _collapsed_body_row(body_text, cap=cap, hint_style=hint_style),
+        _collapsed_body_row(
+            body_text,
+            cap=cap,
+            hint_style=hint_style,
+            max_chars=_TOOL_BLOCK_TRUNCATE_CHARS if public_title else None,
+        ),
     )
 
 
@@ -522,11 +528,18 @@ def _tool_title_row(
     return title_row
 
 
-def _collapsed_body_row(body_text: str, *, cap: int | None, hint_style: str) -> Text:
+def _collapsed_body_row(
+    body_text: str,
+    *,
+    cap: int | None,
+    hint_style: str,
+    max_chars: int | None = None,
+) -> Text:
     from openminion.cli.status.activity_ledger import collapse_output
 
+    length_truncated = max_chars is not None and len(body_text) > max_chars
     collapsed = collapse_output(
-        body_text,
+        body_text[:max_chars] if length_truncated else body_text,
         max_lines=cap if cap is not None else 10**9,
     )
     body_row = Text()
@@ -534,7 +547,11 @@ def _collapsed_body_row(body_text: str, *, cap: int | None, hint_style: str) -> 
     for index, line in enumerate(collapsed.visible_lines):
         prefix = "  └ " if index == 0 else "    "
         body_row.append(f"{prefix}{line}\n", style=body_style)
-    if collapsed.truncated:
+    if length_truncated:
+        body_row.append(
+            "    … output truncated (use /expand to see all)\n", style=hint_style
+        )
+    elif collapsed.truncated:
         body_row.append(f"    {collapsed.expand_hint}\n", style=hint_style)
     return body_row
 
@@ -625,7 +642,11 @@ def _render_in_progress_tool_block(
 
 
 def is_truncated(event: ToolEvent) -> bool:
-    return _body_line_count(event) > _TOOL_BLOCK_TRUNCATE_LINES
+    body = event.full_content or event.content or ""
+    return (
+        _body_line_count(event) > _TOOL_BLOCK_TRUNCATE_LINES
+        or len(body) > _TOOL_BLOCK_TRUNCATE_CHARS
+    )
 
 
 __all__ = [

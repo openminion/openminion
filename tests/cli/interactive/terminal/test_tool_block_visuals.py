@@ -83,6 +83,24 @@ def test_truncates_to_six_lines_with_summary() -> None:
     assert "/expand" in output
 
 
+def test_truncates_long_single_line_output() -> None:
+    body = '{"items":"' + ("x" * 1000) + 'TAIL"}'
+    event = ToolEvent(
+        tool_name="tool.list",
+        args={},
+        content=body,
+        full_content=body,
+        exit_code=0,
+    )
+
+    output = _capture(_render_tool_block(event))
+
+    assert "TAIL" not in output
+    assert "output truncated" in output
+    assert "/expand" in output
+    assert len(output.splitlines()) < 12
+
+
 def test_no_truncation_summary_for_short_output() -> None:
     event = ToolEvent(
         tool_name="Bash",
@@ -178,6 +196,12 @@ def test_is_truncated_returns_true_for_long_body() -> None:
     assert is_truncated(event) is True
 
 
+def test_is_truncated_returns_true_for_long_single_line() -> None:
+    body = "x" * 1000
+    event = ToolEvent(tool_name="tool.list", args={}, content=body, full_content=body)
+    assert is_truncated(event) is True
+
+
 def test_is_truncated_returns_false_for_short_body() -> None:
     event = ToolEvent(
         tool_name="Bash",
@@ -203,3 +227,15 @@ def test_render_full_tool_block_drops_truncation_cap() -> None:
     assert "line 30" in output
     assert "… +" not in output
     assert "/expand" not in output
+
+
+def test_render_full_tool_block_preserves_long_single_line() -> None:
+    body = ("x" * 1000) + "TAIL"
+    event = ToolEvent(
+        tool_name="tool.list", args={}, content=body, full_content=body, exit_code=0
+    )
+
+    output = _capture(_render_full_tool_block(event))
+
+    assert "TAIL" in output
+    assert "output truncated" not in output

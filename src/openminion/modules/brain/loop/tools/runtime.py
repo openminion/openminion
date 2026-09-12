@@ -686,7 +686,10 @@ def build_runtime_tool_specs(
         "ip.public": "Get the public IP details.",
         "ip.local": "Get the local IP details.",
         "browser": "Browse or inspect a web page interactively.",
-        "tool.list": "List the available runtime tools.",
+        "tool.list": (
+            "Inspect available runtime tools. Omit query for compact names; use query "
+            "for matching descriptions."
+        ),
         "task.schedule": "Schedule a task for interval or cron-backed execution.",
         "task.list": "List scheduled tasks and their exact task identifiers.",
         "task.cancel": "Cancel a scheduled task by exact task identifier.",

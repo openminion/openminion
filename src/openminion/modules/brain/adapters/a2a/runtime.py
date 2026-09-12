@@ -38,9 +38,30 @@ def _typed_delegation_result_summary(value: Any) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
     try:
-        return DelegationResultSummary.model_validate(raw).model_dump(mode="json")
+        return DelegationResultSummary.model_validate(raw).model_dump(
+            mode="json", exclude_none=True
+        )
     except Exception:
         return None
+
+
+def _project_delegation_result(
+    response_payload: dict[str, Any],
+    *,
+    metadata: dict[str, Any],
+    params: dict[str, Any],
+    agent_id: str,
+) -> None:
+    result_summary = _typed_delegation_result_summary(
+        metadata.get("delegation_result_summary")
+    )
+    if result_summary is None:
+        return
+    response_payload["delegation_result_summary"] = result_summary
+    review = result_summary.get("review")
+    if params.get("review_target_digest") and isinstance(review, dict):
+        response_payload.update(review)
+        response_payload["child_agent_id"] = agent_id
 
 
 def _call_response_payload(
@@ -533,7 +554,6 @@ class A2actlAdapter:
                     "error_message",
                     "tool_loop_termination_reason",
                     "adaptive.finalization_status",
-                    "delegation_result_summary",
                     "total_tokens_used",
                 )
                 if key in normalized_metadata
@@ -552,11 +572,12 @@ class A2actlAdapter:
                 ).strip(),
                 "metadata": projected_metadata,
             }
-            result_summary = _typed_delegation_result_summary(
-                normalized_metadata.get("delegation_result_summary")
+            _project_delegation_result(
+                response_payload,
+                metadata=normalized_metadata,
+                params=params,
+                agent_id=agent_id,
             )
-            if result_summary is not None:
-                response_payload["delegation_result_summary"] = result_summary
             return response_payload
 
         return _handler

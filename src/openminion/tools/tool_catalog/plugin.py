@@ -14,9 +14,12 @@ class ToolSearchArgs(BaseModel):
 
     query: str = Field(
         default="",
-        description="Optional filter — returns tools whose name or description contains this string (case-insensitive)",
+        description=(
+            "Optional capability filter. Omit it for a compact names-only inventory; "
+            "set it to return matching tool names and descriptions."
+        ),
     )
-    max_results: int = Field(default=50, ge=1, le=200)
+    max_results: int = Field(default=200, ge=1, le=200)
     library: bool = Field(
         default=False,
         description="When true, return the authored-tool library instead of the model tool catalog.",
@@ -58,15 +61,23 @@ def _h_tool_search(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     from openminion.modules.tool.dispatch import get_registry_manager
 
     catalog_rows = get_registry_manager().model_tool_catalog()
-    tools: list[dict[str, Any]] = []
+    matches: list[tuple[str, str]] = []
     for tool_id, description in catalog_rows:
         if query and query not in tool_id.lower() and query not in description.lower():
             continue
-        tools.append({"name": tool_id, "description": description})
-        if len(tools) >= max_results:
-            break
+        matches.append((tool_id, description))
 
-    return {"ok": True, "tools": tools, "count": len(tools)}
+    tools = [
+        ({"name": tool_id, "description": description} if query else {"name": tool_id})
+        for tool_id, description in matches[:max_results]
+    ]
+    return {
+        "ok": True,
+        "tools": tools,
+        "count": len(tools),
+        "total_count": len(matches),
+        "truncated": len(tools) < len(matches),
+    }
 
 
 def register(registry: ToolRegistry) -> None:

@@ -9,10 +9,11 @@ def test_interactive_launches_terminal_flow(monkeypatch) -> None:
     from openminion.cli.commands import interactive as interactive_cmd
     from openminion.cli.presentation import styles
 
+    onboarding_inspections: list[object] = []
     monkeypatch.setattr(
         interactive_cmd,
         "_inspect_interactive_onboarding",
-        lambda _args: SimpleNamespace(action=None),
+        lambda args: onboarding_inspections.append(args),
     )
     monkeypatch.setattr(
         interactive_cmd, "_silence_logging_for_interactive", lambda _args: ""
@@ -47,11 +48,13 @@ def test_interactive_launches_terminal_flow(monkeypatch) -> None:
         no_update_check=True,
         theme=None,
         color="always",
+        onboarding_checked=True,
     )
     try:
         assert interactive_cmd.run_interactive(args) == 0
         assert styles.get_color_mode() == "on"
         assert len(launched) == 1
+        assert onboarding_inspections == []
     finally:
         styles.set_color_mode(None)
 

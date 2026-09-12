@@ -4046,6 +4046,7 @@ def test_engine_delegation_result_summary_is_recorded_for_child_turn() -> None:
     assert any(
         message.role == "system"
         and "structured delegation_result_summary signal" in message.content
+        and "<delegation_result_summary>" in message.content
         for message in client.calls[0]["messages"]
     )
     assert any(

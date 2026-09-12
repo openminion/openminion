@@ -42,6 +42,9 @@ def test_tool_search_returns_ok():
     assert result["ok"] is True
     assert "tools" in result
     assert "count" in result
+    assert result["count"] == result["total_count"]
+    assert result["truncated"] is False
+    assert all(set(tool) == {"name"} for tool in result["tools"])
 
 
 def test_tool_search_returns_model_facing_tools_only():
@@ -58,6 +61,7 @@ def test_tool_search_query_filter():
     result = _h_tool_search({"query": "file"}, _CTX)
     assert result["ok"] is True
     for tool in result["tools"]:
+        assert "description" in tool
         assert (
             "file" in tool["name"].lower()
             or "file" in tool.get("description", "").lower()
@@ -71,10 +75,21 @@ def test_tool_search_no_results_for_gibberish():
     assert result["tools"] == []
 
 
-def test_tool_search_max_results_respected():
+def test_tool_search_max_results_respected(monkeypatch):
+    class _CatalogManager:
+        def model_tool_catalog(self):
+            return [(f"sample.tool_{index}", "Sample tool") for index in range(3)]
+
+    monkeypatch.setattr(
+        "openminion.modules.tool.dispatch.get_registry_manager",
+        lambda: _CatalogManager(),
+    )
+
     result = _h_tool_search({"max_results": 2}, _CTX)
     assert result["ok"] is True
-    assert len(result["tools"]) <= 2
+    assert len(result["tools"]) == 2
+    assert result["total_count"] > result["count"]
+    assert result["truncated"] is True
 
 
 def test_register_adds_tool_list_and_compat_alias():
@@ -115,7 +130,7 @@ def test_registry_execute_calls_supports_tool_list_and_alias() -> None:
 def test_tool_search_args_defaults():
     args = ToolSearchArgs.model_validate({})
     assert args.query == ""
-    assert args.max_results == 50
+    assert args.max_results == 200
 
 
 def test_tool_search_args_rejects_extra():

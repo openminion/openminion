@@ -29,6 +29,7 @@ from sophiagraph.storage import SophiaGraphSqliteStore
 from tests.e2e.cli.focus.conftest import require_live_focus
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
+from tests.e2e.cli.focus.harness.assertions import visible_text
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(360)]
 
@@ -158,8 +159,8 @@ def _resolve_live_delegated_record(root: Path) -> tuple[MemoryRecord, dict]:
         policy.close()
 
 
-def _run_git(repo: Path, *args: str) -> None:
-    subprocess.run(
+def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         ["git", "-C", str(repo), *args],
         check=True,
         capture_output=True,
@@ -420,7 +421,7 @@ def test_live_focus_delegate_async_lifecycle(
             (f"/delegate async {target_agent} Reply with exactly `{marker}`."),
             marker="Delegation:",
         )
-        task_match = _TASK_ID_RE.search(started)
+        task_match = _TASK_ID_RE.search(visible_text(started))
         assert task_match is not None, started
         task_id = task_match.group(1)
 
@@ -469,7 +470,7 @@ def test_live_focus_cancel_stops_active_child_turn(
             ),
             marker="Delegation:",
         )
-        task_match = _TASK_ID_RE.search(started)
+        task_match = _TASK_ID_RE.search(visible_text(started))
         assert task_match is not None, started
         task_id = task_match.group(1)
         _wait_for_a2a_job_state(focus_probe, task_id, "RUNNING")
@@ -565,10 +566,14 @@ def test_live_focus_code_children_store_and_disposition_artifacts(
     active_probe = focus_probe.for_workdir(repo, include_project_context=False)
     prompt = (
         "Use the decompose tool exactly once with two independent subtasks. "
-        "Subtask id accept-child must call file.write with exact arguments "
-        '{"path": "accepted.txt", "content": "ACCEPTED_CHILD"}. '
-        "Subtask id reject-child must call file.write with exact arguments "
-        '{"path": "rejected.txt", "content": "REJECTED_CHILD"}. '
+        "Each subtask description must tell its child to work locally in its current "
+        "allocated workspace, enter the dedicated coding loop, create the requested "
+        "relative file, run an exec verification with the python3 executable and a "
+        "pathlib read_text equality assertion, and finish only after verification. "
+        "It must not use a shell if/test expression, delegate, or use an absolute file "
+        "path. Subtask id accept-child must create relative file "
+        "accepted.txt with exact content ACCEPTED_CHILD. Subtask id reject-child must "
+        "create relative file rejected.txt with exact content REJECTED_CHILD. "
         "For both subtasks set suggested_mode to act and inputs to "
         f'{{"code_bearing": true, "workspace_root": "{repo}"}}. '
         "Do not create either file in the parent checkout yourself."
@@ -592,29 +597,60 @@ def test_live_focus_code_children_store_and_disposition_artifacts(
         artifacts = _latest_public_child_artifacts(active_probe)
         by_id = {str(item.get("subtask_id")): item for item in artifacts}
         assert {"accept-child", "reject-child"}.issubset(by_id)
+        assert by_id["accept-child"]["validation"]["passed"] is True
+        assert by_id["accept-child"]["validation"]["verifier_refs"]
+        accepted_ref = {"record_alias": by_id["accept-child"]["record_alias"]}
+        rejected_ref = {"record_alias": by_id["reject-child"]["record_alias"]}
+
+        review_request = {
+            "reviewer_agent_id": "minimax-m2-7-highspeed",
+            "instruction": "Review the immutable accepted.txt child artifact.",
+            "review_criteria": [
+                "The diff adds only accepted.txt with exact content ACCEPTED_CHILD."
+            ],
+            "repository_instructions": "Remain read-only and report typed findings.",
+            "child_artifact": accepted_ref,
+        }
+        reviewed = active_probe.run_slash_turn(
+            session,
+            "/delegate review "
+            + shlex.quote(json.dumps(review_request, separators=(",", ":"))),
+            marker="status    passed",
+            timeout=240,
+        )
 
         accepted = active_probe.run_slash(
             session,
             "/delegate accept "
-            + shlex.quote(json.dumps(by_id["accept-child"], separators=(",", ":"))),
+            + shlex.quote(json.dumps(accepted_ref, separators=(",", ":"))),
             marker="status    accepted",
         )
         rejected = active_probe.run_slash(
             session,
             "/delegate reject "
-            + shlex.quote(json.dumps(by_id["reject-child"], separators=(",", ":"))),
+            + shlex.quote(json.dumps(rejected_ref, separators=(",", ":"))),
             marker="status    rejected",
         )
         write_transcript(
             root,
             scenario.scenario_id,
-            f"{transcript}\n\n--- accept ---\n{accepted}"
+            f"{transcript}\n\n--- review ---\n{reviewed}"
+            f"\n\n--- accept ---\n{accepted}"
             f"\n\n--- reject ---\n{rejected}\n",
         )
 
+    assert "Delegation failed" not in reviewed
     assert "Delegation failed" not in accepted
     assert "Delegation failed" not in rejected
     assert (repo / "accepted.txt").read_text(encoding="utf-8").strip() == (
         "ACCEPTED_CHILD"
     )
     assert not (repo / "rejected.txt").exists()
+    worktrees = [
+        line
+        for line in _run_git(
+            repo, "worktree", "list", "--porcelain"
+        ).stdout.splitlines()
+        if line.startswith("worktree ")
+    ]
+    assert worktrees == [f"worktree {repo}"]

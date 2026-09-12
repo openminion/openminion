@@ -176,7 +176,22 @@ def test_fixed_readonly_reviewer_returns_typed_findings_and_child_identity() -> 
         f"Target digest: {_PLAN_DIGEST}\n"
         "Diff: git diff -- src tests\n"
         "Verifier refs: pytest:plan-lineage\n"
-        "Repository instructions: AGENTS.md"
+        "Repository instructions: AGENTS.md\n"
+        "The runtime already verified that Target digest is the SHA-256 digest of "
+        "Diff. Immutable child bundle is an evidence identity, not a fetchable URL. "
+        "Review the supplied diff and verifier refs without fetching the bundle or "
+        "calling tools.\n"
+        "End the response with exactly the following typed trailer, without wrapping "
+        "its JSON in another object:\n"
+        "<delegation_result_summary>\n"
+        '{"summary":"State the review outcome.","artifacts_produced":[],'
+        '"status":"complete","review":{"target_digest":"'
+        f'{_PLAN_DIGEST}","verifier_refs":["pytest:plan-lineage"],"passed":true,'
+        '"findings":[]}}\n'
+        "</delegation_result_summary>\n"
+        "Keep passed=true and findings=[] only when every criterion passes. Otherwise "
+        "set passed=false and replace findings with typed priority, owner, and message "
+        "items. Copy Target digest and Verifier refs exactly."
     )
     assert call.command["params"] == {
         "goal": instruction,
@@ -186,6 +201,9 @@ def test_fixed_readonly_reviewer_returns_typed_findings_and_child_identity() -> 
         "permission_mode": "readonly",
         "workspace_root": "/repo",
         "cwd": "/repo",
+        "review_target_digest": _PLAN_DIGEST,
+        "review_bundle_ref": "artifact://sha256/bundle",
+        "review_verifier_refs": ["pytest:plan-lineage"],
     }
 
 

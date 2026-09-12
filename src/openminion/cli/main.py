@@ -148,6 +148,7 @@ def _run_default_interactive(
                 animation=getattr(args, "animation", None),
                 verbosity=getattr(args, "verbosity", None),
                 progress=getattr(args, "progress", None),
+                onboarding_checked=True,
             )
         )
         or 0

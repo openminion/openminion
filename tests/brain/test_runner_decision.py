@@ -129,6 +129,50 @@ class _SequenceEntryLLM(_StaticEntryLLM):
 
 
 class RunnerDecisionTests(unittest.TestCase):
+    def test_direct_entry_response_preserves_delegation_result_summary(self) -> None:
+        response = _entry_text_response("Review passed.")
+        response.delegation_result_summary = {
+            "summary": "Review passed.",
+            "status": "complete",
+            "review": {
+                "target_digest": "a" * 64,
+                "verifier_refs": ["coding-verifier:accepted"],
+                "passed": True,
+                "findings": [],
+            },
+        }
+        runner = BrainRunner(
+            profile=_profile(),
+            session_api=fake_session_api(),
+            llm_api=_StaticEntryLLM(response),
+            context_api=fake_context_builder(),
+            tool_api=SimpleNamespace(registry=SimpleNamespace(_tools={})),
+        )
+        state = WorkingState(
+            session_id="s-delegation-result",
+            agent_id="router-agent",
+            budgets_remaining=BudgetCounters(
+                ticks=10,
+                tool_calls=5,
+                a2a_calls=5,
+                tokens=1000,
+                time_ms=10_000,
+            ),
+        )
+
+        with (
+            patch.object(runner, "_estimate_tokens", return_value=1),
+            patch.object(runner, "_debit_tokens", return_value=None),
+        ):
+            decision = runner._decide(
+                state=state,
+                user_input="review child artifact",
+                logger=fake_logger(),
+            )
+
+        self.assertIsNotNone(decision.delegation_result_summary)
+        self.assertTrue(decision.delegation_result_summary.review.passed)
+
     def test_normalize_decision_payload_requires_explicit_act_payload_shape(
         self,
     ) -> None:

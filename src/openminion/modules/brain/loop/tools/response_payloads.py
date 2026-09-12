@@ -120,7 +120,12 @@ _DELEGATION_RESULT_SUMMARY_GUIDANCE = (
     "When this turn is delegated work from another agent, answer the delegated task "
     "normally and populate the structured delegation_result_summary signal with "
     "summary, artifacts_produced, and status. Keep the summary within 800 "
-    "characters and only report artifacts you actually produced or used."
+    "characters and only report artifacts you actually produced or used. When the "
+    "delegated task is an immutable child-artifact review, also populate review with "
+    "the supplied target_digest and verifier_refs, a boolean passed verdict, and "
+    "typed priority/owner/message findings. End the response with "
+    "<delegation_result_summary> followed by one JSON object containing that signal "
+    "and then </delegation_result_summary>."
 )
 _TASK_PLAN_GUIDANCE = (
     "For complex multi-step user work, record a model-authored task plan by "

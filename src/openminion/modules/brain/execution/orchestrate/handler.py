@@ -5,8 +5,10 @@ from typing import Any
 from pydantic import Field
 
 from openminion.modules.brain.constants import (
+    BRAIN_ACTIVE_STATES,
     BRAIN_INTERNAL_MODE_ACT_ORCHESTRATE,
     BRAIN_INTERNAL_MODE_EXECUTION_TARGET_DELEGATED,
+    BRAIN_STATE_DONE,
 )
 from openminion.modules.brain.diagnostics.transitions import transition
 from openminion.modules.brain.loop.orchestration import decide as decide_phase
@@ -441,7 +443,7 @@ class OrchestrateMode:
         action_status = str(getattr(action_result, "status", "") or "").strip().lower()
         status = "completed"
         if (
-            result.status in {"error", "stopped"}
+            result.status != BRAIN_STATE_DONE
             or action_status
             in {
                 "failed",
@@ -494,6 +496,18 @@ class OrchestrateMode:
                     logger=ctx.logger,
                     depth=1,
                 )
+                while (
+                    result.status in BRAIN_ACTIVE_STATES
+                    and child_state.budgets_remaining.ticks > 0
+                ):
+                    result = invoke_decision_direct(
+                        runner,
+                        state=child_state,
+                        decision=decision,
+                        user_input=None,
+                        logger=ctx.logger,
+                        depth=1,
+                    )
             result_status = result.status
         finally:
             child_artifact = finalize_child_worktree(
