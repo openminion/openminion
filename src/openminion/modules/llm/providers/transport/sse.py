@@ -12,6 +12,7 @@ from .client import ProviderHTTPClient
 from .error_facts import openai_error_facts, openai_error_message
 from .http import (
     _safe_http_error_body,
+    response_header,
     response_request_id,
     with_default_user_agent,
 )
@@ -193,9 +194,9 @@ def iter_sse_post_lines(
         status_code = int(exc.code)
         detail = _safe_http_error_body(exc)
         facts = openai_error_facts(
-            detail,
-            status_code=int(exc.code),
-            request_id=str((exc.headers or {}).get("X-Request-ID") or ""),
+            detail, status_code=int(exc.code),
+            request_id=response_header(exc.headers, "X-Request-ID"),
+            retry_after=response_header(exc.headers, "Retry-After"),
         )
         request_id = str(facts.get("request_id") or "")
         _raise_sse_http_error(exc, provider_name=provider_name, facts=facts)

@@ -872,10 +872,59 @@ class ConfigCommandTests(unittest.TestCase):
                     return_value=0,
                 ) as provider_check,
             ):
-                code = run_setup(args)
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = run_setup(args)
 
             self.assertEqual(code, 0)
             provider_check.assert_called_once_with(config_path=config_path.resolve())
+            self.assertIn(
+                "Checking provider connection; press Ctrl-C to cancel.",
+                buf.getvalue(),
+            )
+            self.assertRegex(
+                buf.getvalue(),
+                r"Connection check completed in \d+\.\d+s\.",
+            )
+
+    def test_provider_check_interrupt_reports_saved_unverified_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path = tmp_path / "cfg" / "config.json"
+            args = Namespace(
+                config=str(config_path),
+                home_root=str(tmp_path),
+                data_root=str(tmp_path / ".openminion"),
+                no_chat=True,
+                agent="ops-agent",
+                provider="openai",
+                model="gpt-4.1-mini",
+                base_url=None,
+                api_format=None,
+                check_provider=True,
+            )
+
+            with (
+                mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-env"}),
+                mock.patch(
+                    "openminion.cli.commands.setup._run_setup_doctor",
+                    return_value=0,
+                ),
+                mock.patch(
+                    "openminion.cli.commands.setup._run_setup_provider_check",
+                    side_effect=KeyboardInterrupt,
+                ),
+            ):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = run_setup(args)
+
+            self.assertEqual(code, 130)
+            self.assertTrue(config_path.exists())
+            output = buf.getvalue()
+            self.assertIn("press Ctrl-C to cancel", output)
+            self.assertIn("cancelled after configuration was saved", output)
+            self.assertIn("connection not tested", output)
 
     def test_setup_catches_keyboard_interrupt_before_write(self) -> None:
         args = Namespace(list_providers=False)
@@ -948,7 +997,14 @@ class ConfigCommandTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             provider_check.assert_called_once_with(config_path=config_path.resolve())
-            self.assertIn("Connection check failed", buf.getvalue())
+            self.assertIn(
+                "Checking provider connection; press Ctrl-C to cancel.",
+                buf.getvalue(),
+            )
+            self.assertRegex(
+                buf.getvalue(),
+                r"Connection check failed after \d+\.\d+s",
+            )
 
     def test_minimax_setup_preserves_existing_openai_shared_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

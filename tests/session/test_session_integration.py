@@ -183,6 +183,36 @@ class CanonicalEventLoggerTests(unittest.TestCase):
         self.assertEqual(event["payload"]["provider_name"], "minimax")
         self.assertEqual(event["payload"]["service_vendor"], "minimax")
 
+    def test_emit_llm_call_keeps_unknown_custom_service_identity(self) -> None:
+        from openminion.modules.brain.adapters.llm.runtime import LlmctlAdapter
+        from openminion.modules.brain.diagnostics.events import CanonicalEventLogger
+        from openminion.modules.llm.providers.bridge import LLMCTLBridgeProvider
+
+        provider = LLMCTLBridgeProvider(
+            provider_name="openai",
+            model="vendor-model",
+            provider_config={
+                "api_key": "fixture-key",
+                "base_url": "https://models.example.invalid/v1",
+            },
+            env={},
+        )
+        llm_api = LlmctlAdapter(SimpleNamespace(provider=provider, name=provider.name))
+        logger = CanonicalEventLogger(
+            session_api=self._store,
+            session_id=self._sid,
+            agent_id="agent.main",
+            llm_api=llm_api,
+        )
+
+        logger.emit("llm.call.completed", {"model": "vendor-model"})
+
+        event = self._store.get_events(
+            self._sid, after_seq=-1, types=["llm.call.completed"]
+        )[-1]
+        self.assertEqual(event["payload"]["provider_name"], "openai")
+        self.assertEqual(event["payload"]["service_vendor"], "unknown")
+
     def test_emit_tool_event_uses_tool_actor_type(self) -> None:
         try:
             logger = self._make_logger()

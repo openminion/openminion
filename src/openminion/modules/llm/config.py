@@ -355,34 +355,40 @@ def _read_env_value(key: str, *, env: Mapping[str, Any] | None = None) -> str:
 
 def _resolve_openai_service_vendor(base_url: str) -> str:
     endpoint = str(base_url or "").strip().lower()
-    if urlparse(endpoint).hostname == "api.cortensor.app":
+    parsed = urlparse(endpoint)
+    hostname = parsed.hostname or ""
+    if not endpoint or hostname == "api.openai.com":
+        return "openai"
+    if hostname == "api.cortensor.app":
         return "cortensor"
-    if (
-        "dashscope.aliyuncs.com" in endpoint
-        or "dashscope-us.aliyuncs.com" in endpoint
-        or "dashscope-intl.aliyuncs.com" in endpoint
-        or ".maas.aliyuncs.com" in endpoint
-    ):
+    if hostname in {
+        "dashscope.aliyuncs.com",
+        "dashscope-us.aliyuncs.com",
+        "dashscope-intl.aliyuncs.com",
+    } or hostname.endswith((".dashscope.aliyuncs.com", ".maas.aliyuncs.com")):
         return "dashscope"
-    if "api.minimax.io" in endpoint:
+    if hostname == "api.minimax.io":
         return "minimax"
-    if "api.moonshot." in endpoint:
+    if hostname in {"api.moonshot.ai", "api.moonshot.cn"}:
         return "kimi"
-    if "api.z.ai/api/coding/paas/v4" in endpoint:
+    if hostname == "api.z.ai" and (
+        parsed.path == "/api/coding/paas/v4"
+        or parsed.path.startswith("/api/coding/paas/v4/")
+    ):
         return "zai-coding"
-    if "api.z.ai" in endpoint:
+    if hostname == "api.z.ai":
         return "zai"
-    if "api.deepseek.com" in endpoint:
+    if hostname == "api.deepseek.com":
         return "deepseek"
-    if "generativelanguage.googleapis.com" in endpoint:
+    if hostname == "generativelanguage.googleapis.com":
         return "gemini"
-    if "api.x.ai" in endpoint:
+    if hostname == "api.x.ai":
         return "xai"
-    if "api.mistral.ai" in endpoint:
+    if hostname == "api.mistral.ai":
         return "mistral"
-    if "api.together.ai" in endpoint:
+    if hostname == "api.together.ai":
         return "together"
-    return "openai"
+    return "unknown"
 
 
 def _resolve_model_family(model: str, *, service_vendor: str = "") -> str:
@@ -409,4 +415,4 @@ def _resolve_model_family(model: str, *, service_vendor: str = "") -> str:
         return "claude"
     if lowered.startswith(("gpt", "o1", "o3", "o4")):
         return "gpt"
-    return "openai"
+    return "unknown"

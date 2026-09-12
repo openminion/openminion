@@ -8,7 +8,11 @@ import pytest
 from openminion.modules.llm.config import resolve_provider_identity_translation
 from openminion.modules.llm.errors import LLMCtlError
 from openminion.modules.llm.providers.behavior.resolver import resolve_behavior_profile
-from openminion.modules.llm.providers.adapters import OpenAIProvider
+from openminion.modules.llm.providers.adapters import (
+    CerebrasProvider,
+    GroqProvider,
+    OpenAIProvider,
+)
 from openminion.modules.llm.setup_catalog import get_setup_preset
 from openminion.modules.llm.schemas import LLMRequest
 
@@ -717,15 +721,16 @@ def test_cortensor_portal_stream_reports_malformed_tool_arguments() -> None:
     assert error.error.details["tool_call_id"] == "call-invalid"
 
 
-def test_default_openai_stream_behavior_remains_text_only() -> None:
+def test_default_openai_stream_preserves_native_tool_contract() -> None:
     provider = OpenAIProvider()
     request = LLMRequest.model_validate(
         {
             "model": "gpt-4.1-mini",
             "messages": [{"role": "user", "content": "Call weather."}],
+            "top_p": 0.8,
             "tools": [
                 {
-                    "name": "weather",
+                    "name": "web.search",
                     "description": "look up weather",
                     "input_schema": {"type": "object"},
                 }
@@ -737,10 +742,16 @@ def test_default_openai_stream_behavior_remains_text_only() -> None:
 
     def _fake_stream(**kwargs):
         captured.update(kwargs["payload"])
-        yield 'data: {"choices":[{"delta":{"content":"hello"}}]}'
+        kwargs["response_metadata"]["request_id"] = "request-1"
         yield (
-            'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
-            '"usage":{"total_tokens":2}}'
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            '"id":"call-1","function":{"name":"web_",'
+            '"arguments":"{\\"query\\":\\""}}]}}]}'
+        )
+        yield (
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            '"function":{"name":"search","arguments":"docs\\"}"}}]},'
+            '"finish_reason":"tool_calls"}],"usage":{"total_tokens":2}}'
         )
         yield "data: [DONE]"
 
@@ -750,12 +761,245 @@ def test_default_openai_stream_behavior_remains_text_only() -> None:
     ):
         events = list(provider.stream(request, {"api_key": "fixture-key"}))
 
+    assert captured["tools"][0]["function"]["name"] == "web_search"
+    assert captured["tool_choice"] == "required"
+    assert captured["top_p"] == 0.8
+    assert [event.type for event in events] == ["delta", "delta", "delta", "done"]
+    assert events[-2].tool_call is not None
+    assert events[-2].tool_call.name == "web.search"
+    assert events[-2].tool_call.arguments == {"query": "docs"}
+    assert events[-1].finish_reason == "tool_calls"
+    assert events[-1].usage is not None
+    assert events[-1].usage.total_tokens == 2
+    assert events[-1].request_id == "request-1"
+
+
+@pytest.mark.parametrize(
+    ("provider_type", "provider_name"),
+    [(GroqProvider, "groq"), (CerebrasProvider, "cerebras")],
+)
+def test_inherited_openai_stream_preserves_tools_and_provider_identity(
+    provider_type: type[OpenAIProvider],
+    provider_name: str,
+) -> None:
+    provider = provider_type()
+    request = LLMRequest.model_validate(
+        {
+            "messages": [{"role": "user", "content": "Search."}],
+            "tools": [
+                {
+                    "name": "web.search",
+                    "description": "Search the web",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+        }
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_stream(**kwargs):
+        captured.update(kwargs["payload"])
+        yield "data: {bad-json"
+
+    with patch(
+        "openminion.modules.llm.providers.openai.adapter.iter_sse_post_lines",
+        side_effect=_fake_stream,
+    ):
+        events = list(provider.stream(request, {"api_key": "fixture-key"}))
+
+    assert "tools" in captured
+    assert [event.type for event in events] == ["error", "done"]
+    assert events[0].error is not None
+    assert events[0].error.message.startswith(f"{provider_name} stream")
+
+
+@pytest.mark.parametrize(
+    ("provider_type", "provider_name"),
+    [(GroqProvider, "groq"), (CerebrasProvider, "cerebras")],
+)
+def test_inherited_stream_tool_delta_error_keeps_provider_identity(
+    provider_type: type[OpenAIProvider],
+    provider_name: str,
+) -> None:
+    provider = provider_type()
+    request = LLMRequest.model_validate(
+        {
+            "messages": [{"role": "user", "content": "Search."}],
+            "tools": [
+                {
+                    "name": "web.search",
+                    "description": "Search the web",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+        }
+    )
+    invalid_index = (
+        'data: {"choices":[{"delta":{"tool_calls":'
+        '[{"index":"bad","function":{"name":"web_search"}}]}}]}'
+    )
+
+    with patch(
+        "openminion.modules.llm.providers.openai.adapter.iter_sse_post_lines",
+        return_value=iter([invalid_index]),
+    ):
+        events = list(provider.stream(request, {"api_key": "fixture-key"}))
+
+    assert [event.type for event in events] == ["error", "done"]
+    assert events[0].error is not None
+    assert events[0].error.message.startswith(f"{provider_name} stream error:")
+    assert "openai" not in events[0].error.message
+
+
+@pytest.mark.parametrize("payload", ["[]", "null"])
+def test_stream_non_object_json_is_typed_and_terminal(payload: str) -> None:
+    provider = OpenAIProvider()
+
+    with patch(
+        "openminion.modules.llm.providers.openai.adapter.iter_sse_post_lines",
+        return_value=iter([f"data: {payload}"]),
+    ):
+        events = list(
+            provider.stream(
+                LLMRequest.model_validate(
+                    {"messages": [{"role": "user", "content": "Hello."}]}
+                ),
+                {"api_key": "fixture-key"},
+            )
+        )
+
+    assert [event.type for event in events] == ["error", "done"]
+    assert events[0].error is not None
+    assert events[0].error.code == "PROVIDER_ERROR"
+    assert "must be an object" in events[0].error.message
+
+
+def test_custom_compatible_stream_does_not_enable_unaccepted_native_facts() -> None:
+    provider = OpenAIProvider()
+    request = LLMRequest.model_validate(
+        {
+            "model": "vendor-model",
+            "messages": [{"role": "user", "content": "Hello."}],
+            "tools": [
+                {
+                    "name": "web.search",
+                    "description": "Search the web",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+        }
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_stream(**kwargs):
+        captured.update(kwargs["payload"])
+        yield 'data: {"choices":[{"delta":{"content":"ok"}}]}'
+        yield "data: [DONE]"
+
+    with patch(
+        "openminion.modules.llm.providers.openai.adapter.iter_sse_post_lines",
+        side_effect=_fake_stream,
+    ):
+        events = list(
+            provider.stream(
+                request,
+                {
+                    "api_key": "fixture-key",
+                    "base_url": "https://api.deepseek.com/v1",
+                },
+            )
+        )
+
     assert "tools" not in captured
-    assert "tool_choice" not in captured
     assert [event.type for event in events] == ["delta", "done"]
-    assert events[0].delta_text == "hello"
-    assert events[-1].finish_reason is None
-    assert events[-1].usage is None
+    assert events[0].delta_text == "ok"
+
+
+@pytest.mark.parametrize("tool_call_strategy", ["fallback", "off"])
+def test_supported_openai_stream_rejects_non_native_tool_strategy_without_request(
+    tool_call_strategy: str,
+) -> None:
+    provider = OpenAIProvider()
+    request = LLMRequest.model_validate(
+        {
+            "messages": [{"role": "user", "content": "Search."}],
+            "tools": [
+                {
+                    "name": "web.search",
+                    "description": "Search the web",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+        }
+    )
+
+    with patch(
+        "openminion.modules.llm.providers.openai.adapter.iter_sse_post_lines"
+    ) as stream_post:
+        events = list(
+            provider.stream(
+                request,
+                {
+                    "api_key": "fixture-key",
+                    "tool_call_strategy": tool_call_strategy,
+                },
+            )
+        )
+
+    stream_post.assert_not_called()
+    assert [event.type for event in events] == ["error", "done"]
+    assert events[0].error is not None
+    assert events[0].error.code == "INVALID_ARGUMENT"
+    assert events[0].error.details["tool_call_strategy"] == tool_call_strategy
+
+
+@pytest.mark.parametrize("arguments", ('{"query":"docs"}', '{"query":"'))
+def test_malformed_stream_never_reconstructs_buffered_tool_call(arguments: str) -> None:
+    provider = OpenAIProvider()
+    request = LLMRequest.model_validate(
+        {
+            "model": "gpt-4.1-mini",
+            "messages": [{"role": "user", "content": "Search."}],
+            "tools": [
+                {
+                    "name": "web.search",
+                    "description": "Search the web",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+        }
+    )
+
+    def _fake_stream(**_kwargs):
+        tool_delta = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-1",
+                                "function": {
+                                    "name": "web_search",
+                                    "arguments": arguments,
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        yield f"data: {json.dumps(tool_delta)}"
+        yield "data: {bad-json"
+
+    with patch(
+        "openminion.modules.llm.providers.openai.adapter.iter_sse_post_lines",
+        side_effect=_fake_stream,
+    ):
+        events = list(provider.stream(request, {"api_key": "fixture-key"}))
+
+    assert [event.type for event in events] == ["delta", "error", "done"]
+    assert all(event.tool_call is None for event in events)
 
 
 def test_cortensor_portal_lists_live_models() -> None:
@@ -809,8 +1053,8 @@ def test_dashscope_openai_compatible_endpoint_variants_resolve_structurally(
     [
         ("https://api.cortensor.app/v1/", "oss-20b", "cortensor", "oss"),
         ("https://api.cortensor.app:443/v1", "manual-model", "cortensor", "unknown"),
-        ("https://api.cortensor.app.evil.test/v1", "oss-20b", "openai", "openai"),
-        ("https://api.cortensor.app@evil.test/v1", "oss-20b", "openai", "openai"),
+        ("https://api.cortensor.app.evil.test/v1", "oss-20b", "unknown", "unknown"),
+        ("https://api.cortensor.app@evil.test/v1", "oss-20b", "unknown", "unknown"),
     ],
 )
 def test_cortensor_portal_identity_uses_exact_parsed_host(

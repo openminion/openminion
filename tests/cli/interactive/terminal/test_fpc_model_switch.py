@@ -20,6 +20,7 @@ from openminion.base.config import (
 )
 from openminion.cli.interactive.runtime import OpenMinionRuntime
 from openminion.cli.interactive.terminal.shell import _render_model_status
+from openminion.cli.interactive.terminal.shell.renderers import _render_model_command
 
 
 class _SessionStore:
@@ -478,3 +479,47 @@ def test_render_model_status_marks_active_row() -> None:
     _render_model_status(runtime=rt, console=console)
 
     assert "◆" in buf.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("argument", "method_name", "failure", "success_text"),
+    [
+        ("add new-model", "add_model", OSError("save failed"), "added new-model"),
+        (
+            "default 1",
+            "set_default_model",
+            AgentConfigActivationError("saved, but activating failed"),
+            "is now the default",
+        ),
+    ],
+)
+def test_model_command_reports_expected_failure_and_remains_usable(
+    argument: str,
+    method_name: str,
+    failure: Exception,
+    success_text: str,
+) -> None:
+    selected = SimpleNamespace(
+        model="new-model",
+        connection_name="Test connection",
+    )
+    results: list[Exception | SimpleNamespace] = [failure, selected]
+    runtime = SimpleNamespace(agent_id="default-agent")
+
+    def run(_target: str):
+        result = results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    setattr(runtime, method_name, run)
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=100)
+
+    _render_model_command(argument, runtime=runtime, console=console)
+    first_output = output.getvalue()
+    assert str(failure) in first_output
+    assert success_text not in first_output
+
+    _render_model_command(argument, runtime=runtime, console=console)
+    assert success_text in output.getvalue()

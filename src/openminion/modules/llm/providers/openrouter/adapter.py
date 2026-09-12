@@ -1,4 +1,3 @@
-import json
 import time
 from typing import Any, Iterator
 
@@ -29,7 +28,11 @@ from ..message_payloads import (
     _resolve_tool_names,
     _usage_from_openai_like,
 )
-from ..openai.adapter import OpenAIProvider
+from ..openai.adapter import (
+    OpenAIProvider,
+    _iter_openai_stream_events,
+    _stream_strategy_error,
+)
 from ..transport.client import http_client_for_config
 from ..tool_calling import (
     build_tool_schema_name_map,
@@ -268,10 +271,29 @@ class OpenRouterProvider(OpenAIProvider):
             yield LLMStreamEvent(
                 type="error", error=ResponseError(code="AUTH_ERROR", message=str(exc))
             )
+            yield LLMStreamEvent(type="done")
             return
-
         base_url = str(config.get("base_url") or self.default_base_url).rstrip("/")
-
+        tool_call_strategy = str(
+            config.get("tool_call_strategy", LLM_TOOL_CALL_STRATEGY_HYBRID)
+        )
+        if request.tools and not supports_native_tool_calling(tool_call_strategy):
+            yield LLMStreamEvent(
+                type="error",
+                error=_stream_strategy_error(self.name, tool_call_strategy),
+            )
+            yield LLMStreamEvent(type="done")
+            return
+        tool_name_map = (
+            build_tool_schema_name_map(
+                request.tools,
+                provider_name=self.name,
+                model_name=model,
+            )
+            if request.tools
+            else None
+        )
+        name_overrides = tool_name_map.canonical_to_external if tool_name_map else None
         payload: dict[str, Any] = {
             "model": model,
             "messages": _messages_openai_like(
@@ -280,16 +302,28 @@ class OpenRouterProvider(OpenAIProvider):
                 collapse_system_messages=self._collapse_system_messages_for_model(
                     model
                 ),
+                tool_name_overrides=name_overrides,
             ),
             "stream": True,
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
+        if request.top_p is not None:
+            payload["top_p"] = request.top_p
         resolved_max_tokens = self._resolve_max_tokens(request=request, config=config)
         if resolved_max_tokens is not None:
             payload["max_tokens"] = resolved_max_tokens
         if request.stop:
             payload["stop"] = request.stop
+        if request.tools and supports_native_tool_calling(tool_call_strategy):
+            payload["tools"] = build_openai_tools_payload(
+                request.tools,
+                canonical_to_external=name_overrides,
+            )
+            payload["tool_choice"] = normalize_tool_choice(
+                request.tool_choice,
+                canonical_to_external=name_overrides,
+            )
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -302,47 +336,28 @@ class OpenRouterProvider(OpenAIProvider):
             headers["HTTP-Referer"] = app_url
         if app_name:
             headers["X-Title"] = app_name
-
         timeout_seconds = _resolve_timeout_seconds(config, metadata=request.metadata)
-
-        try:
-            for line in iter_sse_post_lines(
-                url=f"{base_url}/chat/completions",
-                payload=payload,
-                headers=headers,
-                timeout_seconds=timeout_seconds,
-                provider_name=self.name,
-                trace_metadata=request.metadata,
-                http_client=http_client_for_config(self._http_client, config),
-                telemetryctl=config.get("telemetryctl"),
-            ):
-                if not line.startswith("data:"):
-                    continue
-                data_str = line[len("data:") :].strip()
-                if data_str == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data_str)
-                except json.JSONDecodeError:
-                    continue
-                choices = chunk.get("choices")
-                if not isinstance(choices, list) or not choices:
-                    continue
-                delta = (
-                    choices[0].get("delta", {}) if isinstance(choices[0], dict) else {}
-                )
-                content = delta.get("content")
-                if content:
-                    yield LLMStreamEvent(type="delta", delta_text=str(content))
-        except LLMCtlError as exc:
-            yield LLMStreamEvent(
-                type="error",
-                error=ResponseError(
-                    code=exc.code, message=f"openrouter stream error: {exc.message}"
-                ),
-            )
-            return
-        yield LLMStreamEvent(type="done")
+        response_metadata: dict[str, str] = {}
+        lines = iter_sse_post_lines(
+            url=f"{base_url}/chat/completions",
+            payload=payload,
+            headers=headers,
+            timeout_seconds=timeout_seconds,
+            provider_name=self.name,
+            trace_metadata=request.metadata,
+            http_client=http_client_for_config(self._http_client, config),
+            response_metadata=response_metadata,
+            telemetryctl=config.get("telemetryctl"),
+        )
+        yield from _iter_openai_stream_events(
+            lines,
+            response_metadata=response_metadata,
+            preserve_response_facts=True,
+            provider_name=self.name,
+            external_to_canonical=(
+                tool_name_map.external_to_canonical if tool_name_map else None
+            ),
+        )
 
     @staticmethod
     def _collapse_system_messages_for_model(model_name: str) -> bool:

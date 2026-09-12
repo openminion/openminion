@@ -31,6 +31,7 @@ def _request(
     tools: list | None = None,
     tool_choice: str | dict | None = None,
     max_output_tokens: int | None = None,
+    top_p: float | None = None,
 ) -> LLMRequest:
     payload: dict = {
         "messages": [{"role": "user", "content": content}],
@@ -40,6 +41,8 @@ def _request(
         payload["tool_choice"] = tool_choice
     if max_output_tokens is not None:
         payload["max_output_tokens"] = max_output_tokens
+    if top_p is not None:
+        payload["top_p"] = top_p
     return LLMRequest.model_validate(payload)
 
 
@@ -91,14 +94,14 @@ def _openrouter_json_response(
     }
 
 
-def _http_error(code: int):
+def _http_error(code: int, *, headers: dict[str, str] | None = None):
     from urllib.error import HTTPError
 
     err = HTTPError(
         url="https://openrouter.ai/api/v1/chat/completions",
         code=code,
         msg=f"HTTP {code}",
-        hdrs=None,  # type: ignore[arg-type]
+        hdrs=headers,
         fp=io.BytesIO(b'{"error": "test error"}'),
     )
     return err
@@ -489,25 +492,31 @@ class TestOpenRouterStreaming(unittest.TestCase):
             side_effect=_http_error(401),
         ):
             events = list(provider.stream(_request(), _config()))
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].type, "error")
+        self.assertEqual([event.type for event in events], ["error", "done"])
         self.assertEqual(events[0].error.code, "AUTH_ERROR")
 
     def test_stream_rate_limited(self):
         provider = _provider()
         with patch(
             "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
-            side_effect=_http_error(429),
+            side_effect=_http_error(
+                429,
+                headers={"X-Request-ID": "req-429", "Retry-After": "7"},
+            ),
         ):
             events = list(provider.stream(_request(), _config()))
         self.assertEqual(events[0].type, "error")
         self.assertEqual(events[0].error.code, "RATE_LIMITED")
+        self.assertEqual(events[0].error.details["request_id"], "req-429")
+        self.assertEqual(events[0].error.details["retry_after"], "7")
+        self.assertEqual(events[-1].type, "done")
 
     def test_stream_missing_api_key_yields_error(self):
         provider = _provider()
         events = list(provider.stream(_request(), {"api_key": ""}))
         self.assertEqual(events[0].type, "error")
         self.assertEqual(events[0].error.code, "AUTH_ERROR")
+        self.assertEqual(events[-1].type, "done")
 
     def test_stream_skips_non_data_lines(self):
         provider = _provider()
@@ -526,6 +535,105 @@ class TestOpenRouterStreaming(unittest.TestCase):
         delta_events = [e for e in events if e.type == "delta"]
         self.assertEqual(len(delta_events), 1)
         self.assertEqual(delta_events[0].delta_text, "hi")
+
+    def test_stream_preserves_tools_controls_and_response_facts(self):
+        provider = _provider()
+        captured: dict[str, object] = {}
+        lines = [
+            (
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                '"id":"call-1","function":{"name":"web_",'
+                '"arguments":"{\\"query\\":\\""}}]}}]}'
+            ),
+            (
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                '"function":{"name":"search","arguments":"docs\\"}"}}]},'
+                '"finish_reason":"tool_calls"}],"usage":{"total_tokens":3}}'
+            ),
+            "data: [DONE]",
+        ]
+
+        def stream_lines(**kwargs):
+            captured.update(kwargs["payload"])
+            kwargs["response_metadata"]["request_id"] = "openrouter-request-1"
+            yield from lines
+
+        tools = [
+            {
+                "name": "web.search",
+                "description": "Search the web",
+                "input_schema": {"type": "object"},
+            }
+        ]
+        with patch(
+            "openminion.modules.llm.providers.openrouter.adapter.iter_sse_post_lines",
+            side_effect=stream_lines,
+        ):
+            events = list(
+                provider.stream(
+                    _request(tools=tools, tool_choice="required", top_p=0.7),
+                    _config(),
+                )
+            )
+
+        self.assertEqual(captured["tools"][0]["function"]["name"], "web_search")
+        self.assertEqual(captured["tool_choice"], "required")
+        self.assertEqual(captured["top_p"], 0.7)
+        self.assertEqual(events[-2].tool_call.name, "web.search")
+        self.assertEqual(events[-2].tool_call.arguments, {"query": "docs"})
+        self.assertEqual(events[-1].finish_reason, "tool_calls")
+        self.assertEqual(events[-1].usage.total_tokens, 3)
+        self.assertEqual(events[-1].request_id, "openrouter-request-1")
+
+    def test_stream_malformed_json_is_typed_and_terminal(self):
+        provider = _provider()
+        with patch(
+            "openminion.modules.llm.providers.openrouter.adapter.iter_sse_post_lines",
+            return_value=iter(["data: {bad-json"]),
+        ):
+            events = list(provider.stream(_request(), _config()))
+
+        self.assertEqual([event.type for event in events], ["error", "done"])
+        self.assertEqual(events[0].error.code, "PROVIDER_ERROR")
+        self.assertIn("malformed event payload", events[0].error.message)
+
+    def test_stream_non_object_json_is_typed_and_terminal(self):
+        provider = _provider()
+        with patch(
+            "openminion.modules.llm.providers.openrouter.adapter.iter_sse_post_lines",
+            return_value=iter(["data: []"]),
+        ):
+            events = list(provider.stream(_request(), _config()))
+
+        self.assertEqual([event.type for event in events], ["error", "done"])
+        self.assertEqual(events[0].error.code, "PROVIDER_ERROR")
+        self.assertIn("must be an object", events[0].error.message)
+
+    def test_stream_rejects_non_native_tool_strategy_without_request(self):
+        provider = _provider()
+        tools = [
+            {
+                "name": "web.search",
+                "description": "Search the web",
+                "input_schema": {"type": "object"},
+            }
+        ]
+        with patch(
+            "openminion.modules.llm.providers.openrouter.adapter.iter_sse_post_lines"
+        ) as stream_post:
+            events = list(
+                provider.stream(
+                    _request(tools=tools),
+                    {**_config(), "tool_call_strategy": "fallback"},
+                )
+            )
+
+        stream_post.assert_not_called()
+        self.assertEqual([event.type for event in events], ["error", "done"])
+        self.assertEqual(events[0].error.code, "INVALID_ARGUMENT")
+        self.assertEqual(
+            events[0].error.details["tool_call_strategy"], "fallback"
+        )
 
 
 # list_models() tests

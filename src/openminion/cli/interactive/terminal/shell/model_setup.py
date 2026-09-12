@@ -47,16 +47,20 @@ async def _prompt_setup_selection(
     for index, preset in enumerate(presets, start=1):
         console.print(f"  {index}. {preset.display_label} ({preset.api_format_label})")
 
-    choice = await overlay.present_prompt_async("Connection number or id: ")
-    if not choice:
-        return None
-    preset = None
-    if choice.isdigit() and 1 <= int(choice) <= len(presets):
-        preset = presets[int(choice) - 1]
-    if preset is None:
-        preset = next((row for row in presets if row.preset_id == choice), None)
-    if preset is None:
-        raise ValueError(f"unknown connection {choice!r}")
+    while True:
+        choice = await overlay.present_prompt_async("Connection number or id: ")
+        if not choice:
+            return None
+        preset = None
+        if choice.isdigit() and 1 <= int(choice) <= len(presets):
+            preset = presets[int(choice) - 1]
+        if preset is None:
+            preset = next((row for row in presets if row.preset_id == choice), None)
+        if preset is not None:
+            break
+        console.print(
+            Text(f"(/model: unknown connection {choice!r})", style=_ERR_STYLE)
+        )
 
     default_model = preset.recommended_models[0] if preset.recommended_models else ""
     model = await overlay.present_prompt_async(
@@ -75,84 +79,108 @@ async def _prompt_setup_selection(
     return preset, model, base_url, preset.preset_id
 
 
+async def _prompt_local_api_key(
+    exc: ProviderSetupMissingCredential,
+    *,
+    console: Console,
+    overlay: TerminalOverlayPresenter,
+) -> str | None:
+    console.print(
+        Text(
+            f"No {exc.env_var} environment variable was found.",
+            style=_MUTED_STYLE,
+        )
+    )
+    if not await overlay.present_confirm_async(
+        "Store an API key in the local config instead?",
+        default=False,
+    ):
+        return None
+    return await overlay.present_prompt_async("API key: ", secret=True) or None
+
+
 async def handle_model_setup(
     *,
     runtime: Any,
     console: Console,
     overlay: TerminalOverlayPresenter,
 ) -> None:
-    try:
-        selection = await _prompt_setup_selection(
-            runtime=runtime,
-            console=console,
-            overlay=overlay,
-        )
-    except ValueError as exc:
-        console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
-        return
+    selection = await _prompt_setup_selection(
+        runtime=runtime,
+        console=console,
+        overlay=overlay,
+    )
     if selection is None:
         _cancel(console)
         return
     preset, model, base_url, connection_id = selection
+    stored_api_key = ""
 
-    def build(target_connection_id: str, *, stored_api_key: str = "") -> Any:
+    def build() -> Any:
         return runtime.build_model_setup(
             preset_id=preset.preset_id,
             model=model,
             base_url=base_url,
-            connection_id=target_connection_id,
+            connection_id=connection_id,
             stored_api_key=stored_api_key,
             allow_local_api_key=bool(stored_api_key),
         )
 
-    async def build_with_connection(
-        target_connection_id: str,
-        *,
-        stored_api_key: str = "",
-    ) -> Any | None:
+    async def build_with_connection() -> Any | None:
+        nonlocal connection_id
         try:
-            return build(target_connection_id, stored_api_key=stored_api_key)
+            return build()
         except ProviderSetupConnectionConflict as exc:
-            replacement = await overlay.present_prompt_async(
-                f"Connection id {exc.connection_id!r} is already used. New id: "
-            )
+            prompt = f"Connection id {exc.connection_id!r} is already used. New id: "
+        while True:
+            replacement = await overlay.present_prompt_async(prompt)
             if not replacement:
                 return None
-            return build(replacement, stored_api_key=stored_api_key)
+            connection_id = replacement
+            try:
+                return build()
+            except ProviderSetupConnectionConflict as exc:
+                prompt = (
+                    f"Connection id {exc.connection_id!r} is already used. New id: "
+                )
+            except ProviderSetupMissingCredential:
+                raise
+            except ProviderSetupError as exc:
+                console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
+                prompt = "New connection id: "
 
-    try:
-        result = await build_with_connection(connection_id)
-    except ProviderSetupMissingCredential as exc:
-        console.print(
-            Text(
-                f"No {exc.env_var} environment variable was found.",
-                style=_MUTED_STYLE,
-            )
-        )
-        if not await overlay.present_confirm_async(
-            "Store an API key in the local config instead?",
-            default=False,
-        ):
-            _cancel(console)
-            return
-        stored_api_key = await overlay.present_prompt_async("API key: ", secret=True)
-        if not stored_api_key:
-            _cancel(console)
-            return
+    while True:
         try:
-            result = await build_with_connection(
-                connection_id,
-                stored_api_key=stored_api_key,
+            result = await build_with_connection()
+        except ProviderSetupMissingCredential as exc:
+            entered_api_key = await _prompt_local_api_key(
+                exc, console=console, overlay=overlay
             )
-        except ProviderSetupError as credential_exc:
-            console.print(Text(f"(/model: {credential_exc})", style=_ERR_STYLE))
+            if entered_api_key is None:
+                _cancel(console)
+                return
+            stored_api_key = entered_api_key
+            continue
+        except ProviderSetupError as exc:
+            console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
+            corrected_model = await overlay.present_prompt_async(f"Model [{model}]: ")
+            if corrected_model is None:
+                _cancel(console)
+                return
+            model = corrected_model or model
+            if preset.requires_base_url:
+                corrected_base_url = await overlay.present_prompt_async(
+                    f"Base URL [{base_url}]: "
+                )
+                if corrected_base_url is None:
+                    _cancel(console)
+                    return
+                base_url = corrected_base_url or base_url
+            continue
+        if result is None:
+            _cancel(console)
             return
-    except ProviderSetupError as exc:
-        console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
-        return
-    if result is None:
-        _cancel(console)
-        return
+        break
 
     _render_preview(console, result.preview)
     if not await overlay.present_confirm_async("Save and use this connection now?"):

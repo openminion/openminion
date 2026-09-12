@@ -16,7 +16,6 @@ from openminion.modules.llm.providers.behavior.constants import (
     MINIMAX_SERVICE_VENDOR,
     OPENAI_CHAT_COMPLETIONS_WIRE_PROTOCOL_FAMILY,
     OPENAI_CHAT_TRANSPORT_ADAPTER,
-    OPENAI_MODEL_FAMILY,
     OPENAI_SERVICE_VENDOR,
     STRUCTURED_FALLBACK_PARSER_POLICY,
 )
@@ -75,7 +74,7 @@ class TestIdentityTranslationInterplay:
                 "unknown-model-name",
                 "",
                 OPENAI_SERVICE_VENDOR,
-                OPENAI_MODEL_FAMILY,
+                "unknown",
             ),
         ],
     )

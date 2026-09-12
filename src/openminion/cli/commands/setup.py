@@ -5,6 +5,7 @@ from contextlib import redirect_stderr, redirect_stdout
 import importlib
 import io
 import logging
+import time
 from dataclasses import dataclass
 from getpass import getpass
 from pathlib import Path
@@ -505,6 +506,31 @@ def _reject_incompatible_model_flags(args: Any) -> bool:
     return True
 
 
+def _check_provider_with_progress(config_path: Path) -> int:
+    print("Checking provider connection; press Ctrl-C to cancel.")
+    started = time.perf_counter()
+    try:
+        code = _resolve_runtime_helper("_run_setup_provider_check")(
+            config_path=config_path
+        )
+    except (EOFError, KeyboardInterrupt):
+        print(
+            f"Setup cancelled after configuration was saved at {config_path}; "
+            f"provider check ran for {time.perf_counter() - started:.1f}s; "
+            "connection not tested."
+        )
+        return 130
+    elapsed = time.perf_counter() - started
+    if code != 0:
+        print(
+            f"Connection check failed after {elapsed:.1f}s; config was written but "
+            "provider readiness is not claimed."
+        )
+        return code
+    print(f"Connection check completed in {elapsed:.1f}s.")
+    return 0
+
+
 def run_setup(args) -> int:
     from openminion.base.config.core import resolve_default_agent_id
 
@@ -564,14 +590,8 @@ def run_setup(args) -> int:
         if not add_model and not provider_check_requested and interactive_preset:
             provider_check_requested = _prompt_provider_check(interactive_preset)
         if provider_check_requested:
-            check_code = _resolve_runtime_helper("_run_setup_provider_check")(
-                config_path=saved_path
-            )
+            check_code = _check_provider_with_progress(saved_path)
             if check_code != 0:
-                print(
-                    "Connection check failed; config was written but provider "
-                    "readiness is not claimed."
-                )
                 return check_code
             connection_state = "verified"
 
