@@ -151,8 +151,7 @@ def iter_sse_post_lines(
     consumed_lines: list[str] = []
     status_code, request_id = 0, ""
     complete, response_bytes = False, 0
-    response_open_ms: int | None = None
-    first_event_ms: int | None = None
+    response_open_ms = first_event_ms = None
     if response_metadata is not None:
         response_metadata.clear()
     trace_http_json_request(
@@ -194,7 +193,8 @@ def iter_sse_post_lines(
         status_code = int(exc.code)
         detail = _safe_http_error_body(exc)
         facts = openai_error_facts(
-            detail, status_code=int(exc.code),
+            detail,
+            status_code=int(exc.code),
             request_id=response_header(exc.headers, "X-Request-ID"),
             retry_after=response_header(exc.headers, "Retry-After"),
         )

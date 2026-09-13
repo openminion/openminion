@@ -476,13 +476,13 @@ def test_focus_model_setup_corrects_invalid_replacement_id_in_pty(
         session.type_line("/model setup")
         session.wait_for_after("Connection number or id:", offset=offset, timeout=60)
         session.type_line("ollama")
-        session.wait_for_after(re.escape("Model [llama3.1]:"), offset=offset, timeout=60)
+        session.wait_for_after(
+            re.escape("Model [llama3.1]:"), offset=offset, timeout=60
+        )
         session.type_line("")
         session.wait_for_after("already used. New id:", offset=offset, timeout=60)
         session.type_line("bad/id")
-        session.wait_for_after(
-            "New connection id:", offset=offset, timeout=60
-        )
+        session.wait_for_after("New connection id:", offset=offset, timeout=60)
         session.type_line("ollama-local")
         session.wait_for_after(
             "Save and use this connection now?", offset=offset, timeout=60

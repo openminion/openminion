@@ -691,11 +691,10 @@ class FocusProbe:
 
     def run_turn(self, session: PtySession, scenario: FocusScenario) -> str:
         turn_offset = len(session.visible_transcript)
-        self._submit_composer_line(session, scenario.prompt)
+        completion_probe = self._submit_composer_line(session, scenario.prompt)
         event_offset = len(session.visible_transcript)
         approvals = 0
         continuations = 0
-        completion_probe: str | None = None
         deadline = time.monotonic() + scenario.timeout
         while time.monotonic() < deadline:
             time.sleep(0.1)
@@ -726,13 +725,6 @@ class FocusProbe:
                 approvals += 1
                 assert approvals <= scenario.max_auto_approvals, transcript[-2000:]
                 self._submit_inline_approval(session, scenario.approval_reply)
-                approval_probe = composer_echo_probe(scenario.approval_reply)
-                completion_probe = (
-                    approval_probe
-                    if screen_after_submission(session.screen_text, approval_probe)
-                    is not None
-                    else None
-                )
                 event_offset = len(session.visible_transcript)
                 continue
             if approval_needs_reply or approval_visible:
@@ -750,7 +742,12 @@ class FocusProbe:
                     "Focus turn ended with a terminal provider failure\n"
                     f"{failure_slice[-2000:]}"
                 )
-            if done_match is not None and not approval_visible:
+            if (
+                done_match is not None
+                and not approval_visible
+                and _COMPOSER_READY_RE.search(screen_text)
+                and not active_turn_busy(screen_text)
+            ):
                 completed_segment = transcript[event_offset:]
                 if completion_probe is not None:
                     completed_segment = (

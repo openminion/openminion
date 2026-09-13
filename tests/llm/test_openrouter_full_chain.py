@@ -631,9 +631,7 @@ class TestOpenRouterStreaming(unittest.TestCase):
         stream_post.assert_not_called()
         self.assertEqual([event.type for event in events], ["error", "done"])
         self.assertEqual(events[0].error.code, "INVALID_ARGUMENT")
-        self.assertEqual(
-            events[0].error.details["tool_call_strategy"], "fallback"
-        )
+        self.assertEqual(events[0].error.details["tool_call_strategy"], "fallback")
 
 
 # list_models() tests
