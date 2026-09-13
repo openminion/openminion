@@ -462,7 +462,10 @@ def _run_doctor_quietly(run_doctor, args) -> int:
 
 
 def _launch_post_setup_interactive(args, *, config_path: Path) -> int:
-    from openminion.cli.commands.interactive import run_interactive
+    from openminion.cli.commands.interactive import (
+        reset_focus_viewport,
+        run_interactive,
+    )
 
     interactive_args = SimpleNamespace(
         config=str(config_path),
@@ -483,6 +486,7 @@ def _launch_post_setup_interactive(args, *, config_path: Path) -> int:
         progress=getattr(args, "progress", None),
         onboarding_checked=True,
     )
+    reset_focus_viewport()
     return int(run_interactive(interactive_args) or 0)
 
 

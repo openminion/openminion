@@ -1159,9 +1159,14 @@ def test_setup_focus_handoff_preserves_interactive_options(tmp_path: Path) -> No
     )
     config_path = tmp_path / "config.json"
 
-    with mock.patch(
-        "openminion.cli.commands.interactive.run_interactive", return_value=0
-    ) as run:
+    with (
+        mock.patch(
+            "openminion.cli.commands.interactive.reset_focus_viewport"
+        ) as reset_viewport,
+        mock.patch(
+            "openminion.cli.commands.interactive.run_interactive", return_value=0
+        ) as run,
+    ):
         assert (
             setup_command._launch_post_setup_interactive(
                 args,
@@ -1170,6 +1175,7 @@ def test_setup_focus_handoff_preserves_interactive_options(tmp_path: Path) -> No
             == 0
         )
 
+    reset_viewport.assert_called_once_with()
     assert vars(run.call_args.args[0]) == {
         "config": str(config_path),
         **vars(args),

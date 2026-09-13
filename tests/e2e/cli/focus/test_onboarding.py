@@ -340,11 +340,14 @@ def test_bare_command_imports_config_and_reaches_focus(
         )
         session.wait_for_visible_match_after(_FOCUS_READY_RE, offset=0, timeout=120)
         transcript = session.transcript
+        screen = session.screen_text
 
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert payload["default_agent"] == "imported"
     assert payload["agents"]["imported"]["provider"] == "echo"
     assert "Provider connection not applicable for this setup path." in transcript
+    assert "Choose your model provider:" not in screen
+    assert "Entering OpenMinion" not in screen
     _assert_owner_only(config_path)
     write_transcript(artifact_root(tmp_path), "onboarding-import", transcript)
 

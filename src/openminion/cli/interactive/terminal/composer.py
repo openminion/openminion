@@ -13,6 +13,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
+from prompt_toolkit.output.vt100 import Vt100_Output
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import DummyStyle, Style
 
@@ -92,8 +93,10 @@ class _ClickableCompletionMenuControl(CompletionsMenuControl):
         return None
 
 
-def _install_clickable_completion_menu(session: PromptSession[str]) -> None:
-    """Make prompt-toolkit's vertical completion menu click-to-apply."""
+def _configure_completion_menu(session: PromptSession[str]) -> None:
+    """Configure click-only tracking and click-to-apply completion entries."""
+
+    _use_click_only_mouse_tracking(session)
 
     seen: set[int] = set()
 
@@ -129,6 +132,20 @@ def _install_clickable_completion_menu(session: PromptSession[str]) -> None:
     except Exception:
         _LOGGER.debug("completion menu customization failed", exc_info=True)
         return
+
+
+def _use_click_only_mouse_tracking(session: PromptSession[str]) -> None:
+    """Request clicks without the all-motion mode unused by the completion menu."""
+
+    output = session.app.output
+    if not isinstance(output, Vt100_Output):
+        return
+
+    def enable_click_support() -> None:
+        output.write_raw("\x1b[?1000h")
+        output.write_raw("\x1b[?1006h")
+
+    setattr(output, "enable_mouse_support", enable_click_support)
 
 
 class _SlashAndAtCompleter(Completer):
@@ -299,7 +316,7 @@ class TerminalComposer:
             reserve_space_for_menu=_COMPLETION_MENU_ROWS,
             style=_FOCUS_PROMPT_STYLE if self._color else DummyStyle(),
         )
-        _install_clickable_completion_menu(self._session)
+        _configure_completion_menu(self._session)
 
     def set_resumed(self, is_resumed: bool) -> None:
         self._is_resumed = bool(is_resumed)
