@@ -192,6 +192,7 @@ def test_approved_project_turn_uses_the_core_tool_scope(tmp_path) -> None:
     worker.run_cycle(run.run_id)
 
     assert set(requests[0].allowed_tools) == PROJECT_CODING_ALLOWED_TOOLS
+    assert "tool.request" not in requests[0].allowed_tools
     assert set(requests[0].allowed_tools).isdisjoint(PROJECT_RELEASE_ADDITIONAL_TOOLS)
 
 

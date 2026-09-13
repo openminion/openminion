@@ -41,12 +41,14 @@ from openminion.modules.brain.loop.tools.contracts import (
     PreparedToolDispatch,
 )
 from openminion.modules.brain.loop.strategies.coding.contracts import (
+    CODING_ALLOWED_TOOLS,
     CODING_TERM_BUDGET_EXHAUSTED,
     CODING_TERM_DISALLOWED_TOOL,
     CODING_TERM_FINAL_TEXT,
     CODING_TERM_TOOL_FAILURE,
     CODING_TERM_VERIFY_CAP_EXCEEDED,
     PROJECT_CODING_ALLOWED_TOOLS,
+    PROJECT_RELEASE_ALLOWED_TOOLS,
 )
 from openminion.modules.brain.schemas import ActionResult, BudgetCounters, ToolCommand
 from openminion.modules.llm.schemas import Message
@@ -113,6 +115,11 @@ class TestCodingProfileRunnerMethods:
 
 
 class TestCodingHandlerPureHelperBehavior:
+    def test_current_coding_ceiling_sizes(self) -> None:
+        assert len(CODING_ALLOWED_TOOLS) == 19
+        assert len(PROJECT_CODING_ALLOWED_TOOLS) == 45
+        assert len(PROJECT_RELEASE_ALLOWED_TOOLS) == 48
+
     def test_build_error_result_shape(self) -> None:
         result = handler._build_error_result("oops", "TEST_CODE")
         assert result.summary == "oops"
@@ -172,6 +179,34 @@ class TestCodingHandlerPureHelperBehavior:
         [spec] = specs
         assert spec.input_schema == schema
         assert "path/cwd/working_directory" in spec.description
+
+    def test_current_coding_specs_include_the_full_ceiling(self) -> None:
+        with (
+            patch.object(
+                coding_runtime,
+                "_runner_and_profile_from_context",
+                return_value=(object(), None),
+            ),
+            patch.object(
+                coding_runtime,
+                "collect_runtime_tool_schemas",
+                return_value=[
+                    {
+                        "name": "file.read",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                            "required": ["path"],
+                            "additionalProperties": False,
+                        },
+                    }
+                ],
+            ),
+        ):
+            specs = handler._build_tool_specs(CODING_ALLOWED_TOOLS, ctx=object())
+
+        assert {spec.name for spec in specs} == CODING_ALLOWED_TOOLS
+        assert len(specs) == 19
 
     def test_approved_project_loop_exposes_and_invokes_project_tool(self) -> None:
         checkpoint = SimpleNamespace(

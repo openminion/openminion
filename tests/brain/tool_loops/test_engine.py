@@ -2976,6 +2976,14 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
     ]
     assert "web.fetch" in [spec.name for spec in runtime.calls[1]["tools"]]
     assert runtime.calls[1]["tool_choice"] == "auto"
+    inactive_directories = [
+        message
+        for message in runtime.calls[1]["messages"]
+        if message.role == "system"
+        and message.meta.get("tool_schema_shortlisting") == "inactive_directory"
+    ]
+    assert len(inactive_directories) == 1
+    assert "web.fetch" in inactive_directories[0].content
     tool_messages = [
         message for message in runtime.calls[1]["messages"] if message.role == "tool"
     ]
