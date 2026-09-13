@@ -84,7 +84,10 @@ def test_turn_executor_injects_runtime_env_into_tool_execution_context():
         )
     )
     override_context = captured["context"]
-    assert override_context.metadata["runtime_env"] == {"ECC_104_OVERRIDE": "1"}
+    assert override_context.metadata["runtime_env"] == {
+        "ECC_104_EXECUTOR": "enabled",
+        "ECC_104_OVERRIDE": "1",
+    }
     assert override_context.metadata["runtime_tools"]["search"]["provider_order"] == [
         "brave",
         "tavily",
@@ -394,6 +397,8 @@ def test_os_adapter_runtime_tool_builder_injects_runtime_env():
     )
     adapter.agent_id = "agent-os"
     adapter.memory_service = None
+    adapter.registry = ToolRegistry()
+    adapter._approval_callback = None
 
     outcome = ToolAdapter._execute_openminion_runtime_tool(
         adapter,
@@ -428,6 +433,8 @@ def test_os_adapter_runtime_tool_builder_injects_agent_id():
     adapter.policy = Policy(raw={})
     adapter.agent_id = "agent-os"
     adapter.memory_service = None
+    adapter.registry = ToolRegistry()
+    adapter._approval_callback = None
 
     outcome = ToolAdapter._execute_openminion_runtime_tool(
         adapter,
@@ -460,6 +467,8 @@ def test_os_adapter_runtime_tool_builder_injects_policy_replay_confirmation():
     adapter.policy = Policy(raw={})
     adapter.agent_id = "agent-os"
     adapter.memory_service = None
+    adapter.registry = ToolRegistry()
+    adapter._approval_callback = None
 
     outcome = ToolAdapter._execute_openminion_runtime_tool(
         adapter,

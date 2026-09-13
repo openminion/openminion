@@ -1149,12 +1149,8 @@ class ClarifyDigestTests(unittest.TestCase):
         pack = service.build_pack(request)
         mission = next(s for s in pack.segments if s.bucket == "mission_snapshot")
 
-        self.assertIn(
-            "current_datetime: 2026-09-12T21:00:00-07:00", mission.content
-        )
-        self.assertIn(
-            'freshness_contract: {"needs_exact_date": true}', mission.content
-        )
+        self.assertIn("current_datetime: 2026-09-12T21:00:00-07:00", mission.content)
+        self.assertIn('freshness_contract: {"needs_exact_date": true}', mission.content)
         self.assertIn(
             'freshness_obligations: {"require_exact_date": true}', mission.content
         )

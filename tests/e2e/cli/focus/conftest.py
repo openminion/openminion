@@ -25,10 +25,11 @@ def framework_root(openminion_root: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def python_bin(openminion_root: Path) -> Path:
+    override = str(os.getenv("OPENMINION_PYTHON", "")).strip()
+    if override:
+        return Path(override)
     local = openminion_root / ".venv" / "bin" / "python3.11"
-    return (
-        local if local.exists() else Path(os.getenv("OPENMINION_PYTHON", "python3.11"))
-    )
+    return local if local.exists() else Path("python3.11")
 
 
 @pytest.fixture(scope="session")
