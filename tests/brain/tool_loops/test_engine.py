@@ -3194,6 +3194,7 @@ def test_terminal_tool_request_uses_existing_direct_tool_closure() -> None:
     assert outcome.final_text == "The current UTC time is 09:10."
     assert [command.tool_name for command in loop_ctx.commands] == ["time"]
     assert [spec.name for spec in runtime.calls[0]["tools"]] == ["time"]
+    assert [spec.name for spec in runtime.calls[1]["tools"]] == ["time"]
     assert runtime.calls[1]["tool_choice"] == "none"
     assert outcome.state.scratchpad["tool_schema_shortlisting.terminal_tool"] == (
         "time"
@@ -4516,8 +4517,7 @@ def test_engine_marks_direct_tool_request_satisfied_from_executed_command_args()
     assert all(
         call["tool_choice"] != "none"
         or any(
-            "already completed successfully"
-            in str(getattr(message, "content", "") or "")
+            "completed successfully" in str(getattr(message, "content", "") or "")
             for message in call["messages"]
             if getattr(message, "role", "") == "system"
         )
@@ -5876,7 +5876,7 @@ def test_engine_limits_visible_tools_for_direct_tool_turn() -> None:
     assert all(spec.name != "exec.run" for spec in runtime.calls[0]["tools"])
 
 
-def test_engine_retries_direct_tool_finalization_without_exposing_more_tools() -> None:
+def test_engine_retries_direct_tool_finalization_with_requested_tool_schema() -> None:
     seed_response = LLMResponse(
         ok=True,
         provider="fake",
@@ -5962,7 +5962,7 @@ def test_engine_retries_direct_tool_finalization_without_exposing_more_tools() -
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "The current weather is foggy and 11.4C."
     assert len(runtime.calls) == 1
-    assert runtime.calls[0]["tools"] == []
+    assert [spec.name for spec in runtime.calls[0]["tools"]] == ["weather"]
     assert runtime.calls[0]["tool_choice"] == "none"
 
 

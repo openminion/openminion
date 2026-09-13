@@ -221,6 +221,18 @@ def _visible_tool_specs_for_direct_tool_turn(
     return tool_specs
 
 
+def _direct_tool_closure_specs(
+    loop_state: AdaptiveToolLoopState,
+    tool_specs: list[Any],
+) -> list[Any]:
+    requested = set(_direct_tool_turn_requested_tool_names(loop_state))
+    return [
+        spec
+        for spec in tool_specs
+        if str(getattr(spec, "name", "") or "").strip() in requested
+    ]
+
+
 def _forced_tool_choice_for_direct_tool_turn(
     loop_state: AdaptiveToolLoopState,
     tool_specs: list[Any],
@@ -295,8 +307,10 @@ def _build_direct_tool_closure_message(
     return Message(
         role="system",
         content=(
-            f"The explicit requested tool batch ({rendered_tools}) already completed "
-            "successfully for this turn. Do not call more tools."
+            f"FACT: the explicit requested tool batch ({rendered_tools}) was "
+            "available and completed successfully for this turn. Its result remains "
+            "valid when the tool schema is no longer active. Do not describe it as "
+            "unavailable or failed. Do not call more tools."
         ),
         meta={"direct_tool_closure": True},
     )
@@ -693,7 +707,7 @@ def _force_direct_tool_answer_only_closure(
         try:
             response = runtime.complete(
                 messages=loop_state.messages,
-                tools=[],
+                tools=_direct_tool_closure_specs(loop_state, tool_specs),
                 model=model,
                 tool_choice="none",
                 max_output_tokens=max_output_tokens,

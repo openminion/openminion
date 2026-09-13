@@ -1398,6 +1398,35 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
         self.assertEqual(res, {"pack_version": "123"})
         mock_svc.build_pack.assert_called_once()
 
+    def test_context_adapter_preserves_temporal_phase_facts(self) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+
+        mock_svc = fake_context_service(pack=fake_context_pack({"pack_version": "123"}))
+        adapter = ContextCtlAdapter(mock_svc)
+
+        adapter.build(
+            session_id="s1",
+            agent_id="a1",
+            purpose="act",
+            budget={},
+            hints={
+                "user_input": "Find lodging tomorrow.",
+                "current_datetime": "2026-09-12T21:00:00-07:00",
+                "freshness_contract": {"needs_exact_date": True},
+                "freshness_obligations": {"require_exact_date": True},
+            },
+        )
+
+        request = mock_svc.build_pack.call_args.args[0]
+        self.assertEqual(
+            request.phase_hints,
+            {
+                "current_datetime": "2026-09-12T21:00:00-07:00",
+                "freshness_contract": {"needs_exact_date": True},
+                "freshness_obligations": {"require_exact_date": True},
+            },
+        )
+
     def test_context_adapter_close_delegates_to_service(self) -> None:
         from openminion.modules.brain.adapters.context import ContextCtlAdapter
 
@@ -3844,6 +3873,63 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
         self.assertEqual(res["status"], "success")
         self.assertEqual(res["summary"], "ok-from-runtime-tool")
         self.assertEqual(res["outputs"]["result"], "ok")
+
+    def test_runtime_tool_starts_sidecar_after_operator_approval(self) -> None:
+        from openminion.modules.brain.adapters.tool import ToolAdapter
+        from openminion.modules.tool.base import Tool, ToolExecutionResult
+
+        calls: list[dict[str, str]] = []
+        approvals: list[str] = []
+
+        class _SidecarTool(Tool):
+            name = "browser"
+            description = "browser"
+            sidecar = "pinchtab"
+
+            def execute(self, arguments, context):
+                del arguments, context
+                return ToolExecutionResult(
+                    tool_name=self.name,
+                    ok=True,
+                    content="browser ready",
+                    verified=True,
+                )
+
+        class _RuntimeRegistry:
+            def __init__(self) -> None:
+                self._tools = {"browser": _SidecarTool()}
+
+            def ensure_sidecar_autostart(self, **kwargs):
+                runtime_env = dict(kwargs.get("runtime_env") or {})
+                calls.append(runtime_env)
+                return {"enabled": runtime_env.get("PINCHTAB_AUTOSTART") == "1"}
+
+        runtime_config = SimpleNamespace(
+            env={"OPENMINION_PINCHTAB_ALLOW_EXTERNAL": "1"},
+            tools=None,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = ToolAdapter(
+                workspace_root=Path(tmp),
+                runtime_config=runtime_config,
+                runtime_registry=_RuntimeRegistry(),
+            )
+            adapter.set_approval_callback(
+                lambda tool_name, _args, _approval_id: (
+                    approvals.append(tool_name) or True
+                )
+            )
+            res = adapter.execute(
+                command={"tool_name": "browser", "args": {"op": "tab.list"}},
+                session_id="s1",
+                trace_id="t1",
+            )
+
+        self.assertEqual(res["status"], "success")
+        self.assertEqual(approvals, ["sidecar.pinchtab.autostart"])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["OPENMINION_PINCHTAB_ALLOW_EXTERNAL"], "1")
+        self.assertEqual(calls[1]["PINCHTAB_AUTOSTART"], "1")
 
     def test_os_adapter_runtime_registry_tools_receive_workspace_metadata(
         self,

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+import openminion.services.runtime.sidecars.manager as sidecar_manager_module
+
 from openminion.services.lifecycle.sidecars import (
     SidecarConsent,
     SidecarConsentStore,
@@ -100,3 +104,37 @@ def test_manager_policy_blocks_without_scope(tmp_path: Path) -> None:
     result = manager.ensure_started(name="fake", interactive=False)
     assert result["started"] is False
     assert "policy" in result
+
+
+def test_runtime_autostart_starts_and_waits_for_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    class _Manager:
+        def status(self, name: str) -> dict:
+            assert name == "pinchtab"
+            return {"ok": False, "pid_alive": False}
+
+        def ensure_started(
+            self, *, name: str, interactive: bool, prompt_fn=None
+        ) -> dict:
+            del prompt_fn
+            calls.append((name, interactive))
+            return {"started": True, "status": {"ok": True, "pid_alive": True}}
+
+    monkeypatch.setattr(
+        sidecar_manager_module,
+        "default_sidecar_manager",
+        lambda **_kwargs: _Manager(),
+    )
+
+    result = sidecar_manager_module.ensure_sidecar_autostart(
+        name="pinchtab",
+        config_path=None,
+        interactive=True,
+    )
+
+    assert result["enabled"] is True
+    assert result["start"]["started"] is True
+    assert calls == [("pinchtab", True)]

@@ -474,16 +474,17 @@ def _runtime_direct_allowed(
 def _sidecar_start_failure(
     registry: "ToolRegistry",
     *,
-    tool: ToolSpec,
+    tool: Any,
     runtime_tool_name: str,
     call: ProviderToolCall,
     env_owner: Any,
 ) -> ToolExecutionResult | None:
-    if not tool.sidecar:
+    sidecar = str(getattr(tool, "sidecar", "") or "").strip()
+    if not sidecar:
         return None
     try:
         autostart = registry.ensure_sidecar_autostart(
-            name=tool.sidecar,
+            name=sidecar,
             config_path=env_owner.get(OPENMINION_CONFIG_PATH_ENV, "") or None,
             runtime_env=env_owner.snapshot(),
             interactive=bool(sys.stdin.isatty()),
@@ -495,10 +496,10 @@ def _sidecar_start_failure(
             ok=False,
             content="",
             verified=False,
-            error=f"sidecar '{tool.sidecar}' autostart failed: {exc}",
+            error=f"sidecar '{sidecar}' autostart failed: {exc}",
             call_id=call.id,
             source=call.source,
-            data={"sidecar": tool.sidecar},
+            data={"sidecar": sidecar},
         )
     if autostart.get("enabled", False):
         return None
@@ -507,10 +508,10 @@ def _sidecar_start_failure(
         ok=False,
         content="",
         verified=False,
-        error=f"sidecar '{tool.sidecar}' not enabled",
+        error=f"sidecar '{sidecar}' not enabled",
         call_id=call.id,
         source=call.source,
-        data={"sidecar": tool.sidecar, "autostart": autostart},
+        data={"sidecar": sidecar, "autostart": autostart},
     )
 
 
@@ -638,16 +639,15 @@ def execute_single_call(
             arguments=raw_arguments,
         )
 
-        if isinstance(tool, ToolSpec):
-            last_result = _sidecar_start_failure(
-                registry,
-                tool=tool,
-                runtime_tool_name=runtime_tool_name,
-                call=call,
-                env_owner=env_owner,
-            )
-            if last_result is not None:
-                break
+        last_result = _sidecar_start_failure(
+            registry,
+            tool=tool,
+            runtime_tool_name=runtime_tool_name,
+            call=call,
+            env_owner=env_owner,
+        )
+        if last_result is not None:
+            break
 
         boundary_adapter = getattr(context, "blast_radius_adapter", None)
         if boundary_adapter is not None and isinstance(tool, ToolSpec):

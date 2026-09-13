@@ -73,7 +73,13 @@ def focus_probe(
         pytest.skip("focus PTY E2E harness requires a POSIX platform")
     run_root = artifact_root(tmp_path)
     node_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", request.node.name).strip("-")
-    data_root = run_root / "data" / (node_name or "focus-e2e")
+    data_root = (
+        run_root
+        / "data"
+        / tmp_path.parent.name
+        / tmp_path.name
+        / (node_name or "focus-e2e")
+    )
     data_root.mkdir(parents=True, exist_ok=True)
     return FocusProbe(
         python_bin=python_bin,

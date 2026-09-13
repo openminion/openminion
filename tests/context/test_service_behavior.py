@@ -1132,6 +1132,33 @@ class ClarifyDigestTests(unittest.TestCase):
         self.assertIn("intent_outcomes:", mission.content)
         self.assertIn('success_criteria: {"weather_returned": true}', mission.content)
 
+    def test_task_header_renders_typed_temporal_context(self) -> None:
+        service = _make_service(session=_SliceSession(summary_short="summary"))
+        request = BuildPackRequest(
+            session_id="sess-temporal",
+            agent_id="agent-test",
+            purpose="act",
+            query="Find lodging from tomorrow to next Wednesday.",
+            phase_hints={
+                "current_datetime": "2026-09-12T21:00:00-07:00",
+                "freshness_contract": {"needs_exact_date": True},
+                "freshness_obligations": {"require_exact_date": True},
+            },
+        )
+
+        pack = service.build_pack(request)
+        mission = next(s for s in pack.segments if s.bucket == "mission_snapshot")
+
+        self.assertIn(
+            "current_datetime: 2026-09-12T21:00:00-07:00", mission.content
+        )
+        self.assertIn(
+            'freshness_contract: {"needs_exact_date": true}', mission.content
+        )
+        self.assertIn(
+            'freshness_obligations: {"require_exact_date": true}', mission.content
+        )
+
 
 class CacheBehaviorTests(unittest.TestCase):
     def test_cache_hit_returns_same_pack(self) -> None:

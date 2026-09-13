@@ -1,15 +1,72 @@
 """Tool-runtime sidecar approval helpers."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from openminion.modules.tool.base import ToolExecutionResult
+from openminion.modules.tool.constants import OPENMINION_CONFIG_PATH_ENV
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
+from openminion.modules.tool.errors import ToolRuntimeError
 
 SIDECAR_AUTOSTART_ENV_KEYS: dict[str, str] = {"pinchtab": "PINCHTAB_AUTOSTART"}
 
 
 def sidecar_autostart_env_key(name: str) -> str:
     return SIDECAR_AUTOSTART_ENV_KEYS.get(str(name or "").strip().lower(), "")
+
+
+def ensure_tool_sidecar_ready(
+    *,
+    registry: Any,
+    tool: Any,
+    runtime_env: Mapping[str, str],
+    approval_callback: Any | None,
+) -> None:
+    sidecar = str(getattr(tool, "sidecar", "") or "").strip()
+    if not sidecar:
+        return
+
+    env = dict(runtime_env)
+    result = registry.ensure_sidecar_autostart(
+        name=sidecar,
+        config_path=runtime_env.get(OPENMINION_CONFIG_PATH_ENV) or None,
+        runtime_env=env,
+        interactive=False,
+    )
+    if result.get("enabled", False):
+        return
+    approval_id = f"sidecar:{sidecar}"
+    if approval_callback is None:
+        raise ToolRuntimeError(
+            TOOL_ERROR_CONFIRM_REQUIRED,
+            f"Starting local {sidecar} requires approval.",
+            {"approval_id": approval_id, "sidecar": sidecar},
+        )
+    if not approval_callback(
+        f"sidecar.{sidecar}.autostart", {"sidecar": sidecar}, approval_id
+    ):
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            f"Starting local {sidecar} was denied.",
+            {"sidecar": sidecar},
+        )
+
+    env_key = sidecar_autostart_env_key(sidecar)
+    if env_key:
+        env[env_key] = "1"
+    result = registry.ensure_sidecar_autostart(
+        name=sidecar,
+        config_path=runtime_env.get(OPENMINION_CONFIG_PATH_ENV) or None,
+        runtime_env=env,
+        interactive=False,
+    )
+    if not result.get("enabled", False):
+        raise ToolRuntimeError(
+            "DEPENDENCY_MISSING",
+            f"Managed service '{sidecar}' did not become ready.",
+            {"sidecar": sidecar, "result": result},
+        )
 
 
 def sidecar_for_tool(tools: Any, tool_name: str) -> str:
@@ -207,6 +264,7 @@ __all__ = [
     "blocked_tool_result",
     "denied_tool_event",
     "filter_call_without_policy",
+    "ensure_tool_sidecar_ready",
     "maybe_allow_denied_call_with_operator_approval",
     "provider_call_from_decision",
     "sidecar_autostart_env_key",

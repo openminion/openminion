@@ -33,7 +33,7 @@ from ..errors import ToolRuntimeError
 from ..runtime.plugins import discover_plugin_registrars
 from ..runtime.policy import Policy
 from ..registry import ToolRegistry
-from ..registry.catalog import Scope as RegistryScope, ToolSpec
+from ..registry.catalog import Scope as RegistryScope
 from ..runtime import (
     RuntimeContext,
     build_runtime_repositories,
@@ -241,11 +241,12 @@ def _enforce_safety_and_policy(
 def _maybe_autostart_sidecar_for_spec(
     spec: Any, env_owner: Any, registry: ToolRegistry
 ) -> None:
-    if not (isinstance(spec, ToolSpec) and getattr(spec, "sidecar", None)):
+    sidecar = str(getattr(spec, "sidecar", "") or "").strip()
+    if not sidecar:
         return
     try:
         autostart = registry.ensure_sidecar_autostart(
-            name=str(spec.sidecar),
+            name=sidecar,
             config_path=env_owner.get(OPENMINION_CONFIG_PATH_ENV, "") or None,
             runtime_env=env_owner.snapshot(),
             interactive=bool(sys.stdin.isatty()),
@@ -254,16 +255,16 @@ def _maybe_autostart_sidecar_for_spec(
         if not autostart.get("enabled", False):
             raise ToolRuntimeError(
                 cast(ErrorCode, TOOL_ERROR_CONFIRM_REQUIRED),
-                f"sidecar '{spec.sidecar}' not enabled",
-                {"sidecar": spec.sidecar, "autostart": autostart},
+                f"sidecar '{sidecar}' not enabled",
+                {"sidecar": sidecar, "autostart": autostart},
             )
     except ToolRuntimeError:
         raise
     except Exception as exc:  # noqa: BLE001
         raise ToolRuntimeError(
             "EXEC_ERROR",
-            f"sidecar '{spec.sidecar}' autostart failed: {exc}",
-            {"sidecar": spec.sidecar},
+            f"sidecar '{sidecar}' autostart failed: {exc}",
+            {"sidecar": sidecar},
         ) from exc
 
 

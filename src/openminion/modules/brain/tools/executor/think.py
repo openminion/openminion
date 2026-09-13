@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ...diagnostics.events import CanonicalEventLogger
@@ -13,7 +14,6 @@ from ...schemas import (
     JobHandle,
     ThinkResult,
     WorkingState,
-    iso_now,
     new_uuid,
 )
 
@@ -105,7 +105,10 @@ def _think_hints(
     prompt: str,
     output_key: str,
 ) -> dict[str, object]:
-    hints: dict[str, object] = {"user_input": prompt, "current_datetime": iso_now()}
+    hints: dict[str, object] = {
+        "user_input": prompt,
+        "current_datetime": datetime.now().astimezone().isoformat(),
+    }
     if output_key:
         hints["output_key"] = output_key
     if state.last_result is not None and state.last_result.summary:

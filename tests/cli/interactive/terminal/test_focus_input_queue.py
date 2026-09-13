@@ -887,6 +887,14 @@ def test_terminal_approval_prompt_preserves_full_exec_command() -> None:
     assert "…" not in prompt
 
 
+def test_terminal_approval_prompt_explains_managed_sidecar_start() -> None:
+    prompt = format_terminal_approval_prompt(
+        "sidecar.pinchtab.autostart", {"sidecar": "pinchtab"}
+    )
+
+    assert prompt == "Approval required: start local pinchtab service and continue"
+
+
 @pytest.mark.asyncio
 async def test_terminal_slash_approval_resumes_after_command(
     monkeypatch: pytest.MonkeyPatch,

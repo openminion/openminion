@@ -1,6 +1,5 @@
+from datetime import datetime
 from typing import Any
-
-from openminion.base.time import utc_now_iso as _iso_now_utc
 
 _TEMPORAL_FACT_DATE_KEYS = (
     "published_at",
@@ -9,6 +8,10 @@ _TEMPORAL_FACT_DATE_KEYS = (
     "evidence_date",
 )
 _TEMPORAL_FACT_RESULT_KEYS = ("published_at", "date", "evidence_date")
+
+
+def local_now_iso() -> str:
+    return datetime.now().astimezone().isoformat()
 
 
 def normalized_text(value: Any) -> str:
@@ -111,7 +114,7 @@ def _finding_evidence_dates(findings: list[dict[str, Any]]) -> list[str]:
 def render_temporal_fact_lines(
     findings: list[dict[str, Any]],
     *,
-    now_iso_fn: Any = _iso_now_utc,
+    now_iso_fn: Any = local_now_iso,
 ) -> list[str]:
     lines = [f"current_datetime={now_iso_fn()}"]
     for evidence_date in _finding_evidence_dates(findings)[:6]:

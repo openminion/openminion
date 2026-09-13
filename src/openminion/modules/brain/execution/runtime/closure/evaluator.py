@@ -1,6 +1,7 @@
 """Phase-oriented closure gate runtime helpers."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
@@ -9,7 +10,6 @@ from ....constants import (
     BRAIN_DISPOSITION_CLOSE,
     BRAIN_DISPOSITION_CONTINUE,
     BRAIN_DISPOSITION_REPLAN,
-    BRAIN_STATE_DONE,
 )
 from ....diagnostics.events import CanonicalEventLogger
 from ....runtime.reconciliation import (
@@ -157,12 +157,6 @@ def _prepare_closure_gate(
         if mission is not None
         else ""
     )
-    if state.status != BRAIN_STATE_DONE:
-        return ClosureJudgment(
-            satisfied=True,
-            reason="closure_gate_skipped_non_done_state",
-            next_action=BRAIN_DISPOSITION_CLOSE,
-        )
     if runner.llm_api is None or runner.context_api is None:
         return _missing_llm_or_context_judgment(
             state=state,
@@ -306,10 +300,7 @@ def _build_closure_hints(
 ) -> dict[str, Any]:
     hints = {
         "_llm_call_id": context.llm_call_id,
-        "current_datetime": state.last_result.created_at
-        if getattr(state, "last_result", None) is not None
-        and getattr(state.last_result, "created_at", None)
-        else "",
+        "current_datetime": datetime.now().astimezone().isoformat(),
         "user_input": context.closure_goal,
         "closure_candidate_reason": completion_reason,
         "closure_action_summary": str(

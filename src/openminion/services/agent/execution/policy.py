@@ -114,12 +114,13 @@ async def filter_allowed_tool_calls(
             decision=decision,
             approval_callback=approval_callback,
         )
-        if approved_call is not None:
-            allowed_calls.append(approved_call)
-            continue
-        if decision.allowed and sidecar and approval_callback is not None:
+        if (
+            (decision.allowed or approved_call is not None)
+            and sidecar
+            and approval_callback
+        ):
             event, denied = await approve_sidecar_for_allowed_decision(
-                call=call,
+                call=approved_call or call,
                 tool_name=tool_name,
                 sidecar=sidecar,
                 approval_callback=approval_callback,
@@ -130,6 +131,9 @@ async def filter_allowed_tool_calls(
             if denied is not None:
                 denied_results.append(denied)
                 break
+        if approved_call is not None:
+            allowed_calls.append(approved_call)
+            continue
         if decision.allowed:
             allowed_calls.append(
                 provider_call_from_decision(

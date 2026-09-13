@@ -1,6 +1,10 @@
 # area	pytest_path
 guardrail	tests/ci/test_critical_path_manifest.py
 brain-loop	tests/integration/test_openminion_brain_client_real_runtime.py
+freshness-runtime	tests/brain/test_runner_context.py
+freshness-adapter	tests/brain/test_adapters.py
+freshness-rendering	tests/context/test_service_behavior.py
+freshness-closure	tests/brain/test_mission_mode.py
 session-continuity	tests/controlplane/test_session_resume_across_restart.py
 memory	tests/integration/test_success_path_memory_creation.py
 tool-loop	tests/brain/tool_loops/test_engine.py

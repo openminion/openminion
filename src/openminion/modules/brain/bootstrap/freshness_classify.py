@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -66,7 +67,7 @@ def _build_freshness_context(*, user_input: str) -> dict[str, Any]:
         ],
         "hints": {
             "user_input": user_input,
-            "current_datetime": iso_now(),
+            "current_datetime": datetime.now().astimezone().isoformat(),
             "mode_name": "freshness_classify",
         },
     }

@@ -34,6 +34,7 @@ from ..contracts import (
 from ..correction import build_correction_history_summary
 from ..direct_tool import (
     _build_direct_tool_closure_message,
+    _direct_tool_closure_specs,
     _forced_tool_choice_for_direct_tool_turn,
     _should_force_direct_tool_closure,
     _visible_tool_specs_for_direct_tool_turn,
@@ -427,7 +428,12 @@ class AdaptiveLoopRunnerPostprocessMixin(
         elif direct_tool_closure_active:
             suppress_tools = True
         if suppress_tools:
-            return [], "none", True
+            closure_tools = (
+                _direct_tool_closure_specs(self.loop_state, llm_tools)
+                if direct_tool_closure_active
+                else []
+            )
+            return closure_tools, "none", True
         return llm_tools, llm_tool_choice, llm_tool_choice == "none"
 
     def _prepare_llm_response(self) -> Any:

@@ -104,6 +104,15 @@ def render_procedure_snippet(
 
 def task_header(request: BuildPackRequest, constraints: BuildConstraints) -> str:
     lines = [f"purpose: {request.purpose}", f"query: {request.query.strip()}"]
+    current_datetime = str(
+        request.phase_hints.get("current_datetime", "") or ""
+    ).strip()
+    if current_datetime:
+        lines.append(f"current_datetime: {current_datetime}")
+    for label in ("freshness_contract", "freshness_obligations"):
+        value = request.phase_hints.get(label)
+        if isinstance(value, dict) and value:
+            lines.append(f"{label}: " + json.dumps(value, sort_keys=True))
     if constraints.style_overrides:
         lines.append(
             "style_overrides: "
