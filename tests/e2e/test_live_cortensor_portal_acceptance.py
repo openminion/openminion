@@ -117,6 +117,7 @@ def test_live_cortensor_portal_acceptance_runs_serially() -> None:
         )
         forced = provider.complete(forced_request, config)
         assert forced.finish_reason == "tool_calls"
+        assert forced.telemetry.get("request_id")
         assert len(forced.tool_calls) == 1
         tool_call = forced.tool_calls[0]
         assert tool_call.id
@@ -155,6 +156,7 @@ def test_live_cortensor_portal_acceptance_runs_serially() -> None:
         )
         assert continuation.output_text.strip() == "portal continuation ok"
         assert continuation.finish_reason
+        assert continuation.telemetry.get("request_id")
 
         tool_events = list(
             provider.stream(
@@ -170,6 +172,7 @@ def test_live_cortensor_portal_acceptance_runs_serially() -> None:
         assert str(streamed_call.arguments.get("city", "")).lower() == "paris"
         assert any(event.tool_call_deltas for event in tool_events)
         assert tool_events[-1].finish_reason == "tool_calls"
+        assert tool_events[-1].request_id
 
         with pytest.raises(LLMCtlError) as rejected:
             _http_json_post(
