@@ -137,7 +137,7 @@ def test_schedule_relative_one_time_uses_runtime_clock(
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
     monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
     monkeypatch.setattr(
-        "openminion.tools.task.plugin.utc_now",
+        "openminion.tools.task.scheduled_task.runtime.utc_now",
         lambda: datetime(2026, 9, 12, 10, 40, tzinfo=timezone.utc),
     )
 
