@@ -1,10 +1,6 @@
-from collections.abc import Mapping
-from datetime import timedelta
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
-from openminion.modules.task.scheduling.schedule import to_iso_utc, utc_now
 
 from .constants import (
     DEFAULT_CONSOLIDATION_BATCH_LIMIT,
@@ -12,102 +8,9 @@ from .constants import (
     DEFAULT_WATCH_MAX_CHECKS,
     DEFAULT_WATCH_TIMEOUT_SECONDS,
     DEFAULT_WATCH_TTL_MINUTES,
-    EVERY_UNIT_TO_MS,
 )
 from .routine.schemas import RoutinePayloadV1
 from .scheduled_task.runtime import _text
-
-
-_EVERY_SCHEDULE_ALIASES: tuple[tuple[str, str | None], ...] = (
-    ("interval", None),
-    ("every", None),
-    ("milliseconds", "milliseconds"),
-    ("seconds", "seconds"),
-    ("minutes", "minutes"),
-    ("hours", "hours"),
-    ("days", "days"),
-    ("ms", "ms"),
-    ("s", "s"),
-    ("m", "m"),
-    ("h", "h"),
-    ("d", "d"),
-    ("interval_milliseconds", "milliseconds"),
-    ("interval_seconds", "seconds"),
-    ("interval_minutes", "minutes"),
-    ("interval_hours", "hours"),
-    ("interval_days", "days"),
-    ("every_milliseconds", "milliseconds"),
-    ("every_seconds", "seconds"),
-    ("every_minutes", "minutes"),
-    ("every_hours", "hours"),
-    ("every_days", "days"),
-)
-
-
-def _every_unit_multiplier(unit: Any) -> int:
-    token = _text(unit).lower()
-    if not token:
-        return EVERY_UNIT_TO_MS["seconds"]
-    multiplier = EVERY_UNIT_TO_MS.get(token)
-    if multiplier is None:
-        raise ValueError(f"unsupported every unit: {unit}")
-    return multiplier
-
-
-def _coerce_schedule_aliases(schedule: Mapping[str, Any]) -> dict[str, Any]:
-    normalized = dict(schedule or {})
-    kind = _text(normalized.get("kind"))
-
-    if kind == "cron":
-        if normalized.get("expr") is None:
-            for alias in ("expression", "cron_expr", "cron"):
-                if normalized.get(alias) is None:
-                    continue
-                normalized["expr"] = normalized.get(alias)
-                normalized.pop(alias, None)
-                break
-        if normalized.get("tz") is None and normalized.get("timezone") is not None:
-            normalized["tz"] = normalized.get("timezone")
-            normalized.pop("timezone", None)
-        return normalized
-
-    if kind == "at":
-        if normalized.get("at") is None and normalized.get("time") is not None:
-            normalized["at"] = normalized.get("time")
-            normalized.pop("time", None)
-        has_at = normalized.get("at") not in (None, "")
-        has_after = normalized.get("after_seconds") is not None
-        if has_at == has_after:
-            raise ValueError("at schedule requires exactly one of at or after_seconds")
-        if has_after:
-            delay_seconds = normalized["after_seconds"]
-            valid_delay = isinstance(delay_seconds, int) and not isinstance(
-                delay_seconds, bool
-            )
-            if not valid_delay or delay_seconds <= 0:
-                raise ValueError("after_seconds must be a positive integer")
-            normalized["at"] = to_iso_utc(utc_now() + timedelta(seconds=delay_seconds))
-            normalized.pop("after_seconds")
-        return normalized
-
-    if kind != "every" or normalized.get("every_ms") is not None:
-        return normalized
-
-    for key, unit_alias in _EVERY_SCHEDULE_ALIASES:
-        raw_value = normalized.get(key)
-        if raw_value is None:
-            continue
-        value = int(raw_value or 0)
-        if value <= 0:
-            raise ValueError(f"{key} must be greater than 0")
-        unit_value = normalized.get("unit") if unit_alias is None else unit_alias
-        normalized["every_ms"] = value * _every_unit_multiplier(unit_value)
-        for drop_key, _ in _EVERY_SCHEDULE_ALIASES:
-            normalized.pop(drop_key, None)
-        normalized.pop("unit", None)
-        return normalized
-
-    return normalized
 
 
 class TaskScheduleArgs(BaseModel):
@@ -123,7 +26,8 @@ class TaskScheduleArgs(BaseModel):
             "For recurring: {kind: 'every', every_ms: <milliseconds>} "
             "or {kind: 'every', seconds: <n>} or {kind: 'every', minutes: <n>} or {kind: 'every', hours: <n>}. "
             "For cron: {kind: 'cron', expr: '<cron expression>'}. "
-            "For one-shot: {kind: 'at', at: '<ISO 8601 datetime>'} or {kind: 'at', after_seconds: <n>}."
+            "For one-shot at an absolute time: {kind: 'at', at: '<ISO 8601 datetime>'}. "
+            "For one-shot relative to now: {kind: 'at', after_seconds: <n>}."
         ),
     )
     name: str | None = Field(default=None, description="Optional task name")
