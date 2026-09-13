@@ -5,6 +5,56 @@ from types import SimpleNamespace
 from openminion.cli.presentation.animation import AnimationResolution, AnimationSpec
 
 
+def test_reset_focus_viewport_clears_interactive_terminal(monkeypatch) -> None:
+    from openminion.cli.commands import interactive as interactive_cmd
+
+    cleared: list[bool] = []
+    monkeypatch.setattr(interactive_cmd, "has_tty", lambda: True)
+    monkeypatch.setattr("prompt_toolkit.shortcuts.clear", lambda: cleared.append(True))
+
+    interactive_cmd.reset_focus_viewport()
+
+    assert cleared == [True]
+
+
+def test_reset_focus_viewport_leaves_non_tty_output_unchanged(monkeypatch) -> None:
+    from openminion.cli.commands import interactive as interactive_cmd
+
+    cleared: list[bool] = []
+    monkeypatch.setattr(interactive_cmd, "has_tty", lambda: False)
+    monkeypatch.setattr("prompt_toolkit.shortcuts.clear", lambda: cleared.append(True))
+
+    interactive_cmd.reset_focus_viewport()
+
+    assert cleared == []
+
+
+def test_inline_onboarding_resets_viewport_before_focus(monkeypatch) -> None:
+    from openminion.cli.commands import interactive as interactive_cmd
+    from openminion.services.bootstrap.onboarding import OnboardingAction
+
+    resets: list[bool] = []
+    monkeypatch.setattr(
+        interactive_cmd,
+        "_inspect_interactive_onboarding",
+        lambda _args: SimpleNamespace(action=OnboardingAction.LAUNCH_SETUP),
+    )
+    monkeypatch.setattr(interactive_cmd, "_run_inline_setup", lambda _args: 0)
+    monkeypatch.setattr(
+        interactive_cmd,
+        "reset_focus_viewport",
+        lambda: resets.append(True),
+    )
+
+    code, args = interactive_cmd._handle_focus_onboarding_gate(
+        SimpleNamespace(no_interactive=True)
+    )
+
+    assert code is None
+    assert args.no_interactive is False
+    assert resets == [True]
+
+
 def test_interactive_launches_terminal_flow(monkeypatch) -> None:
     from openminion.cli.commands import interactive as interactive_cmd
     from openminion.cli.presentation import styles

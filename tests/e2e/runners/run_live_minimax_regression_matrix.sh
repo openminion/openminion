@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 source "$(dirname "${BASH_SOURCE[0]}")/../../helpers/runtime_roots.sh"
+CALLER_HOME="${OPENMINION_HOME:-$ROOT/..}"
+export OPENMINION_CLI_FOCUS_E2E_CONFIG="${OPENMINION_CLI_FOCUS_E2E_CONFIG:-$CALLER_HOME/test-configs/per-agent-minimax-official.json}"
+export OPENMINION_CLI_FOCUS_E2E_AGENT="${OPENMINION_CLI_FOCUS_E2E_AGENT:-minimax-m2-7}"
 isolate_openminion_test_roots openminion-live-minimax-matrix
 PY_BIN="${OPENMINION_PYTHON:-$ROOT/.venv/bin/python3.11}"
 MODE="${1:-tier1}"

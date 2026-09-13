@@ -45,6 +45,29 @@ def test_env_first_credentials_store_reference_not_secret(tmp_path: Path) -> Non
     assert result.preview.credential == "environment variable OPENAI_API_KEY"
 
 
+def test_setup_reports_malformed_existing_json_without_changing_it(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.json"
+    malformed = '{"agents": '
+    config_path.write_text(malformed, encoding="utf-8")
+
+    with pytest.raises(ProviderSetupError, match="not valid JSON") as error:
+        build_provider_setup(
+            ProviderSetupRequest(
+                preset_id="ollama",
+                agent_id="local",
+                config_path=str(config_path),
+                data_root=tmp_path / "data",
+                env={},
+            )
+        )
+
+    assert str(config_path) in str(error.value)
+    assert "Fix the file and rerun setup" in str(error.value)
+    assert config_path.read_text(encoding="utf-8") == malformed
+
+
 def test_cortensor_portal_setup_uses_openai_runtime_and_slow_timeout(
     tmp_path: Path,
 ) -> None:

@@ -67,6 +67,7 @@ from .results import (
     _error_envelope,
     _normalized_artifact_refs,
     _tool_allowlist_error,
+    run_runtime_tool,
     run_tool_spec,
 )
 from .workspace_policy import workspace_context_policy
@@ -121,6 +122,7 @@ class ToolAdapter:
         agent_id: str | None = None,
         agent_profile: Any | None = None,
         task_manager: Any | None = None,
+        scheduler_readiness: Callable[[], dict[str, Any]] | None = None,
         telemetryctl: Any | None = None,
     ) -> None:
         self.workspace_root = workspace_root
@@ -140,6 +142,7 @@ class ToolAdapter:
         self.agent_query = agent_query
         self.agent_profile = agent_profile
         self.task_manager = task_manager
+        self.scheduler_readiness = scheduler_readiness
         self.telemetryctl = telemetryctl
         self.allow_background_write_authorization = (
             _runtime_background_write_authorization_enabled(runtime_config)
@@ -171,10 +174,10 @@ class ToolAdapter:
                 "allow_background_write_authorization",
                 str(self.allow_background_write_authorization).lower(),
             )
-            context_metadata.update(
-                build_runtime_tool_routing_metadata(
-                    getattr(runtime_config, "tools", None)
-                )
+            tool_config = getattr(runtime_config, "tools", None)
+            context_metadata.update(build_runtime_tool_routing_metadata(tool_config))
+            context_metadata["runtime_env"] = dict(
+                getattr(runtime_config, "env", None) or {}
             )
         _apply_reactions_default_policy(self.policy, runtime_config)
         _apply_agent_command_policy(self.policy, agent_profile)
@@ -524,7 +527,6 @@ class ToolAdapter:
             "github.merge_pr",
         }:
             auto_confirm = True
-
         extra_adapter = None if permission_mode == "bypass" else self.policy_adapter
         local_adapter = LocalPolicyAdapter(
             policy=policy_for_run,
@@ -567,6 +569,7 @@ class ToolAdapter:
             agent_profile=self.agent_profile,
             tool_registry=self.registry,
             task_manager=self.task_manager,
+            scheduler_readiness=self.scheduler_readiness,
         )
         ctx.session_id, ctx.trace_id = session_id, trace_id
         ctx.agent_id, ctx.run_id = self.agent_id, run_id
@@ -853,16 +856,17 @@ class ToolAdapter:
             orchestration_metadata=orchestration_metadata,
             replay_confirmation_metadata=replay_confirmation_metadata,
         )
-        try:
-            result = tool.execute(arguments=args, context=context)
-        except Exception as exc:
-            return _error_envelope(
-                status=BRAIN_STATE_ERROR,
-                summary="Tool execution failed",
-                code="EXEC_ERROR",
-                message=str(exc),
-                latency_ms=int((time.monotonic() - start_time) * 1000),
-            )
+        result, error = run_runtime_tool(
+            tool=tool,
+            args=args,
+            context=context,
+            registry=self.registry,
+            runtime_env=_runtime_env_from_policy(effective_policy),
+            approval_callback=self._approval_callback,
+            start_time=start_time,
+        )
+        if error is not None:
+            return error
 
         ok = bool(getattr(result, "ok", False))
         content = str(getattr(result, "content", "") or "")
@@ -877,7 +881,6 @@ class ToolAdapter:
                 "source": str(getattr(result, "source", "") or "openminion"),
             }
         )
-
         summary = (
             content if ok else (error_message or content or "Tool execution failed")
         )

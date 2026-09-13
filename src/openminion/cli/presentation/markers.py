@@ -10,7 +10,7 @@ from openminion.cli.presentation.styles import (
 
 Marker = tuple[str, StyleToken]
 
-MARKER_ASSISTANT: Marker = ("⏺", StyleToken.ASSISTANT)
+MARKER_ASSISTANT: Marker = ("●", StyleToken.ASSISTANT)
 MARKER_TOOL_RUNNING: Marker = ("●", StyleToken.WARNING)
 MARKER_TOOL_OK: Marker = ("●", StyleToken.SUCCESS)
 MARKER_TOOL_FAIL: Marker = ("●", StyleToken.ERROR)

@@ -113,6 +113,26 @@ class _SegmentAssemblyRuntime:
             self.truncation_stats[section] = self.truncation_stats.get(section, 0) + 1
         return fitted
 
+    def fit_record_items(
+        self,
+        section: str,
+        header: str,
+        items: list[tuple[str, str]],
+        cap_tokens: int,
+    ) -> tuple[str, list[str]]:
+        lines = [header]
+        refs: list[str] = []
+        for record_id, text in items:
+            candidate = "\n".join([*lines, text])
+            _, truncated = self.fit_to_budget(candidate, cap_tokens)
+            if truncated:
+                break
+            lines.append(text)
+            refs.append(record_id)
+        if len(refs) < len(items):
+            self.truncation_stats[section] = self.truncation_stats.get(section, 0) + 1
+        return ("\n".join(lines) if refs else "", refs)
+
     def make(
         self,
         seg_id: str,

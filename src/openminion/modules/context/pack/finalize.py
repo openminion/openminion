@@ -48,6 +48,29 @@ class _IncludedManifestInputs:
     artifacts: list[ArtifactDigest]
 
 
+def selected_memory_record_ids(manifest: ContextManifest | None) -> tuple[str, ...]:
+    """Return final durable-memory IDs in stable manifest order."""
+
+    if manifest is None:
+        return ()
+    selected: list[str] = []
+    seen: set[str] = set()
+    for values in (
+        manifest.facts,
+        manifest.memory,
+        manifest.session_start_recalled_memory,
+        manifest.mid_session_recalled_memory,
+        manifest.recent_session_artifacts,
+    ):
+        for value in values:
+            record_id = str(value or "").strip()
+            if not record_id or record_id.startswith("degraded:") or record_id in seen:
+                continue
+            seen.add(record_id)
+            selected.append(record_id)
+    return tuple(selected)
+
+
 def context_drop_visibility_counts(
     *,
     decision_log: PackingDecisionLog,
@@ -354,8 +377,22 @@ class _IncludedPackItems:
     artifacts: list[ArtifactDigest]
 
 
-def _has_segment_ref(segments: list[ContextSegment], ref: Any) -> bool:
-    return any(ref in segment.refs for segment in segments)
+_MEMORY_SEGMENT_IDS = {
+    "retrieval:memory",
+    "retrieval:decisions",
+    "retrieval:improvement_notes",
+    "retrieval:strategy_outcomes",
+    "retrieval:post_completion_critiques",
+}
+
+
+def _segment_refs(segments: list[ContextSegment], segment_ids: set[str]) -> set[str]:
+    return {
+        str(ref)
+        for segment in segments
+        if segment.id in segment_ids and segment.content.strip()
+        for ref in segment.refs
+    }
 
 
 def _included_pack_items(
@@ -370,6 +407,11 @@ def _included_pack_items(
     procedure: Any,
     artifact_digests: list[ArtifactDigest],
 ) -> _IncludedPackItems:
+    fact_refs = _segment_refs(segments, {"retrieval:facts"})
+    memory_refs = _segment_refs(segments, _MEMORY_SEGMENT_IDS)
+    recent_artifact_refs = _segment_refs(
+        segments, {"evidence:recent_session_artifacts"}
+    )
     return _IncludedPackItems(
         all_segment_ids=[segment.id for segment in segments],
         included_segment_ids=[
@@ -385,31 +427,32 @@ def _included_pack_items(
         facts=[
             record
             for record in fact_records
-            if record.ttl_valid and _has_segment_ref(segments, record.record_id)
+            if record.ttl_valid and record.record_id in fact_refs
         ],
-        memory=[
-            card for card in memory_cards if _has_segment_ref(segments, card.record_id)
-        ],
+        memory=[card for card in memory_cards if card.record_id in memory_refs],
         session_start_recalled_memory=[
             card
             for card in session_start_recalled_memory_cards
-            if _has_segment_ref(segments, card.record_id)
+            if card.record_id in memory_refs
         ],
         mid_session_recalled_memory=[
             card
             for card in mid_session_recalled_memory_cards
-            if _has_segment_ref(segments, card.record_id)
+            if card.record_id in memory_refs
         ],
         recent_session_artifacts=[
             item
             for item in recent_session_artifact_refs
-            if _has_segment_ref(segments, item.record_id)
+            if item.record_id in recent_artifact_refs
         ],
         procedure_id=getattr(procedure, "procedure_id", "") if procedure else "",
         artifacts=[
             artifact
             for artifact in artifact_digests
-            if _has_segment_ref(segments, artifact.ref)
+            if any(
+                segment.id == f"evidence:{artifact.ref}" and segment.content.strip()
+                for segment in segments
+            )
         ],
     )
 

@@ -17,7 +17,7 @@ from openminion.cli.presentation.markers import (
 
 def test_marker_glyph_token_pairs() -> None:
     expected_pairs = [
-        (MARKER_ASSISTANT, "⏺", StyleToken.ASSISTANT),
+        (MARKER_ASSISTANT, "●", StyleToken.ASSISTANT),
         (MARKER_TOOL_RUNNING, "●", StyleToken.WARNING),
         (MARKER_TOOL_OK, "●", StyleToken.SUCCESS),
         (MARKER_TOOL_FAIL, "●", StyleToken.ERROR),

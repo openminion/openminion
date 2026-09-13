@@ -1240,6 +1240,47 @@ def test_turn_closure_continues_when_freshness_evidence_missing_but_budget_remai
         assert "freshness_verifier_blocked" in judgment.reason
 
 
+def test_turn_closure_evaluates_active_completion_candidate() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        context_api = _ContextAPI()
+        llm_api = _MissionJudgeLLM(
+            mission_payload={"outcome": "complete", "reason": "unused"},
+            closure_payload={
+                "satisfied": True,
+                "reason": "request satisfied",
+                "next_action": "close",
+                "final_answer": "Completed with current evidence.",
+            },
+        )
+        runner, session = _build_runner(
+            Path(tmp),
+            llm_api=llm_api,
+            context_api=context_api,
+        )
+        state = runner._load_or_init_state("s-active-closure")
+        state.status = "active"
+        state.goal = "Return a current evidence-backed answer."
+        logger = CanonicalEventLogger(
+            session_api=session,
+            session_id=state.session_id,
+            agent_id=runner.profile.agent_id,
+        )
+
+        judgment = runner._evaluate_turn_closure(
+            state=state,
+            action_result=ActionResult(
+                command_id="cmd-active-close",
+                status="success",
+                summary="current evidence collected",
+            ),
+            logger=logger,
+            completion_reason="act_adaptive_final_text",
+        )
+
+        assert "ClosureJudgment" in llm_api.calls
+        assert judgment.final_answer == "Completed with current evidence."
+
+
 def test_turn_closure_refuses_close_when_final_answer_repair_fails() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         context_api = _ContextAPI()

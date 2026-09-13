@@ -256,6 +256,7 @@ class RuntimeContext:
     ops_service: Any | None = None
     tool_registry: Any | None = None
     task_manager: Any | None = None
+    scheduler_readiness: Callable[[], dict[str, Any]] | None = None
     artifactctl: Optional[Any] = None
     memory_service: MemoryToolRuntimeService | None = None
     knowledge_graph_service: KnowledgeGraphService | None = None

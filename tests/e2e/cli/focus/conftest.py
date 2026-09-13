@@ -25,10 +25,11 @@ def framework_root(openminion_root: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def python_bin(openminion_root: Path) -> Path:
+    override = str(os.getenv("OPENMINION_PYTHON", "")).strip()
+    if override:
+        return Path(override)
     local = openminion_root / ".venv" / "bin" / "python3.11"
-    return (
-        local if local.exists() else Path(os.getenv("OPENMINION_PYTHON", "python3.11"))
-    )
+    return local if local.exists() else Path("python3.11")
 
 
 @pytest.fixture(scope="session")
@@ -73,7 +74,13 @@ def focus_probe(
         pytest.skip("focus PTY E2E harness requires a POSIX platform")
     run_root = artifact_root(tmp_path)
     node_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", request.node.name).strip("-")
-    data_root = run_root / "data" / (node_name or "focus-e2e")
+    data_root = (
+        run_root
+        / "data"
+        / tmp_path.parent.name
+        / tmp_path.name
+        / (node_name or "focus-e2e")
+    )
     data_root.mkdir(parents=True, exist_ok=True)
     return FocusProbe(
         python_bin=python_bin,

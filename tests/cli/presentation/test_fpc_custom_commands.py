@@ -150,12 +150,13 @@ def test_bundled_fix_markdown_is_packaged_resource() -> None:
 # ── Frontmatter parsing ──────────────────────────────────────────
 
 
-def test_frontmatter_description_model_agent_extracted(tmp_path: Path) -> None:
+def test_frontmatter_description_usage_model_agent_extracted(tmp_path: Path) -> None:
     project = tmp_path / ".openminion" / "commands"
     project.mkdir(parents=True)
     (project / "x.md").write_text(
         "---\n"
         "description: Run a code review\n"
+        "usage: /x <path>\n"
         "model: anthropic/claude-3-5-sonnet-latest\n"
         "agent: reviewer\n"
         "---\n"
@@ -165,6 +166,7 @@ def test_frontmatter_description_model_agent_extracted(tmp_path: Path) -> None:
     result = discover_custom_commands(project_dir=project, user_dir=None)
     cmd = result["/x"]
     assert cmd.description == "Run a code review"
+    assert cmd.usage == "/x <path>"
     assert cmd.model == "anthropic/claude-3-5-sonnet-latest"
     assert cmd.agent == "reviewer"
     assert cmd.body.startswith("Review the code:")
@@ -178,6 +180,7 @@ def test_frontmatter_optional(tmp_path: Path) -> None:
     result = discover_custom_commands(project_dir=project, user_dir=None)
     cmd = result["/y"]
     assert cmd.description == ""
+    assert cmd.usage == ""
     assert cmd.model == ""
     assert cmd.body == "just a body\n$ARGUMENTS"
 

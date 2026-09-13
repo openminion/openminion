@@ -185,7 +185,6 @@ tools/reaction/plugin.py	openminion.modules.tool.runtime
 tools/search/plugin.py	openminion.modules.tool.runtime
 tools/search/plugin.py	openminion.modules.tool.runtime.routing
 tools/task/plugin.py	openminion.modules.brain.runtime.goal.policy
-tools/task/plugin.py	openminion.modules.tool.runtime
 tools/task/plugin.py	openminion.modules.tool.runtime.context
 tools/task/plugin.py	openminion.modules.tool.runtime.environment
 tools/task/scheduled_task/runtime.py	openminion.modules.tool.runtime.context

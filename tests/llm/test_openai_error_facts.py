@@ -35,7 +35,7 @@ def _http_error() -> HTTPError:
         "https://api.cortensor.app/v1/chat/completions",
         400,
         "Bad Request",
-        {"X-Request-ID": "req-header"},
+        {"X-Request-ID": "req-header", "Retry-After": "11"},
         io.BytesIO(_body().encode()),
     )
 
@@ -117,6 +117,9 @@ def test_openai_compatible_error_facts_match_across_transports() -> None:
     assert errors[0].details["request_id"] == "req-header"
     assert errors[1].details["request_id"] == "req-header"
     assert errors[2].details["request_id"] == "req-body"
+    assert errors[0].details["retry_after"] == "11"
+    assert errors[1].details["retry_after"] == "11"
+    assert "retry_after" not in errors[2].details
 
 
 def test_openai_error_facts_redact_nested_credentials() -> None:

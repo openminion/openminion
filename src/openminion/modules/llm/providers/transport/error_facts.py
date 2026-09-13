@@ -18,6 +18,7 @@ def openai_error_facts(
     *,
     status_code: int,
     request_id: str = "",
+    retry_after: str = "",
 ) -> dict[str, Any]:
     payload = _json_object(raw_body)
     raw_error = payload.get("error")
@@ -43,6 +44,9 @@ def openai_error_facts(
     )
     if response_request_id:
         facts["request_id"] = response_request_id
+    bounded_retry_after = _bounded(retry_after, UPSTREAM_ERROR_FIELD_MAX_CHARS)
+    if bounded_retry_after:
+        facts["retry_after"] = bounded_retry_after
     return facts
 
 

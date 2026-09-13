@@ -331,7 +331,12 @@ def _load_existing(config_path: Path) -> OpenMinionConfig:
 
 
 def _parse_config_file(path: Path) -> OpenMinionConfig:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ProviderSetupError(
+            f"Config at {path} is not valid JSON. Fix the file and rerun setup."
+        ) from exc
     if not isinstance(payload, dict):
         raise ProviderSetupError(f"Config at {path} must be a JSON object.")
     return OpenMinionConfig.from_dict(payload)

@@ -91,7 +91,7 @@ def assert_expected_markers(
     done_matches = list(_DONE_RE.finditer(output))
     if done_matches:
         output = output[: done_matches[-1].start()]
-    answer_index = output.rfind("⏺")
+    answer_index = output.rfind("●")
     if answer_index >= 0:
         output = output[answer_index + 1 :]
     for failure_marker in _FAILED_FINAL_ANSWER_MARKERS:

@@ -208,9 +208,10 @@ class TestDirectToolClosureContract:
         state = self._fake_loop_state(["web.search", "web.fetch"])
         msg = _build_direct_tool_closure_message(state)
         assert msg.content == (
-            "The explicit requested tool batch (web.search, web.fetch) "
-            "already completed successfully for this turn. Do not call "
-            "more tools."
+            "FACT: the explicit requested tool batch (web.search, web.fetch) was "
+            "available and completed successfully for this turn. Its result remains "
+            "valid when the tool schema is no longer active. Do not describe it as "
+            "unavailable or failed. Do not call more tools."
         )
 
     def test_absence_of_next_step_prose(self) -> None:
@@ -222,5 +223,5 @@ class TestDirectToolClosureContract:
         state = self._fake_loop_state(["web.search"])
         msg = _build_direct_tool_closure_message(state)
         assert "web.search" in msg.content
-        assert "already completed successfully" in msg.content
+        assert "completed successfully" in msg.content
         assert "Do not call more tools." in msg.content

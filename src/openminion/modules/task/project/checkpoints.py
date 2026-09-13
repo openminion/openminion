@@ -161,9 +161,14 @@ def advance_repository_lifecycle_payload(
 
     resume = dict(cast(dict[str, object], lifecycle[project_run.resume_packet_ref]))
     current_revisions = dict(cast(dict[str, object], resume["current_revisions"]))
-    if turn.task_plan_revision is not None:
+    latest_revision = (
+        turn.task_plan_revisions[-1]
+        if turn.task_plan_revisions
+        else turn.task_plan_revision
+    )
+    if latest_revision is not None:
         current_revisions["task_plan"] = _bounded_repository_text(
-            turn.task_plan_revision.revision_id
+            latest_revision.revision_id
         )
     resume.update(
         {
@@ -574,8 +579,10 @@ def updated_checkpoint_task_plan(
         if revision is not None and revision.plan_id != plan.plan_id:
             revision = None
 
-    incoming = turn.task_plan_revision
-    if incoming is not None:
+    incoming_revisions = turn.task_plan_revisions or (
+        (turn.task_plan_revision,) if turn.task_plan_revision is not None else ()
+    )
+    for incoming in incoming_revisions:
         if plan is None or incoming.plan_id != plan.plan_id:
             raise ValueError("plan revision must match the checkpoint task plan")
         if not incoming.revision_id:

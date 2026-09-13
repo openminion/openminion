@@ -1,8 +1,8 @@
 import hashlib
 import json
 import time
+from datetime import datetime
 
-from openminion.base.time import utc_now_iso as _iso_now_utc
 from typing import Any
 
 from openminion.base.config.core import resolve_default_agent_id
@@ -85,7 +85,7 @@ def _build_runtime_facts_message(
 ) -> ProviderHistoryMessage | None:
     """Compose a typed runtime-facts system message for the follow-up call."""
 
-    lines: list[str] = [f"current_datetime={_iso_now_utc()}"]
+    lines: list[str] = [f"current_datetime={datetime.now().astimezone().isoformat()}"]
     lines.extend(_dated_evidence_lines_from_tool_results(tool_results))
     if not lines:
         return None

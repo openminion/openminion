@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import re
+import time
+
 import pytest
 
 from openminion.modules.telemetry.schemas import TelemetryEvent
@@ -8,9 +11,19 @@ from tests.e2e.cli.focus.conftest import require_live_focus
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus.harness.assertions import visible_text
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
+from tests.e2e.cli.focus.harness.probe import active_turn_busy
 from tests.e2e.cli.focus.harness.scenarios import BASE_LIVE_SCENARIOS
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(300)]
+
+
+def _observed_call_count(token_report: str) -> int:
+    match = re.search(r"Calls: (\d+) metered · (\d+) unmetered", token_report)
+    if match is None:
+        match = re.search(r"Calls: (\d+) observed", token_report)
+        assert match is not None, token_report
+        return int(match.group(1))
+    return int(match.group(1)) + int(match.group(2))
 
 
 def _structured_trace_path(trace_listing: str) -> str:
@@ -110,6 +123,16 @@ def test_live_focus_basic_turn(
         )
         assert "No model calls in this session yet." not in tokens
         assert "Tokens:" in tokens
+        calls_before_help = _observed_call_count(tokens)
+
+        token_help = visible_text(
+            focus_probe.run_slash(session, "/help tokens", marker="/tokens —")
+        )
+        assert "/tokens recent [1..20]" in token_help
+        tokens_after_help = visible_text(
+            focus_probe.run_slash(session, "/tokens", marker="Token usage")
+        )
+        assert _observed_call_count(tokens_after_help) == calls_before_help
 
         history = visible_text(
             focus_probe.run_slash(
@@ -143,5 +166,63 @@ def test_live_focus_basic_turn(
         write_transcript(
             artifact_root(tmp_path),
             scenario.scenario_id,
+            session.transcript,
+        )
+
+
+def test_live_focus_contextual_help_while_busy(
+    focus_probe: FocusProbe,
+    tmp_path,
+) -> None:
+    require_live_focus()
+    with focus_probe.session() as session:
+        focus_probe.wait_ready(session)
+        before_permissions = visible_text(
+            focus_probe.run_slash(session, "/permissions", marker="permissions:")
+        )
+        before_mode = re.search(r"permissions: ([a-z]+)", before_permissions)
+        assert before_mode is not None
+        turn_offset = len(session.transcript)
+        focus_probe._submit_composer_line(
+            session,
+            "Write twenty short numbered lines about reliable software delivery.",
+        )
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            screen = session.screen_text
+            if active_turn_busy(screen) or "Type to queue while" in screen:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(
+                "Focus never exposed a busy turn state\n"
+                f"{visible_text(session.transcript)[-2000:]}"
+            )
+
+        help_offset = len(session.transcript)
+        session.type_line("/permissions ?")
+        help_transcript = session.wait_for_after(
+            re.escape("Show or set the sandbox approval mode"),
+            offset=help_offset,
+            timeout=60,
+        )
+        session.wait_for_after(
+            r"Done in \d+(?:m\d{2}s|s)", offset=turn_offset, timeout=300
+        )
+        after_permissions = visible_text(
+            focus_probe.run_slash(session, "/permissions", marker="permissions:")
+        )
+        queue = visible_text(
+            focus_probe.run_slash(session, "/queue", marker="No queued messages.")
+        )
+
+        output = visible_text(help_transcript)
+        assert "/permissions <default|readonly|bypass|cycle>" in output
+        assert "Queued message" not in output
+        assert f"permissions: {before_mode.group(1)}" in after_permissions
+        assert "No queued messages." in queue
+        write_transcript(
+            artifact_root(tmp_path),
+            "live-contextual-help-while-busy",
             session.transcript,
         )

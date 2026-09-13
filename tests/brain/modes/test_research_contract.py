@@ -524,7 +524,7 @@ def test_iteration_goal_includes_typed_current_datetime_and_evidence_dates(
 ) -> None:
     monkeypatch.setattr(
         research_handler_module,
-        "_iso_now_utc",
+        "_local_now_iso",
         lambda: "2026-05-08T12:34:56+00:00",
     )
     mode = _make_mode(max_iterations=3)
@@ -573,7 +573,7 @@ def test_synthesis_passes_typed_temporal_facts_to_structured_model(
 ) -> None:
     monkeypatch.setattr(
         research_handler_module,
-        "_iso_now_utc",
+        "_local_now_iso",
         lambda: "2026-05-08T12:34:56+00:00",
     )
     with tempfile.TemporaryDirectory() as tmp:

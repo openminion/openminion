@@ -25,6 +25,7 @@ class CustomCommand:
     source: str
     path: Path
     description: str = ""
+    usage: str = ""
     model: str = ""
     agent: str = ""
     frontmatter: dict[str, str] = field(default_factory=dict)
@@ -189,6 +190,7 @@ def _load_command_text(
         source=source,
         path=path,
         description=frontmatter.get("description", "").strip(),
+        usage=frontmatter.get("usage", "").strip(),
         model=frontmatter.get("model", "").strip(),
         agent=frontmatter.get("agent", "").strip(),
         frontmatter=frontmatter,

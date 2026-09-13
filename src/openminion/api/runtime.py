@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from openminion.base.config import EnvironmentConfig, RunProfileOverrides
 from openminion.modules.llm import RuntimeLLMHandle
@@ -97,6 +97,16 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
         payload = snapshot.model_dump(mode="json")
         self._emit_runtime_self_model_snapshot(payload)
         return payload  # type: ignore[no-any-return]
+
+    def scheduler_readiness(self) -> dict[str, Any]:
+        from openminion.cli.commands.daemon import build_daemon_status_payload
+
+        status = build_daemon_status_payload(
+            str(self.config_path),
+            home_root=self.home_root,
+            data_root=self.data_root,
+        )
+        return cast(dict[str, Any], status["scheduler"])
 
     def _emit_runtime_self_model_snapshot(self, snapshot: dict[str, Any]) -> None:
         try:

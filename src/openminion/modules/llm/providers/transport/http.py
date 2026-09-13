@@ -42,10 +42,12 @@ def _http_error_details(
     exc: urllib_error.HTTPError,
 ) -> tuple[str, dict[str, Any], str]:
     body = _safe_http_error_body(exc)
+    headers = getattr(exc, "headers", None)
     facts = openai_error_facts(
         body,
         status_code=int(exc.code),
-        request_id=str((exc.headers or {}).get("X-Request-ID") or ""),
+        request_id=response_header(headers, "X-Request-ID"),
+        retry_after=response_header(headers, "Retry-After"),
     )
     return body, facts, openai_error_message(facts, status_code=int(exc.code))
 
@@ -96,13 +98,17 @@ def with_default_user_agent(headers: Dict[str, str]) -> Dict[str, str]:
     return normalized
 
 
-def response_request_id(headers: Mapping[str, Any] | None) -> str:
+def response_header(headers: Any, name: str) -> str:
     if headers is None:
         return ""
     for key, value in headers.items():
-        if str(key).strip().lower() == "x-request-id":
+        if str(key).strip().lower() == name.strip().lower():
             return str(value or "").strip()
     return ""
+
+
+def response_request_id(headers: Mapping[str, Any] | None) -> str:
+    return response_header(headers, "X-Request-ID")
 
 
 def _capture_response_request_id(

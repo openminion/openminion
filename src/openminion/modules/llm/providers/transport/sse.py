@@ -12,6 +12,7 @@ from .client import ProviderHTTPClient
 from .error_facts import openai_error_facts, openai_error_message
 from .http import (
     _safe_http_error_body,
+    response_header,
     response_request_id,
     with_default_user_agent,
 )
@@ -150,8 +151,7 @@ def iter_sse_post_lines(
     consumed_lines: list[str] = []
     status_code, request_id = 0, ""
     complete, response_bytes = False, 0
-    response_open_ms: int | None = None
-    first_event_ms: int | None = None
+    response_open_ms = first_event_ms = None
     if response_metadata is not None:
         response_metadata.clear()
     trace_http_json_request(
@@ -195,7 +195,8 @@ def iter_sse_post_lines(
         facts = openai_error_facts(
             detail,
             status_code=int(exc.code),
-            request_id=str((exc.headers or {}).get("X-Request-ID") or ""),
+            request_id=response_header(exc.headers, "X-Request-ID"),
+            retry_after=response_header(exc.headers, "Retry-After"),
         )
         request_id = str(facts.get("request_id") or "")
         _raise_sse_http_error(exc, provider_name=provider_name, facts=facts)

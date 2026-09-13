@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime
 from typing import Any
 
 from openminion.modules.brain.adapters.llm.request import (
@@ -45,7 +46,6 @@ from openminion.modules.brain.schemas import (
     Decision,
     RespondDecision,
     WorkingState,
-    iso_now,
     new_uuid,
 )
 from openminion.modules.brain.retry import build_entry_retry_message
@@ -535,7 +535,7 @@ def decide(
     hints: dict[str, Any] = {
         "user_input": query_text,
         "_llm_call_id": llm_call_id,
-        "current_datetime": iso_now(),
+        "current_datetime": datetime.now().astimezone().isoformat(),
         "prompt_tool_schemas_enabled": bool(
             getattr(runner, "_prompt_tool_schemas_enabled", False)
         ),

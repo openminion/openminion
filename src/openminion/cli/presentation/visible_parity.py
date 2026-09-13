@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from openminion.cli.status import format_token_usage_summary
 
@@ -287,9 +287,6 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
         build_task_surface,
         resolve_task_surface_source,
     )
-    from openminion.modules.task.scheduling.coordination import (
-        scheduler_readiness_from_health,
-    )
 
     surface = build_task_surface(
         resolve_task_surface_source(runtime),
@@ -324,14 +321,11 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
         if task.get("schedule_summary"):
             lines.append(f"schedule: {task.get('schedule_summary')}")
         if task.get("daemon_required"):
-            scheduler = scheduler_readiness_from_health(
-                {},
-                reachable=True,
-                identity_matches=None,
-            )
-            lines.append(
-                f"scheduler: {scheduler['state']} (check: {scheduler['check_command']})"
-            )
+            scheduler = _runtime_scheduler_readiness(runtime)
+            scheduler_line = f"scheduler: {scheduler['state']}"
+            if scheduler.get("check_command"):
+                scheduler_line += f" (check: {scheduler['check_command']})"
+            lines.append(scheduler_line)
         if task.get("last_run"):
             last_run = task["last_run"]
             lines.append(
@@ -375,6 +369,11 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
                 f"- {action.get('decision_id')}: task={action.get('task_id') or '-'}"
             )
     return "\n".join(lines)
+
+
+def _runtime_scheduler_readiness(runtime: Any) -> dict[str, Any]:
+    api_runtime = getattr(runtime, "api_runtime", runtime)
+    return cast(dict[str, Any], api_runtime.scheduler_readiness())
 
 
 def handle_effort_command(runtime: Any, arg: str) -> str:

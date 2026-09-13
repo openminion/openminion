@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
-from openminion.base.time import utc_now_iso as _iso_now_utc
 import traceback
 from typing import Any
 
@@ -70,6 +69,7 @@ from .findings import (
     build_pause_partial_answer as _build_pause_partial_answer,
     evidence_dates_from_action_result as _evidence_dates_from_action_result,
     evidence_dates_from_working_state as _evidence_dates_from_working_state,
+    local_now_iso as _local_now_iso,
     normalized_text as _normalized_text,
     render_temporal_fact_lines as _render_temporal_fact_lines_impl,
     usable_child_action_result_text as _usable_child_action_result_text,
@@ -97,7 +97,7 @@ def _non_recursive_child_profile(runner: Any):
 
 
 def _render_temporal_fact_lines(findings: list[dict[str, Any]]) -> list[str]:
-    return _render_temporal_fact_lines_impl(findings, now_iso_fn=_iso_now_utc)
+    return _render_temporal_fact_lines_impl(findings, now_iso_fn=_local_now_iso)
 
 
 class ResearchMode(SimpleCheckpointMixin):

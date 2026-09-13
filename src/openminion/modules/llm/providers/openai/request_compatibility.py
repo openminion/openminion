@@ -60,6 +60,7 @@ def resolve_openai_request_compat(
             profile_id="minimax_openai_compat",
             collapse_system_messages=True,
             disable_fallback_instruction=True,
+            include_stream_tool_contract=False,
             enable_structured_tool_envelope_parse=True,
             retry_empty_payload_once=True,
             retry_tool_transcript_error_once=True,

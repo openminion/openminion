@@ -3,15 +3,19 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from openminion.base.config.env import resolve_environment_config
 from openminion.base.logging import get_logger
 from openminion.modules.brain.constants import (
+    BRAIN_ACTION_STATUS_NEEDS_USER,
     BRAIN_ACTION_STATUS_SUCCESS,
     BRAIN_JOB_STATUS_RUNNING,
     BRAIN_STATE_ERROR,
 )
 from openminion.modules.tool import RuntimeContext, ToolSpec, preferred_artifact_ref
 from openminion.modules.tool.diagnostics.events import emit_tool_execution_event
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.sidecars import ensure_tool_sidecar_ready
 
 _log = get_logger("brain.adapters.tool.runtime")
 
@@ -225,10 +229,50 @@ def run_tool_spec(
     return result
 
 
+def run_runtime_tool(
+    *,
+    tool: Any,
+    args: dict[str, Any],
+    context: Any,
+    registry: Any,
+    runtime_env: Mapping[str, str],
+    approval_callback: Any | None,
+    start_time: float,
+) -> tuple[Any | None, dict[str, Any] | None]:
+    runtime_env = resolve_environment_config(runtime_env=runtime_env).snapshot()
+    try:
+        ensure_tool_sidecar_ready(
+            registry=registry,
+            tool=tool,
+            runtime_env=runtime_env,
+            approval_callback=approval_callback,
+        )
+        return tool.execute(arguments=args, context=context), None
+    except ToolRuntimeError as exc:
+        confirm = str(exc.code or "").strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED
+        return None, _error_envelope(
+            status=BRAIN_ACTION_STATUS_NEEDS_USER if confirm else BRAIN_STATE_ERROR,
+            summary=exc.message or "Tool execution failed",
+            code=TOOL_ERROR_CONFIRM_REQUIRED if confirm else exc.code,
+            message=exc.message or "Tool execution failed",
+            latency_ms=int((time.monotonic() - start_time) * 1000),
+            details=dict(exc.details or {}),
+        )
+    except Exception as exc:
+        return None, _error_envelope(
+            status=BRAIN_STATE_ERROR,
+            summary="Tool execution failed",
+            code="EXEC_ERROR",
+            message=str(exc),
+            latency_ms=int((time.monotonic() - start_time) * 1000),
+        )
+
+
 __all__ = [
     "_derive_toolspec_summary",
     "_error_envelope",
     "_normalized_artifact_refs",
     "_tool_allowlist_error",
+    "run_runtime_tool",
     "run_tool_spec",
 ]

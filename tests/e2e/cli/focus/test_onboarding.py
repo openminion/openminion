@@ -256,6 +256,39 @@ def _run_noninteractive_setup_case(
     return payload, transcript
 
 
+def test_noninteractive_setup_reports_malformed_existing_config(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+) -> None:
+    home_root = tmp_path / "home"
+    data_root = tmp_path / "data"
+    config_path = home_root / ".openminion" / "config.json"
+    config_path.parent.mkdir(parents=True)
+    malformed = '{"agents": '
+    config_path.write_text(malformed, encoding="utf-8")
+
+    with PtySession(
+        argv=_command(
+            python_bin=python_bin,
+            config_path=config_path,
+            home_root=home_root,
+            data_root=data_root,
+            setup_only=True,
+            extra_setup_args=("--provider", "ollama"),
+        ),
+        cwd=openminion_root,
+        env=_environment(home_root=home_root, data_root=data_root),
+    ) as session:
+        transcript = session.wait_for_after("Setup failed:", offset=0, timeout=30)
+
+    assert str(config_path) in transcript
+    assert "not valid JSON" in transcript
+    assert "Fix the file and rerun setup" in transcript
+    assert "Traceback" not in transcript
+    assert config_path.read_text(encoding="utf-8") == malformed
+
+
 def _write_import_source(path: Path) -> None:
     config = OpenMinionConfig()
     config.agents = {
@@ -307,11 +340,14 @@ def test_bare_command_imports_config_and_reaches_focus(
         )
         session.wait_for_visible_match_after(_FOCUS_READY_RE, offset=0, timeout=120)
         transcript = session.transcript
+        screen = session.screen_text
 
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert payload["default_agent"] == "imported"
     assert payload["agents"]["imported"]["provider"] == "echo"
     assert "Provider connection not applicable for this setup path." in transcript
+    assert "Choose your model provider:" not in screen
+    assert "Entering OpenMinion" not in screen
     _assert_owner_only(config_path)
     write_transcript(artifact_root(tmp_path), "onboarding-import", transcript)
 
@@ -635,6 +671,8 @@ def test_local_ollama_check_failure_does_not_claim_readiness(
         )
 
     assert config_path.exists()
+    assert "Checking provider connection; press Ctrl-C to cancel." in transcript
+    assert re.search(r"Connection check failed after \d+\.\d+s", transcript)
     assert "Connection verified." not in transcript
     assert "Interactive launch skipped" not in transcript
     _assert_owner_only(config_path)
@@ -760,7 +798,14 @@ def test_local_ollama_check_can_verify_against_fixture_server(
         result for result in tool_results if result["tool_name"] == "file.list_dir"
     )
 
-    assert len(requests) == 7
+    assert len(requests) == 8
+    assert (
+        sum(
+            request.get("format", {}).get("title") == "ClosureJudgment"
+            for request in requests
+        )
+        == 1
+    )
     assert len(turn_requests) == 4
     assert turn_requests[0]["messages"][-1]["role"] == "user"
     assert denial["error"]["details"]["suggested_tool"] == "file.list_dir"
@@ -785,6 +830,8 @@ def test_local_ollama_check_can_verify_against_fixture_server(
     assert list_dir_result["ok"] is True
     assert metadata["tool_loop_termination_reason"] == "final_text"
     assert "Connection verified." in transcript
+    assert "Checking provider connection; press Ctrl-C to cancel." in transcript
+    assert re.search(r"Connection check completed in \d+\.\d+s", transcript)
     assert "Connection not tested" not in transcript
     assert "Connection check failed" not in transcript
     assert "ONBOARDING_OK" in first_task
@@ -1060,8 +1107,8 @@ def test_noninteractive_openai_compatible_setups_preserve_api_format(
     assert custom_payload["providers"]["openai"]["provider_identity"] == {
         "transport_adapter": "openai_chat",
         "wire_protocol_family": "openai_chat_completions",
-        "service_vendor": "openai",
-        "model_family": "openai",
+        "service_vendor": "unknown",
+        "model_family": "unknown",
     }
     assert "Connection not tested; no provider request was made." in (custom_transcript)
     assert "fixture-custom-key" not in custom_transcript

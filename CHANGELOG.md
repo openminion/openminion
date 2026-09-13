@@ -1,11 +1,28 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-09-08
+Last updated: 2026-09-13
 
 This file tracks package-facing release notes for `openminion`.
 
-## Current package line - 2026-09-08
+## Current package line - 2026-09-13
+
+- Improved ContextCtl memory continuity across session start, active work,
+  prior-session artifacts, and selected-record attribution.
+- Strengthened long-running project execution with durable plan, revision,
+  recovery, verifier, and terminal-outcome lineage across resumed work.
+- Added configurable per-turn usage reporting, recent token history,
+  privacy-safe telemetry export, and trace diagnostics.
+- Improved provider and model setup, contextual slash-command help, terminal
+  status transitions, and bounded tool-result presentation.
+- Added relative one-time schedules with aligned scheduler readiness and
+  lifecycle behavior across interactive and background execution.
+- Added typed delegated artifact review bound to immutable digests and
+  verifier references.
+- Hardened fresh-context handling, sidecar recovery, repository instruction
+  boundaries, active-checkout execution, and telemetry shutdown.
+
+## Prior package line - 2026-09-08
 
 - Added explicit interactive session closure and aligned close, release, and
   resume lifecycle behavior across terminal, ACP, API, gateway, and cached

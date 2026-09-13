@@ -26,7 +26,8 @@ class TaskScheduleArgs(BaseModel):
             "For recurring: {kind: 'every', every_ms: <milliseconds>} "
             "or {kind: 'every', seconds: <n>} or {kind: 'every', minutes: <n>} or {kind: 'every', hours: <n>}. "
             "For cron: {kind: 'cron', expr: '<cron expression>'}. "
-            "For one-shot: {kind: 'at', at: '<ISO 8601 datetime>'}."
+            "For one-shot at an absolute time: {kind: 'at', at: '<ISO 8601 datetime>'}. "
+            "For one-shot relative to now: {kind: 'at', after_seconds: <n>}."
         ),
     )
     name: str | None = Field(default=None, description="Optional task name")

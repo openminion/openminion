@@ -79,6 +79,7 @@ def _segments_with_cards(
     memory_cards: list[MemoryCard],
     live_state_overlay: dict[str, Any],
     active_state: dict[str, Any] | None = None,
+    memory_tokens: int = 120,
 ) -> list[Any]:
     request = BuildPackRequest(
         session_id="s-drm-03",
@@ -97,7 +98,7 @@ def _segments_with_cards(
         trailer_feedback_tokens=0,
         recent_turn_tokens=100,
         facts_tokens=40,
-        memory_tokens=120,
+        memory_tokens=memory_tokens,
         skills_tokens=0,
         artifact_tokens=0,
         instructions_tokens=80,
@@ -197,6 +198,31 @@ def test_decide_context_surfaces_decision_memory_bucket() -> None:
     assert decision_segment.refs == ["decision-1"]
     assert "[DECISION MEMORY]" in decision_segment.content
     assert "reason_code=structured_followup" in decision_segment.content
+
+
+def test_decision_memory_refs_only_name_complete_rendered_cards() -> None:
+    segments = _segments_with_cards(
+        live_state_overlay={"decision_reason_code": "first"},
+        memory_tokens=25,
+        memory_cards=[
+            _decision_card(
+                "decision-1",
+                reason_code="first",
+                created_at="2026-05-01T00:00:01+00:00",
+            ),
+            _decision_card(
+                "decision-2",
+                reason_code="second",
+                created_at="2026-05-01T00:00:02+00:00",
+                text="x" * 200,
+            ),
+        ],
+    )
+
+    decision_segment = next(seg for seg in segments if seg.id == "retrieval:decisions")
+    assert decision_segment.refs == ["decision-1"]
+    assert "decision-1" in decision_segment.content
+    assert "decision-2" not in decision_segment.content
 
 
 def test_written_decision_card_surfaces_for_repeated_typed_sub_intent() -> None:

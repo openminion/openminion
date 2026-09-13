@@ -4,7 +4,8 @@ from argparse import Namespace
 from types import SimpleNamespace
 
 from openminion.cli.commands.tasks import run_tasks
-from openminion.modules.task import InMemoryTaskCtl, TaskCreateInput
+from openminion.modules.session.storage.repository import create_sqlite_cron_repository
+from openminion.modules.task import InMemoryTaskCtl, TaskCreateInput, TaskManager
 
 
 def test_tasks_cli_lists_task_as_json(capsys) -> None:
@@ -41,6 +42,44 @@ def test_tasks_cli_shows_missing_task_as_failure(capsys) -> None:
     out = capsys.readouterr().out
     assert exit_code == 1
     assert "task not found" in out.lower()
+
+
+def test_tasks_cli_shows_live_scheduler_readiness_for_scheduled_task(
+    tmp_path,
+    capsys,
+) -> None:
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "tasks.db")
+    )
+    record = manager.schedule_task(
+        name="scheduled",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "work"},
+        agent_id="agent",
+    )
+    args = Namespace(
+        tasks_command="show",
+        task_id=record.task_id,
+        agent_id="agent",
+        session="s1",
+        limit=10,
+        json=False,
+    )
+    app = SimpleNamespace(
+        task_manager=manager,
+        scheduler_readiness=lambda: {
+            "state": "ready",
+            "hosted_by": "daemon",
+            "reason": None,
+        },
+    )
+
+    assert run_tasks(args, app) == 0
+    assert "scheduler: ready" in capsys.readouterr().out
+
+    args.tasks_command = "list"
+    assert run_tasks(args, app) == 0
+    assert "scheduler: ready" in capsys.readouterr().out
 
 
 def test_tasks_cli_uses_configured_default_agent(capsys) -> None:

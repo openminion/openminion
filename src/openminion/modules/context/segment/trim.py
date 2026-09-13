@@ -68,7 +68,7 @@ def apply_trim_ladder(
             candidates[0] if name == CONTEXT_BUCKET_RECENT_WINDOW else candidates[-1]
         )
         saved = estimate_tokens(segment.content)
-        segments[idx] = segment.model_copy(update={"content": ""})
+        segments[idx] = segment.model_copy(update={"content": "", "refs": []})
         decision_log.append(
             TrimAction(
                 action="drop_segment",

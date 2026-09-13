@@ -47,6 +47,9 @@ def run_tasks(args: argparse.Namespace, app: APIRuntime) -> int:
     except (AttributeError, TypeError, RuntimeError) as exc:
         payload = {"ok": False, "error": str(exc)}
 
+    if payload.get("ok") and _payload_requires_daemon(payload):
+        payload["scheduler"] = app.scheduler_readiness()
+
     if bool(getattr(args, "json", False)):
         print_json_payload(payload, sort_keys=False, default=str)
     else:
@@ -59,6 +62,16 @@ def _show_payload(surface: Any, task_id: str) -> dict[str, Any]:
     if task is None:
         return {"ok": False, "error": f"task not found: {task_id}"}
     return {"ok": True, "task": task}
+
+
+def _payload_requires_daemon(payload: dict[str, Any]) -> bool:
+    task = payload.get("task")
+    if isinstance(task, dict) and task.get("daemon_required"):
+        return True
+    return any(
+        isinstance(item, dict) and item.get("daemon_required")
+        for item in payload.get("tasks", [])
+    )
 
 
 def _print_human(*, action: str, payload: dict[str, Any]) -> None:
@@ -82,6 +95,11 @@ def _print_human(*, action: str, payload: dict[str, Any]) -> None:
                 f"schedule={task.get('schedule_summary', '-')} "
                 f"next={due} last={last_run.get('state') or '-'}"
             )
+        scheduler = dict(payload.get("scheduler") or {})
+        if scheduler:
+            print(f"scheduler: {scheduler.get('state', 'unknown')}")
+            if scheduler.get("check_command"):
+                print(f"scheduler_check: {scheduler['check_command']}")
         return
     task = payload.get("task")
     if isinstance(task, dict):
@@ -96,7 +114,10 @@ def _print_human(*, action: str, payload: dict[str, Any]) -> None:
         if task.get("schedule_summary"):
             print(f"schedule: {task.get('schedule_summary')}")
         if task.get("daemon_required"):
-            print("scheduler: run `openminion service status cron`")
+            scheduler = dict(payload.get("scheduler") or {})
+            print(f"scheduler: {scheduler.get('state', 'unknown')}")
+            if scheduler.get("check_command"):
+                print(f"scheduler_check: {scheduler['check_command']}")
         if task.get("last_run"):
             last_run = task["last_run"]
             print(f"last_run: {last_run.get('state')}")

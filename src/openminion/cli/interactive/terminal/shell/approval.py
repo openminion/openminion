@@ -9,6 +9,9 @@ from ..overlays import TerminalOverlayPresenter
 
 def format_terminal_approval_prompt(tool_name: str, args: dict[str, Any]) -> str:
     name = str(tool_name or "tool").strip() or "tool"
+    if name.startswith("sidecar.") and name.endswith(".autostart"):
+        sidecar = str(args.get("sidecar", "") or "local service").strip()
+        return f"Approval required: start local {sidecar} service and continue"
     full_command = name.lower().startswith(("exec.", "git."))
     args_preview = format_tool_args_preview(
         name,

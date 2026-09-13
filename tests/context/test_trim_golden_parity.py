@@ -10,7 +10,12 @@ def _est(text: str) -> int:
 
 
 def _seg(
-    seg_id: str, bucket: str, content: str, *, pinned: bool = False
+    seg_id: str,
+    bucket: str,
+    content: str,
+    *,
+    pinned: bool = False,
+    refs: list[str] | None = None,
 ) -> ContextSegment:
     return make_segment(
         seg_id,
@@ -18,6 +23,7 @@ def _seg(
         content,
         role="system",
         pinned=pinned,
+        refs=refs,
         estimate_tokens=_est,
     )
 
@@ -189,6 +195,32 @@ def test_reason_codes_and_warnings_emitted() -> None:
     for action in result_log.actions:
         if action.action == "drop_segment":
             assert action.tokens_saved > 0
+
+
+def test_dropped_segment_clears_refs_with_content() -> None:
+    segments = [
+        _seg("static_prefix", "static_prefix", "identity", pinned=True),
+        _seg("turn_input", "turn_input", "question", pinned=True),
+        _seg(
+            "retrieval:facts",
+            "retrieval",
+            "selected fact content",
+            refs=["mem-1"],
+        ),
+    ]
+
+    result_segments, _, _ = apply_trim_ladder(
+        segments,
+        total_cap=2,
+        bucket_caps={"retrieval": 100},
+        decision_log=PackingDecisionLog(),
+        warnings=[],
+        estimate_tokens=_est,
+    )
+
+    dropped = next(item for item in result_segments if item.id == "retrieval:facts")
+    assert dropped.content == ""
+    assert dropped.refs == []
 
 
 def test_budget_exceeded_warning_when_pinned_blocks_trim() -> None:

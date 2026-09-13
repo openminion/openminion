@@ -33,6 +33,97 @@ def test_focus_pty_launches_and_handles_help(
         write_transcript(artifact_root(tmp_path), "local-help", transcript)
 
 
+def test_focus_pty_handles_contextual_slash_help(
+    focus_probe: FocusProbe,
+    tmp_path,
+) -> None:
+    transcripts: list[str] = []
+    with focus_probe.session(rows=34, cols=80) as session:
+        focus_probe.wait_ready(session)
+        global_help = focus_probe.run_slash(session, "/help", marker="Use /help")
+        long_help = focus_probe.run_slash(
+            session, "/help context-review", marker="[artifacts=<dir>]"
+        )
+        transcripts.extend((global_help, long_help))
+        for command, marker in (
+            ("/help agents", "Alias: /agent"),
+            ("/help agent", "Alias: /agent"),
+            ("/help /agent", "Agent selection:"),
+            ("/agents ?", "/agents <agent-id-or-label>"),
+            ("/agents --help", "/agents <agent-id-or-label>"),
+            ("/agent --help", "List configured agents"),
+            ("/help new", "/new session"),
+            ("/help new session", "/help <command>"),
+            ("/clear ?", "Clear chat history"),
+            ("/review --help", "Review the current or supplied diff"),
+            ("/exit --help", "Exit the interactive CLI"),
+            ("/help statsu", "Did you mean /status?"),
+            ("/status", "Status:"),
+        ):
+            transcripts.append(focus_probe.run_slash(session, command, marker=marker))
+
+    output = visible_text("\n".join(transcripts))
+    assert "\n               /agent)" in visible_text(global_help)
+    assert "\n    [artifacts=<dir>]" in visible_text(long_help)
+    assert "/agents <agent-id-or-label>" in output
+    assert "Alias: /agent" in output
+    assert "--profile" in output
+    assert "/new session" in output
+    assert "(/agents: none found)" not in output
+    assert "Unknown command: /statsu" in output
+    write_transcript(
+        artifact_root(tmp_path),
+        "local-contextual-slash-help",
+        "\n".join(transcripts),
+    )
+
+
+def test_focus_pty_custom_help_is_metadata_only(
+    focus_probe: FocusProbe,
+    tmp_path,
+) -> None:
+    project = tmp_path / "custom-help-project"
+    commands = project / ".openminion" / "commands"
+    commands.mkdir(parents=True)
+    (project / "secret.txt").write_text("SECRET BODY", encoding="utf-8")
+    (commands / "sample.md").write_text(
+        "---\n"
+        "description: Run the sample workflow\n"
+        "usage: /sample <topic>\n"
+        "---\n"
+        "Read @secret.txt, run !`touch help-side-effect`, then use $ARGUMENTS.",
+        encoding="utf-8",
+    )
+    (commands / "agent.md").write_text(
+        "---\ndescription: custom collision\n---\ncustom body",
+        encoding="utf-8",
+    )
+    probe = focus_probe.for_workdir(project, include_project_context=False)
+
+    with probe.session(rows=34, cols=100) as session:
+        probe.wait_ready(session)
+        custom = probe.run_slash(session, "/sample --help", marker="Source: project")
+        global_help = probe.run_slash(
+            session, "/help", marker="Run the sample workflow"
+        )
+        collision = probe.run_slash(
+            session, "/help agent", marker="List configured agents"
+        )
+
+    custom_output = visible_text(custom)
+    assert "/sample <topic>" in custom_output
+    assert "SECRET BODY" not in custom_output
+    assert not (project / "help-side-effect").exists()
+    assert visible_text(global_help).count("/sample") == 1
+    assert "custom collision" not in visible_text(global_help)
+    assert "custom collision" not in visible_text(collision)
+    write_transcript(
+        artifact_root(tmp_path),
+        "local-custom-slash-help",
+        "\n".join((custom, global_help, collision)),
+    )
+
+
 def test_focus_pty_renders_durable_token_report(
     focus_probe: FocusProbe,
     tmp_path,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from openminion.modules.brain.runtime.reasoning import (
@@ -12,8 +13,9 @@ from openminion.modules.brain.runtime.reasoning import (
     ThinkingResolutionInput,
 )
 
-from ..diagnostics.events import CanonicalEventLogger
+from ..bootstrap.freshness_classify import build_freshness_hints
 from ..bootstrap.route_catalog import get_route_descriptor
+from ..diagnostics.events import CanonicalEventLogger
 from ..schemas import BudgetTelemetryBlock, BudgetTelemetryConfig, LearningLoopMetric
 from ..schemas import WorkingState, iso_now
 from ..meta.schemas import LowProgressSignal, MetaConfig
@@ -131,6 +133,24 @@ def _is_phase_hint_allowed(*, purpose: str, key: str) -> bool:
         return True
     allowed = _PHASE_HINT_KEYS.get(purpose, set())
     return key in allowed
+
+
+def _runtime_freshness_hints(
+    *, state: WorkingState, hints: dict[str, Any]
+) -> dict[str, Any]:
+    freshness = build_freshness_hints(
+        contract=getattr(state, "freshness_contract", None),
+        obligations=getattr(state, "freshness_obligations", None),
+    )
+    style = {
+        **dict(freshness.pop("style_overrides", {}) or {}),
+        **dict(hints.get("style_overrides") or {}),
+    }
+    merged = {**freshness, **hints}
+    if style:
+        merged["style_overrides"] = style
+    merged.setdefault("current_datetime", datetime.now().astimezone().isoformat())
+    return merged
 
 
 def _thinking_model_for_purpose(*, runner: "BrainRunner", purpose: str) -> str:
@@ -645,7 +665,7 @@ def build_context(
 ) -> dict[str, Any]:
     if runner.context_api is None:
         return {}
-    hints = dict(hints or {})
+    hints = _runtime_freshness_hints(state=state, hints=dict(hints or {}))
 
     if state.unresolved_clarify_items:
         hints["pending_clarifications"] = [

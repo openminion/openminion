@@ -69,6 +69,16 @@ def _run_inline_setup(args: Any) -> int:
     return int(run_setup(setup_args) or 0)
 
 
+def reset_focus_viewport() -> None:
+    """Start Focus on a clean terminal screen after inline onboarding."""
+
+    if not has_tty():
+        return
+    from prompt_toolkit.shortcuts import clear
+
+    clear()
+
+
 def _resolve_focus_verbosity(args: argparse.Namespace) -> str:
     from openminion.cli.ux.verbosity import resolve_verbosity
 
@@ -136,6 +146,7 @@ def _handle_focus_onboarding_gate(
     if onboarding_status.action == OnboardingAction.LAUNCH_SETUP:
         if _run_inline_setup(args) != 0:
             return 1, args
+        reset_focus_viewport()
         args = argparse.Namespace(**vars(args))
         args.no_interactive = False
     return None, args

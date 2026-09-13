@@ -226,7 +226,7 @@ def test_prompt_safe_turn_has_one_leading_and_trailing_gap() -> None:
 
     handle.complete(final_text="ready")
 
-    assert buffer.getvalue() == "\n⏺ ready\n\n"
+    assert buffer.getvalue() == "\n● ready\n\n"
 
 
 def test_prompt_safe_turn_spacing_is_consistent_across_interactions() -> None:
@@ -239,7 +239,7 @@ def test_prompt_safe_turn_spacing_is_consistent_across_interactions() -> None:
         handle.start()
         handle.complete(final_text=reply)
 
-    assert buffer.getvalue() == ("❯ first\n\n⏺ one\n\n❯ second\n\n⏺ two\n\n")
+    assert buffer.getvalue() == ("❯ first\n\n● one\n\n❯ second\n\n● two\n\n")
 
 
 def test_prompt_safe_mode_keeps_elapsed_status_out_of_prompt_output() -> None:

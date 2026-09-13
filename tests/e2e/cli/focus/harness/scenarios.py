@@ -62,15 +62,15 @@ TOOL_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
     FocusScenario(
         scenario_id="browser_tool_status",
         prompt=(
-            "Use the browser tool with the daemon.status operation to check "
-            "browser/provider readiness, then summarize the browser status in "
-            "one sentence."
+            "Use the browser tool with the tab.list operation to list current "
+            "browser tabs. If it succeeds, reply with exactly `browser ready`; "
+            "otherwise summarize the exact browser error in one sentence."
         ),
-        expected_markers=("browser",),
+        expected_markers=("browser ready",),
         timeout=360,
         requires_approval=True,
         max_auto_approvals=4,
-        approval_reply="session",
+        approval_reply="yes",
     ),
 )
 

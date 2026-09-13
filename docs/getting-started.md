@@ -63,8 +63,10 @@ writes the canonical config at
 `~/.openminion/agents.json` (or `<OPENMINION_HOME>/.openminion/agents.json`
 when that root is set), runs `doctor`, and then enters the interactive CLI.
 The hosted-provider connection check is recommended and selected by pressing
-Enter; it sends one short request that may consume quota. A useful first task
-is:
+Enter; it sends one short request that may consume quota. The check displays
+progress and elapsed time. Pressing Ctrl-C stops the foreground check without
+retrying; the saved configuration remains available but unverified. A useful
+first task is:
 
 ```text
 List this workspace using the file tools.

@@ -48,6 +48,85 @@ def test_focus_session_id_uses_stable_sha256_digest(tmp_path: Path) -> None:
     assert all(character in "0123456789abcdef" for character in digest)
 
 
+def test_run_turn_ignores_repeated_old_completion_after_inline_approval(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    prompt = "build the uniquely anchored fixture"
+    old_completion = (
+        "Budget: exhausted\nContinue in a new turn to resume.\nDone in 1s\n"
+    )
+
+    class Session:
+        state = 0
+
+        @property
+        def visible_transcript(self) -> str:
+            transcripts = (
+                f"{old_completion}❯ {prompt}\nApproval required: file.write\n"
+                "[y]es / [N]o / [a]lways:",
+                f"{old_completion}❯ {prompt}\na\nStatus: Thinking...\n",
+                f"{old_completion}❯ {prompt}\na\nStatus: Thinking...\n"
+                f"\f{old_completion}❯ {prompt}\nStatus: Thinking...\n",
+                f"{old_completion}❯ {prompt}\na\nStatus: Thinking...\n"
+                f"\f❯ {prompt}\nresult: complete\nDone in 2s\n",
+            )
+            return transcripts[self.state]
+
+        @property
+        def screen_text(self) -> str:
+            if self.state == 0:
+                return "Approval required: file.write\n[y]es / [N]o / [a]lways:"
+            if self.state < 3:
+                return (
+                    "Status: Thinking...\n❯ Type to queue while the current turn runs"
+                )
+            return "result: complete\nDone in 2s\n❯ Ask anything"
+
+    session = Session()
+    submitted: list[str] = []
+
+    def submit(_session: Session, text: str) -> str:
+        submitted.append(text)
+        return composer_echo_probe(text)
+
+    def approve(_session: Session, _reply: str) -> None:
+        session.state = 1
+
+    def advance(_seconds: float) -> None:
+        if 0 < session.state < 3:
+            session.state += 1
+
+    monkeypatch.setattr(FocusProbe, "_submit_composer_line", staticmethod(submit))
+    monkeypatch.setattr(FocusProbe, "_submit_inline_approval", staticmethod(approve))
+    monkeypatch.setattr(FocusProbe, "uses_echo_agent", lambda self: True)
+    monkeypatch.setattr("tests.e2e.cli.focus.harness.probe.time.sleep", advance)
+    focus_probe = FocusProbe(
+        python_bin=Path(sys.executable),
+        openminion_root=tmp_path,
+        framework_root=tmp_path,
+        data_root=tmp_path,
+        config_path=tmp_path / "config.json",
+        agent_id="test-agent",
+        workdir=tmp_path,
+        session_id="test-session",
+    )
+
+    transcript = focus_probe.run_turn(
+        session,  # type: ignore[arg-type]
+        FocusScenario(
+            scenario_id="repeated-history",
+            prompt=prompt,
+            requires_approval=True,
+            max_auto_approvals=1,
+            max_auto_continuations=1,
+        ),
+    )
+
+    assert submitted == [prompt]
+    assert "result: complete" in transcript
+
+
 def test_expected_markers_ignore_echoed_prompt() -> None:
     prompt = "Please end with next steps."
     transcript = f"❯ {prompt}\n● Working\nDone in 4s\n"
@@ -208,7 +287,7 @@ def test_expected_markers_reject_provider_error_final_answer() -> None:
     prompt = "Build and validate a project, then report result."
     transcript = (
         f"❯ {prompt}\n"
-        "⏺ [act:coding] LLM error: PROVIDER_ERROR: invalid tool transcript\n"
+        "● [act:coding] LLM error: PROVIDER_ERROR: invalid tool transcript\n"
         "Done in 2m10s\n"
     )
 
@@ -230,7 +309,7 @@ def test_expected_markers_ignore_tool_output_before_final_answer() -> None:
     transcript = (
         f"❯ {prompt}\n"
         "● web.search result: recommendation from an unverified snippet\n"
-        "⏺ I could not complete the requested comparison.\n"
+        "● I could not complete the requested comparison.\n"
         "Done in 4m12s\n"
     )
 
@@ -729,7 +808,7 @@ def test_completed_turn_allows_debug_traceback_before_final_done() -> None:
         "Traceback (most recent call last):\n"
         "ZeroDivisionError: division by zero\n"
         "● Running file.write(module.py)\n"
-        "⏺ result: fixed the failing edge case.\n"
+        "● result: fixed the failing edge case.\n"
         "Done in 12s\n"
     )
 

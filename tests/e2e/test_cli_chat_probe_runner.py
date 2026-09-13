@@ -99,7 +99,7 @@ def test_turn_response_boundary_ignores_typeahead_prompt_until_done() -> None:
     assert not _turn_response_boundary_detected(
         "❯ hello\nhello\n\n❯ Commands are unavailable while a turn is running."
     )
-    assert _turn_response_boundary_detected("⏺ done\nDone in 3s\n\n❯ ")
+    assert _turn_response_boundary_detected("● done\nDone in 3s\n\n❯ ")
 
 
 def test_turn_response_boundary_accepts_inline_approval_prompt() -> None:
@@ -411,7 +411,7 @@ def test_probe_requirement_accepts_assistant_output_marker() -> None:
             output=(
                 "❯ Reply with exactly: Groq smoke OK\n"
                 "Reply with exactly: Groq smoke OK\n"
-                "⏺ Groq smoke OK\n"
+                "● Groq smoke OK\n"
             ),
             messages=("Reply with exactly: Groq smoke OK",),
             required_output_markers=("Groq smoke OK",),
@@ -427,7 +427,7 @@ def test_probe_requirement_accepts_prompt_prefixed_assistant_output_marker() -> 
             output=(
                 "❯ Reply with exactly: Groq smoke OK\n"
                 "Reply with exactly: Groq smoke OK\n"
-                '❯ ⏺ <respond>{"answer": "Groq smoke OK"}</respond>\n'
+                '❯ ● <respond>{"answer": "Groq smoke OK"}</respond>\n'
             ),
             messages=("Reply with exactly: Groq smoke OK",),
             required_output_markers=("Groq smoke OK",),
@@ -443,7 +443,7 @@ def test_probe_requirement_rejects_marker_that_only_appears_in_echoed_prompt() -
             output=(
                 "❯ Reply with exactly: OpenRouter GPT smoke OK\n"
                 "Reply with exactly: OpenRouter GPT smoke OK\n"
-                "⏺ Provider quota exceeded.\n"
+                "● Provider quota exceeded.\n"
             ),
             messages=("Reply with exactly: OpenRouter GPT smoke OK",),
             required_output_markers=("OpenRouter GPT smoke OK",),
@@ -453,7 +453,7 @@ def test_probe_requirement_rejects_marker_that_only_appears_in_echoed_prompt() -
 
 
 def test_probe_requirement_requires_marker_in_final_assistant_turn() -> None:
-    output = "❯ first prompt\n⏺ continuity-ok\n❯ final prompt\n⏺ wrong-final-answer\n"
+    output = "❯ first prompt\n● continuity-ok\n❯ final prompt\n● wrong-final-answer\n"
 
     assert (
         _probe_requirement_failure(

@@ -12,6 +12,9 @@ from openminion.base.channel import ChannelRegistry
 from openminion.base.types import Message
 from openminion.base.user_io import UserIO
 from openminion.services.agent import AgentService
+from openminion.services.agent.memory.gateway_adapter import (
+    DisabledMemoryGatewayAdapter,
+)
 from openminion.modules.controlplane.channels.authenticity import (
     ChannelAuthenticityPolicy,
 )
@@ -118,11 +121,8 @@ class GatewayService:
         retrieval_service: RetrievalService | None = None,
         contextctl_adapter: Any | None = None,
         context_token_budget: int = 0,
+        record_context_selection: Callable[[str], None] | None = None,
     ) -> None:
-        from openminion.services.agent.memory.gateway_adapter import (
-            DisabledMemoryGatewayAdapter,
-        )
-
         self._agent = agent
         self._channels = channels
         self._logger = logger
@@ -137,7 +137,9 @@ class GatewayService:
             logger=logger.getChild("session_context"),
             keep_recent_messages=self._history_limit,
         )
-        self._agent_memory = agent_memory or DisabledMemoryGatewayAdapter(
+        self._agent_memory: Any = cast(
+            Any, agent_memory
+        ) or DisabledMemoryGatewayAdapter(
             agent_id=self._agent_id,
             logger=logger.getChild("agent_memory"),
         )
@@ -147,13 +149,15 @@ class GatewayService:
             from openminion.modules.context.memory_client import (
                 ContextMemoryClientAdapter,
             )
+            from openminion.modules.context.slices import RuntimeMappedSessionClient
             from openminion.services.context.adapter import ContextCtlGatewayAdapter
 
             contextctl_adapter = ContextCtlGatewayAdapter.from_env(
                 agent_id=agent_id,
                 runtime_token_budget=context_token_budget,
-                session_client=self._sessions,
+                session_client=RuntimeMappedSessionClient(store=self._sessions),
                 memory_client=ContextMemoryClientAdapter(self._agent_memory),
+                record_context_selection=record_context_selection,
                 logger=logger.getChild("contextctl"),
             )
         self._contextctl_adapter = contextctl_adapter

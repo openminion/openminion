@@ -169,6 +169,7 @@ def _openai_stream_payload(
     request_compat: Any,
     tool_call_strategy: str,
     tool_name_map: Any,
+    include_tool_contract: bool,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
@@ -186,13 +187,15 @@ def _openai_stream_payload(
     }
     if request.temperature is not None:
         payload["temperature"] = request.temperature
+    if request.top_p is not None:
+        payload["top_p"] = request.top_p
     if request.max_output_tokens is not None and request.max_output_tokens > 0:
         payload["max_tokens"] = request.max_output_tokens
     if request.stop:
         payload["stop"] = request.stop
     if (
         request.tools
-        and request_compat.include_stream_tool_contract
+        and include_tool_contract
         and supports_native_tool_calling(tool_call_strategy)
     ):
         payload["tools"] = build_openai_tools_payload(
@@ -209,6 +212,17 @@ def _openai_stream_payload(
     return payload
 
 
+def _stream_strategy_error(provider: str, strategy: str) -> ResponseError:
+    return ResponseError(
+        code="INVALID_ARGUMENT",
+        message=(
+            f"{provider} native streaming tools do not support "
+            f"tool_call_strategy={strategy!r}"
+        ),
+        details={"provider": provider, "tool_call_strategy": strategy},
+    )
+
+
 def _merge_openai_stream_tool_call_delta(
     states: dict[int, dict[str, str]],
     raw_delta: dict[str, Any],
@@ -217,7 +231,7 @@ def _merge_openai_stream_tool_call_delta(
         index = int(raw_delta.get("index", 0))
     except (TypeError, ValueError) as exc:
         raise LLMCtlError(
-            "PROVIDER_ERROR", "openai stream tool call delta has invalid index"
+            "PROVIDER_ERROR", "stream tool call delta has invalid index"
         ) from exc
     state = states.setdefault(index, {"id": "", "name": "", "arguments": ""})
     state["id"] += str(raw_delta.get("id") or "")
@@ -229,28 +243,32 @@ def _merge_openai_stream_tool_call_delta(
 
 def _reconstruct_openai_stream_tool_calls(
     states: dict[int, dict[str, str]],
+    *,
+    external_to_canonical: dict[str, str] | None = None,
 ) -> list[ToolCall]:
     tool_calls: list[ToolCall] = []
     for index in sorted(states):
         state = states[index]
-        name = state["name"]
+        name = remap_provider_tool_call_name(
+            state["name"], external_to_canonical=external_to_canonical
+        )
         raw_arguments = state["arguments"]
         if not name:
             raise LLMCtlError(
-                "PROVIDER_ERROR", "openai stream tool call is missing function name"
+                "PROVIDER_ERROR", "stream tool call is missing function name"
             )
         try:
             arguments = json.loads(raw_arguments or "{}")
         except json.JSONDecodeError as exc:
             raise LLMCtlError(
                 "PROVIDER_ERROR",
-                "openai stream tool call has malformed arguments",
+                "stream tool call has malformed arguments",
                 details={"tool_call_id": state["id"], "tool_call_index": index},
             ) from exc
         if not isinstance(arguments, dict):
             raise LLMCtlError(
                 "PROVIDER_ERROR",
-                "openai stream tool call arguments must be an object",
+                "stream tool call arguments must be an object",
                 details={"tool_call_id": state["id"], "tool_call_index": index},
             )
         tool_calls.append(
@@ -417,16 +435,42 @@ def _resolve_openai_response_content(
     return text, text_source, thinking_blocks, tool_calls, resolution
 
 
+def _decode_openai_stream_chunk(
+    data: str, *, provider_name: str, event_type: str
+) -> dict[str, Any] | ResponseError:
+    try:
+        chunk = json.loads(data)
+    except json.JSONDecodeError as exc:
+        return ResponseError(
+            code="PROVIDER_ERROR",
+            message=f"{provider_name} stream malformed event payload",
+            details={"stream_event_type": event_type, "error": str(exc)},
+        )
+    if not isinstance(chunk, dict):
+        return ResponseError(
+            code="PROVIDER_ERROR",
+            message=f"{provider_name} stream event payload must be an object",
+            details={
+                "stream_event_type": event_type,
+                "payload_type": type(chunk).__name__,
+            },
+        )
+    return chunk
+
+
 def _iter_openai_stream_events(
     lines: Iterable[str],
     *,
     response_metadata: dict[str, str],
     preserve_response_facts: bool,
+    provider_name: str = "openai",
+    external_to_canonical: dict[str, str] | None = None,
 ) -> Iterator[LLMStreamEvent]:
     stream_event_type = "message"
     tool_call_states: dict[int, dict[str, str]] = {}
     finish_reason = ""
     usage = None
+    stream_failed = False
     try:
         for line in lines:
             if line.startswith("event:"):
@@ -437,27 +481,23 @@ def _iter_openai_stream_events(
             data_str = line[len("data:") :].strip()
             if data_str == "[DONE]":
                 break
-            try:
-                chunk = json.loads(data_str)
-            except json.JSONDecodeError as exc:
-                yield LLMStreamEvent(
-                    type="error",
-                    error=ResponseError(
-                        code="PROVIDER_ERROR",
-                        message="openai stream malformed event payload",
-                        details={
-                            "stream_event_type": stream_event_type,
-                            "error": str(exc),
-                        },
-                    ),
-                )
+            chunk = _decode_openai_stream_chunk(
+                data_str,
+                provider_name=provider_name,
+                event_type=stream_event_type,
+            )
+            if isinstance(chunk, ResponseError):
+                stream_failed = True
+                yield LLMStreamEvent(type="error", error=chunk)
                 break
             choices = chunk.get("choices")
             first = (
                 choices[0]
-                if isinstance(choices, list)
-                and choices
-                and isinstance(choices[0], dict)
+                if (
+                    isinstance(choices, list)
+                    and choices
+                    and isinstance(choices[0], dict)
+                )
                 else {}
             )
             delta = first.get("delta", {})
@@ -493,14 +533,17 @@ def _iter_openai_stream_events(
                 request_id=response_metadata.get("request_id") or None,
                 provider_raw=chunk,
             )
-        for tool_call in _reconstruct_openai_stream_tool_calls(tool_call_states):
-            yield LLMStreamEvent(type="delta", tool_call=tool_call)
+        if not stream_failed:
+            for tool_call in _reconstruct_openai_stream_tool_calls(
+                tool_call_states, external_to_canonical=external_to_canonical
+            ):
+                yield LLMStreamEvent(type="delta", tool_call=tool_call)
     except LLMCtlError as exc:
         yield LLMStreamEvent(
             type="error",
             error=ResponseError(
                 code=exc.code,
-                message=f"openai stream error: {exc.message}",
+                message=f"{provider_name} stream error: {exc.message}",
                 details=dict(exc.details),
             ),
         )
@@ -839,7 +882,6 @@ class OpenAIProvider:
             )
             yield LLMStreamEvent(type="done")
             return
-
         base_url = str(config.get("base_url") or self.default_base_url).rstrip("/")
         behavior_profile = self._resolve_behavior_profile(
             model=model,
@@ -856,10 +898,27 @@ class OpenAIProvider:
             ),
             request_dialect=behavior_profile.request_dialect,
         )
-
+        identity = behavior_profile.provider_identity
+        service_vendor = getattr(identity, "service_vendor", "")
+        stream_contract_enabled = request_compat.include_stream_tool_contract or (
+            self.name in {"groq", "cerebras"}
+            or self.name == "openai"
+            and service_vendor == "openai"
+        )
         tool_call_strategy = str(
             config.get("tool_call_strategy", LLM_TOOL_CALL_STRATEGY_HYBRID)
         )
+        if (
+            request.tools
+            and stream_contract_enabled
+            and not supports_native_tool_calling(tool_call_strategy)
+        ):
+            yield LLMStreamEvent(
+                type="error",
+                error=_stream_strategy_error(self.name, tool_call_strategy),
+            )
+            yield LLMStreamEvent(type="done")
+            return
         tool_name_map = (
             build_tool_schema_name_map(
                 request.tools,
@@ -870,15 +929,14 @@ class OpenAIProvider:
             if request.tools
             else None
         )
-
         payload = _openai_stream_payload(
             request,
             model=model,
             request_compat=request_compat,
             tool_call_strategy=tool_call_strategy,
             tool_name_map=tool_name_map,
+            include_tool_contract=stream_contract_enabled,
         )
-
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -900,7 +958,11 @@ class OpenAIProvider:
         yield from _iter_openai_stream_events(
             lines,
             response_metadata=response_metadata,
-            preserve_response_facts=request_compat.include_stream_tool_contract,
+            preserve_response_facts=stream_contract_enabled,
+            provider_name=self.name,
+            external_to_canonical=(
+                tool_name_map.external_to_canonical if tool_name_map else None
+            ),
         )
 
     def list_models(self, config: dict[str, Any]) -> list[str]:

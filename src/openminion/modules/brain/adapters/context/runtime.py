@@ -12,6 +12,9 @@ from openminion.modules.tool.schema_service import ToolSchemaService
 
 _TOOL_SCHEMA_SERVICE = ToolSchemaService()
 _PHASE_PROMPT_HINT_KEYS = {
+    "current_datetime",
+    "freshness_contract",
+    "freshness_obligations",
     "closure_candidate_reason",
     "closure_action_summary",
     "closure_action_outputs",

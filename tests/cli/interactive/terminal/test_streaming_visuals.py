@@ -24,7 +24,7 @@ def test_streaming_renders_two_row_layout() -> None:
     handle.append_token("world")
     handle.complete()
     output = buffer.getvalue()
-    assert "⏺" in output
+    assert "●" in output
     assert "hello world" in output
 
 
@@ -66,7 +66,7 @@ def test_streaming_above_50ms_keeps_marker_in_final_render() -> None:
     handle.complete()
     output = buffer.getvalue()
     assert "slower stream" in output
-    assert "⏺" in output
+    assert "●" in output
 
 
 def test_cursor_present_during_streaming_dropped_on_complete() -> None:
@@ -166,7 +166,7 @@ def test_wait_state_suppresses_empty_assistant_row_before_first_token() -> None:
     handle.complete()
 
     output = buffer.getvalue()
-    assert "⏺" not in output
+    assert "●" not in output
     assert "▍" not in output
     assert "minimax-m2-7" in output
     assert "esc interrupts" in output

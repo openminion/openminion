@@ -6,6 +6,7 @@ from pathlib import Path
 import urllib.error
 import urllib.request
 from typing import Any, Callable
+from uuid import uuid4
 
 from openminion.modules.memory.constants import MEMORY_CANDIDATE_STATUS_PROPOSED
 from openminion.modules.memory.models import (
@@ -478,7 +479,7 @@ class RemoteMemoryStore:
         self._transport.call(
             operation="touch_last_hit",
             payload={"record_id": record_id},
-            idempotency_key=record_id,
+            idempotency_key=f"touch:{record_id}:{uuid4().hex}",
         )
 
     def apply_outcome_feedback(

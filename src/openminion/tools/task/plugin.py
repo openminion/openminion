@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 from uuid import uuid4
 
@@ -22,10 +22,14 @@ from openminion.modules.tool.contracts.model_ids import (
 from openminion.modules.tool.runtime.environment import (
     agent_id_from_context as _agent_id_from_context,
 )
-from openminion.modules.tool.runtime.context import resolve_cron_repository
+from openminion.modules.tool.runtime.context import (
+    RuntimeContext,
+    resolve_cron_repository,
+)
+from openminion.modules.tool.contracts.schemas import ErrorCode
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.registry import ToolRegistry, ToolSpec
-from openminion.modules.tool.runtime import RuntimeContext
+from openminion.modules.tool.registry import ToolRegistry
+from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.task import TaskManager
 from openminion.modules.task.constants import (
     DEFAULT_TASK_MIN_EVERY_MS,
@@ -46,7 +50,6 @@ from .constants import (
     DEFAULT_CONSOLIDATION_RETRY_BACKOFF_SECONDS,
     DEFAULT_CONSOLIDATION_TIMEOUT_SECONDS,
     DEFAULT_WATCH_MAX_ITERATIONS,
-    EVERY_UNIT_TO_MS,
     TASK_REASON_RECORD_NOT_FOUND,
     TASK_REASON_STORAGE_EXEC_ERROR,
     TASK_REASON_STORAGE_UNAVAILABLE,
@@ -66,6 +69,7 @@ from .args import (
 )
 from .scheduled_task.runtime import (
     _background_write_authorization_allowed,
+    _coerce_schedule_aliases,
     _context_metadata,
     _origin_delivery_context,
     _safe_str,
@@ -82,7 +86,7 @@ from .watch import watch_profile_tools
 
 
 def _tool_error(
-    code: str,
+    code: ErrorCode,
     *,
     message: str,
     reason_code: str,
@@ -169,33 +173,6 @@ def _normalized_goal_origin_action_type(
     return None
 
 
-_EVERY_SCHEDULE_ALIASES: tuple[tuple[str, str | None], ...] = (
-    ("interval", None),
-    ("every", None),
-    ("milliseconds", "milliseconds"),
-    ("seconds", "seconds"),
-    ("minutes", "minutes"),
-    ("hours", "hours"),
-    ("days", "days"),
-    ("ms", "ms"),
-    ("s", "s"),
-    ("m", "m"),
-    ("h", "h"),
-    ("d", "d"),
-    ("interval_milliseconds", "milliseconds"),
-    ("interval_seconds", "seconds"),
-    ("interval_minutes", "minutes"),
-    ("interval_hours", "hours"),
-    ("interval_days", "days"),
-    ("every_milliseconds", "milliseconds"),
-    ("every_seconds", "seconds"),
-    ("every_minutes", "minutes"),
-    ("every_hours", "hours"),
-    ("every_days", "days"),
-)
-_EVERY_SCHEDULE_ALIAS_KEYS = tuple(key for key, _ in _EVERY_SCHEDULE_ALIASES)
-
-
 def _resolve_cron_store(ctx: RuntimeContext) -> Any:
     repository = resolve_cron_repository(ctx)
     if repository is not None:
@@ -239,7 +216,7 @@ def _storage_operation(
     message: str,
     details: Mapping[str, Any] | None = None,
     passthrough: tuple[type[BaseException], ...] = (),
-):
+) -> Iterator[None]:
     try:
         yield
     except passthrough:
@@ -264,62 +241,6 @@ def _derive_task_name(*, name: str | None, instruction: str) -> str:
     if len(compact) <= DEFAULT_TASK_NAME_MAX_CHARS:
         return compact
     return f"{compact[: DEFAULT_TASK_NAME_MAX_CHARS - 3].rstrip()}..."
-
-
-def _every_unit_multiplier(unit: Any) -> int:
-    token = _text(unit).lower()
-    if not token:
-        return EVERY_UNIT_TO_MS["seconds"]
-    multiplier = EVERY_UNIT_TO_MS.get(token)
-    if multiplier is None:
-        raise ValueError(f"unsupported every unit: {unit}")
-    return multiplier
-
-
-def _coerce_schedule_aliases(schedule: Mapping[str, Any]) -> dict[str, Any]:
-    normalized = dict(schedule or {})
-    kind = _safe_str(normalized, "kind")
-
-    if kind == "cron":
-        if normalized.get("expr") is None:
-            for alias in ("expression", "cron_expr", "cron"):
-                if normalized.get(alias) is None:
-                    continue
-                normalized["expr"] = normalized.get(alias)
-                normalized.pop(alias, None)
-                break
-        if normalized.get("tz") is None and normalized.get("timezone") is not None:
-            normalized["tz"] = normalized.get("timezone")
-            normalized.pop("timezone", None)
-        return normalized
-
-    if kind == "at":
-        if normalized.get("at") is None and normalized.get("time") is not None:
-            normalized["at"] = normalized.get("time")
-            normalized.pop("time", None)
-        return normalized
-
-    if kind != "every":
-        return normalized
-
-    if normalized.get("every_ms") is not None:
-        return normalized
-
-    for key, unit_alias in _EVERY_SCHEDULE_ALIASES:
-        raw_value = normalized.get(key)
-        if raw_value is None:
-            continue
-        value = int(raw_value or 0)
-        if value <= 0:
-            raise ValueError(f"{key} must be greater than 0")
-        unit_value = normalized.get("unit") if unit_alias is None else unit_alias
-        normalized["every_ms"] = value * _every_unit_multiplier(unit_value)
-        for drop_key in _EVERY_SCHEDULE_ALIAS_KEYS:
-            normalized.pop(drop_key, None)
-        normalized.pop("unit", None)
-        return normalized
-
-    return normalized
 
 
 def _enforce_every_schedule_floor(schedule: Mapping[str, Any]) -> None:
@@ -403,10 +324,10 @@ def _h_task_schedule(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         surface="task",
     )
     instruction = validated.instruction
-    raw_schedule = _coerce_schedule_aliases(validated.schedule or {})
     task_name = _derive_task_name(name=validated.name, instruction=instruction)
 
     try:
+        raw_schedule = _coerce_schedule_aliases(validated.schedule or {})
         normalized_schedule = normalize_schedule(raw_schedule)
     except Exception as exc:
         raise ToolRuntimeError(
@@ -432,6 +353,16 @@ def _h_task_schedule(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         task_id = task_row.task_id
         deduped = bool(created["deduped"])
 
+    scheduler = _scheduler_readiness(ctx)
+    scheduler_note = (
+        "Task scheduled. The OpenMinion daemon scheduler is ready."
+        if scheduler["state"] == "ready"
+        else (
+            "Task scheduled. Runs will only execute while the OpenMinion daemon "
+            "is running. Start it with: openminion daemon start"
+        )
+    )
+
     return {
         "ok": True,
         "task_id": task_id,
@@ -442,16 +373,21 @@ def _h_task_schedule(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         "session_target": _safe_str(job, "session_target", "isolated"),
         "next_due_at": job.get("next_due_at"),
         "delete_after_run": bool(job.get("delete_after_run", False)),
-        "scheduler": scheduler_readiness_from_health(
-            {},
-            reachable=True,
-            identity_matches=None,
-        ),
-        "scheduler_note": (
-            "Task scheduled. Runs will only execute while the openminion daemon is running. "
-            "Start it with: openminion daemon start"
-        ),
+        "scheduler": scheduler,
+        "scheduler_note": scheduler_note,
     }
+
+
+def _scheduler_readiness(ctx: RuntimeContext) -> dict[str, Any]:
+    query: Callable[[], dict[str, Any]] | None = ctx.scheduler_readiness
+    if callable(query):
+        return query()
+    readiness: dict[str, Any] = scheduler_readiness_from_health(
+        {},
+        reachable=True,
+        identity_matches=None,
+    )
+    return readiness
 
 
 def _h_task_watch(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:

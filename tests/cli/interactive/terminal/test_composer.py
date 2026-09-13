@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import io
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,10 +17,14 @@ from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.output.base import Size
+from prompt_toolkit.output.color_depth import ColorDepth
+from prompt_toolkit.output.vt100 import Vt100_Output
 
 import openminion.cli.interactive.terminal.composer as composer_module
 from openminion.cli.interactive.terminal.composer import (
     _ClickableCompletionMenuControl,
+    _use_click_only_mouse_tracking,
     TerminalComposer,
 )
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
@@ -206,6 +211,23 @@ def test_mouse_capture_is_limited_to_open_completion_menu(
     assert c._session.mouse_support() is False
     buffer.complete_state = object()
     assert c._session.mouse_support() is True
+
+
+def test_completion_menu_requests_clicks_without_all_motion_tracking() -> None:
+    stream = io.StringIO()
+    output = Vt100_Output(
+        stdout=stream,
+        get_size=lambda: Size(rows=24, columns=80),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+    )
+    session = SimpleNamespace(app=SimpleNamespace(output=output))
+
+    _use_click_only_mouse_tracking(session)
+    output.enable_mouse_support()
+    output.flush()
+
+    assert stream.getvalue() == "\x1b[?1000h\x1b[?1006h"
 
 
 def _completion_menu_controls(node: object) -> list[CompletionsMenuControl]:
@@ -581,6 +603,51 @@ def test_slash_completer_opens_menu_for_bare_slash() -> None:
 
     assert [comp.text for comp in completions] == ["/help", "/model"]
     assert completions[1].display_meta_text == "choose model"
+
+
+def test_slash_completer_offers_canonical_help_targets() -> None:
+    from prompt_toolkit.document import Document
+
+    composer = TerminalComposer(
+        slash_commands={
+            "/agents": "list agents",
+            "/help": "show help",
+            "/archive": "custom command",
+        }
+    )
+    completions = list(
+        composer._completer.get_completions(
+            Document(text="/help a"), complete_event=None
+        )
+    )
+
+    assert [completion.text for completion in completions] == [
+        "agents",
+        "archive",
+    ]
+    assert [completion.display_text for completion in completions] == [
+        "/agents",
+        "/archive",
+    ]
+
+
+def test_slash_completer_preserves_leading_slash_and_ignores_other_operands() -> None:
+    from prompt_toolkit.document import Document
+
+    composer = TerminalComposer(slash_commands={"/agents": "list agents"})
+    with_slash = list(
+        composer._completer.get_completions(
+            Document(text="/help /a"), complete_event=None
+        )
+    )
+    ordinary_operand = list(
+        composer._completer.get_completions(
+            Document(text="/agents a"), complete_event=None
+        )
+    )
+
+    assert [completion.text for completion in with_slash] == ["/agents"]
+    assert ordinary_operand == []
 
 
 def test_bottom_toolbar_formats_ansi_string_for_prompt_toolkit() -> None:

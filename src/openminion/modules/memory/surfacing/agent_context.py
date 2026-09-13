@@ -215,7 +215,7 @@ class ContextBuildersMixin:
         self, *, session_id: str, query_text: str, first_turn: bool
     ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
         session_scope = f"session:{session_id}"
-        long_term_scopes = self._long_term_scopes()
+        long_term_scopes = self.context_scopes()
         query_options = {"query": query_text, "limit": 20}
         agent_records = (
             self._service.search(
@@ -452,7 +452,7 @@ class ContextBuildersMixin:
         )
         return outcome
 
-    def _recall_hits(
+    def recall_context(
         self,
         *,
         session_id: str,
@@ -802,8 +802,8 @@ class ContextBuildersMixin:
 
         try:
             self._maybe_run_session_lifecycle(session_id=session_id)
-            retrieval_scopes = [f"session:{session_id}", *self._long_term_scopes()]
-            memory_hits, precision = self._recall_hits(
+            retrieval_scopes = self.context_scopes(session_id=session_id)
+            memory_hits, precision = self.recall_context(
                 session_id=session_id,
                 query=user_message,
                 scopes=retrieval_scopes,

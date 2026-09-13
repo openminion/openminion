@@ -179,11 +179,11 @@ def test_runtime_py_has_no_new_goal_declaration_regex() -> None:
 
 
 def test_session_start_recall_includes_declared_goal() -> None:
-    from openminion.modules.brain.adapters.context.bridges.memory import (
-        _SESSION_START_RECALL_TYPES,
+    from openminion.modules.context.memory_client import (
+        SESSION_START_RECALL_TYPES,
     )
 
-    assert "declared_goal" in _SESSION_START_RECALL_TYPES
+    assert "declared_goal" in SESSION_START_RECALL_TYPES
 
 
 def test_retrieval_memory_type_tags_includes_declared_goal() -> None:
@@ -584,6 +584,7 @@ def test_service_create_tool_api_forwards_agent_profile(monkeypatch) -> None:
     agent_query = object()
     agent_profile = object()
     memory_service = object()
+    scheduler_readiness = object()
     monkeypatch.setattr(
         factory,
         "create_tool_adapter",
@@ -597,11 +598,13 @@ def test_service_create_tool_api_forwards_agent_profile(monkeypatch) -> None:
         agent_query=agent_query,
         agent_profile=agent_profile,
         memory_service=memory_service,
+        scheduler_readiness=scheduler_readiness,
     )
 
     assert captured["agent_query"] is agent_query
     assert captured["agent_profile"] is agent_profile
     assert captured["memory_service"] is memory_service
+    assert captured["scheduler_readiness"] is scheduler_readiness
 
 
 def test_bootstrap_passes_default_profile_into_create_tool_api() -> None:
@@ -624,6 +627,7 @@ def test_bootstrap_passes_default_profile_into_create_tool_api() -> None:
     assert "memory_service=memory_api" in text
     assert "agent_query=getattr(" in text
     assert 'getattr(runtime_handle, "agent_discovery_snapshot", None)' in text
+    assert 'getattr(runtime_handle, "scheduler_readiness", None)' in text
 
 
 def test_brain_cli_passes_profile_into_create_tool_adapter() -> None:

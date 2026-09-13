@@ -12,7 +12,9 @@ from openminion.modules.context.schemas import (
     SessionSlice,
     SessionToolEvent,
     SessionTurn,
+    default_budgets_for,
 )
+from openminion.modules.context.pack.finalize import selected_memory_record_ids
 from openminion.modules.context.service import ContextCtlService
 
 
@@ -227,6 +229,7 @@ def _make_service(**kwargs) -> ContextCtlService:
         rolling_enabled=kwargs.get("rolling_enabled", True),
         compaction_enabled=kwargs.get("compaction_enabled", True),
         compression_enabled=kwargs.get("compression_enabled", True),
+        record_context_selection=kwargs.get("record_context_selection"),
     )
 
 
@@ -1129,6 +1132,29 @@ class ClarifyDigestTests(unittest.TestCase):
         self.assertIn("intent_outcomes:", mission.content)
         self.assertIn('success_criteria: {"weather_returned": true}', mission.content)
 
+    def test_task_header_renders_typed_temporal_context(self) -> None:
+        service = _make_service(session=_SliceSession(summary_short="summary"))
+        request = BuildPackRequest(
+            session_id="sess-temporal",
+            agent_id="agent-test",
+            purpose="act",
+            query="Find lodging from tomorrow to next Wednesday.",
+            phase_hints={
+                "current_datetime": "2026-09-12T21:00:00-07:00",
+                "freshness_contract": {"needs_exact_date": True},
+                "freshness_obligations": {"require_exact_date": True},
+            },
+        )
+
+        pack = service.build_pack(request)
+        mission = next(s for s in pack.segments if s.bucket == "mission_snapshot")
+
+        self.assertIn("current_datetime: 2026-09-12T21:00:00-07:00", mission.content)
+        self.assertIn('freshness_contract: {"needs_exact_date": true}', mission.content)
+        self.assertIn(
+            'freshness_obligations: {"require_exact_date": true}', mission.content
+        )
+
 
 class CacheBehaviorTests(unittest.TestCase):
     def test_cache_hit_returns_same_pack(self) -> None:
@@ -1614,3 +1640,230 @@ class ModeAwareContextTests(unittest.TestCase):
         self.assertEqual(pack.session_id, "sess-unknown")
         mission = next(seg for seg in pack.segments if seg.bucket == "mission_snapshot")
         self.assertNotIn("[MODE CONTEXT]\nrespond mode", mission.content)
+
+
+class ContextSelectionCreditTests(unittest.TestCase):
+    def test_selected_ids_are_stable_deduplicated_and_exclude_degraded(self) -> None:
+        pack = _make_service(
+            memory=_MemoryClient(
+                facts=[FactRecord(record_id="mem-1", text="fact")],
+            )
+        ).build_pack(_make_request())
+        manifest = pack.context_manifest.model_copy(
+            update={
+                "memory": ["mem-1", "mem-2", "degraded:backend"],
+                "session_start_recalled_memory": ["mem-2", "mem-3"],
+                "mid_session_recalled_memory": ["mem-3", ""],
+                "recent_session_artifacts": ["mem-4"],
+                "recalled_memory": ["must-not-be-read"],
+                "procedures": ["procedure-1"],
+            }
+        )
+
+        before = manifest.model_dump()
+        self.assertEqual(
+            selected_memory_record_ids(manifest),
+            ("mem-1", "mem-2", "mem-3", "mem-4"),
+        )
+        self.assertEqual(manifest.model_dump(), before)
+
+    def test_grouped_fact_and_memory_refs_exclude_partial_items(self) -> None:
+        budgets = default_budgets_for("act")
+        budgets.facts_tokens = 20
+        budgets.memory_tokens = 30
+        touched: list[str] = []
+        service = _make_service(
+            memory=_MemoryClient(
+                facts=[
+                    FactRecord(record_id="fact-kept", text="short fact"),
+                    FactRecord(record_id="fact-dropped", text="x" * 200),
+                ],
+                cards=[
+                    MemoryCard(
+                        record_id="memory-kept",
+                        record_type="note",
+                        text="short memory",
+                    ),
+                    MemoryCard(
+                        record_id="memory-dropped",
+                        record_type="note",
+                        text="y" * 250,
+                    ),
+                ],
+            ),
+            record_context_selection=touched.append,
+        )
+
+        pack = service.build_pack(_make_request(budgets_override=budgets))
+
+        self.assertEqual(pack.context_manifest.facts, ["fact-kept"])
+        self.assertEqual(pack.context_manifest.memory, ["memory-kept"])
+        self.assertEqual(touched, ["fact-kept", "memory-kept"])
+        assert pack.context_manifest.decision_trace is not None
+        trace_refs = {
+            ref
+            for decision in pack.context_manifest.decision_trace.decisions
+            for ref in decision.refs
+        }
+        self.assertIn("fact-kept", trace_refs)
+        self.assertIn("memory-kept", trace_refs)
+        self.assertNotIn("fact-dropped", trace_refs)
+        self.assertNotIn("memory-dropped", trace_refs)
+
+    def test_unrelated_artifact_ref_cannot_readmit_dropped_memory(self) -> None:
+        budgets = default_budgets_for("act")
+        budgets.facts_tokens = 5
+        service = _make_service(
+            memory=_MemoryClient(
+                facts=[FactRecord(record_id="shared-ref", text="x" * 200)]
+            ),
+            artifact=_ArtifactClient(
+                digests=[ArtifactDigest(ref="shared-ref", bullets=["kept artifact"])]
+            ),
+        )
+
+        pack = service.build_pack(_make_request(budgets_override=budgets))
+
+        self.assertEqual(pack.context_manifest.facts, [])
+        self.assertEqual(
+            [artifact.ref for artifact in pack.context_manifest.artifacts],
+            ["shared-ref"],
+        )
+
+    def test_recalled_memory_and_prior_artifact_refs_exclude_partial_items(
+        self,
+    ) -> None:
+        budgets = default_budgets_for("act")
+        budgets.memory_tokens = 30
+        budgets.artifact_tokens = 40
+        service = _make_service(
+            session=_SliceSession(turns=[], summary_short=""),
+            memory=_MemoryClient(
+                recall_cards=[
+                    MemoryCard(
+                        record_id="recall-kept",
+                        record_type="user_preference",
+                        text="short preference",
+                    ),
+                    MemoryCard(
+                        record_id="recall-dropped",
+                        record_type="user_preference",
+                        text="z" * 250,
+                    ),
+                ],
+                recent_artifact_refs=[
+                    RecentSessionArtifactRef(
+                        record_id="artifact-kept",
+                        artifact_type="file",
+                        artifact_path="/work/a.py",
+                        session_id="older-session",
+                        turn_index=1,
+                    ),
+                    RecentSessionArtifactRef(
+                        record_id="artifact-dropped",
+                        artifact_type="file",
+                        artifact_path="/work/" + "a" * 200,
+                        session_id="older-session",
+                        turn_index=2,
+                    ),
+                ],
+            ),
+        )
+
+        pack = service.build_pack(_make_request(budgets_override=budgets))
+
+        self.assertEqual(
+            pack.context_manifest.session_start_recalled_memory,
+            ["recall-kept"],
+        )
+        self.assertEqual(
+            pack.context_manifest.recent_session_artifacts,
+            ["artifact-kept"],
+        )
+
+    def test_fresh_and_cached_returns_each_credit_selected_record_once(self) -> None:
+        touched: list[str] = []
+        service = _make_service(
+            memory=_MemoryClient(
+                facts=[FactRecord(record_id="mem-1", text="fact")],
+            ),
+            record_context_selection=touched.append,
+        )
+        request = _make_request()
+
+        first = service.build_pack(request)
+        second = service.build_pack(request)
+
+        self.assertIs(first, second)
+        self.assertEqual(touched, ["mem-1", "mem-1"])
+
+    def test_empty_selection_does_not_call_recorder(self) -> None:
+        touched: list[str] = []
+        pack = _make_service(record_context_selection=touched.append).build_pack(
+            _make_request()
+        )
+
+        self.assertEqual(selected_memory_record_ids(pack.context_manifest), ())
+        self.assertEqual(touched, [])
+
+    def test_failed_bookkeeping_does_not_credit_selection(self) -> None:
+        touched: list[str] = []
+        service = _make_service(
+            memory=_MemoryClient(
+                facts=[FactRecord(record_id="mem-1", text="fact")],
+            ),
+            record_context_selection=touched.append,
+        )
+
+        def fail_bookkeeping(**kwargs) -> None:
+            del kwargs
+            raise RuntimeError("bookkeeping failed")
+
+        service._record_built_pack = fail_bookkeeping  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(RuntimeError, "bookkeeping failed"):
+            service.build_pack(_make_request())
+        self.assertEqual(touched, [])
+
+    def test_failed_cache_telemetry_does_not_credit_selection(self) -> None:
+        touched: list[str] = []
+        service = _make_service(
+            memory=_MemoryClient(
+                facts=[FactRecord(record_id="mem-1", text="fact")],
+            ),
+            record_context_selection=touched.append,
+        )
+        request = _make_request()
+        service.build_pack(request)
+
+        def fail_telemetry(**kwargs) -> None:
+            del kwargs
+            raise RuntimeError("cache telemetry failed")
+
+        service._telemetry.emit_pack_manifest_event = fail_telemetry
+        with self.assertRaisesRegex(RuntimeError, "cache telemetry failed"):
+            service.build_pack(request)
+        self.assertEqual(touched, ["mem-1"])
+
+    def test_one_touch_failure_does_not_drop_pack_or_other_credit(self) -> None:
+        touched: list[str] = []
+
+        def record(record_id: str) -> None:
+            touched.append(record_id)
+            if record_id == "mem-1":
+                raise RuntimeError("record disappeared")
+
+        service = _make_service(
+            memory=_MemoryClient(
+                facts=[
+                    FactRecord(record_id="mem-1", text="first"),
+                    FactRecord(record_id="mem-2", text="second"),
+                ],
+            ),
+            record_context_selection=record,
+        )
+
+        pack = service.build_pack(_make_request())
+
+        self.assertEqual(pack.context_manifest.facts, ["mem-1", "mem-2"])
+        self.assertEqual(touched, ["mem-1", "mem-2"])

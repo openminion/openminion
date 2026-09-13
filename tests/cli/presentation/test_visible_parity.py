@@ -328,7 +328,16 @@ def test_render_tasks_report_applies_exact_lifecycle_actions(tmp_path) -> None:
     runtime = type(
         "Runtime",
         (),
-        {"task_manager": manager, "agent_id": "agent-1", "session_id": "session-1"},
+        {
+            "task_manager": manager,
+            "agent_id": "agent-1",
+            "session_id": "session-1",
+            "scheduler_readiness": lambda self: {
+                "state": "ready",
+                "hosted_by": "daemon",
+                "reason": None,
+            },
+        },
     )()
 
     paused = render_tasks_report(runtime, f"pause {record.task_id}")
@@ -337,7 +346,7 @@ def test_render_tasks_report_applies_exact_lifecycle_actions(tmp_path) -> None:
 
     assert "status: WAITING" in paused
     assert "schedule: every:60000ms" in paused
-    assert "scheduler: unknown" in paused
+    assert "scheduler: ready" in paused
     assert "status: ACTIVE" in resumed
     assert "status: CANCELED" in cancelled
 

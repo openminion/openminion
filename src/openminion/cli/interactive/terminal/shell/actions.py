@@ -24,7 +24,7 @@ from .delegation import run_slash_delegate
 from .labels import _runtime_label
 from .model_setup import handle_model_setup
 from openminion.cli.presentation.slash_commands import (
-    slash_help_rows,
+    format_slash_help,
     terminal_slash_commands,
     unknown_slash_command_message,
 )
@@ -467,9 +467,7 @@ def _handle_slash_details(
 
 
 def _print_slash_help(console: Console) -> None:
-    console.print(Text("Slash commands:", style="bold"))
-    for slash, description in slash_help_rows():
-        console.print(f"  {slash:<12} {description}")
+    console.print(Text(format_slash_help(width=console.width), style=_SYSTEM_STYLE))
 
 
 def _print_unknown_slash_notice(cmd: str, console: Console) -> None:

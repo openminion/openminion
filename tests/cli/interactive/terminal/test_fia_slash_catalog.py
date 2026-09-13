@@ -7,6 +7,7 @@ import io
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from rich.console import Console
 
 from openminion.cli.interactive.terminal.shell import (
@@ -28,9 +29,12 @@ from openminion.cli.interactive.terminal.shell.sessions import resume_session
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.interactive.models import ModelSelection
+from openminion.cli.presentation.models import ChatMessage, MessageKind
+from openminion.cli.presentation.custom_commands import CustomCommand
 from openminion.cli.presentation.slash_commands import (
     SLASH_COMMANDS,
     canonical_slash_command_name,
+    slash_completion_catalog,
 )
 
 
@@ -181,6 +185,40 @@ class _VisibleRuntime:
 
     def room_set_routing(self, _mode: str) -> None:
         return None
+
+
+class _HelpSafetyRuntime(_VisibleRuntime):
+    def __init__(self) -> None:
+        self.list_agents_calls = 0
+
+    def list_agents(self) -> list[object]:
+        self.list_agents_calls += 1
+        return []
+
+
+def _run_prompt_slash(
+    text: str,
+    tmp_path: Path,
+    *,
+    runtime: object | None = None,
+    custom_commands: dict[str, CustomCommand] | None = None,
+    transcript: TerminalTranscript | None = None,
+) -> tuple[bool, TerminalTranscript]:
+    console = Console(file=io.StringIO(), force_terminal=False, width=160)
+    active_transcript = transcript or TerminalTranscript(console)
+    should_exit = asyncio.run(
+        _handle_slash_input(
+            text,
+            runtime=runtime or _HelpSafetyRuntime(),
+            console=console,
+            transcript=active_transcript,
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+            custom_commands=custom_commands or {},
+        )
+    )
+    return should_exit, active_transcript
 
 
 def _extract_implemented_slashes() -> set[str]:
@@ -578,6 +616,206 @@ def test_prompt_loop_routes_unknown_slash_with_suggestion_through_transcript(
         "Did you mean /skills?\n"
         "Type / to view available commands."
     )
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "/help agents",
+        "/help /agents",
+        "/help agent",
+        "/agents --help",
+        "/agents ?",
+        "/agent --help",
+    ),
+)
+def test_prompt_loop_resolves_contextual_help_to_canonical_command(
+    text: str, tmp_path: Path
+) -> None:
+    runtime = _HelpSafetyRuntime()
+    should_exit, transcript = _run_prompt_slash(text, tmp_path, runtime=runtime)
+
+    output = transcript._messages[-1].body
+    assert should_exit is False
+    assert output.startswith(
+        "/agents — List configured agents or filter by exact ID or label"
+    )
+    assert "Usage:\n  /agents\n  /agents <agent-id-or-label>" in output
+    assert "Alias: /agent" in output
+    assert "--profile" in output
+    assert runtime.list_agents_calls == 0
+
+
+@pytest.mark.parametrize("text", ("/exit --help", "/clear ?", "/review --help"))
+def test_contextual_help_does_not_execute_target_command(
+    text: str, tmp_path: Path
+) -> None:
+    transcript = TerminalTranscript(
+        Console(file=io.StringIO(), force_terminal=False, width=160)
+    )
+    transcript.push_message(
+        ChatMessage(kind=MessageKind.AGENT, sender="assistant", body="keep me"),
+        render=False,
+    )
+    should_exit, transcript = _run_prompt_slash(text, tmp_path, transcript=transcript)
+
+    assert should_exit is False
+    assert any(message.body == "keep me" for message in transcript._messages)
+    assert transcript._messages[-1].body.startswith(text.split()[0] + " —")
+
+
+def test_help_with_extra_operands_returns_help_usage(tmp_path: Path) -> None:
+    _, transcript = _run_prompt_slash("/help new session", tmp_path)
+
+    output = transcript._messages[-1].body
+    assert output.startswith("/help —")
+    assert "  /help <command>" in output
+    assert not output.startswith("/new —")
+
+
+def test_unknown_contextual_help_stays_local(tmp_path: Path) -> None:
+    _, transcript = _run_prompt_slash("/help statsu", tmp_path)
+
+    assert transcript._messages[-1].body == (
+        "Unknown command: /statsu\n"
+        "Did you mean /status?\n"
+        "Type / to view available commands."
+    )
+
+
+def test_custom_contextual_help_uses_metadata_without_rendering_body(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from openminion.cli.presentation import custom_commands as custom_module
+
+    command = CustomCommand(
+        slash="/sample",
+        body="Read @secret.txt then run !`touch should-not-exist` for $ARGUMENTS",
+        source="project",
+        path=tmp_path / "sample.md",
+        description="Run the sample workflow",
+        usage="/sample <topic>",
+    )
+    monkeypatch.setattr(
+        custom_module,
+        "render_command",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("custom body must not render for help")
+        ),
+    )
+    _, transcript = _run_prompt_slash(
+        "/sample --help", tmp_path, custom_commands={"/sample": command}
+    )
+
+    output = transcript._messages[-1].body
+    assert output.startswith("/sample — Run the sample workflow")
+    assert "  /sample <topic>" in output
+    assert "Source: project" in output
+    assert "secret.txt" not in output
+    assert not (tmp_path / "should-not-exist").exists()
+
+
+def test_custom_help_defaults_usage_and_description_without_guessing(
+    tmp_path: Path,
+) -> None:
+    command = CustomCommand(
+        slash="/plain",
+        body="body",
+        source="user",
+        path=tmp_path / "plain.md",
+    )
+    _, transcript = _run_prompt_slash(
+        "/help plain", tmp_path, custom_commands={"/plain": command}
+    )
+
+    output = transcript._messages[-1].body
+    assert output.startswith("/plain — custom command")
+    assert "Usage:\n  /plain" in output
+    assert "[arguments]" not in output
+    assert "Source: user" in output
+
+
+def test_built_ins_win_custom_primary_and_alias_collisions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from openminion.cli.presentation import custom_commands as custom_module
+
+    colliding = {
+        name: CustomCommand(
+            slash=name,
+            body="custom body",
+            source="project",
+            path=tmp_path / f"{name[1:]}.md",
+            description="custom collision",
+        )
+        for name in ("/agents", "/agent")
+    }
+    catalog = slash_completion_catalog(colliding)
+
+    assert catalog["/agents"].startswith("List configured agents")
+    assert "/agent" not in catalog
+
+    _, transcript = _run_prompt_slash("/help", tmp_path, custom_commands=colliding)
+    assert "custom collision" not in transcript._messages[-1].body
+
+    monkeypatch.setattr(
+        custom_module,
+        "render_command",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("built-in alias must win dispatch")
+        ),
+    )
+    runtime = _HelpSafetyRuntime()
+    _run_prompt_slash(
+        "/agent",
+        tmp_path,
+        runtime=runtime,
+        custom_commands=colliding,
+    )
+    assert runtime.list_agents_calls == 1
+
+
+def test_global_help_includes_non_colliding_custom_command_once(tmp_path: Path) -> None:
+    command = CustomCommand(
+        slash="/ship",
+        body="ship it",
+        source="project",
+        path=tmp_path / "ship.md",
+        description="Ship the current change",
+    )
+    _, transcript = _run_prompt_slash(
+        "/help", tmp_path, custom_commands={"/ship": command}
+    )
+
+    output = transcript._messages[-1].body
+    assert output.count("/ship") == 1
+    assert "Ship the current change" in output
+
+
+def test_ordinary_custom_command_still_renders_and_runs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from openminion.cli.interactive.terminal import shell as terminal_shell
+
+    captured: list[str] = []
+
+    async def _capture_turn(*, text: str, **_kwargs: object) -> None:
+        captured.append(text)
+
+    monkeypatch.setattr(terminal_shell, "_run_interruptible_agent_turn", _capture_turn)
+    command = CustomCommand(
+        slash="/sample",
+        body="Sample: $ARGUMENTS",
+        source="project",
+        path=tmp_path / "sample.md",
+    )
+    _, transcript = _run_prompt_slash(
+        "/sample topic", tmp_path, custom_commands={"/sample": command}
+    )
+
+    assert captured == ["Sample: topic"]
+    assert transcript._messages[-1].kind == MessageKind.USER
+    assert transcript._messages[-1].body == "Sample: topic"
 
 
 def test_prompt_loop_passes_skill_id_to_skill_detail_report(tmp_path: Path) -> None:

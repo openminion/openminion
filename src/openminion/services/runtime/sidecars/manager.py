@@ -617,14 +617,19 @@ def ensure_sidecar_autostart(
     status = manager.status(name)
     if bool(status.get("pid_alive")) or bool(status.get("ok")):
         return {"enabled": True, "source": "status", "status": status}
-    autostart = manager.ensure_autostart(
+    started = manager.ensure_started(
         name=name,
         interactive=interactive,
         prompt_fn=prompt_fn,
     )
+    started_status = started.get("status")
+    enabled = bool(started.get("started")) or (
+        isinstance(started_status, Mapping)
+        and (bool(started_status.get("pid_alive")) or bool(started_status.get("ok")))
+    )
     return {
-        "enabled": bool(autostart.get("enabled")),
-        "autostart": autostart,
+        "enabled": enabled,
+        "start": started,
         "status": status,
     }
 

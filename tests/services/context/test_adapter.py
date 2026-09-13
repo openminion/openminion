@@ -179,6 +179,7 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
 
     def test_closes_runtime_identity_controller_after_ctxctl_build(self) -> None:
         closed: list[bool] = []
+        created_services: list[dict] = []
         store_factory = Mock(return_value=object())
 
         class _FakeIdentityCtl:
@@ -191,6 +192,7 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
         class _FakeContextCtlService:
             def __init__(self, **kwargs) -> None:
                 self.kwargs = kwargs
+                created_services.append(kwargs)
 
             def build_pack(self, request):
                 del request
@@ -227,7 +229,8 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
                 _FakeContextCtlService,
             ),
         ):
-            adapter = _adapter()
+            recorder = Mock()
+            adapter = _adapter(record_context_selection=recorder)
             result = adapter.build_ctxctl_messages(
                 session_id="s1", agent_id="a1", query="hello"
             )
@@ -235,6 +238,7 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
 
         self.assertEqual([item.content for item in result or []], ["identity"])
         self.assertEqual(closed, [True])
+        self.assertIs(created_services[0]["record_context_selection"], recorder)
         store_factory.assert_called_once_with(
             sqlite_path=str(Path("/tmp/context-identity-root/identity.db").resolve())
         )
@@ -459,6 +463,17 @@ class CGWE06MemoryBridgeParityTests(unittest.TestCase):
             agent_id="a1", memory_client=memory, logger=_logger()
         )
         self.assertIs(adapter._memory_client, memory)
+
+    def test_from_env_threads_context_selection_recorder(self) -> None:
+        recorder = Mock()
+
+        adapter = ContextCtlGatewayAdapter.from_env(
+            agent_id="a1",
+            record_context_selection=recorder,
+            logger=_logger(),
+        )
+
+        self.assertIs(adapter._record_context_selection, recorder)  # noqa: SLF001
 
     def test_default_memory_client_is_none_until_injected(self) -> None:
         adapter = _adapter()

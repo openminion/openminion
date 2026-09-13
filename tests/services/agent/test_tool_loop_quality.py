@@ -177,6 +177,8 @@ def test_executor_observes_without_suppressing_legitimate_calls() -> None:
 def test_executor_runtime_routes_sidecar_autostart_through_approval_callback() -> None:
     captured_env: dict[str, str] = {}
     approvals: list[tuple[str, dict[str, object], str]] = []
+    config = OpenMinionConfig()
+    config.runtime.env["OPENMINION_PINCHTAB_ALLOW_EXTERNAL"] = "1"
 
     def _handler(_args, runtime_context):
         policy_raw = getattr(getattr(runtime_context, "policy", None), "raw", {})
@@ -217,7 +219,7 @@ def test_executor_runtime_routes_sidecar_autostart_through_approval_callback() -
         inference_steps=0,
     )
     service = SimpleNamespace(
-        _config=OpenMinionConfig(),
+        _config=config,
         _identity_agent_id="agent-1",
         _tool_selection=None,
         _tools=registry,
@@ -241,6 +243,7 @@ def test_executor_runtime_routes_sidecar_autostart_through_approval_callback() -
     assert security_events == []
     assert batch.has_success
     assert captured_env["PINCHTAB_AUTOSTART"] == "1"
+    assert captured_env["OPENMINION_PINCHTAB_ALLOW_EXTERNAL"] == "1"
     assert approvals == [
         (
             "sidecar.pinchtab.autostart",
@@ -317,3 +320,64 @@ def test_sidecar_approval_runs_when_security_policy_adapter_is_absent() -> None:
     assert batch.has_success
     assert captured_env["PINCHTAB_AUTOSTART"] == "1"
     assert approvals == ["sidecar.pinchtab.autostart"]
+
+
+def test_sidecar_approval_follows_tool_execution_approval() -> None:
+    approvals: list[str] = []
+
+    registry = ToolRegistry()
+    registry.add(
+        ToolSpec(
+            name="browser",
+            args_model=_NoArgs,
+            min_scope="READ_ONLY",
+            handler=lambda _args, _context: {"ok": True, "content": "ready"},
+            dangerous=True,
+            sidecar="pinchtab",
+            prompt_visible_runtime_name=True,
+        )
+    )
+    registry.bind_sidecar_autostart(
+        lambda **kwargs: {
+            "enabled": dict(kwargs.get("runtime_env") or {}).get("PINCHTAB_AUTOSTART")
+            == "1"
+        }
+    )
+    inbound = Message(channel="console", target="user", body="browser", metadata={})
+
+    async def _approve(tool_name, _args, _call_id):
+        approvals.append(str(tool_name))
+        return True
+
+    runtime = SimpleNamespace(
+        inbound=inbound,
+        progress_callback=None,
+        approval_callback=_approve,
+        tool_call_signature_counts={},
+        tool_loop_observations=[],
+        inference_steps=0,
+    )
+    service = SimpleNamespace(
+        _config=OpenMinionConfig(),
+        _identity_agent_id="agent-1",
+        _tool_selection=None,
+        _tools=registry,
+        _security_policy=SecurityPolicyEngine(),
+        _self_improvement=None,
+        _logger=None,
+        _home_root=None,
+    )
+
+    batch, security_events, denied = asyncio.run(
+        ExecutorRuntime(
+            service_port=build_service_port(service), runtime=runtime
+        ).execute_tool_calls(
+            [ProviderToolCall(name="browser", arguments={}, id="call-1")],
+            tool_budget_state=None,
+        )
+    )
+
+    assert denied is False
+    assert security_events == []
+    assert batch.has_success
+    assert approvals == ["browser", "sidecar.pinchtab.autostart"]

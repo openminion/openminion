@@ -65,6 +65,7 @@ class ProjectTurnResult:
     tool_call_count: int = 0
     task_plan: TaskPlan | None = None
     task_plan_revision: TaskPlanRevision | None = None
+    task_plan_revisions: tuple[TaskPlanRevision, ...] = ()
     task_plan_step_completed: TaskPlanStepCompleted | None = None
     task_plan_step_blocked: TaskPlanStepBlocked | None = None
     task_plan_abandoned: TaskPlanTerminalSignal | None = None
@@ -107,9 +108,27 @@ def project_cycle_prompt(
             for item in evidence
             if item["status"] == TestEvidenceStatus.FAILED.value
         ]
-        outcome = (failed or evidence)[-1]
-        lines.extend(("Prior verifier outcome:", str(outcome["summary"])))
-        if failed and isinstance(active_plan, Mapping):
+        history = checkpoint_payload.get("verification_history")
+        history_evidence = (
+            cast(list[dict[str, object]], history)
+            if isinstance(history, list)
+            else evidence
+        )
+        revision_required = bool(failed) or (
+            checkpoint_payload.get("plan_revision_required") is True
+        )
+        outcomes = (
+            [
+                item
+                for item in history_evidence
+                if item["status"] == TestEvidenceStatus.FAILED.value
+            ][-4:]
+            if revision_required
+            else evidence[-1:]
+        )
+        summaries = list(dict.fromkeys(str(item["summary"]) for item in outcomes))
+        lines.extend(("Prior verifier outcome:", "\n\n".join(summaries)))
+        if revision_required and isinstance(active_plan, Mapping):
             plan_id = str(active_plan.get("plan_id") or "").strip()
             verifier_refs = ", ".join(project_run.verifier_refs[-5:])
             prior_revision = checkpoint_payload.get("task_plan_revision")
@@ -123,8 +142,16 @@ def project_cycle_prompt(
                 if predecessor_id
                 else "Omit predecessor_revision_id because this is the first revision."
             )
+            action_order = "Your first action must"
+            if active_plan.get("status") == "completed":
+                lines.append(
+                    "The checkpoint task plan completed before external verification "
+                    "failed. First redeclare the same plan_id with a pending repair "
+                    "step and continue_plan_autonomously=false so it is active again."
+                )
+                action_order = "Then"
             lines.append(
-                "Your first action must use the existing plan loop-control "
+                f"{action_order} use the existing plan loop-control "
                 f"tool with action=revise for plan_id={plan_id}. Use a new "
                 "revision_id, set continue_plan_autonomously=false, and bind "
                 f"verifier_refs to: {verifier_refs}. {predecessor_guidance}"
@@ -147,6 +174,7 @@ def project_cycle_prompt(
 
 
 def project_cycle_checkpoint_payload(
+    checkpoint: ProjectCheckpoint,
     turn: ProjectTurnResult,
     *,
     effect_payload: Mapping[str, object],
@@ -159,12 +187,34 @@ def project_cycle_checkpoint_payload(
     replan_count: int,
     waiting_for_checks: bool,
 ) -> dict[str, object]:
+    previous_verification = checkpoint.payload.get("verification_history")
+    if not isinstance(previous_verification, list):
+        previous_verification = checkpoint.payload.get("verification")
+    verification_payload = [item.model_dump(mode="json") for item in verification]
+    verification_history = [
+        *(previous_verification if isinstance(previous_verification, list) else []),
+        *verification_payload,
+    ][-8:]
+    revision_emitted = bool(turn.task_plan_revisions or turn.task_plan_revision)
+    has_model_task_plan = bool(turn.gateway_run_id) and (
+        turn.task_plan is not None
+        or isinstance(checkpoint.payload.get("task_plan"), Mapping)
+    )
+    revision_required = (
+        bool(checkpoint.payload.get("plan_revision_required"))
+        or (
+            has_model_task_plan
+            and any(item.status == TestEvidenceStatus.FAILED for item in verification)
+        )
+    ) and not revision_emitted
     return {
         **effect_payload,
         "decision": decision.value,
         "summary": turn.summary,
         "gateway_run_id": turn.gateway_run_id,
-        "verification": [item.model_dump(mode="json") for item in verification],
+        "verification": verification_payload,
+        "verification_history": verification_history,
+        "plan_revision_required": revision_required,
         "verification_closure": dict(verification_closure),
         "condition": turn.condition.value,
         "decision_reason": decision_reason,
@@ -346,6 +396,7 @@ def project_turn_result_from_response(
     )
     evidence_refs = project_metadata_refs(metadata, "evidence_refs", "artifact_refs")
     evidence_kinds = project_metadata_refs(metadata, "evidence_kinds")
+    task_plan_revisions = _project_checkpoint_revisions(metadata)
     return ProjectTurnResult(
         summary=summary,
         gateway_run_id=str(metadata.get("run_id") or "").strip(),
@@ -363,7 +414,12 @@ def project_turn_result_from_response(
         effect_refs=project_metadata_refs(metadata, "effect_refs"),
         tool_call_count=_project_tool_call_count(metadata, tool_results),
         task_plan=_project_metadata_model(metadata, "task_plan", TaskPlan),
-        task_plan_revision=_project_checkpoint_revision(metadata),
+        task_plan_revision=(
+            task_plan_revisions[-1]
+            if task_plan_revisions
+            else _project_checkpoint_revision(metadata)
+        ),
+        task_plan_revisions=task_plan_revisions,
         task_plan_step_completed=_project_metadata_model(
             metadata,
             "task_plan.step_completed",
@@ -410,6 +466,21 @@ def _project_checkpoint_revision(
         metadata,
         "task_plan.revision",
         TaskPlanRevision,
+    )
+
+
+def _project_checkpoint_revisions(
+    metadata: Mapping[str, object],
+) -> tuple[TaskPlanRevision, ...]:
+    value = metadata.get("task_plan.revisions")
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, list):
+        return ()
+    return tuple(
+        TaskPlanRevision.model_validate(item)
+        for item in value
+        if isinstance(item, Mapping)
     )
 
 

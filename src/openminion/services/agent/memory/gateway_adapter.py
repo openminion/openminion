@@ -425,6 +425,12 @@ class MemoryServiceGatewayAdapter(
         except (RuntimeError, ValueError, TypeError, OSError) as exc:
             raise StoreReadError(f"memory search query failed: {exc}") from exc
 
+    def get_procedure(self, *, procedure_id: str) -> Any | None:
+        return self._service.get_procedure(procedure_id=procedure_id)
+
+    def record_context_selection(self, record_id: str) -> None:
+        self._service.touch_last_hit(record_id)
+
     def list_candidates(
         self, *, session_id: str | None = None, limit: int | None = 50
     ) -> list[Any]:
@@ -544,6 +550,32 @@ class DisabledMemoryGatewayAdapter:
     def search_records(self, options: SearchQueryOptions) -> list[Any]:
         del options
         raise MemoryQueryUnavailableError("durable memory queries are disabled")
+
+    def context_scopes(
+        self,
+        *,
+        session_id: str | None = None,
+        include_global: bool = True,
+    ) -> list[str]:
+        del session_id, include_global
+        return []
+
+    def recall_context(
+        self,
+        *,
+        session_id: str,
+        query: str,
+        scopes: list[str],
+    ) -> tuple[list[dict[str, Any]], None]:
+        del session_id, query, scopes
+        return [], None
+
+    def get_procedure(self, *, procedure_id: str) -> None:
+        del procedure_id
+        return None
+
+    def record_context_selection(self, record_id: str) -> None:
+        del record_id
 
     def list_candidates(
         self, *, session_id: str | None = None, limit: int | None = 50

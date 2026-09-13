@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 from unittest.mock import Mock
 
 from openminion.modules.context.contracts import MemoryClient
-from openminion.modules.context.memory_client import ContextMemoryClientAdapter
+from openminion.modules.context.memory_client import (
+    SESSION_START_RECALL_TYPES,
+    ContextMemoryClientAdapter,
+)
+from openminion.modules.memory.errors import MemoryQueryUnavailableError
 from openminion.modules.memory.models import MemoryPatchResult, MemoryRecord
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage.base import ListQueryOptions
@@ -44,6 +48,27 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
             retrieve_ctl=mock_ctl,
         )
         self.assertIs(adapter._retrieve_ctl, mock_ctl)  # noqa: SLF001
+
+    def test_record_context_selection_touches_existing_record(self) -> None:
+        adapter = _make_adapter()
+        now = datetime.now(timezone.utc).isoformat()
+        adapter._service._store.put(  # noqa: SLF001
+            MemoryRecord(
+                id="selected-record",
+                scope="agent:test-agent",
+                type="fact",
+                content={"text": "selected"},
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+        adapter.record_context_selection("selected-record")
+
+        stored = adapter._service._store.get("selected-record")  # noqa: SLF001
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored.access_count, 1)
 
     def test_derive_patch_id_deterministic(self) -> None:
         adapter = _make_adapter()
@@ -249,6 +274,12 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
             query="Helios",
             limit=5,
         )
+        cards = memory_client.query_memory_cards(
+            session_id="session-1",
+            agent_id="minimax-m2-7",
+            query="Helios",
+            limit=5,
+        )
 
         self.assertIsInstance(memory_client, MemoryClient)
         self.assertEqual(len(facts), 1)
@@ -256,6 +287,269 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         self.assertEqual(facts[0].text, "The project is Helios.")
         self.assertEqual(facts[0].confidence, 0.8)
         self.assertEqual(facts[0].tags, ["project"])
+        self.assertEqual([card.record_id for card in cards], ["contextctl-fact"])
+
+    def test_contextctl_session_start_recall_lists_all_supported_types(self) -> None:
+        expected_types = (
+            "user_preference",
+            "procedure",
+            "tool_habit",
+            "tool_outcome",
+            "strategy_outcome",
+            "meta_rule_preference",
+            "plan_snapshot",
+            "meta_insight",
+            "correction",
+            "session_summary",
+            "project_convention",
+            "declared_goal",
+            "goal_revision",
+        )
+        self.assertEqual(SESSION_START_RECALL_TYPES, expected_types)
+        store = InMemoryMemoryStore()
+        service = MemoryService(store=store)
+        adapter = MemoryServiceGatewayAdapter(
+            service,
+            agent_id="agent-a",
+            project_id="project-a",
+        )
+        base_time = datetime(2026, 9, 12, tzinfo=timezone.utc)
+        record_ids: list[str] = []
+        scopes = ("agent:agent-a", "project:project-a", "global:system")
+        for index, record_type in enumerate(expected_types):
+            record_id = f"session-start-{index}"
+            record_ids.append(record_id)
+            timestamp = (base_time + timedelta(seconds=index)).isoformat()
+            store.put(
+                MemoryRecord(
+                    id=record_id,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    scope=scopes[index % len(scopes)],
+                    type=record_type,
+                    title=record_type,
+                    content={"text": f"durable {record_type}"},
+                )
+            )
+        store.put(
+            MemoryRecord(
+                id="other-agent-memory",
+                created_at=base_time.isoformat(),
+                updated_at=base_time.isoformat(),
+                scope="agent:other",
+                type="user_preference",
+                title="other",
+                content={"text": "unrelated scope"},
+            )
+        )
+        memory_client = ContextMemoryClientAdapter(adapter)
+
+        recalled = memory_client.recall_session_start_memory(
+            session_id="new-session",
+            agent_id="agent-a",
+            query="no overlap",
+            turn_index=0,
+            limit=len(record_ids),
+        )
+        limited = memory_client.recall_session_start_memory(
+            session_id="new-session",
+            agent_id="agent-a",
+            query="different query",
+            turn_index=0,
+            limit=3,
+        )
+        later = memory_client.recall_session_start_memory(
+            session_id="new-session",
+            agent_id="agent-a",
+            query="no overlap",
+            turn_index=1,
+            limit=len(record_ids),
+        )
+
+        self.assertEqual(
+            [card.record_id for card in recalled],
+            list(reversed(record_ids)),
+        )
+        self.assertEqual(
+            {card.record_type for card in recalled},
+            set(expected_types),
+        )
+        self.assertEqual(
+            [card.record_id for card in limited],
+            list(reversed(record_ids))[:3],
+        )
+        self.assertEqual(later, [])
+
+    def test_contextctl_mid_session_recall_uses_typed_query(self) -> None:
+        adapter = _make_adapter(agent_id="agent-a")
+        adapter.recall_context = Mock(wraps=adapter.recall_context)
+        memory_client = ContextMemoryClientAdapter(adapter)
+
+        memory_client.recall_mid_session_memory(
+            session_id="session-a",
+            agent_id="agent-a",
+            turn_index=2,
+            latest_user_message="continue",
+            intent_ids=["intent-a"],
+            intent_statuses=["active"],
+            active_skill_id="python",
+            resolved_skill_ids=["python"],
+            plan_cursor=1,
+            plan_step_ids=["step-a"],
+            recent_tool_families=["file"],
+            limit=4,
+        )
+
+        self.assertEqual(
+            adapter.recall_context.call_args.kwargs["query"],
+            "continue intent-a active python cursor-1 step-a file",
+        )
+
+    def test_contextctl_recent_artifact_recall_uses_bounded_project_scopes(
+        self,
+    ) -> None:
+        store = InMemoryMemoryStore()
+        service = MemoryService(store=store)
+        adapter = MemoryServiceGatewayAdapter(
+            service,
+            agent_id="agent-a",
+            project_id="project-a",
+        )
+        now = datetime.now(timezone.utc)
+
+        def put_artifact(
+            record_id: str,
+            *,
+            scope: str,
+            source_session_id: str = "prior-session",
+            updated_at: str | None = None,
+            expires_at: str | None = None,
+        ) -> None:
+            timestamp = updated_at or now.isoformat()
+            store.put(
+                MemoryRecord(
+                    id=record_id,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    expires_at=expires_at,
+                    scope=scope,
+                    type="artifact_digest",
+                    title=record_id,
+                    content={
+                        "session_id": source_session_id,
+                        "artifact_path": f"/workspace/{record_id}.py",
+                    },
+                )
+            )
+
+        put_artifact("eligible-agent", scope="agent:agent-a")
+        put_artifact(
+            "eligible-project",
+            scope="project:project-a",
+            updated_at=(now - timedelta(seconds=1)).isoformat(),
+        )
+        put_artifact(
+            "current-session",
+            scope="project:project-a",
+            source_session_id="session-a",
+        )
+        put_artifact(
+            "expired",
+            scope="project:project-a",
+            expires_at=(now - timedelta(seconds=1)).isoformat(),
+        )
+        put_artifact(
+            "stale",
+            scope="agent:agent-a",
+            updated_at=(now - timedelta(days=15)).isoformat(),
+        )
+        put_artifact("global", scope="global:system")
+        put_artifact("other-project", scope="project:other")
+        adapter.list_records = Mock(wraps=adapter.list_records)
+        memory_client = ContextMemoryClientAdapter(adapter)
+
+        recalled = memory_client.recall_recent_session_artifacts(
+            session_id="session-a",
+            agent_id="agent-a",
+            max_results=2,
+            max_session_age=14,
+        )
+
+        self.assertEqual(
+            {item.record_id for item in recalled},
+            {"eligible-agent", "eligible-project"},
+        )
+        options = adapter.list_records.call_args.args[0]
+        self.assertEqual(options.scopes, ["agent:agent-a", "project:project-a"])
+        self.assertEqual(options.types, ["artifact_digest"])
+        self.assertEqual(options.limit, 8)
+
+    def test_contextctl_public_scope_and_recall_owners(self) -> None:
+        store = InMemoryMemoryStore()
+        service = MemoryService(store=store)
+        adapter = MemoryServiceGatewayAdapter(
+            service,
+            agent_id="agent-a",
+            project_id="project-a",
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        store.put(
+            MemoryRecord(
+                id="public-recall-fact",
+                created_at=now,
+                updated_at=now,
+                scope="project:project-a",
+                type="fact",
+                title="Public recall",
+                content={"text": "The release marker is cobalt."},
+                confidence=0.9,
+            )
+        )
+
+        scopes = adapter.context_scopes(session_id="session-a")
+        hits, _ = adapter.recall_context(
+            session_id="session-a",
+            query="cobalt",
+            scopes=scopes,
+        )
+
+        self.assertEqual(
+            scopes,
+            [
+                "session:session-a",
+                "agent:agent-a",
+                "project:project-a",
+                "global:system",
+            ],
+        )
+        self.assertEqual(
+            adapter.context_scopes(include_global=False),
+            [
+                "agent:agent-a",
+                "project:project-a",
+            ],
+        )
+        self.assertEqual(
+            [item["meta"]["record_id"] for item in hits],
+            ["public-recall-fact"],
+        )
+        self.assertFalse(hasattr(adapter, "_long_term_scopes"))
+        self.assertFalse(hasattr(adapter, "_recall_hits"))
+
+    def test_contextctl_public_procedure_owner(self) -> None:
+        service = Mock()
+        procedure = object()
+        service.get_procedure.return_value = procedure
+        adapter = MemoryServiceGatewayAdapter(service, agent_id="agent-a")
+        memory_client = ContextMemoryClientAdapter(adapter)
+
+        self.assertIs(adapter.get_procedure(procedure_id="procedure-a"), procedure)
+        self.assertIs(
+            memory_client.get_procedure(procedure_id="procedure-a"),
+            procedure,
+        )
+        self.assertEqual(service.get_procedure.call_count, 2)
+        service.get_procedure.assert_called_with(procedure_id="procedure-a")
 
     def test_build_retrieval_context_returns_string(self) -> None:
         adapter = _make_adapter()
@@ -993,6 +1287,9 @@ class TestDisabledMemoryGatewayAdapter(unittest.TestCase):
     def test_enabled_is_false(self) -> None:
         self.assertFalse(self.adapter.enabled)
 
+    def test_record_context_selection_is_a_no_op(self) -> None:
+        self.assertIsNone(self.adapter.record_context_selection("record"))
+
     def test_derive_patch_id_returns_empty(self) -> None:
         pid = self.adapter.derive_patch_id(
             session_id="s", run_id="r", request_id="req", user_message="hi"
@@ -1037,6 +1334,22 @@ class TestDisabledMemoryGatewayAdapter(unittest.TestCase):
         )
         self.assertEqual(content, "")
         self.assertIsInstance(meta, dict)
+
+    def test_contextctl_public_operations_are_neutral_but_listing_stays_closed(
+        self,
+    ) -> None:
+        self.assertEqual(self.adapter.context_scopes(session_id="s"), [])
+        self.assertEqual(
+            self.adapter.recall_context(
+                session_id="s",
+                query="q",
+                scopes=["agent:test-agent"],
+            ),
+            ([], None),
+        )
+        self.assertIsNone(self.adapter.get_procedure(procedure_id="p"))
+        with self.assertRaises(MemoryQueryUnavailableError):
+            self.adapter.list_records(ListQueryOptions(scopes=["agent:test-agent"]))
 
 
 class TestDebugSnapshot(unittest.TestCase):

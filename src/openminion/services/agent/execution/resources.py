@@ -131,11 +131,10 @@ class ExecutionResources:
                 token = str(key or "").strip()
                 if not token:
                     continue
-                metadata[token] = (
-                    dict(value)
-                    if token == "runtime_env" and isinstance(value, Mapping)
-                    else str(value)
-                )
+                if token == "runtime_env" and isinstance(value, Mapping):
+                    metadata[token] = {**dict(metadata.get(token) or {}), **value}
+                else:
+                    metadata[token] = str(value)
         context.blast_radius_adapter = turn_boundary_adapter
         return context
 

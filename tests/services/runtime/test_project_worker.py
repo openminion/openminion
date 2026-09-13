@@ -1097,7 +1097,14 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
         plan_id="plan-1",
         objective="Ship the fixture",
         criterion_ids=["criterion-tests"],
-        steps=[{"step_id": "build", "description": "Build it"}],
+        steps=[
+            {
+                "step_id": "build",
+                "description": "Build it",
+                "status": "completed",
+            }
+        ],
+        status="completed",
     )
     first = ProjectWorker(
         task_manager=manager,
@@ -1144,9 +1151,19 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     assert checkpoint.payload["plan_revision_count"] == 1
     assert checkpoint.payload["task_plan"]["criterion_ids"] == ["criterion-tests"]
     assert checkpoint.payload["task_plan_revision"]["revision_id"] == "revision-1"
+    assert checkpoint.payload["plan_revision_required"] is False
+    assert [item["summary"] for item in checkpoint.payload["verification"]] == [
+        "verification passed"
+    ]
+    assert [item["summary"] for item in checkpoint.payload["verification_history"]] == [
+        "verification failed",
+        "verification passed",
+    ]
     assert "first action must use the existing plan loop-control tool" in prompts[0]
     assert "continue_plan_autonomously=false" in prompts[0]
     assert "action=revise for plan_id=plan-1" in prompts[1]
+    assert "First redeclare the same plan_id" in prompts[1]
+    assert "Then use the existing plan loop-control tool" in prompts[1]
     assert "continue_plan_autonomously=false" in prompts[1]
     assert "Omit predecessor_revision_id" in prompts[1]
     assert "verification:prun_" in prompts[1]
@@ -1158,6 +1175,46 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
         ).metrics.plan_revision_count
         == 1
     )
+
+
+def test_project_worker_does_not_close_before_required_plan_revision(tmp_path) -> None:
+    store, manager, run = _project(tmp_path)
+    plan = TaskPlan(
+        plan_id="plan-1",
+        objective="Ship the fixture",
+        steps=[
+            {
+                "step_id": "build",
+                "description": "Build it",
+                "status": "completed",
+            }
+        ],
+        status="completed",
+    )
+    ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: ProjectTurnResult(
+            summary="planned", gateway_run_id="gateway-1", task_plan=plan
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.FAILED),),
+        owner_id="worker-1",
+    ).run_cycle(run.run_id)
+
+    result = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: ProjectTurnResult(
+            summary="fixed", gateway_run_id="gateway-2", task_plan=plan
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+        owner_id="worker-2",
+    ).run_cycle(run.run_id)
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+
+    assert result.run.status != AutonomyRunStatus.COMPLETED
+    assert checkpoint is not None
+    assert checkpoint.payload["plan_revision_required"] is True
 
 
 @pytest.mark.parametrize(
@@ -1261,6 +1318,42 @@ def test_project_worker_rejects_duplicate_or_stale_later_revision(
             checkpoint,
             ProjectTurnResult(summary="bad revision", task_plan_revision=incoming),
         )
+
+
+def test_project_worker_applies_ordered_revision_chain(tmp_path) -> None:
+    _store, manager, _run = _project(tmp_path)
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+    assert checkpoint is not None
+    checkpoint.payload["task_plan"] = TaskPlan(
+        plan_id="plan-1",
+        objective="Ship",
+        criterion_ids=["criterion-tests"],
+        steps=[{"step_id": "build", "description": "Build"}],
+    ).model_dump(mode="json")
+    revisions = (
+        TaskPlanRevision(
+            plan_id="plan-1",
+            revision_id="revision-1",
+            verifier_refs=["verify:failed-1"],
+            revised_steps=[{"step_id": "build", "description": "Repair"}],
+        ),
+        TaskPlanRevision(
+            plan_id="plan-1",
+            revision_id="revision-2",
+            predecessor_revision_id="revision-1",
+            verifier_refs=["verify:failed-2"],
+            revised_steps=[{"step_id": "build", "description": "Repair again"}],
+        ),
+    )
+
+    payload = plan_checkpoint_payload(
+        checkpoint,
+        ProjectTurnResult(summary="revised", task_plan_revisions=revisions),
+    )
+
+    assert payload["plan_revision_count"] == 2
+    assert payload["task_plan_revision"]["revision_id"] == "revision-2"
+    assert payload["task_plan"]["steps"][0]["description"] == "Repair again"
 
 
 def test_project_worker_blocks_after_one_failed_replan(tmp_path) -> None:

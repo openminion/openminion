@@ -18,6 +18,8 @@ from openminion.modules.brain.schemas import (
     AgentBudgets,
     AgentDefaults,
     AgentProfile,
+    FreshnessContract,
+    FreshnessObligations,
     LLMProfiles,
     StepOutputEntry,
 )
@@ -119,6 +121,43 @@ def test_context_build_preserves_turn_order_and_hints() -> None:
         turns = context.get("turns", [])
         assert [t["content"] for t in turns] == ["first", "second", "third"]
         assert context.get("hints", {}).get("user_input") == "hello"
+
+
+def test_context_build_adds_runtime_time_and_freshness_to_act_context() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, _session = _build_runner(Path(tmp))
+        state = runner._load_or_init_state("ctx-freshness-hints")
+        state.freshness_contract = FreshnessContract(
+            intent="find lodging tomorrow",
+            domain="shopping",
+            time_sensitive=True,
+            needs_live_data=True,
+            needs_sources=True,
+            needs_exact_date=True,
+            answer_mode="browse_then_answer",
+        )
+        state.freshness_obligations = FreshnessObligations(
+            require_live_data=True,
+            require_sources=True,
+            require_exact_date=True,
+            require_explicit_failure_wording=True,
+            answer_mode="browse_then_answer",
+        )
+
+        context = runner._build_context(
+            state=state,
+            purpose="act",
+            budget={"max_tokens": 200},
+            hints={"user_input": "Find lodging from tomorrow to next Wednesday."},
+            logger=DummyLogger(),
+        )
+
+        hints = context.get("hints", {})
+        current_datetime = datetime.fromisoformat(str(hints["current_datetime"]))
+        assert current_datetime.utcoffset() == datetime.now().astimezone().utcoffset()
+        assert hints["freshness_contract"]["needs_exact_date"] is True
+        assert hints["freshness_obligations"]["require_exact_date"] is True
+        assert "freshness_exact_date_contract" in hints["style_overrides"]
 
 
 def test_context_build_enforces_phase_hint_boundaries() -> None:

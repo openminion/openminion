@@ -370,45 +370,24 @@ def build_turn_context(
         prior_transcript_available=history_has_prior_transcript(history),
         memory_strategy=memory_capsule_strategy,
     )
-    if memory_capsule_strategy != MEMORY_CAPSULE_STRATEGY_OFF:
-        try:
-            _populate_memory_context(
-                turn_context=turn_context,
-                agent_memory=agent_memory,
-                session_id=session_id,
-                user_message=user_message,
-                memory_strategy=memory_capsule_strategy,
-                memory_capsule_cache=memory_capsule_cache,
-                memory_dynamic_retrieval_enabled=memory_dynamic_retrieval_enabled,
-            )
-            _emit_memory_build_events_for_turn(
-                turn_context=turn_context,
-                emit_memory_event=emit_memory_event,
-                session_id=session_id,
-                conversation_id=conversation_id,
-                thread_id=thread_id,
-                attach_id=attach_id,
-                run_id=run_id,
-                request_id=request_id,
-                memory_strategy=memory_capsule_strategy,
-                memory_dynamic_retrieval_enabled=memory_dynamic_retrieval_enabled,
-            )
-        except Exception as exc:
-            _record_memory_context_failure(
-                turn_context=turn_context,
-                emit_memory_event=emit_memory_event,
-                logger=logger,
-                agent_id=agent_id,
-                exc=exc,
-                session_id=session_id,
-                conversation_id=conversation_id or None,
-                thread_id=thread_id or None,
-                attach_id=attach_id or None,
-                run_id=run_id,
-                request_id=request_id,
-                memory_capsule_strategy=memory_capsule_strategy,
-            )
-
+    contextctl_selected = _select_and_populate_memory_context(
+        turn_context=turn_context,
+        agent_id=agent_id,
+        agent_memory=agent_memory,
+        logger=logger,
+        emit_memory_event=emit_memory_event,
+        session_id=session_id,
+        run_id=run_id,
+        request_id=request_id,
+        user_message=user_message,
+        conversation_id=conversation_id,
+        thread_id=thread_id,
+        attach_id=attach_id,
+        memory_capsule_strategy=memory_capsule_strategy,
+        memory_capsule_cache=memory_capsule_cache,
+        memory_dynamic_retrieval_enabled=memory_dynamic_retrieval_enabled,
+        contextctl_adapter=contextctl_adapter,
+    )
     _populate_knowledge_graph_context(
         turn_context=turn_context,
         knowledge_graphs=knowledge_graphs,
@@ -422,27 +401,99 @@ def build_turn_context(
         request_id=request_id,
         user_message=user_message,
     )
-    contextctl_selected = _finalize_turn_context(
+    _finalize_turn_context(
         turn_context=turn_context,
         channel=channel,
         target=target,
         session_id=session_id,
         memory_capsule_strategy=memory_capsule_strategy,
-        agent_id=agent_id,
-        logger=logger,
-        user_message=user_message,
         memory_evidence_enabled=memory_dynamic_retrieval_enabled,
         knowledge_evidence_enabled=knowledge_graphs is not None,
+        contextctl_selected=contextctl_selected,
+    )
+    if contextctl_selected:
+        emit_contextctl_selection(
+            emit_memory_event,
+            session_id,
+            conversation_id,
+            thread_id,
+            attach_id,
+            run_id,
+            request_id,
+            len(turn_context.history),
+        )
+    return turn_context
+
+
+def _select_and_populate_memory_context(
+    *,
+    turn_context: TurnContext,
+    agent_id: str,
+    agent_memory: Any,
+    logger: logging.Logger,
+    emit_memory_event: MemoryEventEmitter,
+    session_id: str,
+    run_id: str,
+    request_id: str,
+    user_message: str,
+    conversation_id: str,
+    thread_id: str,
+    attach_id: str,
+    memory_capsule_strategy: str,
+    memory_capsule_cache: dict[str, str],
+    memory_dynamic_retrieval_enabled: bool,
+    contextctl_adapter: Any | None,
+) -> bool:
+    if memory_capsule_strategy == MEMORY_CAPSULE_STRATEGY_OFF:
+        return False
+    contextctl_selected = _maybe_apply_contextctl_call_site(
+        turn_context=turn_context,
+        agent_id=agent_id,
+        logger=logger,
+        session_id=session_id,
+        user_message=user_message,
         contextctl_adapter=contextctl_adapter,
     )
     if contextctl_selected:
-        # fmt: off
-        emit_contextctl_selection(
-            emit_memory_event, session_id, conversation_id, thread_id, attach_id, run_id, request_id, len(turn_context.history),
+        return True
+    try:
+        _populate_memory_context(
+            turn_context=turn_context,
+            agent_memory=agent_memory,
+            session_id=session_id,
+            user_message=user_message,
+            memory_strategy=memory_capsule_strategy,
+            memory_capsule_cache=memory_capsule_cache,
+            memory_dynamic_retrieval_enabled=memory_dynamic_retrieval_enabled,
         )
-        # fmt: on
-
-    return turn_context
+        _emit_memory_build_events_for_turn(
+            turn_context=turn_context,
+            emit_memory_event=emit_memory_event,
+            session_id=session_id,
+            conversation_id=conversation_id,
+            thread_id=thread_id,
+            attach_id=attach_id,
+            run_id=run_id,
+            request_id=request_id,
+            memory_strategy=memory_capsule_strategy,
+            memory_dynamic_retrieval_enabled=memory_dynamic_retrieval_enabled,
+        )
+    except Exception as exc:
+        _record_memory_context_failure(
+            turn_context=turn_context,
+            emit_memory_event=emit_memory_event,
+            logger=logger,
+            agent_id=agent_id,
+            exc=exc,
+            session_id=session_id,
+            conversation_id=conversation_id or None,
+            thread_id=thread_id or None,
+            attach_id=attach_id or None,
+            run_id=run_id,
+            request_id=request_id,
+            memory_capsule_strategy=memory_capsule_strategy,
+        )
+    return False
 
 
 def _finalize_turn_context(
@@ -452,41 +503,41 @@ def _finalize_turn_context(
     target: str,
     session_id: str,
     memory_capsule_strategy: str,
-    agent_id: str,
-    logger: logging.Logger,
-    user_message: str,
     memory_evidence_enabled: bool,
     knowledge_evidence_enabled: bool,
-    contextctl_adapter: Any | None,
-) -> bool:
-    _attach_memory_capsule_to_history(
-        turn_context=turn_context,
-        channel=channel,
-        target=target,
-        session_id=session_id,
-    )
-    contextctl_selected = False
-    if memory_capsule_strategy != MEMORY_CAPSULE_STRATEGY_OFF:
-        contextctl_selected = _maybe_apply_contextctl_call_site(
-            turn_context=turn_context,
-            agent_id=agent_id,
-            logger=logger,
+    contextctl_selected: bool,
+) -> None:
+    if not contextctl_selected and turn_context.memory_context:
+        turn_context.history = _inject_memory_context(
+            history=turn_context.history,
+            channel=channel,
+            target=target,
             session_id=session_id,
-            user_message=user_message,
-            contextctl_adapter=contextctl_adapter,
+            memory_context=turn_context.memory_context,
         )
-    _apply_shared_evidence_context(
-        turn_context=turn_context,
-        memory_evidence_enabled=(
-            memory_evidence_enabled
-            and memory_capsule_strategy != MEMORY_CAPSULE_STRATEGY_OFF
-        ),
-        knowledge_evidence_enabled=knowledge_evidence_enabled,
-        channel=channel,
-        target=target,
-        session_id=session_id,
+    memory_evidence_enabled = (
+        memory_evidence_enabled
+        and memory_capsule_strategy != MEMORY_CAPSULE_STRATEGY_OFF
     )
-    return contextctl_selected
+    if not memory_evidence_enabled and not knowledge_evidence_enabled:
+        return
+    _pack_evidence_context(turn_context)
+    if turn_context.memory_retrieval_context:
+        turn_context.history = _append_memory_retrieval_context(
+            history=turn_context.history,
+            channel=channel,
+            target=target,
+            session_id=session_id,
+            memory_context=turn_context.memory_retrieval_context,
+        )
+    if turn_context.knowledge_graph_context:
+        turn_context.history = _append_knowledge_graph_context(
+            history=turn_context.history,
+            channel=channel,
+            target=target,
+            session_id=session_id,
+            graph_context=turn_context.knowledge_graph_context,
+        )
 
 
 def _populate_memory_context(
@@ -700,68 +751,6 @@ def _record_memory_context_failure(
         "memory_context_error_code": error_facts["error_code"],
         "memory_context_reason_code": error_facts["reason_code"],
     }
-
-
-def _apply_shared_evidence_context(
-    *,
-    turn_context: TurnContext,
-    memory_evidence_enabled: bool,
-    knowledge_evidence_enabled: bool,
-    channel: str,
-    target: str,
-    session_id: str,
-) -> None:
-    if not memory_evidence_enabled and not knowledge_evidence_enabled:
-        return
-    _pack_evidence_context(turn_context)
-    _attach_evidence_context_to_history(
-        turn_context=turn_context,
-        channel=channel,
-        target=target,
-        session_id=session_id,
-    )
-
-
-def _attach_memory_capsule_to_history(
-    *,
-    turn_context: TurnContext,
-    channel: str,
-    target: str,
-    session_id: str,
-) -> None:
-    if turn_context.memory_context:
-        turn_context.history = _inject_memory_context(
-            history=turn_context.history,
-            channel=channel,
-            target=target,
-            session_id=session_id,
-            memory_context=turn_context.memory_context,
-        )
-
-
-def _attach_evidence_context_to_history(
-    *,
-    turn_context: TurnContext,
-    channel: str,
-    target: str,
-    session_id: str,
-) -> None:
-    if turn_context.memory_retrieval_context:
-        turn_context.history = _append_memory_retrieval_context(
-            history=turn_context.history,
-            channel=channel,
-            target=target,
-            session_id=session_id,
-            memory_context=turn_context.memory_retrieval_context,
-        )
-    if turn_context.knowledge_graph_context:
-        turn_context.history = _append_knowledge_graph_context(
-            history=turn_context.history,
-            channel=channel,
-            target=target,
-            session_id=session_id,
-            graph_context=turn_context.knowledge_graph_context,
-        )
 
 
 def _maybe_apply_contextctl_call_site(

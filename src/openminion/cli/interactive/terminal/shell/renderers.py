@@ -5,6 +5,7 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
+from openminion.api.core.profiles import AgentConfigActivationError
 from openminion.cli.status import format_token_usage_summary
 from openminion.cli.presentation.header import (
     format_api_adapter,
@@ -232,7 +233,7 @@ def _render_model_command(arg: str, *, runtime: Any, console: Console) -> None:
             return
         try:
             selected = runtime.add_model(target.strip())
-        except ValueError as exc:
+        except (AgentConfigActivationError, OSError, ValueError) as exc:
             console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
             return
         console.print(
@@ -252,7 +253,7 @@ def _render_model_command(arg: str, *, runtime: Any, console: Console) -> None:
             if action == "default"
             else runtime.switch_model(target.strip() if action == "use" else arg)
         )
-    except ValueError as exc:
+    except (AgentConfigActivationError, OSError, ValueError) as exc:
         console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
         return
     suffix = (

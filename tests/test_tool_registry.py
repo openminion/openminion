@@ -82,6 +82,18 @@ class _UnmappedTool(Tool):
         )
 
 
+class _SidecarTool(Tool):
+    name = "sidecar.test"
+    description = "legacy tool with a managed sidecar"
+    sidecar = "fake"
+
+    def execute(self, arguments, context: ToolExecutionContext) -> ToolExecutionResult:
+        del arguments, context
+        return ToolExecutionResult(
+            tool_name=self.name, ok=True, content="ready", verified=True
+        )
+
+
 class _WeatherCurrentTool(Tool):
     name = "weather"
     description = "weather current"
@@ -260,6 +272,26 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertEqual(result, {"enabled": True, "source": "test"})
         self.assertEqual(calls, [{"name": "pinchtab"}])
+
+    def test_legacy_tool_starts_managed_sidecar_before_execution(self) -> None:
+        registry = ToolRegistry([_SidecarTool()])
+        calls: list[str] = []
+
+        def autostart(**kwargs):
+            calls.append(str(kwargs["name"]))
+            return {"enabled": True, "source": "test"}
+
+        registry.bind_sidecar_autostart(autostart)
+
+        batch = registry.execute_calls(
+            [ProviderToolCall(name="sidecar.test", arguments={})],
+            context=ToolExecutionContext(
+                channel="console", target="test", session_id="sidecar-test"
+            ),
+        )
+
+        self.assertTrue(batch.has_success)
+        self.assertEqual(calls, ["fake"])
 
     def test_policy_for_known_tool_reads_execution_policy(self) -> None:
         registry = ToolRegistry([_PolicyTool()])

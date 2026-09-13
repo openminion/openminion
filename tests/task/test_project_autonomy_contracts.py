@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from openminion.modules.task import (
@@ -32,6 +34,7 @@ from openminion.modules.task.project.turn import (
     ProjectTurnRequest,
     project_turn_from_payload,
     project_turn_inbound_metadata,
+    project_turn_result_from_response,
 )
 
 
@@ -257,6 +260,43 @@ def test_project_turn_preserves_revisions_for_checkpoint_validation(
     )
 
     assert result.task_plan_revision is not None
+
+
+def test_project_turn_preserves_ordered_revision_chain() -> None:
+    result = project_turn_result_from_response(
+        response={
+            "summary": "revised twice",
+            "metadata": {
+                "task_plan.revisions": json.dumps(
+                    [
+                        {
+                            "plan_id": "plan-1",
+                            "revision_id": "revision-1",
+                            "verifier_refs": ["verify:failed-1"],
+                            "revised_steps": [
+                                {"step_id": "build", "description": "Repair"}
+                            ],
+                        },
+                        {
+                            "plan_id": "plan-1",
+                            "revision_id": "revision-2",
+                            "predecessor_revision_id": "revision-1",
+                            "verifier_refs": ["verify:failed-2"],
+                            "revised_steps": [
+                                {"step_id": "build", "description": "Repair again"}
+                            ],
+                        },
+                    ]
+                )
+            },
+        }
+    )
+
+    assert [item.revision_id for item in result.task_plan_revisions] == [
+        "revision-1",
+        "revision-2",
+    ]
+    assert result.task_plan_revision == result.task_plan_revisions[-1]
 
 
 @pytest.mark.parametrize(
