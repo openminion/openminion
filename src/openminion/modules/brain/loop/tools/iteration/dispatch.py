@@ -57,7 +57,7 @@ from ..review_control import (
 )
 from ..shortlisting import (
     TOOL_REQUEST_TOOL_NAME,
-    build_inactive_tool_directory_message,
+    upsert_inactive_tool_directory_message,
 )
 from ..status import emit_adaptive_status
 from ..telemetry import _emit_iteration_event
@@ -697,7 +697,6 @@ def _process_tool_request_calls(
         for tool_call in tool_calls
         if str(getattr(tool_call, "name", "") or "").strip() != TOOL_REQUEST_TOOL_NAME
     ]
-    activated_any = False
     requested_tools = list(
         loop_state.scratchpad.get("tool_schema_shortlisting.requested_tools", []) or []
     )
@@ -710,9 +709,9 @@ def _process_tool_request_calls(
             active_tool_names=active_tool_names,
             requestable_specs_by_name=requestable_specs_by_name,
             active_tool_specs=active_tool_specs,
+            arguments=arguments,
         )
         _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
-        activated_any = activated_any or activated
         _record_terminal_tool_request(
             terminal_requested_names,
             action_result=action_result,
@@ -758,20 +757,21 @@ def _process_tool_request_calls(
                 "activated": activated,
             },
         )
-    loop_state.scratchpad["tool_schema_shortlisting.requested_tools"] = requested_tools
-    loop_state.scratchpad["tool_schema_shortlisting.active_tools"] = sorted(
-        active_tool_names
+    scratchpad = loop_state.scratchpad
+    scratchpad["tool_schema_shortlisting.requested_tools"] = requested_tools
+    scratchpad["tool_schema_shortlisting.active_tools"] = sorted(active_tool_names)
+    scratchpad["tool_schema_shortlisting.active_count"] = len(active_tool_names)
+    scratchpad["tool_schema_shortlisting.inactive_tools"] = sorted(
+        set(requestable_specs_by_name) - active_tool_names
     )
     _stage_terminal_tool_request(
         loop_state, terminal_requested_names, regular_tool_calls
     )
-    if activated_any:
-        inactive_directory_message = build_inactive_tool_directory_message(
-            requestable_tool_specs=requestable_specs,
-            active_tool_names=active_tool_names,
-        )
-        if inactive_directory_message is not None:
-            loop_state.messages.append(inactive_directory_message)
+    upsert_inactive_tool_directory_message(
+        loop_state.messages,
+        requestable_tool_specs=requestable_specs,
+        active_tool_names=active_tool_names,
+    )
     if on_tool_result is not None:
         on_tool_result(loop_state)
     if not regular_tool_calls:

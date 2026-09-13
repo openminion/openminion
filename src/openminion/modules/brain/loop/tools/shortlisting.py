@@ -13,6 +13,20 @@ from openminion.modules.brain.config import (
 from openminion.modules.llm.schemas import LLMResponse, Message, ToolSpec
 
 TOOL_REQUEST_TOOL_NAME = "tool.request"
+_SHORTLISTING_TELEMETRY_KEYS = (
+    "tool_schema_shortlisting.enabled",
+    "tool_schema_shortlisting.reason",
+    "tool_schema_shortlisting.candidate_count",
+    "tool_schema_shortlisting.active_count",
+    "tool_schema_shortlisting.selected_tools",
+    "tool_schema_shortlisting.inactive_tools",
+    "tool_schema_shortlisting.requested_tools",
+    "tool_schema_shortlisting.active_tools",
+    "tool_schema_shortlisting.input_tokens",
+    "tool_schema_shortlisting.output_tokens",
+    "tool_schema_shortlisting.total_tokens",
+    "tool_schema_shortlisting.llm_call_made",
+)
 _JSON_FENCE_RE = re.compile(
     r"^\s*```(?:json)?\s*(?P<body>.*?)\s*```\s*$",
     re.IGNORECASE | re.DOTALL,
@@ -68,6 +82,7 @@ def build_tool_request_spec() -> ToolSpec:
                 },
                 "terminal_after_success": {
                     "type": "boolean",
+                    "default": False,
                     "description": (
                         "True only when one successful call to this tool will "
                         "fully satisfy the current user request before the final "
@@ -75,7 +90,7 @@ def build_tool_request_spec() -> ToolSpec:
                     ),
                 },
             },
-            "required": ["name", "terminal_after_success"],
+            "required": ["name"],
             "additionalProperties": False,
         },
     )
@@ -123,6 +138,33 @@ def build_inactive_tool_directory_message(
         content="\n".join(lines),
         meta={"tool_schema_shortlisting": "inactive_directory"},
     )
+
+
+def upsert_inactive_tool_directory_message(
+    messages: list[Message],
+    *,
+    requestable_tool_specs: Sequence[ToolSpec],
+    active_tool_names: set[str] | frozenset[str],
+) -> None:
+    messages[:] = [
+        message
+        for message in messages
+        if message.meta.get("tool_schema_shortlisting") != "inactive_directory"
+    ]
+    directory = build_inactive_tool_directory_message(
+        requestable_tool_specs=requestable_tool_specs,
+        active_tool_names=active_tool_names,
+    )
+    if directory is not None:
+        messages.append(directory)
+
+
+def shortlisting_telemetry_payload(scratchpad: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: scratchpad[key]
+        for key in _SHORTLISTING_TELEMETRY_KEYS
+        if key in scratchpad
+    }
 
 
 def should_shortlist_tool_schemas(

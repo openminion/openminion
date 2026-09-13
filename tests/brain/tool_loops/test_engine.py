@@ -51,6 +51,7 @@ from openminion.modules.brain.loop.tools.engine import (
     _repeated_plan_only_without_substantive_work,
     _suppress_plan_family_tools,
 )
+from openminion.modules.brain.loop.tools.dispatch import _tool_request_result
 from openminion.modules.brain.loop.tools.confirmation import (
     confirmation_required_user_message,
     extract_confirmation_replay_queue,
@@ -2956,7 +2957,7 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
     outcome = run_adaptive_tool_loop(
         loop_ctx,
         profile=_profile(
-            allowed_tools=frozenset({"web.search", "web.fetch"}),
+            allowed_tools=frozenset({"web.search", "web.fetch", "time"}),
             max_iterations=4,
             profile_name="general_adaptive_v1",
         ),
@@ -2964,7 +2965,7 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
         model="fake-model",
         initial_messages=[Message(role="user", content="fetch the page")],
         tool_specs=_tool_specs("web.search"),
-        requestable_tool_specs=_tool_specs("web.search", "web.fetch"),
+        requestable_tool_specs=_tool_specs("web.search", "web.fetch", "time"),
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
@@ -2983,7 +2984,8 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
         and message.meta.get("tool_schema_shortlisting") == "inactive_directory"
     ]
     assert len(inactive_directories) == 1
-    assert "web.fetch" in inactive_directories[0].content
+    assert "web.fetch" not in inactive_directories[0].content
+    assert "time" in inactive_directories[0].content
     tool_messages = [
         message for message in runtime.calls[1]["messages"] if message.role == "tool"
     ]
@@ -2993,6 +2995,31 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
     }
     assert loop_ctx.state.budgets_remaining.tool_calls == 4
     assert outcome.final_text == "done"
+
+
+def test_tool_request_rejects_malformed_arguments_before_activation() -> None:
+    requestable = {spec.name: spec for spec in _tool_specs("web.fetch")}
+    for arguments in (
+        {"name": 7},
+        {"name": "web.fetch", "terminal_after_success": "yes"},
+        {"name": "web.fetch", "extra": True},
+    ):
+        active_names: set[str] = set()
+        active_specs: list[ToolSpec] = []
+        raw_name = arguments.get("name")
+        result, activated = _tool_request_result(
+            requested_name=raw_name.strip() if isinstance(raw_name, str) else "",
+            active_tool_names=active_names,
+            requestable_specs_by_name=requestable,
+            active_tool_specs=active_specs,
+            arguments=arguments,
+        )
+
+        assert activated is False
+        assert result.error is not None
+        assert result.error.code == "TOOL_REQUEST_INVALID_ARGUMENTS"
+        assert active_names == set()
+        assert active_specs == []
 
 
 def test_runtime_scope_excludes_loop_control_tools() -> None:

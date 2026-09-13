@@ -40,6 +40,7 @@ from openminion.modules.brain.loop.tools.contracts import (
     CommandExecutionOutcome,
     PreparedToolDispatch,
 )
+from openminion.modules.brain.loop.tools.dispatch import _tool_request_result
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_ALLOWED_TOOLS,
     CODING_TERM_BUDGET_EXHAUSTED,
@@ -51,7 +52,7 @@ from openminion.modules.brain.loop.strategies.coding.contracts import (
     PROJECT_RELEASE_ALLOWED_TOOLS,
 )
 from openminion.modules.brain.schemas import ActionResult, BudgetCounters, ToolCommand
-from openminion.modules.llm.schemas import Message
+from openminion.modules.llm.schemas import LLMResponse, Message, ToolCall, ToolSpec
 
 
 # Public symbols downstream imports rely on. Anything in this list MUST
@@ -117,8 +118,8 @@ class TestCodingProfileRunnerMethods:
 class TestCodingHandlerPureHelperBehavior:
     def test_current_coding_ceiling_sizes(self) -> None:
         assert len(CODING_ALLOWED_TOOLS) == 19
-        assert len(PROJECT_CODING_ALLOWED_TOOLS) == 45
-        assert len(PROJECT_RELEASE_ALLOWED_TOOLS) == 48
+        assert len(PROJECT_CODING_ALLOWED_TOOLS) == 46
+        assert len(PROJECT_RELEASE_ALLOWED_TOOLS) == 49
 
     def test_build_error_result_shape(self) -> None:
         result = handler._build_error_result("oops", "TEST_CODE")
@@ -180,7 +181,7 @@ class TestCodingHandlerPureHelperBehavior:
         assert spec.input_schema == schema
         assert "path/cwd/working_directory" in spec.description
 
-    def test_current_coding_specs_include_the_full_ceiling(self) -> None:
+    def test_coding_specs_intersect_the_runtime_surface(self) -> None:
         with (
             patch.object(
                 coding_runtime,
@@ -205,8 +206,28 @@ class TestCodingHandlerPureHelperBehavior:
         ):
             specs = handler._build_tool_specs(CODING_ALLOWED_TOOLS, ctx=object())
 
-        assert {spec.name for spec in specs} == CODING_ALLOWED_TOOLS
-        assert len(specs) == 19
+        assert [spec.name for spec in specs] == ["file.read"]
+
+    def test_unregistered_coding_tool_is_not_requestable(self) -> None:
+        runner = SimpleNamespace(tool_api=SimpleNamespace(registry=object()))
+        with (
+            patch.object(
+                coding_runtime,
+                "_runner_and_profile_from_context",
+                return_value=(runner, None),
+            ),
+            patch.object(
+                coding_runtime,
+                "collect_runtime_tool_schemas",
+                return_value=[],
+            ),
+        ):
+            specs = handler._build_tool_specs(
+                frozenset({"file.read", "web.search"}),
+                ctx=object(),
+            )
+
+        assert specs == []
 
     def test_approved_project_loop_exposes_and_invokes_project_tool(self) -> None:
         checkpoint = SimpleNamespace(
@@ -276,11 +297,13 @@ class TestCodingHandlerPureHelperBehavior:
         ):
             allowed_tools = handler._coding_allowed_tools(ctx)
             tool_specs = handler._build_tool_specs(allowed_tools, ctx=ctx)
-            profile, iteration_specs = CodingProfileRunner()._iteration_profile(
+            profile, active_specs, requestable_specs = (
+                CodingProfileRunner()._iteration_profile(
                 ctx,
                 loop=AdaptiveToolLoopState(),
                 allowed_tools=allowed_tools,
                 tool_specs=tool_specs,
+            )
             )
             _CodingLoopContextAdapter(ctx).execute_command(
                 command=ToolCommand(
@@ -291,9 +314,83 @@ class TestCodingHandlerPureHelperBehavior:
             )
 
         assert profile.allowed_tools == PROJECT_CODING_ALLOWED_TOOLS
-        by_name = {spec.name: spec for spec in iteration_specs}
+        assert active_specs == []
+        by_name = {spec.name: spec for spec in requestable_specs}
         assert by_name["git.status"].input_schema == schema
         assert seen[0].tool_name == "git.status"
+
+    def test_coding_profile_starts_with_the_bounded_core(self) -> None:
+        tool_specs = handler._build_tool_specs(PROJECT_CODING_ALLOWED_TOOLS)
+
+        _profile, active_specs, requestable_specs = (
+            CodingProfileRunner()._iteration_profile(
+                SimpleNamespace(),
+                loop=AdaptiveToolLoopState(),
+                allowed_tools=PROJECT_CODING_ALLOWED_TOOLS,
+                tool_specs=tool_specs,
+            )
+        )
+
+        assert [spec.name for spec in active_specs] == [
+            "file.list_dir",
+            "file.read",
+            "file.write",
+            "code.grep",
+            "code.patch",
+            "exec.run",
+            "exec.poll",
+        ]
+        assert {spec.name for spec in requestable_specs} == (
+            PROJECT_CODING_ALLOWED_TOOLS - {"plan"}
+        )
+
+    def test_coding_profile_preserves_entry_selected_order(self) -> None:
+        tool_specs = handler._build_tool_specs(PROJECT_CODING_ALLOWED_TOOLS)
+        seed = LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            tool_calls=[
+                ToolCall(id="git", name="git.status", arguments={}),
+                ToolCall(id="read", name="file.read", arguments={"path": "x"}),
+            ],
+        )
+
+        _profile, active_specs, _requestable_specs = (
+            CodingProfileRunner()._iteration_profile(
+                SimpleNamespace(),
+                loop=AdaptiveToolLoopState(),
+                allowed_tools=PROJECT_CODING_ALLOWED_TOOLS,
+                tool_specs=tool_specs,
+                seed_response=seed,
+            )
+        )
+
+        assert [spec.name for spec in active_specs] == ["git.status", "file.read"]
+
+    def test_every_coding_execution_schema_supports_exact_activation(self) -> None:
+        for allowed_tools in (
+            CODING_ALLOWED_TOOLS,
+            PROJECT_CODING_ALLOWED_TOOLS,
+            PROJECT_RELEASE_ALLOWED_TOOLS,
+        ):
+            specs = handler._build_tool_specs(allowed_tools)
+            requestable = {spec.name: spec for spec in specs}
+            for name in requestable:
+                active_names: set[str] = set()
+                active_specs: list[ToolSpec] = []
+                result, activated = _tool_request_result(
+                    requested_name=name,
+                    active_tool_names=active_names,
+                    requestable_specs_by_name=requestable,
+                    active_tool_specs=active_specs,
+                    arguments={"name": name},
+                )
+
+                assert result.status == "success"
+                assert activated is True
+                assert name in active_names
+                assert name in {spec.name for spec in active_specs}
 
     def test_build_tool_specs_projects_targets_only_for_verify_candidates(self) -> None:
         specs = handler._build_tool_specs(

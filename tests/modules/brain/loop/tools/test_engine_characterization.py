@@ -7564,10 +7564,14 @@ def test_loop_keeps_requested_tools_active_across_later_requests() -> None:
         if "[INACTIVE TOOL DIRECTORY]" in str(message.content)
     ]
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert inactive_directories
-    assert "cannot be called directly" in inactive_directories[-1]
-    assert "provider-safe `tool_request`" in inactive_directories[-1]
-    assert "- extra.one:" not in inactive_directories[-1]
+    assert {spec.name for spec in runtime.calls[-1]["tools"]} == {
+        "file.read",
+        "extra.one",
+        "extra.two",
+        "tool.request",
+        "plan",
+    }
+    assert not inactive_directories
 
 
 def test_loop_repeated_tool_request_does_not_trigger_duplicate_work_guard() -> None:

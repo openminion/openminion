@@ -12,6 +12,7 @@ from openminion.base.logging import format_structured_event, get_logger
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     select_coding_allowed_tools,
 )
+from openminion.modules.brain.loop.tools.shortlisting import TOOL_REQUEST_TOOL_NAME
 from openminion.modules.config import resolve_module_data_root, resolve_module_home_root
 from openminion.modules.task import (
     AutonomyRun,
@@ -538,14 +539,13 @@ class ProjectWorker:
                 sorted(
                     select_coding_allowed_tools(
                         project_launch_approved=(
-                            project_policy.repository_project_launch_approved(
-                                checkpoint
-                            )
+                            project_policy.repository_project_launch_approved(checkpoint)
                         ),
                         release_approved=(
                             project_policy.repository_release_tools_approved(checkpoint)
                         ),
                     )
+                    | {TOOL_REQUEST_TOOL_NAME}
                 )
             )
         request = ProjectTurnRequest(

@@ -4,6 +4,9 @@ from typing import Any
 from openminion.modules.brain.loop.tools.iteration.helpers import (
     _tool_result_payload_from_action,
 )
+from openminion.modules.brain.loop.tools.shortlisting import (
+    shortlisting_telemetry_payload,
+)
 from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.llm.schemas import Message
 from openminion.modules.tool.diagnostics.events import structural_security_tool_results
@@ -89,6 +92,7 @@ class CodingLoopState:
             "coding.termination_reason": self.termination_reason,
             "coding.allowed_tools": sorted(allowed_tools),
         }
+        payload.update(shortlisting_telemetry_payload(self.scratchpad))
         tool_results = [
             item
             for item in self.scratchpad.get("adaptive.tool_results", []) or []

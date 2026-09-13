@@ -71,6 +71,7 @@ def test_v1_allowlist_contains_expected_tools() -> None:
 def test_project_allowlists_match_the_accepted_repository_sets() -> None:
     expected_core = {
         "plan",
+        "web.search",
         "git.status",
         "git.diff",
         "git.log",
@@ -174,6 +175,7 @@ def test_v1_allowlist_excludes_interactive_or_search_web_tools() -> None:
     assert "web.fetch" in CODING_ALLOWED_TOOLS
     for tool in ("web.search", "browser"):
         assert tool not in CODING_ALLOWED_TOOLS
+    assert "web.search" in PROJECT_CODING_ALLOWED_TOOLS
 
 
 def test_default_tool_policy_allows_code_prefix_for_coding_tools() -> None:

@@ -50,7 +50,7 @@ from ..response_payloads import (
 )
 from ..shortlisting import (
     TOOL_REQUEST_TOOL_NAME,
-    build_inactive_tool_directory_message,
+    upsert_inactive_tool_directory_message,
     with_tool_request_spec,
 )
 from ..startup import initialize_loop_runtime_state
@@ -370,17 +370,11 @@ def prepare_loop_frame(
             index=2,
             content=_WATCH_ACTION_GUIDANCE,
         )
-    if tool_request_enabled and not any(
-        message.role == "system"
-        and message.meta.get("tool_schema_shortlisting") == "inactive_directory"
-        for message in loop_state.messages
-    ):
-        inactive_directory_message = build_inactive_tool_directory_message(
-            requestable_tool_specs=requestable_specs,
-            active_tool_names=active_tool_names,
-        )
-        if inactive_directory_message is not None:
-            loop_state.messages.append(inactive_directory_message)
+    upsert_inactive_tool_directory_message(
+        loop_state.messages,
+        requestable_tool_specs=requestable_specs if tool_request_enabled else (),
+        active_tool_names=active_tool_names,
+    )
 
     max_output_tokens = profile.llm_request_overrides.get("max_output_tokens")
     metadata = _loop_request_metadata(profile, requestable_specs)
