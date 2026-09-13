@@ -340,9 +340,9 @@ class ToolAdapter:
         _inject_runtime_message_ref(
             tool_name=tool_name, args=args, message_ref=runtime_message_ref
         )
-        tool_name, spec, runtime_tool = self._resolve_registry_tool(tool_name)
         if not self.is_tool_allowed(tool_name):
             return _tool_allowlist_error(tool_name)
+        tool_name, spec, runtime_tool = self._resolve_registry_tool(tool_name)
         if spec is None and runtime_tool is None:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,

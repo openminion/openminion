@@ -23,6 +23,7 @@ from .contracts import (
     semantic_batch_signature,
 )
 from .runtime import _extract_visible_response_text
+from .shortlisting import TOOL_REQUEST_TOOL_NAME
 from .status import emit_adaptive_status
 
 
@@ -497,21 +498,39 @@ def _clamp_direct_tool_batch_to_requested_call(
         or loop_state.direct_tool_requested_batch_satisfied
     ):
         return tool_calls
+    control_calls = [
+        tool_call
+        for tool_call in tool_calls
+        if str(getattr(tool_call, "name", "") or "").strip()
+        == TOOL_REQUEST_TOOL_NAME
+    ]
+    execution_calls = [
+        tool_call for tool_call in tool_calls if tool_call not in control_calls
+    ]
     if _direct_tool_turn_match_by_name_only(loop_state):
-        return _clamp_direct_tool_batch_by_name(loop_state, tool_calls)
-    clamped_calls = _clamp_direct_tool_batch_by_requested_calls(
+        clamped_calls = _clamp_direct_tool_batch_by_name(loop_state, execution_calls)
+        return [
+            tool_call
+            for tool_call in tool_calls
+            if tool_call in control_calls or tool_call in clamped_calls
+        ]
+    requested_clamped_calls = _clamp_direct_tool_batch_by_requested_calls(
         loop_state,
-        tool_calls,
+        execution_calls,
         requested_calls=requested_calls,
     )
-    if clamped_calls is not None:
-        return clamped_calls
-    for tool_call in tool_calls:
+    if requested_clamped_calls is not None:
+        return [*control_calls, *requested_clamped_calls]
+    for tool_call in execution_calls:
         if semantic_batch_signature([tool_call]) != requested_batch_signature:
             continue
         loop_state.scratchpad["direct_tool_requested_batch_clamped"] = True
-        return [tool_call]
-    return tool_calls
+        return [
+            call
+            for call in tool_calls
+            if call in control_calls or call is tool_call
+        ]
+    return control_calls or tool_calls
 
 
 def _clamp_direct_tool_batch_by_name(

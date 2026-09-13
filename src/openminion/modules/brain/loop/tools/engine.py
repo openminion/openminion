@@ -491,7 +491,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
             )
 
             if not tool_calls:
-                self._append_response_messages(prepared.response)
+                self._append_response_messages(prepared.response, tool_calls=[])
                 continue_loop, outcome = self._handle_no_tool_calls(
                     prepared=prepared,
                     payloads=self._build_response_payloads(prepared.response),

@@ -81,6 +81,10 @@ def main(argv: list[str] | None = None) -> int:
         if not config_path.is_file():
             print(f"live MNTE E2E requires {_CONFIG_ENV}", file=sys.stderr)
             return 2
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        env.setdefault(
+            "OPENMINION_CLI_FOCUS_E2E_AGENT", str(config["default_agent"])
+        )
         env["OPENMINION_LIVE_CLI_FOCUS_E2E"] = "1"
         env["OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E"] = "1"
         results["live"] = _run(_LIVE_TARGETS, env=env)

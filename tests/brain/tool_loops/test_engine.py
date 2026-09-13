@@ -2997,6 +2997,137 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
     assert outcome.final_text == "done"
 
 
+def test_direct_tool_clamp_preserves_seeded_tool_request() -> None:
+    seed_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        tool_calls=[
+            ToolCall(
+                id="request-write",
+                name=TOOL_REQUEST_TOOL_NAME,
+                arguments={"name": "file.write"},
+            )
+        ],
+        finish_reason="tool_calls",
+    )
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="write",
+                        name="file.write",
+                        arguments={"path": "slug.py", "content": "pass\n"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="done",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=3, llm_calls_max=4),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="wrote slug.py",
+                ),
+            )
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"file.write"}),
+            max_iterations=4,
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="create slug.py")],
+        initial_state=AdaptiveToolLoopState(
+            messages=[Message(role="user", content="create slug.py")],
+            direct_tool_turn=DirectToolTurnContext(
+                requested_tool_names=("file.write",),
+                requested_batch_signature="",
+                match_by_name_only=True,
+            ),
+        ),
+        tool_specs=_tool_specs("file.write"),
+        requestable_tool_specs=_tool_specs("file.write"),
+        seed_response=seed_response,
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert [command.tool_name for command in loop_ctx.commands] == ["file.write"]
+    request_messages = [
+        message for message in runtime.calls[0]["messages"] if message.role == "tool"
+    ]
+    assert json.loads(request_messages[-1].content)["outputs"] == {
+        "tool_name": "file.write",
+        "activated": False,
+    }
+
+
+def test_direct_tool_clamp_does_not_leave_mismatched_seed_call_unpaired() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="cannot continue",
+                finish_reason="stop",
+            )
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state(tool_calls=2, llm_calls_max=3))
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.write"})),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="create slug.py")],
+        initial_state=AdaptiveToolLoopState(
+            messages=[Message(role="user", content="create slug.py")],
+            direct_tool_turn=DirectToolTurnContext(
+                requested_tool_names=("file.write",),
+                requested_batch_signature="",
+                match_by_name_only=True,
+            ),
+        ),
+        tool_specs=_tool_specs("file.write"),
+        seed_response=LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            tool_calls=[ToolCall(id="wrong", name="exec.run", arguments={})],
+            finish_reason="tool_calls",
+        ),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED
+    assert not any(
+        message.tool_calls
+        for message in runtime.calls[0]["messages"]
+        if message.role == "assistant"
+    )
+
+
 def test_tool_request_rejects_malformed_arguments_before_activation() -> None:
     requestable = {spec.name: spec for spec in _tool_specs("web.fetch")}
     for arguments in (
