@@ -46,6 +46,31 @@ class OllamaFixtureHandler(BaseHTTPRequestHandler):
                     '"confidence":1.0}'
                 ),
             }
+        elif schema_title == "ClosureJudgment":
+            task_complete = type(self).turn_response_index >= len(
+                type(self).turn_response_messages
+            )
+            response_message = {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "satisfied": task_complete,
+                        "reason": (
+                            "workspace listing completed"
+                            if task_complete
+                            else "task still active"
+                        ),
+                        "next_action": "close" if task_complete else "continue",
+                        "final_answer": (
+                            "Workspace entries listed. ONBOARDING_OK"
+                            if task_complete
+                            else None
+                        ),
+                        "memory_use_refs": [],
+                        "mutation_claimed": False,
+                    }
+                ),
+            }
         else:
             response_message = type(self).turn_response_messages[
                 type(self).turn_response_index

@@ -798,7 +798,11 @@ def test_local_ollama_check_can_verify_against_fixture_server(
         result for result in tool_results if result["tool_name"] == "file.list_dir"
     )
 
-    assert len(requests) == 7
+    assert len(requests) == 8
+    assert sum(
+        request.get("format", {}).get("title") == "ClosureJudgment"
+        for request in requests
+    ) == 1
     assert len(turn_requests) == 4
     assert turn_requests[0]["messages"][-1]["role"] == "user"
     assert denial["error"]["details"]["suggested_tool"] == "file.list_dir"
