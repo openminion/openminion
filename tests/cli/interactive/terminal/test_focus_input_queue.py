@@ -757,7 +757,7 @@ async def test_terminal_focus_frames_idle_answer_with_one_gap() -> None:
     await loop.cancel_read_task()
 
     rendered = output.getvalue()
-    assert rendered.startswith("\n⏺ answer")
+    assert rendered.startswith("\n● answer")
     assert rendered.endswith("\n\n")
 
 

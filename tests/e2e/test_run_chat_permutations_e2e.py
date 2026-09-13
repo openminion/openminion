@@ -295,7 +295,7 @@ def test_turn_response_boundary_waits_for_done_on_chat_turn() -> None:
     assert (
         _turn_response_boundary_detected_since(
             previous,
-            current + "⏺ hello (thinking=minimal)\n\nDone in 0s\n\n",
+            current + "● hello (thinking=minimal)\n\nDone in 0s\n\n",
             require_turn_done=True,
         )
         is True

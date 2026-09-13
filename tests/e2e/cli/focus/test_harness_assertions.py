@@ -287,7 +287,7 @@ def test_expected_markers_reject_provider_error_final_answer() -> None:
     prompt = "Build and validate a project, then report result."
     transcript = (
         f"❯ {prompt}\n"
-        "⏺ [act:coding] LLM error: PROVIDER_ERROR: invalid tool transcript\n"
+        "● [act:coding] LLM error: PROVIDER_ERROR: invalid tool transcript\n"
         "Done in 2m10s\n"
     )
 
@@ -309,7 +309,7 @@ def test_expected_markers_ignore_tool_output_before_final_answer() -> None:
     transcript = (
         f"❯ {prompt}\n"
         "● web.search result: recommendation from an unverified snippet\n"
-        "⏺ I could not complete the requested comparison.\n"
+        "● I could not complete the requested comparison.\n"
         "Done in 4m12s\n"
     )
 
@@ -808,7 +808,7 @@ def test_completed_turn_allows_debug_traceback_before_final_done() -> None:
         "Traceback (most recent call last):\n"
         "ZeroDivisionError: division by zero\n"
         "● Running file.write(module.py)\n"
-        "⏺ result: fixed the failing edge case.\n"
+        "● result: fixed the failing edge case.\n"
         "Done in 12s\n"
     )
 
