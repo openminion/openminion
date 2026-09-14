@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from openminion.base.config.parser.runtime import _build_runtime_config
 from openminion.base.config.runtime import RuntimeConfig, ToolPolicyConfig
 from openminion.modules.brain.config import RetryConfig, RunnerOptions
 
@@ -8,6 +9,13 @@ def test_ar01_agent_loop_max_steps_default_is_at_least_50() -> None:
     assert RuntimeConfig().agent_loop_max_steps >= 50, (
         "AR-01: production default for agent_loop_max_steps must be >= 50; "
         "see the autonomy / loop-reliability spec"
+    )
+
+
+def test_ar01_parser_uses_the_production_loop_default() -> None:
+    assert (
+        _build_runtime_config({}).agent_loop_max_steps
+        == RuntimeConfig().agent_loop_max_steps
     )
 
 
