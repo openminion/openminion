@@ -316,11 +316,11 @@ class TestCodingHandlerPureHelperBehavior:
             tool_specs = handler._build_tool_specs(allowed_tools, ctx=ctx)
             profile, active_specs, requestable_specs = (
                 CodingProfileRunner()._iteration_profile(
-                ctx,
-                loop=AdaptiveToolLoopState(),
-                allowed_tools=allowed_tools,
-                tool_specs=tool_specs,
-            )
+                    ctx,
+                    loop=AdaptiveToolLoopState(),
+                    allowed_tools=allowed_tools,
+                    tool_specs=tool_specs,
+                )
             )
             _CodingLoopContextAdapter(ctx).execute_command(
                 command=ToolCommand(

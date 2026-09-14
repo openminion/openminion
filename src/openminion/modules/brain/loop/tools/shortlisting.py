@@ -187,7 +187,9 @@ def refresh_shortlisting_state(
         active_count,
     )
     if control_schema_count is not None:
-        scratchpad["tool_schema_shortlisting.control_schema_count"] = control_schema_count
+        scratchpad["tool_schema_shortlisting.control_schema_count"] = (
+            control_schema_count
+        )
     scratchpad["tool_schema_shortlisting.inactive_directory_count"] = int(
         inactive_directory is not None
     )

@@ -685,22 +685,20 @@ def _process_tool_request_calls(
     requestable_specs: list[Any],
     requestable_specs_by_name: dict[str, Any],
 ) -> tuple[list[Any], bool, LoopDispatchResult | None]:
-    tool_request_calls = [
-        tool_call
-        for tool_call in tool_calls
-        if str(getattr(tool_call, "name", "") or "").strip() == TOOL_REQUEST_TOOL_NAME
-    ]
+    tool_request_calls = []
+    regular_tool_calls = []
+    for tool_call in tool_calls:
+        tool_name = str(getattr(tool_call, "name", "") or "").strip()
+        if tool_name == TOOL_REQUEST_TOOL_NAME:
+            tool_request_calls.append(tool_call)
+        else:
+            regular_tool_calls.append(tool_call)
     if not tool_request_calls:
         return tool_calls, False, None
-    regular_tool_calls = [
-        tool_call
-        for tool_call in tool_calls
-        if str(getattr(tool_call, "name", "") or "").strip() != TOOL_REQUEST_TOOL_NAME
-    ]
     requested_tools = list(
         loop_state.scratchpad.get("tool_schema_shortlisting.requested_tools", []) or []
     )
-    terminal_requested_names: list[str] = []
+    terminal_names: list[str] = []
     for tool_call in tool_request_calls:
         arguments = dict(getattr(tool_call, "arguments", {}) or {})
         requested_name = str(arguments.get("name", "") or "").strip()
@@ -713,7 +711,7 @@ def _process_tool_request_calls(
         )
         _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
         _record_terminal_tool_request(
-            terminal_requested_names,
+            terminal_names,
             action_result=action_result,
             arguments=arguments,
             requested_name=requested_name,
@@ -762,11 +760,12 @@ def _process_tool_request_calls(
     scratchpad["tool_schema_shortlisting.inactive_tools"] = sorted(
         set(requestable_specs_by_name) - active_tool_names
     )
-    _stage_terminal_tool_request(
-        loop_state, terminal_requested_names, regular_tool_calls
-    )
+    _stage_terminal_tool_request(loop_state, terminal_names, regular_tool_calls)
     refresh_shortlisting_state(
-        loop_state.messages, scratchpad, requestable_specs, active_tool_names,
+        loop_state.messages,
+        scratchpad,
+        requestable_specs,
+        active_tool_names,
     )
     if on_tool_result is not None:
         on_tool_result(loop_state)

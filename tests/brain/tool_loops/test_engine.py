@@ -2994,19 +2994,21 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
         "tool_name": "web.fetch",
         "activated": True,
     }
-    assert outcome.state.scratchpad[
-        "tool_schema_shortlisting.initial_active_count"
-    ] == 1
+    assert (
+        outcome.state.scratchpad["tool_schema_shortlisting.initial_active_count"] == 1
+    )
     assert outcome.state.scratchpad["tool_schema_shortlisting.max_active_count"] == 2
-    assert outcome.state.scratchpad[
-        "tool_schema_shortlisting.control_schema_count"
-    ] == 2
-    assert outcome.state.scratchpad[
-        "tool_schema_shortlisting.inactive_directory_count"
-    ] == 1
-    assert outcome.state.scratchpad[
-        "tool_schema_shortlisting.inactive_directory_bytes"
-    ] > 0
+    assert (
+        outcome.state.scratchpad["tool_schema_shortlisting.control_schema_count"] == 2
+    )
+    assert (
+        outcome.state.scratchpad["tool_schema_shortlisting.inactive_directory_count"]
+        == 1
+    )
+    assert (
+        outcome.state.scratchpad["tool_schema_shortlisting.inactive_directory_bytes"]
+        > 0
+    )
     assert loop_ctx.state.budgets_remaining.tool_calls == 4
     assert outcome.final_text == "done"
 

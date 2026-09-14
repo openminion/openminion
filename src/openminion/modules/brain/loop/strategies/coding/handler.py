@@ -372,9 +372,7 @@ class CodingProfileRunner(
             {
                 "tool_schema_shortlisting.enabled": bool(requestable_tool_specs),
                 "tool_schema_shortlisting.reason": "coding_progressive_disclosure",
-                "tool_schema_shortlisting.candidate_count": len(
-                    requestable_tool_specs
-                ),
+                "tool_schema_shortlisting.candidate_count": len(requestable_tool_specs),
                 "tool_schema_shortlisting.active_count": len(active_tool_specs),
                 "tool_schema_shortlisting.selected_tools": selected_names,
                 "tool_schema_shortlisting.inactive_tools": inactive_names,
@@ -439,12 +437,14 @@ class CodingProfileRunner(
             self._sync_plan_telemetry()
             self._dispatch_subtasks_if_needed(ctx)
             loop = self._as_adaptive_state(self._loop_state)
-            profile, active_tool_specs, requestable_tool_specs = self._iteration_profile(
-                ctx,
-                loop=loop,
-                allowed_tools=allowed_tools,
-                tool_specs=tool_specs,
-                seed_response=seed_response,
+            profile, active_tool_specs, requestable_tool_specs = (
+                self._iteration_profile(
+                    ctx,
+                    loop=loop,
+                    allowed_tools=allowed_tools,
+                    tool_specs=tool_specs,
+                    seed_response=seed_response,
+                )
             )
             frame_seed_response = seed_response
             seed_response = None

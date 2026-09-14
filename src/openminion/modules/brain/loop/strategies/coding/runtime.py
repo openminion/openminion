@@ -193,9 +193,7 @@ def _build_tool_specs(
     }
     runtime_schemas = _runtime_tool_schemas_by_name(ctx)
     tool_ids = (
-        allowed_tools & runtime_schemas.keys()
-        if ctx is not None
-        else allowed_tools
+        allowed_tools & runtime_schemas.keys() if ctx is not None else allowed_tools
     ) - {PLAN_TOOL_NAME}
     return [
         ToolSpec(

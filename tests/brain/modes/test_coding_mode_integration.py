@@ -88,7 +88,7 @@ def test_coding_loop_state_telemetry_preserves_tool_results_for_closure() -> Non
                     "verified": True,
                     "data": {"argv": ["pytest", "-q"], "exit_code": 0},
                 },
-            ]
+            ],
         }
     )
 
@@ -765,12 +765,10 @@ def test_coding_loop_single_tool_then_final_text() -> None:
         "tool.request",
         "plan",
     ]
-    assert handler._loop_state.scratchpad[
-        "tool_schema_shortlisting.candidate_count"
-    ] == 19
-    assert handler._loop_state.scratchpad[
-        "tool_schema_shortlisting.active_count"
-    ] == 7
+    assert (
+        handler._loop_state.scratchpad["tool_schema_shortlisting.candidate_count"] == 19
+    )
+    assert handler._loop_state.scratchpad["tool_schema_shortlisting.active_count"] == 7
 
 
 def test_coding_loop_consumes_entry_response_once_across_phases() -> None:
@@ -1041,8 +1039,7 @@ def test_coding_loop_executes_all_plan_phases_in_order() -> None:
             message
             for message in call["messages"]
             if message.role == "system"
-            and message.meta.get("tool_schema_shortlisting")
-            == "inactive_directory"
+            and message.meta.get("tool_schema_shortlisting") == "inactive_directory"
         ]
         assert len(directories) <= 1
 

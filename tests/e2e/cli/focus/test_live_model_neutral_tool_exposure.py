@@ -23,12 +23,18 @@ from openminion.modules.task.autonomy import (
     AutonomyRunStore,
     autonomy_permission_metadata,
 )
-from openminion.modules.task.project import ProjectTurnRequest, project_turn_inbound_metadata
+from openminion.modules.task.project import (
+    ProjectTurnRequest,
+    project_turn_inbound_metadata,
+)
 from openminion.tools.exec.constants import EXEC_ENABLE_HOST_EXEC_ENV
 from tests.e2e.cli.focus.conftest import require_complex_focus
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
-from tests.e2e.cli.focus.harness.scenarios import FocusScenario, assert_scenario_contract
+from tests.e2e.cli.focus.harness.scenarios import (
+    FocusScenario,
+    assert_scenario_contract,
+)
 from tests.helpers.live_cli_chat_alibaba import parse_tool_results
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(1500)]
@@ -239,9 +245,7 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
         str(event.get("call_id", "")): event for event in completed_events
     }
     exec_request = next(
-        event
-        for event in requested_events
-        if event.get("canonical_name") == "exec.run"
+        event for event in requested_events if event.get("canonical_name") == "exec.run"
     )
     exec_output = completed_by_id[str(exec_request["call_id"])]["output"]["outputs"]
     assert exec_output["status"] == "ok"
@@ -429,7 +433,9 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         data_root=root / "data" / artifact_id,
     )
     try:
-        manager = runtime.resolve_agent_service(minimax_agent_id)._get_runner().task_manager
+        manager = (
+            runtime.resolve_agent_service(minimax_agent_id)._get_runner().task_manager
+        )
         store = AutonomyRunStore(root=root / "autonomy")
         launched = launch_project(
             build_project_launch_request(
@@ -496,9 +502,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
             )
             wall_times_ms.append(round((time.monotonic() - started) * 1000))
             failure_categories = _provider_failure_categories(telemetry_path)
-            failure_categories_by_turn.append(
-                failure_categories[failed_event_count:]
-            )
+            failure_categories_by_turn.append(failure_categories[failed_event_count:])
             failed_event_count = len(failure_categories)
             if index == 0:
                 research_results = parse_tool_results(
@@ -719,9 +723,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
             "structured_denials": release_denials,
             "schema_counts": [
                 {
-                    "candidate": event.get(
-                        "tool_schema_shortlisting.candidate_count"
-                    ),
+                    "candidate": event.get("tool_schema_shortlisting.candidate_count"),
                     "initial_execution": event.get(
                         "tool_schema_shortlisting.initial_active_count"
                     ),
@@ -746,8 +748,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
                 for event in shortlisting_events
             ],
             "provider_calls": sum(
-                int(event.get("provider_calls_total", 0) or 0)
-                for event in phase_timing
+                int(event.get("provider_calls_total", 0) or 0) for event in phase_timing
             ),
             "provider_call_purposes": [
                 purpose
@@ -756,8 +757,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
             ],
             "provider_attempts": provider_attempts,
             "compatibility_retries": sum(
-                int(attempt.get("attempt", 1) or 1) > 1
-                for attempt in provider_attempts
+                int(attempt.get("attempt", 1) or 1) > 1 for attempt in provider_attempts
             ),
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,

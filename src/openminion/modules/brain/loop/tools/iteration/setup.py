@@ -371,14 +371,14 @@ def prepare_loop_frame(
             content=_WATCH_ACTION_GUIDANCE,
         )
     refresh_shortlisting_state(
-        loop_state.messages, loop_state.scratchpad,
-        requestable_specs if tool_request_enabled else (), active_tool_names,
+        loop_state.messages,
+        loop_state.scratchpad,
+        requestable_specs if tool_request_enabled else (),
+        active_tool_names,
         control_schema_count=int(tool_request_enabled) + int(plan_enabled),
     )
-
     max_output_tokens = profile.llm_request_overrides.get("max_output_tokens")
     metadata = _loop_request_metadata(profile, requestable_specs)
-
     turn_scope_id = _current_turn_scope_id(loop_ctx)
 
     runtime_state = initialize_loop_runtime_state(

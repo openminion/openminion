@@ -31,9 +31,7 @@ _LOCAL_TARGETS = (
     "tests/services/runtime/test_project_worker.py",
     "tests/brain/modes/test_delegate_e2e.py",
 )
-_LIVE_TARGETS = (
-    "tests/e2e/cli/focus/test_live_model_neutral_tool_exposure.py",
-)
+_LIVE_TARGETS = ("tests/e2e/cli/focus/test_live_model_neutral_tool_exposure.py",)
 _LIVE_EVIDENCE_FILES = {
     "focus/mnte-focus-live-evidence.json": "mnte-core-edit-test",
     "mnte-project-live-evidence.json": "mnte-project-corpus",
@@ -93,7 +91,10 @@ def main(argv: list[str] | None = None) -> int:
         print("local\nlive\nall")
         return 0
     if mode not in {"local", "live", "all"}:
-        print("usage: run_model_neutral_tool_exposure_e2e.py [local|live|all]", file=sys.stderr)
+        print(
+            "usage: run_model_neutral_tool_exposure_e2e.py [local|live|all]",
+            file=sys.stderr,
+        )
         return 2
 
     env = os.environ.copy()
@@ -113,9 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"live MNTE E2E requires {_CONFIG_ENV}", file=sys.stderr)
             return 2
         config = json.loads(config_path.read_text(encoding="utf-8"))
-        env.setdefault(
-            "OPENMINION_CLI_FOCUS_E2E_AGENT", str(config["default_agent"])
-        )
+        env.setdefault("OPENMINION_CLI_FOCUS_E2E_AGENT", str(config["default_agent"]))
         env["OPENMINION_LIVE_CLI_FOCUS_E2E"] = "1"
         env["OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E"] = "1"
         results["live"] = _run(_LIVE_TARGETS, env=env)

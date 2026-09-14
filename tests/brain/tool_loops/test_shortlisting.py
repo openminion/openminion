@@ -142,9 +142,10 @@ def test_tool_request_spec_and_directory_are_loop_control_only() -> None:
     assert request_spec.name == TOOL_REQUEST_TOOL_NAME
     assert request_spec.input_schema["required"] == ["name"]
     assert request_spec.input_schema["properties"]["name"]["minLength"] == 1
-    assert request_spec.input_schema["properties"]["terminal_after_success"][
-        "default"
-    ] is False
+    assert (
+        request_spec.input_schema["properties"]["terminal_after_success"]["default"]
+        is False
+    )
     assert [spec.name for spec in specs_with_request] == [
         "web.search",
         TOOL_REQUEST_TOOL_NAME,

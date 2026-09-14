@@ -535,15 +535,13 @@ class ProjectWorker:
         milestone = project_run.current_milestone or run.goal_text
         allowed_tools: tuple[str, ...] = ()
         if run.execution_selectors.verification_domain != "research":
+            launch_grant = project_policy.repository_project_launch_approved(checkpoint)
+            release_grant = project_policy.repository_release_tools_approved(checkpoint)
             allowed_tools = tuple(
                 sorted(
                     select_coding_allowed_tools(
-                        project_launch_approved=(
-                            project_policy.repository_project_launch_approved(checkpoint)
-                        ),
-                        release_approved=(
-                            project_policy.repository_release_tools_approved(checkpoint)
-                        ),
+                        project_launch_approved=launch_grant,
+                        release_approved=release_grant,
                     )
                     | {TOOL_REQUEST_TOOL_NAME}
                 )

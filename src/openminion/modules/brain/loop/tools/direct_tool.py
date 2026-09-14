@@ -501,8 +501,7 @@ def _clamp_direct_tool_batch_to_requested_call(
     control_calls = [
         tool_call
         for tool_call in tool_calls
-        if str(getattr(tool_call, "name", "") or "").strip()
-        == TOOL_REQUEST_TOOL_NAME
+        if str(getattr(tool_call, "name", "") or "").strip() == TOOL_REQUEST_TOOL_NAME
     ]
     execution_calls = [
         tool_call for tool_call in tool_calls if tool_call not in control_calls
@@ -526,9 +525,7 @@ def _clamp_direct_tool_batch_to_requested_call(
             continue
         loop_state.scratchpad["direct_tool_requested_batch_clamped"] = True
         return [
-            call
-            for call in tool_calls
-            if call in control_calls or call is tool_call
+            call for call in tool_calls if call in control_calls or call is tool_call
         ]
     return control_calls or tool_calls
 
