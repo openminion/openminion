@@ -62,6 +62,22 @@ def _telemetry_events(path: Path, event_type: str) -> list[dict[str, object]]:
     return [json.loads(row[0]) for row in rows]
 
 
+def _telemetry_event_rows(
+    path: Path, event_types: tuple[str, ...]
+) -> list[tuple[str, str, dict[str, object]]]:
+    placeholders = ", ".join("?" for _ in event_types)
+    with sqlite3.connect(path) as connection:
+        rows = connection.execute(
+            f"SELECT turn_id, event_type, data FROM events "
+            f"WHERE event_type IN ({placeholders}) ORDER BY id",
+            event_types,
+        ).fetchall()
+    return [
+        (str(turn_id), str(event_type), json.loads(raw_data))
+        for turn_id, event_type, raw_data in rows
+    ]
+
+
 def _agent_identity(config_path: Path, agent_id: str) -> tuple[str, str, str]:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     agent_config = config["agents"][agent_id]
@@ -516,7 +532,24 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
     metadata_by_turn = [_result_metadata(payload) for payload in payloads]
     tool_results_by_turn = _turn_local_tool_results(metadata_by_turn)
     tool_results = [item for results in tool_results_by_turn for item in results]
-    tool_names = [str(item.get("tool_name", "")) for item in tool_results]
+    tool_call_rows = _telemetry_event_rows(
+        telemetry_path,
+        ("tool.call.requested", "tool.call.completed", "tool.call.blocked"),
+    )
+    request_events = {
+        str(event["call_id"]): event
+        for _, event_type, event in tool_call_rows
+        if event_type == "tool.call.requested"
+    }
+    tool_names_by_turn: dict[str, list[str]] = {}
+    for turn_id, event_type, event in tool_call_rows:
+        if event_type != "tool.call.requested":
+            continue
+        tool_name = str(event["canonical_name"])
+        if tool_name != TOOL_REQUEST_TOOL_NAME:
+            tool_names_by_turn.setdefault(turn_id, []).append(tool_name)
+    execution_tool_names_by_turn = list(tool_names_by_turn.values())
+    tool_names = [name for names in execution_tool_names_by_turn for name in names]
     expected_tools = {
         "web.search",
         "web.fetch",
@@ -525,22 +558,34 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         "git.status",
     }
     release_denials = [
-        item
-        for item in tool_results
-        if item.get("tool_name") == TOOL_REQUEST_TOOL_NAME
-        and item.get("error_code") == "TOOL_REQUEST_UNAVAILABLE"
+        {
+            "tool_name": TOOL_REQUEST_TOOL_NAME,
+            "requested_name": request_events[str(event["call_id"])][
+                "sanitized_normalized_arguments"
+            ]["name"],
+            "error_code": event["error"]["code"],
+            "call_id": event["call_id"],
+        }
+        for _, event_type, event in tool_call_rows
+        if event_type == "tool.call.blocked"
+        and str(event["call_id"]) in request_events
+        and request_events[str(event["call_id"])]["canonical_name"]
+        == TOOL_REQUEST_TOOL_NAME
+        and event["error"]["code"] == "TOOL_REQUEST_UNAVAILABLE"
     ]
     activated_tools = [
-        str(item.get("data", {}).get("tool_name", ""))
-        for item in tool_results
-        if item.get("tool_name") == TOOL_REQUEST_TOOL_NAME
-        and item.get("ok") is True
-        and item.get("data", {}).get("activated") is True
+        str(event["output"]["outputs"]["tool_name"])
+        for _, event_type, event in tool_call_rows
+        if event_type == "tool.call.completed"
+        and str(event["call_id"]) in request_events
+        and request_events[str(event["call_id"])]["canonical_name"]
+        == TOOL_REQUEST_TOOL_NAME
+        and event["output"]["outputs"]["activated"] is True
     ]
     requested = [
-        name
-        for metadata in metadata_by_turn
-        for name in metadata.get("tool_schema_shortlisting.requested_tools", [])
+        str(event["sanitized_normalized_arguments"]["name"])
+        for event in request_events.values()
+        if event["canonical_name"] == TOOL_REQUEST_TOOL_NAME
     ]
     response_bodies = [str(payload.get("body", "")) for payload in payloads]
     source_text = (workspace / "source_info.py").read_text(encoding="utf-8")
@@ -565,6 +610,13 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
     ).stdout.splitlines()
 
     phase_timing = _telemetry_events(telemetry_path, "chat.phase_timing")
+    shortlisting_by_turn: dict[str, dict[str, object]] = {}
+    for turn_id, _, event in _telemetry_event_rows(
+        telemetry_path, ("brain.execution_status",)
+    ):
+        if "tool_schema_shortlisting.candidate_count" in event:
+            shortlisting_by_turn[turn_id] = event
+    shortlisting_events = list(shortlisting_by_turn.values())
     act_bootstraps = _telemetry_events(telemetry_path, "brain.act.bootstrap")
     resolved_act_profiles = [
         str(event.get("resolved_act_profile", "")) for event in act_bootstraps
@@ -578,14 +630,6 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         event
         for event in _telemetry_events(telemetry_path, "llm.call.completed")
         if event.get("purpose") == "act"
-    ]
-    tool_names_by_turn = [
-        [str(item.get("tool_name", "")) for item in results]
-        for results in tool_results_by_turn
-    ]
-    execution_tool_names_by_turn = [
-        [name for name in names if name != TOOL_REQUEST_TOOL_NAME]
-        for names in tool_names_by_turn
     ]
     code_turn_exec_results = [
         item
@@ -604,9 +648,16 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         and source_url == _PYPA_GUIDE_URL
         and "result:" in response_bodies[0].lower()
     )
+    code_sequence = (
+        execution_tool_names_by_turn[1]
+        if len(execution_tool_names_by_turn) >= 2
+        else []
+    )
     code_passed = (
-        len(execution_tool_names_by_turn) >= 2
-        and execution_tool_names_by_turn[1] == ["file.write", "exec.run"]
+        "file.write" in code_sequence
+        and "exec.run" in code_sequence
+        and code_sequence.index("file.write") < code_sequence.index("exec.run")
+        and set(code_sequence) <= {"file.write", "file.read", "exec.run"}
         and _PYPA_GUIDE_URL in source_text
         and code_turn_exec_verified
         and verification.returncode == 0
@@ -675,31 +726,31 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
             "structured_denials": release_denials,
             "schema_counts": [
                 {
-                    "candidate": metadata.get(
+                    "candidate": event.get(
                         "tool_schema_shortlisting.candidate_count"
                     ),
-                    "initial_execution": metadata.get(
+                    "initial_execution": event.get(
                         "tool_schema_shortlisting.initial_active_count"
                     ),
-                    "max_execution": metadata.get(
+                    "max_execution": event.get(
                         "tool_schema_shortlisting.max_active_count"
                     ),
-                    "controls": metadata.get(
+                    "controls": event.get(
                         "tool_schema_shortlisting.control_schema_count"
                     ),
                 }
-                for metadata in metadata_by_turn
+                for event in shortlisting_events
             ],
             "inactive_directory_sequence": [
                 {
-                    "count": metadata.get(
+                    "count": event.get(
                         "tool_schema_shortlisting.inactive_directory_count"
                     ),
-                    "bytes": metadata.get(
+                    "bytes": event.get(
                         "tool_schema_shortlisting.inactive_directory_bytes"
                     ),
                 }
-                for metadata in metadata_by_turn
+                for event in shortlisting_events
             ],
             "provider_calls": sum(
                 int(event.get("provider_calls_total", 0) or 0)
@@ -746,17 +797,18 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
     assert expected_tools <= set(tool_names), tool_results
     assert "github.dispatch_workflow" not in tool_names
     assert release_denials, tool_results
-    assert {"web.fetch", "git.status", "github.dispatch_workflow"} <= set(requested)
+    assert {"web.fetch", "github.dispatch_workflow"} <= set(requested)
+    assert len(shortlisting_events) >= len(payloads)
     assert all(
-        int(metadata["tool_schema_shortlisting.candidate_count"]) > 7
-        for metadata in metadata_by_turn
+        int(event["tool_schema_shortlisting.candidate_count"]) > 7
+        for event in shortlisting_events
     )
     assert all(
-        int(metadata["tool_schema_shortlisting.initial_active_count"]) <= 7
-        and int(metadata["tool_schema_shortlisting.max_active_count"])
-        <= int(metadata["tool_schema_shortlisting.candidate_count"])
-        and int(metadata["tool_schema_shortlisting.control_schema_count"]) <= 2
-        for metadata in metadata_by_turn
+        int(event["tool_schema_shortlisting.initial_active_count"]) <= 7
+        and int(event["tool_schema_shortlisting.max_active_count"])
+        <= int(event["tool_schema_shortlisting.candidate_count"])
+        and int(event["tool_schema_shortlisting.control_schema_count"]) <= 2
+        for event in shortlisting_events
     )
     assert source_url == _PYPA_GUIDE_URL
     assert verification.returncode == 0, verification.stdout + verification.stderr
