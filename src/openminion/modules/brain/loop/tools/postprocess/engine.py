@@ -676,7 +676,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
         exposed_tools = {
             str(getattr(spec, "name", "") or "").strip()
             for spec in self.active_tool_specs
-        }
+        } & set(self.allowed_tools)
         for tool_call in tool_calls:
             tool_name = str(getattr(tool_call, "name", "") or "").strip()
             if tool_name in exposed_tools:

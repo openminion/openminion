@@ -55,6 +55,30 @@ def _run(targets: tuple[str, ...], *, env: dict[str, str]) -> int:
     )
 
 
+def _scenario_evidence(root: Path, *, live_result: int | None) -> list[dict]:
+    evidence = []
+    for path in sorted(root.rglob("mnte-*-live-evidence.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        evidence.append(
+            {
+                "path": str(path.relative_to(root)),
+                "disposition": payload.get("disposition", "unavailable"),
+                "scenario_id": payload.get("scenario_id"),
+                "scenario_results": payload.get("scenario_results", []),
+            }
+        )
+    if live_result is not None and not evidence:
+        evidence.append(
+            {
+                "path": None,
+                "disposition": "pass" if live_result == 0 else "failed_without_evidence",
+                "scenario_id": "live-corpus",
+                "scenario_results": [],
+            }
+        )
+    return evidence
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     mode = args[0] if args else "local"
@@ -91,7 +115,15 @@ def main(argv: list[str] | None = None) -> int:
 
     (root / "runner-summary.json").write_text(
         json.dumps(
-            {"mode": mode, "results": results, "artifact_root": str(root)},
+            {
+                "mode": mode,
+                "results": results,
+                "artifact_root": str(root),
+                "scenario_evidence": _scenario_evidence(
+                    root,
+                    live_result=results.get("live"),
+                ),
+            },
             indent=2,
             sort_keys=True,
         )

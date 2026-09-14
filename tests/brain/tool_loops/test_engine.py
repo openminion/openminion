@@ -3049,6 +3049,46 @@ def test_inactive_tool_cannot_execute_before_activation() -> None:
     assert loop_ctx.commands == []
 
 
+def test_visible_tool_cannot_bypass_profile_allowlist() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="fetch",
+                        name="web.fetch",
+                        arguments={"url": "https://example.test"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            )
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state(tool_calls=2, llm_calls_max=2))
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"web.search"}),
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="fetch the page")],
+        tool_specs=_tool_specs("web.fetch"),
+        requestable_tool_specs=_tool_specs("web.search", "web.fetch"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_DISALLOWED_TOOL
+    assert outcome.tool_name == "web.fetch"
+    assert "web.search" in outcome.allowed_tools
+    assert "web.fetch" not in outcome.allowed_tools
+    assert loop_ctx.commands == []
+
+
 def test_direct_tool_clamp_preserves_seeded_tool_request() -> None:
     seed_response = LLMResponse(
         ok=True,
