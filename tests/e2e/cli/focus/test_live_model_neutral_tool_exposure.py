@@ -224,6 +224,7 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
         event
         for event in reversed(status_events)
         if "tool_schema_shortlisting.initial_active_count" in event
+        and "adaptive.allowed_tools" in event
     )
     _write_json(
         evidence_path,

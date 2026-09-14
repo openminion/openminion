@@ -29,6 +29,9 @@ from openminion.modules.brain.loop.strategies.coding.contracts import (
 from openminion.modules.brain.loop.strategies.coding.loop_state import (
     CodingLoopState,
 )
+from openminion.modules.brain.loop.strategies.coding.prompts import (
+    build_coding_plan_system_prompt,
+)
 from openminion.modules.tool.runtime.policy import DEFAULT_POLICY
 from openminion.modules.brain.loop.strategies.coding.llm import (
     DefaultCodingLLMRuntime,
@@ -163,6 +166,12 @@ def test_core_project_set_excludes_legacy_and_release_tools() -> None:
     }
 
     assert PROJECT_CODING_ALLOWED_TOOLS.isdisjoint(excluded)
+
+
+def test_coding_plan_prompt_keeps_bounded_read_only_work_in_one_phase() -> None:
+    prompt = build_coding_plan_system_prompt()
+
+    assert "single implement phase for a bounded read-only task" in prompt
 
 
 def test_v1_allowlist_excludes_pty_tools() -> None:
