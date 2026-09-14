@@ -8,8 +8,18 @@ from tests.e2e.cli.focus.test_live_model_neutral_tool_exposure import (
     _provider_failure_categories,
 )
 from tests.e2e.runners.run_model_neutral_tool_exposure_e2e import (
+    _ARTIFACT_ENV,
+    _artifact_root,
     _scenario_evidence,
 )
+
+
+def test_configured_artifact_root_is_absolute(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    root = _artifact_root({_ARTIFACT_ENV: "artifacts"})
+
+    assert root == tmp_path / "artifacts"
 
 
 def test_live_summary_marks_each_missing_scenario_unavailable(tmp_path) -> None:

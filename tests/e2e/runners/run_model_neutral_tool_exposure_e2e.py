@@ -43,7 +43,7 @@ _LIVE_EVIDENCE_FILES = {
 def _artifact_root(env: dict[str, str]) -> Path:
     configured = str(env.get(_ARTIFACT_ENV, "")).strip()
     if configured:
-        return Path(configured).expanduser()
+        return Path(configured).expanduser().resolve()
     return (
         _ROOT.parent
         / "workspace-tmp"
