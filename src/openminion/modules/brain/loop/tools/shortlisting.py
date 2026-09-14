@@ -18,8 +18,13 @@ _SHORTLISTING_TELEMETRY_KEYS = (
     "tool_schema_shortlisting.reason",
     "tool_schema_shortlisting.candidate_count",
     "tool_schema_shortlisting.active_count",
+    "tool_schema_shortlisting.initial_active_count",
+    "tool_schema_shortlisting.max_active_count",
+    "tool_schema_shortlisting.control_schema_count",
     "tool_schema_shortlisting.selected_tools",
     "tool_schema_shortlisting.inactive_tools",
+    "tool_schema_shortlisting.inactive_directory_count",
+    "tool_schema_shortlisting.inactive_directory_bytes",
     "tool_schema_shortlisting.requested_tools",
     "tool_schema_shortlisting.active_tools",
     "tool_schema_shortlisting.input_tokens",
@@ -78,6 +83,7 @@ def build_tool_request_spec() -> ToolSpec:
             "properties": {
                 "name": {
                     "type": "string",
+                    "minLength": 1,
                     "description": "Exact inactive tool name to activate.",
                 },
                 "terminal_after_success": {
@@ -145,7 +151,7 @@ def upsert_inactive_tool_directory_message(
     *,
     requestable_tool_specs: Sequence[ToolSpec],
     active_tool_names: set[str] | frozenset[str],
-) -> None:
+) -> Message | None:
     messages[:] = [
         message
         for message in messages
@@ -157,6 +163,39 @@ def upsert_inactive_tool_directory_message(
     )
     if directory is not None:
         messages.append(directory)
+    return directory
+
+
+def refresh_shortlisting_state(
+    messages: list[Message],
+    scratchpad: dict[str, Any],
+    requestable_tool_specs: Sequence[ToolSpec],
+    active_tool_names: set[str],
+    control_schema_count: int | None = None,
+) -> None:
+    inactive_directory = upsert_inactive_tool_directory_message(
+        messages,
+        requestable_tool_specs=requestable_tool_specs,
+        active_tool_names=active_tool_names,
+    )
+    active_count = len(active_tool_names)
+    scratchpad.setdefault("tool_schema_shortlisting.initial_active_count", active_count)
+    scratchpad["tool_schema_shortlisting.active_tools"] = sorted(active_tool_names)
+    scratchpad["tool_schema_shortlisting.active_count"] = active_count
+    scratchpad["tool_schema_shortlisting.max_active_count"] = max(
+        int(scratchpad.get("tool_schema_shortlisting.max_active_count", 0) or 0),
+        active_count,
+    )
+    if control_schema_count is not None:
+        scratchpad["tool_schema_shortlisting.control_schema_count"] = control_schema_count
+    scratchpad["tool_schema_shortlisting.inactive_directory_count"] = int(
+        inactive_directory is not None
+    )
+    scratchpad["tool_schema_shortlisting.inactive_directory_bytes"] = (
+        len(inactive_directory.content.encode("utf-8"))
+        if inactive_directory is not None
+        else 0
+    )
 
 
 def shortlisting_telemetry_payload(scratchpad: dict[str, Any]) -> dict[str, Any]:

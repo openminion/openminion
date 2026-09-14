@@ -25,6 +25,7 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_DECOMPOSE_INVALID,
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
     ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
+    ADAPTIVE_TERM_DISALLOWED_TOOL,
     ADAPTIVE_TERM_FINALIZATION_BLOCKED,
     ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
     ADAPTIVE_TERM_FINAL_TEXT,
@@ -2993,8 +2994,59 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
         "tool_name": "web.fetch",
         "activated": True,
     }
+    assert outcome.state.scratchpad[
+        "tool_schema_shortlisting.initial_active_count"
+    ] == 1
+    assert outcome.state.scratchpad["tool_schema_shortlisting.max_active_count"] == 2
+    assert outcome.state.scratchpad[
+        "tool_schema_shortlisting.control_schema_count"
+    ] == 2
+    assert outcome.state.scratchpad[
+        "tool_schema_shortlisting.inactive_directory_count"
+    ] == 1
+    assert outcome.state.scratchpad[
+        "tool_schema_shortlisting.inactive_directory_bytes"
+    ] > 0
     assert loop_ctx.state.budgets_remaining.tool_calls == 4
     assert outcome.final_text == "done"
+
+
+def test_inactive_tool_cannot_execute_before_activation() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="fetch",
+                        name="web.fetch",
+                        arguments={"url": "https://example.test"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            )
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state(tool_calls=2, llm_calls_max=2))
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"web.search", "web.fetch"}),
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="fetch the page")],
+        tool_specs=_tool_specs("web.search"),
+        requestable_tool_specs=_tool_specs("web.search", "web.fetch"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_DISALLOWED_TOOL
+    assert outcome.tool_name == "web.fetch"
+    assert loop_ctx.commands == []
 
 
 def test_direct_tool_clamp_preserves_seeded_tool_request() -> None:

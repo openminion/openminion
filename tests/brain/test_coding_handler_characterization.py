@@ -229,6 +229,23 @@ class TestCodingHandlerPureHelperBehavior:
 
         assert specs == []
 
+    def test_coding_specs_fail_closed_without_runtime_registry(self) -> None:
+        with (
+            patch.object(
+                coding_runtime,
+                "_runner_and_profile_from_context",
+                return_value=(SimpleNamespace(tool_api=None), None),
+            ),
+            patch.object(
+                coding_runtime,
+                "collect_runtime_tool_schemas",
+                return_value=[],
+            ),
+        ):
+            specs = handler._build_tool_specs(CODING_ALLOWED_TOOLS, ctx=object())
+
+        assert specs == []
+
     def test_approved_project_loop_exposes_and_invokes_project_tool(self) -> None:
         checkpoint = SimpleNamespace(
             project_run=SimpleNamespace(

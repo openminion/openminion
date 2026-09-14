@@ -13,6 +13,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from openminion.modules.brain.loop.strategies.coding import CodingMode
+from openminion.modules.brain.loop.strategies.coding import runtime as coding_runtime
+from openminion.modules.brain.loop.strategies.coding.contracts import (
+    CODING_ALLOWED_TOOLS,
+)
 from openminion.modules.brain.loop.strategies.coding.loop_state import CodingLoopState
 from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_CIRCULAR_PATTERN,
@@ -461,6 +465,22 @@ def _llm_adapter(client: _FakeLLMClient) -> Any:
     return SimpleNamespace(client=client)
 
 
+def _coding_runtime_schemas() -> list[dict[str, Any]]:
+    return [
+        {"name": name, "parameters": {"type": "object"}}
+        for name in CODING_ALLOWED_TOOLS
+    ]
+
+
+@pytest.fixture(autouse=True)
+def _registered_coding_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        coding_runtime,
+        "collect_runtime_tool_schemas",
+        lambda _runner: _coding_runtime_schemas(),
+    )
+
+
 def _decision() -> Any:
     return SimpleNamespace(
         mode="coding",
@@ -483,6 +503,8 @@ def _ctx(
     user_input: str = "find where auth is implemented",
 ) -> ExecutionContext:
     services = services or _FakeServices()
+    if services.runner is None:
+        services.runner = SimpleNamespace(tool_api=SimpleNamespace())
     return ExecutionContext(
         state=state or _state(),
         decision=_decision(),

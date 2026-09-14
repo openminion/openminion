@@ -192,13 +192,9 @@ def _build_tool_specs(
         ),
     }
     runtime_schemas = _runtime_tool_schemas_by_name(ctx)
-    runner, _profile = (
-        _runner_and_profile_from_context(ctx) if ctx is not None else (None, None)
-    )
-    registry = getattr(getattr(runner, "tool_api", None), "registry", None)
     tool_ids = (
         allowed_tools & runtime_schemas.keys()
-        if registry is not None or runtime_schemas
+        if ctx is not None
         else allowed_tools
     ) - {PLAN_TOOL_NAME}
     return [

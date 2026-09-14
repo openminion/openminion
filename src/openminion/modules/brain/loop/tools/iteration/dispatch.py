@@ -57,7 +57,7 @@ from ..review_control import (
 )
 from ..shortlisting import (
     TOOL_REQUEST_TOOL_NAME,
-    upsert_inactive_tool_directory_message,
+    refresh_shortlisting_state,
 )
 from ..status import emit_adaptive_status
 from ..telemetry import _emit_iteration_event
@@ -759,18 +759,14 @@ def _process_tool_request_calls(
         )
     scratchpad = loop_state.scratchpad
     scratchpad["tool_schema_shortlisting.requested_tools"] = requested_tools
-    scratchpad["tool_schema_shortlisting.active_tools"] = sorted(active_tool_names)
-    scratchpad["tool_schema_shortlisting.active_count"] = len(active_tool_names)
     scratchpad["tool_schema_shortlisting.inactive_tools"] = sorted(
         set(requestable_specs_by_name) - active_tool_names
     )
     _stage_terminal_tool_request(
         loop_state, terminal_requested_names, regular_tool_calls
     )
-    upsert_inactive_tool_directory_message(
-        loop_state.messages,
-        requestable_tool_specs=requestable_specs,
-        active_tool_names=active_tool_names,
+    refresh_shortlisting_state(
+        loop_state.messages, scratchpad, requestable_specs, active_tool_names,
     )
     if on_tool_result is not None:
         on_tool_result(loop_state)
