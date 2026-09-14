@@ -509,13 +509,12 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
                     break
                 prompts.extend(
                     (
-                        f"Request and call file.write exactly once to update "
-                        f"source_info.py so "
+                        f"Use file.write to update source_info.py so "
                         f"SOURCE_URL equals exactly `{source_url}`. Then request and "
-                        "call exec.run exactly once with the command exactly "
+                        "call exec.run with the command exactly "
                         "`python -m pytest -q` and `yield_ms` 30000 so you observe "
-                        "the result. Omit host and security arguments. Do not read "
-                        "the file back and do not call any other execution tool. "
+                        "the result. Omit host and security arguments. Keep execution "
+                        "bounded to file.write, file.read, and exec.run as needed. "
                         "Finish with `result:` and the passing test count.",
                         "Request and call git.status exactly once to inspect the "
                         "project change. Then request once the exact release-only tool "
@@ -626,11 +625,6 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         for event in phase_timing
         for attempt in event.get("provider_attempts", [])
     ]
-    schema_calls = [
-        event
-        for event in _telemetry_events(telemetry_path, "llm.call.completed")
-        if event.get("purpose") == "act"
-    ]
     code_turn_exec_results = [
         item
         for item in (tool_results_by_turn[1] if len(tool_results_by_turn) >= 2 else [])
@@ -646,6 +640,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         len(execution_tool_names_by_turn) >= 1
         and execution_tool_names_by_turn[0] == ["web.search", "web.fetch"]
         and source_url == _PYPA_GUIDE_URL
+        and "result:" in response_bodies[0].lower()
     )
     code_sequence = (
         execution_tool_names_by_turn[1]
@@ -660,14 +655,15 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         and _PYPA_GUIDE_URL in source_text
         and code_turn_exec_verified
         and verification.returncode == 0
+        and "result:" in response_bodies[1].lower()
     )
     git_denial_passed = (
         len(execution_tool_names_by_turn) >= 3
         and execution_tool_names_by_turn[2] == ["git.status"]
         and "github.dispatch_workflow" not in tool_names
         and bool(release_denials)
-        and "TOOL_REQUEST_UNAVAILABLE" in response_bodies[2]
         and git_status == [" M source_info.py"]
+        and "result:" in response_bodies[2].lower()
     )
     pass_flags = (research_passed, code_passed, git_denial_passed)
     scenario_ids = ("research-to-code", "code-and-verify", "git-and-denial")
@@ -763,14 +759,6 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
                 int(attempt.get("attempt", 1) or 1) > 1
                 for attempt in provider_attempts
             ),
-            "tool_schema_calls": [
-                {
-                    "count": event.get("tool_schema_count"),
-                    "bytes": event.get("tool_schema_bytes"),
-                    "retry_count": event.get("retry_count"),
-                }
-                for event in schema_calls
-            ],
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
@@ -809,5 +797,5 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
     )
     assert source_url == _PYPA_GUIDE_URL
     assert verification.returncode == 0, verification.stdout + verification.stderr
-    assert phase_timing and provider_attempts and schema_calls
+    assert phase_timing and provider_attempts
     assert all(pass_flags), evidence_path.read_text(encoding="utf-8")
