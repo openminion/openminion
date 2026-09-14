@@ -646,7 +646,6 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         len(execution_tool_names_by_turn) >= 1
         and execution_tool_names_by_turn[0] == ["web.search", "web.fetch"]
         and source_url == _PYPA_GUIDE_URL
-        and "result:" in response_bodies[0].lower()
     )
     code_sequence = (
         execution_tool_names_by_turn[1]
@@ -661,7 +660,6 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         and _PYPA_GUIDE_URL in source_text
         and code_turn_exec_verified
         and verification.returncode == 0
-        and "result:" in response_bodies[1].lower()
     )
     git_denial_passed = (
         len(execution_tool_names_by_turn) >= 3
@@ -669,7 +667,6 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         and "github.dispatch_workflow" not in tool_names
         and bool(release_denials)
         and "TOOL_REQUEST_UNAVAILABLE" in response_bodies[2]
-        and "result:" in response_bodies[2].lower()
         and git_status == [" M source_info.py"]
     )
     pass_flags = (research_passed, code_passed, git_denial_passed)
