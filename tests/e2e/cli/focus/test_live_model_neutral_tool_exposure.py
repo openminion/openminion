@@ -82,8 +82,8 @@ def _provider_failure_categories(telemetry_path: Path) -> list[str]:
     with sqlite3.connect(telemetry_path) as connection:
         rows = connection.execute(
             "SELECT event_type, data FROM events "
-            "WHERE event_type IN (?, ?) ORDER BY id",
-            ("llm.call.failed", "module.stats"),
+            "WHERE event_type IN (?, ?, ?) ORDER BY id",
+            ("llm.call.failed", "module.stats", "agent.turn.failed"),
         ).fetchall()
     categories = []
     for event_type, raw_data in rows:
@@ -99,11 +99,21 @@ def _provider_failure_categories(telemetry_path: Path) -> list[str]:
         ):
             if category := str(event.get("error_code", "")):
                 categories.append(category)
+        elif event_type == "agent.turn.failed":
+            raw_error = event.get("error")
+            if isinstance(raw_error, dict):
+                if category := str(raw_error.get("code", "")):
+                    categories.append(category)
     return categories
 
 
 def _failure_disposition(categories: list[str]) -> str:
-    if {"RATE_LIMITED", "TIMEOUT", "PROVIDER_ERROR"} & set(categories):
+    if {
+        "EMPTY_PROVIDER_RESPONSE",
+        "PROVIDER_ERROR",
+        "RATE_LIMITED",
+        "TIMEOUT",
+    } & set(categories):
         return "provider_residual"
     return "failed"
 

@@ -102,3 +102,23 @@ def test_live_failure_requires_typed_provider_fact(tmp_path) -> None:
 
     assert categories == ["RATE_LIMITED"]
     assert _failure_disposition(categories) == "provider_residual"
+
+
+def test_live_failure_reads_terminal_provider_error(tmp_path) -> None:
+    telemetry_path = tmp_path / "telemetry.db"
+    with sqlite3.connect(telemetry_path) as connection:
+        connection.execute(
+            "CREATE TABLE events (id INTEGER PRIMARY KEY, event_type TEXT, data TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO events (event_type, data) VALUES (?, ?)",
+            (
+                "agent.turn.failed",
+                json.dumps({"error": {"code": "EMPTY_PROVIDER_RESPONSE"}}),
+            ),
+        )
+
+    categories = _provider_failure_categories(telemetry_path)
+
+    assert categories == ["EMPTY_PROVIDER_RESPONSE"]
+    assert _failure_disposition(categories) == "provider_residual"
