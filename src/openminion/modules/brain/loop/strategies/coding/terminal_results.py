@@ -4,6 +4,7 @@ from typing import Any
 from openminion.modules.brain.constants import (
     BRAIN_ACT_PROFILE_CODING,
     BRAIN_ACTION_STATUS_SUCCESS,
+    BRAIN_DISPOSITION_CLOSE,
     BRAIN_DISPOSITION_CONTINUE,
     BRAIN_DECISION_ROUTE_ACT,
     BRAIN_STATE_CONTINUE,
@@ -221,7 +222,7 @@ def _exit_blocked_with_closure(
 
     if (
         judgment is not None
-        and disposition != BRAIN_DISPOSITION_CONTINUE
+        and disposition == BRAIN_DISPOSITION_CLOSE
         and str(getattr(judgment, "final_answer", "") or "").strip()
     ):
         return _exit_closed_by_closure_gate(

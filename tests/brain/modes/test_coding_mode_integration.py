@@ -13,6 +13,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from openminion.modules.brain.loop.strategies.coding import CodingMode
+from openminion.modules.brain.loop.strategies.coding import runtime as coding_runtime
+from openminion.modules.brain.loop.strategies.coding.contracts import (
+    CODING_ALLOWED_TOOLS,
+)
 from openminion.modules.brain.loop.strategies.coding.loop_state import CodingLoopState
 from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_CIRCULAR_PATTERN,
@@ -69,6 +73,10 @@ _PLANNER_CONTEXT_TOOLS = frozenset(
 def test_coding_loop_state_telemetry_preserves_tool_results_for_closure() -> None:
     loop = CodingLoopState(
         scratchpad={
+            "tool_schema_shortlisting.candidate_count": 19,
+            "tool_schema_shortlisting.active_count": 7,
+            "tool_schema_shortlisting.inactive_tools": ["web.fetch"],
+            "tool_schema_shortlisting.requested_tools": ["web.fetch"],
             "adaptive.tool_results": [
                 {
                     "tool_name": "file.write",
@@ -80,7 +88,7 @@ def test_coding_loop_state_telemetry_preserves_tool_results_for_closure() -> Non
                     "verified": True,
                     "data": {"argv": ["pytest", "-q"], "exit_code": 0},
                 },
-            ]
+            ],
         }
     )
 
@@ -88,6 +96,10 @@ def test_coding_loop_state_telemetry_preserves_tool_results_for_closure() -> Non
 
     assert payload["tool_execution_count"] == 2
     assert payload["tool_verified"] is True
+    assert payload["tool_schema_shortlisting.candidate_count"] == 19
+    assert payload["tool_schema_shortlisting.active_count"] == 7
+    assert payload["tool_schema_shortlisting.inactive_tools"] == ["web.fetch"]
+    assert payload["tool_schema_shortlisting.requested_tools"] == ["web.fetch"]
     assert payload["tool_results"][0]["data"]["path"] == "demo/pyproject.toml"
     assert payload["tool_results"][1]["data"]["exit_code"] == 0
 
@@ -453,6 +465,22 @@ def _llm_adapter(client: _FakeLLMClient) -> Any:
     return SimpleNamespace(client=client)
 
 
+def _coding_runtime_schemas() -> list[dict[str, Any]]:
+    return [
+        {"name": name, "parameters": {"type": "object"}}
+        for name in CODING_ALLOWED_TOOLS
+    ]
+
+
+@pytest.fixture(autouse=True)
+def _registered_coding_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        coding_runtime,
+        "collect_runtime_tool_schemas",
+        lambda _runner: _coding_runtime_schemas(),
+    )
+
+
 def _decision() -> Any:
     return SimpleNamespace(
         mode="coding",
@@ -475,6 +503,8 @@ def _ctx(
     user_input: str = "find where auth is implemented",
 ) -> ExecutionContext:
     services = services or _FakeServices()
+    if services.runner is None:
+        services.runner = SimpleNamespace(tool_api=SimpleNamespace())
     return ExecutionContext(
         state=state or _state(),
         decision=_decision(),
@@ -723,6 +753,76 @@ def test_coding_loop_single_tool_then_final_text() -> None:
     assert all(not v for v in executor.include_reflect_values)
     # One planning call plus the tool and final-answer calls.
     assert len(llm_client.calls) == 3
+    initial_tool_names = [spec.name for spec in llm_client.calls[1]["tools"]]
+    assert initial_tool_names == [
+        "file.list_dir",
+        "file.read",
+        "file.write",
+        "code.grep",
+        "code.patch",
+        "exec.run",
+        "exec.poll",
+        "tool.request",
+        "plan",
+    ]
+    assert (
+        handler._loop_state.scratchpad["tool_schema_shortlisting.candidate_count"] == 19
+    )
+    assert handler._loop_state.scratchpad["tool_schema_shortlisting.active_count"] == 7
+
+
+def test_coding_loop_consumes_entry_response_once_across_phases() -> None:
+    executor = _FakeCommandExecutor()
+    llm_client = _FakeLLMClient(
+        responses=[
+            _plan_response(
+                json.dumps(
+                    {
+                        "goal": "inspect auth",
+                        "phases": [
+                            {"name": "explore", "status": "active"},
+                            {"name": "plan", "status": "pending"},
+                        ],
+                        "current_phase": "explore",
+                    }
+                )
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="explore complete",
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="plan complete",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    ctx = _ctx(llm_client, executor)
+    ctx.decision._entry_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        tool_calls=[
+            ToolCall(
+                id="entry-read",
+                name="file.read",
+                arguments={"path": "src/auth.py"},
+            )
+        ],
+        finish_reason="tool_calls",
+    )
+
+    result = CodingMode().execute(ctx)
+
+    assert result.status == "done"
+    assert [call.tool_name for call in executor.calls] == ["file.read"]
+    assert len(llm_client.calls) == 3
 
 
 def test_coding_loop_exec_run_cmd_alias_reaches_final_text() -> None:
@@ -934,6 +1034,14 @@ def test_coding_loop_executes_all_plan_phases_in_order() -> None:
     assert "[act:coding] phase: plan" in phase_updates
     assert "[act:coding] phase: implement" in phase_updates
     assert "[act:coding] phase: verify" in phase_updates
+    for call in llm_client.calls[1:]:
+        directories = [
+            message
+            for message in call["messages"]
+            if message.role == "system"
+            and message.meta.get("tool_schema_shortlisting") == "inactive_directory"
+        ]
+        assert len(directories) <= 1
 
 
 def test_coding_loop_fails_closed_when_plan_json_is_invalid() -> None:
@@ -1279,47 +1387,61 @@ def test_coding_plan_persists_to_module_state_and_resumes_on_continue() -> None:
 
     resumed_state = first_ctx.state.model_copy(deep=True)
     resumed_state.budgets_remaining.tool_calls = 5
-    second_result = CodingMode().execute(
-        _ctx(
-            _FakeLLMClient(
-                responses=[
-                    _plan_response(
-                        json.dumps(
-                            {
-                                "goal": "inspect auth",
-                                "phases": [
-                                    {
-                                        "name": "verify",
-                                        "status": "active",
-                                        "steps": ["summarize evidence"],
-                                        "output": "",
-                                    }
-                                ],
-                                "current_phase": "verify",
-                                "scratchpad": [],
-                                "completed_steps": ["read source"],
-                                "open_issues": [],
-                                "subtasks": [],
-                            }
-                        )
-                    ),
-                    LLMResponse(
-                        ok=True,
-                        provider="fake",
-                        model="fake-model",
-                        output_text="resumed from module state",
-                        finish_reason="stop",
-                    ),
-                ]
-            ),
-            _FakeCommandExecutor(),
-            state=resumed_state,
-            user_input="continue",
-        )
+    second_executor = _FakeCommandExecutor()
+    second_ctx = _ctx(
+        _FakeLLMClient(
+            responses=[
+                _plan_response(
+                    json.dumps(
+                        {
+                            "goal": "inspect auth",
+                            "phases": [
+                                {
+                                    "name": "verify",
+                                    "status": "active",
+                                    "steps": ["summarize evidence"],
+                                    "output": "",
+                                }
+                            ],
+                            "current_phase": "verify",
+                            "scratchpad": [],
+                            "completed_steps": ["read source"],
+                            "open_issues": [],
+                            "subtasks": [],
+                        }
+                    )
+                ),
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="fake-model",
+                    output_text="resumed from module state",
+                    finish_reason="stop",
+                ),
+            ]
+        ),
+        second_executor,
+        state=resumed_state,
+        user_input="continue",
     )
+    second_ctx.decision._entry_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        tool_calls=[
+            ToolCall(
+                id="stale-entry-read",
+                name="file.read",
+                arguments={"path": "src/auth.py"},
+            )
+        ],
+        finish_reason="tool_calls",
+    )
+    second_result = CodingMode().execute(second_ctx)
 
     assert second_result.status == "done"
     assert second_result.message == "resumed from module state"
+    assert second_executor.calls == []
     assert "coding" not in resumed_state.module_state
 
 
@@ -3631,4 +3753,9 @@ def test_coding_loop_emits_adaptive_status_payload_during_execution() -> None:
     assert any(payload.get("adaptive.mode") == "act" for payload in adaptive_payloads)
     assert any(
         payload.get("adaptive.tool_calls_total") == 1 for payload in adaptive_payloads
+    )
+    assert any(
+        payload.get("tool_schema_shortlisting.candidate_count") == 19
+        and payload.get("tool_schema_shortlisting.active_count") == 7
+        for payload in adaptive_payloads
     )

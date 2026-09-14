@@ -24,7 +24,30 @@ def _tool_request_result(
     active_tool_names: set[str],
     requestable_specs_by_name: dict[str, Any],
     active_tool_specs: list[Any],
+    arguments: dict[str, Any] | None = None,
 ) -> tuple[ActionResult, bool]:
+    if arguments is not None:
+        unexpected = sorted(set(arguments) - {"name", "terminal_after_success"})
+        terminal_after_success = arguments.get("terminal_after_success", False)
+        if (
+            not isinstance(arguments.get("name"), str)
+            or not isinstance(terminal_after_success, bool)
+            or unexpected
+        ):
+            return (
+                ActionResult(
+                    command_id=new_uuid(),
+                    status=BRAIN_ACTION_STATUS_FAILED,
+                    summary="tool.request arguments do not match its schema.",
+                    outputs={"tool_name": requested_name, "activated": False},
+                    error=ActionError(
+                        code="TOOL_REQUEST_INVALID_ARGUMENTS",
+                        message="Invalid tool.request arguments.",
+                        details={"unexpected_fields": unexpected},
+                    ),
+                ),
+                False,
+            )
     if not requested_name:
         return (
             ActionResult(

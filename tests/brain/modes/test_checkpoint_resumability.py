@@ -11,6 +11,9 @@ from openminion.modules.brain.loop.strategies.coding import (
     CodingMode,
     CodingProfileRunner,
 )
+from openminion.modules.brain.loop.strategies.coding.contracts import (
+    CODING_ALLOWED_TOOLS,
+)
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.loop.tools.phases.eval import EvalMode
 from openminion.modules.brain.loop.tools.phases.observe import OBSERVE_MODE, ObserveMode
@@ -323,7 +326,21 @@ def _ctx(
         task_manager=task_manager,
         response_queue=list(response_queue or []),
     )
-    services.runner = SimpleNamespace(task_manager=task_manager, tool_api=None)
+    services.runner = SimpleNamespace(
+        task_manager=task_manager,
+        tool_api=SimpleNamespace(
+            registry=SimpleNamespace(
+                model_provider_specs=lambda: [
+                    SimpleNamespace(
+                        name=name,
+                        description=name,
+                        parameters={"type": "object"},
+                    )
+                    for name in CODING_ALLOWED_TOOLS
+                ]
+            )
+        ),
+    )
     ctx = ExecutionContext(
         state=state,
         decision=decision,

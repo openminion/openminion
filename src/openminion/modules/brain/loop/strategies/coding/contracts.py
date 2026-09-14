@@ -61,6 +61,17 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_TASK_SCHEDULE,
     MODEL_TASK_SHOW,
     MODEL_WEB_FETCH,
+    MODEL_WEB_SEARCH,
+)
+
+CODING_INITIAL_TOOL_IDS: tuple[str, ...] = (
+    MODEL_FILE_LIST_DIR,
+    MODEL_FILE_READ,
+    MODEL_FILE_WRITE,
+    MODEL_CODE_GREP,
+    MODEL_CODE_PATCH,
+    MODEL_EXEC_RUN,
+    MODEL_EXEC_POLL,
 )
 
 CODING_ALLOWED_TOOLS: frozenset[str] = frozenset(
@@ -90,6 +101,7 @@ CODING_ALLOWED_TOOLS: frozenset[str] = frozenset(
 PROJECT_CORE_ADDITIONAL_TOOLS: frozenset[str] = frozenset(
     (
         PLAN_TOOL_NAME,
+        MODEL_WEB_SEARCH,
         MODEL_GIT_STATUS,
         MODEL_GIT_DIFF,
         MODEL_GIT_LOG,

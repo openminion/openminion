@@ -47,6 +47,7 @@ from openminion.modules.task.project.policy import (
 )
 
 from .contracts import (
+    CODING_INITIAL_TOOL_IDS,
     CODING_TERM_FINAL_TEXT,
     CODING_TERM_VERIFY_CAP_EXCEEDED,
     CodingRuntimeUnavailableError,
@@ -314,7 +315,8 @@ class CodingProfileRunner(
         loop: AdaptiveToolLoopState,
         allowed_tools: frozenset[str],
         tool_specs: list[Any],
-    ) -> tuple[AdaptiveToolLoopProfile, list[Any]]:
+        seed_response: Any | None = None,
+    ) -> tuple[AdaptiveToolLoopProfile, list[Any], list[Any]]:
         iteration_allowed_tools = self._allowed_tools_for_current_phase(
             default_allowed_tools=allowed_tools
         )
@@ -331,26 +333,55 @@ class CodingProfileRunner(
         if required_write_tool:
             iteration_allowed_tools = frozenset({required_write_tool})
 
-        iteration_tool_specs = tool_specs
+        requestable_tool_specs = tool_specs
         tool_choice: str | dict[str, Any] = "auto"
         if loop.scratchpad.get("coding.final_answer_reserve_used"):
             iteration_allowed_tools = frozenset()
-            iteration_tool_specs = []
+            requestable_tool_specs = []
             tool_choice = "none"
         elif loop.scratchpad.get("coding.verification_reserve_used"):
             iteration_allowed_tools = self._verification_reserve_allowed_tools()
-            iteration_tool_specs = _build_tool_specs(
+            requestable_tool_specs = _build_tool_specs(
                 iteration_allowed_tools,
                 ctx=ctx,
                 verification_targets=verification_targets,
             )
         elif iteration_allowed_tools != allowed_tools or verification_targets:
-            iteration_tool_specs = _build_tool_specs(
+            requestable_tool_specs = _build_tool_specs(
                 iteration_allowed_tools,
                 ctx=ctx,
                 verification_targets=verification_targets,
                 require_verification_target=require_verification_target,
             )
+
+        requestable_by_name = {spec.name: spec for spec in requestable_tool_specs}
+        selected_names: list[str] = []
+        for call in list(getattr(seed_response, "tool_calls", []) or []):
+            name = str(getattr(call, "name", "") or "").strip()
+            if name in requestable_by_name and name not in selected_names:
+                selected_names.append(name)
+            if len(selected_names) == len(CODING_INITIAL_TOOL_IDS):
+                break
+        if not selected_names:
+            selected_names = [
+                name for name in CODING_INITIAL_TOOL_IDS if name in requestable_by_name
+            ]
+        active_tool_specs = [requestable_by_name[name] for name in selected_names]
+        inactive_names = sorted(set(requestable_by_name) - set(selected_names))
+        loop.scratchpad.update(
+            {
+                "tool_schema_shortlisting.enabled": bool(requestable_tool_specs),
+                "tool_schema_shortlisting.reason": "coding_progressive_disclosure",
+                "tool_schema_shortlisting.candidate_count": len(requestable_tool_specs),
+                "tool_schema_shortlisting.active_count": len(active_tool_specs),
+                "tool_schema_shortlisting.selected_tools": selected_names,
+                "tool_schema_shortlisting.inactive_tools": inactive_names,
+                "tool_schema_shortlisting.input_tokens": 0,
+                "tool_schema_shortlisting.output_tokens": 0,
+                "tool_schema_shortlisting.total_tokens": 0,
+                "tool_schema_shortlisting.llm_call_made": False,
+            }
+        )
 
         return (
             AdaptiveToolLoopProfile(
@@ -370,7 +401,8 @@ class CodingProfileRunner(
                 },
                 final_closure_policy=ADAPTIVE_CLOSURE_MODE_OWNED,
             ),
-            iteration_tool_specs,
+            active_tool_specs,
+            requestable_tool_specs,
         )
 
     def _execute_coding_loop(self, ctx: ExecutionContext) -> ExecutionResult:
@@ -396,18 +428,26 @@ class CodingProfileRunner(
         )
         if isinstance(prepared, ExecutionResult):
             return prepared
-        tool_specs = prepared
+        tool_specs, resumed = prepared
+        seed_response = (
+            None if resumed else getattr(ctx.decision, "_entry_response", None)
+        )
 
         while True:
             self._sync_plan_telemetry()
             self._dispatch_subtasks_if_needed(ctx)
             loop = self._as_adaptive_state(self._loop_state)
-            profile, iteration_tool_specs = self._iteration_profile(
-                ctx,
-                loop=loop,
-                allowed_tools=allowed_tools,
-                tool_specs=tool_specs,
+            profile, active_tool_specs, requestable_tool_specs = (
+                self._iteration_profile(
+                    ctx,
+                    loop=loop,
+                    allowed_tools=allowed_tools,
+                    tool_specs=tool_specs,
+                    seed_response=seed_response,
+                )
             )
+            frame_seed_response = seed_response
+            seed_response = None
             outcome = run_adaptive_tool_loop(
                 _CodingLoopContextAdapter(
                     ctx,
@@ -424,7 +464,9 @@ class CodingProfileRunner(
                 model=model,
                 initial_messages=list(loop.messages),
                 initial_state=loop,
-                tool_specs=iteration_tool_specs,
+                tool_specs=active_tool_specs,
+                requestable_tool_specs=requestable_tool_specs,
+                seed_response=frame_seed_response,
                 on_tool_result=lambda adaptive_state: self._checkpoint_loop_state(
                     ctx,
                     adaptive_state=adaptive_state,
@@ -445,7 +487,7 @@ class CodingProfileRunner(
         runtime: DefaultCodingLLMRuntime,
         model: str,
         allowed_tools: frozenset[str],
-    ) -> list[Any] | ExecutionResult:
+    ) -> tuple[list[Any], bool] | ExecutionResult:
         tool_specs = _build_tool_specs(allowed_tools, ctx=ctx)
         self._init_checkpoint(ctx)
         resume_state = {
@@ -503,7 +545,7 @@ class CodingProfileRunner(
         if self._coding_plan is not None:
             self._stage_initial_write_if_required()
             self._emit_phase_status(ctx)
-        return tool_specs
+        return tool_specs, bool(resume_state)
 
     def _handle_iteration_outcome(
         self,

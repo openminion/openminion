@@ -40,16 +40,19 @@ from openminion.modules.brain.loop.tools.contracts import (
     CommandExecutionOutcome,
     PreparedToolDispatch,
 )
+from openminion.modules.brain.loop.tools.dispatch import _tool_request_result
 from openminion.modules.brain.loop.strategies.coding.contracts import (
+    CODING_ALLOWED_TOOLS,
     CODING_TERM_BUDGET_EXHAUSTED,
     CODING_TERM_DISALLOWED_TOOL,
     CODING_TERM_FINAL_TEXT,
     CODING_TERM_TOOL_FAILURE,
     CODING_TERM_VERIFY_CAP_EXCEEDED,
     PROJECT_CODING_ALLOWED_TOOLS,
+    PROJECT_RELEASE_ALLOWED_TOOLS,
 )
 from openminion.modules.brain.schemas import ActionResult, BudgetCounters, ToolCommand
-from openminion.modules.llm.schemas import Message
+from openminion.modules.llm.schemas import LLMResponse, Message, ToolCall, ToolSpec
 
 
 # Public symbols downstream imports rely on. Anything in this list MUST
@@ -113,6 +116,11 @@ class TestCodingProfileRunnerMethods:
 
 
 class TestCodingHandlerPureHelperBehavior:
+    def test_current_coding_ceiling_sizes(self) -> None:
+        assert len(CODING_ALLOWED_TOOLS) == 19
+        assert len(PROJECT_CODING_ALLOWED_TOOLS) == 46
+        assert len(PROJECT_RELEASE_ALLOWED_TOOLS) == 49
+
     def test_build_error_result_shape(self) -> None:
         result = handler._build_error_result("oops", "TEST_CODE")
         assert result.summary == "oops"
@@ -172,6 +180,71 @@ class TestCodingHandlerPureHelperBehavior:
         [spec] = specs
         assert spec.input_schema == schema
         assert "path/cwd/working_directory" in spec.description
+
+    def test_coding_specs_intersect_the_runtime_surface(self) -> None:
+        with (
+            patch.object(
+                coding_runtime,
+                "_runner_and_profile_from_context",
+                return_value=(object(), None),
+            ),
+            patch.object(
+                coding_runtime,
+                "collect_runtime_tool_schemas",
+                return_value=[
+                    {
+                        "name": "file.read",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                            "required": ["path"],
+                            "additionalProperties": False,
+                        },
+                    }
+                ],
+            ),
+        ):
+            specs = handler._build_tool_specs(CODING_ALLOWED_TOOLS, ctx=object())
+
+        assert [spec.name for spec in specs] == ["file.read"]
+
+    def test_unregistered_coding_tool_is_not_requestable(self) -> None:
+        runner = SimpleNamespace(tool_api=SimpleNamespace(registry=object()))
+        with (
+            patch.object(
+                coding_runtime,
+                "_runner_and_profile_from_context",
+                return_value=(runner, None),
+            ),
+            patch.object(
+                coding_runtime,
+                "collect_runtime_tool_schemas",
+                return_value=[],
+            ),
+        ):
+            specs = handler._build_tool_specs(
+                frozenset({"file.read", "web.search"}),
+                ctx=object(),
+            )
+
+        assert specs == []
+
+    def test_coding_specs_fail_closed_without_runtime_registry(self) -> None:
+        with (
+            patch.object(
+                coding_runtime,
+                "_runner_and_profile_from_context",
+                return_value=(SimpleNamespace(tool_api=None), None),
+            ),
+            patch.object(
+                coding_runtime,
+                "collect_runtime_tool_schemas",
+                return_value=[],
+            ),
+        ):
+            specs = handler._build_tool_specs(CODING_ALLOWED_TOOLS, ctx=object())
+
+        assert specs == []
 
     def test_approved_project_loop_exposes_and_invokes_project_tool(self) -> None:
         checkpoint = SimpleNamespace(
@@ -241,11 +314,13 @@ class TestCodingHandlerPureHelperBehavior:
         ):
             allowed_tools = handler._coding_allowed_tools(ctx)
             tool_specs = handler._build_tool_specs(allowed_tools, ctx=ctx)
-            profile, iteration_specs = CodingProfileRunner()._iteration_profile(
-                ctx,
-                loop=AdaptiveToolLoopState(),
-                allowed_tools=allowed_tools,
-                tool_specs=tool_specs,
+            profile, active_specs, requestable_specs = (
+                CodingProfileRunner()._iteration_profile(
+                    ctx,
+                    loop=AdaptiveToolLoopState(),
+                    allowed_tools=allowed_tools,
+                    tool_specs=tool_specs,
+                )
             )
             _CodingLoopContextAdapter(ctx).execute_command(
                 command=ToolCommand(
@@ -256,9 +331,83 @@ class TestCodingHandlerPureHelperBehavior:
             )
 
         assert profile.allowed_tools == PROJECT_CODING_ALLOWED_TOOLS
-        by_name = {spec.name: spec for spec in iteration_specs}
+        assert active_specs == []
+        by_name = {spec.name: spec for spec in requestable_specs}
         assert by_name["git.status"].input_schema == schema
         assert seen[0].tool_name == "git.status"
+
+    def test_coding_profile_starts_with_the_bounded_core(self) -> None:
+        tool_specs = handler._build_tool_specs(PROJECT_CODING_ALLOWED_TOOLS)
+
+        _profile, active_specs, requestable_specs = (
+            CodingProfileRunner()._iteration_profile(
+                SimpleNamespace(),
+                loop=AdaptiveToolLoopState(),
+                allowed_tools=PROJECT_CODING_ALLOWED_TOOLS,
+                tool_specs=tool_specs,
+            )
+        )
+
+        assert [spec.name for spec in active_specs] == [
+            "file.list_dir",
+            "file.read",
+            "file.write",
+            "code.grep",
+            "code.patch",
+            "exec.run",
+            "exec.poll",
+        ]
+        assert {spec.name for spec in requestable_specs} == (
+            PROJECT_CODING_ALLOWED_TOOLS - {"plan"}
+        )
+
+    def test_coding_profile_preserves_entry_selected_order(self) -> None:
+        tool_specs = handler._build_tool_specs(PROJECT_CODING_ALLOWED_TOOLS)
+        seed = LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            tool_calls=[
+                ToolCall(id="git", name="git.status", arguments={}),
+                ToolCall(id="read", name="file.read", arguments={"path": "x"}),
+            ],
+        )
+
+        _profile, active_specs, _requestable_specs = (
+            CodingProfileRunner()._iteration_profile(
+                SimpleNamespace(),
+                loop=AdaptiveToolLoopState(),
+                allowed_tools=PROJECT_CODING_ALLOWED_TOOLS,
+                tool_specs=tool_specs,
+                seed_response=seed,
+            )
+        )
+
+        assert [spec.name for spec in active_specs] == ["git.status", "file.read"]
+
+    def test_every_coding_execution_schema_supports_exact_activation(self) -> None:
+        for allowed_tools in (
+            CODING_ALLOWED_TOOLS,
+            PROJECT_CODING_ALLOWED_TOOLS,
+            PROJECT_RELEASE_ALLOWED_TOOLS,
+        ):
+            specs = handler._build_tool_specs(allowed_tools)
+            requestable = {spec.name: spec for spec in specs}
+            for name in requestable:
+                active_names: set[str] = set()
+                active_specs: list[ToolSpec] = []
+                result, activated = _tool_request_result(
+                    requested_name=name,
+                    active_tool_names=active_names,
+                    requestable_specs_by_name=requestable,
+                    active_tool_specs=active_specs,
+                    arguments={"name": name},
+                )
+
+                assert result.status == "success"
+                assert activated is True
+                assert name in active_names
+                assert name in {spec.name for spec in active_specs}
 
     def test_build_tool_specs_projects_targets_only_for_verify_candidates(self) -> None:
         specs = handler._build_tool_specs(
@@ -2387,6 +2536,34 @@ class TestCodingVerificationReserve:
         assert "budget exhausted" in message
         assert "continue in a new turn to resume" in message
         assert "result:" not in message
+
+    def test_budget_exhausted_does_not_close_on_replan_judgment(self) -> None:
+        runner = CodingProfileRunner()
+        runner._loop_state.scratchpad = {}
+        judgment = SimpleNamespace(final_answer="Tools are unavailable.")
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            evaluate_turn_closure=lambda **kwargs: judgment,
+            apply_closure_judgment=lambda **kwargs: "replan",
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+            error_message="budget exhausted",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "waiting_user"
+        assert "budget exhausted" in str(result.message).lower()
 
     def test_final_text_allows_read_only_plan_without_write(
         self,

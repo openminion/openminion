@@ -673,13 +673,17 @@ class AdaptiveLoopRunnerPostprocessMixin(
         self,
         tool_calls: list[Any],
     ) -> AdaptiveToolLoopOutcome | None:
+        exposed_tools = {
+            str(getattr(spec, "name", "") or "").strip()
+            for spec in self.active_tool_specs
+        } & set(self.allowed_tools)
         for tool_call in tool_calls:
             tool_name = str(getattr(tool_call, "name", "") or "").strip()
-            if tool_name in self.allowed_tools:
+            if tool_name in exposed_tools:
                 continue
             message = (
-                f"{self.profile.mode_name} does not allow tool {tool_name!r}. "
-                f"Allowed: {sorted(self.allowed_tools)}"
+                f"{self.profile.mode_name} does not expose tool {tool_name!r} in "
+                "the current loop. Activate it before use."
             )
             self.loop_state.messages.append(
                 format_blocking_tool_message(

@@ -50,22 +50,25 @@ class OllamaFixtureHandler(BaseHTTPRequestHandler):
             task_complete = type(self).turn_response_index >= len(
                 type(self).turn_response_messages
             )
+            final_answer = (
+                str(type(self).turn_response_messages[-1]["content"])
+                .partition("<finalization_status>")[0]
+                .strip()
+                if task_complete
+                else None
+            )
             response_message = {
                 "role": "assistant",
                 "content": json.dumps(
                     {
                         "satisfied": task_complete,
                         "reason": (
-                            "workspace listing completed"
+                            "fixture turn completed"
                             if task_complete
                             else "task still active"
                         ),
                         "next_action": "close" if task_complete else "continue",
-                        "final_answer": (
-                            "Workspace entries listed. ONBOARDING_OK"
-                            if task_complete
-                            else None
-                        ),
+                        "final_answer": final_answer,
                         "memory_use_refs": [],
                         "mutation_claimed": False,
                     }

@@ -13,6 +13,25 @@ from openminion.modules.brain.config import (
 from openminion.modules.llm.schemas import LLMResponse, Message, ToolSpec
 
 TOOL_REQUEST_TOOL_NAME = "tool.request"
+_SHORTLISTING_TELEMETRY_KEYS = (
+    "tool_schema_shortlisting.enabled",
+    "tool_schema_shortlisting.reason",
+    "tool_schema_shortlisting.candidate_count",
+    "tool_schema_shortlisting.active_count",
+    "tool_schema_shortlisting.initial_active_count",
+    "tool_schema_shortlisting.max_active_count",
+    "tool_schema_shortlisting.control_schema_count",
+    "tool_schema_shortlisting.selected_tools",
+    "tool_schema_shortlisting.inactive_tools",
+    "tool_schema_shortlisting.inactive_directory_count",
+    "tool_schema_shortlisting.inactive_directory_bytes",
+    "tool_schema_shortlisting.requested_tools",
+    "tool_schema_shortlisting.active_tools",
+    "tool_schema_shortlisting.input_tokens",
+    "tool_schema_shortlisting.output_tokens",
+    "tool_schema_shortlisting.total_tokens",
+    "tool_schema_shortlisting.llm_call_made",
+)
 _JSON_FENCE_RE = re.compile(
     r"^\s*```(?:json)?\s*(?P<body>.*?)\s*```\s*$",
     re.IGNORECASE | re.DOTALL,
@@ -64,10 +83,12 @@ def build_tool_request_spec() -> ToolSpec:
             "properties": {
                 "name": {
                     "type": "string",
+                    "minLength": 1,
                     "description": "Exact inactive tool name to activate.",
                 },
                 "terminal_after_success": {
                     "type": "boolean",
+                    "default": False,
                     "description": (
                         "True only when one successful call to this tool will "
                         "fully satisfy the current user request before the final "
@@ -75,7 +96,7 @@ def build_tool_request_spec() -> ToolSpec:
                     ),
                 },
             },
-            "required": ["name", "terminal_after_success"],
+            "required": ["name"],
             "additionalProperties": False,
         },
     )
@@ -123,6 +144,68 @@ def build_inactive_tool_directory_message(
         content="\n".join(lines),
         meta={"tool_schema_shortlisting": "inactive_directory"},
     )
+
+
+def upsert_inactive_tool_directory_message(
+    messages: list[Message],
+    *,
+    requestable_tool_specs: Sequence[ToolSpec],
+    active_tool_names: set[str] | frozenset[str],
+) -> Message | None:
+    messages[:] = [
+        message
+        for message in messages
+        if message.meta.get("tool_schema_shortlisting") != "inactive_directory"
+    ]
+    directory = build_inactive_tool_directory_message(
+        requestable_tool_specs=requestable_tool_specs,
+        active_tool_names=active_tool_names,
+    )
+    if directory is not None:
+        messages.append(directory)
+    return directory
+
+
+def refresh_shortlisting_state(
+    messages: list[Message],
+    scratchpad: dict[str, Any],
+    requestable_tool_specs: Sequence[ToolSpec],
+    active_tool_names: set[str],
+    control_schema_count: int | None = None,
+) -> None:
+    inactive_directory = upsert_inactive_tool_directory_message(
+        messages,
+        requestable_tool_specs=requestable_tool_specs,
+        active_tool_names=active_tool_names,
+    )
+    active_count = len(active_tool_names)
+    scratchpad.setdefault("tool_schema_shortlisting.initial_active_count", active_count)
+    scratchpad["tool_schema_shortlisting.active_tools"] = sorted(active_tool_names)
+    scratchpad["tool_schema_shortlisting.active_count"] = active_count
+    scratchpad["tool_schema_shortlisting.max_active_count"] = max(
+        int(scratchpad.get("tool_schema_shortlisting.max_active_count", 0) or 0),
+        active_count,
+    )
+    if control_schema_count is not None:
+        scratchpad["tool_schema_shortlisting.control_schema_count"] = (
+            control_schema_count
+        )
+    scratchpad["tool_schema_shortlisting.inactive_directory_count"] = int(
+        inactive_directory is not None
+    )
+    scratchpad["tool_schema_shortlisting.inactive_directory_bytes"] = (
+        len(inactive_directory.content.encode("utf-8"))
+        if inactive_directory is not None
+        else 0
+    )
+
+
+def shortlisting_telemetry_payload(scratchpad: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: scratchpad[key]
+        for key in _SHORTLISTING_TELEMETRY_KEYS
+        if key in scratchpad
+    }
 
 
 def should_shortlist_tool_schemas(

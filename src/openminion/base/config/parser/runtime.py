@@ -78,7 +78,7 @@ _INT_MIN_DEFAULTS = (
     ("session_context_token_budget", 0, 0),
     ("session_thread_ttl_seconds", 0, 0),
     ("session_writer_lease_seconds", 0, 0),
-    ("agent_loop_max_steps", 1, 4),
+    ("agent_loop_max_steps", 1, 50),
     ("agent_loop_tool_result_max_chars", 256, 4000),
     ("brain_turn_timeout_seconds", 1, 120),
     ("provider_retry_max_attempts", 1, 3),

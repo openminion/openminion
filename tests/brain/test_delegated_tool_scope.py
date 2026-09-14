@@ -50,6 +50,31 @@ def test_turn_tool_allowlist_filters_catalog_and_execution(tmp_path: Path) -> No
     }
 
 
+def test_turn_tool_allowlist_uses_model_name_before_runtime_binding(
+    tmp_path: Path,
+) -> None:
+    registry = ToolRegistry()
+    registry.add(
+        ToolSpec(
+            name="fetch.get",
+            args_model=dict,
+            min_scope="READ_ONLY",
+            handler=lambda _arguments, _ctx: {"ok": True, "content": "fetched"},
+        )
+    )
+    adapter = ToolAdapter(workspace_root=tmp_path, runtime_registry=registry)
+
+    with adapter.restrict_tools(("web.fetch",)):
+        result = adapter.execute(
+            command={"tool_name": "web.fetch", "args": {}},
+            session_id="project-session",
+            trace_id="project-turn",
+        )
+
+    assert result["status"] == "success"
+    assert result["summary"] == "fetched"
+
+
 def test_turn_tool_allowlist_is_isolated_between_concurrent_children(
     tmp_path: Path,
 ) -> None:

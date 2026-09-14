@@ -57,7 +57,7 @@ from ..review_control import (
 )
 from ..shortlisting import (
     TOOL_REQUEST_TOOL_NAME,
-    build_inactive_tool_directory_message,
+    refresh_shortlisting_state,
 )
 from ..status import emit_adaptive_status
 from ..telemetry import _emit_iteration_event
@@ -685,23 +685,20 @@ def _process_tool_request_calls(
     requestable_specs: list[Any],
     requestable_specs_by_name: dict[str, Any],
 ) -> tuple[list[Any], bool, LoopDispatchResult | None]:
-    tool_request_calls = [
-        tool_call
-        for tool_call in tool_calls
-        if str(getattr(tool_call, "name", "") or "").strip() == TOOL_REQUEST_TOOL_NAME
-    ]
+    tool_request_calls = []
+    regular_tool_calls = []
+    for tool_call in tool_calls:
+        tool_name = str(getattr(tool_call, "name", "") or "").strip()
+        if tool_name == TOOL_REQUEST_TOOL_NAME:
+            tool_request_calls.append(tool_call)
+        else:
+            regular_tool_calls.append(tool_call)
     if not tool_request_calls:
         return tool_calls, False, None
-    regular_tool_calls = [
-        tool_call
-        for tool_call in tool_calls
-        if str(getattr(tool_call, "name", "") or "").strip() != TOOL_REQUEST_TOOL_NAME
-    ]
-    activated_any = False
     requested_tools = list(
         loop_state.scratchpad.get("tool_schema_shortlisting.requested_tools", []) or []
     )
-    terminal_requested_names: list[str] = []
+    terminal_names: list[str] = []
     for tool_call in tool_request_calls:
         arguments = dict(getattr(tool_call, "arguments", {}) or {})
         requested_name = str(arguments.get("name", "") or "").strip()
@@ -710,11 +707,11 @@ def _process_tool_request_calls(
             active_tool_names=active_tool_names,
             requestable_specs_by_name=requestable_specs_by_name,
             active_tool_specs=active_tool_specs,
+            arguments=arguments,
         )
         _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
-        activated_any = activated_any or activated
         _record_terminal_tool_request(
-            terminal_requested_names,
+            terminal_names,
             action_result=action_result,
             arguments=arguments,
             requested_name=requested_name,
@@ -758,20 +755,18 @@ def _process_tool_request_calls(
                 "activated": activated,
             },
         )
-    loop_state.scratchpad["tool_schema_shortlisting.requested_tools"] = requested_tools
-    loop_state.scratchpad["tool_schema_shortlisting.active_tools"] = sorted(
-        active_tool_names
+    scratchpad = loop_state.scratchpad
+    scratchpad["tool_schema_shortlisting.requested_tools"] = requested_tools
+    scratchpad["tool_schema_shortlisting.inactive_tools"] = sorted(
+        set(requestable_specs_by_name) - active_tool_names
     )
-    _stage_terminal_tool_request(
-        loop_state, terminal_requested_names, regular_tool_calls
+    _stage_terminal_tool_request(loop_state, terminal_names, regular_tool_calls)
+    refresh_shortlisting_state(
+        loop_state.messages,
+        scratchpad,
+        requestable_specs,
+        active_tool_names,
     )
-    if activated_any:
-        inactive_directory_message = build_inactive_tool_directory_message(
-            requestable_tool_specs=requestable_specs,
-            active_tool_names=active_tool_names,
-        )
-        if inactive_directory_message is not None:
-            loop_state.messages.append(inactive_directory_message)
     if on_tool_result is not None:
         on_tool_result(loop_state)
     if not regular_tool_calls:

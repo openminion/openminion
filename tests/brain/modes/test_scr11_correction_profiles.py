@@ -9,6 +9,9 @@ from unittest.mock import MagicMock
 
 from openminion.modules.brain.loop.adaptive import ActLoopMode
 from openminion.modules.brain.loop.strategies.coding import CodingMode
+from openminion.modules.brain.loop.strategies.coding.contracts import (
+    CODING_ALLOWED_TOOLS,
+)
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.schemas import (
     ActionResult,
@@ -23,6 +26,23 @@ from openminion.modules.llm.schemas import LLMResponse, ToolCall
 
 
 # Shared fakes
+
+
+def _coding_runner() -> Any:
+    registry = SimpleNamespace(
+        model_provider_specs=lambda: [
+            SimpleNamespace(
+                name=name,
+                description=name,
+                parameters={"type": "object"},
+            )
+            for name in CODING_ALLOWED_TOOLS
+        ]
+    )
+    return SimpleNamespace(
+        tool_api=SimpleNamespace(registry=registry),
+        options=SimpleNamespace(failure_strategy="halt"),
+    )
 
 
 @dataclass
@@ -127,7 +147,7 @@ class _FakeCommandExecutor:
 @dataclass
 class _FakeServices:
     statuses: list[dict[str, Any]] = field(default_factory=list)
-    runner: Any = None
+    runner: Any = field(default_factory=_coding_runner)
 
     def save_state(self, *, state):
         pass

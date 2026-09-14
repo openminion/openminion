@@ -89,6 +89,22 @@ def test_workspace_trust_fresh_project(
             "content": "",
             "tool_calls": [
                 {
+                    "id": "request-edit",
+                    "function": {
+                        "name": "tool.request",
+                        "arguments": {
+                            "name": "file.edit",
+                            "terminal_after_success": False,
+                        },
+                    },
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
                     "id": "edit",
                     "function": {
                         "name": "file.edit",

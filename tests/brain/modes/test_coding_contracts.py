@@ -29,6 +29,9 @@ from openminion.modules.brain.loop.strategies.coding.contracts import (
 from openminion.modules.brain.loop.strategies.coding.loop_state import (
     CodingLoopState,
 )
+from openminion.modules.brain.loop.strategies.coding.prompts import (
+    build_coding_plan_system_prompt,
+)
 from openminion.modules.tool.runtime.policy import DEFAULT_POLICY
 from openminion.modules.brain.loop.strategies.coding.llm import (
     DefaultCodingLLMRuntime,
@@ -71,6 +74,7 @@ def test_v1_allowlist_contains_expected_tools() -> None:
 def test_project_allowlists_match_the_accepted_repository_sets() -> None:
     expected_core = {
         "plan",
+        "web.search",
         "git.status",
         "git.diff",
         "git.log",
@@ -164,6 +168,12 @@ def test_core_project_set_excludes_legacy_and_release_tools() -> None:
     assert PROJECT_CODING_ALLOWED_TOOLS.isdisjoint(excluded)
 
 
+def test_coding_plan_prompt_keeps_bounded_read_only_work_in_one_phase() -> None:
+    prompt = build_coding_plan_system_prompt()
+
+    assert "single implement phase for a bounded read-only task" in prompt
+
+
 def test_v1_allowlist_excludes_pty_tools() -> None:
     excluded = {"exec.send_keys", "exec.paste", "exec.submit", "exec.clear"}
     for tool in excluded:
@@ -174,6 +184,7 @@ def test_v1_allowlist_excludes_interactive_or_search_web_tools() -> None:
     assert "web.fetch" in CODING_ALLOWED_TOOLS
     for tool in ("web.search", "browser"):
         assert tool not in CODING_ALLOWED_TOOLS
+    assert "web.search" in PROJECT_CODING_ALLOWED_TOOLS
 
 
 def test_default_tool_policy_allows_code_prefix_for_coding_tools() -> None:

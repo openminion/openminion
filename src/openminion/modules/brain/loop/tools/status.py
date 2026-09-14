@@ -15,6 +15,7 @@ from .contracts import (
     loop_parallel_payload,
     loop_turn_progress_payload,
 )
+from .shortlisting import shortlisting_telemetry_payload
 
 
 def loop_reflection_payload(scratchpad: dict) -> dict:
@@ -92,6 +93,7 @@ def adaptive_status_payload(
     payload.update(loop_reflection_payload(loop_state.scratchpad))
     payload.update(loop_resume_payload(loop_state.scratchpad))
     payload.update(loop_correction_payload(loop_state.scratchpad))
+    payload.update(shortlisting_telemetry_payload(loop_state.scratchpad))
     if termination_reason:
         payload["adaptive.termination_reason"] = termination_reason
     if extra:

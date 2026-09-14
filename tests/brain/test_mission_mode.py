@@ -833,6 +833,7 @@ def test_turn_closure_hints_include_execution_facts_for_partial_scaffolds() -> N
         )
         contract = context_api.last_hints["style_overrides"]["closure_gate_contract"]
         assert "closure_action_outputs" in contract
+        assert "do not infer that execution tools were unavailable" in contract
         assert "partial scaffold" in contract
         assert "required headings" in contract
         assert "progress note" in contract

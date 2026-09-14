@@ -53,6 +53,9 @@ GitHub runs the deterministic package workflows for pushes and pull requests
 on both `dev` and `main`. Required-check policy is a repository setting and is
 reported separately from workflow availability.
 
+External GitHub Actions are pinned to full commit SHAs. Dependabot checks those
+pins weekly, and `make workflow-check` rejects mutable action tags.
+
 ## Numeric debt baselines
 
 Mypy errors, over-ceiling method LOC, and broad/silent exception counts are

@@ -7,6 +7,7 @@ from openminion.modules.brain.constants import (
     BRAIN_INTERNAL_MODE_ACT_CODING,
 )
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
+from openminion.modules.brain.loop.tools.plan_control import PLAN_TOOL_NAME
 from openminion.modules.brain.tools.schema import collect_runtime_tool_schemas
 from openminion.modules.brain.schemas import ActionError, ActionResult, new_uuid
 from openminion.modules.llm.schemas import ToolSpec
@@ -191,10 +192,17 @@ def _build_tool_specs(
         ),
     }
     runtime_schemas = _runtime_tool_schemas_by_name(ctx)
+    tool_ids = (
+        allowed_tools & runtime_schemas.keys() if ctx is not None else allowed_tools
+    ) - {PLAN_TOOL_NAME}
     return [
         ToolSpec(
             name=tool_id,
-            description=descriptions.get(tool_id, tool_id),
+            description=descriptions.get(
+                tool_id,
+                str(runtime_schemas.get(tool_id, {}).get("description", "") or "")
+                or tool_id,
+            ),
             input_schema=_input_schema_for_tool(
                 tool_id,
                 runtime_schemas,
@@ -202,7 +210,7 @@ def _build_tool_specs(
                 require_verification_target=require_verification_target,
             ),
         )
-        for tool_id in sorted(allowed_tools)
+        for tool_id in sorted(tool_ids)
     ]
 
 
