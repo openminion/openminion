@@ -6,6 +6,7 @@ import sqlite3
 from tests.e2e.cli.focus.test_live_model_neutral_tool_exposure import (
     _failure_disposition,
     _provider_failure_categories,
+    _turn_local_tool_results,
 )
 from tests.e2e.runners.run_model_neutral_tool_exposure_e2e import (
     _ARTIFACT_ENV,
@@ -122,3 +123,17 @@ def test_live_failure_reads_terminal_provider_error(tmp_path) -> None:
 
     assert categories == ["EMPTY_PROVIDER_RESPONSE"]
     assert _failure_disposition(categories) == "provider_residual"
+
+
+def test_live_evidence_removes_results_replayed_by_later_turns() -> None:
+    first = {"call_id": "call-1", "tool_name": "web.search"}
+    second = {"call_id": "call-2", "tool_name": "file.write"}
+
+    results = _turn_local_tool_results(
+        [
+            {"tool_results": json.dumps([first])},
+            {"tool_results": json.dumps([first, second])},
+        ]
+    )
+
+    assert results == [[first], [second]]

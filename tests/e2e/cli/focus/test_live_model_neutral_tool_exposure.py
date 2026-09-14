@@ -24,6 +24,7 @@ from openminion.modules.task.autonomy import (
     autonomy_permission_metadata,
 )
 from openminion.modules.task.project import ProjectTurnRequest, project_turn_inbound_metadata
+from openminion.tools.exec.constants import EXEC_ENABLE_HOST_EXEC_ENV
 from tests.e2e.cli.focus.conftest import require_complex_focus
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
@@ -321,6 +322,24 @@ def _result_metadata(payload: dict[str, object]) -> dict[str, object]:
     return dict(raw) if isinstance(raw, dict) else {}
 
 
+def _turn_local_tool_results(
+    metadata_by_turn: list[dict[str, object]],
+) -> list[list[dict]]:
+    seen_call_ids: set[str] = set()
+    results_by_turn = []
+    for metadata in metadata_by_turn:
+        current = []
+        for item in parse_tool_results(metadata.get("tool_results")):
+            call_id = str(item.get("call_id", "")).strip()
+            if call_id and call_id in seen_call_ids:
+                continue
+            if call_id:
+                seen_call_ids.add(call_id)
+            current.append(item)
+        results_by_turn.append(current)
+    return results_by_turn
+
+
 def _fetched_source_url(tool_results: list[dict]) -> str | None:
     for item in tool_results:
         if item.get("tool_name") == "web.fetch" and item.get("ok") is True:
@@ -336,6 +355,7 @@ def _scenario_disposition(passed: bool, failure_categories: list[str]) -> str:
 
 def test_live_minimax_approved_project_research_code_git_and_denial(
     request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
     minimax_agent_id: str,
 ) -> None:
     require_complex_focus()
@@ -346,7 +366,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
     provider, model, configured_act_profile = _agent_identity(
         config_path, minimax_agent_id
     )
-    root = Path(os.environ["OPENMINION_MNTE_E2E_ARTIFACT_ROOT"]).expanduser()
+    root = Path(os.environ["OPENMINION_MNTE_E2E_ARTIFACT_ROOT"]).expanduser().resolve()
     workspace = _project_workspace(root)
     artifact_id = f"mnte-project-{int(time.time())}-{uuid.uuid4().hex[:8]}"
     evidence_path = root / "mnte-project-live-evidence.json"
@@ -379,12 +399,14 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
     source_url = ""
     prompts = [
         (
-            "Use web.search to find the official PyPA guide for writing "
-            "pyproject.toml, then request and use web.fetch on the authoritative "
-            "guide you found. Do not call any other execution tool. Finish with "
-            "`result:` and the fetched source URL."
+            "Call web.search exactly once to find the official PyPA guide for "
+            "writing pyproject.toml. Then request web.fetch if needed and call "
+            "web.fetch exactly once on the authoritative guide using its default "
+            "arguments. Do not call either tool again and do not call any other "
+            "execution tool. Finish with `result:` and the fetched source URL."
         ),
     ]
+    monkeypatch.setenv(EXEC_ENABLE_HOST_EXEC_ENV, "1")
     runtime = APIRuntime.from_config_path(
         str(config_path),
         home_root=Path(__file__).resolve().parents[4],
@@ -471,14 +493,16 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
                     break
                 prompts.extend(
                     (
-                        f"Request and use file.write to update source_info.py so "
+                        f"Request and call file.write exactly once to update "
+                        f"source_info.py so "
                         f"SOURCE_URL equals exactly `{source_url}`. Then request and "
-                        "use exec.run with the command exactly `python -m pytest -q` "
-                        "and `yield_ms` 30000 so you observe the result. Do not call "
-                        "any other execution tool. Finish with `result:` and the "
-                        "passing test count.",
-                        "Request and use git.status to inspect the project change. "
-                        "Then request the exact release-only tool "
+                        "call exec.run exactly once with the command exactly "
+                        "`python -m pytest -q` and `yield_ms` 30000 so you observe "
+                        "the result. Omit host and security arguments. Do not read "
+                        "the file back and do not call any other execution tool. "
+                        "Finish with `result:` and the passing test count.",
+                        "Request and call git.status exactly once to inspect the "
+                        "project change. Then request once the exact release-only tool "
                         "github.dispatch_workflow. This project has no release grant, "
                         "so report its typed unavailable result without substituting "
                         "or retrying. Do not call any other execution tool. Finish "
@@ -490,10 +514,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
 
     source_revision_end = _source_revision()
     metadata_by_turn = [_result_metadata(payload) for payload in payloads]
-    tool_results_by_turn = [
-        parse_tool_results(metadata.get("tool_results"))
-        for metadata in metadata_by_turn
-    ]
+    tool_results_by_turn = _turn_local_tool_results(metadata_by_turn)
     tool_results = [item for results in tool_results_by_turn for item in results]
     tool_names = [str(item.get("tool_name", "")) for item in tool_results]
     expected_tools = {
