@@ -203,6 +203,7 @@ format-check: $(DEV_STAMP)
 
 workflow-check: $(DEV_STAMP)
 	$(PRE_COMMIT) run actionlint --all-files
+	$(PYTHON) scripts/validate/action_pins.py
 
 lint: $(DEV_STAMP)
 	$(RUFF) check "$(REPO_ROOT)"
