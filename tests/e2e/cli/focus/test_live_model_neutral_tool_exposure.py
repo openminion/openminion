@@ -461,12 +461,12 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
                     break
                 prompts.extend(
                     (
-                        "Request and use file.write to update source_info.py so "
-                        "SOURCE_URL equals the source URL obtained in the previous "
-                        "turn. Then request and use exec.run with the command exactly "
-                        "`python -m pytest -q` and `yield_ms` 30000 so you observe "
-                        "the result. Do not call any other execution tool. Finish "
-                        "with `result:` and the passing test count.",
+                        f"Request and use file.write to update source_info.py so "
+                        f"SOURCE_URL equals exactly `{source_url}`. Then request and "
+                        "use exec.run with the command exactly `python -m pytest -q` "
+                        "and `yield_ms` 30000 so you observe the result. Do not call "
+                        "any other execution tool. Finish with `result:` and the "
+                        "passing test count.",
                         "Request and use git.status to inspect the project change. "
                         "Then request the exact release-only tool "
                         "github.dispatch_workflow. This project has no release grant, "

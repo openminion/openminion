@@ -2537,6 +2537,34 @@ class TestCodingVerificationReserve:
         assert "continue in a new turn to resume" in message
         assert "result:" not in message
 
+    def test_budget_exhausted_does_not_close_on_replan_judgment(self) -> None:
+        runner = CodingProfileRunner()
+        runner._loop_state.scratchpad = {}
+        judgment = SimpleNamespace(final_answer="Tools are unavailable.")
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            evaluate_turn_closure=lambda **kwargs: judgment,
+            apply_closure_judgment=lambda **kwargs: "replan",
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+            error_message="budget exhausted",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "waiting_user"
+        assert "budget exhausted" in str(result.message).lower()
+
     def test_final_text_allows_read_only_plan_without_write(
         self,
     ) -> None:
