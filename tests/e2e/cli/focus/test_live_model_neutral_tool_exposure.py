@@ -370,9 +370,9 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
     prompts = [
         (
             "Use web.search to find the official PyPA guide for writing "
-            "pyproject.toml, then use web.fetch on the authoritative guide you "
-            "found. Do not call any other tool. Finish with `result:` and the "
-            "fetched source URL."
+            "pyproject.toml, then request and use web.fetch on the authoritative "
+            "guide you found. Do not call any other execution tool. Finish with "
+            "`result:` and the fetched source URL."
         ),
     ]
     runtime = APIRuntime.from_config_path(
@@ -461,18 +461,18 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
                     break
                 prompts.extend(
                     (
-                        "Use the source URL obtained in the previous turn to update "
-                        "source_info.py so SOURCE_URL equals that URL. Then use "
-                        "exec.run with the command exactly `python -m pytest -q` "
-                        "and `yield_ms` 30000 so you observe the result. Do not call "
-                        "any other tool. Finish with `result:` and the passing test "
-                        "count.",
+                        "Request and use file.write to update source_info.py so "
+                        "SOURCE_URL equals the source URL obtained in the previous "
+                        "turn. Then request and use exec.run with the command exactly "
+                        "`python -m pytest -q` and `yield_ms` 30000 so you observe "
+                        "the result. Do not call any other execution tool. Finish "
+                        "with `result:` and the passing test count.",
                         "Request and use git.status to inspect the project change. "
                         "Then request the exact release-only tool "
                         "github.dispatch_workflow. This project has no release grant, "
                         "so report its typed unavailable result without substituting "
-                        "or retrying. Do not call any other tool. Finish with "
-                        "`result:` and the changed path.",
+                        "or retrying. Do not call any other execution tool. Finish "
+                        "with `result:` and the changed path.",
                     )
                 )
     finally:
