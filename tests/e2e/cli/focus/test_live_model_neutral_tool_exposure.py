@@ -18,7 +18,6 @@ from openminion.cli.commands.autonomy_project import (
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     PROJECT_CODING_ALLOWED_TOOLS,
 )
-from openminion.modules.brain.loop.tools import ADAPTIVE_TERM_LLM_ERROR
 from openminion.modules.brain.loop.tools.shortlisting import TOOL_REQUEST_TOOL_NAME
 from openminion.modules.task.autonomy import (
     AutonomyRunStore,
@@ -84,7 +83,7 @@ def _provider_failure_categories(telemetry_path: Path) -> list[str]:
         rows = connection.execute(
             "SELECT event_type, data FROM events "
             "WHERE event_type IN (?, ?) ORDER BY id",
-            ("llm.call.failed", "brain.execution_status"),
+            ("llm.call.failed", "module.stats"),
         ).fetchall()
     categories = []
     for event_type, raw_data in rows:
@@ -94,15 +93,17 @@ def _provider_failure_categories(telemetry_path: Path) -> list[str]:
             nested_code = raw_error.get("code") if isinstance(raw_error, dict) else ""
             if category := str(event.get("error_category") or nested_code or ""):
                 categories.append(category)
-        elif event.get("adaptive.termination_reason") == ADAPTIVE_TERM_LLM_ERROR:
-            categories.append("LLM_ERROR")
+        elif (
+            event.get("module_id") == "openminion-llm"
+            and event.get("operation") == "error"
+        ):
+            if category := str(event.get("error_code", "")):
+                categories.append(category)
     return categories
 
 
 def _failure_disposition(categories: list[str]) -> str:
-    if {"RATE_LIMITED", "TIMEOUT", "PROVIDER_ERROR", "LLM_ERROR"} & set(
-        categories
-    ):
+    if {"RATE_LIMITED", "TIMEOUT", "PROVIDER_ERROR"} & set(categories):
         return "provider_residual"
     return "failed"
 

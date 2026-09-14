@@ -54,7 +54,7 @@ def test_live_summary_keeps_missing_scenario_visible(tmp_path) -> None:
     assert evidence[1]["disposition"] == "unavailable"
 
 
-def test_live_failure_uses_typed_llm_terminal_fact(tmp_path) -> None:
+def test_live_failure_requires_typed_provider_fact(tmp_path) -> None:
     telemetry_path = tmp_path / "telemetry.db"
     with sqlite3.connect(telemetry_path) as connection:
         connection.execute(
@@ -70,6 +70,25 @@ def test_live_failure_uses_typed_llm_terminal_fact(tmp_path) -> None:
 
     categories = _provider_failure_categories(telemetry_path)
 
-    assert categories == ["LLM_ERROR"]
+    assert categories == []
+    assert _failure_disposition(categories) == "failed"
+
+    with sqlite3.connect(telemetry_path) as connection:
+        connection.execute(
+            "INSERT INTO events (event_type, data) VALUES (?, ?)",
+            (
+                "module.stats",
+                json.dumps(
+                    {
+                        "module_id": "openminion-llm",
+                        "operation": "error",
+                        "error_code": "RATE_LIMITED",
+                    }
+                ),
+            ),
+        )
+
+    categories = _provider_failure_categories(telemetry_path)
+
+    assert categories == ["RATE_LIMITED"]
     assert _failure_disposition(categories) == "provider_residual"
-    assert _failure_disposition([]) == "failed"
