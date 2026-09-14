@@ -34,6 +34,10 @@ _LOCAL_TARGETS = (
 _LIVE_TARGETS = (
     "tests/e2e/cli/focus/test_live_model_neutral_tool_exposure.py",
 )
+_LIVE_EVIDENCE_FILES = {
+    "focus/mnte-focus-live-evidence.json": "mnte-core-edit-test",
+    "mnte-project-live-evidence.json": "mnte-project-corpus",
+}
 
 
 def _artifact_root(env: dict[str, str]) -> Path:
@@ -57,25 +61,26 @@ def _run(targets: tuple[str, ...], *, env: dict[str, str]) -> int:
 
 def _scenario_evidence(root: Path, *, live_result: int | None) -> list[dict]:
     evidence = []
-    for path in sorted(root.rglob("mnte-*-live-evidence.json")):
+    for filename, scenario_id in _LIVE_EVIDENCE_FILES.items():
+        path = root / filename
+        if not path.is_file():
+            if live_result is not None:
+                evidence.append(
+                    {
+                        "path": None,
+                        "disposition": "unavailable",
+                        "scenario_id": scenario_id,
+                        "scenario_results": [],
+                    }
+                )
+            continue
         payload = json.loads(path.read_text(encoding="utf-8"))
         evidence.append(
             {
                 "path": str(path.relative_to(root)),
                 "disposition": payload.get("disposition", "unavailable"),
-                "scenario_id": payload.get("scenario_id"),
+                "scenario_id": payload.get("scenario_id", scenario_id),
                 "scenario_results": payload.get("scenario_results", []),
-            }
-        )
-    if live_result is not None and not evidence:
-        evidence.append(
-            {
-                "path": None,
-                "disposition": (
-                    "unavailable" if live_result == 0 else "failed_without_evidence"
-                ),
-                "scenario_id": "live-corpus",
-                "scenario_results": [],
             }
         )
     return evidence

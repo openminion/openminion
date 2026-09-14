@@ -61,7 +61,7 @@ def _telemetry_events(path: Path, event_type: str) -> list[dict[str, object]]:
     return [json.loads(row[0]) for row in rows]
 
 
-def _provider_identity(config_path: Path, agent_id: str) -> tuple[str, str]:
+def _agent_identity(config_path: Path, agent_id: str) -> tuple[str, str, str]:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     agent_config = config["agents"][agent_id]
     provider = str(agent_config["provider"])
@@ -69,10 +69,31 @@ def _provider_identity(config_path: Path, agent_id: str) -> tuple[str, str]:
         **config["providers"][provider],
         **agent_config.get("provider_config_overrides", {}),
     }
-    return provider, str(provider_config["model"])
+    return (
+        provider,
+        str(provider_config["model"]),
+        str(agent_config.get("default_act_profile", "")),
+    )
+
+
+def _provider_failure_categories(telemetry_path: Path) -> list[str]:
+    if not telemetry_path.is_file():
+        return []
+    return [
+        str(event.get("error_category", ""))
+        for event in _telemetry_events(telemetry_path, "llm.call.failed")
+        if event.get("error_category")
+    ]
+
+
+def _failure_disposition(categories: list[str]) -> str:
+    if {"RATE_LIMITED", "TIMEOUT", "PROVIDER_ERROR"} & set(categories):
+        return "provider_residual"
+    return "failed"
 
 
 def test_live_focus_core_edit_and_test_uses_bounded_tools(
+    request: pytest.FixtureRequest,
     focus_probe: FocusProbe,
     tmp_path: Path,
 ) -> None:
@@ -108,35 +129,42 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
         max_auto_continuations=2,
     )
     probe = focus_probe.for_workdir(workspace, include_project_context=False)
-    provider, model = _provider_identity(probe.config_path, probe.agent_id)
+    provider, model, configured_act_profile = _agent_identity(
+        probe.config_path, probe.agent_id
+    )
     evidence_path = root / "mnte-focus-live-evidence.json"
+    telemetry_path = probe.data_root / "telemetry" / "telemetry.db"
+
+    def write_failure_evidence() -> None:
+        if evidence_path.exists():
+            return
+        failure_categories = _provider_failure_categories(telemetry_path)
+        _write_json(
+            evidence_path,
+            {
+                "scenario_id": scenario.scenario_id,
+                "source_revision_start": source_revision,
+                "source_revision_end": _source_revision(),
+                "profile": probe.agent_id,
+                "configured_act_profile": configured_act_profile,
+                "provider": provider,
+                "model": model,
+                "provider_failure_categories": failure_categories,
+                "disposition": _failure_disposition(failure_categories),
+                "unplanned_interventions": 0,
+            },
+        )
+
+    request.addfinalizer(write_failure_evidence)
+    assert configured_act_profile == "coding"
 
     with probe.session(rows=50, cols=160) as session:
         probe.wait_ready(session)
         try:
             transcript = probe.run_turn(session, scenario)
-        except BaseException:
+        finally:
             transcript = session.transcript
             write_transcript(root, scenario.scenario_id, transcript)
-            _write_json(
-                evidence_path,
-                {
-                    "scenario_id": scenario.scenario_id,
-                    "source_revision_start": source_revision,
-                    "source_revision_end": _source_revision(),
-                    "profile": probe.agent_id,
-                    "provider": provider,
-                    "model": model,
-                    "disposition": (
-                        "provider_residual"
-                        if "PROVIDER_ERROR" in transcript
-                        else "failed"
-                    ),
-                    "unplanned_interventions": 0,
-                },
-            )
-            raise
-        write_transcript(root, scenario.scenario_id, transcript)
 
     source_revision_end = _source_revision()
     assert source_revision_end == source_revision
@@ -148,11 +176,11 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
     )
     assert "file.write(" in transcript
     assert "exec.run(" in transcript
-    telemetry_path = probe.data_root / "telemetry" / "telemetry.db"
     requested_events = _telemetry_events(telemetry_path, "tool.call.requested")
     completed_events = _telemetry_events(telemetry_path, "tool.call.completed")
     status_events = _telemetry_events(telemetry_path, "brain.execution_status")
     bootstrap = _telemetry_events(telemetry_path, "brain.act.bootstrap")[-1]
+    assert bootstrap["resolved_act_profile"] == "coding"
     timing = _telemetry_events(telemetry_path, "chat.phase_timing")[-1]
     tool_sequence = [
         str(event.get("canonical_name", ""))
@@ -189,6 +217,7 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
             "source_revision_end": source_revision_end,
             "revision_stable": True,
             "profile": probe.agent_id,
+            "configured_act_profile": configured_act_profile,
             "provider": provider,
             "model": model,
             "resolved_act_profile": bootstrap["resolved_act_profile"],
@@ -272,28 +301,54 @@ def _fetched_source_url(tool_results: list[dict]) -> str | None:
     return None
 
 
-def _scenario_disposition(passed: bool, payload: dict[str, object]) -> str:
+def _scenario_disposition(passed: bool, failure_categories: list[str]) -> str:
     if passed:
         return "pass"
-    serialized = json.dumps(payload, sort_keys=True, default=str)
-    if "PROVIDER_ERROR" in serialized or "RATE_LIMITED" in serialized:
-        return "provider_residual"
-    return "failed"
+    return _failure_disposition(failure_categories)
 
 
 def test_live_minimax_approved_project_research_code_git_and_denial(
+    request: pytest.FixtureRequest,
     minimax_agent_id: str,
 ) -> None:
     require_complex_focus()
     source_revision = _source_revision()
     config_path = Path(os.environ["OPENMINION_CLI_FOCUS_E2E_CONFIG"]).expanduser()
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    assert config["default_agent"] == minimax_agent_id == "minimax-m2-7"
-    provider, model = _provider_identity(config_path, minimax_agent_id)
-    assert model == "MiniMax-M2.7"
+    assert config["default_agent"] == minimax_agent_id
+    provider, model, configured_act_profile = _agent_identity(
+        config_path, minimax_agent_id
+    )
     root = Path(os.environ["OPENMINION_MNTE_E2E_ARTIFACT_ROOT"]).expanduser()
     workspace = _project_workspace(root)
     artifact_id = f"mnte-project-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    evidence_path = root / "mnte-project-live-evidence.json"
+    telemetry_path = root / "data" / artifact_id / "telemetry" / "telemetry.db"
+
+    def write_failure_evidence() -> None:
+        if evidence_path.exists():
+            return
+        failure_categories = _provider_failure_categories(telemetry_path)
+        _write_json(
+            evidence_path,
+            {
+                "scenario_id": "mnte-project-corpus",
+                "source_revision_start": source_revision,
+                "source_revision_end": _source_revision(),
+                "workspace": str(workspace),
+                "profile": minimax_agent_id,
+                "configured_act_profile": configured_act_profile,
+                "provider": provider,
+                "model": model,
+                "provider_failure_categories": failure_categories,
+                "disposition": _failure_disposition(failure_categories),
+                "unplanned_interventions": 0,
+            },
+        )
+
+    request.addfinalizer(write_failure_evidence)
+    assert model == "MiniMax-M2.7"
+    assert configured_act_profile == "coding"
     source_url = ""
     prompts = [
         (
@@ -335,6 +390,8 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         )
         payloads = []
         wall_times_ms = []
+        failure_categories_by_turn: list[list[str]] = []
+        failed_event_count = 0
         for index in range(3):
             if index >= len(prompts):
                 break
@@ -373,6 +430,11 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
                 )
             )
             wall_times_ms.append(round((time.monotonic() - started) * 1000))
+            failure_categories = _provider_failure_categories(telemetry_path)
+            failure_categories_by_turn.append(
+                failure_categories[failed_event_count:]
+            )
+            failed_event_count = len(failure_categories)
             if index == 0:
                 research_results = parse_tool_results(
                     _result_metadata(payloads[0]).get("tool_calls_cumulative")
@@ -454,8 +516,11 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         text=True,
     ).stdout.splitlines()
 
-    telemetry_path = root / "data" / artifact_id / "telemetry" / "telemetry.db"
     phase_timing = _telemetry_events(telemetry_path, "chat.phase_timing")
+    act_bootstraps = _telemetry_events(telemetry_path, "brain.act.bootstrap")
+    resolved_act_profiles = [
+        str(event.get("resolved_act_profile", "")) for event in act_bootstraps
+    ]
     provider_attempts = [
         attempt
         for event in phase_timing
@@ -467,35 +532,41 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         if event.get("purpose") == "act"
     ]
     tool_names_by_turn = [
-        {str(item.get("tool_name", "")) for item in results}
+        [str(item.get("tool_name", "")) for item in results]
         for results in tool_results_by_turn
     ]
-    exec_results = [
-        item for item in tool_results if item.get("tool_name") == "exec.run"
+    execution_tool_names_by_turn = [
+        [name for name in names if name != TOOL_REQUEST_TOOL_NAME]
+        for names in tool_names_by_turn
     ]
-    exec_verified = any(
+    code_turn_exec_results = [
+        item
+        for item in (tool_results_by_turn[1] if len(tool_results_by_turn) >= 2 else [])
+        if item.get("tool_name") == "exec.run"
+    ]
+    code_turn_exec_verified = any(
         item.get("data", {}).get("status") == "ok"
         and item.get("data", {}).get("exit_code") == 0
         and "1 passed" in str(item.get("data", {}).get("stdout", ""))
-        for item in exec_results
+        for item in code_turn_exec_results
     )
     research_passed = (
-        len(tool_names_by_turn) >= 1
-        and {"web.search", "web.fetch"} <= tool_names_by_turn[0]
+        len(execution_tool_names_by_turn) >= 1
+        and execution_tool_names_by_turn[0] == ["web.search", "web.fetch"]
         and source_url == _PYPA_GUIDE_URL
         and "result:" in response_bodies[0].lower()
     )
     code_passed = (
-        len(tool_names_by_turn) >= 2
-        and {"file.write", "exec.run"} <= tool_names_by_turn[1]
+        len(execution_tool_names_by_turn) >= 2
+        and execution_tool_names_by_turn[1] == ["file.write", "exec.run"]
         and _PYPA_GUIDE_URL in source_text
-        and exec_verified
+        and code_turn_exec_verified
         and verification.returncode == 0
         and "result:" in response_bodies[1].lower()
     )
     git_denial_passed = (
-        len(tool_names_by_turn) >= 3
-        and "git.status" in tool_names_by_turn[2]
+        len(execution_tool_names_by_turn) >= 3
+        and execution_tool_names_by_turn[2] == ["git.status"]
         and "github.dispatch_workflow" not in tool_names
         and bool(release_denials)
         and "TOOL_REQUEST_UNAVAILABLE" in response_bodies[2]
@@ -508,7 +579,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         {
             "scenario_id": scenario_id,
             "disposition": (
-                _scenario_disposition(passed, payloads[index])
+                _scenario_disposition(passed, failure_categories_by_turn[index])
                 if index < len(payloads)
                 else "not_run"
             ),
@@ -531,22 +602,26 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         int(metadata.get("total_output_tokens_used", 0) or 0)
         for metadata in metadata_by_turn
     )
-    evidence_path = root / "mnte-project-live-evidence.json"
     _write_json(
         evidence_path,
         {
+            "scenario_id": "mnte-project-corpus",
             "source_revision_start": source_revision,
             "source_revision_end": source_revision_end,
             "revision_stable": source_revision == source_revision_end,
             "run_id": launched.run_id,
             "workspace": str(workspace),
             "profile": minimax_agent_id,
+            "configured_act_profile": configured_act_profile,
+            "resolved_act_profiles": resolved_act_profiles,
             "provider": provider,
             "model": model,
             "allowed_ceiling_count": len(PROJECT_CODING_ALLOWED_TOOLS),
             "scenario_results": scenario_results,
             "discovered_source_url": source_url or "unavailable",
             "executed_tool_sequence": tool_names,
+            "execution_tool_sequence_by_turn": execution_tool_names_by_turn,
+            "provider_failure_categories_by_turn": failure_categories_by_turn,
             "requested_tools": requested,
             "activated_tools": activated_tools,
             "structured_denials": release_denials,
@@ -618,6 +693,8 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
     )
 
     assert source_revision_end == source_revision
+    assert len(resolved_act_profiles) >= len(payloads)
+    assert all(profile == "coding" for profile in resolved_act_profiles)
     assert expected_tools <= set(tool_names), tool_results
     assert "github.dispatch_workflow" not in tool_names
     assert release_denials, tool_results
