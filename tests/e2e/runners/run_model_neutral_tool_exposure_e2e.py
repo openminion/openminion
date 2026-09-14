@@ -71,7 +71,9 @@ def _scenario_evidence(root: Path, *, live_result: int | None) -> list[dict]:
         evidence.append(
             {
                 "path": None,
-                "disposition": "pass" if live_result == 0 else "failed_without_evidence",
+                "disposition": (
+                    "unavailable" if live_result == 0 else "failed_without_evidence"
+                ),
                 "scenario_id": "live-corpus",
                 "scenario_results": [],
             }
