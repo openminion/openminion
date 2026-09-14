@@ -396,7 +396,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
             if index >= len(prompts):
                 break
             prompt = prompts[index]
-            request = ProjectTurnRequest(
+            turn_request = ProjectTurnRequest(
                 run_id=launched.run_id,
                 project_run_id=f"prun_{launched.run_id}",
                 task_id=launched.task_id,
@@ -414,12 +414,12 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
                     payload={
                         "message": prompt,
                         "agent_id": minimax_agent_id,
-                        "session_id": request.session_id,
+                        "session_id": turn_request.session_id,
                         "channel": "console",
                         "target": "mnte-project",
                         "timeout_seconds": 1200,
                         "inbound_metadata": project_turn_inbound_metadata(
-                            request,
+                            turn_request,
                             base={
                                 "source": "openminion.mnte.e2e",
                                 "workspace_root": str(workspace),
