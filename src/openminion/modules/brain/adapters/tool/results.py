@@ -11,6 +11,7 @@ from openminion.modules.brain.constants import (
     BRAIN_JOB_STATUS_RUNNING,
     BRAIN_STATE_ERROR,
 )
+from openminion.modules.policy.models import PolicyControlError
 from openminion.modules.tool import RuntimeContext, ToolSpec, preferred_artifact_ref
 from openminion.modules.tool.diagnostics.events import emit_tool_execution_event
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
@@ -120,6 +121,17 @@ def _error_envelope(
         },
         "error": error,
     }
+
+
+def _policy_error(exc: PolicyControlError, latency_ms: int) -> dict[str, Any]:
+    return _error_envelope(
+        status=BRAIN_STATE_ERROR,
+        summary="Tool approval failed",
+        code=exc.code,
+        message=str(exc),
+        latency_ms=latency_ms,
+        details=exc.details,
+    )
 
 
 def _tool_allowlist_error(tool_name: str) -> dict[str, Any]:

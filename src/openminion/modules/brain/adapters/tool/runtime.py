@@ -67,6 +67,7 @@ from .policy_context import (
 from .results import (
     _error_envelope,
     _normalized_artifact_refs,
+    _policy_error,
     _tool_allowlist_error,
     run_runtime_tool,
     run_tool_spec,
@@ -74,8 +75,7 @@ from .results import (
 from .workspace_policy import workspace_context_policy
 
 _WORKSPACE_OVERRIDE: ContextVar[Path | None] = ContextVar(
-    "openminion_tool_workspace_override",
-    default=None,
+    "openminion_tool_workspace_override", default=None
 )
 _ADDED_WORKSPACE_ROOTS: ContextVar[tuple[Path, ...]] = ContextVar(
     "openminion_tool_added_workspace_roots",
@@ -290,14 +290,7 @@ class ToolAdapter:
                     "allow_once" if approved else "deny",
                 )
             except PolicyControlError as exc:
-                return _error_envelope(
-                    status=BRAIN_STATE_ERROR,
-                    summary="Tool approval failed",
-                    code=exc.code,
-                    message=str(exc),
-                    latency_ms=int((time.monotonic() - start_time) * 1000),
-                    details=exc.details,
-                )
+                return _policy_error(exc, int((time.monotonic() - start_time) * 1000))
         if not approved:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,

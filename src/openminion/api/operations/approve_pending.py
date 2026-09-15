@@ -20,19 +20,19 @@ def parse_decision(raw: Any) -> str | None:
     return normalized if normalized in APPROVAL_CHOICES else None
 
 
-def _invalid_decision_error(raw: Any) -> dict[str, Any]:
+def _invalid_decision_error(
+    raw: Any, *, choices: tuple[str, ...] = APPROVAL_CHOICES
+) -> dict[str, Any]:
     return {
         "ok": False,
         "error": {
             "code": "INVALID_DECISION",
-            "message": (
-                "approval decision must be one of: " + ", ".join(APPROVAL_CHOICES)
-            ),
+            "message": ("approval decision must be one of: " + ", ".join(choices)),
             "details": {
                 "received": raw
                 if isinstance(raw, (str, int, float, bool, type(None)))
                 else repr(raw),
-                "choices": list(APPROVAL_CHOICES),
+                "choices": list(choices),
             },
         },
     }
@@ -99,7 +99,7 @@ def process_approval_decision(
             ("ops.command", "run"),
         }
         if exact_pending and decision not in {"allow_once", "deny"}:
-            return _invalid_decision_error(decision)
+            return _invalid_decision_error(decision, choices=("allow_once", "deny"))
         if exact_pending:
             try:
                 grant_id = policyctl.resolve_confirmation(approval_id, decision)
