@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -294,6 +295,47 @@ def test_ssh_transport_cancels_active_operation(monkeypatch) -> None:
     assert not thread.is_alive()
     assert result["value"].cancelled is True
     assert result["value"].return_code == 130
+
+
+def test_ssh_transport_cancel_enqueues_before_active_cleanup() -> None:
+    transport = SshTransport(lambda _: "password")
+    begin_cleanup = threading.Event()
+    cleanup_acquired = threading.Event()
+
+    class Connection:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    connection = Connection()
+
+    class Loop:
+        def call_soon_threadsafe(self, callback) -> None:
+            begin_cleanup.set()
+            assert not cleanup_acquired.wait(timeout=0.05)
+            callback()
+
+    with transport._lock:
+        transport._active["near-complete"] = (
+            cast(Any, Loop()),
+            cast(Any, connection),
+        )
+
+    def cleanup() -> None:
+        assert begin_cleanup.wait(timeout=1)
+        with transport._lock:
+            transport._active.pop("near-complete", None)
+            transport._cancelled.discard("near-complete")
+            cleanup_acquired.set()
+
+    thread = threading.Thread(target=cleanup)
+    thread.start()
+    assert transport.cancel("near-complete") is True
+    thread.join(timeout=1)
+
+    assert connection.closed is True
+    assert cleanup_acquired.is_set()
 
 
 def test_ssh_target_rejects_environment_forwarding() -> None:
