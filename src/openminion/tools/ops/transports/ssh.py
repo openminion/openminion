@@ -381,12 +381,11 @@ class SshTransport:
     def cancel(self, operation_id: str) -> bool:
         with self._lock:
             active = self._active.get(operation_id)
-        if active is None:
-            return False
-        loop, connection = active
-        with self._lock:
+            if active is None:
+                return False
+            loop, connection = active
             self._cancelled.add(operation_id)
-        loop.call_soon_threadsafe(connection.close)
+            loop.call_soon_threadsafe(connection.close)
         return True
 
     def close(self) -> None:
