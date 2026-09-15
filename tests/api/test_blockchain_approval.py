@@ -121,6 +121,13 @@ def test_exact_ops_command_rejects_broad_approval(monkeypatch, decision: str) ->
         body=body,
     )
 
-    assert result["error"]["code"] == "INVALID_DECISION"
+    assert result["error"] == {
+        "code": "INVALID_DECISION",
+        "message": "approval decision must be one of: allow_once, deny",
+        "details": {
+            "received": decision,
+            "choices": ["allow_once", "deny"],
+        },
+    }
     runtime.action_policy.resolve_confirmation.assert_not_called()
     runtime.action_policy.create_grant_from_confirmation.assert_not_called()
