@@ -37,9 +37,9 @@ from openminion.base.config.tool_selection import ToolSelectionConfig
 @dataclass
 class ToolPolicyConfig:
     default_required_scopes: list[str] = field(default_factory=lambda: ["tool.execute"])
-    max_calls_per_run: int = 50
-    max_calls_per_tool: int = 4
-    max_budget_cost_per_run: int = 16
+    max_calls_per_run: int = 100
+    max_calls_per_tool: int = 50
+    max_budget_cost_per_run: int = 200
 
 
 @dataclass
@@ -65,9 +65,9 @@ class RuntimeConfig:
     session_summary_enrichment_enabled: bool = False
     session_thread_ttl_seconds: int = 0
     session_writer_lease_seconds: int = 0
-    agent_loop_max_steps: int = 50
+    agent_loop_max_steps: int = 100
     agent_loop_tool_result_max_chars: int = 4000
-    brain_turn_timeout_seconds: int = 120
+    brain_turn_timeout_seconds: int = 300
     provider_retry_max_attempts: int = 3
     chat_turn_timeout_seconds: float = 90.0
     chat_turn_max_attempts: int = 2
