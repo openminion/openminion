@@ -132,6 +132,7 @@ def _provider_failure_categories(telemetry_path: Path) -> list[str]:
 
 def _failure_disposition(categories: list[str]) -> str:
     if {
+        "EMPTY_PAYLOAD",
         "EMPTY_PROVIDER_RESPONSE",
         "PROVIDER_ERROR",
         "RATE_LIMITED",
