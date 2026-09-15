@@ -9,6 +9,7 @@ from typing import Any, Iterator, Mapping, cast
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.base.config.env import resolve_environment_config
 from openminion.modules.artifact.refs import create_default_artifactctl
+from openminion.modules.policy.models import PolicyControlError
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_NEEDS_USER,
     BRAIN_ACTION_STATUS_SUCCESS,
@@ -283,10 +284,20 @@ class ToolAdapter:
                     latency_ms=int((time.monotonic() - start_time) * 1000),
                     details={"reason": "action_policy_unavailable"},
                 )
-            self.policy_ctl.resolve_confirmation(
-                approval_id,
-                "allow_once" if approved else "deny",
-            )
+            try:
+                self.policy_ctl.resolve_confirmation(
+                    approval_id,
+                    "allow_once" if approved else "deny",
+                )
+            except PolicyControlError as exc:
+                return _error_envelope(
+                    status=BRAIN_STATE_ERROR,
+                    summary="Tool approval failed",
+                    code=exc.code,
+                    message=str(exc),
+                    latency_ms=int((time.monotonic() - start_time) * 1000),
+                    details=exc.details,
+                )
         if not approved:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,

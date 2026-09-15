@@ -126,7 +126,7 @@ class _BoundedRedactedStream:
 class SshTransport:
     def __init__(self, credential_reader: CredentialReader) -> None:
         self._credential_reader = credential_reader
-        self._active: dict[str, _SshConnection] = {}
+        self._active: dict[str, tuple[asyncio.AbstractEventLoop, _SshConnection]] = {}
         self._cancelled: set[str] = set()
         self._lock = threading.RLock()
 
@@ -211,7 +211,10 @@ class SshTransport:
         )
         if operation_id:
             with self._lock:
-                self._active[operation_id] = connection
+                self._active[operation_id] = (
+                    asyncio.get_running_loop(),
+                    connection,
+                )
         try:
             command = shlex.join(argv)
             if cwd:
@@ -230,6 +233,17 @@ class SshTransport:
             )
             stdout.finish()
             stderr.finish()
+            with self._lock:
+                cancelled = operation_id in self._cancelled
+            if cancelled:
+                return TransportResult(
+                    argv=argv,
+                    return_code=130,
+                    stdout=stdout.value,
+                    stderr=stderr.value,
+                    cancelled=True,
+                    truncated=stdout.truncated or stderr.truncated,
+                )
         except asyncio.TimeoutError:
             stdout.finish()
             stderr.finish()
@@ -366,12 +380,13 @@ class SshTransport:
 
     def cancel(self, operation_id: str) -> bool:
         with self._lock:
-            connection = self._active.get(operation_id)
-        if connection is None:
+            active = self._active.get(operation_id)
+        if active is None:
             return False
+        loop, connection = active
         with self._lock:
             self._cancelled.add(operation_id)
-        connection.close()
+        loop.call_soon_threadsafe(connection.close)
         return True
 
     def close(self) -> None:

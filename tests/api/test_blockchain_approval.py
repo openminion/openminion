@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+import pytest
+
 from openminion.api.operations.approve_pending import process_approval_decision
 from openminion.modules.policy.models import PolicyControlError
 
@@ -96,4 +98,29 @@ def test_exact_ops_command_approval_resolves_server_owned_pending_row(
     runtime.action_policy.resolve_confirmation.assert_called_once_with(
         "approval-1", "allow_once"
     )
+    runtime.action_policy.create_grant_from_confirmation.assert_not_called()
+
+
+@pytest.mark.parametrize("decision", ["allow_session", "allow_forever"])
+def test_exact_ops_command_rejects_broad_approval(monkeypatch, decision: str) -> None:
+    runtime = MagicMock()
+    monkeypatch.setattr(
+        "openminion.api.operations.approve_pending.resolve_runtime_manager",
+        lambda *, config_path, runtime: (None, runtime, False),
+    )
+    body = _body(decision)
+    body["invocation"] = {
+        "tool": "ops.command",
+        "method": "run",
+        "args": {"plan_id": "plan-1", "plan_hash": "a" * 64},
+    }
+
+    result = process_approval_decision(
+        config_path=None,
+        runtime=runtime,
+        body=body,
+    )
+
+    assert result["error"]["code"] == "INVALID_DECISION"
+    runtime.action_policy.resolve_confirmation.assert_not_called()
     runtime.action_policy.create_grant_from_confirmation.assert_not_called()
