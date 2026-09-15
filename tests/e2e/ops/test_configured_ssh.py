@@ -37,7 +37,7 @@ class _SshFixture:
 @contextmanager
 def _ssh_server() -> Iterator[_SshFixture]:
     ready = threading.Event()
-    state: dict[str, Any] = {}
+    state: dict[str, Any] = {"cancel_started": threading.Event()}
     client_key = asyncssh.generate_private_key("ssh-ed25519")
     client_public = client_key.export_public_key()
 
@@ -91,6 +91,8 @@ def _ssh_server() -> Iterator[_SshFixture]:
                 process.exit(0)
 
             asyncio.get_running_loop().call_later(0.05, finish)
+        elif "cancel-fixture" in command:
+            state["cancel_started"].set()
         else:
             process.stdout.write(f"executed:{process.command}\n")
             process.exit(0)
@@ -346,3 +348,27 @@ def test_configured_ssh_zero_exit_does_not_replace_health_verification() -> None
     assert restart.status == "succeeded"
     assert health.status == "failed"
     assert service.inspect_evidence(health.evidence_id).return_code == 22
+
+
+def test_configured_ssh_cross_thread_cancel(monkeypatch) -> None:
+    monkeypatch.setenv("PYTHONASYNCIODEBUG", "1")
+    with _ssh_server() as fixture:
+        transport = SshTransport(lambda _ref: "fixture-password")
+        result: dict[str, Any] = {}
+
+        def run() -> None:
+            result["value"] = transport.run(
+                _target(fixture, "password"),
+                ("printf", "cancel-fixture"),
+                timeout_seconds=5,
+                operation_id="cancel-fixture",
+            )
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        assert fixture.service_state["cancel_started"].wait(timeout=2)
+        assert transport.cancel("cancel-fixture") is True
+        thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert result["value"].cancelled is True

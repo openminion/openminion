@@ -338,12 +338,14 @@ class PolicyCtl:
         tool: str,
         method: str,
         invocation_hash: str,
+        session_id: str | None = None,
     ) -> PolicyGrant | None:
         return self._store.resolve_matching_active_grant_for_use(
             subject_id=subject_id,
             tool=tool,
             method=method,
             invocation_hash=invocation_hash,
+            session_id=session_id,
         )
 
     def list_grants(

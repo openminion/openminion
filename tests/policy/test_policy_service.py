@@ -259,6 +259,33 @@ def test_ops_command_rejects_broad_and_wrong_session_grants(tmp_path) -> None:
         ctl.close()
 
 
+def test_public_grant_resolution_binds_session(tmp_path) -> None:
+    ctl = PolicyCtl.with_sqlite(
+        tmp_path / "policy.db", config=PolicyConfig(mode="enforce")
+    )
+    invocation = _ops_invocation()
+    invocation_hash = stable_invocation_hash(
+        tool="ops.command", method="run", args=invocation["args"]
+    )
+    try:
+        pending = ctl.check(invocation, _ctx())
+        assert pending.approval_id
+        ctl.resolve_confirmation(pending.approval_id, "allow_once")
+
+        assert (
+            ctl.resolve_matching_active_grant_for_use(
+                subject_id="local",
+                tool="ops.command",
+                method="run",
+                invocation_hash=invocation_hash,
+                session_id="sess-2",
+            )
+            is None
+        )
+    finally:
+        ctl.close()
+
+
 def test_ops_command_requires_enforcing_policy(tmp_path) -> None:
     for mode in ("disabled", "log_only"):
         ctl = PolicyCtl.with_sqlite(

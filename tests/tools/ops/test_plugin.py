@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
 
-from openminion.modules.policy.models import PolicyConfig
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+from openminion.modules.policy.models import PolicyConfig, PolicyControlError
 from openminion.modules.policy.runtime.service import PolicyCtl
 from openminion.modules.tool.framework import derive_manifest, derive_tool_specs
 from openminion.modules.tool.base import ToolExecutionContext
@@ -339,3 +340,39 @@ def test_focus_tool_adapter_resolves_ops_confirmation_once(tmp_path) -> None:
     assert result["outputs"]["data"]["status"] == "succeeded"
     assert len(approvals) == 1
     assert service.jobs.list()[0].policy_grant_id
+
+
+def test_focus_tool_adapter_returns_policy_resolution_error(tmp_path) -> None:
+    policy = PolicyCtl.with_sqlite(
+        tmp_path / "policy.db", config=PolicyConfig(mode="enforce")
+    )
+    service = local_ops_service()
+    service.action_policy = policy
+    plan = service.plan_command(
+        target_id="local", argv=("printf", "ready"), session_id="session-1"
+    )
+    adapter = ToolAdapter(
+        workspace_root=tmp_path,
+        policy_ctl=policy,
+        ops_service=service,
+        artifactctl=SimpleNamespace(),
+    )
+    adapter.set_approval_callback(lambda *_args: True)
+    policy.resolve_confirmation = MagicMock(
+        side_effect=PolicyControlError(
+            "PENDING_CONFIRMATION_EXPIRED",
+            "Pending confirmation expired.",
+        )
+    )
+
+    result = adapter.execute(
+        command={
+            "tool_name": TOOL_OPS_COMMAND_RUN,
+            "args": {"plan_id": plan.plan_id, "plan_hash": plan.plan_hash},
+        },
+        session_id="session-1",
+        trace_id="trace-1",
+    )
+
+    assert result["status"] == "error"
+    assert result["error"]["code"] == "PENDING_CONFIRMATION_EXPIRED"
