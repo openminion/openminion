@@ -236,14 +236,7 @@ class SshTransport:
             with self._lock:
                 cancelled = operation_id in self._cancelled
             if cancelled:
-                return TransportResult(
-                    argv=argv,
-                    return_code=130,
-                    stdout=stdout.value,
-                    stderr=stderr.value,
-                    cancelled=True,
-                    truncated=stdout.truncated or stderr.truncated,
-                )
+                return self._cancelled_result(argv, stdout, stderr)
         except asyncio.TimeoutError:
             stdout.finish()
             stderr.finish()
@@ -260,16 +253,7 @@ class SshTransport:
                 cancelled = operation_id in self._cancelled
             if not cancelled:
                 raise RuntimeError(f"SSH command failed: {type(exc).__name__}") from exc
-            stdout.finish()
-            stderr.finish()
-            return TransportResult(
-                argv=argv,
-                return_code=130,
-                stdout=stdout.value,
-                stderr=stderr.value,
-                cancelled=True,
-                truncated=stdout.truncated or stderr.truncated,
-            )
+            return self._cancelled_result(argv, stdout, stderr)
         finally:
             if operation_id:
                 with self._lock:
@@ -282,6 +266,23 @@ class SshTransport:
             return_code=int(completed.exit_status),
             stdout=stdout.value,
             stderr=stderr.value,
+            truncated=stdout.truncated or stderr.truncated,
+        )
+
+    @staticmethod
+    def _cancelled_result(
+        argv: tuple[str, ...],
+        stdout: _BoundedRedactedStream,
+        stderr: _BoundedRedactedStream,
+    ) -> TransportResult:
+        stdout.finish()
+        stderr.finish()
+        return TransportResult(
+            argv=argv,
+            return_code=130,
+            stdout=stdout.value,
+            stderr=stderr.value,
+            cancelled=True,
             truncated=stdout.truncated or stderr.truncated,
         )
 
