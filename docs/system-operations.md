@@ -85,15 +85,33 @@ runtime. Inspect readiness, create a plan, then run the exact reviewed hash:
 
 ```bash
 opsctl status --config /path/to/openminion.yaml
-opsctl command-plan staging-web uname -a --config /path/to/openminion.yaml
-opsctl command-run opplan-... PLAN_HASH --confirm \
+opsctl target-inspect staging-web --probe --config /path/to/openminion.yaml
+opsctl command-plan staging-web uname -a --session SESSION_ID \
+  --config /path/to/openminion.yaml
+opsctl command-run opplan-... PLAN_HASH --session SESSION_ID --confirm \
   --config /path/to/openminion.yaml
 opsctl job-inspect opjob-... --config /path/to/openminion.yaml
 opsctl evidence-list --target-id staging-web \
   --config /path/to/openminion.yaml
-opsctl file-read staging-web /srv/openminion/status.txt --max-bytes 4096 \
+```
+
+`target-inspect` is metadata-only unless `--probe` is present. A probe performs
+one bounded authenticated SSH handshake and closes it; it does not persist a
+live connection. `command-run --stream` optionally writes redacted SSH output
+chunks to stderr while keeping the final job JSON on stdout. Focus and API
+callers continue to receive pending or final results rather than live chunks.
+
+If the client process exits while a command remains last-known running, inspect
+the remote state independently before correcting the local record:
+
+```bash
+opsctl job-mark-interrupted opjob-... --confirm \
+  --reason "remote state checked after client exit" \
   --config /path/to/openminion.yaml
 ```
+
+This records an operator conclusion without sending another SSH command. It
+does not prove remote termination and never makes the same plan replayable.
 
 Plans, jobs, and redacted evidence are stored below
 `OPENMINION_DATA_ROOT/ops/`. A successful exit records process facts only; it
@@ -103,8 +121,11 @@ The managed command path is intentionally bounded: one target, structured
 argv, no environment/stdin forwarding, no PTY or file transfer, no
 bastion/fan-out, and no production or privileged mutation. Kubernetes never
 adds a shell wrapper. SSM uses only its target's allowlisted document and never
-fans out. `ops.file.read` is limited to configured absolute workspace/log
-scopes and a bounded byte count; it does not add write or transfer behavior.
+fans out. `ops.file.read` is limited to transports which implement scoped
+reads, configured absolute workspace/log scopes, and a bounded byte count. SSH
+does not advertise scoped file reads because its command transport cannot
+provide race-resistant path containment; use an explicitly approved command
+when remote account permissions are the intended authority.
 Background worker pools and post-dispatch retry remain deferred until a real
 long-running command workflow requires them.
 
@@ -116,6 +137,18 @@ Built-in ops guidance is injected by tool-family ownership rather than a
 separate capability-pack framework. Optional skills can add deeper workflows
 such as Linux diagnostics or incident handoff, but the base safety rules stay
 with `tools/ops`.
+
+## Operations telemetry
+
+The existing module-operation catalog records `transport.probe`,
+`transport.authorization`, `transport.dispatch`, `transport.cancel`, and
+`transport.result`. Events carry target/revision, transport/capability, bounded
+duration and error facts plus the related job, plan, attempt phase, cancellation,
+remote outcome, approval, grant, and invocation-hash identities when present.
+Durable job rows remain the execution-state owner and evidence rows remain the
+observed-result owner. Structural telemetry never contains argv, output chunks,
+credential values, or endpoint trust material, and it does not turn an unknown
+remote outcome into success.
 
 ## Debugging evidence owners
 
@@ -208,9 +241,16 @@ OPENMINION_OPS_SSH_PASSWORD='...' \
   tests/e2e/ops/test_live_ssh.py
 ```
 
-The smoke submits the closed `host.snapshot` profile through the normal service,
-durable-job, evidence, and pinned-key transport path. The bounded command path
-must first pass deterministic non-production tests before adding a harmless
-live command to this smoke. After the run, revoke or rotate the dedicated
-credential and remove its temporary target entry. Do not reuse production
-credentials for this check.
+The smoke submits the closed `host.snapshot` profile and one harmless `uname`
+plan through the normal service, durable-job, canonical allow-once approval,
+evidence, and pinned-key transport path. After the run, revoke or rotate the
+dedicated credential and remove its temporary target entry. Do not reuse
+production credentials for this check.
+
+A service-restart acceptance run is separate and must name an approved
+non-production target revision, dedicated SSH identity, user unit, target-local
+health URL, expected response body, timeouts, and cleanup action before it
+runs. The remote account must support `systemctl --user` without forwarding a
+local environment. Verify the unit with `systemctl --user show` and the health
+response with target-local `curl`; a zero command exit alone is not a healthy
+service result.

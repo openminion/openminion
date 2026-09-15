@@ -16,7 +16,21 @@ def _invocation(path: str = "/tmp/demo.txt") -> dict:
 
 
 def _ctx() -> dict:
-    return {"trace_id": "trace-1", "session_id": "sess-1", "agent_id": "agent-1"}
+    return {
+        "trace_id": "trace-1",
+        "session_id": "sess-1",
+        "agent_id": "agent-1",
+        "subject_id": "local",
+    }
+
+
+def _ops_invocation(plan_id: str = "plan-1", plan_hash: str = "a" * 64) -> dict:
+    return {
+        "tool": "ops.command",
+        "method": "run",
+        "args": {"plan_id": plan_id, "plan_hash": plan_hash},
+        "invocation_id": plan_id,
+    }
 
 
 def test_disabled_mode_allows_without_confirmation(tmp_path):
@@ -180,3 +194,79 @@ def test_parse_confirmation_response_honors_custom_tokens(tmp_path):
         assert ctl.parse_confirmation_response("yes") == "unclear"
     finally:
         ctl.close()
+
+
+def test_ops_command_requires_exact_pending_once_grant(tmp_path) -> None:
+    ctl = PolicyCtl.with_sqlite(
+        tmp_path / "policy.db", config=PolicyConfig(mode="enforce")
+    )
+    invocation = _ops_invocation()
+    try:
+        pending = ctl.check(invocation, _ctx())
+        assert pending.decision == "REQUIRE_CONFIRM"
+        assert pending.approval_id
+        assert pending.confirm_request == {
+            "approval_id": pending.approval_id,
+            "choices": ["allow_once", "deny"],
+            "preview": {"plan_id": "plan-1", "plan_hash": "a" * 64},
+        }
+
+        ctl.resolve_confirmation(pending.approval_id, "allow_once")
+        allowed = ctl.check(invocation, _ctx())
+        repeated = ctl.check(invocation, _ctx())
+
+        assert allowed.decision == "ALLOW"
+        assert allowed.reason_code == "EXACT_PENDING_ALLOW"
+        assert allowed.approval_id == pending.approval_id
+        assert allowed.matched_grant_id
+        assert repeated.decision == "REQUIRE_CONFIRM"
+        assert repeated.approval_id != pending.approval_id
+    finally:
+        ctl.close()
+
+
+def test_ops_command_rejects_broad_and_wrong_session_grants(tmp_path) -> None:
+    ctl = PolicyCtl.with_sqlite(
+        tmp_path / "policy.db", config=PolicyConfig(mode="enforce")
+    )
+    invocation = _ops_invocation()
+    invocation_hash = stable_invocation_hash(
+        tool="ops.command", method="run", args=invocation["args"]
+    )
+    try:
+        ctl.create_grant(
+            PolicyGrantInput(
+                effect="allow",
+                tool="ops.command",
+                method="run",
+                duration_type="forever",
+            )
+        )
+        assert ctl.check(invocation, _ctx()).decision == "REQUIRE_CONFIRM"
+
+        pending = ctl.check(invocation, _ctx())
+        assert pending.approval_id
+        ctl.resolve_confirmation(pending.approval_id, "allow_once")
+        wrong_session = {**_ctx(), "session_id": "sess-2"}
+        assert ctl.check(invocation, wrong_session).decision == "REQUIRE_CONFIRM"
+
+        grants = ctl.list_grants(tool="ops.command", method="run", active_only=True)
+        exact = next(
+            grant for grant in grants if grant.invocation_hash == invocation_hash
+        )
+        assert exact.uses_count == 0
+    finally:
+        ctl.close()
+
+
+def test_ops_command_requires_enforcing_policy(tmp_path) -> None:
+    for mode in ("disabled", "log_only"):
+        ctl = PolicyCtl.with_sqlite(
+            tmp_path / f"{mode}.db", config=PolicyConfig(mode=mode)
+        )
+        try:
+            decision = ctl.check(_ops_invocation(), _ctx())
+            assert decision.decision == "DENY"
+            assert decision.reason_code == "POLICY_MODE_UNSUPPORTED"
+        finally:
+            ctl.close()

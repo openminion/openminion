@@ -16,6 +16,13 @@ ContainerRuntime = Literal["docker", "podman"]
 ClaimStatus = Literal["observed", "failed", "partial", "unknown", "rolled_back"]
 OperationRisk = Literal["read", "write_safe"]
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+AttemptPhase = Literal[
+    "", "awaiting_approval", "claimed", "dispatch_intent", "terminal"
+]
+RemoteOutcome = Literal["unknown", "not_dispatched", "exit_observed"]
+CancelStatus = Literal[
+    "", "cancel_requested", "cancel_delivered", "cancel_not_delivered"
+]
 
 
 class StrictModel(BaseModel):
@@ -290,6 +297,7 @@ class EvidenceRecord(StrictModel):
     rollback_state: str = ""
     provider_request_id: str = ""
     timed_out: bool = False
+    cancelled: bool = False
     truncated: bool = False
 
 
@@ -304,6 +312,18 @@ class OperationJob(StrictModel):
     error: str = ""
     expires_at: str = ""
     lease_owner: str = ""
+    plan_id: str = ""
+    attempt_phase: AttemptPhase = ""
+    claim_token: str = ""
+    cancel_requested: bool = False
+    cancel_status: CancelStatus = ""
+    remote_outcome: RemoteOutcome = "unknown"
+    approval_id: str = ""
+    policy_grant_id: str = ""
+    policy_invocation_hash: str = ""
+    interrupted_at: str = ""
+    interruption_reason: str = ""
+    interrupted_by: str = ""
 
 
 class CommandPlan(StrictModel):

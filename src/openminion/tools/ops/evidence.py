@@ -70,6 +70,7 @@ def build_evidence(
         rollback_state=rollback_state,
         provider_request_id=result.provider_request_id,
         timed_out=result.timed_out,
+        cancelled=result.cancelled,
         truncated=result.truncated,
     )
 

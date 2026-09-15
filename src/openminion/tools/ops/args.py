@@ -15,6 +15,10 @@ class TargetArgs(StrictArgs):
     target_id: str = Field(min_length=1)
 
 
+class TargetInspectArgs(TargetArgs):
+    probe: bool = False
+
+
 class ObservationArgs(TargetArgs):
     timeout_seconds: float = Field(default=30.0, gt=0, le=300)
 

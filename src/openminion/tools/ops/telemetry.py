@@ -6,7 +6,7 @@ from typing import Any
 
 from openminion.modules.telemetry.events.module import emit_module_telemetry
 
-from .contracts import EvidenceRecord, OperationTarget
+from .contracts import EvidenceRecord, OperationJob, OperationTarget
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,6 +20,7 @@ def emit_transport_event(
     status: str,
     duration_ms: int = 0,
     evidence: EvidenceRecord | None = None,
+    job: OperationJob | None = None,
     error_code: str = "",
 ) -> bool:
     provider_digest = ""
@@ -52,6 +53,15 @@ def emit_transport_event(
             "truncated": bool(evidence and evidence.truncated),
             "error_code": error_code,
             "provider_request_id_digest": provider_digest,
+            "job_id": job.job_id if job else "",
+            "plan_id": job.plan_id if job else "",
+            "attempt_phase": job.attempt_phase if job else "",
+            "cancel_requested": bool(job and job.cancel_requested),
+            "cancel_status": job.cancel_status if job else "",
+            "remote_outcome": job.remote_outcome if job else "",
+            "approval_id": job.approval_id if job else "",
+            "policy_grant_id": job.policy_grant_id if job else "",
+            "policy_invocation_hash": job.policy_invocation_hash if job else "",
         },
         logger=_LOGGER,
     )

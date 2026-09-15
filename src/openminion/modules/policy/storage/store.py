@@ -561,6 +561,7 @@ class _PolicyStoreMixin(PolicyStore):
         tool: str,
         method: str,
         invocation_hash: str,
+        session_id: str | None = None,
     ) -> PolicyGrant | None:
         now = utc_now_iso()
         invalid_approval_id: str | None = None
@@ -585,18 +586,28 @@ class _PolicyStoreMixin(PolicyStore):
             grant = self._row_to_grant(rows[0])
             approval_rows = self._record_store.query_dicts(
                 """
-                SELECT preview_json FROM policy_pending_confirmations
+                SELECT preview_json, state, session_id
+                FROM policy_pending_confirmations
                 WHERE approval_id = ? AND tool = ? AND method = ?
                   AND invocation_hash = ?
                 """,
                 (grant.approval_id, tool, method, invocation_hash),
             )
-            preview = (
-                _parse_json(approval_rows[0]["preview_json"], {})
-                if approval_rows
-                else None
-            )
-            if _blockchain_preview_is_invalid(preview):
+            if (
+                not approval_rows
+                or str(approval_rows[0]["state"]) != "allowed"
+                or (
+                    session_id is not None
+                    and str(approval_rows[0]["session_id"] or "") != session_id
+                )
+            ):
+                return None
+            preview = _parse_json(approval_rows[0]["preview_json"], {})
+            if (
+                tool == "blockchain"
+                and method == "send_transaction"
+                and _blockchain_preview_is_invalid(preview)
+            ):
                 self._record_store.execute_count(
                     """
                     UPDATE policy_grants

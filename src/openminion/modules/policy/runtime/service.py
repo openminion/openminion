@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Optional, cast
@@ -27,9 +27,6 @@ from ..models import (
 )
 from ..interfaces import POLICY_INTERFACE_VERSION
 from ..constants import (
-    BLOCKCHAIN_CONFIRMATION_TTL_SECONDS,
-    BLOCKCHAIN_POLICY_TOOL,
-    BLOCKCHAIN_SEND_METHOD,
     POLICY_DECISION_ALLOW,
     POLICY_DECISION_DENY,
     POLICY_DECISION_REQUIRE_CONFIRM,
@@ -68,7 +65,11 @@ from ..storage.store import SQLitePolicyStore
 from .confirmation import (
     blockchain_preview_invalid_decision,
     build_confirm_request,
+    get_or_create_exact_confirmation,
+    is_exact_blockchain_send,
+    is_exact_ops_command,
     parse_confirmation_response,
+    resolve_exact_ops_decision,
 )
 
 
@@ -85,24 +86,17 @@ _RISK_ORDER: Dict[RiskClass, int] = {
 
 def _arg_path(args: Dict[str, Any]) -> Optional[str]:
     for key in ("path", "root"):
-        value = args.get(key)
-        if value is not None:
-            text = str(value)
-            if text:
-                return text
+        text = _opt_str(args.get(key))
+        if text:
+            return text
     return None
 
 
 def _arg_command(args: Dict[str, Any]) -> Optional[str]:
     argv = args.get("argv")
     if isinstance(argv, list):
-        command = " ".join(str(item) for item in argv).strip()
-        return command or None
-    command = args.get("command")
-    if command is None:
-        return None
-    text = str(command).strip()
-    return text or None
+        return _opt_str(" ".join(str(item) for item in argv))
+    return _opt_str(args.get("command"))
 
 
 def _arg_domain(args: Dict[str, Any]) -> Optional[str]:
@@ -110,9 +104,7 @@ def _arg_domain(args: Dict[str, Any]) -> Optional[str]:
     if domain:
         return domain
     url = args.get("url")
-    if isinstance(url, str):
-        return _opt_str(urlparse(url).hostname)
-    return None
+    return _opt_str(urlparse(url).hostname) if isinstance(url, str) else None
 
 
 @dataclass(frozen=True)
@@ -191,7 +183,8 @@ class PolicyCtl:
     ) -> PolicyDecision:
         inv = self._normalize_invocation(invocation)
         csum = self._normalize_context(ctx)
-        exact_blockchain_send = self._is_exact_blockchain_send(inv.tool, inv.method)
+        exact_blockchain_send = is_exact_blockchain_send(inv.tool, inv.method)
+        exact_ops_command = is_exact_ops_command(inv.tool, inv.method)
         risk = (
             self._resolve_risk(inv)
             if exact_blockchain_send
@@ -205,14 +198,15 @@ class PolicyCtl:
             )
             self._log_decision(inv=inv, ctx=csum, decision=decision)
             return decision
-        if exact_blockchain_send and mode not in {
+        if (exact_blockchain_send or exact_ops_command) and mode not in {
             POLICY_MODE_ENFORCE,
             POLICY_MODE_ENFORCE_SAFE,
         }:
+            action = "operations command" if exact_ops_command else "blockchain send"
             decision = PolicyDecision(
                 decision=POLICY_DECISION_DENY,
                 reason_code="POLICY_MODE_UNSUPPORTED",
-                reason="Enforcing policy is required for blockchain send.",
+                reason=f"Enforcing policy is required for {action}.",
                 risk=risk,
                 invocation_hash=inv.invocation_hash,
                 details={"mode": mode},
@@ -253,7 +247,7 @@ class PolicyCtl:
         return enforced
 
     def create_grant(self, grant: PolicyGrantInput) -> str:
-        if self._is_exact_blockchain_send(grant.tool, grant.method):
+        if is_exact_blockchain_send(grant.tool, grant.method):
             raise PolicyControlError(
                 "BLOCKCHAIN_SEND_GRANT_REQUIRES_CONFIRMATION",
                 "Blockchain send grants require a pending confirmation.",
@@ -277,7 +271,7 @@ class PolicyCtl:
         max_uses: Optional[int] = None,
     ) -> str:
         inv = self._normalize_invocation(invocation)
-        if self._is_exact_blockchain_send(inv.tool, inv.method):
+        if is_exact_blockchain_send(inv.tool, inv.method):
             raise PolicyControlError(
                 "BLOCKCHAIN_SEND_GRANT_REQUIRES_CONFIRMATION",
                 "Blockchain send grants require a pending confirmation.",
@@ -399,7 +393,7 @@ class PolicyCtl:
         subject_id = csum.subject_id or effective_config.subject_id_default
         candidates = self._store.list_grants(subject_id=subject_id, active_only=True)
         matches = self._find_matching_grants(candidates, inv=inv, csum=csum, risk=risk)
-        if self._is_exact_blockchain_send(inv.tool, inv.method):
+        if is_exact_blockchain_send(inv.tool, inv.method):
             matches = [match for match in matches if match.grant.approval_id]
         selected = self._select_match(matches)
         if selected is not None:
@@ -413,20 +407,31 @@ class PolicyCtl:
                     matched_grant_id=grant.grant_id,
                     details={"grant_id": grant.grant_id},
                 )
-            if consume_grants and not self._is_exact_blockchain_send(
-                inv.tool, inv.method
-            ):
-                self._store.consume_grant_use(grant.grant_id)
-            return PolicyDecision(
-                decision=POLICY_DECISION_ALLOW,
-                reason_code="EXPLICIT_ALLOW",
-                reason="Allowed by explicit grant",
+            if not is_exact_ops_command(inv.tool, inv.method):
+                if consume_grants and not is_exact_blockchain_send(
+                    inv.tool, inv.method
+                ):
+                    self._store.consume_grant_use(grant.grant_id)
+                return PolicyDecision(
+                    decision=POLICY_DECISION_ALLOW,
+                    reason_code="EXPLICIT_ALLOW",
+                    reason="Allowed by explicit grant",
+                    risk=risk,
+                    matched_grant_id=grant.grant_id,
+                    approval_id=grant.approval_id,
+                    invocation_hash=inv.invocation_hash,
+                    details={"grant_id": grant.grant_id},
+                )
+        if is_exact_ops_command(inv.tool, inv.method):
+            decision = resolve_exact_ops_decision(
+                store=self._store,
+                invocation=inv,
+                context=csum,
+                subject_id=subject_id,
                 risk=risk,
-                matched_grant_id=grant.grant_id,
-                approval_id=grant.approval_id,
-                invocation_hash=inv.invocation_hash,
-                details={"grant_id": grant.grant_id},
             )
+            if decision is not None:
+                return decision
         is_sensitive_target = self._matches_sensitive_target(inv, risk)
         if (
             risk.risk_class == POLICY_RISK_READ
@@ -546,18 +551,15 @@ class PolicyCtl:
             target_scope=self._default_target_scope(inv),
         )
         approval_id: str | None = None
-        if self._is_exact_blockchain_send(inv.tool, inv.method):
-            assert confirmation_preview is not None
-            pending = self._store.get_or_create_pending_confirmation(
+        if is_exact_blockchain_send(inv.tool, inv.method) or is_exact_ops_command(
+            inv.tool, inv.method
+        ):
+            pending = get_or_create_exact_confirmation(
+                store=self._store,
+                invocation=inv,
+                context=csum,
                 subject_id=csum.subject_id or self._config.subject_id_default,
-                tool=inv.tool,
-                method=inv.method,
-                invocation_hash=inv.invocation_hash,
-                invocation_id=inv.invocation_id,
-                trace_id=csum.trace_id,
-                session_id=csum.session_id,
-                preview=asdict(confirmation_preview),
-                ttl_seconds=BLOCKCHAIN_CONFIRMATION_TTL_SECONDS,
+                blockchain_preview=confirmation_preview,
             )
             approval_id = pending.approval_id
             confirm_request = {
@@ -582,8 +584,9 @@ class PolicyCtl:
         path = _arg_path(args)
         if path:
             target["path_prefix"] = path
-        if isinstance(args.get("argv"), list) and args["argv"]:
-            first = str(args["argv"][0]).strip()
+        argv = args.get("argv")
+        if isinstance(argv, list) and argv:
+            first = str(argv[0]).strip()
             if first:
                 target["cmd_prefix"] = first
         if "host" in args:
@@ -723,29 +726,19 @@ class PolicyCtl:
         return True
 
     def _specificity_score(self, grant: PolicyGrant) -> int:
-        score = 0
-        if grant.tool != "*":
-            score += 8
-        if grant.method != "*":
-            score += 6
+        score = 8 if grant.tool != "*" else 0
+        score += 6 if grant.method != "*" else 0
         if grant.target_json:
             score += 4 + len(grant.target_json.keys())
-        if grant.risk_floor:
-            score += 1
-        return score
+        return score + bool(grant.risk_floor)
 
     def _select_match(self, matches: list[_GrantMatch]) -> Optional[_GrantMatch]:
         if not matches:
             return None
-        matches.sort(key=lambda item: item.score, reverse=True)
-        best_score = matches[0].score
+        best_score = max(item.score for item in matches)
         same = [item for item in matches if item.score == best_score]
         deny = [item for item in same if item.grant.effect == POLICY_GRANT_EFFECT_DENY]
-        if deny:
-            deny.sort(key=lambda item: item.grant.created_at, reverse=True)
-            return deny[0]
-        same.sort(key=lambda item: item.grant.created_at, reverse=True)
-        return same[0]
+        return max(deny or same, key=lambda item: item.grant.created_at)
 
     def _matches_sensitive_target(self, inv: InvocationSummary, risk: RiskSpec) -> bool:
         if not risk.sensitive_targets:
@@ -795,12 +788,9 @@ class PolicyCtl:
         domain = _arg_domain(args)
         if domain:
             facts["domain"] = domain
-        if "namespace" in args:
-            facts["namespace"] = str(args["namespace"])
-        if "cluster" in args:
-            facts["cluster"] = str(args["cluster"])
-        if "resource" in args:
-            facts["resource"] = str(args["resource"])
+        for key in ("namespace", "cluster", "resource"):
+            if key in args:
+                facts[key] = str(args[key])
         return facts
 
     def _resolve_risk(self, inv: InvocationSummary) -> RiskSpec:
@@ -986,10 +976,6 @@ class PolicyCtl:
             reason_code=decision.reason_code,
             risk_spec=decision.risk.to_dict(),
         )
-
-    @staticmethod
-    def _is_exact_blockchain_send(tool: str, method: str) -> bool:
-        return tool == BLOCKCHAIN_POLICY_TOOL and method == BLOCKCHAIN_SEND_METHOD
 
 
 def _opt_str(value: Any) -> Optional[str]:

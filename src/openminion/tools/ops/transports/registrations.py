@@ -44,9 +44,7 @@ BUILTIN_TRANSPORTS = (
         frozenset({"command", "file_read"}),
         lambda _reader: ContainerTransport(),
     ),
-    TransportRegistration(
-        "ssh", SshTarget, frozenset({"command", "file_read"}), SshTransport
-    ),
+    TransportRegistration("ssh", SshTarget, frozenset({"command"}), SshTransport),
     TransportRegistration("winrm", WinrmTarget, frozenset({"command"}), WinrmTransport),
     TransportRegistration(
         "kubernetes", KubernetesTarget, frozenset({"command"}), KubernetesTransport

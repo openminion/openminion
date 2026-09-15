@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 import typer
 
 from openminion.base.config import ConfigManager
+from openminion.modules.policy import PolicyCtl
+from openminion.modules.policy.models import policy_config_from_action_policy
 from openminion.modules.runtime.credentials import (
     InMemoryCredentialAuditLog,
     resolve_credential_env_value,
 )
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
+from openminion.modules.tool.errors import ToolRuntimeError
 
 from .api import evidence_list, job_inspect, operator_state, target_inspect, target_list
 from .service import OpsService, configured_ops_service
@@ -19,6 +24,10 @@ app = typer.Typer(add_completion=False, no_args_is_help=True)
 def _configured_service(config_path: str | None) -> OpsService:
     manager = ConfigManager.load(config_path)
     audit = InMemoryCredentialAuditLog()
+    action_policy = PolicyCtl.with_sqlite(
+        manager.data_root / "policy" / "policy.db",
+        config=policy_config_from_action_policy(manager.base_config.action_policy),
+    )
     return configured_ops_service(
         manager.base_config.runtime.ops,
         data_root=manager.data_root,
@@ -30,6 +39,7 @@ def _configured_service(config_path: str | None) -> OpsService:
             audit_log=audit,
             env=manager.env,
         ),
+        action_policy=action_policy,
     )
 
 
@@ -47,11 +57,13 @@ def target_list_command(config: str | None = typer.Option(None, "--config")) -> 
 @app.command("target-inspect")
 def target_inspect_command(
     target_id: str,
+    probe: bool = typer.Option(False, "--probe"),
     config: str | None = typer.Option(None, "--config"),
 ) -> None:
     typer.echo(
         json.dumps(
-            target_inspect(_configured_service(config), target_id), sort_keys=True
+            target_inspect(_configured_service(config), target_id, probe=probe),
+            sort_keys=True,
         )
     )
 
@@ -64,6 +76,23 @@ def job_inspect_command(
     typer.echo(
         json.dumps(job_inspect(_configured_service(config), job_id), sort_keys=True)
     )
+
+
+@app.command("job-mark-interrupted")
+def job_mark_interrupted_command(
+    job_id: str,
+    reason: str = typer.Option(..., "--reason"),
+    confirm: bool = typer.Option(False, "--confirm"),
+    config: str | None = typer.Option(None, "--config"),
+) -> None:
+    if not confirm:
+        raise typer.BadParameter("--confirm is required to mark a job interrupted")
+    job = _configured_service(config).mark_job_interrupted(
+        job_id,
+        reason=reason,
+        actor="local",
+    )
+    typer.echo(job.model_dump_json())
 
 
 @app.command("evidence-list")
@@ -90,7 +119,7 @@ def command_plan(
     argv: list[str] = typer.Argument(...),
     cwd: str = typer.Option("", "--cwd"),
     timeout_seconds: float = typer.Option(30.0, "--timeout"),
-    session_id: str = typer.Option("", "--session"),
+    session_id: str = typer.Option(..., "--session"),
     config: str | None = typer.Option(None, "--config"),
 ) -> None:
     plan = _configured_service(config).plan_command(
@@ -126,16 +155,42 @@ def file_read(
 def command_run(
     plan_id: str,
     plan_hash: str,
+    session_id: str = typer.Option(..., "--session"),
     confirm: bool = typer.Option(False, "--confirm"),
+    stream: bool = typer.Option(False, "--stream"),
     config: str | None = typer.Option(None, "--config"),
 ) -> None:
     if not confirm:
         raise typer.BadParameter("--confirm is required for an immutable command plan")
-    job = _configured_service(config).run_plan(
-        plan_id=plan_id,
-        plan_hash=plan_hash,
-        approval_id=f"opsctl-{plan_hash[:16]}",
-    )
+    service = _configured_service(config)
+    output_sink: Callable[[str, str], None] | None
+    if stream:
+
+        def output_sink(_stream: str, chunk: str) -> None:
+            typer.echo(chunk, err=True, nl=False)
+
+    else:
+        output_sink = None
+    try:
+        job = service.run_plan(
+            plan_id=plan_id,
+            plan_hash=plan_hash,
+            session_id=session_id,
+            output_sink=output_sink,
+        )
+    except ToolRuntimeError as exc:
+        if exc.code != TOOL_ERROR_CONFIRM_REQUIRED:
+            raise
+        approval_id = str(exc.details.get("approval_id", ""))
+        action_policy = service.action_policy
+        assert action_policy is not None
+        action_policy.resolve_confirmation(approval_id, "allow_once")
+        job = service.run_plan(
+            plan_id=plan_id,
+            plan_hash=plan_hash,
+            session_id=session_id,
+            output_sink=output_sink,
+        )
     typer.echo(job.model_dump_json())
 
 

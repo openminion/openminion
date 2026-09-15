@@ -3,6 +3,8 @@ from openminion.base.time import utc_now_iso  # noqa: F401
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, Optional, cast
 
+from openminion.base.config import ActionPolicyConfig
+from openminion.base.config.action_policy import map_action_policy_mode
 from openminion.modules.tool.plugin_api import (
     BlockchainSendConfirmationPreview,
     stable_invocation_hash as stable_invocation_hash,
@@ -123,6 +125,19 @@ class PolicyConfig:
     )
     subject_id_default: str = POLICY_SUBJECT_ID_LOCAL
     decision_log_enabled: bool = True
+
+
+def policy_config_from_action_policy(action_policy: ActionPolicyConfig) -> PolicyConfig:
+    defaults = PolicyConfig()
+    return PolicyConfig(
+        mode=cast(PolicyMode, map_action_policy_mode(action_policy.mode)),
+        default_action=action_policy.default_action or defaults.default_action,
+        allow_read_only_without_prompt=action_policy.allow_read_only_without_prompt,
+        affirmative_tokens=list(
+            action_policy.affirmative_tokens or defaults.affirmative_tokens
+        ),
+        negative_tokens=list(action_policy.negative_tokens or defaults.negative_tokens),
+    )
 
 
 @dataclass

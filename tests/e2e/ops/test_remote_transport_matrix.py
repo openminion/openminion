@@ -4,7 +4,10 @@ from typing import Any
 
 import pytest
 
+from openminion.modules.policy.models import PolicyConfig
+from openminion.modules.policy.runtime.service import PolicyCtl
 from openminion.modules.runtime.credentials import resolve_credential_ref
+from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.tools.ops.contracts import OpsConfig, TransportFacts, TransportResult
 from openminion.tools.ops.registry import TargetRegistry
 from openminion.tools.ops.service import OpsService
@@ -116,6 +119,9 @@ def test_remote_kinds_share_plan_approval_job_and_evidence(
         targets=TargetRegistry((target,)),
         transports={target.kind: transport},
         transport_capabilities={target.kind: frozenset({"command"})},
+        action_policy=PolicyCtl.with_sqlite(
+            ":memory:", config=PolicyConfig(mode="enforce")
+        ),
     )
 
     plan = service.plan_command(
@@ -123,10 +129,18 @@ def test_remote_kinds_share_plan_approval_job_and_evidence(
         argv=("printf", "ready"),
         session_id="remote-e2e",
     )
+    with pytest.raises(ToolRuntimeError) as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+        )
+    approval_id = str(pending.value.details["approval_id"])
+    service.action_policy.resolve_confirmation(approval_id, "allow_once")
     job = service.run_plan(
         plan_id=plan.plan_id,
         plan_hash=plan.plan_hash,
-        approval_id="approval-1",
+        session_id=plan.session_id,
     )
     evidence = service.inspect_evidence(job.evidence_id)
 
@@ -134,6 +148,6 @@ def test_remote_kinds_share_plan_approval_job_and_evidence(
     assert transport.calls == [("printf", "ready")]
     assert evidence.target_revision == target.revision
     assert evidence.transport == target.kind
-    assert evidence.approval_id == "approval-1"
+    assert evidence.approval_id == approval_id
     assert evidence.provider_request_id == provider_request_id
     assert evidence.claim_status == "observed"
