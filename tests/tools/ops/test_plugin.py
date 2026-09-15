@@ -6,20 +6,34 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from openminion.modules.policy.models import PolicyConfig
+from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+from openminion.modules.policy.runtime.service import PolicyCtl
 from openminion.modules.tool.framework import derive_manifest, derive_tool_specs
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
 from openminion.tools.ops import OPS_FAMILY, REGISTRAR, local_ops_service
 from openminion.tools.ops.args import PortOwnerArgs, ProcessArgs, ProfileArgs
+from openminion.tools.ops.contracts import OperationRequest
 from openminion.tools.ops.interfaces import (
     ALL_OPS_TOOLS,
     TOOL_OPS_HOST_SNAPSHOT,
     TOOL_OPS_COMMAND_PLAN,
     TOOL_OPS_COMMAND_RUN,
     TOOL_OPS_JOB_CANCEL,
+    TOOL_OPS_JOB_INSPECT,
     TOOL_OPS_PROCESS_INSPECT,
+    TOOL_OPS_TARGET_INSPECT,
 )
+
+
+class _Telemetry:
+    def __init__(self) -> None:
+        self.events = []
+
+    def emit_module_operation(self, *args, **kwargs):
+        self.events.append((args, kwargs))
 
 
 def test_ops_registrar_registers_exact_tool_family_surface() -> None:
@@ -84,16 +98,9 @@ def test_ops_plugin_records_concrete_tool_id_in_evidence() -> None:
 
 
 def test_ops_transport_telemetry_is_structural_and_redacted() -> None:
-    class Telemetry:
-        def __init__(self) -> None:
-            self.events = []
-
-        def emit_module_operation(self, *args, **kwargs):
-            self.events.append((args, kwargs))
-
     registry = ToolRegistry()
     REGISTRAR.register(registry)
-    telemetry = Telemetry()
+    telemetry = _Telemetry()
     context = ToolExecutionContext(
         channel="cli",
         target="local",
@@ -122,8 +129,77 @@ def test_ops_transport_telemetry_is_structural_and_redacted() -> None:
         "truncated",
         "error_code",
         "provider_request_id_digest",
+        "job_id",
+        "plan_id",
+        "attempt_phase",
+        "cancel_requested",
+        "cancel_status",
+        "remote_outcome",
+        "approval_id",
+        "policy_grant_id",
+        "policy_invocation_hash",
     }
     assert not {"argv", "stdout", "stderr", "content", "credential"} & set(result_facts)
+
+
+def test_explicit_target_probe_emits_one_structural_event() -> None:
+    registry = ToolRegistry()
+    REGISTRAR.register(registry)
+    telemetry = _Telemetry()
+    context = ToolExecutionContext(
+        channel="cli",
+        target="local",
+        session_id="ops-probe",
+        telemetryctl=telemetry,
+        ops_service=local_ops_service(),
+    )
+
+    result = registry.get(TOOL_OPS_TARGET_INSPECT).handler(
+        {"target_id": "local", "probe": True}, context
+    )
+
+    assert result["data"]["probe"]["status"] == "unsupported"
+    assert [event[0][3] for event in telemetry.events] == ["transport.probe"]
+    assert telemetry.events[0][1]["extra"]["error_code"] == "unsupported_transport"
+
+
+def test_cancel_telemetry_matches_job_without_inspection_side_effects() -> None:
+    registry = ToolRegistry()
+    REGISTRAR.register(registry)
+    service = local_ops_service()
+    job = service.jobs.submit(
+        OperationRequest(
+            operation_id="observe-1",
+            target_id="local",
+            profile_id="host.snapshot",
+            session_id="session-1",
+        ),
+        target_revision=1,
+    )
+    telemetry = _Telemetry()
+    context = ToolExecutionContext(
+        channel="cli",
+        target="local",
+        session_id="session-1",
+        telemetryctl=telemetry,
+        ops_service=service,
+    )
+    arguments = {
+        "job_id": job.job_id,
+        "target_id": "local",
+        "session_id": "session-1",
+    }
+
+    cancelled = registry.get(TOOL_OPS_JOB_CANCEL).handler(arguments, context)
+    inspected = registry.get(TOOL_OPS_JOB_INSPECT).handler(arguments, context)
+
+    assert cancelled["data"]["status"] == "cancelled"
+    assert inspected["data"]["status"] == "cancelled"
+    assert [event[0][3] for event in telemetry.events] == ["transport.cancel"]
+    facts = telemetry.events[0][1]["extra"]
+    assert facts["job_id"] == job.job_id
+    assert facts["cancel_requested"] is True
+    assert facts["remote_outcome"] == "not_dispatched"
 
 
 def test_process_inspect_records_typed_local_evidence() -> None:
@@ -174,10 +250,15 @@ def test_command_tools_use_injected_service_and_require_confirmation() -> None:
     registry = ToolRegistry()
     REGISTRAR.register(registry)
     service = local_ops_service()
+    service.action_policy = PolicyCtl.with_sqlite(
+        ":memory:", config=PolicyConfig(mode="enforce")
+    )
+    telemetry = _Telemetry()
     context = ToolExecutionContext(
         channel="cli",
         target="local",
         session_id="session-1",
+        telemetryctl=telemetry,
         ops_service=service,
     )
     planned = execute_tool_spec_call(
@@ -192,7 +273,10 @@ def test_command_tools_use_injected_service_and_require_confirmation() -> None:
         arguments={"plan_id": plan["plan_id"], "plan_hash": plan["plan_hash"]},
         context=context,
     )
-    context.confirm = True
+    assert [event[0][3] for event in telemetry.events] == ["transport.authorization"]
+    assert telemetry.events[0][1]["extra"]["remote_outcome"] == "not_dispatched"
+    approval_id = denied.data["details"]["approval_id"]
+    service.action_policy.resolve_confirmation(approval_id, "allow_once")
     completed = execute_tool_spec_call(
         tool=registry.get(TOOL_OPS_COMMAND_RUN),
         arguments={"plan_id": plan["plan_id"], "plan_hash": plan["plan_hash"]},
@@ -200,6 +284,58 @@ def test_command_tools_use_injected_service_and_require_confirmation() -> None:
     )
 
     assert denied.ok is False
-    assert "operator approval" in denied.error
+    assert "confirmation" in denied.error
     assert completed.ok is True
     assert completed.data["status"] == "succeeded"
+    assert [event[0][3] for event in telemetry.events] == [
+        "transport.authorization",
+        "transport.dispatch",
+        "transport.result",
+    ]
+    result_facts = telemetry.events[-1][1]["extra"]
+    assert result_facts["job_id"] == completed.data["job_id"]
+    assert result_facts["plan_id"] == plan["plan_id"]
+    assert result_facts["attempt_phase"] == "terminal"
+    assert result_facts["remote_outcome"] == "exit_observed"
+    assert result_facts["approval_id"] == approval_id
+    assert result_facts["policy_grant_id"]
+
+
+def test_focus_tool_adapter_resolves_ops_confirmation_once(tmp_path) -> None:
+    registry = ToolRegistry()
+    REGISTRAR.register(registry)
+    policy = PolicyCtl.with_sqlite(
+        tmp_path / "policy.db", config=PolicyConfig(mode="enforce")
+    )
+    service = local_ops_service()
+    service.action_policy = policy
+    plan = service.plan_command(
+        target_id="local", argv=("printf", "ready"), session_id="session-1"
+    )
+    adapter = ToolAdapter(
+        workspace_root=tmp_path,
+        runtime_registry=registry,
+        policy_ctl=policy,
+        ops_service=service,
+        artifactctl=SimpleNamespace(),
+    )
+    approvals = []
+    adapter.set_approval_callback(
+        lambda tool, args, approval_id: (
+            approvals.append((tool, args, approval_id)) or True
+        )
+    )
+
+    result = adapter.execute(
+        command={
+            "tool_name": TOOL_OPS_COMMAND_RUN,
+            "args": {"plan_id": plan.plan_id, "plan_hash": plan.plan_hash},
+        },
+        session_id="session-1",
+        trace_id="trace-1",
+    )
+
+    assert result["status"] == "success"
+    assert result["outputs"]["data"]["status"] == "succeeded"
+    assert len(approvals) == 1
+    assert service.jobs.list()[0].policy_grant_id

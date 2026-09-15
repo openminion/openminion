@@ -117,6 +117,7 @@ class ToolAdapter:
         secret_service: Any | None = None,
         memory_service: Any | None = None,
         knowledge_graph_service: Any | None = None,
+        ops_service: Any | None = None,
         a2a_delegate_api: Any | None = None,
         agent_query: Callable[[], list[dict[str, Any]]] | None = None,
         agent_id: str | None = None,
@@ -138,6 +139,7 @@ class ToolAdapter:
         self.secret_service = secret_service
         self.memory_service = memory_service
         self.knowledge_graph_service = knowledge_graph_service
+        self.ops_service = ops_service
         self.a2a_delegate_api = a2a_delegate_api
         self.agent_query = agent_query
         self.agent_profile = agent_profile
@@ -270,6 +272,20 @@ class ToolAdapter:
                 message=str(exc) or "Tool approval failed",
                 latency_ms=int((time.monotonic() - start_time) * 1000),
                 details={"reason": "approval_callback_failed"},
+            )
+        if tool_name == "ops.command.run":
+            if self.policy_ctl is None:
+                return _error_envelope(
+                    status=BRAIN_STATE_ERROR,
+                    summary="Operations approval is unavailable",
+                    code="POLICY_DENIED",
+                    message="Operations approval is unavailable.",
+                    latency_ms=int((time.monotonic() - start_time) * 1000),
+                    details={"reason": "action_policy_unavailable"},
+                )
+            self.policy_ctl.resolve_confirmation(
+                approval_id,
+                "allow_once" if approved else "deny",
             )
         if not approved:
             return _error_envelope(
@@ -511,9 +527,8 @@ class ToolAdapter:
                 },
             )
         background_write_authorized = _background_write_authorized(inputs)
-        project_task_id = str(
-            orchestration_metadata.get("task_backed_task_id") or ""
-        ).strip()
+        raw_project_task_id = orchestration_metadata.get("task_backed_task_id")
+        project_task_id = str(raw_project_task_id or "").strip()
         auto_confirm = _resolve_auto_confirm(
             tool_name=tool_name,
             args=validated_args,
@@ -536,7 +551,7 @@ class ToolAdapter:
         )
         policy_adapter = (
             None
-            if replay_confirmed
+            if replay_confirmed or tool_name == "ops.command.run"
             else _compose_policy_adapter(
                 base_adapter=local_adapter,
                 extra_adapter=extra_adapter,
@@ -561,6 +576,7 @@ class ToolAdapter:
             artifactctl=self.artifactctl,
             memory_service=self.memory_service,
             knowledge_graph_service=self.knowledge_graph_service,
+            ops_service=self.ops_service,
             a2a_delegate_api=self.a2a_delegate_api,
             agent_query=self.agent_query,
             telemetry_session_id=session_id,

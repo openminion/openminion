@@ -40,7 +40,7 @@ def build_command_plan(
         "target_revision": target.revision,
         "argv": _normalize_argv(argv),
         "cwd": _normalize_cwd(cwd, target.workspace_scopes),
-        "timeout_seconds": min(timeout_seconds, target.timeout_seconds),
+        "timeout_seconds": float(min(timeout_seconds, target.timeout_seconds)),
         "session_id": session_id,
         "idempotency_key": idempotency_key,
         "created_at": now.isoformat(),

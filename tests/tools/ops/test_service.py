@@ -2,6 +2,12 @@ import threading
 
 import pytest
 
+from openminion.modules.policy.models import PolicyConfig
+from openminion.modules.policy.runtime.service import PolicyCtl
+from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.tools.ops.evidence import EvidenceStore
+from openminion.tools.ops.jobs import OperationJobStore
+from openminion.tools.ops.plans import CommandPlanStore
 from openminion.tools.ops.registry import TargetRegistry
 from openminion.tools.ops.contracts import (
     OperationRequest,
@@ -52,6 +58,26 @@ class _RecordingTransport:
             return False
         self.cancelled.set()
         return True
+
+
+def _action_policy() -> PolicyCtl:
+    return PolicyCtl.with_sqlite(":memory:", config=PolicyConfig(mode="enforce"))
+
+
+def _approve_and_run(service: OpsService, plan) -> object:
+    with pytest.raises(ToolRuntimeError, match="confirmation") as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+        )
+    approval_id = str(pending.value.details["approval_id"])
+    service.action_policy.resolve_confirmation(approval_id, "allow_once")
+    return service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        session_id=plan.session_id,
+    )
 
 
 def _request(**overrides: object) -> OperationRequest:
@@ -140,6 +166,33 @@ def test_file_read_rejects_command_only_transport_before_dispatch(tmp_path) -> N
         )
 
 
+def test_file_read_rejects_disabled_target_before_transport_dispatch(tmp_path) -> None:
+    transport = _RecordingTransport()
+    service = OpsService(
+        targets=TargetRegistry(
+            (
+                OperationTarget(
+                    target_id="disabled",
+                    kind="local",
+                    enabled=False,
+                    workspace_scopes=(str(tmp_path),),
+                ),
+            )
+        ),
+        transports={"local": transport},
+        transport_capabilities={"local": frozenset({"command", "file_read"})},
+    )
+
+    with pytest.raises(PermissionError, match="disabled"):
+        service.read_file(
+            target_id="disabled",
+            path=str(tmp_path / "status.txt"),
+            max_bytes=10,
+            timeout_seconds=2,
+        )
+    assert transport.started.is_set() is False
+
+
 def test_service_rejects_stale_target_and_unknown_profile() -> None:
     service = local_ops_service()
     with pytest.raises(ValueError, match="target revision changed"):
@@ -209,8 +262,12 @@ def test_job_cancellation_reaches_active_transport() -> None:
     assert not thread.is_alive()
     assert transport.operation_id == running.job_id
     assert transport.cancelled.is_set()
-    assert cancelled.status == "cancelled"
-    assert service.inspect_job(running.job_id).status == "cancelled"
+    assert cancelled.status == "running"
+    assert cancelled.cancel_requested is True
+    assert cancelled.cancel_status == "cancel_delivered"
+    completed = service.inspect_job(running.job_id)
+    assert completed.status == "cancelled"
+    assert completed.remote_outcome == "unknown"
 
 
 def test_command_plan_run_is_hash_bound_and_records_evidence() -> None:
@@ -227,11 +284,13 @@ def test_command_plan_run_is_hash_bound_and_records_evidence() -> None:
             )
         ),
         transports={"local": transport},
+        action_policy=_action_policy(),
     )
     plan = service.plan_command(
         target_id="staging",
         argv=("printf", "%s", "hello"),
         cwd="/srv/app/releases",
+        timeout_seconds=15,
         session_id="session-1",
     )
 
@@ -239,17 +298,13 @@ def test_command_plan_run_is_hash_bound_and_records_evidence() -> None:
         service.run_plan(
             plan_id=plan.plan_id,
             plan_hash="0" * 64,
-            approval_id="approval-1",
+            session_id="session-1",
         )
-    job = service.run_plan(
-        plan_id=plan.plan_id,
-        plan_hash=plan.plan_hash,
-        approval_id="approval-1",
-    )
+    job = _approve_and_run(service, plan)
 
     assert job.status == "succeeded"
     evidence = service.inspect_evidence(job.evidence_id)
-    assert evidence.approval_id == "approval-1"
+    assert evidence.approval_id
     assert evidence.command_hash
     assert evidence.target_revision == 1
 
@@ -270,7 +325,7 @@ def test_command_plan_rejects_unsafe_argv(argv: tuple[str, ...], error: str) -> 
     )
 
     with pytest.raises((ValueError, PermissionError), match=error):
-        service.plan_command(target_id="staging", argv=argv)
+        service.plan_command(target_id="staging", argv=argv, session_id="session-1")
 
 
 def test_command_plan_denies_production_and_cwd_escape() -> None:
@@ -296,35 +351,112 @@ def test_command_plan_denies_production_and_cwd_escape() -> None:
             target_id="staging",
             argv=("uname", "-a"),
             cwd="/tmp",
+            session_id="session-1",
         )
     with pytest.raises(ValueError, match="inside a configured workspace"):
         service.plan_command(
             target_id="staging",
             argv=("uname", "-a"),
             cwd="/srv/app/../../tmp",
+            session_id="session-1",
         )
     with pytest.raises(PermissionError, match="production"):
-        service.plan_command(target_id="production", argv=("uname", "-a"))
+        service.plan_command(
+            target_id="production", argv=("uname", "-a"), session_id="session-1"
+        )
 
 
 def test_configured_service_persists_plans_jobs_and_evidence(tmp_path) -> None:
     config = {"targets": [{"target_id": "staging", "kind": "local"}]}
-    service = configured_ops_service(config, data_root=tmp_path)
-    plan = service.plan_command(target_id="staging", argv=("printf", "ready"))
-    job = service.run_plan(
-        plan_id=plan.plan_id,
-        plan_hash=plan.plan_hash,
-        approval_id="approval-1",
+    service = configured_ops_service(
+        config, data_root=tmp_path, action_policy=_action_policy()
     )
+    plan = service.plan_command(
+        target_id="staging",
+        argv=("printf", "ready"),
+        session_id="session-1",
+    )
+    job = _approve_and_run(service, plan)
     evidence_id = job.evidence_id
     service.close()
 
-    reopened = configured_ops_service(config, data_root=tmp_path)
+    reopened = configured_ops_service(
+        config, data_root=tmp_path, action_policy=_action_policy()
+    )
 
     assert reopened.plans.get(plan.plan_id) == plan
     assert reopened.inspect_job(job.job_id).status == "succeeded"
     assert reopened.inspect_evidence(evidence_id).stdout_preview == "ready"
     reopened.close()
+
+
+def test_configured_service_does_not_relabel_running_job_on_open(tmp_path) -> None:
+    config = {"targets": [{"target_id": "staging", "kind": "local"}]}
+    service = configured_ops_service(config, data_root=tmp_path)
+    job = service.jobs.submit(_request(session_id="session-1"), target_revision=1)
+    service.jobs.update(job.job_id, status="running")
+    service.close()
+
+    reopened = configured_ops_service(config, data_root=tmp_path)
+
+    assert reopened.inspect_job(job.job_id).status == "running"
+    reopened.close()
+
+
+def test_second_process_inspection_does_not_relabel_active_job(tmp_path) -> None:
+    transport = _RecordingTransport(block=True)
+    target = OperationTarget(target_id="local", kind="local")
+    first = OpsService(
+        targets=TargetRegistry((target,)),
+        transports={"local": transport},
+        jobs=OperationJobStore(tmp_path / "jobs.db"),
+    )
+    result = {}
+
+    def run() -> None:
+        result["job"] = first.submit(_request(session_id="session-1"))
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    assert transport.started.wait(timeout=1)
+    running = first.jobs.list()[0]
+    second = OpsService(
+        targets=TargetRegistry((target,)),
+        transports={},
+        jobs=OperationJobStore(tmp_path / "jobs.db"),
+    )
+
+    assert second.inspect_job(running.job_id).status == "running"
+    assert first.inspect_job(running.job_id).status == "running"
+
+    first.cancel_job(running.job_id)
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert result["job"].status == "cancelled"
+
+
+def test_mark_job_interrupted_records_local_evidence_without_transport() -> None:
+    transport = _RecordingTransport()
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="local", kind="local"),)),
+        transports={"local": transport},
+    )
+    job = service.jobs.submit(_request(session_id="session-1"), target_revision=1)
+    service.jobs.update(job.job_id, status="running")
+
+    marked = service.mark_job_interrupted(
+        job.job_id,
+        reason="remote state checked separately",
+        actor="local",
+    )
+    evidence = service.inspect_evidence(marked.evidence_id)
+
+    assert marked.status == "failed"
+    assert marked.remote_outcome == "unknown"
+    assert transport.started.is_set() is False
+    assert evidence.transport == "local_record"
+    assert evidence.before_facts == {"status": "running", "phase": ""}
+    assert evidence.after_facts == {"status": "failed", "remote_outcome": "unknown"}
 
 
 def test_command_plan_rechecks_expiry_and_target_revision() -> None:
@@ -334,21 +466,24 @@ def test_command_plan_rechecks_expiry_and_target_revision() -> None:
         target_id="staging",
         argv=("printf", "ready"),
         ttl_seconds=-1,
+        session_id="session-1",
     )
 
     with pytest.raises(ValueError, match="expired"):
         service.run_plan(
             plan_id=expired.plan_id,
             plan_hash=expired.plan_hash,
-            approval_id="approval-1",
+            session_id="session-1",
         )
-    current = service.plan_command(target_id="staging", argv=("printf", "ready"))
+    current = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
     targets.register(OperationTarget(target_id="staging", kind="local", revision=2))
     with pytest.raises(ValueError, match="target revision changed"):
         service.run_plan(
             plan_id=current.plan_id,
             plan_hash=current.plan_hash,
-            approval_id="approval-2",
+            session_id="session-1",
         )
 
 
@@ -362,14 +497,168 @@ def test_command_evidence_redacts_configured_literals() -> None:
         targets=TargetRegistry((OperationTarget(target_id="staging", kind="local"),)),
         transports={"local": SecretTransport()},
         redaction_resolver=lambda _target: ("secret-value",),
+        action_policy=_action_policy(),
     )
-    plan = service.plan_command(target_id="staging", argv=("printf", "ready"))
-    job = service.run_plan(
-        plan_id=plan.plan_id,
-        plan_hash=plan.plan_hash,
-        approval_id="approval-1",
+    plan = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
     )
+    job = _approve_and_run(service, plan)
 
     evidence = service.inspect_evidence(job.evidence_id)
     assert evidence.stdout_preview == "token=[REDACTED]"
     assert "secret-value" not in evidence.model_dump_json()
+
+
+def test_two_service_processes_dispatch_one_plan_once(tmp_path) -> None:
+    class CountingTransport(_RecordingTransport):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        def run(self, *args: object, **kwargs: object) -> TransportResult:
+            self.calls += 1
+            return super().run(*args, **kwargs)
+
+    target = OperationTarget(target_id="staging", kind="local")
+    targets = TargetRegistry((target,))
+    transport = CountingTransport()
+    paths = {
+        "jobs": tmp_path / "jobs.db",
+        "evidence": tmp_path / "evidence.db",
+        "plans": tmp_path / "plans.db",
+        "policy": tmp_path / "policy.db",
+    }
+
+    def open_service() -> OpsService:
+        return OpsService(
+            targets=targets,
+            transports={"local": transport},
+            jobs=OperationJobStore(paths["jobs"]),
+            evidence=EvidenceStore(paths["evidence"]),
+            plans=CommandPlanStore(paths["plans"]),
+            action_policy=PolicyCtl.with_sqlite(
+                paths["policy"], config=PolicyConfig(mode="enforce")
+            ),
+        )
+
+    first = open_service()
+    plan = first.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
+    with pytest.raises(ToolRuntimeError) as pending:
+        first.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+        )
+    first.action_policy.resolve_confirmation(
+        str(pending.value.details["approval_id"]), "allow_once"
+    )
+    second = open_service()
+    jobs = []
+
+    def run(service: OpsService) -> None:
+        jobs.append(
+            service.run_plan(
+                plan_id=plan.plan_id,
+                plan_hash=plan.plan_hash,
+                session_id=plan.session_id,
+            )
+        )
+
+    threads = [
+        threading.Thread(target=run, args=(first,)),
+        threading.Thread(target=run, args=(second,)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(jobs) == 2
+    assert len({job.job_id for job in jobs}) == 1
+    assert transport.calls == 1
+    assert transport.operation_id == jobs[0].job_id
+    assert first.inspect_job(jobs[0].job_id).status == "succeeded"
+
+
+def test_consumed_approval_is_not_restored_after_capacity_failure() -> None:
+    target = OperationTarget(target_id="staging", kind="local", max_concurrency=1)
+    transport = _RecordingTransport()
+    service = OpsService(
+        targets=TargetRegistry((target,)),
+        transports={"local": transport},
+        action_policy=_action_policy(),
+    )
+    active = service.jobs.submit(
+        _request(
+            operation_id="active",
+            target_id="staging",
+            session_id="other-session",
+        ),
+        target_revision=1,
+    )
+    service.jobs.update(active.job_id, status="running")
+    plan = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
+    with pytest.raises(ToolRuntimeError) as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+        )
+    service.action_policy.resolve_confirmation(
+        str(pending.value.details["approval_id"]), "allow_once"
+    )
+
+    with pytest.raises(RuntimeError, match="concurrency limit"):
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+        )
+    recorded = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        session_id=plan.session_id,
+    )
+
+    assert recorded.status == "failed"
+    assert recorded.remote_outcome == "not_dispatched"
+    assert transport.started.is_set() is False
+
+
+def test_wrong_session_does_not_consume_pending_plan_approval() -> None:
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="staging", kind="local"),)),
+        transports={"local": _RecordingTransport()},
+        action_policy=_action_policy(),
+    )
+    plan = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
+    with pytest.raises(ToolRuntimeError) as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+        )
+    service.action_policy.resolve_confirmation(
+        str(pending.value.details["approval_id"]), "allow_once"
+    )
+
+    with pytest.raises(PermissionError, match="another session"):
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id="wrong-session",
+        )
+    completed = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        session_id=plan.session_id,
+    )
+
+    assert completed.status == "succeeded"

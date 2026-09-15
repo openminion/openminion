@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from openminion.modules.policy.models import PolicyConfig
+from openminion.modules.policy.runtime.service import PolicyCtl
 from openminion.modules.runtime.credentials import CredentialRef
+from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.tools.ops.evidence import EvidenceStore
 from openminion.tools.ops.jobs import OperationJobStore
 from openminion.tools.ops.registry import TargetRegistry
@@ -68,6 +71,9 @@ def test_live_ssh_readonly_smoke(tmp_path: Path) -> None:
         transports={"ssh": SshTransport(lambda _: required[credential_env])},
         jobs=OperationJobStore(jobs_path),
         evidence=EvidenceStore(evidence_path),
+        action_policy=PolicyCtl.with_sqlite(
+            tmp_path / "policy.db", config=PolicyConfig(mode="enforce")
+        ),
     )
     job = service.submit(
         OperationRequest(
@@ -98,13 +104,21 @@ def test_live_ssh_readonly_smoke(tmp_path: Path) -> None:
         timeout_seconds=15,
         session_id="live-ssh-smoke",
     )
+    with pytest.raises(ToolRuntimeError) as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+        )
+    approval_id = str(pending.value.details["approval_id"])
+    service.action_policy.resolve_confirmation(approval_id, "allow_once")
     command_job = service.run_plan(
         plan_id=plan.plan_id,
         plan_hash=plan.plan_hash,
-        approval_id="live-ssh-explicit-approval",
+        session_id=plan.session_id,
     )
     command_evidence = service.inspect_evidence(command_job.evidence_id)
     assert command_job.status == "succeeded"
-    assert command_evidence.approval_id == "live-ssh-explicit-approval"
+    assert command_evidence.approval_id == approval_id
     assert command_evidence.target_revision == target.revision
     assert command_evidence.stdout_preview.strip()

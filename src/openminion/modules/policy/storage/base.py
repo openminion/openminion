@@ -70,6 +70,7 @@ class PolicyStore(ABC):
         tool: str,
         method: str,
         invocation_hash: str,
+        session_id: str | None = None,
     ) -> PolicyGrant | None: ...
 
     @abstractmethod

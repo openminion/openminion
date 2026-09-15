@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-TOOL_ERROR_CONFIRM_REQUIRED = "CONFIRM_REQUIRED"
+TOOL_ERROR_CONFIRM_REQUIRED: Literal["CONFIRM_REQUIRED"] = "CONFIRM_REQUIRED"
 
 ErrorCode = Literal[
     "INVALID_ARGUMENT",

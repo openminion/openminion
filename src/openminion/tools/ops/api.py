@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 from typing import Any
 
 from .contracts import OperationTarget
@@ -9,10 +8,10 @@ from .interfaces import ALL_OPS_TOOLS
 from .service import OpsService
 
 _DEPENDENCIES = {
-    "ssh": ("asyncssh", "install the 'remote' extra"),
-    "winrm": ("winrm", "install the 'remote-winrm' extra"),
-    "kubernetes": ("kubernetes", "install the 'remote-kubernetes' extra"),
-    "ssm": ("boto3", "install the 'remote-aws' extra"),
+    "ssh": "install the 'remote' extra",
+    "winrm": "install the 'remote-winrm' extra",
+    "kubernetes": "install the 'remote-kubernetes' extra",
+    "ssm": "install the 'remote-aws' extra",
 }
 
 
@@ -48,12 +47,13 @@ def operator_state(service: OpsService) -> dict[str, Any]:
     targets = service.list_targets()
     disabled = {}
     for target in targets:
-        dependency = _DEPENDENCIES.get(target.kind)
-        if dependency is not None and importlib.util.find_spec(dependency[0]) is None:
-            disabled[target.target_id] = dependency[1]
+        readiness = service.inspect_target_readiness(target.target_id)
+        if not readiness["dependency_available"]:
+            disabled[target.target_id] = _DEPENDENCIES[target.kind]
     target_payloads = []
     for target in targets:
         payload = target_view(target)
+        payload.update(service.inspect_target_readiness(target.target_id))
         payload["transport_capabilities"] = service.transport_capabilities(
             target.target_id
         )
@@ -68,7 +68,7 @@ def operator_state(service: OpsService) -> dict[str, Any]:
                 "guidance": OPS_GUIDANCE_ID,
             },
             "targets": target_payloads,
-            "jobs": [job.model_dump(mode="json") for job in service.jobs.list()],
+            "jobs": [job_view(job) for job in service.jobs.list()],
             "plans": [plan.model_dump(mode="json") for plan in service.plans.list()],
             "evidence": [
                 item.model_dump(mode="json") for item in service.list_evidence()
@@ -86,18 +86,33 @@ def target_list(service: OpsService) -> dict[str, Any]:
     }
 
 
-def target_inspect(service: OpsService, target_id: str) -> dict[str, Any]:
+def target_inspect(
+    service: OpsService, target_id: str, *, probe: bool = False
+) -> dict[str, Any]:
     return {
         "ok": True,
-        "data": target_view(service.inspect_target(target_id)),
+        "data": {
+            **target_view(service.inspect_target(target_id)),
+            **service.inspect_target_readiness(target_id, probe=probe),
+        },
     }
 
 
 def job_inspect(service: OpsService, job_id: str) -> dict[str, Any]:
     return {
         "ok": True,
-        "data": service.inspect_job(job_id).model_dump(mode="json"),
+        "data": job_view(service.inspect_job(job_id)),
     }
+
+
+def job_view(job: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = job.model_dump(mode="json")
+    payload["current_liveness"] = (
+        "unverified"
+        if job.status == "running" or job.attempt_phase == "claimed"
+        else "not_running"
+    )
+    return payload
 
 
 def evidence_list(

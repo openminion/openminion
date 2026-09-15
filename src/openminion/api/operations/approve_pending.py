@@ -94,11 +94,10 @@ def process_approval_decision(
         method = str(invocation.get("method", "") or "")
         if not method and "." in tool:
             tool, method = tool.rsplit(".", 1)
-        if (
-            tool == "blockchain"
-            and method == "send_transaction"
-            and decision in {"allow_once", "deny"}
-        ):
+        if (tool, method) in {
+            ("blockchain", "send_transaction"),
+            ("ops.command", "run"),
+        } and decision in {"allow_once", "deny"}:
             try:
                 grant_id = policyctl.resolve_confirmation(approval_id, decision)
             except PolicyControlError as exc:

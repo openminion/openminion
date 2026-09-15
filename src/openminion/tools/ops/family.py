@@ -13,7 +13,7 @@ from .args import (
     ProcessArgs,
     ProfileArgs,
     ServiceArgs,
-    TargetArgs,
+    TargetInspectArgs,
 )
 from .interfaces import (
     TOOL_OPS_COMMAND_OBSERVE,
@@ -142,7 +142,7 @@ OPS_FAMILY = ToolFamilySpec(
         ),
         ToolDecl(
             TOOL_OPS_TARGET_INSPECT,
-            TargetArgs,
+            TargetInspectArgs,
             _target_inspect,
             "Inspect one configured operations target and its transport metadata.",
             idempotent=True,
