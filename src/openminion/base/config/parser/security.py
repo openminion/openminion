@@ -17,10 +17,8 @@ from openminion.base.config.parse import (
 )
 from openminion.base.config.runtime import ToolPolicyConfig
 
-from .action import (
-    _action_policy_to_payload,
-    _build_action_policy_config,
-)
+from .action import _action_policy_to_payload, _build_action_policy_config
+from .mapping import mapping_payload
 
 
 def _list_payload(payload: dict[str, Any], key: str, default: list[Any]) -> list[Any]:
@@ -48,8 +46,8 @@ def _build_gateway_security_sections(
     action_policy_payload: dict[str, Any],
     normalized_channel_defaults: dict[str, Any],
 ) -> dict[str, Any]:
-    raw_tool_policy = security_payload.get("tool_policy")
-    tool_policy_payload = raw_tool_policy if isinstance(raw_tool_policy, dict) else {}
+    defaults = ToolPolicyConfig()
+    tool_policy_payload = mapping_payload(security_payload, "tool_policy")
     return {
         "gateway": GatewayConfig(
             host=str(gateway_payload.get("host", "127.0.0.1")),
@@ -110,9 +108,9 @@ def _build_gateway_security_sections(
                 **{
                     name: max(1, _as_int(tool_policy_payload.get(name), default))
                     for name, default in (
-                        ("max_calls_per_run", 8),
-                        ("max_calls_per_tool", 4),
-                        ("max_budget_cost_per_run", 16),
+                        ("max_calls_per_run", defaults.max_calls_per_run),
+                        ("max_calls_per_tool", defaults.max_calls_per_tool),
+                        ("max_budget_cost_per_run", defaults.max_budget_cost_per_run),
                     )
                 },
             )
