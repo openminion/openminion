@@ -1,23 +1,21 @@
 from __future__ import annotations
 
+import importlib.util
 import platform
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Callable, cast
+from typing import Any, Callable, cast
 
+from openminion.base.time import utc_now_iso
+from openminion.modules.policy.models import PolicyDecision, RiskSpec
 from openminion.modules.runtime.credentials import CredentialRef
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
+from openminion.modules.tool.errors import ToolRuntimeError
 
-from .evidence import EvidenceStore, build_evidence
-from .interfaces import FileReadTransport, TargetTransport
-from .jobs import OperationJobStore
-from .plans import CommandPlanStore, build_command_plan, validate_command_plan
-from .policy import OperationPolicyDecision, decide_operation_policy
-from .profiles import build_argv
-from .registry import TargetRegistry
 from .contracts import (
-    EvidenceRecord,
     CommandPlan,
+    EvidenceRecord,
     JobStatus,
     OperationJob,
     OperationRequest,
@@ -25,9 +23,23 @@ from .contracts import (
     TargetPlatform,
     TransportResult,
 )
+from .evidence import EvidenceStore, build_evidence
+from .interfaces import FileReadTransport, TargetTransport
+from .jobs import OperationJobStore
+from .plans import CommandPlanStore, build_command_plan, validate_command_plan
+from .policy import OperationPolicyDecision, decide_operation_policy
+from .profiles import build_argv
+from .registry import TargetRegistry
 from .transports import build_transports, registration_map
+from .transports.ssh import SshConnectionError
 
 RedactionResolver = Callable[[OperationTarget], tuple[str, ...]]
+_TRANSPORT_DEPENDENCIES = {
+    "ssh": "asyncssh",
+    "winrm": "winrm",
+    "kubernetes": "kubernetes",
+    "ssm": "boto3",
+}
 
 
 class OpsService:
@@ -41,18 +53,20 @@ class OpsService:
         plans: CommandPlanStore | None = None,
         redaction_resolver: RedactionResolver | None = None,
         transport_capabilities: Mapping[str, frozenset[str]] | None = None,
+        action_policy: Any | None = None,
     ) -> None:
         self.targets = targets or TargetRegistry()
         self.jobs = jobs or OperationJobStore()
         self.evidence = evidence or EvidenceStore()
         self.plans = plans or CommandPlanStore()
+        self.action_policy = action_policy
         self._redaction_resolver = redaction_resolver or (lambda _target: ())
         if transports is None:
             self._transports = build_transports(
                 ("local", "container"),
                 credential_reader=lambda _ref: "",
             )
-            self._transport_capabilities = {
+            self._transport_capabilities: dict[str, frozenset[str]] = {
                 kind: registration.capabilities
                 for kind, registration in registration_map().items()
                 if kind in self._transports
@@ -66,6 +80,48 @@ class OpsService:
 
     def inspect_target(self, target_id: str) -> OperationTarget:
         return self.targets.get(target_id)
+
+    def inspect_target_readiness(
+        self, target_id: str, *, probe: bool = False
+    ) -> dict[str, object]:
+        target = self.targets.get(target_id)
+        dependency = _TRANSPORT_DEPENDENCIES.get(target.kind)
+        dependency_available = (
+            dependency is None or importlib.util.find_spec(dependency) is not None
+        )
+        result: dict[str, object] = {
+            "status": "not_requested",
+            "reason_code": "",
+            "checked_at": "",
+            "target_revision": target.revision,
+        }
+        if probe:
+            result["checked_at"] = utc_now_iso()
+            if target.kind != "ssh":
+                result.update(status="unsupported", reason_code="unsupported_transport")
+            elif not target.enabled:
+                result.update(status="failed", reason_code="target_disabled")
+            elif not dependency_available:
+                result.update(status="failed", reason_code="dependency_missing")
+            else:
+                transport = self._transports.get("ssh")
+                if transport is None:
+                    result.update(status="failed", reason_code="unsupported_transport")
+                else:
+                    try:
+                        facts = transport.connect(target)
+                    except SshConnectionError as exc:
+                        result.update(status="failed", reason_code=exc.reason_code)
+                    else:
+                        result.update(
+                            status="succeeded" if facts.connected else "failed",
+                            reason_code="" if facts.connected else "connection_failed",
+                        )
+        return {
+            "dependency_available": dependency_available,
+            "transport_ready": dependency_available,
+            "probe": result,
+        }
 
     def transport_capabilities(self, target_id: str) -> tuple[str, ...]:
         target = self.targets.get(target_id)
@@ -139,13 +195,20 @@ class OpsService:
         except (OSError, RuntimeError, ValueError) as exc:
             return self.jobs.update(job.job_id, status="failed", error=str(exc))
         status: JobStatus = (
-            "succeeded" if evidence.claim_status == "observed" else "failed"
+            "cancelled"
+            if evidence.cancelled
+            else "succeeded"
+            if evidence.claim_status == "observed"
+            else "failed"
         )
         return self.jobs.update(
             job.job_id,
             status=status,
             evidence_id=evidence.evidence_id,
             error=evidence.reason if status == "failed" else "",
+            remote_outcome="exit_observed"
+            if not evidence.timed_out and not evidence.cancelled
+            else "unknown",
         )
 
     def plan_command(
@@ -159,6 +222,8 @@ class OpsService:
         idempotency_key: str = "",
         ttl_seconds: int = 300,
     ) -> CommandPlan:
+        if not session_id.strip():
+            raise ValueError("command plan session is required")
         target = self.targets.get(target_id)
         decision = decide_operation_policy(target, risk="write_safe")
         if decision.outcome == "deny":
@@ -181,21 +246,17 @@ class OpsService:
         *,
         plan_id: str,
         plan_hash: str,
-        approval_id: str,
+        session_id: str,
+        subject_id: str = "local",
+        agent_id: str = "",
+        trace_id: str = "",
+        output_sink: Callable[[str, str], None] | None = None,
     ) -> OperationJob:
-        if not approval_id.strip():
-            raise PermissionError("command plan requires operator approval")
-        plan = self.plans.get(plan_id)
-        validate_command_plan(plan, supplied_hash=plan_hash)
-        target = self.targets.get(plan.target_id)
-        if target.revision != plan.target_revision:
-            raise ValueError("target revision changed")
-        decision = decide_operation_policy(target, risk="write_safe")
-        if decision.outcome == "deny":
-            raise PermissionError(decision.reason)
-        transport = self._transports.get(target.kind)
-        if transport is None:
-            raise RuntimeError(f"transport unavailable for target kind: {target.kind}")
+        plan, target, transport, decision = self._validate_plan_execution(
+            plan_id=plan_id,
+            plan_hash=plan_hash,
+            session_id=session_id,
+        )
         request = OperationRequest(
             operation_id=plan.plan_id,
             target_id=plan.target_id,
@@ -206,20 +267,55 @@ class OpsService:
             session_id=plan.session_id,
             tool_id="ops.command.run",
         )
-        job = self.jobs.submit(
+        job, claim_token = self.jobs.claim_plan_attempt(
             request,
+            plan_id=plan.plan_id,
             target_revision=target.revision,
-            target_limit=target.max_concurrency,
         )
-        if job.status != "queued":
+        if not claim_token:
             return job
-        self.jobs.update(job.job_id, status="running")
+        policy_decision = self._authorize_plan(
+            plan=plan,
+            job=job,
+            claim_token=claim_token,
+            session_id=session_id,
+            subject_id=subject_id,
+            agent_id=agent_id,
+            trace_id=trace_id,
+        )
+        try:
+            self.jobs.reserve_plan_capacity(
+                job.job_id,
+                claim_token=claim_token,
+                target_limit=target.max_concurrency,
+            )
+            intent = self.jobs.record_dispatch_intent(
+                job.job_id,
+                claim_token=claim_token,
+                approval_id=str(policy_decision.approval_id or ""),
+                policy_grant_id=str(policy_decision.matched_grant_id or ""),
+                policy_invocation_hash=str(policy_decision.invocation_hash or ""),
+            )
+        except RuntimeError as exc:
+            terminal = self.jobs.finish_plan_attempt(
+                job.job_id,
+                claim_token=claim_token,
+                status="failed",
+                error=str(exc),
+                remote_outcome="not_dispatched",
+            )
+            if terminal.status == "cancelled":
+                return terminal
+            raise
+        if intent.status == "cancelled":
+            return intent
         try:
             result = transport.run(
                 target,
                 plan.argv,
                 timeout_seconds=plan.timeout_seconds,
                 operation_id=job.job_id,
+                output_sink=output_sink,
                 cwd=plan.cwd,
             )
             evidence = self.evidence.put(
@@ -230,20 +326,150 @@ class OpsService:
                     target_revision=target.revision,
                     transport=target.kind,
                     policy_outcome=decision.outcome,
-                    approval_id=approval_id,
+                    approval_id=str(policy_decision.approval_id or ""),
                 )
             )
         except (OSError, RuntimeError, ValueError) as exc:
-            return self.jobs.update(job.job_id, status="failed", error=str(exc))
+            return self.jobs.finish_plan_attempt(
+                job.job_id,
+                claim_token=claim_token,
+                status="failed",
+                error=str(exc),
+                remote_outcome="unknown",
+            )
+        return self._finish_plan_result(job, claim_token, evidence, result)
+
+    def _validate_plan_execution(
+        self,
+        *,
+        plan_id: str,
+        plan_hash: str,
+        session_id: str,
+    ) -> tuple[CommandPlan, OperationTarget, TargetTransport, OperationPolicyDecision]:
+        plan = self.plans.get(plan_id)
+        validate_command_plan(plan, supplied_hash=plan_hash)
+        if not plan.session_id:
+            raise PermissionError(
+                "legacy command plan must be recreated with a session"
+            )
+        if not session_id.strip() or session_id != plan.session_id:
+            raise PermissionError("command plan belongs to another session")
+        target = self.targets.get(plan.target_id)
+        if target.revision != plan.target_revision:
+            raise ValueError("target revision changed")
+        decision = decide_operation_policy(target, risk="write_safe")
+        if decision.outcome == "deny":
+            raise PermissionError(decision.reason)
+        transport = self._transports.get(target.kind)
+        if transport is None:
+            raise RuntimeError(f"transport unavailable for target kind: {target.kind}")
+        return plan, target, transport, decision
+
+    def _finish_plan_result(
+        self,
+        job: OperationJob,
+        claim_token: str,
+        evidence: EvidenceRecord,
+        result: TransportResult,
+    ) -> OperationJob:
         succeeded = (
             not result.timed_out and not result.cancelled and result.return_code == 0
         )
-        return self.jobs.update(
+        status: JobStatus
+        if result.cancelled:
+            status = "cancelled"
+        else:
+            status = "succeeded" if succeeded else "failed"
+        return self.jobs.finish_plan_attempt(
             job.job_id,
-            status="succeeded" if succeeded else "failed",
+            claim_token=claim_token,
+            status=status,
             evidence_id=evidence.evidence_id,
             error="" if succeeded else evidence.reason,
+            remote_outcome="exit_observed"
+            if not result.timed_out and not result.cancelled
+            else "unknown",
         )
+
+    def _authorize_plan(
+        self,
+        *,
+        plan: CommandPlan,
+        job: OperationJob,
+        claim_token: str,
+        session_id: str,
+        subject_id: str,
+        agent_id: str,
+        trace_id: str,
+    ) -> PolicyDecision:
+        if self.action_policy is None:
+            self.jobs.finish_plan_attempt(
+                job.job_id,
+                claim_token=claim_token,
+                status="failed",
+                error="canonical action policy is unavailable",
+                remote_outcome="not_dispatched",
+            )
+            raise ToolRuntimeError(
+                "POLICY_DENIED",
+                "Operations command execution requires the canonical action policy.",
+                {"reason_code": "POLICY_MODE_UNSUPPORTED"},
+            )
+        decision = cast(
+            PolicyDecision,
+            self.action_policy.check(
+                {
+                    "tool": "ops.command",
+                    "method": "run",
+                    "args": {"plan_id": plan.plan_id, "plan_hash": plan.plan_hash},
+                    "invocation_id": plan.plan_id,
+                },
+                {
+                    "trace_id": trace_id,
+                    "session_id": session_id,
+                    "agent_id": agent_id,
+                    "subject_id": subject_id,
+                },
+                risk_override=RiskSpec(
+                    risk_class="exec",
+                    side_effects="remote",
+                    reversibility="unknown",
+                    default_confirm=True,
+                ),
+            ),
+        )
+        if decision.decision == "REQUIRE_CONFIRM":
+            self.jobs.await_approval(
+                job.job_id,
+                claim_token=claim_token,
+                approval_id=str(decision.approval_id or ""),
+            )
+            raise ToolRuntimeError(
+                TOOL_ERROR_CONFIRM_REQUIRED,
+                decision.reason,
+                {
+                    "approval_id": str(decision.approval_id or ""),
+                    "choices": ["allow_once", "deny"],
+                    "job_id": job.job_id,
+                    "plan_id": plan.plan_id,
+                },
+            )
+        if (
+            decision.decision != "ALLOW"
+            or decision.reason_code != "EXACT_PENDING_ALLOW"
+            or not decision.approval_id
+            or not decision.matched_grant_id
+            or decision.invocation_hash is None
+        ):
+            self.jobs.finish_plan_attempt(
+                job.job_id,
+                claim_token=claim_token,
+                status="failed",
+                error=decision.reason,
+                remote_outcome="not_dispatched",
+            )
+            raise ToolRuntimeError("POLICY_DENIED", decision.reason)
+        return decision
 
     def inspect_job(
         self,
@@ -273,14 +499,60 @@ class OpsService:
         )
         target = self.targets.get(job.request.target_id)
         transport = self._transports.get(target.kind)
-        cancelled = self.jobs.cancel(
+        requested = self.jobs.request_cancel(
             job_id,
             target_id=target_id,
             session_id=session_id,
         )
-        if transport is not None:
-            transport.cancel(job_id)
-        return cancelled
+        if requested.status != "running":
+            return requested
+        delivered = transport.cancel(job_id) if transport is not None else False
+        return self.jobs.record_cancel_delivery(job_id, delivered=delivered)
+
+    def mark_job_interrupted(
+        self,
+        job_id: str,
+        *,
+        reason: str,
+        actor: str,
+    ) -> OperationJob:
+        job, changed, prior_status, prior_phase = self.jobs.mark_interrupted(
+            job_id,
+            reason=reason,
+            actor=actor,
+        )
+        if not changed:
+            return job
+        request = OperationRequest(
+            operation_id=job.request.operation_id,
+            target_id=job.request.target_id,
+            profile_id="job.mark_interrupted",
+            parameters={
+                "reason": reason,
+                "actor": actor,
+                "prior_status": prior_status,
+                "prior_phase": prior_phase,
+            },
+            timeout_seconds=1,
+            session_id=job.request.session_id,
+            tool_id="opsctl.job-mark-interrupted",
+        )
+        evidence = self.evidence.put(
+            build_evidence(
+                request,
+                TransportResult(
+                    argv=("job-mark-interrupted",),
+                    return_code=1,
+                    stderr="local operator marked the attempt interrupted",
+                ),
+                target_revision=job.target_revision,
+                transport="local_record",
+                policy_outcome="operator_confirmed",
+                before_facts={"status": prior_status, "phase": prior_phase},
+                after_facts={"status": "failed", "remote_outcome": "unknown"},
+            )
+        )
+        return self.jobs.attach_evidence(job_id, evidence.evidence_id)
 
     def inspect_evidence(self, evidence_id: str) -> EvidenceRecord:
         return self.evidence.get(evidence_id)
@@ -295,6 +567,9 @@ class OpsService:
         session_id: str = "",
     ) -> EvidenceRecord:
         target = self.targets.get(target_id)
+        decision = decide_operation_policy(target, risk="read")
+        if decision.outcome != "allow":
+            raise PermissionError(decision.reason)
         if "file_read" not in self._transport_capabilities.get(target.kind, ()):
             raise ValueError(f"file read is unsupported for target kind: {target.kind}")
         requested = Path(path)
@@ -334,7 +609,7 @@ class OpsService:
                 redactions=self._redaction_resolver(target),
                 target_revision=target.revision,
                 transport=target.kind,
-                policy_outcome="allow",
+                policy_outcome=decision.outcome,
             )
         )
 
@@ -367,6 +642,7 @@ def configured_ops_service(
     *,
     data_root: Path,
     credential_reader: Callable[[CredentialRef], str] | None = None,
+    action_policy: Any | None = None,
 ) -> OpsService:
     from .registry import registry_from_config
 
@@ -401,7 +677,6 @@ def configured_ops_service(
     storage_root = data_root / "ops"
     storage_root.mkdir(parents=True, exist_ok=True)
     jobs = OperationJobStore(storage_root / "jobs.db")
-    jobs.recover_running()
     return OpsService(
         targets=targets,
         transports=transports,
@@ -418,4 +693,5 @@ def configured_ops_service(
             for kind, registration in registration_map().items()
             if kind in transports
         },
+        action_policy=action_policy,
     )

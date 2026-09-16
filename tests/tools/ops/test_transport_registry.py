@@ -22,6 +22,7 @@ def test_builtin_registration_is_explicit_and_complete() -> None:
     )
     assert registrations["local"].target_schema is LocalTarget
     assert registrations["local"].capabilities == {"command", "file_read"}
+    assert registrations["ssh"].capabilities == {"command"}
     assert set(build_transports(("local",), credential_reader=lambda _ref: "")) == {
         "local"
     }

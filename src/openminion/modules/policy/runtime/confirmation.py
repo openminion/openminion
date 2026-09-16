@@ -1,26 +1,37 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import asdict
 from typing import Any, Literal
 
 from openminion.modules.tool.plugin_api import (
     BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
+    BlockchainSendConfirmationPreview,
 )
 
 from ..constants import (
+    BLOCKCHAIN_CONFIRMATION_TTL_SECONDS,
+    BLOCKCHAIN_POLICY_TOOL,
+    BLOCKCHAIN_SEND_METHOD,
+    OPS_COMMAND_CONFIRMATION_TTL_SECONDS,
+    OPS_COMMAND_POLICY_TOOL,
+    OPS_COMMAND_RUN_METHOD,
     POLICY_CONFIRM_RESPONSE_AFFIRM,
     POLICY_CONFIRM_RESPONSE_DENY,
     POLICY_CONFIRM_RESPONSE_UNCLEAR,
+    POLICY_DECISION_ALLOW,
     POLICY_DECISION_DENY,
 )
 from ..models import (
     ContextSummary,
     InvocationSummary,
+    PendingPolicyConfirmation,
     PolicyConfig,
     PolicyDecision,
     RiskSpec,
     sanitize_args,
 )
+from ..storage import PolicyStore
 
 _BLOCKCHAIN_PREVIEW_ERROR_REASONS = {
     "request_schema",
@@ -29,6 +40,77 @@ _BLOCKCHAIN_PREVIEW_ERROR_REASONS = {
     "calldata_limit",
     "preview_limit",
 }
+
+
+def is_exact_blockchain_send(tool: str, method: str) -> bool:
+    return tool == BLOCKCHAIN_POLICY_TOOL and method == BLOCKCHAIN_SEND_METHOD
+
+
+def is_exact_ops_command(tool: str, method: str) -> bool:
+    return tool == OPS_COMMAND_POLICY_TOOL and method == OPS_COMMAND_RUN_METHOD
+
+
+def get_or_create_exact_confirmation(
+    *,
+    store: PolicyStore,
+    invocation: InvocationSummary,
+    context: ContextSummary,
+    subject_id: str,
+    blockchain_preview: BlockchainSendConfirmationPreview | None,
+) -> PendingPolicyConfirmation:
+    if is_exact_blockchain_send(invocation.tool, invocation.method):
+        assert blockchain_preview is not None
+        preview = asdict(blockchain_preview)
+        ttl_seconds = BLOCKCHAIN_CONFIRMATION_TTL_SECONDS
+    else:
+        preview = {
+            "plan_id": str(invocation.args.get("plan_id", "")),
+            "plan_hash": str(invocation.args.get("plan_hash", "")),
+        }
+        ttl_seconds = OPS_COMMAND_CONFIRMATION_TTL_SECONDS
+    return store.get_or_create_pending_confirmation(
+        subject_id=subject_id,
+        tool=invocation.tool,
+        method=invocation.method,
+        invocation_hash=invocation.invocation_hash,
+        invocation_id=invocation.invocation_id,
+        trace_id=context.trace_id,
+        session_id=context.session_id,
+        preview=preview,
+        ttl_seconds=ttl_seconds,
+    )
+
+
+def resolve_exact_ops_decision(
+    *,
+    store: PolicyStore,
+    invocation: InvocationSummary,
+    context: ContextSummary,
+    subject_id: str,
+    risk: RiskSpec,
+) -> PolicyDecision | None:
+    grant = store.resolve_matching_active_grant_for_use(
+        subject_id=subject_id,
+        tool=invocation.tool,
+        method=invocation.method,
+        invocation_hash=invocation.invocation_hash,
+        session_id=context.session_id,
+    )
+    if grant is None:
+        return None
+    return PolicyDecision(
+        decision=POLICY_DECISION_ALLOW,
+        reason_code="EXACT_PENDING_ALLOW",
+        reason="Allowed by exact pending confirmation",
+        risk=risk,
+        matched_grant_id=grant.grant_id,
+        approval_id=grant.approval_id,
+        invocation_hash=invocation.invocation_hash,
+        details={
+            "grant_id": grant.grant_id,
+            "duration_type": grant.duration_type,
+        },
+    )
 
 
 def blockchain_preview_invalid_decision(

@@ -162,12 +162,12 @@ def build_runtime_infrastructure(
     default_agent = default_config.agents[resolve_default_agent_id(default_config)]
     llm_runtime = build_runtime_llm_handle(default_config, logger.getChild("provider"))
     tools = extension_runtime.tools
-    action_policy = build_action_policy_service(
-        config=base_config,
+    action_policy, ops_service = _build_ops_services(
+        base_config,
+        manager,
+        paths.data,
         tool_registry=tools,
-        data_root=paths.data,
     )
-    ops_service = _build_ops_service(base_config, manager, paths.data)
     support = _build_runtime_support(
         base_config=base_config,
         manager=manager,
@@ -221,13 +221,20 @@ def _build_security_policy(
     )
 
 
-def _build_ops_service(
+def _build_ops_services(
     base_config: OpenMinionConfig,
     manager: ConfigManager,
     data_root: Path,
-) -> OpsService:
+    *,
+    tool_registry: Any,
+) -> tuple[Any, OpsService]:
+    action_policy = build_action_policy_service(
+        config=base_config,
+        tool_registry=tool_registry,
+        data_root=data_root,
+    )
     credential_audit = InMemoryCredentialAuditLog()
-    return configured_ops_service(
+    ops_service = configured_ops_service(
         base_config.runtime.ops,
         data_root=data_root,
         credential_reader=lambda ref: resolve_credential_env_value(
@@ -238,7 +245,9 @@ def _build_ops_service(
             audit_log=credential_audit,
             env=manager.env,
         ),
+        action_policy=action_policy,
     )
+    return action_policy, ops_service
 
 
 def _bind_channel_supervisor_telemetry(

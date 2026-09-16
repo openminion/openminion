@@ -3,9 +3,12 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Callable, Mapping, MutableMapping
-from typing import Any
+from typing import Any, cast
 
-from .api import target_view
+from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
+
+from .api import job_view, target_view
 from .args import (
     EmptyArgs,
     CommandPlanArgs,
@@ -18,7 +21,7 @@ from .args import (
     ProcessArgs,
     ProfileArgs,
     ServiceArgs,
-    TargetArgs,
+    TargetInspectArgs,
 )
 from .contracts import OperationRequest
 from .interfaces import (
@@ -119,9 +122,32 @@ def _target_list(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 
 def _target_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    parsed = TargetArgs.model_validate(args)
-    target = _service(ctx).inspect_target(parsed.target_id)
-    return {"ok": True, "data": target_view(target)}
+    parsed = TargetInspectArgs.model_validate(args)
+    service = _service(ctx)
+    target = service.inspect_target(parsed.target_id)
+    started = time.monotonic()
+    readiness = service.inspect_target_readiness(
+        parsed.target_id,
+        probe=parsed.probe,
+    )
+    if parsed.probe:
+        probe = cast(dict[str, object], readiness["probe"])
+        emit_transport_event(
+            ctx,
+            phase="probe",
+            target=target,
+            capability="command",
+            status=str(probe["status"]),
+            duration_ms=int((time.monotonic() - started) * 1000),
+            error_code=str(probe["reason_code"]),
+        )
+    return {
+        "ok": True,
+        "data": {
+            **target_view(target),
+            **readiness,
+        },
+    }
 
 
 def _profile(
@@ -244,24 +270,40 @@ def _command_plan(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 def _command_run(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     parsed = CommandRunArgs.model_validate(args)
-    if not bool(getattr(ctx, "confirm", False)):
-        raise PermissionError("command plan requires operator approval")
     service = _service(ctx)
     plan = service.plans.get(parsed.plan_id)
     target = service.inspect_target(plan.target_id)
     started = time.monotonic()
-    emit_transport_event(
-        ctx,
-        phase="dispatch",
-        target=target,
-        capability="command",
-        status="started",
-    )
-    job = service.run_plan(
-        plan_id=parsed.plan_id,
-        plan_hash=parsed.plan_hash,
-        approval_id=_approval_id(ctx, parsed.plan_hash),
-    )
+    try:
+        job = service.run_plan(
+            plan_id=parsed.plan_id,
+            plan_hash=parsed.plan_hash,
+            session_id=_session_id(ctx),
+            agent_id=str(getattr(ctx, "agent_id", "") or ""),
+            trace_id=str(getattr(ctx, "trace_id", "") or ""),
+        )
+    except ToolRuntimeError as exc:
+        job_id = str(exc.details.get("job_id", ""))
+        emit_transport_event(
+            ctx,
+            phase="authorization",
+            target=target,
+            capability="command",
+            status="pending" if exc.code == TOOL_ERROR_CONFIRM_REQUIRED else "denied",
+            duration_ms=int((time.monotonic() - started) * 1000),
+            job=service.inspect_job(job_id) if job_id else None,
+            error_code=exc.code,
+        )
+        raise
+    if job.remote_outcome != "not_dispatched":
+        emit_transport_event(
+            ctx,
+            phase="dispatch",
+            target=target,
+            capability="command",
+            status="recorded",
+            job=job,
+        )
     evidence = service.inspect_evidence(job.evidence_id) if job.evidence_id else None
     emit_transport_event(
         ctx,
@@ -271,6 +313,7 @@ def _command_run(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         status=job.status,
         duration_ms=int((time.monotonic() - started) * 1000),
         evidence=evidence,
+        job=job,
         error_code="transport_failed" if job.status == "failed" else "",
     )
     return {
@@ -325,18 +368,6 @@ def _session_id(ctx: Any) -> str:
     return str(extras.get("session_id", "")) if isinstance(extras, Mapping) else ""
 
 
-def _approval_id(ctx: Any, plan_hash: str) -> str:
-    policy = getattr(ctx, "policy", None)
-    raw = getattr(policy, "raw", {})
-    metadata = raw.get("context_metadata", {}) if isinstance(raw, Mapping) else {}
-    grant_id = (
-        str(metadata.get("confirmation_grant_id", "") or "").strip()
-        if isinstance(metadata, Mapping)
-        else ""
-    )
-    return grant_id or f"interactive-{plan_hash[:16]}"
-
-
 def _job_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     parsed = JobArgs.model_validate(args)
     job = _service(ctx).inspect_job(
@@ -344,7 +375,7 @@ def _job_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         target_id=parsed.target_id,
         session_id=parsed.session_id,
     )
-    return {"ok": True, "data": job.model_dump(mode="json")}
+    return {"ok": True, "data": job_view(job)}
 
 
 def _job_cancel(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
@@ -367,5 +398,6 @@ def _job_cancel(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         target=target,
         capability="command",
         status=job.status,
+        job=job,
     )
     return {"ok": True, "data": job.model_dump(mode="json")}

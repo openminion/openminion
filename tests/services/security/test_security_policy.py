@@ -1,5 +1,7 @@
 import unittest
 
+import pytest
+
 from openminion.services.security.policy import (
     DECISION_ALLOW,
     DECISION_DENY,
@@ -28,6 +30,28 @@ def test_service_policy_surface_is_canonical_module_owner() -> None:
     )
 
     assert compatibility is canonical
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        ToolBudgetState(tool_calls_total=99),
+        ToolBudgetState(per_tool_calls={"file.read": 49}),
+        ToolBudgetState(budget_cost_total=199),
+    ],
+)
+def test_default_tool_budget_allows_then_denies_at_each_limit(state) -> None:
+    engine = SecurityPolicyEngine()
+    assert engine.evaluate_tool_budget(
+        tool_name="file.read", budget_cost=1, state=state
+    ).allowed
+    engine.record_tool_budget_usage(tool_name="file.read", budget_cost=1, state=state)
+    assert (
+        engine.evaluate_tool_budget(
+            tool_name="file.read", budget_cost=1, state=state
+        ).decision
+        == DECISION_DENY
+    )
 
 
 class SecurityPolicyEngineTests(unittest.TestCase):

@@ -623,8 +623,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
     from openminion.modules.brain.schemas import AgentProfile
 
     config = service._config
-    llm_config = service._get_manager_config("llm")
-    llm_payload = llm_config if llm_config is not None else {}
+    llm_payload = service._get_manager_config("llm") or {}
     llm_api = bridge_module.create_llm_adapter(
         mode=service.mode,
         config=llm_payload,
@@ -751,6 +750,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         secret_service=_runtime_secret_service(service, config),
         memory_service=memory_api,
         knowledge_graph_service=getattr(runtime_handle, "knowledge_graphs", None),
+        ops_service=getattr(runtime_handle, "ops_service", None),
         policy_ctl=service._action_policy_service,
         a2a_delegate_api=a2a_delegate_api,
         agent_query=getattr(runtime_handle, "agent_discovery_snapshot", None),

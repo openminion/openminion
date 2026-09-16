@@ -19,10 +19,7 @@ from openminion.services.agent.context.history import _resolve_system_prompt
 
 
 def create_session_api(
-    *,
-    mode: str,
-    db_path: str,
-    telemetryctl: Any | None = None,
+    *, mode: str, db_path: str, telemetryctl: Any | None = None
 ) -> Any:
     return create_session_adapter(mode=mode, db_path=db_path, telemetryctl=telemetryctl)
 
@@ -38,6 +35,7 @@ def create_tool_api(
     secret_service: Any | None = None,
     memory_service: Any | None = None,
     knowledge_graph_service: Any | None = None,
+    ops_service: Any | None = None,
     policy_ctl: Any | None = None,
     a2a_delegate_api: Any | None = None,
     agent_query: Any | None = None,
@@ -58,6 +56,7 @@ def create_tool_api(
         secret_service=secret_service,
         memory_service=memory_service,
         knowledge_graph_service=knowledge_graph_service,
+        ops_service=ops_service,
         policy_ctl=policy_ctl,
         a2a_delegate_api=a2a_delegate_api,
         agent_query=agent_query,

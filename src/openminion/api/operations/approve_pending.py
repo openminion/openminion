@@ -20,19 +20,19 @@ def parse_decision(raw: Any) -> str | None:
     return normalized if normalized in APPROVAL_CHOICES else None
 
 
-def _invalid_decision_error(raw: Any) -> dict[str, Any]:
+def _invalid_decision_error(
+    raw: Any, *, choices: tuple[str, ...] = APPROVAL_CHOICES
+) -> dict[str, Any]:
     return {
         "ok": False,
         "error": {
             "code": "INVALID_DECISION",
-            "message": (
-                "approval decision must be one of: " + ", ".join(APPROVAL_CHOICES)
-            ),
+            "message": ("approval decision must be one of: " + ", ".join(choices)),
             "details": {
                 "received": raw
                 if isinstance(raw, (str, int, float, bool, type(None)))
                 else repr(raw),
-                "choices": list(APPROVAL_CHOICES),
+                "choices": list(choices),
             },
         },
     }
@@ -94,11 +94,13 @@ def process_approval_decision(
         method = str(invocation.get("method", "") or "")
         if not method and "." in tool:
             tool, method = tool.rsplit(".", 1)
-        if (
-            tool == "blockchain"
-            and method == "send_transaction"
-            and decision in {"allow_once", "deny"}
-        ):
+        exact_pending = (tool, method) in {
+            ("blockchain", "send_transaction"),
+            ("ops.command", "run"),
+        }
+        if exact_pending and decision not in {"allow_once", "deny"}:
+            return _invalid_decision_error(decision, choices=("allow_once", "deny"))
+        if exact_pending:
             try:
                 grant_id = policyctl.resolve_confirmation(approval_id, decision)
             except PolicyControlError as exc:

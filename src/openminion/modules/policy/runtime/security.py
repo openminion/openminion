@@ -1,6 +1,9 @@
+"""Security decisions and tool-budget enforcement."""
+
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from openminion.base.config.runtime import ToolPolicyConfig
 from openminion.modules.tool.contracts.model_ids import MODEL_BROWSER
 from openminion.modules.telemetry.events.module import emit_module_telemetry
 
@@ -105,9 +108,9 @@ class SecurityPolicyRule:
 
 @dataclass(frozen=True)
 class ToolBudgetPolicy:
-    max_calls_per_run: int = 8
-    max_calls_per_tool: int = 4
-    max_budget_cost_per_run: int = 16
+    max_calls_per_run: int = ToolPolicyConfig.max_calls_per_run
+    max_calls_per_tool: int = ToolPolicyConfig.max_calls_per_tool
+    max_budget_cost_per_run: int = ToolPolicyConfig.max_budget_cost_per_run
 
 
 @dataclass

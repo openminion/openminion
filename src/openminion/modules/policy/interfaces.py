@@ -86,6 +86,7 @@ class PolicyCtlInterface(Protocol):
         tool: str,
         method: str,
         invocation_hash: str,
+        session_id: str | None = None,
     ) -> Any | None: ...
 
     def revoke_grant(self, grant_id: str) -> bool: ...

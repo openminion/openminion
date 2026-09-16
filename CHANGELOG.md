@@ -1,9 +1,17 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-09-13
+Last updated: 2026-09-15
 
 This file tracks package-facing release notes for `openminion`.
+
+## Unreleased
+
+- Raised shared execution defaults to 100 tool calls per run, 50 calls per
+  tool, 200 weighted tool-cost units, 100 loop steps and a 300-second brain
+  turn budget. JSON parsing and standalone policy now use the same defaults.
+  Explicit saved limits remain unchanged; mode-specific and client timeouts
+  still apply independently.
 
 ## Current package line - 2026-09-13
 
