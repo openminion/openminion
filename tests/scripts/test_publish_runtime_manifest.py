@@ -21,11 +21,12 @@ from scripts.ci.publish_runtime_manifest import verify_producer, verify_producer
 
 def test_observer_skips_testpypi_tags_before_publication_approval():
     workflow = (
-        Path(__file__).resolve().parents[2]
-        / ".github/workflows/runtime-manifests.yml"
+        Path(__file__).resolve().parents[2] / ".github/workflows/runtime-manifests.yml"
     ).read_text()
     for marker in ("alpha", "beta", "rc"):
-        assert f"!contains(github.event.workflow_run.head_branch, '{marker}')" in workflow
+        assert (
+            f"!contains(github.event.workflow_run.head_branch, '{marker}')" in workflow
+        )
 
 
 def seed_main(tmp_path, remote):
