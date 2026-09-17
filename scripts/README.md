@@ -83,6 +83,12 @@ generic repo validators.
 CI plumbing helpers used by workflows, bundle generation, wheel building, or
 migration check orchestration.
 
+`release_manifest.py` verifies official source-release wheel metadata.
+`publish_runtime_manifest.py` verifies the approved producer wheel and prepares
+record-before-feed metadata PRs for protected main. Its read-only `--verify-main`
+checks public feeds and reachable record SHAs after merge. These helpers do not change CLI or daemon
+behavior; see [Releasing](../RELEASING.md) for deployment prerequisites.
+
 ### `baselines/`
 
 Static baseline artifacts consumed by validators.
