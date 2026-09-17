@@ -1,13 +1,94 @@
 # OpenMinion Releasing
 
 Status: active
-Last updated: 2026-09-09
+Last updated: 2026-09-18
 
 Purpose: give maintainers a compact package-local release smoke checklist for
 the public `openminion` package surface on the active alpha line defined by
 `openminion.base.version.OPENMINION_VERSION`.
 
 ## Release floor
+
+Runtime metadata is separate from source or CLI behavior. The new
+`Runtime manifests` workflow observes a successful final-tag `Release` run and
+requires its production PyPI job to have succeeded. It reads trusted `main`
+helpers under `scripts/ci/`, verifies the official wheel bytes/package metadata,
+compares its filename/size/digest with the approved producer's `dist` wheel,
+and prepares a metadata PR only after the protected `runtime-publication` environment exists.
+Record IDs include the producer run and attempt; publisher-only reruns reuse
+the same immutable identity. Producer artifacts are read as data, never executed.
+No Desktop-specific command or CLI/TUI startup check is added.
+
+Publication targets protected `main` in this repo, through a transient metadata-only PR:
+`releases/runtime/v1/pypi/releases/<version>/<release-id>.json` and
+`releases/runtime/v1/pypi/channels/stable.json`. Immutable record readback must
+pass before composing the proposed feed; references pin full metadata commit SHAs.
+Merge the PR with a merge commit, never squash/rebase, so record SHAs remain
+reachable. Desktop reads the stable feed from `main`. Back-merge `main` into
+`dev` after publication; both branches retain the same published metadata,
+while `dev` can contain unreleased code. Uncertified Desktop bounds remain null.
+Existing releases/source files are not rewritten; binary promotion is not enabled.
+
+Qualify the publication environment and public feeds before the first use;
+local files and passing tests are not deployment evidence. Verify without publishing:
+
+```bash
+.venv/bin/python3.11 -m scripts.ci.publish_runtime_manifest --help
+.venv/bin/python3.11 -m pytest -q tests/scripts/test_release_manifest.py tests/scripts/test_publish_runtime_manifest.py
+```
+
+### Next-release runtime metadata checklist
+
+1. Land the publisher workflow/helpers and initial empty `releases/runtime/v1/`
+   feeds through the normal `dev` → `main` PR. Ship the Desktop reader pointing
+   to `https://raw.githubusercontent.com/openminion/openminion/main/releases/runtime/v1/pypi/channels/stable.json`.
+2. Configure the protected `runtime-publication` environment's reviewers and
+   deployment refs, permit Actions PR creation and retain main's existing
+   required checks. Do not grant a protection bypass. GitHub-token-created
+   PR workflows can require **Approve workflows to run** in GitHub;
+   see [GitHub's trigger rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+3. Use the existing package release process below. A successful final
+   production-PyPI `Release` run triggers **Runtime manifests** automatically;
+   it verifies official/producer wheel equality, publishes immutable R then
+   proposed feed F to `runtime-publication/<release-id>`, and opens/reuses a PR
+   targeting main. `pending_merge` is not published and does not notify clients.
+   RC/alpha/beta tag runs and manual TestPyPI runs do not request publication.
+4. Run the normal PR checks, then merge with a **merge commit**. Keep only one
+   pending runtime metadata PR; rerun another producer's observer after the
+   first merges. If main moved while a PR was pending, merge current main into
+   that transient branch normally and resolve feed conflicts without dropping
+   references; no force/rebase, branch recreation or automatic conflict repair.
+5. The read-only **Runtime manifests / verify-main** job runs after a manifest
+   change is merged into main. Manual workflow dispatch also verifies main and
+   never publishes. It checks anonymous main feeds, record digests and R-SHA
+   ancestry/readback. Record the actual successful job and metadata/merge SHAs;
+   a failed readback remains publication-unconfirmed.
+6. Back-merge main into dev through the normal integration process. In a fresh
+   checkout, verify the manifest trees match:
+
+   ```bash
+   git fetch origin main dev
+   git diff --exit-code origin/main origin/dev -- releases/runtime/v1
+   ```
+
+7. Verify the Desktop reader against both public feeds before offering an update.
+   Record the exact Desktop revision, source tag, producer run/attempt, R/F/merge
+   SHAs and artifact digests in the runtime-distribution tracker. Read-only feed
+   consumption and a private Electron fixture are separate from shipped-app
+   upgrade acceptance.
+8. Test the shipped Desktop in isolated roots against public URLs: startup
+   and manual checks, explicit **Prepare update**, quit/reopen activation and
+   continued replies in the same chat. Source records are initially
+   **uncertified** (`desktop_compatibility: null`) and must be skipped, not
+   offered. A separately reviewed/tested compatibility revision is required
+   before claiming end-to-end upgrade acceptance; this observer does not
+   invent or publish that certification. Binary feed stays empty until its
+   packaging/native/trust gates pass.
+
+Manifest-only merges run verification and normal CI, not another package
+release. Main is the public discovery authority; dev's copy is for consistent
+development, not a second update channel. Desktop checks notify only: no
+timer-driven installation or restart of active work.
 
 Before cutting a public package release:
 
