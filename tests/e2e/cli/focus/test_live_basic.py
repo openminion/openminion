@@ -14,7 +14,7 @@ from tests.e2e.cli.focus.harness.assertions import (
     assert_recorded_answer,
     assert_time_only_tools,
     current_turn_events,
-    read_session_events,
+    read_focus_evidence,
     visible_text,
 )
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
@@ -92,25 +92,25 @@ def test_live_focus_basic_turn(
         focus_probe.wait_ready(session)
         if scenario.scenario_id == "exact_reply":
             focus_probe.run_slash(session, "/permissions readonly", marker="readonly")
-        previous_ids = {
-            event.event_id
-            for event in read_session_events(
-                focus_probe.environment(), focus_probe.session_id
-            )
-        }
+        previous_events, previous_messages, _ = read_focus_evidence(
+            focus_probe.environment(), focus_probe.session_id
+        )
+        previous_ids = {event.event_id for event in previous_events}
         transcript = focus_probe.run_turn(session, scenario)
         if scenario.scenario_id == "exact_reply":
             assert_exact_reply(transcript, scenario.prompt, "CLI Focus live smoke OK")
-            events, turn_scope = current_turn_events(
-                read_session_events(focus_probe.environment(), focus_probe.session_id),
-                previous_ids,
+            all_events, messages, brain_session_id = read_focus_evidence(
+                focus_probe.environment(), focus_probe.session_id
             )
+            events, turn_scope = current_turn_events(all_events, previous_ids)
             assert_time_only_tools(
-                events, session_id=focus_probe.session_id, turn_scope_id=turn_scope
+                events, session_id=brain_session_id, turn_scope_id=turn_scope
             )
             assert_recorded_answer(
-                events,
+                messages,
                 session_id=focus_probe.session_id,
+                turn_scope_id=turn_scope,
+                previous_ids={message.id for message in previous_messages},
                 answer="CLI Focus live smoke OK",
             )
         foreign_invocation_id = _seed_foreign_invocation(focus_probe)

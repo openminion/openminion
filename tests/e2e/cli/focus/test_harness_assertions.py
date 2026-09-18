@@ -7,6 +7,10 @@ import pytest
 from pyte.screens import Char
 
 from openminion.modules.telemetry.schemas import TelemetryEvent
+from openminion.modules.storage.runtime.session_store import MessageRecord, SessionStore
+from openminion.modules.storage.runtime.sqlite import connect_database
+from openminion.modules.storage.runtime.migrations import migrate_database
+from openminion.modules.telemetry.service import TelemetryService
 
 from tests.e2e.cli.focus.harness.assertions import (
     assert_expected_markers,
@@ -15,6 +19,7 @@ from tests.e2e.cli.focus.harness.assertions import (
     assert_time_only_tools,
     assert_recorded_answer,
     current_turn_events,
+    read_focus_evidence,
     assert_focus_turn_completed,
     turn_output_text,
 )
@@ -212,35 +217,215 @@ def test_baseline_tools_reject_successful_non_time_execution(name: str) -> None:
 def test_recorded_assistant_output_preserves_literal_line_start_markers(
     answer: str,
 ) -> None:
-    events = [
-        TelemetryEvent(
-            session_id="current-session",
-            turn_id="assistant-turn",
-            event_type="turn.assistant",
-            data={"role": "assistant", "content": answer},
-        )
-    ]
+    messages = [_outbound_message(answer)]
     transcript = f"◆ Reply with exactly: OK\n● {answer}\nDone in 1s"
     if answer == "OK":
         assert_exact_reply(transcript, "Reply with exactly: OK", "OK")
-        assert_recorded_answer(events, session_id="current-session", answer="OK")
+        assert_recorded_answer(
+            messages,
+            session_id="current-session",
+            turn_scope_id="current-turn",
+            previous_ids=set(),
+            answer="OK",
+        )
     else:
         with pytest.raises(AssertionError, match="recorded assistant output"):
             assert_exact_reply(transcript, "Reply with exactly: OK", "OK")
-            assert_recorded_answer(events, session_id="current-session", answer="OK")
+            assert_recorded_answer(
+                messages,
+                session_id="current-session",
+                turn_scope_id="current-turn",
+                previous_ids=set(),
+                answer="OK",
+            )
 
 
 def test_recorded_assistant_output_requires_current_session_evidence() -> None:
-    events = [
+    messages = [_outbound_message("OK", session_id="foreign-session")]
+    with pytest.raises(AssertionError, match="not recorded"):
+        assert_recorded_answer(
+            messages,
+            session_id="current-session",
+            turn_scope_id="current-turn",
+            previous_ids=set(),
+            answer="OK",
+        )
+
+
+def _outbound_message(
+    answer: str,
+    *,
+    session_id: str = "current-session",
+    request_id: str = "current-turn",
+    message_id: str = "answer-message",
+) -> MessageRecord:
+    return MessageRecord(
+        id=message_id,
+        session_id=session_id,
+        conversation_id="explicit-conversation",
+        thread_id="",
+        attach_id="",
+        role="outbound",
+        body=f"minimax-m2-7: {answer}",
+        metadata={"request_id": request_id},
+        created_at="2026-09-18T23:00:00Z",
+    )
+
+
+@pytest.mark.parametrize(
+    "previous_ids,request_id",
+    (({"answer-message"}, "current-turn"), (set(), "old-turn")),
+)
+def test_recorded_assistant_output_rejects_stale_message_ids_and_requests(
+    previous_ids: set[str], request_id: str
+) -> None:
+    with pytest.raises(AssertionError, match="not recorded"):
+        assert_recorded_answer(
+            [_outbound_message("OK", request_id=request_id)],
+            session_id="current-session",
+            turn_scope_id="current-turn",
+            previous_ids=previous_ids,
+            answer="OK",
+        )
+
+
+def test_focus_evidence_uses_runtime_messages_and_explicit_conversation_owner(
+    tmp_path: Path,
+) -> None:
+    environment = {
+        "OPENMINION_HOME": str(tmp_path / "home"),
+        "OPENMINION_DATA_ROOT": str(tmp_path / "data"),
+    }
+    db_path = tmp_path / "data" / "state" / "openminion.db"
+    migrate_database(db_path)
+    connection = connect_database(db_path)
+    store = SessionStore(connection)
+    store.resolve_session(
+        agent_id="minimax-m2-7",
+        channel="console",
+        target="focus",
+        session_id="runtime-session",
+        metadata={"conversation_id": "explicit-conversation"},
+    )
+    message = store.append_message(
+        session_id="runtime-session",
+        conversation_id="explicit-conversation",
+        role="outbound",
+        body="minimax-m2-7: OK",
+        metadata={"request_id": "current-turn"},
+    )
+    connection.close()
+    service = TelemetryService(env=environment)
+    service.record_event_sync(
         TelemetryEvent(
-            session_id="foreign-session",
+            session_id="runtime-session",
+            turn_id="current-turn",
+            event_type="agent.invocation.started",
+            event_id="start-event",
+            invocation_id="current-invocation",
+        )
+    )
+    service.record_event_sync(
+        TelemetryEvent(
+            session_id="runtime-session::conv:explicit-conversation",
             turn_id="assistant-turn",
             event_type="turn.assistant",
             data={"role": "assistant", "content": "OK"},
         )
-    ]
-    with pytest.raises(AssertionError, match="not recorded"):
-        assert_recorded_answer(events, session_id="current-session", answer="OK")
+    )
+    service.close_sync()
+    events, messages, brain_session_id = read_focus_evidence(
+        environment, "runtime-session"
+    )
+    assert brain_session_id == "runtime-session::conv:explicit-conversation"
+    assert {event.session_id for event in events} == {
+        "runtime-session",
+        brain_session_id,
+    }
+    assistant = next(event for event in events if event.event_type == "turn.assistant")
+    assert "content" not in assistant.data
+    assert any(item.id == message.id for item in messages)
+    assert_recorded_answer(
+        messages,
+        session_id="runtime-session",
+        turn_scope_id="current-turn",
+        previous_ids=set(),
+        answer="OK",
+    )
+
+
+def _family_time_events() -> list[TelemetryEvent]:
+    events = _time_events(
+        name="time",
+        session_id="runtime-session::conv:explicit-conversation",
+        scope="current-turn",
+    )
+    for event in events:
+        event.turn_id = "brain-local-turn"
+    for event_type, status in (
+        ("tool.execution.started", "running"),
+        ("tool.execution.completed", "succeeded"),
+    ):
+        events.append(
+            TelemetryEvent(
+                session_id="runtime-session::conv:explicit-conversation",
+                turn_id="current-turn",
+                event_type=event_type,
+                data={
+                    "tool_call_id": "time-call",
+                    "tool_name": "time.now",
+                    "status": status,
+                },
+            )
+        )
+    return events
+
+
+def test_time_reply_accepts_model_family_with_correlated_runtime_leaf() -> None:
+    assert_current_time_reply(
+        "◆ current time\n● 2026-09-18T12:34:56.1234Z\nDone in 1s",
+        "current time",
+        _family_time_events(),
+        session_id="runtime-session::conv:explicit-conversation",
+        turn_scope_id="current-turn",
+    )
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    (
+        "missing_execution",
+        "conversion",
+        "failed",
+        "foreign_call",
+        "foreign_scope",
+        "foreign_session",
+    ),
+)
+def test_time_family_rejects_unproved_or_foreign_runtime_leaf(mismatch: str) -> None:
+    events = _family_time_events()
+    if mismatch == "missing_execution":
+        events = events[:2]
+    else:
+        completed = events[-1]
+        if mismatch == "conversion":
+            completed.data["tool_name"] = "time.convert"
+        elif mismatch == "failed":
+            completed.data["status"] = "failed"
+        elif mismatch == "foreign_call":
+            completed.data["tool_call_id"] = "foreign-call"
+        elif mismatch == "foreign_scope":
+            completed.turn_id = "old-turn"
+        elif mismatch == "foreign_session":
+            completed.session_id = "foreign-session"
+    with pytest.raises(AssertionError, match="time family call"):
+        assert_current_time_reply(
+            "◆ current time\n● 2026-09-18T12:34:56.1234Z\nDone in 1s",
+            "current time",
+            events,
+            session_id="runtime-session::conv:explicit-conversation",
+            turn_scope_id="current-turn",
+        )
 
 
 @pytest.mark.parametrize("requested_name", ("time.now", "time.in_zone", "exec.run"))

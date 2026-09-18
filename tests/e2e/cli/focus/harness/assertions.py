@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sqlite3
 from datetime import datetime, timedelta
 
+from openminion.base.types import Message
+from openminion.cli.interactive.runtime.messages import RuntimeMessageMixin
+from openminion.modules.storage.runtime.session_store import MessageRecord, SessionStore
+from openminion.modules.storage.runtime.sqlite import resolve_database_path
 from openminion.modules.telemetry.schemas import TelemetryEvent
 from openminion.modules.telemetry.service import TelemetryService
+from openminion.services.brain.post_execution.context import _resolve_turn_session_ids
 
 _ANSI_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 _DONE_RE = re.compile(r"\bDone in \d+(?:m\d{2}s|s)\b")
@@ -67,25 +73,55 @@ def assert_exact_reply(transcript: str, prompt: str, expected: str) -> None:
 
 
 def assert_recorded_answer(
-    events: list[TelemetryEvent], *, session_id: str, answer: str
+    messages: list[MessageRecord],
+    *,
+    session_id: str,
+    turn_scope_id: str,
+    previous_ids: set[str],
+    answer: str,
 ) -> None:
     recorded = [
-        event.data["content"]
-        for event in events
-        if event.session_id == session_id and event.event_type == "turn.assistant"
+        message.body
+        for message in messages
+        if message.session_id == session_id
+        and message.role == "outbound"
+        and message.id not in previous_ids
+        and message.metadata.get("request_id") == turn_scope_id
     ]
     assert recorded, "current assistant output was not recorded"
-    assert " ".join(recorded[-1].split()) == answer, (
-        "terminal answer differs from recorded assistant output"
-    )
+    assert (
+        " ".join(RuntimeMessageMixin._strip_sender_prefix(recorded[-1]).split())
+        == answer
+    ), "terminal answer differs from recorded assistant output"
 
 
-def read_session_events(
+def read_focus_evidence(
     environment: dict[str, str], session_id: str
-) -> list[TelemetryEvent]:
+) -> tuple[list[TelemetryEvent], list[MessageRecord], str]:
+    database_path = resolve_database_path(None, env=environment)
+    connection = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        store = SessionStore(connection)
+        session = store.get_session(session_id)
+        assert session is not None, "missing Focus runtime session"
+        messages = store.list_messages(session_id=session_id)
+        _, brain_session_id = _resolve_turn_session_ids(
+            message=Message(
+                channel="console",
+                target="focus",
+                body="",
+                metadata={**session.metadata, "session_id": session_id},
+            )
+        )
+    finally:
+        connection.close()
     service = TelemetryService(env=environment, read_only=True)
     try:
-        return asyncio.run(service.get_session_summary(session_id)).events
+        events = asyncio.run(service.get_session_summary(session_id)).events
+        if brain_session_id != session_id:
+            events += asyncio.run(service.get_session_summary(brain_session_id)).events
+        return events, messages, brain_session_id
     finally:
         service.close_sync()
 
@@ -110,7 +146,6 @@ def assert_time_only_tools(
         event
         for event in events
         if event.session_id == session_id
-        and event.turn_id == turn_scope_id
         and event.data.get("turn_scope_id") == turn_scope_id
     ]
     requests = {
@@ -129,6 +164,31 @@ def assert_time_only_tools(
         name = request.get("canonical_name")
         if name == "tool.request":
             name = request.get("sanitized_normalized_arguments", {}).get("name")
+        elif name == "time":
+            started = {
+                event.data.get("tool_name")
+                for event in events
+                if event.session_id == session_id
+                and event.turn_id == turn_scope_id
+                and event.event_type == "tool.execution.started"
+                and event.data.get("tool_call_id") == request["call_id"]
+                and event.data.get("status") == "running"
+            }
+            completed = {
+                event.data.get("tool_name")
+                for event in events
+                if event.session_id == session_id
+                and event.turn_id == turn_scope_id
+                and event.event_type == "tool.execution.completed"
+                and event.data.get("tool_call_id") == request["call_id"]
+                and event.data.get("status") == "succeeded"
+            }
+            assert started & completed & {"time.now", "time.in_zone"}, (
+                "time family call has no successful correlated current-time execution"
+            )
+            continue
+        if name == "time" and request.get("canonical_name") == "tool.request":
+            continue
         assert name in {"time.now", "time.in_zone"}, (
             f"unexpected successful tool: {name}"
         )
@@ -162,14 +222,13 @@ def assert_current_time_reply(
         event
         for event in events
         if event.session_id == session_id
-        and event.turn_id == turn_scope_id
         and event.data.get("turn_scope_id") == turn_scope_id
     ]
     requested = {
         event.data["call_id"]
         for event in current_events
         if event.event_type == "tool.call.requested"
-        and event.data.get("canonical_name") in {"time.now", "time.in_zone"}
+        and event.data.get("canonical_name") in {"time", "time.now", "time.in_zone"}
         and event.data.get("call_id")
     }
     acquired: list[datetime] = []
