@@ -9,7 +9,14 @@ from openminion.modules.telemetry.schemas import TelemetryEvent
 from openminion.modules.telemetry.service import TelemetryService
 from tests.e2e.cli.focus.conftest import require_live_focus
 from tests.e2e.cli.focus.harness import FocusProbe
-from tests.e2e.cli.focus.harness.assertions import visible_text
+from tests.e2e.cli.focus.harness.assertions import (
+    assert_exact_reply,
+    assert_recorded_answer,
+    assert_time_only_tools,
+    current_turn_events,
+    read_session_events,
+    visible_text,
+)
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
 from tests.e2e.cli.focus.harness.probe import active_turn_busy
 from tests.e2e.cli.focus.harness.scenarios import BASE_LIVE_SCENARIOS
@@ -83,7 +90,29 @@ def test_live_focus_basic_turn(
     monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
     with focus_probe.session() as session:
         focus_probe.wait_ready(session)
-        focus_probe.run_turn(session, scenario)
+        if scenario.scenario_id == "exact_reply":
+            focus_probe.run_slash(session, "/permissions readonly", marker="readonly")
+        previous_ids = {
+            event.event_id
+            for event in read_session_events(
+                focus_probe.environment(), focus_probe.session_id
+            )
+        }
+        transcript = focus_probe.run_turn(session, scenario)
+        if scenario.scenario_id == "exact_reply":
+            assert_exact_reply(transcript, scenario.prompt, "CLI Focus live smoke OK")
+            events, turn_scope = current_turn_events(
+                read_session_events(focus_probe.environment(), focus_probe.session_id),
+                previous_ids,
+            )
+            assert_time_only_tools(
+                events, session_id=focus_probe.session_id, turn_scope_id=turn_scope
+            )
+            assert_recorded_answer(
+                events,
+                session_id=focus_probe.session_id,
+                answer="CLI Focus live smoke OK",
+            )
         foreign_invocation_id = _seed_foreign_invocation(focus_probe)
 
         telemetry = visible_text(

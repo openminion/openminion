@@ -6,8 +6,15 @@ import sys
 import pytest
 from pyte.screens import Char
 
+from openminion.modules.telemetry.schemas import TelemetryEvent
+
 from tests.e2e.cli.focus.harness.assertions import (
     assert_expected_markers,
+    assert_exact_reply,
+    assert_current_time_reply,
+    assert_time_only_tools,
+    assert_recorded_answer,
+    current_turn_events,
     assert_focus_turn_completed,
     turn_output_text,
 )
@@ -37,6 +44,254 @@ from tests.e2e.cli.focus.harness.scenarios import (
 )
 
 pytestmark = pytest.mark.e2e
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    (
+        "❯ Reply with exactly: OK\n● OK\nDone in 1s\n",
+        "◆ Reply with exactly: OK\n● OK\nDone in 1s\n",
+        "◆ Reply with exactly:\n  OK\nWorking...\n"
+        "● time.now(timezone=UTC)\n  └ returned timestamp\n● OK\nDone in 1s\n",
+        "❯ Reply with exactly: OK\n● O\f"
+        "❯ Reply with exactly: OK\n● \x1b[32mOK\x1b[0m\nDone in 1s\n",
+        "❯ Reply with exactly: OK\n● OK\nDone in 1s\f"
+        "❯ Reply with exactly: OK\n● OK\nDone in 1s\n❯ Ask anything",
+    ),
+)
+def test_exact_reply_accepts_completed_answer_and_benign_redraw(
+    transcript: str,
+) -> None:
+    assert_exact_reply(transcript, "Reply with exactly: OK", "OK")
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    (
+        "❯ Reply with exactly: OK\n● Wrong\nDone in 1s\n",
+        "❯ Reply with exactly: OK\nDone in 1s\n",
+        "❯ Reply with exactly: OK\n● OK, here you go.\nDone in 1s\n",
+        "● OK\nDone in 1s\n❯ Reply with exactly: OK\n",
+        "❯ Previous prompt\n● OK\nDone in 1s\f"
+        "❯ Reply with exactly: OK\n● Wrong\nDone in 1s\n",
+        "❯ Reply with exactly: OK\n● OK\nDone in 1s\f"
+        "❯ Reply with exactly: OK\nWorking...\n",
+        "❯ Previous prompt\n● OK\nDone in 1s\f"
+        "❯ Previous prompt\n● OK\nDone in 1s\n❯ Reply with exactly: OK\n",
+        "❯ Reply with exactly: OK\n● ok\nDone in 1s\n",
+        "● Reply with exactly: OK\n● OK\nDone in 1s\n",
+        "❯ Reply with exactly: OK\n● Here is some extra prose. ● OK\nDone in 1s\n",
+    ),
+)
+def test_exact_reply_rejects_echo_extra_prose_and_stale_answers(
+    transcript: str,
+) -> None:
+    with pytest.raises(AssertionError):
+        assert_exact_reply(transcript, "Reply with exactly: OK", "OK")
+
+
+def _time_events(
+    *,
+    name: str = "time.now",
+    session_id: str = "current-session",
+    scope: str = "current-turn",
+    status: str = "success",
+    completed_call_id: str = "time-call",
+    timestamp: str = "2026-09-18T12:34:56.123400Z",
+) -> list[TelemetryEvent]:
+    return [
+        TelemetryEvent(
+            session_id=session_id,
+            turn_id=scope,
+            event_type="tool.call.requested",
+            data={
+                "turn_scope_id": scope,
+                "call_id": "time-call",
+                "canonical_name": name,
+            },
+        ),
+        TelemetryEvent(
+            session_id=session_id,
+            turn_id=scope,
+            event_type="tool.call.completed",
+            data={
+                "turn_scope_id": scope,
+                "call_id": completed_call_id,
+                "status": status,
+                "output": {"outputs": {"utc": timestamp}},
+            },
+        ),
+    ]
+
+
+@pytest.mark.parametrize("name", ("time.now", "time.in_zone"))
+@pytest.mark.parametrize(
+    "answer",
+    (
+        "2026-09-18T12:34:56.1234+00:00",
+        "2026-09-18T12:34:56,123400Z",
+        "2026-09-18T12:34:56.1234000Z",
+    ),
+)
+def test_time_reply_accepts_equivalent_utc_and_multiple_acquisitions(
+    name: str, answer: str
+) -> None:
+    events = _time_events(name=name)
+    later = _time_events(timestamp="2026-09-18T12:34:57Z")
+    for event in later:
+        event.data["call_id"] = "second-time-call"
+    events += later
+    assert_current_time_reply(
+        f"❯ current time\n● {answer}\nDone in 1s",
+        "current time",
+        events,
+        session_id="current-session",
+        turn_scope_id="current-turn",
+    )
+
+
+@pytest.mark.parametrize(
+    "events",
+    (
+        [],
+        _time_events(name="time.convert"),
+        _time_events(name="time.parse_iso"),
+        _time_events(session_id="foreign-session"),
+        _time_events(scope="previous-turn"),
+        _time_events(status="failed"),
+        _time_events(completed_call_id="foreign-call"),
+        _time_events()[1:],
+    ),
+)
+def test_time_reply_requires_successful_correlated_current_acquisition(
+    events: list[TelemetryEvent],
+) -> None:
+    with pytest.raises(AssertionError):
+        assert_current_time_reply(
+            "❯ current time\n● 2026-09-18T12:34:56.1234Z\nDone in 1s",
+            "current time",
+            events,
+            session_id="current-session",
+            turn_scope_id="current-turn",
+        )
+
+
+@pytest.mark.parametrize(
+    "answer",
+    (
+        "It is 2026-09-18T12:34:56.1234Z UTC.",
+        "2026-09-18T12:34:56Z",
+        "2026-09-18T12:34:56.1234",
+        "2026-09-18T14:34:56.1234+02:00",
+        "2026-09-18T12:34:56.1234001Z",
+        "2026-09-18T12:34:56,1234001Z",
+    ),
+)
+def test_time_reply_rejects_prose_rounding_and_non_utc(answer: str) -> None:
+    with pytest.raises((AssertionError, ValueError)):
+        assert_current_time_reply(
+            f"❯ current time\n● {answer}\nDone in 1s",
+            "current time",
+            _time_events(),
+            session_id="current-session",
+            turn_scope_id="current-turn",
+        )
+
+
+@pytest.mark.parametrize("name", ("web.search", "file.read", "exec.run"))
+def test_baseline_tools_reject_successful_non_time_execution(name: str) -> None:
+    with pytest.raises(AssertionError, match="unexpected successful tool"):
+        assert_time_only_tools(
+            _time_events(name=name),
+            session_id="current-session",
+            turn_scope_id="current-turn",
+        )
+
+
+@pytest.mark.parametrize("answer", ("OK", "Here is extra prose.\n● OK"))
+def test_recorded_assistant_output_preserves_literal_line_start_markers(
+    answer: str,
+) -> None:
+    events = [
+        TelemetryEvent(
+            session_id="current-session",
+            turn_id="assistant-turn",
+            event_type="turn.assistant",
+            data={"role": "assistant", "content": answer},
+        )
+    ]
+    transcript = f"◆ Reply with exactly: OK\n● {answer}\nDone in 1s"
+    if answer == "OK":
+        assert_exact_reply(transcript, "Reply with exactly: OK", "OK")
+        assert_recorded_answer(events, session_id="current-session", answer="OK")
+    else:
+        with pytest.raises(AssertionError, match="recorded assistant output"):
+            assert_exact_reply(transcript, "Reply with exactly: OK", "OK")
+            assert_recorded_answer(events, session_id="current-session", answer="OK")
+
+
+def test_recorded_assistant_output_requires_current_session_evidence() -> None:
+    events = [
+        TelemetryEvent(
+            session_id="foreign-session",
+            turn_id="assistant-turn",
+            event_type="turn.assistant",
+            data={"role": "assistant", "content": "OK"},
+        )
+    ]
+    with pytest.raises(AssertionError, match="not recorded"):
+        assert_recorded_answer(events, session_id="current-session", answer="OK")
+
+
+@pytest.mark.parametrize("requested_name", ("time.now", "time.in_zone", "exec.run"))
+def test_baseline_disclosure_control_is_restricted_to_time(requested_name: str) -> None:
+    events = _time_events(name="tool.request")
+    events[0].data["sanitized_normalized_arguments"] = {"name": requested_name}
+    if requested_name == "exec.run":
+        with pytest.raises(AssertionError, match="unexpected successful tool"):
+            assert_time_only_tools(
+                events, session_id="current-session", turn_scope_id="current-turn"
+            )
+    else:
+        assert_time_only_tools(
+            events, session_id="current-session", turn_scope_id="current-turn"
+        )
+
+
+def test_current_turn_events_exclude_previous_invocations() -> None:
+    old = TelemetryEvent(
+        session_id="current-session",
+        turn_id="previous-turn",
+        event_type="agent.invocation.started",
+        event_id="old-invocation",
+    )
+    current = TelemetryEvent(
+        session_id="current-session",
+        turn_id="current-turn",
+        event_type="agent.invocation.started",
+        event_id="current-invocation",
+    )
+    assert current_turn_events([old, current], {"old-invocation"}) == (
+        [current],
+        "current-turn",
+    )
+
+
+@pytest.mark.parametrize("scopes", ((), ("first-turn", "second-turn")))
+def test_current_turn_events_require_unambiguous_invocation(
+    scopes: tuple[str, ...],
+) -> None:
+    events = [
+        TelemetryEvent(
+            session_id="current-session",
+            turn_id=scope,
+            event_type="agent.invocation.started",
+            event_id=scope,
+        )
+        for scope in scopes
+    ]
+    with pytest.raises(AssertionError, match="missing or ambiguous"):
+        current_turn_events(events, set())
 
 
 def test_focus_session_id_uses_stable_sha256_digest(tmp_path: Path) -> None:

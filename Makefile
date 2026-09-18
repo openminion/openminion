@@ -277,7 +277,11 @@ test-e2e-ci: $(DEV_STAMP)
 		"$(REPO_ROOT)/tests/e2e/project_worker/test_completion.py" \
 		"$(REPO_ROOT)/tests/e2e/test_memory_capture_recall_reliability.py" \
 		"$(REPO_ROOT)/tests/e2e/test_tool_transcript_continuity.py" \
-		"$(REPO_ROOT)/tests/e2e/test_project_learning_instruction_loop.py"
+		"$(REPO_ROOT)/tests/e2e/test_project_learning_instruction_loop.py" \
+		"$(REPO_ROOT)/tests/e2e/test_cli_focus_e2e_runner.py" \
+		"$(REPO_ROOT)/tests/e2e/cli/focus/test_runner_summary.py" \
+		"$(REPO_ROOT)/tests/e2e/cli/focus/test_harness_assertions.py" \
+		"$(REPO_ROOT)/tests/e2e/cli/focus/harness/test_provider_session_resilience.py"
 
 ci-check: format-check workflow-check lint test-critical test-ci test-e2e-ci
 

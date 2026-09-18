@@ -144,3 +144,40 @@ def test_live_main_runs_with_an_existing_config(monkeypatch, tmp_path: Path) -> 
 
     assert runner.main(["live"]) == 0
     assert captured["env"]["OPENMINION_LIVE_CLI_FOCUS_E2E"] == "1"
+
+
+def test_baseline_has_only_two_frozen_nodes() -> None:
+    runner = _load_runner()
+    assert runner.SUITES["baseline-live"].paths == runner.BASELINE_CASES
+    assert len(runner.BASELINE_CASES) == 2
+    assert runner.SUITES["baseline-live"].live
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_baseline_collection_rejects_xfail_markers(monkeypatch, strict) -> None:
+    from tests.e2e.cli.focus import conftest
+    from tests.e2e.runners.run_cli_focus_e2e import BASELINE_CASES
+
+    class SelectedCase:
+        nodeid = BASELINE_CASES[0]
+
+        def get_closest_marker(self, name):
+            assert name == "xfail"
+            return pytest.mark.xfail(strict=strict).mark
+
+    monkeypatch.setenv("OPENMINION_CLI_FOCUS_E2E_BASELINE", "1")
+    with pytest.raises(pytest.UsageError, match="must not have an xfail marker"):
+        conftest.pytest_collection_modifyitems([SelectedCase()])
+
+
+def test_xfail_collection_policy_does_not_change_other_suites(monkeypatch) -> None:
+    from tests.e2e.cli.focus import conftest
+
+    class OtherCase:
+        nodeid = "tests/other.py::test_other"
+
+        def get_closest_marker(self, _name):
+            return pytest.mark.xfail(strict=False).mark
+
+    monkeypatch.setenv("OPENMINION_CLI_FOCUS_E2E_BASELINE", "1")
+    conftest.pytest_collection_modifyitems([OtherCase()])
