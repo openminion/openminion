@@ -1,11 +1,19 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-09-15
+Last updated: 2026-09-18
 
 This file tracks package-facing release notes for `openminion`.
 
-## Unreleased
+## Current package line - 2026-09-18
+
+- Keep published runtime feed and immutable record JSON compatible with the
+  single-version-owner guard, while continuing to reject duplicate live
+  version literals in source, scripts and unrelated release files.
+- Add regression coverage for the precise metadata path exception and retain
+  protected publication, pinned-record hashes and merge-commit ancestry.
+
+## Prior package line - 2026-09-17
 
 - Raised shared execution defaults to 100 tool calls per run, 50 calls per
   tool, 200 weighted tool-cost units, 100 loop steps and a 300-second brain
@@ -13,7 +21,7 @@ This file tracks package-facing release notes for `openminion`.
   Explicit saved limits remain unchanged; mode-specific and client timeouts
   still apply independently.
 
-## Current package line - 2026-09-13
+## Prior package line - 2026-09-13
 
 - Improved ContextCtl memory continuity across session start, active work,
   prior-session artifacts, and selected-record attribution.
