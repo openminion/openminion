@@ -8,6 +8,8 @@ import tarfile
 from pathlib import Path
 import zipfile
 
+import pytest
+
 from openminion import __version__ as package_version
 from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.llm.reasoning import ThinkingCtl
@@ -24,6 +26,12 @@ VERSION_LITERAL_ALLOWLIST = {
 VERSION_LITERAL_OWNERS = {
     OPENMINION_VERSION: "OPENMINION_VERSION",
 }
+
+# Published feeds and immutable records describe releases, not live version owners.
+RUNTIME_METADATA_PATH = re.compile(
+    r"releases/runtime/v1/(?:pypi|binary)/"
+    r"(?:channels/stable\.json|releases/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\.json)"
+)
 
 _GRAPHFAKOS_MIN_VERSION = ".".join(("0", "0", "8"))
 
@@ -215,6 +223,37 @@ def test_current_package_version_is_centralized_across_runtime_surfaces() -> Non
         assert quoted_version not in text
 
 
+@pytest.mark.parametrize("distribution", ["pypi", "binary"])
+@pytest.mark.parametrize(
+    "suffix", ["channels/stable.json", "releases/{version}/source.123.1.json"]
+)
+def test_runtime_metadata_version_literals_are_release_facts(
+    distribution: str, suffix: str
+) -> None:
+    path = f"releases/runtime/v1/{distribution}/{suffix.format(version=OPENMINION_VERSION)}"
+    assert RUNTIME_METADATA_PATH.fullmatch(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/openminion/example.json",
+        "scripts/ci/example.py",
+        "releases/README.md",
+        "releases/runtime/v1/pypi/channels/stable.py",
+        "releases/runtime/v1/pypi/channels/dev.json",
+        "releases/runtime/v1/pypi/releases/{version}/source.py",
+        "releases/runtime/v1/pypi/releases/{version}/nested/source.json",
+        "releases/runtime/v1/unknown/channels/stable.json",
+        "releases/runtime/v2/pypi/channels/stable.json",
+    ],
+)
+def test_runtime_metadata_exception_does_not_cover_other_files(path: str) -> None:
+    assert (
+        RUNTIME_METADATA_PATH.fullmatch(path.format(version=OPENMINION_VERSION)) is None
+    )
+
+
 def test_current_package_version_literal_stays_in_version_owner() -> None:
     root = Path(__file__).resolve().parents[1]
     findings: list[str] = []
@@ -228,7 +267,10 @@ def test_current_package_version_literal_stays_in_version_owner() -> None:
         if not path.is_file():
             continue
         relative_path = Path(raw_path)
-        if relative_path in VERSION_LITERAL_ALLOWLIST:
+        if (
+            relative_path in VERSION_LITERAL_ALLOWLIST
+            or RUNTIME_METADATA_PATH.fullmatch(relative_path.as_posix())
+        ):
             continue
         try:
             text = path.read_text(encoding="utf-8")
