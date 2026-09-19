@@ -23,6 +23,7 @@ from openminion.modules.brain.loop.strategies.coding.handler import (
     execute_coding_profile,
     prepare_coding_profile,
 )
+from openminion.modules.brain.loop.strategies.coding.loop_state import CodingLoopState
 from openminion.modules.brain.loop.strategies.coding.plan import CodingPlan
 from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
@@ -156,6 +157,24 @@ class TestCodingProfileRunnerMethods:
             "plan_id": "plan-1",
             "reason": "done",
         }
+
+    def test_new_resume_input_clears_prior_turn_plan_signals(self) -> None:
+        runner = CodingProfileRunner()
+        runner._loop_state = CodingLoopState(
+            task_plan={"plan_id": "plan-1", "status": "completed"},
+            task_plan_revision={"plan_id": "plan-1", "revision_id": "revision-1"},
+            task_plan_completed={"plan_id": "plan-1", "reason": "done"},
+        )
+
+        runner._apply_resume_input(SimpleNamespace(user_input="Continue repair"))
+
+        assert runner._loop_state.task_plan == {
+            "plan_id": "plan-1",
+            "status": "completed",
+        }
+        assert runner._loop_state.task_plan_revision is None
+        assert runner._loop_state.task_plan_completed is None
+        assert runner._loop_state.messages[-1].content == "Continue repair"
 
 
 class TestCodingHandlerPureHelperBehavior:
