@@ -31,8 +31,8 @@ _SCENARIOS = (
         "This is durable project work. Before using any execution tool, propose a "
         "project handoff. After approval, fix calculator.py and formatting.py so "
         f"all tests pass. Use the verification command exactly `{_PYTHON} "
-        "verify_once.py`, a "
-        "maximum of 4 iterations, and measurable success criteria. The verifier "
+        "verify_once.py`, exactly 4 project iterations, and measurable success "
+        "criteria. The verifier "
         "intentionally fails its first invocation; revise the task plan from that "
         "evidence, repair if needed, and finish only after verification passes. "
         "Use a 10-minute wall-clock limit.",
@@ -44,7 +44,7 @@ _SCENARIOS = (
         "official PyPA guide for writing "
         "pyproject.toml before choosing the implementation. Update source_info.py "
         "and source_summary.md with the authoritative URL and a concise finding. "
-        f"Use `{_PYTHON} -m pytest -q` as the verification command, at most 4 "
+        f"Use `{_PYTHON} -m pytest -q` as the verification command, exactly 4 "
         "iterations, a 10-minute wall-clock limit, and finish only after the tests "
         "pass.",
     ),
@@ -55,8 +55,8 @@ _SCENARIOS = (
         f"feature.py and CHANGELOG.md, run `{_PYTHON} -m pytest -q`, then delegate "
         "one independent read-only review "
         "to one exact agent_id returned by agent.list and explicitly accept, reject, "
-        "or reassign its findings before completion. Use at most 4 iterations and "
-        "a 10-minute wall-clock limit with measurable success criteria.",
+        "or reassign its findings before completion. Use exactly 4 project iterations, "
+        "a 10-minute wall-clock limit, and measurable success criteria.",
     ),
 )
 
