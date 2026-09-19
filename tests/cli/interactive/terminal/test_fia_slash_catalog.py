@@ -25,7 +25,10 @@ from openminion.cli.interactive.terminal.shell.slash_output import (
     handle_debug_output_slash,
     render_context_review,
 )
-from openminion.cli.interactive.terminal.shell.sessions import resume_session
+from openminion.cli.interactive.terminal.shell.sessions import (
+    handle_room_slash,
+    resume_session,
+)
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.interactive.models import ModelSelection
@@ -272,6 +275,7 @@ def _extract_implemented_slashes() -> set[str]:
         _handle_shell_preference_slash,
         _handle_visible_parity_slash,
         handle_debug_output_slash,
+        handle_room_slash,
     )
     for dispatcher in dispatchers:
         tree = ast.parse(inspect.getsource(dispatcher))
