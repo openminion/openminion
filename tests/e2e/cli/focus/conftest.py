@@ -91,6 +91,8 @@ def focus_probe(
         agent_id=minimax_agent_id,
         workdir=openminion_root,
         session_id=focus_session_id(data_root=data_root, node_name=node_name),
+        allow_unsandboxed_exec=os.getenv("OPENMINION_CLI_FOCUS_E2E_BASELINE") != "1",
+        include_project_context=os.getenv("OPENMINION_CLI_FOCUS_E2E_BASELINE") != "1",
     )
 
 
@@ -107,3 +109,15 @@ def require_complex_focus() -> None:
         pytest.skip(
             "OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E=1 not set; skipping complex focus E2E."
         )
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    if os.getenv("OPENMINION_CLI_FOCUS_E2E_BASELINE") != "1":
+        return
+    from tests.e2e.runners.run_cli_focus_e2e import BASELINE_CASES
+
+    for item in items:
+        if item.nodeid in BASELINE_CASES and item.get_closest_marker("xfail"):
+            raise pytest.UsageError(
+                f"baseline case must not have an xfail marker: {item.nodeid}"
+            )
