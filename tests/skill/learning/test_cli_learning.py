@@ -4,12 +4,15 @@ import io
 import json
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from openminion.modules.skill.cli import main
+from openminion.modules.skill.interfaces import SkillIngestAuthority
 from openminion.modules.skill.learning.shapes import WorkflowShape, command_fingerprint
 from openminion.modules.skill.models import stable_hash
+from openminion.modules.skill.runtime.skill import Skill
 
 
 def _config_path(tmp_path: Path) -> Path:
@@ -139,7 +142,9 @@ def test_learning_cli_scan_inspect_save_and_trust_status(tmp_path: Path) -> None
             shape.shape_id,
         ]
     )
-    assert trust["trust"]["trust_state"] == "candidate"
+    assert trust["trust"]["diagnostic_state"] == "unavailable"
+    assert trust["trust"]["persisted_trust_history"] is False
+    assert trust["trust"]["automatic_demotion_enforced"] is False
 
 
 def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
@@ -240,3 +245,45 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
         ]
     )
     assert applied["addition"]["added_skill_id"].startswith("emergent.")
+
+    addition = cast(dict[str, str], applied["addition"])
+    skill = Skill(str(cfg))
+    try:
+        skill.admit_skill_version(
+            skill_id=addition["added_skill_id"],
+            version_hash=addition["version_hash"],
+            expected_active_version_hash=None,
+            target_status="verified",
+            reason="reviewed workflow",
+            authority=SkillIngestAuthority.local_operator(
+                surface="test", principal_id="operator-cli"
+            ),
+        )
+        skill.log_run(
+            session_id="session-1",
+            agent_id="agent-1",
+            skill_id=addition["added_skill_id"],
+            version_hash=addition["version_hash"],
+            used_for="act",
+            outcome="success",
+            evidence_refs=["replay:3"],
+        )
+    finally:
+        skill.close()
+
+    trust = _run_cli(
+        [
+            "--config",
+            str(cfg),
+            "learning-trust-status",
+            "--skill-id",
+            addition["added_skill_id"],
+            "--shape-id",
+            shape.shape_id,
+        ]
+    )
+    assert trust["trust"]["diagnostic_state"] == "experimental"
+    assert trust["trust"]["persisted_trust_history"] is False
+    assert trust["trust"]["active_version_hash"] == addition["version_hash"]
+    assert trust["trust"]["admission_count"] == 1
+    assert trust["trust"]["success_count"] == 1

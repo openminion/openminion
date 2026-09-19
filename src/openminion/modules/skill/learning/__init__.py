@@ -16,7 +16,9 @@ from .telemetry import (
     workflow_learning_event,
 )
 from .trust import (
+    SkillExecutionTrustDiagnostic,
     SkillExecutionTrustRecord,
+    execution_trust_diagnostic,
     record_skill_run_outcome,
     promote_execution_trust,
 )
@@ -26,6 +28,7 @@ __all__ = (
     "ReplayProof",
     "SkillDraftError",
     "SkillExecutionTrustRecord",
+    "SkillExecutionTrustDiagnostic",
     "WORKFLOW_LEARNING_EVENT_TYPES",
     "WorkflowEvidenceBundle",
     "WorkflowShape",
@@ -34,6 +37,7 @@ __all__ = (
     "bundle_from_autonomy_proof_packet",
     "bundle_from_skill_run",
     "bundle_from_strategy_outcome",
+    "execution_trust_diagnostic",
     "promote_execution_trust",
     "record_learned_skill_reuse",
     "record_skill_run_outcome",

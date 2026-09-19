@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .shapes import WorkflowTrustState
 
 SkillRunOutcome = Literal["success", "fail", "partial"]
+TrustDiagnosticState = Literal["unavailable", "experimental"]
 
 _PROMOTION_ORDER: dict[WorkflowTrustState, int] = {
     "candidate": 0,
@@ -38,8 +39,53 @@ class SkillExecutionTrustRecord(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
 
 
+class SkillExecutionTrustDiagnostic(BaseModel):
+    """Stored lifecycle facts without claiming persisted trust history."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    skill_id: str
+    shape_id: str
+    diagnostic_state: TrustDiagnosticState
+    persisted_trust_history: bool = False
+    automatic_demotion_enforced: bool = False
+    active_version_hash: str = ""
+    admission_count: int = 0
+    pending_admission_count: int = 0
+    use_count: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+    partial_count: int = 0
+    last_used_at: str = ""
+
+
 class TrustTransitionError(ValueError):
     """Raised when trust promotion lacks enough evidence."""
+
+
+def execution_trust_diagnostic(
+    *, skill_id: str, shape_id: str, lifecycle_facts: dict[str, object]
+) -> SkillExecutionTrustDiagnostic:
+    has_facts = bool(
+        lifecycle_facts.get("active_version_hash")
+        or lifecycle_facts.get("admission_count")
+        or lifecycle_facts.get("use_count")
+    )
+    return SkillExecutionTrustDiagnostic(
+        skill_id=skill_id,
+        shape_id=shape_id,
+        diagnostic_state="experimental" if has_facts else "unavailable",
+        active_version_hash=str(lifecycle_facts.get("active_version_hash") or ""),
+        admission_count=int(lifecycle_facts.get("admission_count") or 0),
+        pending_admission_count=int(
+            lifecycle_facts.get("pending_admission_count") or 0
+        ),
+        use_count=int(lifecycle_facts.get("use_count") or 0),
+        success_count=int(lifecycle_facts.get("success_count") or 0),
+        failure_count=int(lifecycle_facts.get("failure_count") or 0),
+        partial_count=int(lifecycle_facts.get("partial_count") or 0),
+        last_used_at=str(lifecycle_facts.get("last_used_at") or ""),
+    )
 
 
 def promote_execution_trust(
@@ -123,9 +169,11 @@ def record_skill_run_outcome(
 
 __all__ = (
     "SkillExecutionTrustRecord",
+    "SkillExecutionTrustDiagnostic",
     "SkillRunOutcome",
     "TrustTransitionError",
     "downgrade_execution_trust",
+    "execution_trust_diagnostic",
     "promote_execution_trust",
     "record_skill_run_outcome",
 )

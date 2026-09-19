@@ -445,6 +445,51 @@ class _SkillStoreMixin(SkillStore):
             ),
         )
 
+    def get_skill_lifecycle_facts(self, *, skill_id: str) -> dict[str, Any]:
+        skill_rows = self._record_store.query_dicts(
+            "SELECT active_version_hash FROM skills WHERE skill_id = ? LIMIT 1",
+            (skill_id,),
+        )
+        admission_rows = self._record_store.query_dicts(
+            """
+            SELECT state, COUNT(*) AS n
+            FROM skill_version_admissions
+            WHERE skill_id = ?
+            GROUP BY state
+            """,
+            (skill_id,),
+        )
+        run_rows = self._record_store.query_dicts(
+            """
+            SELECT outcome, COUNT(*) AS n, MAX(created_at) AS last_used_at
+            FROM skill_runs
+            WHERE skill_id = ?
+            GROUP BY outcome
+            """,
+            (skill_id,),
+        )
+        admissions = {
+            str(row["state"]): int(row["n"] or 0) for row in admission_rows
+        }
+        outcomes = {str(row["outcome"]): int(row["n"] or 0) for row in run_rows}
+        last_used_at = max(
+            (str(row["last_used_at"] or "") for row in run_rows), default=""
+        )
+        return {
+            "active_version_hash": (
+                str(skill_rows[0].get("active_version_hash") or "")
+                if skill_rows
+                else ""
+            ),
+            "admission_count": sum(admissions.values()),
+            "pending_admission_count": admissions.get("pending", 0),
+            "use_count": sum(outcomes.values()),
+            "success_count": outcomes.get("success", 0),
+            "failure_count": outcomes.get("fail", 0),
+            "partial_count": outcomes.get("partial", 0),
+            "last_used_at": last_used_at,
+        }
+
     def delete_skill(
         self,
         *,

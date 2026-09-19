@@ -806,7 +806,7 @@ def _dispatch_proposal_cmd(ctl: Skill, args: argparse.Namespace) -> None:
 
 def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
     from openminion.modules.skill.learning import (
-        SkillExecutionTrustRecord,
+        execution_trust_diagnostic,
         WorkflowEvidenceBundle,
         WorkflowShape,
         WorkflowShapeMiner,
@@ -901,9 +901,12 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     if args.cmd == "learning-trust-status":
-        record = SkillExecutionTrustRecord(
+        record = execution_trust_diagnostic(
             skill_id=args.skill_id,
             shape_id=args.shape_id,
+            lifecycle_facts=ctl.store.get_skill_lifecycle_facts(
+                skill_id=args.skill_id
+            ),
         )
         _print_json({"ok": True, "trust": record.model_dump(mode="json")})
         return
