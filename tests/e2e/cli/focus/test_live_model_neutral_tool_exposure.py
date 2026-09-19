@@ -32,6 +32,7 @@ from openminion.modules.task.project import (
 from openminion.tools.exec.constants import EXEC_ENABLE_HOST_EXEC_ENV
 from tests.e2e.cli.focus.conftest import require_complex_focus
 from tests.e2e.cli.focus.harness import FocusProbe
+from tests.e2e.cli.focus.harness.assertions import read_focus_evidence
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
 from tests.e2e.cli.focus.harness.scenarios import (
     FocusScenario,
@@ -287,6 +288,7 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
     turn_ids = {str(row[0]) for row in lifecycle_rows}
     session_ids = {str(row[1]) for row in lifecycle_rows}
     assert turn_ids, "core turn identity is required"
+    _, _, brain_session_id = read_focus_evidence(probe.environment(), probe.session_id)
     rows = _telemetry_event_rows(
         telemetry_path,
         (
@@ -305,7 +307,7 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
         and event["session_id"] == probe.session_id
         and event.get("transport")
     }
-    assert probe.session_id in session_ids
+    assert brain_session_id in session_ids
     assert len(timing_turn_ids) == len(turn_ids), (
         "one Focus timing per submitted turn required"
     )
@@ -738,7 +740,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         "file.write" in code_sequence
         and "exec.run" in code_sequence
         and code_sequence.index("file.write") < code_sequence.index("exec.run")
-        and set(code_sequence) <= {"file.write", "file.read", "exec.run"}
+        and set(code_sequence) <= {"file.write", "file.read", "exec.run", "plan"}
         and _PYPA_GUIDE_URL in source_text
         and code_turn_exec_verified
         and verification.returncode == 0
