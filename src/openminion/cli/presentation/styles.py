@@ -9,6 +9,7 @@ from openminion.cli.constants import (
     CLI_THEME_VERSION,
     OPENMINION_THEME_VARIANT_ENV,
 )
+from openminion.cli.theme.models import Theme
 
 
 class StyleToken(str, Enum):
@@ -55,13 +56,26 @@ def _ansi_codes_from_theme(theme) -> dict[StyleToken, tuple[str, str]]:
     }
 
 
+def _colors_from_theme(theme: Theme) -> dict[StyleToken, str]:
+    return {
+        token: getattr(theme, field) for token, field in _TOKEN_TO_THEME_FIELD.items()
+    }
+
+
 def _build_default_ansi_codes() -> dict[StyleToken, tuple[str, str]]:
     from openminion.cli.theme import DARK
 
     return _ansi_codes_from_theme(DARK)
 
 
+def _build_default_colors() -> dict[StyleToken, str]:
+    from openminion.cli.theme import DARK
+
+    return _colors_from_theme(DARK)
+
+
 _ANSI_CODES: dict[StyleToken, tuple[str, str]] = _build_default_ansi_codes()
+_ACTIVE_COLORS: dict[StyleToken, str] = _build_default_colors()
 
 
 _ACTIVE_THEME_NAME: str = "dark"
@@ -71,8 +85,11 @@ def set_active_theme(theme) -> None:
     """Rebuild ``_ANSI_CODES`` from a new theme."""
     global _ACTIVE_THEME_NAME
     new_codes = _ansi_codes_from_theme(theme)
+    new_colors = _colors_from_theme(theme)
     _ANSI_CODES.clear()
     _ANSI_CODES.update(new_codes)
+    _ACTIVE_COLORS.clear()
+    _ACTIVE_COLORS.update(new_colors)
     name = getattr(theme, "name", "")
     if isinstance(name, str) and name:
         _ACTIVE_THEME_NAME = name
@@ -81,6 +98,11 @@ def set_active_theme(theme) -> None:
 def get_active_theme_name() -> str:
     """Return the active theme name (lowercase), default ``"dark"``."""
     return _ACTIVE_THEME_NAME
+
+
+def active_theme_color(token: StyleToken) -> str:
+    """Return the active theme's hex color for a semantic token."""
+    return _ACTIVE_COLORS[token]
 
 
 _COLOR_MODE: str | None = None

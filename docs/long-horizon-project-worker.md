@@ -16,7 +16,7 @@ capability-specific proof.
 2. Objective, evidence, resume, operator-decision, capability, and metric refs.
 3. Checkpoint, restart/resume, and duplicate-active-worker protection.
 4. Structured cycle records with evidence and validation refs.
-5. Operator controls through the autonomy CLI.
+5. Operator controls through Focus and the autonomy CLI.
 6. Permission grants and budget-policy state for longer runs.
 7. Capability matrices that expose missing or deferred capabilities.
 8. Project reports with metrics, outcome classification, proof refs, safety
@@ -57,6 +57,25 @@ capability-specific proof for the user-facing surfaces involved in the
 objective.
 
 ## Running Local Project-Worker Checks
+
+In Focus, a plain coding request can produce a structured project proposal.
+Approval shows its goal, success criteria, repository, verification commands,
+permission profile, and limits. Only explicit approval queues the project;
+ordinary chat replies do not approve it. The proposal retains the current
+permission profile and must have a usable verifier before work starts.
+
+Use `/project status [RUN_ID]` or `/project show RUN_ID` to inspect a project.
+Use `/project pause RUN_ID`, `/project resume RUN_ID`, and
+`/project cancel RUN_ID` to control it within its owning session and agent.
+Pause takes effect at the next cycle boundary, not as an immediate process kill.
+Resume keeps the run and checkpoint identity and reuses a valid linked wake.
+Status without an ID is available only when the session has a single project.
+
+Task API responses include an additive `project_report` for project tasks,
+using the same report owner as Focus. Existing task fields remain unchanged.
+The provider-free composition test covers approval, verifier failure, linked
+repair, independent child review and parent acceptance, and a fresh-process
+restart. This does not establish live model quality or elapsed-hour reliability.
 
 From the package root:
 

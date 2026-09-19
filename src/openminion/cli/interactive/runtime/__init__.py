@@ -739,6 +739,10 @@ class OpenMinionRuntime(
             self._finalize_turn_usage(final_metadata, succeeded=True)
             if final_text and not emitted_text:
                 yield final_text
+            if handoff_result := await self.approve_project_handoff(
+                final_metadata, approval_callback
+            ):
+                yield "\n\n" + handoff_result
             return
         response = await self._handle_gateway_message(kwargs)
         text_body = self._message_text(response)
@@ -747,6 +751,11 @@ class OpenMinionRuntime(
             succeeded=True,
         )
         yield text_body
+        if handoff_result := await self.approve_project_handoff(
+            response.metadata,
+            approval_callback,
+        ):
+            yield "\n\n" + handoff_result
 
     def _merge_inbound_metadata(
         self,

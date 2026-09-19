@@ -13,6 +13,7 @@ from openminion.modules.brain.execution.loop_contracts import ExecutionResult
 from openminion.modules.brain.execution.preflight import ValidationResult
 from openminion.modules.brain.schemas import (
     ActionResult,
+    ActDecision,
     AgentCommand,
     BudgetCounters,
     ClarifyContext,
@@ -166,6 +167,56 @@ def _state(*, session_id: str = "s-decision-readiness") -> WorkingState:
 
 def _event_types(logger: MagicMock) -> list[str]:
     return [call.args[0] for call in logger.emit.call_args_list]
+
+
+def test_project_handoff_waits_before_preparation_and_cannot_be_approved_by_prose(
+    monkeypatch,
+) -> None:
+    state = _state()
+    proposal = ActDecision(
+        act_profile="coding",
+        sub_intents=["Inspect and fix slug"],
+        request_readiness={
+            "posture": "review_before_act",
+            "requested_outcome": "execute",
+            "state": "needs_plan_review",
+            "project_handoff": {
+                "goal": "Fix slug",
+                "success_criteria": ["Slug tests pass"],
+            },
+        },
+    )
+    manager = _FakeDirectDispatchHarness()
+    _install_direct_dispatch_capture(monkeypatch, manager)
+    runner = _FakeRunner([proposal])
+    logger = MagicMock()
+
+    first = dispatch(
+        runner=runner,
+        state=state,
+        logger=logger,
+        request=build_execution_entry_request(
+            user_input="Fix slug", forced_tools=None, capability_category=None
+        ),
+    )
+    restored = WorkingState.model_validate_json(state.model_dump_json())
+    replay = dispatch(
+        runner=runner,
+        state=restored,
+        logger=logger,
+        request=build_execution_entry_request(
+            user_input="yes, execute", forced_tools=None, capability_category=None
+        ),
+    )
+
+    assert first.status == replay.status == BRAIN_STATE_WAITING_USER
+    assert manager.prepare_calls == 0
+    assert manager.invoke_calls == []
+    assert (
+        first.action_result.outputs["project_handoff"]
+        == replay.action_result.outputs["project_handoff"]
+    )
+    assert len(runner._decisions) == 0
 
 
 def test_plan_review_waits_before_invoke_then_ready_decision_runs(

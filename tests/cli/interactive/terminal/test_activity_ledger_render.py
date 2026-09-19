@@ -19,6 +19,8 @@ from openminion.cli.status.activity_ledger import (
     TurnActivityEvent,
 )
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
+from openminion.cli.presentation.styles import _hex_to_truecolor_ansi
+from openminion.cli.theme import DARK
 
 
 def _make_transcript(
@@ -159,7 +161,7 @@ def test_push_activity_event_colors_completed_and_blocked_states(monkeypatch) ->
         Console(
             file=completed_buf,
             force_terminal=True,
-            color_system="standard",
+            color_system="truecolor",
             no_color=False,
             width=120,
         )
@@ -173,7 +175,7 @@ def test_push_activity_event_colors_completed_and_blocked_states(monkeypatch) ->
         Console(
             file=blocked_buf,
             force_terminal=True,
-            color_system="standard",
+            color_system="truecolor",
             no_color=False,
             width=120,
         )
@@ -182,8 +184,10 @@ def test_push_activity_event_colors_completed_and_blocked_states(monkeypatch) ->
         TurnActivityEvent(kind=KIND_PLAN, state=STATE_BLOCKED, title="deploy")
     )
 
-    assert "\x1b[32m" in completed_buf.getvalue()
-    assert "\x1b[33m" in blocked_buf.getvalue()
+    completed_color, _ = _hex_to_truecolor_ansi(DARK.state_ok)
+    blocked_color, _ = _hex_to_truecolor_ansi(DARK.state_warning)
+    assert completed_color in completed_buf.getvalue()
+    assert blocked_color in blocked_buf.getvalue()
 
 
 def test_push_activity_event_skips_tool_events_to_preserve_fle() -> None:

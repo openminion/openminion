@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from openminion.cli.presentation.styles import StyleToken
+from openminion.cli.presentation.styles import StyleToken, set_active_theme
 from openminion.cli.presentation.markers import (
     MARKER_ASSISTANT,
     MARKER_FAIL_SUFFIX,
@@ -13,6 +13,7 @@ from openminion.cli.presentation.markers import (
     marker_ansi,
     marker_text,
 )
+from openminion.cli.theme import DARK, LIGHT
 
 
 def test_marker_glyph_token_pairs() -> None:
@@ -37,7 +38,7 @@ def test_marker_text_returns_rich_text_with_color() -> None:
     ):
         text = marker_text(MARKER_TOOL_RUNNING)
     assert str(text) == "●"
-    assert "yellow" in str(text.style)
+    assert DARK.state_warning in str(text.style)
 
 
 def test_marker_text_bold_modifier_opt_in() -> None:
@@ -58,8 +59,8 @@ def test_marker_text_strips_color_when_disabled() -> None:
     ):
         text = marker_text(MARKER_TOOL_RUNNING)
     assert str(text) == "●"
-    assert "yellow" not in str(text.style)
-    assert "red" not in str(text.style)
+    assert DARK.state_warning not in str(text.style)
+    assert DARK.state_error not in str(text.style)
 
 
 def test_marker_text_disabled_color_preserves_bold() -> None:
@@ -69,6 +70,19 @@ def test_marker_text_disabled_color_preserves_bold() -> None:
     ):
         text = marker_text(MARKER_TOOL_RUNNING, bold=True)
     assert str(text.style) == "bold"
+
+
+def test_marker_text_uses_active_theme_color() -> None:
+    try:
+        set_active_theme(LIGHT)
+        with patch(
+            "openminion.cli.presentation.markers.is_color_enabled",
+            return_value=True,
+        ):
+            text = marker_text(MARKER_TOOL_RUNNING)
+        assert LIGHT.state_warning in str(text.style)
+    finally:
+        set_active_theme(DARK)
 
 
 def test_marker_ansi_wraps_with_escapes_when_color_enabled() -> None:

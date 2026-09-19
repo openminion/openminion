@@ -368,7 +368,7 @@ class AutonomyRunStore:
         self,
         *,
         status: AutonomyRunStatus | None = None,
-        limit: int = 50,
+        limit: int | None = 50,
     ) -> list[AutonomyRun]:
         runs = [
             AutonomyRun.model_validate_json(path.read_text(encoding="utf-8"))
@@ -377,7 +377,7 @@ class AutonomyRunStore:
         if status is not None:
             runs = [run for run in runs if run.status == status]
         runs.sort(key=lambda run: run.created_at_ms, reverse=True)
-        return runs[: max(0, limit)]
+        return runs if limit is None else runs[: max(0, limit)]
 
     def transition(
         self,

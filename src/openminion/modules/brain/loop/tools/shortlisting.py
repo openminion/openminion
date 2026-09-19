@@ -112,6 +112,33 @@ def with_tool_request_spec(tool_specs: Sequence[ToolSpec]) -> list[ToolSpec]:
     return specs
 
 
+def activate_requestable_tool(
+    *,
+    tool_name: str,
+    active_tool_names: set[str],
+    requestable_specs_by_name: dict[str, Any],
+    active_tool_specs: list[Any],
+) -> bool:
+    if tool_name in active_tool_names:
+        return False
+    requested_spec = requestable_specs_by_name.get(tool_name)
+    if requested_spec is None:
+        return False
+    active_tool_names.add(tool_name)
+    active_tool_specs[:] = with_tool_request_spec(
+        [
+            *[
+                spec
+                for spec in active_tool_specs
+                if str(getattr(spec, "name", "") or "").strip()
+                != TOOL_REQUEST_TOOL_NAME
+            ],
+            requested_spec,
+        ]
+    )
+    return True
+
+
 def build_inactive_tool_directory_message(
     *,
     requestable_tool_specs: Sequence[ToolSpec],
@@ -123,10 +150,12 @@ def build_inactive_tool_directory_message(
     lines = [
         "[INACTIVE TOOL DIRECTORY]",
         (
-            "These tool schemas are inactive to reduce token use and cannot be called "
-            "directly. If you need one, call the visible tool-request activation "
-            "control (`tool.request` or provider-safe `tool_request`) with the exact "
-            "name, wait for the activation result, then use the activated tool."
+            "These tool schemas are inactive to reduce token use. Prefer the visible "
+            "tool-request activation control (`tool.request` or provider-safe "
+            "`tool_request`) with the exact name, wait for the activation result, "
+            "then use the activated tool. An exact direct call also activates the "
+            "schema before normal argument validation and permission policy; schema "
+            "activation itself never grants permission."
         ),
     ]
     inactive_count = 0

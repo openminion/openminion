@@ -18,6 +18,7 @@ from .schemas import (
     iso_now,
 )
 from .schemas.state import _normalize_skill_ids
+from .schemas.decisions import ProjectHandoff
 from openminion.base.config.action_policy import (
     ACTION_POLICY_SESSION_OVERRIDE_KEY,
     normalize_action_policy_mode_override,
@@ -296,6 +297,32 @@ def save_state(runner: "BrainRunner", state: WorkingState) -> None:
     runner.session_api.put_working_state(
         state.session_id, state_inline=state.model_dump(mode="json")
     )
+
+
+def consume_project_handoff(
+    session_api: Any,
+    *,
+    session_id: str,
+    agent_id: str,
+    handoff: ProjectHandoff,
+) -> bool:
+    raw = session_api.get_latest_working_state(session_id, agent_id=agent_id)
+    if raw is None:
+        return False
+    state = WorkingState.model_validate(_state_payload_from_raw(raw))
+    if (
+        state.request_readiness is None
+        or state.request_readiness.project_handoff != handoff
+    ):
+        return False
+    state.request_readiness = None
+    state.decision_sub_intents = []
+    state.decision_sub_intent_refs = []
+    state.status = "done"
+    session_api.put_working_state(
+        session_id, state_inline=state.model_dump(mode="json")
+    )
+    return True
 
 
 def set_session_status(runner: "BrainRunner", session_id: str, status: str) -> None:

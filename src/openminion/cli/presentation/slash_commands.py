@@ -147,13 +147,15 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     ),
     SlashCommandMetadata(
         "/project",
-        "Start durable coding or research work",
+        "Start, inspect, or control durable project work",
         (
             "/project",
             "/project start --goal <text> [--repository <path>] --verify-command <command>",
             "  [--verification-domain coding|research] [--max-iterations <n>]",
             "  [--max-wall-clock-ms <n>] [--max-tool-calls <n>]",
             "  [--expected-check <name>] [--release-tools]",
+            "/project status [RUN_ID]",
+            "/project show/pause/resume/cancel RUN_ID",
         ),
     ),
     SlashCommandMetadata(

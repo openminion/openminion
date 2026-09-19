@@ -76,6 +76,8 @@ def initial_repository_lifecycle_payload(
     expected_checks: tuple[str, ...] = (),
     launch_approved: bool = False,
     release_tools_approved: bool = False,
+    success_criteria: tuple[str, ...] = (),
+    verification_commands: tuple[str, ...] = (),
 ) -> dict[str, object]:
     repository_ref = _bounded_repository_text(project_run.workspace_ref)
     repository_revision = _workspace_revision(repository_ref)
@@ -93,6 +95,15 @@ def initial_repository_lifecycle_payload(
         REPOSITORY_LIFECYCLE_PAYLOAD_KEY: {
             project_run.objective_ledger_ref: {
                 "objective": objective,
+                "success_criteria": list(success_criteria),
+                "criterion_ids": [
+                    f"{project_run.goal_id}:criterion:{index}"
+                    for index in range(1, len(success_criteria) + 1)
+                ],
+                "verification": list(verification_commands),
+                "continuation_policy": autonomy_run.continuation_policy.model_dump(
+                    mode="json"
+                ),
                 "constraints": [],
                 "approval": "approved" if launch_approved else None,
                 "spec_tracker_paths": [],
@@ -628,33 +639,6 @@ def repository_task_plan_required(checkpoint: ProjectCheckpoint) -> bool:
         return False
     resume = lifecycle.get(checkpoint.project_run.resume_packet_ref)
     return bool(isinstance(resume, dict) and resume.get("task_plan_required") is True)
-
-
-def repository_task_plan_progress(
-    checkpoint: ProjectCheckpoint,
-    turn: ProjectTurnResult,
-) -> tuple[bool, str | None]:
-    plan, _, _ = updated_checkpoint_task_plan(checkpoint, turn)
-    required = repository_task_plan_required(checkpoint)
-    incomplete = bool(
-        required
-        and not (
-            plan
-            and plan.status == "completed"
-            and all(step.status == "completed" for step in plan.steps)
-        )
-    )
-    if not required or plan is None:
-        return incomplete, checkpoint.project_run.current_milestone
-    milestone = next(
-        (
-            step.description
-            for step in plan.steps
-            if step.status in {"pending", "in_progress"}
-        ),
-        plan.objective,
-    )
-    return incomplete, milestone
 
 
 def task_plan_incomplete_disposition(

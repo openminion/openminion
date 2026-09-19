@@ -9,6 +9,7 @@ from openminion.cli.interactive.terminal.streaming import (
     _format_elapsed_seconds,
     _render_in_progress_tool_block,
 )
+from openminion.cli.theme import DARK
 
 
 def _render(renderable, *, color: bool = False) -> str:
@@ -64,7 +65,9 @@ def test_render_in_progress_colors_the_full_status_heading(monkeypatch) -> None:
 
     assert isinstance(title, Text)
     assert any(
-        span.start == 2 and span.end == len(title.plain) and span.style == "bold yellow"
+        span.start == 2
+        and span.end == len(title.plain)
+        and span.style == f"bold {DARK.state_warning}"
         for span in title.spans
     )
 

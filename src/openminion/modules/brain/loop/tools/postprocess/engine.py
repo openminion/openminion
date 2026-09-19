@@ -57,6 +57,7 @@ from .evidence_closeout import (
 from ..response_payloads import _pending_finalization_salvage_text
 from ..runtime import _extract_visible_response_text
 from ..seeded import _run_seeded_command_step
+from ..shortlisting import activate_requestable_tool, refresh_shortlisting_state
 from ..status import emit_adaptive_status
 
 
@@ -677,9 +678,17 @@ class AdaptiveLoopRunnerPostprocessMixin(
             str(getattr(spec, "name", "") or "").strip()
             for spec in self.active_tool_specs
         } & set(self.allowed_tools)
+        implicit_activations: list[str] = []
         for tool_call in tool_calls:
             tool_name = str(getattr(tool_call, "name", "") or "").strip()
             if tool_name in exposed_tools:
+                continue
+            if (
+                self.tool_request_enabled
+                and tool_name in self.allowed_tools
+                and tool_name in self.requestable_specs_by_name
+            ):
+                implicit_activations.append(tool_name)
                 continue
             message = (
                 f"{self.profile.mode_name} does not expose tool {tool_name!r} in "
@@ -710,5 +719,32 @@ class AdaptiveLoopRunnerPostprocessMixin(
                 allowed_tools=self.allowed_tools,
                 error_message=message,
                 tool_name=tool_name,
+            )
+        if implicit_activations:
+            requested_tools = list(
+                self.loop_state.scratchpad.get(
+                    "tool_schema_shortlisting.requested_tools", []
+                )
+                or []
+            )
+            for tool_name in dict.fromkeys(implicit_activations):
+                activate_requestable_tool(
+                    tool_name=tool_name,
+                    active_tool_names=self.active_tool_names,
+                    requestable_specs_by_name=self.requestable_specs_by_name,
+                    active_tool_specs=self.active_tool_specs,
+                )
+                requested_tools.append(tool_name)
+            self.loop_state.scratchpad["tool_schema_shortlisting.requested_tools"] = (
+                requested_tools
+            )
+            self.loop_state.scratchpad["tool_schema_shortlisting.inactive_tools"] = (
+                sorted(set(self.requestable_specs_by_name) - self.active_tool_names)
+            )
+            refresh_shortlisting_state(
+                self.loop_state.messages,
+                self.loop_state.scratchpad,
+                self.requestable_specs,
+                self.active_tool_names,
             )
         return None

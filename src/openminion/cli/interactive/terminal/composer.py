@@ -22,7 +22,11 @@ from openminion.cli.presentation.animation.models import (
     AnimationResolution,
     AnimationSpec,
 )
-from openminion.cli.presentation.styles import is_color_enabled
+from openminion.cli.presentation.styles import (
+    StyleToken,
+    active_theme_color,
+    is_color_enabled,
+)
 from openminion.cli.ux.input_normalization import normalize_multiline_input_text
 
 
@@ -56,7 +60,7 @@ _FOCUS_PROMPT_STYLE = Style.from_dict(
     {
         "bottom-toolbar": "noreverse bg:#111827 #8b949e",
         "bottom-toolbar.text": "noreverse bg:#111827 #8b949e",
-        "busy-indicator": "#fbbf24",
+        "busy-indicator": active_theme_color(StyleToken.SPINNER),
         "placeholder": "italic #6b7280",
     }
 )
@@ -483,7 +487,10 @@ class TerminalComposer:
             prompt.append(("class:busy-indicator", f" {frame}"))
         if status or frame:
             prompt.append(("", "\n\n"))
-        prompt.append(("ansicyan" if self._color else "", self._prompt_text()))
+        prompt_style = (
+            f"fg:{active_theme_color(StyleToken.PROMPT)}" if self._color else ""
+        )
+        prompt.append((prompt_style, self._prompt_text()))
         return FormattedText(prompt)
 
     def _busy_frame(self, now: float) -> str:

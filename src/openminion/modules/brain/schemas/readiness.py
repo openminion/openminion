@@ -3,11 +3,29 @@
 from dataclasses import dataclass
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 _UNRESOLVED_TEMPLATE_RE = re.compile(r"\{\{[^{}]+\}\}")
 _BRACKET_PLACEHOLDER_RE = re.compile(r"\[(?:[A-Z][A-Z0-9]*(?:[ _-][A-Z0-9]+)*)\](?!\()")
 _CONTENT_BLOB_FIELD_NAMES = frozenset({"content", "body", "text", "contents"})
+
+
+class ProjectHandoff(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    goal: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    success_criteria: tuple[
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)], ...
+    ] = Field(min_length=1)
+    repository: str | None = None
+    verification_commands: tuple[
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)], ...
+    ] = ()
+    max_iterations: int | None = Field(default=None, gt=0)
+    max_wall_clock_ms: int | None = Field(default=None, gt=0)
+    max_tool_calls: int | None = Field(default=None, gt=0)
 
 
 @dataclass(frozen=True, slots=True)

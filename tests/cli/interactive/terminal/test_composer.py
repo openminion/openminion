@@ -34,6 +34,10 @@ from openminion.cli.presentation.animation import (
     AnimationSpec,
 )
 from openminion.cli.presentation.contracts import Composer
+from openminion.cli.theme import DARK
+
+
+_PROMPT_STYLE = f"fg:{DARK.text_accent}"
 
 
 @pytest.fixture(autouse=True)
@@ -107,14 +111,14 @@ def test_busy_prompt_animates_selected_provider_above_input(
     assert composer._formatted_prompt() == [
         ("class:busy-indicator", " ◐"),
         ("", "\n\n"),
-        ("ansicyan", "❯ "),
+        (_PROMPT_STYLE, "❯ "),
     ]
 
     now = 10.11
     assert composer._formatted_prompt() == [
         ("class:busy-indicator", " ◓"),
         ("", "\n\n"),
-        ("ansicyan", "❯ "),
+        (_PROMPT_STYLE, "❯ "),
     ]
     assert composer._prompt_refresh_interval() == 0.1
 
@@ -146,10 +150,10 @@ def test_busy_prompt_places_status_and_elapsed_before_animation() -> None:
             [
                 ("class:busy-indicator", " •"),
                 ("", "\n\n"),
-                ("ansicyan", "❯ "),
+                (_PROMPT_STYLE, "❯ "),
             ],
         ),
-        ("off", [("ansicyan", "❯ ")]),
+        ("off", [(_PROMPT_STYLE, "❯ ")]),
     ],
 )
 def test_busy_prompt_respects_progress_level(

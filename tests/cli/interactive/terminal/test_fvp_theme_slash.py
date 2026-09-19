@@ -45,7 +45,7 @@ def test_explicit_color_on_forces_console_color_with_dumb_term(monkeypatch) -> N
     try:
         console = _build_terminal_console()
         assert console.is_terminal is True
-        assert console.color_system == "standard"
+        assert console.color_system == "truecolor"
         buffer = io.StringIO()
         console.file = buffer
         console.print(Text("running", style="yellow"))

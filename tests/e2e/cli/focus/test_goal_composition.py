@@ -58,6 +58,9 @@ class _CronStore:
         self.deleted.append(job_id)
         self.jobs = [job for job in self.jobs if job.get("job_id") != job_id]
 
+    def get_cron_job(self, job_id: str):
+        return next((job for job in self.jobs if job["job_id"] == job_id), None)
+
     def close(self) -> None:
         pass
 

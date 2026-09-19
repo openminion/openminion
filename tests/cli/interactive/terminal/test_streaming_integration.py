@@ -16,6 +16,7 @@ from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.interactive.terminal.streaming import TerminalTurnHandle
 from openminion.cli.presentation.models import MessageKind
+from openminion.cli.theme import DARK
 
 
 class _StreamingRuntime:
@@ -275,7 +276,7 @@ def test_terminal_room_turn_renders_structured_agent_attribution() -> None:
         Console(
             file=buf,
             force_terminal=True,
-            color_system="standard",
+            color_system="truecolor",
             no_color=False,
             width=80,
         )
@@ -301,8 +302,10 @@ def test_terminal_room_turn_renders_structured_agent_attribution() -> None:
     ]
     assert "alpha reply" in buf.getvalue()
     assert "beta reply" in buf.getvalue()
-    assert "\x1b[1;32malpha" in buf.getvalue()
-    assert "\x1b[1;32mbeta" in buf.getvalue()
+    assistant_color, _ = styles._hex_to_truecolor_ansi(DARK.state_ok)
+    bold_assistant_color = assistant_color.replace("\x1b[", "\x1b[1;", 1)
+    assert f"{bold_assistant_color}alpha" in buf.getvalue()
+    assert f"{bold_assistant_color}beta" in buf.getvalue()
 
 
 def test_mid_stream_error_preserves_partial_and_emits_error() -> None:

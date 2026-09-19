@@ -123,9 +123,10 @@ def _child_artifact(
     subtask_id: str,
     value: int,
     verifier_ref: str,
+    session_id: str = "orel-session",
 ) -> dict[str, Any]:
     state = WorkingState(
-        session_id="orel-session",
+        session_id=session_id,
         agent_id="project-agent",
         goal="Deliver the repository change",
         budgets_remaining=BudgetCounters(
