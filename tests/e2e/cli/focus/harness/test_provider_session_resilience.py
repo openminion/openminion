@@ -12,6 +12,8 @@ from tests.e2e.runners import run_provider_session_resilience as runner
 from tests.e2e.cli.focus.harness.provider_matrix import (
     CERTIFICATION_REPORT_SCHEMA_VERSION,
     CERTIFICATION_RUN_SCHEMA_VERSION,
+    SCHEMA_VERSION,
+    _render_certification_markdown,
     load_provider_session_resilience_manifest,
     write_provider_session_resilience_report,
 )
@@ -156,6 +158,8 @@ def _completed_attempts(target: object) -> list[dict[str, object]]:
             "provider_name": target.provider_name,
             "service_vendor": target.service_vendor,
             "model": target.expected_model,
+            "session_id": f"psrc-fixture:{target.provider_class}",
+            "llm_call_id": f"call-{turn_id}",
         }
         for turn_id in ("turn-1", "turn-2")
     ]
@@ -165,12 +169,14 @@ def _completed_attempts(target: object) -> list[dict[str, object]]:
     ("mutation", "failure_code"),
     (
         ("missing", "provider_attempts_missing"),
-        ("malformed", "completed_provider_attempts_missing"),
+        ("malformed", "provider_attempts_malformed"),
         ("single_turn", "distinct_completed_turns_missing"),
         ("wrong_agent", "completed_attempt_agent_id_mismatch"),
         ("wrong_provider", "completed_attempt_provider_name_mismatch"),
         ("wrong_service", "completed_attempt_service_vendor_mismatch"),
         ("wrong_model", "completed_attempt_model_mismatch"),
+        ("wrong_session", "completed_attempt_session_id_mismatch"),
+        ("malformed_turn", "completed_attempt_turn_id_missing"),
     ),
 )
 def test_completed_provider_attempts_fail_closed(
@@ -190,16 +196,24 @@ def test_completed_provider_attempts_fail_closed(
         attempts = ["not-an-attempt"]
     elif mutation == "single_turn":
         attempts = list(attempts)[:1]
+    elif mutation == "malformed_turn":
+        attempts[0]["turn_id"] = ["turn-1"]
     else:
         field = {
             "wrong_agent": "agent_id",
             "wrong_provider": "provider_name",
             "wrong_service": "service_vendor",
             "wrong_model": "model",
+            "wrong_session": "session_id",
         }[mutation]
         list(attempts)[0][field] = "wrong"
 
-    assert runner._completed_attempt_failure(target, attempts) == failure_code
+    assert (
+        runner._completed_attempt_failure(
+            target, attempts, f"psrc-fixture:{target.provider_class}"
+        )
+        == failure_code
+    )
 
 
 @pytest.mark.parametrize(
@@ -353,6 +367,7 @@ def test_provider_session_runner_collects_two_live_turns_per_target(
                             "provider_name": "openai",
                             "service_vendor": "openai",
                             "model": model,
+                            "session_id": command[command.index("--session") + 1],
                         },
                         {
                             "event_type": "llm.call.completed",
@@ -362,6 +377,7 @@ def test_provider_session_runner_collects_two_live_turns_per_target(
                             "provider_name": "openai",
                             "service_vendor": "openai",
                             "model": model,
+                            "session_id": command[command.index("--session") + 1],
                         },
                     ]
                 }
@@ -421,16 +437,18 @@ def test_provider_session_runner_sanitizes_failed_probe_output(
     report = json.loads(report_text)
 
     assert exit_code == 1
-    assert report["rows"][0]["classification"] == "provider_residual"
-    assert report["rows"][0]["failure_code"] == "turn_timeout"
+    assert report["rows"][0]["classification"] == "inconclusive"
+    assert report["rows"][0]["failure_code"] == "probe_report_missing"
+    assert report["rows"][0]["probe_phase"] == "turn_timeout"
+    assert report["rows"][0]["probe_exit_code"] == 124
     assert "never-persist-this" not in report_text
 
 
 @pytest.mark.parametrize(
     ("returncode", "phase", "classification", "failure_code"),
     (
-        (1, "durable_turn_completed", "provider_residual", "continuity_oracle_failed"),
-        (124, "startup_timeout", "runtime_regression", "startup_timeout"),
+        (1, "durable_turn_completed", "inconclusive", "probe_report_missing"),
+        (124, "startup_timeout", "inconclusive", "probe_report_missing"),
     ),
 )
 def test_provider_session_runner_classifies_probe_requirement_failure(
@@ -469,3 +487,241 @@ def test_provider_session_runner_classifies_probe_requirement_failure(
     assert exit_code == 1
     assert report["rows"][0]["classification"] == classification
     assert report["rows"][0]["failure_code"] == failure_code
+
+
+@pytest.mark.parametrize(
+    ("phase", "attempt_kind", "classification", "failure_code"),
+    (
+        ("turn_timeout", "completed", "inconclusive", "turn_timeout"),
+        ("startup_timeout", "completed", "inconclusive", "startup_timeout"),
+        ("unknown_phase", "completed", "inconclusive", "unknown_phase"),
+        (
+            "unknown_phase",
+            "missing",
+            "inconclusive",
+            "provider_attempts_missing_or_malformed",
+        ),
+        (
+            "unknown_phase",
+            "malformed",
+            "inconclusive",
+            "provider_attempts_missing_or_malformed",
+        ),
+        (
+            "durable_turn_completed",
+            "completed",
+            "inconclusive",
+            "continuity_oracle_failed",
+        ),
+        ("turn_timeout", "TIMEOUT", "provider_residual", "TIMEOUT"),
+        ("unknown_phase", "AUTH_ERROR", "provider_residual", "AUTH_ERROR"),
+        ("unknown_phase", "RATE_LIMITED", "provider_residual", "RATE_LIMITED"),
+        ("unknown_phase", "INTERNAL_ERROR", "inconclusive", "unknown_phase"),
+        ("unknown_phase", "PROVIDER_ERROR", "inconclusive", "unknown_phase"),
+        ("unknown_phase", "foreign_session", "inconclusive", "unknown_phase"),
+        ("unknown_phase", "missing_turn", "inconclusive", "unknown_phase"),
+        ("unknown_phase", "missing_call", "inconclusive", "unknown_phase"),
+        ("unknown_phase", "recovered", "inconclusive", "unknown_phase"),
+        ("config_env_missing", "missing", "blocked_external", "config_env_missing"),
+    ),
+)
+def test_probe_classification_requires_supported_cause(
+    tmp_path: Path,
+    phase: str,
+    attempt_kind: str,
+    classification: str,
+    failure_code: str,
+) -> None:
+    manifest = load_provider_session_resilience_manifest(
+        _write_manifest(tmp_path, _manifest(tmp_path)), root=ROOT
+    )
+    target = manifest.targets[0]
+    attempts: object = _completed_attempts(target)
+    if attempt_kind == "missing":
+        attempts = None
+    elif attempt_kind == "malformed":
+        attempts = ["not an attempt"]
+    elif attempt_kind != "completed":
+        failed = {
+            **_completed_attempts(target)[-1],
+            "event_type": "llm.call.failed",
+            "status": "failed",
+            "error_code": "TIMEOUT",
+        }
+        if attempt_kind == "foreign_session":
+            failed["session_id"] = "unrelated-session"
+        elif attempt_kind == "missing_turn":
+            failed.pop("turn_id")
+        elif attempt_kind == "missing_call":
+            failed.pop("llm_call_id")
+        elif attempt_kind != "recovered":
+            failed["error_code"] = attempt_kind
+        attempts = [failed]
+        if attempt_kind == "recovered":
+            attempts.extend(_completed_attempts(target))
+    assert runner._probe_classification(
+        target=target,
+        session_id=f"psrc-fixture:{target.provider_class}",
+        returncode=1,
+        phase=phase,
+        provider_attempts=attempts,
+        requirement_failed=phase == "durable_turn_completed",
+    ) == (classification, failure_code)
+
+
+@pytest.mark.parametrize("report", (None, "not-json", "[]", "{}"))
+def test_live_row_unknown_evidence_is_inconclusive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    report: str | None,
+) -> None:
+    manifest = load_provider_session_resilience_manifest(
+        _write_manifest(tmp_path, _manifest(tmp_path)), root=ROOT
+    )
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if report is not None:
+            Path(command[command.index("--summary-output") + 1]).write_text(
+                report, encoding="utf-8"
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="done\n", stderr="")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    row = runner._live_row(
+        target=manifest.targets[0],
+        run_id=manifest.run_id,
+        messages=manifest.messages,
+        required_output_marker=manifest.required_output_marker,
+    )
+    assert row["classification"] == "inconclusive"
+    assert row["probe_exit_code"] == 0
+    assert row["failure_code"] == (
+        "probe_report_missing"
+        if report is None
+        else "provider_attempts_missing"
+        if report == "{}"
+        else "probe_report_malformed"
+    )
+
+
+def test_outer_timeout_is_inconclusive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = load_provider_session_resilience_manifest(
+        _write_manifest(tmp_path, _manifest(tmp_path)), root=ROOT
+    )
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(command, 60, output="secret", stderr="secret")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    row = runner._live_row(
+        target=manifest.targets[0],
+        run_id=manifest.run_id,
+        messages=manifest.messages,
+        required_output_marker=manifest.required_output_marker,
+    )
+    assert row["classification"] == "inconclusive"
+    assert row["failure_code"] == "outer_timeout"
+    assert row["probe_exit_code"] is None
+    assert "secret" not in json.dumps(row)
+
+
+@pytest.mark.parametrize(
+    "classification",
+    (
+        "inconclusive",
+        "blocked_external",
+        "provider_residual",
+        "runtime_regression",
+        "not_applicable",
+    ),
+)
+def test_every_nonpass_row_fails_certification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    classification: str,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.delenv("OPENMINION_GENERATED_ROOT", raising=False)
+    manifest_path = _write_manifest(tmp_path, _manifest(tmp_path))
+    monkeypatch.setattr(
+        runner, "_live_row", lambda **_kwargs: {"classification": classification}
+    )
+    monkeypatch.setattr(
+        runner,
+        "write_provider_session_resilience_report",
+        lambda *_args, **_kwargs: (tmp_path / "report.json", tmp_path / "report.md"),
+    )
+    assert runner.main(["--manifest", str(manifest_path)]) == 1
+
+
+def test_certification_v2_preserves_other_schema_versions_and_historical_rendering() -> (
+    None
+):
+    assert (
+        CERTIFICATION_REPORT_SCHEMA_VERSION
+        == "provider-session-resilience-certification.v2"
+    )
+    assert CERTIFICATION_RUN_SCHEMA_VERSION == "provider-session-resilience-run.v1"
+    assert SCHEMA_VERSION == "session-context-provider-matrix.v1"
+    historical = {
+        "schema_version": "provider-session-resilience-certification.v1",
+        "run_id": "historical",
+        "rows": [
+            {
+                "provider_class": "provider",
+                "agent_id": "agent",
+                "model": "model",
+                "classification": "runtime_regression",
+                "failure_code": "startup_timeout",
+            }
+        ],
+    }
+    rendered = _render_certification_markdown(historical)
+    assert "runtime_regression" in rendered
+    assert "startup_timeout" in rendered
+
+
+def test_live_row_retains_redacted_attempt_facts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = load_provider_session_resilience_manifest(
+        _write_manifest(tmp_path, _manifest(tmp_path)), root=ROOT
+    )
+    target = manifest.targets[0]
+    attempts = _completed_attempts(target)
+    attempts[-1].update(
+        raw_trace="never-persist-this",
+        api_key="never-persist-this",
+        trace_key="Bearer never-persist-this",
+        usage={"input_tokens": 2, "raw_trace": "never-persist-this"},
+    )
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        Path(command[command.index("--summary-output") + 1]).write_text(
+            json.dumps({"provider_attempts": attempts}), encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="done\n", stderr="")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    row = runner._live_row(
+        target=target,
+        run_id=manifest.run_id,
+        messages=manifest.messages,
+        required_output_marker=manifest.required_output_marker,
+    )
+    assert row["classification"] == "pass"
+    assert len(row["provider_attempts"]) == 2
+    assert row["provider_attempts"][-1]["usage"] == {"input_tokens": 2}
+    assert "never-persist-this" not in json.dumps(row)
+    assert "raw_trace" not in json.dumps(row)

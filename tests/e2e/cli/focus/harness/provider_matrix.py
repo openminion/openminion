@@ -30,9 +30,11 @@ MatrixClassification = Literal[
     "not_applicable",
 ]
 
+CertificationClassification = MatrixClassification | Literal["inconclusive"]
+
 SCHEMA_VERSION = "session-context-provider-matrix.v1"
 CERTIFICATION_RUN_SCHEMA_VERSION = "provider-session-resilience-run.v1"
-CERTIFICATION_REPORT_SCHEMA_VERSION = "provider-session-resilience-certification.v1"
+CERTIFICATION_REPORT_SCHEMA_VERSION = "provider-session-resilience-certification.v2"
 CERTIFICATION_REPORT_DIRNAME = "provider-session-resilience-certification"
 _ALLOWED_INJECTED_FAILURE_CODES = frozenset(
     {
@@ -462,7 +464,7 @@ def build_provider_session_certification_row(
     target: ProviderSessionTarget,
     run_id: str,
     messages: tuple[str, ...],
-    classification: MatrixClassification,
+    classification: CertificationClassification,
     failure_code: str,
     latency_ms: int | None = None,
     provider_attempts: list[dict[str, object]] | None = None,
@@ -722,6 +724,7 @@ def _render_markdown(matrix: ProviderMatrix) -> str:
 
 
 __all__ = [
+    "CertificationClassification",
     "CERTIFICATION_REPORT_SCHEMA_VERSION",
     "CERTIFICATION_RUN_SCHEMA_VERSION",
     "ProviderMatrix",
