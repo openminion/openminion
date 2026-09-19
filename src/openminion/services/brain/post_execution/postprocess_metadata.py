@@ -13,6 +13,7 @@ from openminion.services.brain.post_execution.usage import (
 _STRUCTURED_ACTION_OUTPUT_METADATA_KEYS: tuple[str, ...] = (
     "adaptive.finalization_status",
     "pending_turn_context",
+    "project_handoff",
     "meta_rule_preference",
     "session_work_summary",
     "goal_declaration",

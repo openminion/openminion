@@ -49,6 +49,15 @@ async def run_slash_project(
     if text.strip() in {"/project", "/project help", "/project start --help"}:
         console.print(Text(focus_project_help(), style=_SYSTEM_STYLE))
         return
+    if text.split()[1] in {"status", "show", "pause", "resume", "cancel"}:
+        try:
+            tone, body = runtime.execute_project_control(text)
+        except (KeyError, OSError, RuntimeError, ValueError) as exc:
+            tone, body = ("error", f"/project failed: {exc}")
+        console.print(
+            Text(body, style=_ERR_STYLE if tone == "error" else _SYSTEM_STYLE)
+        )
+        return
     if approval_callback is None:
         console.print(Text("(/project: approval is unavailable)", style=_ERR_STYLE))
         return

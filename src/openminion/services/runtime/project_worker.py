@@ -576,9 +576,11 @@ class ProjectWorker:
             ref not in existing_progress_refs
             for ref in (*turn_result.evidence_refs, *turn_result.effect_refs)
         )
-        task_plan_incomplete, next_milestone = project_cp.repository_task_plan_progress(
-            checkpoint,
-            turn_result,
+        task_plan_incomplete, next_milestone = (
+            project_progress.repository_task_plan_progress(
+                checkpoint,
+                turn_result,
+            )
         )
         if checkpoint.payload.get("plan_revision_required") is True and not (
             turn_result.task_plan_revisions or turn_result.task_plan_revision

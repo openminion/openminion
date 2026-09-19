@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from enum import StrEnum
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -16,8 +16,12 @@ from openminion.modules.task.autonomy import (
 from openminion.modules.task.runtime.lifecycle import TaskLifecycleState, TaskManager
 
 from . import checkpoints as project_checkpoints
+from .constants import REPOSITORY_LIFECYCLE_PAYLOAD_KEY
 from .models import ProjectCheckpoint, ProjectCycleDecision, ProjectVerificationState
 from .verification import ProjectDomainVerificationStatus
+
+if TYPE_CHECKING:
+    from .turn import ProjectTurnResult
 
 
 class AutonomyLoopConditionKind(StrEnum):
@@ -52,6 +56,45 @@ class AutonomyLoopJudgment(BaseModel):
         if self.requires_operator and not self.next_resume_action:
             raise ValueError("operator-required judgment needs next_resume_action")
         return self
+
+
+def repository_task_plan_progress(
+    checkpoint: ProjectCheckpoint,
+    turn: ProjectTurnResult,
+) -> tuple[bool, str | None]:
+    plan, _, _ = project_checkpoints.updated_checkpoint_task_plan(checkpoint, turn)
+    required = project_checkpoints.repository_task_plan_required(checkpoint)
+    lifecycle = cast(
+        Mapping[str, object],
+        checkpoint.payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY, {}),
+    )
+    objective = cast(
+        Mapping[str, object],
+        lifecycle.get(checkpoint.project_run.objective_ledger_ref, {}),
+    )
+    criterion_ids = set(
+        cast(tuple[str, ...] | list[str], objective.get("criterion_ids", ()))
+    )
+    incomplete = bool(
+        required
+        and not (
+            plan
+            and criterion_ids <= set(plan.criterion_ids)
+            and plan.status == "completed"
+            and all(step.status == "completed" for step in plan.steps)
+        )
+    )
+    if not required or plan is None:
+        return incomplete, checkpoint.project_run.current_milestone
+    milestone = next(
+        (
+            step.description
+            for step in plan.steps
+            if step.status in {"pending", "in_progress"}
+        ),
+        plan.objective,
+    )
+    return incomplete, milestone
 
 
 def classify_autonomy_loop_condition(

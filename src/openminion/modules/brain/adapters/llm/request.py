@@ -348,6 +348,8 @@ def _build_request_readiness_guidance_message(*, purpose: str, schema: type) -> 
             "Set requested_outcome to answer_only, plan_only, review_only, or execute as the maximum user-authorized outcome.",
             "Set state to ready only when the next step can proceed without clarification, plan review, or operation approval.",
             "Use needs_user only for blocker information; otherwise proceed with bounded reversible assumptions.",
+            "For coding that needs durable project execution, propose request_readiness.project_handoff with goal, measurable success_criteria, verification_commands, and bounded continuation limits; repository is optional and must stay in the active workspace.",
+            "A project_handoff requires route=act, act_profile=coding, posture=review_before_act, requested_outcome=execute, state=needs_plan_review, and concrete sub_intents. It proposes work only; the client must approve launch. Do not include permissions, provider settings, credentials, or release approval.",
         ]
     )
 

@@ -29,6 +29,7 @@ from openminion.modules.task.plan import (
 
 from .progress import AutonomyLoopConditionKind
 from .models import ProjectCheckpoint, ProjectCycleDecision
+from .constants import REPOSITORY_LIFECYCLE_PAYLOAD_KEY
 
 _ProjectMetadataModel = TypeVar(
     "_ProjectMetadataModel",
@@ -91,16 +92,22 @@ def project_cycle_prompt(
         "Do not claim completion; the configured verifier owns completion.",
     ]
     active_plan = checkpoint_payload.get("task_plan")
+    lifecycle = cast(
+        Mapping[str, object],
+        checkpoint_payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY, {}),
+    )
+    objective = cast(
+        Mapping[str, object],
+        lifecycle.get(project_run.objective_ledger_ref, {}),
+    )
+    lines.extend(_approved_objective_guidance(objective))
     if not isinstance(active_plan, Mapping):
         lines.append(
             "Your first action must use the existing plan loop-control tool "
             "to declare a durable task plan with "
             "continue_plan_autonomously=false, then continue with its first step."
         )
-    if project_run.verifier_refs:
-        lines.append(
-            "Prior verifier refs: " + ", ".join(project_run.verifier_refs[-5:])
-        )
+    lines.extend(_project_reference_guidance("verifier", project_run.verifier_refs))
     if verification := checkpoint_payload.get("verification"):
         evidence = cast(list[dict[str, object]], verification)
         failed = [
@@ -156,21 +163,39 @@ def project_cycle_prompt(
                 "revision_id, set continue_plan_autonomously=false, and bind "
                 f"verifier_refs to: {verifier_refs}. {predecessor_guidance}"
             )
-    if project_run.progress_refs:
-        lines.append(
-            "Prior progress refs: " + ", ".join(project_run.progress_refs[-5:])
-        )
-    if (
-        repository_check_observation is not None
-        and repository_check_observation["overall_result"] != "pending"
-    ):
-        lines.extend(
-            (
-                "GitHub check facts for the exact approved head:",
-                json.dumps(repository_check_observation, sort_keys=True),
-            )
-        )
+    lines.extend(_project_reference_guidance("progress", project_run.progress_refs))
+    lines.extend(_repository_check_guidance(repository_check_observation))
     return "\n".join(lines)
+
+
+def _approved_objective_guidance(objective: Mapping[str, object]) -> list[str]:
+    criteria = objective.get("success_criteria")
+    if not criteria:
+        return []
+    criterion_ids = cast(list[str], objective["criterion_ids"])
+    return [
+        "Approved success criteria (preserve these criterion_ids in the TaskPlan):",
+        *(
+            f"{criterion_id}: {criterion}"
+            for criterion_id, criterion in zip(
+                criterion_ids, cast(list[str], criteria), strict=True
+            )
+        ),
+        "Approved verification commands: " + json.dumps(objective["verification"]),
+    ]
+
+
+def _project_reference_guidance(kind: str, refs: tuple[str, ...]) -> list[str]:
+    return [f"Prior {kind} refs: " + ", ".join(refs[-5:])] if refs else []
+
+
+def _repository_check_guidance(observation: Mapping[str, object] | None) -> list[str]:
+    if observation is None or observation["overall_result"] == "pending":
+        return []
+    return [
+        "GitHub check facts for the exact approved head:",
+        json.dumps(observation, sort_keys=True),
+    ]
 
 
 def project_cycle_checkpoint_payload(

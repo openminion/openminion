@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import subprocess
 import time
@@ -16,6 +17,7 @@ from openminion.cli.commands.autonomy_project import (
     launch_project,
 )
 from openminion.modules.brain.loop.strategies.coding.contracts import (
+    CODING_INITIAL_TOOL_IDS,
     PROJECT_CODING_ALLOWED_TOOLS,
 )
 from openminion.modules.brain.loop.tools.shortlisting import TOOL_REQUEST_TOOL_NAME
@@ -99,6 +101,52 @@ def _agent_identity(config_path: Path, agent_id: str) -> tuple[str, str, str]:
     )
 
 
+def _core_turn_evidence(
+    rows: list[tuple[str, str, dict[str, object]]],
+    turn_ids: set[str],
+    transcript: str,
+) -> dict[str, object]:
+    scoped = [row for row in rows if row[0] in turn_ids]
+    requests = [event for _, kind, event in scoped if kind == "tool.call.requested"]
+    tool_sequence = [str(event["canonical_name"]) for event in requests]
+    assert set(tool_sequence) <= {*CODING_INITIAL_TOOL_IDS, "plan"}, (
+        "core-only tools required"
+    )
+    for _, kind, event in scoped:
+        if (
+            kind == "brain.execution_status"
+            and "tool_schema_shortlisting.initial_active_count" in event
+        ):
+            assert event["tool_schema_shortlisting.initial_active_count"] <= 7
+            assert event["tool_schema_shortlisting.control_schema_count"] <= 2
+    terminal_result_observed = (
+        re.search(r"(?im)^\s*(?:[●•]\s*)?result:", transcript) is not None
+    )
+    assert terminal_result_observed, "exact result: marker required"
+    timings = [event for _, kind, event in scoped if kind == "chat.phase_timing"]
+    assert timings, "provider timing evidence required"
+    return {
+        "turn_ids": sorted(turn_ids),
+        "tool_sequence": tool_sequence,
+        "activated_tools": [],
+        "provider_calls": sum(int(event["provider_calls_total"]) for event in timings),
+        "provider_call_purposes": [
+            purpose for event in timings for purpose in event["provider_call_purposes"]
+        ],
+        "provider_attempts": [
+            attempt for event in timings for attempt in event["provider_attempts"]
+        ],
+        "input_tokens": sum(int(event["provider_input_tokens"]) for event in timings),
+        "output_tokens": sum(int(event["provider_output_tokens"]) for event in timings),
+        "total_tokens": sum(
+            int(event["provider_input_tokens"]) + int(event["provider_output_tokens"])
+            for event in timings
+        ),
+        "wall_time_ms": sum(int(event["total_turn_ms"]) for event in timings),
+        "terminal_result_observed": terminal_result_observed,
+    }
+
+
 def _provider_failure_categories(telemetry_path: Path) -> list[str]:
     if not telemetry_path.is_file():
         return []
@@ -167,7 +215,7 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
             "Do not request optional tools. Finish with "
             "the exact label `result:` and the passing test count."
         ),
-        expected_markers=("result",),
+        expected_markers=("result:",),
         requires_approval=True,
         max_auto_approvals=8,
         approval_reply="session",
@@ -209,6 +257,10 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
 
     with probe.session(rows=50, cols=160) as session:
         probe.wait_ready(session)
+        with sqlite3.connect(telemetry_path) as connection:
+            first_event_id = connection.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM events"
+            ).fetchone()[0]
         try:
             transcript = probe.run_turn(session, scenario)
         finally:
@@ -225,22 +277,59 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
     )
     assert "file.write(" in transcript
     assert "exec.run(" in transcript
-    requested_events = _telemetry_events(telemetry_path, "tool.call.requested")
-    completed_events = _telemetry_events(telemetry_path, "tool.call.completed")
-    status_events = _telemetry_events(telemetry_path, "brain.execution_status")
-    bootstrap = _telemetry_events(telemetry_path, "brain.act.bootstrap")[-1]
+    with sqlite3.connect(telemetry_path) as connection:
+        lifecycle_rows = connection.execute(
+            "SELECT turn_id, session_id FROM events WHERE id > ? "
+            "AND event_type = 'agent.turn.started' AND agent_id = ? ORDER BY id",
+            (first_event_id, probe.agent_id),
+        ).fetchall()
+    turn_ids = {str(row[0]) for row in lifecycle_rows}
+    session_ids = {str(row[1]) for row in lifecycle_rows}
+    assert turn_ids, "core turn identity is required"
+    rows = _telemetry_event_rows(
+        telemetry_path,
+        (
+            "tool.call.requested",
+            "tool.call.completed",
+            "brain.execution_status",
+            "brain.act.bootstrap",
+            "chat.phase_timing",
+        ),
+    )
+    timing_turn_ids = {
+        turn_id
+        for turn_id, kind, event in rows
+        if kind == "chat.phase_timing"
+        and event["agent_id"] == probe.agent_id
+        and event["session_id"] == probe.session_id
+        and event.get("transport")
+    }
+    assert probe.session_id in session_ids
+    assert len(timing_turn_ids) == len(turn_ids), (
+        "one Focus timing per submitted turn required"
+    )
+    # Use the Focus timer owner, not its overlapping ingress timer.
+    rows = [
+        row
+        for row in rows
+        if row[1] != "chat.phase_timing" or row[0] in timing_turn_ids
+    ]
+    turn_ids.update(timing_turn_ids)
+    scoped_rows = [row for row in rows if row[0] in turn_ids]
+    core_evidence = _core_turn_evidence(rows, turn_ids, transcript)
+    requested_events = [
+        event for _, kind, event in scoped_rows if kind == "tool.call.requested"
+    ]
+    completed_events = [
+        event for _, kind, event in scoped_rows if kind == "tool.call.completed"
+    ]
+    status_events = [
+        event for _, kind, event in scoped_rows if kind == "brain.execution_status"
+    ]
+    bootstrap = [
+        event for _, kind, event in scoped_rows if kind == "brain.act.bootstrap"
+    ][-1]
     assert bootstrap["resolved_act_profile"] == "coding"
-    timing = _telemetry_events(telemetry_path, "chat.phase_timing")[-1]
-    tool_sequence = [
-        str(event.get("canonical_name", ""))
-        for event in requested_events
-        if event.get("canonical_name") != TOOL_REQUEST_TOOL_NAME
-    ]
-    activated_tools = [
-        str(event.get("sanitized_normalized_arguments", {}).get("name", ""))
-        for event in requested_events
-        if event.get("canonical_name") == TOOL_REQUEST_TOOL_NAME
-    ]
     completed_by_id = {
         str(event.get("call_id", "")): event for event in completed_events
     }
@@ -285,17 +374,7 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
             "inactive_directory_bytes": shortlisting[
                 "tool_schema_shortlisting.inactive_directory_bytes"
             ],
-            "activated_tools": activated_tools,
-            "tool_sequence": tool_sequence,
-            "provider_calls": timing["provider_calls_total"],
-            "provider_call_purposes": timing["provider_call_purposes"],
-            "provider_attempts": timing["provider_attempts"],
-            "input_tokens": timing["provider_input_tokens"],
-            "output_tokens": timing["provider_output_tokens"],
-            "total_tokens": int(timing["provider_input_tokens"])
-            + int(timing["provider_output_tokens"]),
-            "wall_time_ms": timing["total_turn_ms"],
-            "terminal_result_observed": "result:" in transcript.lower(),
+            **core_evidence,
             "verification": "pass",
             "disposition": "pass",
             "unplanned_interventions": 0,

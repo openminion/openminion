@@ -17,6 +17,7 @@ from pydantic_core import PydanticCustomError
 from openminion.modules.brain.runtime.recovery import TCRPContext, validate_payload
 
 from .commands import Command, DelegationReviewResult
+from .readiness import ProjectHandoff
 from .routing import (
     _flatten_branch_payloads,
     _normalize_route_name,
@@ -220,11 +221,18 @@ class RequestReadiness(BaseModel):
     requested_outcome: RequestedOutcome
     state: RequestReadinessState
     assumptions: list[RequestAssumption] = Field(default_factory=list, max_length=5)
+    project_handoff: ProjectHandoff | None = None
 
     @model_validator(mode="after")
     def validate_readiness_shape(self) -> "RequestReadiness":
         if self.state == "needs_plan_review" and self.posture != "review_before_act":
             raise ValueError("needs_plan_review requires posture='review_before_act'")
+        if self.project_handoff is not None and (
+            self.posture != "review_before_act"
+            or self.requested_outcome != "execute"
+            or self.state != "needs_plan_review"
+        ):
+            raise ValueError("project_handoff requires execute + needs_plan_review")
         return self
 
 
@@ -742,6 +750,14 @@ class _DecisionBase(BaseModel):
 
     @model_validator(mode="after")
     def validate_shape(self) -> "_DecisionBase":
+        if (
+            self.request_readiness is not None
+            and self.request_readiness.project_handoff is not None
+            and (self.route != "act" or self.act_profile != "coding")
+        ):
+            raise ValueError(
+                "project_handoff requires route='act' and act_profile='coding'"
+            )
         if self.route == "respond":
             if self.respond_kind is None:
                 raise ValueError("respond_kind is required when route=respond")
@@ -931,6 +947,7 @@ __all__ = [
     "RequestedOutcome",
     "RequestPosture",
     "RequestReadiness",
+    "ProjectHandoff",
     "RequestReadinessState",
     "RespondDecision",
     "RespondKind",

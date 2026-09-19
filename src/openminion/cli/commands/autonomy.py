@@ -17,7 +17,7 @@ from openminion.cli.commands.autonomy_project import (
     project_task_manager,
     resolve_project_repository,
     run_project_turn,
-    resume_project_task,
+    resume_project_run,
     schedule_unattended_project,
     verifier_preflight_error,
     workspace_path_from_ref,
@@ -214,27 +214,18 @@ def _resume(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     waiver = _verification_waiver(args)
     run = apply_resume_overrides(args, store, run, waiver=waiver)
     manager = project_task_manager(args)
-    verifier_error = verifier_preflight_error(
+    running = resume_project_run(
+        manager,
+        store,
         run,
         workspace=workspace,
         waiver=waiver,
     )
-    if verifier_error is not None:
-        blocked = run.model_copy(
-            update={
-                "status": AutonomyRunStatus.BLOCKED,
-                "phase": AutonomyRunPhase.CLOSED,
-                "operator_summary": "Autonomy run blocked before provider execution.",
-                "next_action_hint": "Resume after configuring an available verifier.",
-                "last_error": verifier_error,
-                "updated_at_ms": now_ms(),
-            }
-        )
-        store.save(blocked)
+    if running.status == AutonomyRunStatus.BLOCKED:
         return _write_terminal_output(
             args,
             store,
-            blocked,
+            running,
             validation_summary="Blocked before provider execution by verifier preflight.",
             final_operator_summary="Autonomy run blocked by verifier preflight.",
             cycle_summaries=project_checkpoints.project_cycle_summaries(
@@ -242,13 +233,6 @@ def _resume(args: argparse.Namespace, store: AutonomyRunStore) -> int:
                 task_id=run.task_id or "",
             ),
         )
-    running = store.transition(
-        run.run_id,
-        status=AutonomyRunStatus.RUNNING,
-        phase=AutonomyRunPhase.EXECUTE,
-        operator_summary="Autonomy run resumed.",
-    )
-    resume_project_task(manager, store, running)
     if bool(getattr(args, "unattended", False)):
         scheduled = schedule_unattended_project(args, store, manager, running)
         return _print_run(args, scheduled)

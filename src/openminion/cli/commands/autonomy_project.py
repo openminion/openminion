@@ -60,6 +60,7 @@ class ProjectLaunchRequest:
     task_plan_required: bool
     expected_checks: tuple[str, ...]
     release_tools: bool
+    success_criteria: tuple[str, ...] = ()
 
 
 def focus_project_help() -> str:
@@ -70,6 +71,9 @@ def focus_project_help() -> str:
             "       [--max-wall-clock-ms N] [--max-tool-calls N]",
             "       [--expected-check NAME] [--release-tools]",
             "Repository is optional for non-Git work. Verification is required.",
+            "usage: /project status [RUN_ID] | show RUN_ID",
+            "       /project pause RUN_ID | resume RUN_ID | cancel RUN_ID",
+            "Pause takes effect at the checkpoint boundary; it does not roll back work.",
         )
     )
 
@@ -105,9 +109,12 @@ def build_project_launch_request(
     task_plan_required: bool = True,
     expected_checks: tuple[str, ...] = (),
     release_tools: bool = False,
+    success_criteria: tuple[str, ...] = (),
 ) -> ProjectLaunchRequest:
     boundary = workspace_boundary.expanduser().resolve(strict=False)
     repo = repository.expanduser().resolve(strict=False)
+    if repo != boundary and boundary not in repo.parents:
+        raise ValueError("execution repository must be inside the workspace boundary")
     check_names = tuple(name.strip() for name in expected_checks)
     if any(not name for name in check_names) or len(set(check_names)) != len(
         check_names
@@ -148,6 +155,7 @@ def build_project_launch_request(
         task_plan_required=task_plan_required,
         expected_checks=check_names,
         release_tools=release_tools,
+        success_criteria=success_criteria,
     )
 
 
@@ -252,6 +260,7 @@ def launch_project(
         expected_checks=request.expected_checks,
         launch_approved=True,
         release_tools_approved=request.release_tools,
+        success_criteria=request.success_criteria,
     )
     return store.require(running.run_id)
 
@@ -365,6 +374,7 @@ def initialize_project(
     expected_checks: tuple[str, ...] = (),
     launch_approved: bool = False,
     release_tools_approved: bool = False,
+    success_criteria: tuple[str, ...] = (),
 ) -> None:
     assert run.task_id is not None
     manager.create_task(
@@ -400,6 +410,8 @@ def initialize_project(
                 expected_checks=expected_checks,
                 launch_approved=launch_approved,
                 release_tools_approved=release_tools_approved,
+                success_criteria=success_criteria,
+                verification_commands=run.execution_selectors.verification_commands,
             ),
         },
     )
@@ -419,6 +431,40 @@ def resume_project_task(
         return
     if task.state == TaskLifecycleState.PAUSED:
         manager.transition_task(task_id=run.task_id, to_state=TaskLifecycleState.ACTIVE)
+
+
+def resume_project_run(
+    manager: TaskManager,
+    store: AutonomyRunStore,
+    run: AutonomyRun,
+    *,
+    workspace: Path,
+    waiver: VerificationWaiver | None,
+) -> AutonomyRun:
+    if run.status in {AutonomyRunStatus.COMPLETED, AutonomyRunStatus.CANCELLED}:
+        raise RuntimeError(f"autonomy run cannot be resumed from {run.status}")
+    error = verifier_preflight_error(run, workspace=workspace, waiver=waiver)
+    if error is not None:
+        blocked = run.model_copy(
+            update={
+                "status": AutonomyRunStatus.BLOCKED,
+                "phase": AutonomyRunPhase.CLOSED,
+                "operator_summary": "Autonomy run blocked before provider execution.",
+                "next_action_hint": "Resume after configuring an available verifier.",
+                "last_error": error,
+                "updated_at_ms": now_ms(),
+            }
+        )
+        store.save(blocked)
+        return blocked
+    running = store.transition(
+        run.run_id,
+        status=AutonomyRunStatus.RUNNING,
+        phase=AutonomyRunPhase.EXECUTE,
+        operator_summary="Autonomy run resumed.",
+    )
+    resume_project_task(manager, store, running)
+    return store.require(run.run_id)
 
 
 def apply_resume_overrides(
@@ -537,33 +583,54 @@ def schedule_project_wake(
     run: AutonomyRun,
     cycle_interval_seconds: int = 1,
 ) -> AutonomyRun:
-    job_id = f"prun_{run.run_id}:wake:0"
     assert run.task_id is not None
     task = manager.get_task(run.task_id)
-    prior_metadata = dict(task.metadata) if task is not None else None
-    cron_store.add_cron_job(
-        name=f"Project cycle {run.run_id}",
-        schedule={
-            "kind": "at",
-            "at": (
-                datetime.now(timezone.utc) + timedelta(seconds=cycle_interval_seconds)
-            ).isoformat(),
-        },
-        payload={
-            "kind": "projectCycle",
-            "run_id": run.run_id,
-            "task_id": run.task_id,
-            "goal_id": run.goal_id,
-            "session_id": run.session_id,
-            "cycle_interval_seconds": cycle_interval_seconds,
-        },
-        agent_id=run.execution_selectors.agent_id,
-        session_target="isolated",
-        delivery={"mode": "none"},
-        delete_after_run=True,
-        max_concurrency=1,
-        job_id=job_id,
+    checkpoint = project_checkpoints.load_latest_project_checkpoint(
+        manager, task_id=run.task_id
     )
+    linked_job_id = str(task.metadata.get("linked_cron_job_id") or "") if task else ""
+    existing_job = cron_store.get_cron_job(linked_job_id) if linked_job_id else None
+    if existing_job is not None:
+        payload = existing_job["payload"]
+        if (
+            payload.get("kind") != "projectCycle"
+            or payload.get("run_id") != run.run_id
+            or payload.get("task_id") != run.task_id
+        ):
+            raise ValueError("linked wake does not belong to this project")
+        job_id = linked_job_id
+    else:
+        job_id = (
+            checkpoint.project_run.next_wake_job_id
+            if checkpoint is not None and checkpoint.project_run.next_wake_job_id
+            else f"prun_{run.run_id}:wake:{checkpoint.project_run.committed_cycle_count if checkpoint else 0}"
+        )
+    prior_metadata = dict(task.metadata) if task is not None else None
+    if existing_job is None:
+        cron_store.add_cron_job(
+            name=f"Project cycle {run.run_id}",
+            schedule={
+                "kind": "at",
+                "at": (
+                    datetime.now(timezone.utc)
+                    + timedelta(seconds=cycle_interval_seconds)
+                ).isoformat(),
+            },
+            payload={
+                "kind": "projectCycle",
+                "run_id": run.run_id,
+                "task_id": run.task_id,
+                "goal_id": run.goal_id,
+                "session_id": run.session_id,
+                "cycle_interval_seconds": cycle_interval_seconds,
+            },
+            agent_id=run.execution_selectors.agent_id,
+            session_target="isolated",
+            delivery={"mode": "none"},
+            delete_after_run=True,
+            max_concurrency=1,
+            job_id=job_id,
+        )
     try:
         if task is not None:
             metadata = dict(task.metadata)
@@ -584,7 +651,8 @@ def schedule_project_wake(
         store.save(scheduled)
         return scheduled
     except (OSError, RuntimeError, ValueError, sqlite3.Error):
-        cron_store.delete_cron_job(job_id)
+        if existing_job is None:
+            cron_store.delete_cron_job(job_id)
         if prior_metadata is not None:
             manager.update_task_metadata(
                 task_id=run.task_id,

@@ -22,6 +22,7 @@ from openminion.modules.brain.schemas import (
     ToolCommand,
     WorkingState,
 )
+from openminion.modules.brain.schemas.decisions import ProjectHandoff
 
 
 def _budgets() -> AgentBudgets:
@@ -53,6 +54,78 @@ def test_request_readiness_accepts_bounded_execute_ready_payload() -> None:
 
     assert decision.request_readiness is not None
     assert decision.request_readiness.assumptions[0].source == "repository"
+
+
+def test_project_handoff_round_trips_without_permission_overrides() -> None:
+    decision = ActDecision(
+        act_profile="coding",
+        sub_intents=["Inspect, implement, and verify the requested change"],
+        request_readiness={
+            "posture": "review_before_act",
+            "requested_outcome": "execute",
+            "state": "needs_plan_review",
+            "project_handoff": {
+                "goal": "Fix the slug implementation",
+                "success_criteria": ["The slug test passes"],
+                "verification_commands": ["python -m pytest -q"],
+                "max_iterations": 3,
+            },
+        },
+    )
+
+    restored = ActDecision.model_validate_json(decision.model_dump_json())
+
+    assert (
+        restored.request_readiness.project_handoff
+        == decision.request_readiness.project_handoff
+    )
+    assert restored.request_readiness.project_handoff.repository is None
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"goal": " "},
+        {"success_criteria": []},
+        {"success_criteria": [" "]},
+        {"max_iterations": 0},
+        {"max_tool_calls": -1},
+        {"permission_profile_id": "bypass"},
+    ],
+)
+def test_project_handoff_rejects_invalid_or_privileged_fields(change) -> None:
+    with pytest.raises(ValidationError):
+        ProjectHandoff.model_validate(
+            {
+                "goal": "Fix slug",
+                "success_criteria": ["Tests pass"],
+                **change,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"posture": "direct"},
+        {"requested_outcome": "plan_only"},
+        {"state": "ready"},
+    ],
+)
+def test_project_handoff_requires_execute_plan_review(change) -> None:
+    with pytest.raises(ValidationError):
+        RequestReadiness.model_validate(
+            {
+                "posture": "review_before_act",
+                "requested_outcome": "execute",
+                "state": "needs_plan_review",
+                "project_handoff": {
+                    "goal": "Fix slug",
+                    "success_criteria": ["Tests pass"],
+                },
+                **change,
+            }
+        )
 
 
 def test_omitted_request_readiness_preserves_legacy_decision_shape() -> None:

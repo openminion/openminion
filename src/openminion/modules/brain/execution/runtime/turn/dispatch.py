@@ -83,9 +83,11 @@ def _dispatch_request(
     fixed_act_profile = fixed_act_profile_from_profile(getattr(runner, "profile", None))
     if (
         not str(user_input or "").strip()
-        and getattr(getattr(state, "request_readiness", None), "state", None)
-        == "needs_plan_review"
-    ):
+        or getattr(getattr(state, "request_readiness", None), "project_handoff", None)
+        is not None
+    ) and getattr(
+        getattr(state, "request_readiness", None), "state", None
+    ) == "needs_plan_review":
         return _plan_review_wait_response(
             runner=runner,
             state=state,
@@ -239,6 +241,7 @@ def _plan_review_wait_response(
         f"{index}. {step}"
         for index, step in enumerate((step for step in steps if step), start=1)
     )
+    handoff = getattr(readiness, "project_handoff", None)
     return _runner_delegate(
         "_respond_with_meta",
         runner,
@@ -249,6 +252,16 @@ def _plan_review_wait_response(
             "Review it, then approve or revise it before I act."
         ),
         status=BRAIN_STATE_WAITING_USER,
+        action_result=(
+            ActionResult(
+                command_id=f"project-handoff:{state.trace_id}",
+                status="success",
+                summary="Project proposal awaiting client approval.",
+                outputs={"project_handoff": handoff.model_dump(mode="json")},
+            )
+            if handoff is not None
+            else None
+        ),
     )
 
 
@@ -466,6 +479,15 @@ def _accept_or_redecide(
     validation_result = entry_barrel._validate_decision_readiness(
         state=state, decision=validation_decision
     )
+    if validation_result is None and _has_project_handoff(request.decision):
+        _record_accepted_decision(
+            runner=runner,
+            state=state,
+            logger=logger,
+            request=request,
+            user_input=user_input,
+        )
+        return True
     mode_preparation = None
     if validation_result is None:
         mode_preparation = entry_barrel.prepare_decision_direct(
@@ -537,6 +559,11 @@ def _accept_or_redecide(
         validation_attempts=validation_attempts + 1,
     )
     return validation_attempts + 1
+
+
+def _has_project_handoff(decision: Any) -> bool:
+    readiness = getattr(decision, "request_readiness", None)
+    return getattr(readiness, "project_handoff", None) is not None
 
 
 def _record_accepted_decision(
