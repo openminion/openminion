@@ -269,6 +269,23 @@ def test_loop_state_telemetry_payload_structure() -> None:
     assert set(payload["coding.allowed_tools"]) == set(CODING_ALLOWED_TOOLS)
 
 
+def test_loop_state_telemetry_preserves_task_plan_terminal_state() -> None:
+    state = CodingLoopState(
+        task_plan={"plan_id": "plan-1", "status": "active"},
+        task_plan_revision={"plan_id": "plan-1", "revision_id": "revision-1"},
+        task_plan_completed={"plan_id": "plan-1", "reason": "done"},
+    )
+
+    payload = state.telemetry_payload(CODING_ALLOWED_TOOLS)
+
+    assert payload["task_plan"]["plan_id"] == "plan-1"
+    assert payload["task_plan.revision"]["revision_id"] == "revision-1"
+    assert payload["task_plan.completed"] == {
+        "plan_id": "plan-1",
+        "reason": "done",
+    }
+
+
 def test_loop_state_telemetry_keeps_security_results_structural() -> None:
     report_ref = "artifact://sha256/" + ("a" * 64)
     state = CodingLoopState(

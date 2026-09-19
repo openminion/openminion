@@ -804,6 +804,10 @@ class CodingProfileRunner(
             ),
             scratchpad=scratchpad,
             seen_signatures=list(adaptive_state.seen_signatures),
+            task_plan=adaptive_state.task_plan,
+            task_plan_revision=adaptive_state.task_plan_revision,
+            task_plan_abandoned=adaptive_state.task_plan_abandoned,
+            task_plan_completed=adaptive_state.task_plan_completed,
         )
 
     def _checkpoint_loop_state(

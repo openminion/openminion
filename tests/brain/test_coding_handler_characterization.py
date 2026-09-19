@@ -114,6 +114,32 @@ class TestCodingProfileRunnerMethods:
         )
         assert callable(getattr(CodingProfileRunner, name))
 
+    def test_sync_loop_state_keeps_task_plan_terminal_state(self) -> None:
+        runner = object.__new__(CodingProfileRunner)
+        runner._sync_loop_state(
+            AdaptiveToolLoopState(
+                task_plan={"plan_id": "plan-1", "status": "active"},
+                task_plan_revision={
+                    "plan_id": "plan-1",
+                    "revision_id": "revision-1",
+                },
+                task_plan_completed={"plan_id": "plan-1", "reason": "done"},
+            )
+        )
+
+        assert runner._loop_state.task_plan == {
+            "plan_id": "plan-1",
+            "status": "active",
+        }
+        assert runner._loop_state.task_plan_revision == {
+            "plan_id": "plan-1",
+            "revision_id": "revision-1",
+        }
+        assert runner._loop_state.task_plan_completed == {
+            "plan_id": "plan-1",
+            "reason": "done",
+        }
+
 
 class TestCodingHandlerPureHelperBehavior:
     def test_current_coding_ceiling_sizes(self) -> None:
