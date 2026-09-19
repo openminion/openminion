@@ -86,7 +86,7 @@ def _proposal(runtime, monkeypatch, **changes) -> dict[str, str]:
             "project_handoff": handoff,
         },
     )
-    state = _state(session_id=runtime.session_id)
+    state = _state(session_id=runtime._turn_session_id())
     state.agent_id = runtime.agent_id
     harness = _FakeDirectDispatchHarness()
     _install_direct_dispatch_capture(monkeypatch, harness)
@@ -108,7 +108,7 @@ def _proposal(runtime, monkeypatch, **changes) -> dict[str, str]:
     )
     try:
         session.put_working_state(
-            runtime.session_id, state_inline=state.model_dump(mode="json")
+            runtime._turn_session_id(), state_inline=state.model_dump(mode="json")
         )
     finally:
         session.close()
@@ -456,6 +456,33 @@ def _restart_and_repair(root: str, run_id: str) -> None:
     ).run_cycle(run_id)
     assert result.decision == ProjectCycleDecision.STOP
     manager.close()
+
+
+def test_focus_project_handoff_consumes_conversation_scoped_state(
+    tmp_path, monkeypatch
+) -> None:
+    runtime, _, _ = _project_runtime(tmp_path)
+    runtime._conversation_id = f"focus-{runtime.session_id}"
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "config", "user.email", "silc@example.invalid")
+    _git(tmp_path, "config", "user.name", "SILC Fixture")
+    metadata = _proposal(runtime, monkeypatch)
+    cron = _CronStore()
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.configured_cron_store",
+        lambda *a, **k: cron,
+    )
+
+    async def approve(name, args, call_id):
+        return True
+
+    result = asyncio.run(runtime.approve_project_handoff(metadata, approve))
+
+    assert "Project queued:" in result
+    assert len(cron.jobs) == 1
+    store = AutonomyRunStore(root=resolve_autonomy_state_root(runtime._rt.home_root))
+    runs = store.list_runs()
+    assert len(runs) == 1 and runs[0].session_id == runtime.session_id
 
 
 @pytest.mark.parametrize("approved", [False, None])

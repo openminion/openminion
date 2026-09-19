@@ -141,6 +141,7 @@ def _project_runtime(
         telemetry_service=telemetry,
     )
     runtime._session_id = "focus-project-session"
+    runtime._conversation_id = ""
     runtime._agent_id = "alpha"
     runtime._gateway = object()
     runtime._working_dir = str(tmp_path)

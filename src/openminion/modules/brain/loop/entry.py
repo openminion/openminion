@@ -16,6 +16,7 @@ from openminion.modules.brain.tools.schema import collect_runtime_tool_names
 from openminion.modules.brain.loop.tools.shortlisting import build_tool_request_spec
 from openminion.modules.brain.loop.tools.plan_control import build_plan_tool_spec
 from openminion.modules.brain.loop.tools.review_control import build_review_tool_spec
+from openminion.modules.brain.schemas.readiness import ProjectHandoff
 from openminion.modules.llm.schemas import ToolSpec
 
 ENTRY_CLARIFY_TOOL_NAME = "clarify"
@@ -135,11 +136,24 @@ def coding_tool_spec() -> ToolSpec:
         description=(
             "Enter the dedicated coding loop when the whole request is a single "
             "software task that needs iterative file edits, project scaffolding, "
-            "tests, command execution, and final verification before answering."
+            "tests, command execution, and final verification before answering. "
+            "When the user requests a project proposal before changes, include "
+            "project_handoff and sub_intents; this returns the proposal for approval "
+            "without starting the coding loop."
         ),
         input_schema={
             "type": "object",
-            "properties": {},
+            "properties": {
+                "project_handoff": ProjectHandoff.model_json_schema(),
+                "sub_intents": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "minItems": 1,
+                    "description": (
+                        "Concrete work items for the proposed project handoff."
+                    ),
+                },
+            },
             "additionalProperties": False,
         },
     )

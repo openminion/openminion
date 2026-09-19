@@ -349,6 +349,7 @@ def _build_request_readiness_guidance_message(*, purpose: str, schema: type) -> 
             "Set state to ready only when the next step can proceed without clarification, plan review, or operation approval.",
             "Use needs_user only for blocker information; otherwise proceed with bounded reversible assumptions.",
             "For coding that needs durable project execution, propose request_readiness.project_handoff with goal, measurable success_criteria, verification_commands, and bounded continuation limits; repository is optional and must stay in the active workspace.",
+            "When the user explicitly requests a project handoff before changes, call the visible coding control with project_handoff and sub_intents, or populate the equivalent Decision fields when no coding control is visible. Do not perform the project work in the same turn.",
             "A project_handoff requires route=act, act_profile=coding, posture=review_before_act, requested_outcome=execute, state=needs_plan_review, and concrete sub_intents. It proposes work only; the client must approve launch. Do not include permissions, provider settings, credentials, or release approval.",
         ]
     )
