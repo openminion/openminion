@@ -67,9 +67,11 @@ LIVE_SCENARIOS = {
     "delegated-read-only-review": (
         "Work only in this Git repository. Treat this as durable project work and "
         "propose a typed project handoff for approval before changing files. "
-        "Implement calc.add and calc.multiply in calc.py so `python -m pytest -q` "
-        "passes. Delegate one bounded code-bearing subtask to the exact agent "
-        "minimax-m2-7-highspeed so it returns a child worktree artifact. Then use the "
+        "Implement calc.add in calc.py and operations.multiply in operations.py so "
+        "`python -m pytest -q` passes. Delegate one bounded code-bearing subtask that "
+        "implements both functions in their two files to the exact agent "
+        "minimax-m2-7-highspeed so it returns a child worktree artifact. The parent "
+        "does not edit those files. Then use the "
         "existing task.delegate review mode with the exact distinct reviewer "
         "minimax-m2-5-highspeed for one independent read-only review of that artifact "
         "against the tests. Inspect the review findings and explicitly "
@@ -118,12 +120,12 @@ def _fixture(root: Path, scenario_id: str) -> tuple[Path, dict[str, object]]:
         }
     else:
         files = {
-            "calc.py": (
-                "def add(left, right):\n    raise NotImplementedError\n\n"
+            "calc.py": "def add(left, right):\n    raise NotImplementedError\n",
+            "operations.py": (
                 "def multiply(left, right):\n    raise NotImplementedError\n"
             ),
             "test_calc.py": (
-                "from calc import add, multiply\n\n"
+                "from calc import add\nfrom operations import multiply\n\n"
                 "def test_calc():\n"
                 "    assert add(2, 3) == 5\n"
                 "    assert multiply(4, 5) == 20\n"
@@ -149,7 +151,7 @@ def _fixture(root: Path, scenario_id: str) -> tuple[Path, dict[str, object]]:
     changed_paths = {
         "plain-multifile-repair": ["accepted_steps.log", "mean.py", "stats.py"],
         "research-then-code": ["source_info.py"],
-        "delegated-read-only-review": ["calc.py"],
+        "delegated-read-only-review": ["calc.py", "operations.py"],
     }[scenario_id]
     oracle_text = (
         "python -m pytest -q\0"
