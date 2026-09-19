@@ -156,6 +156,15 @@ def test_project_turn_budget_rollover_remains_productive() -> None:
         project_condition_from_metadata({"brain_status": "waiting_user"})
         == AutonomyLoopConditionKind.WAITING
     )
+    assert (
+        project_condition_from_metadata(
+            {
+                "brain_status": "waiting_user",
+                "error_code": "act_adaptive_budget_exhausted",
+            }
+        )
+        == AutonomyLoopConditionKind.WAITING
+    )
 
 
 def _save_ci_effect(
@@ -1185,8 +1194,11 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     ]
     assert "first action must use the existing plan loop-control tool" in prompts[0]
     assert "continue_plan_autonomously=false" in prompts[0]
-    assert "After any approved verification command fails" in prompts[0]
-    assert "action=complete" in prompts[0]
+    assert "your very next tool call must use plan action=revise" in prompts[0]
+    assert "verifier_refs containing that failed tool-call ref" in prompts[0]
+    assert "Do not edit, rerun verification, or complete steps first" in prompts[0]
+    assert "call plan action=complete once and end the turn" in prompts[0]
+    assert "Do not redeclare a completed plan" in prompts[0]
     assert "action=revise for plan_id=plan-1" in prompts[1]
     assert "First redeclare the same plan_id" in prompts[1]
     assert "Then use the existing plan loop-control tool" in prompts[1]

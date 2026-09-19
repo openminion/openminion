@@ -38,7 +38,7 @@ from ..dispatch import (
 )
 from ..evidence import _count_substantive_non_control_tool_results
 from ..messages import action_result_to_tool_message
-from ..plan import _current_active_plan
+from ..plan import _current_active_plan, _failed_result
 from ..plan_control import (
     PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY,
     PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY,
@@ -460,7 +460,18 @@ def _process_plan_tool_calls(
     for tool_call in plan_tool_calls:
         arguments = dict(getattr(tool_call, "arguments", {}) or {})
         loop_state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] = True
-        action_result = handle_plan_tool_call(loop_ctx=loop_ctx, arguments=arguments)
+        if (
+            loop_state.task_plan_completed is not None
+            and str(arguments.get("action", "") or "").strip() == "declare"
+        ):
+            action_result = _failed_result(
+                code="PLAN_ALREADY_COMPLETED",
+                summary="The task plan is already complete for this turn.",
+            )
+        else:
+            action_result = handle_plan_tool_call(
+                loop_ctx=loop_ctx, arguments=arguments
+            )
         _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
         if str(getattr(action_result, "status", "") or "") == "success":
             outputs = dict(getattr(action_result, "outputs", {}) or {})

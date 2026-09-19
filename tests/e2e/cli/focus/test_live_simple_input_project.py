@@ -40,8 +40,8 @@ _SCENARIOS = (
     (
         "research-then-code",
         "This is durable project work. Before using any execution or research tool, "
-        "propose a project handoff. After approval, search for and fetch the current "
-        "official PyPA guide for writing "
+        "propose a project handoff. After approval, call web.search to find and then "
+        "web.fetch to read the current official PyPA guide for writing "
         "pyproject.toml before choosing the implementation. Update source_info.py "
         "and source_summary.md with the authoritative URL and a concise finding. "
         f"Use `{_PYTHON} -m pytest -q` as the verification command, exactly 4 "
