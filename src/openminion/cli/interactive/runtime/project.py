@@ -68,6 +68,8 @@ class RuntimeProjectMixin:
         @property
         def permission_mode(self) -> str: ...
 
+        def _turn_session_id(self) -> str: ...
+
     def execute_project_control(self, line: str) -> tuple[str, str]:
         from openminion.cli.commands.autonomy_project import (
             cancel_project_task_wake,
@@ -230,7 +232,7 @@ class RuntimeProjectMixin:
         try:
             consumed = consume_project_handoff(
                 session_api,
-                session_id=self.session_id,
+                session_id=self._turn_session_id(),
                 agent_id=self.agent_id,
                 handoff=handoff,
             )
