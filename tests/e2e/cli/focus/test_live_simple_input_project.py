@@ -14,10 +14,7 @@ import time
 import pytest
 
 from openminion.modules.task import AutonomyRunStore, TaskManager
-from openminion.modules.task.autonomy import (
-    AutonomyRunStatus,
-    resolve_autonomy_state_root,
-)
+from openminion.modules.task.autonomy import AutonomyRunStatus
 from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.task.project import load_latest_project_checkpoint
 from tests.e2e.cli.focus.conftest import require_complex_focus
@@ -257,8 +254,11 @@ def test_live_focus_simple_input_project(
             else first
         )
         store = AutonomyRunStore(
-            root=resolve_autonomy_state_root(
-                Path(probe.environment()["OPENMINION_HOME"])
+            root=(
+                Path(probe.environment()["OPENMINION_GENERATED_ROOT"])
+                / "state"
+                / "task"
+                / "autonomy"
             )
         )
         run = store.require(run_id)
