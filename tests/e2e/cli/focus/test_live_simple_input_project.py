@@ -5,8 +5,10 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import sqlite3
 import subprocess
+import sys
 import time
 
 import pytest
@@ -25,30 +27,34 @@ from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcrip
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(1800)]
 
 _RUN_ID_RE = re.compile(r"Project queued:\s*(awrk_[A-Za-z0-9_]+)")
+_PYTHON = shlex.quote(sys.executable)
 _SCENARIOS = (
     (
         "plain-restart-repair",
-        "This is durable project work. Propose a project handoff before changing "
-        "files. After approval, fix calculator.py and formatting.py so all tests "
-        "pass. Use the verification command exactly `python verify_once.py`, a "
+        "This is durable project work. Before using any execution tool, propose a "
+        "project handoff. After approval, fix calculator.py and formatting.py so "
+        f"all tests pass. Use the verification command exactly `{_PYTHON} "
+        "verify_once.py`, a "
         "maximum of 4 iterations, and measurable success criteria. The verifier "
         "intentionally fails its first invocation; revise the task plan from that "
         "evidence, repair if needed, and finish only after verification passes.",
     ),
     (
         "research-then-code",
-        "This is durable project work. Propose a project handoff before changing "
-        "files. Search for and fetch the current official PyPA guide for writing "
+        "This is durable project work. Before using any execution or research tool, "
+        "propose a project handoff. After approval, search for and fetch the current "
+        "official PyPA guide for writing "
         "pyproject.toml before choosing the implementation. Update source_info.py "
         "and source_summary.md with the authoritative URL and a concise finding. "
-        "Use `python -m pytest -q` as the verification command, at most 4 "
+        f"Use `{_PYTHON} -m pytest -q` as the verification command, at most 4 "
         "iterations, and finish only after the tests pass.",
     ),
     (
         "delegated-review",
-        "This is durable project work. Propose a project handoff before changing "
-        "files. Implement the requested changes in feature.py and CHANGELOG.md, "
-        "run `python -m pytest -q`, then delegate one independent read-only review "
+        "This is durable project work. Before using any execution tool, propose a "
+        "project handoff. After approval, implement the requested changes in "
+        f"feature.py and CHANGELOG.md, run `{_PYTHON} -m pytest -q`, then delegate "
+        "one independent read-only review "
         "to one exact agent_id returned by agent.list and explicitly accept, reject, "
         "or reassign its findings before completion. Use at most 4 iterations and "
         "measurable success criteria.",
