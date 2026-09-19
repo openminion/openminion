@@ -1,0 +1,46 @@
+{
+  "default_agent": "minimax-m2-7",
+  "agents": {
+    "minimax-m2-7": {
+      "name": "minimax-m2-7",
+      "default_channel": "console",
+      "provider": "openai",
+      "system_prompt": "You are OpenMinion, a pragmatic assistant.",
+      "thinking": "minimal",
+      "command_policy": {"allow_host": false}
+    }
+  },
+  "providers": {
+    "openai": {
+      "model": "MiniMax-M2.7",
+      "api_key_env": "MINIMAX_API_KEY",
+      "base_url": "https://api.minimax.io/v1",
+      "temperature": 0.2,
+      "timeout_seconds": 60,
+      "provider_identity": {
+        "transport_adapter": "openai_chat",
+        "wire_protocol_family": "openai_chat_completions",
+        "service_vendor": "minimax",
+        "model_family": "minimax"
+      }
+    }
+  },
+  "runtime": {
+    "log_level": "ERROR",
+    "brain_turn_timeout_seconds": 180,
+    "agent_loop_max_steps": 12
+  },
+  "security": {
+    "tool_policy": {
+      "max_calls_per_run": 12,
+      "max_calls_per_tool": 6,
+      "max_budget_cost_per_run": 24
+    }
+  },
+  "action_policy": {
+    "mode": "ask",
+    "default_action": "require_confirm",
+    "allow_read_only_without_prompt": true
+  },
+  "enabled_plugins": []
+}

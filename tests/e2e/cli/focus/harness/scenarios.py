@@ -36,6 +36,7 @@ BASE_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         prompt="Reply with exactly: CLI Focus live smoke OK",
         expected_markers=("CLI Focus live smoke OK",),
         timeout=180,
+        include_project_context=False,
     ),
 )
 
@@ -43,9 +44,12 @@ BASE_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
 TOOL_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
     FocusScenario(
         scenario_id="time_tool",
-        prompt="Use the time tool to tell me the current UTC time in one sentence.",
-        expected_markers=("UTC",),
+        prompt=(
+            "Use the time tool to obtain the current UTC time. Reply only with its "
+            "returned utc timestamp in ISO-8601 UTC format. Do not round."
+        ),
         timeout=240,
+        include_project_context=False,
     ),
     FocusScenario(
         scenario_id="policy_recovery",

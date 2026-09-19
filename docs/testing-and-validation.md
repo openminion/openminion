@@ -1,7 +1,7 @@
 # OpenMinion Testing And Validation
 
 Status: active
-Last updated: 2026-09-06
+Last updated: 2026-09-18
 
 Purpose: give package users and maintainers one package-local reference for the
 basic validation commands that prove `openminion` installs and runs correctly.
@@ -90,6 +90,52 @@ GitHub runs these deterministic workflows for pushes and pull requests on both
 `dev` and `main`. Release publication remains limited to `main`, tags, and
 explicit dispatch. A workflow appearing in GitHub does not by itself mean the
 repository currently requires that check for merge.
+
+## Focus regression confidence
+
+The `focus-e2e` Actions job runs `make test-e2e-ci` independently of the package
+suite. It includes the real provider-free terminal smoke and the Focus
+runner/assertion/provider-report controls; an earlier job failure does not
+suppress this evidence. Required merge checks remain a repository setting,
+verified separately from workflow presence.
+
+For an authorized real-provider baseline, the existing runner selects exactly
+two cases: an exact final reply and a correlated current-time acquisition.
+From the package root with a configured MiniMax key in the environment:
+
+```bash
+export OPENMINION_CLI_FOCUS_E2E_CONFIG="$PWD/tests/e2e/fixtures/focus/minimax-baseline.json"
+export OPENMINION_CLI_FOCUS_E2E_AGENT=minimax-m2-7
+export OPENMINION_CLI_FOCUS_E2E_RUNNER_TIMEOUT_SECONDS=480
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py baseline-live
+```
+
+The fixture contains no key and applies explicit call/time limits. The two
+cases use read-only permissions and no host execution or auto-approval.
+The current public Focus surface has no time-only profile allowlist; the
+baseline rejects successful unrelated tool calls and does not claim to change
+runtime tool exposure. This smoke qualifies response/tool dispatch only;
+coding, research, approval, recovery and long work need their existing suites.
+
+The manual-only `Focus live validation` workflow runs only on the default branch
+and uses the `focus-live-validation` environment's MiniMax secret. Its daily
+schedule remains disabled until a manual acceptance and reviewed schedule
+activation. Missing prerequisites, skipped or missing cases, unexpected passes,
+incomplete reports and ambiguous failures cannot qualify the baseline. Reports
+record source/config/corpus identity and counts; unknown usage is not zero.
+Uploaded evidence contains the sanitized summary and safe JUnit outcomes,
+excluding private provider traces and raw assertion/log content.
+Dependency-installation or hard job termination can leave runner evidence
+unavailable; record that workflow failure as inconclusive. The OpenAI-compatible
+configuration has no output-token cap field, so its reported limit and unavailable
+usage remain unknown rather than a promised spending cap.
+
+Provider-session certification now emits v2 with an `inconclusive` classification
+for insufficient cause evidence. Historical v1 reports remain readable; a failed
+live task or timeout alone does not establish an introduced code regression.
+Keep failed attempts and compare accepted/candidate revisions under matching
+inputs before changing a baseline. Never automatically widen tolerances or
+promote the latest successful run to an accepted baseline.
 
 ## Focused regression tests
 
