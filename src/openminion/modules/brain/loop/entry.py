@@ -132,6 +132,7 @@ def decompose_tool_spec() -> ToolSpec:
 
 def coding_tool_spec() -> ToolSpec:
     handoff_schema = ProjectHandoff.model_json_schema()
+    handoff_schema["properties"].pop("repository")
     handoff_schema["properties"]["verification_commands"]["minItems"] = 1
     handoff_schema["required"].append("verification_commands")
     return ToolSpec(
