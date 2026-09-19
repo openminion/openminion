@@ -83,10 +83,11 @@ def project_cycle_prompt(
 ) -> str:
     project_run = checkpoint.project_run
     checkpoint_payload = checkpoint.payload
+    workspace = project_workspace(run.workspace_ref)
     lines = [
         run.goal_text,
         "",
-        f"Workspace root: {project_workspace(run.workspace_ref)}",
+        f"Workspace root: {workspace}",
         "Use this workspace for repository tools. Do not infer another workspace "
         "from the goal text or verification command.",
         f"Current milestone: {milestone}",
@@ -105,10 +106,12 @@ def project_cycle_prompt(
     ]
     active_plan = checkpoint_payload.get("task_plan")
     lifecycle = cast(
-        Mapping[str, object], checkpoint_payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY, {})
+        Mapping[str, object],
+        checkpoint_payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY, {}),
     )
     objective = cast(
-        Mapping[str, object], lifecycle.get(project_run.objective_ledger_ref, {})
+        Mapping[str, object],
+        lifecycle.get(project_run.objective_ledger_ref, {}),
     )
     source_request = str(objective.get("source_request") or "").strip()
     if source_request:
@@ -130,7 +133,8 @@ def project_cycle_prompt(
     if verification := checkpoint_payload.get("verification"):
         evidence = cast(list[dict[str, object]], verification)
         failed = [
-            item for item in evidence
+            item
+            for item in evidence
             if item["status"] == TestEvidenceStatus.FAILED.value
         ]
         history = checkpoint_payload.get("verification_history")
