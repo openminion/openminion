@@ -38,6 +38,7 @@ from .messages import (
     RuntimeMessageMixin,
 )
 from .project import RuntimeProjectMixin
+from .room_tasks import RuntimeRoomTaskMixin
 from .token_usage import RuntimeTokenUsageMixin
 
 ApprovalCallback = Callable[[str, dict[str, Any], Any], Awaitable[bool]]
@@ -55,6 +56,7 @@ class OpenMinionRuntime(
     RuntimeControlsMixin,
     RuntimeDelegationMixin,
     RuntimeMCPMixin,
+    RuntimeRoomTaskMixin,
     RuntimeMessageMixin,
     RuntimeProjectMixin,
     RuntimeTokenUsageMixin,
