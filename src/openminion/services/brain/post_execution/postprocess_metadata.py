@@ -163,6 +163,19 @@ def _attach_session_task_plan_metadata(
     if revisions:
         metadata["task_plan.revisions"] = json.dumps(revisions, sort_keys=True)
         metadata["task_plan.revision"] = json.dumps(revisions[-1], sort_keys=True)
+    for event_type in (
+        "task_plan.step_completed",
+        "task_plan.step_blocked",
+        "task_plan.abandoned",
+        "task_plan.completed",
+    ):
+        events = session_api.list_events(
+            session_id,
+            event_type=event_type,
+            trace_id=request_id,
+        )
+        if events and isinstance(events[-1].get("payload"), dict):
+            metadata[event_type] = json.dumps(events[-1]["payload"], sort_keys=True)
 
 
 def _security_events_from_tool_results(

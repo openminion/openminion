@@ -612,6 +612,42 @@ def test_build_turn_response_metadata_keeps_ordered_plan_revisions() -> None:
     assert json.loads(metadata["task_plan.revision"])["revision_id"] == "revision-2"
 
 
+def test_build_turn_response_metadata_recovers_terminal_plan_signal() -> None:
+    bridge = DummyBridge()
+    bridge._config = SimpleNamespace(
+        agent=SimpleNamespace(name="agent-1"),
+        agents={"agent-1": SimpleNamespace(name="agent-1")},
+        default_agent="agent-1",
+    )
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    runner = _DummyRunner({})
+    runner.session_api.append_event(
+        "sess-plan",
+        "task_plan.completed",
+        {"plan_id": "plan-1", "reason": "verified"},
+        trace_id="brain-trace",
+    )
+
+    metadata = bridge._build_turn_response_metadata(
+        runner=runner,
+        step_out=SimpleNamespace(
+            status="waiting_user",
+            working_state=SimpleNamespace(trace_id="brain-trace"),
+            action_result=SimpleNamespace(outputs={}),
+        ),
+        session_id="sess-plan",
+        request_id="gateway-trace",
+        elapsed_ms=100.0,
+        llm_steps=1,
+        termination_reason="verification_blocked",
+    )
+
+    assert json.loads(metadata["task_plan.completed"]) == {
+        "plan_id": "plan-1",
+        "reason": "verified",
+    }
+
+
 def test_build_turn_response_metadata_captures_provider_error_facts() -> None:
     bridge = DummyBridge()
     bridge._config = SimpleNamespace(
