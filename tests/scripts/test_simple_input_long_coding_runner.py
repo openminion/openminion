@@ -97,10 +97,8 @@ def test_restart_fixture_failure_is_owned_by_project_verifier(tmp_path) -> None:
     assert subprocess.run(command, cwd=repo, check=False).returncode == 0
     verifier_env = {**os.environ, "OPENMINION_SILC_PROJECT_VERIFIER": "1"}
     assert (
-        subprocess.run(command, cwd=repo, env=verifier_env, check=False).returncode
-        == 1
+        subprocess.run(command, cwd=repo, env=verifier_env, check=False).returncode == 1
     )
     assert (
-        subprocess.run(command, cwd=repo, env=verifier_env, check=False).returncode
-        == 0
+        subprocess.run(command, cwd=repo, env=verifier_env, check=False).returncode == 0
     )

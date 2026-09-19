@@ -194,8 +194,7 @@ def _telemetry_evidence(data_root: Path) -> dict[str, object]:
             if kind == "tool.call.completed"
             and (
                 event.get("canonical_name") == "task.delegate"
-                or requested_names.get(str(event.get("call_id", "")))
-                == "task.delegate"
+                or requested_names.get(str(event.get("call_id", ""))) == "task.delegate"
             )
         ],
         "provider_calls": sum(

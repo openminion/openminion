@@ -190,7 +190,6 @@ def test_focus_plain_request_approval_verifier_repair_review_restart_and_control
     )
     assert len(store.list_runs()) == len(cron.jobs) == 1
 
-
     plan = TaskPlan(
         plan_id="silc-plan",
         objective=run.goal_text,

@@ -354,9 +354,9 @@ def project_condition_from_metadata(
         return AutonomyLoopConditionKind(explicit)
     brain_status = str(metadata.get("brain_status") or "").strip().lower()
     if brain_status == "waiting_user":
-        termination = str(
-            metadata.get("tool_loop_termination_reason") or ""
-        ).strip().lower()
+        termination = (
+            str(metadata.get("tool_loop_termination_reason") or "").strip().lower()
+        )
         error_code = str(metadata.get("error_code") or "").strip().lower()
         if termination == "budget_exhausted" or (
             error_code == "act_adaptive_budget_exhausted"
