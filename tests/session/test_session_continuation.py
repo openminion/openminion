@@ -259,7 +259,8 @@ def test_room_handoff_creation_requires_an_empty_bound_target(tmp_path) -> None:
 
 
 def test_room_handback_is_bound_idempotent_and_conflict_checked(tmp_path) -> None:
-    store = _store(tmp_path)
+    database_path = tmp_path / "sessions.db"
+    store = SQLiteSessionStore(database_path)
     source_id = _seed_source(store, session_id="room-source")
     target_id = _target(store, session_id="worker", agent_id="agent-b")
     binding = RoomHandoffBinding(
@@ -310,6 +311,14 @@ def test_room_handback_is_bound_idempotent_and_conflict_checked(tmp_path) -> Non
         service.accept_room_handback(
             result.model_copy(update={"summary": "Different result."})
         )
+
+    store.close()
+    reopened_store = SQLiteSessionStore(database_path)
+    after_restart = SessionContinuationService(reopened_store).accept_room_handback(
+        result
+    )
+    assert after_restart.status == "already_accepted"
+    assert after_restart.event_id == accepted.event_id
 
 
 def test_room_handback_rejects_unapplied_or_unlinked_result(tmp_path) -> None:
