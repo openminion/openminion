@@ -67,6 +67,30 @@ def test_os_adapter_executes_after_inline_approval(tmp_path: Path):
     assert approvals[0][2]
 
 
+def test_default_permission_mode_asks_for_each_write(tmp_path: Path):
+    adapter = ToolAdapter(workspace_root=tmp_path)
+    approvals: list[str] = []
+
+    def approve(tool_name, _args, _approval_id):
+        approvals.append(tool_name)
+        return True
+
+    adapter.set_approval_callback(approve)
+
+    for filename in ("first.txt", "second.txt"):
+        result = adapter.execute(
+            command={
+                "tool_name": "file.write",
+                "args": {"path": filename, "content": "hello"},
+            },
+            session_id="s1",
+            trace_id=filename,
+        )
+        assert result["status"] == "success"
+
+    assert approvals == ["file.write", "file.write"]
+
+
 def test_os_adapter_fails_closed_after_inline_denial(tmp_path: Path):
     adapter = ToolAdapter(workspace_root=tmp_path)
     adapter.set_approval_callback(lambda *_args: False)
