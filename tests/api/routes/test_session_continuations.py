@@ -147,6 +147,7 @@ def test_room_handoff_route_rechecks_membership_before_apply(tmp_path) -> None:
                 "dry_run": True,
                 "target_agent_id": "agent-b",
                 "target_session_id": "worker",
+                "task_step_id": "step-1",
             },
             query=None,
         )
@@ -168,6 +169,7 @@ def test_room_handoff_route_rechecks_membership_before_apply(tmp_path) -> None:
             body={
                 "target_agent_id": "agent-b",
                 "target_session_id": "worker",
+                "task_step_id": "step-1",
             },
             query=None,
         )
@@ -218,6 +220,7 @@ def test_room_handoff_route_applies_for_current_members(tmp_path) -> None:
             body={
                 "target_agent_id": "agent-b",
                 "target_session_id": "worker",
+                "task_step_id": "step-1",
             },
             query=None,
         )
@@ -243,4 +246,21 @@ def _seed_room_source(store: SQLiteSessionStore) -> None:
     store.put_working_state(
         "room-source",
         state_inline={"session_work_summary": "Hand off the bounded room work."},
+    )
+    store.append_event(
+        "room-source",
+        event_type="task_plan.declared",
+        payload={
+            "plan": {
+                "plan_id": "plan-1",
+                "objective": "Finish the bounded room work.",
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "description": "Review the change.",
+                        "status": "pending",
+                    }
+                ],
+            }
+        },
     )

@@ -61,6 +61,23 @@ def _seed_source(store: SQLiteSessionStore, *, session_id: str = "source") -> st
         payload={"tool_name": "file.read", "status": "completed"},
         refs={"artifact_refs": ["artifact-1"]},
     )
+    store.append_event(
+        session_id,
+        event_type="task_plan.declared",
+        payload={
+            "plan": {
+                "plan_id": "plan-1",
+                "objective": "Finish the bounded work.",
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "description": "Review the change.",
+                        "status": "pending",
+                    }
+                ],
+            }
+        },
+    )
     return session_id
 
 
@@ -144,13 +161,14 @@ def test_room_handoff_requires_current_binding_before_target_projection(
 ) -> None:
     store = _store(tmp_path)
     source_id = _seed_source(store, session_id="room-source")
-    target_id = _target(store, session_id="worker", agent_id="agent-b")
+    target_id = "worker"
     binding = RoomHandoffBinding(
         room_session_id=source_id,
         local_human_authority_id="human-a",
         source_agent_id="agent-a",
         target_agent_id="agent-b",
         target_session_id=target_id,
+        task_step_id="step-1",
     )
     service = SessionContinuationService(store, now_ms=lambda: 10_000)
     before = store.latest_event_seq(source_id)
@@ -159,7 +177,9 @@ def test_room_handoff_requires_current_binding_before_target_projection(
     assert store.latest_event_seq(source_id) == before
     assert preview.payload.continuation_kind == "room_agent_handoff"
     assert preview.payload.room_handoff_binding == binding
+    assert store.get_session(target_id) is None
 
+    _target(store, session_id=target_id, agent_id="agent-b")
     packet = service.create_room_handoff(binding).packet
     assert packet is not None
     missing = service.apply(target_id, packet_id=packet.packet_id)
@@ -199,6 +219,7 @@ def test_room_handoff_is_bound_to_one_target_session(tmp_path) -> None:
         source_agent_id="agent-a",
         target_agent_id="agent-b",
         target_session_id=target_id,
+        task_step_id="step-1",
     )
     service = SessionContinuationService(store, now_ms=lambda: 10_000)
     packet = service.create_room_handoff(binding).packet
@@ -225,6 +246,7 @@ def test_room_handoff_creation_requires_an_empty_bound_target(tmp_path) -> None:
         source_agent_id="agent-a",
         target_agent_id="agent-b",
         target_session_id=target_id,
+        task_step_id="step-1",
     )
     service = SessionContinuationService(store, now_ms=lambda: 10_000)
 

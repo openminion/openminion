@@ -68,6 +68,7 @@ class RoomHandoffBinding(BaseModel):
     source_agent_id: str = Field(min_length=1, max_length=256)
     target_agent_id: str = Field(min_length=1, max_length=256)
     target_session_id: str = Field(min_length=1, max_length=256)
+    task_step_id: str = Field(min_length=1, max_length=256)
 
 
 class SessionContinuationPayload(BaseModel):

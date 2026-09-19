@@ -396,6 +396,15 @@ class EventStore:
                     revised = TaskPlan.model_validate(plan_payload)
                     active_plan = revised if revised.status == "active" else None
                     continue
+                if event_type == "task_plan.assigned":
+                    from openminion.modules.task.plan import (
+                        TaskPlanStepAssigned,
+                        apply_task_plan_assignment,
+                    )
+
+                    assigned = TaskPlanStepAssigned.model_validate(payload)
+                    active_plan = apply_task_plan_assignment(active_plan, assigned)
+                    continue
                 if event_type == "task_plan.step_completed":
                     completed = TaskPlanStepCompleted.model_validate(payload)
                     if completed.plan_id != active_plan.plan_id:

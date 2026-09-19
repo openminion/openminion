@@ -53,6 +53,9 @@ class TaskPlanStep(BaseModel):
     output_summary: str = ""
     blocker_type: str | None = None
     blocker_details: str | None = None
+    assigned_participant_id: str | None = None
+    worker_session_id: str | None = None
+    continuation_packet_id: str | None = None
 
     @field_validator("step_id", "description", mode="before")
     @classmethod
@@ -91,10 +94,30 @@ class TaskPlanStep(BaseModel):
     def _cap_output_summary(cls, value: Any) -> str:
         return _bounded_output_summary(value)
 
-    @field_validator("blocker_type", "blocker_details", mode="before")
+    @field_validator(
+        "blocker_type",
+        "blocker_details",
+        "assigned_participant_id",
+        "worker_session_id",
+        "continuation_packet_id",
+        mode="before",
+    )
     @classmethod
     def _optional_text(cls, value: Any) -> str | None:
         return _trimmed_non_empty(value) or None
+
+
+class TaskPlanStepAssigned(BaseModel):
+    plan_id: str = Field(min_length=1)
+    step_id: str = Field(min_length=1)
+    participant_id: str = Field(min_length=1)
+    worker_session_id: str = Field(min_length=1)
+    continuation_packet_id: str = Field(min_length=1)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: Any) -> str:
+        return _trimmed_non_empty(value)
 
 
 class TaskPlan(BaseModel):
@@ -334,13 +357,45 @@ def apply_task_plan_signals(
     return plan.model_copy(update={"steps": steps, "status": status})
 
 
+def apply_task_plan_assignment(
+    plan: TaskPlan,
+    assignment: TaskPlanStepAssigned,
+) -> TaskPlan:
+    if assignment.plan_id != plan.plan_id:
+        raise ValueError("task plan assignment must match the active plan")
+    matching = [step for step in plan.steps if step.step_id == assignment.step_id]
+    if not matching:
+        raise ValueError(f"unknown task plan step: {assignment.step_id}")
+    selected = matching[0]
+    if selected.status != "pending":
+        raise ValueError("task plan assignment requires a pending step")
+    completed = {step.step_id for step in plan.steps if step.status == "completed"}
+    if any(dependency not in completed for dependency in selected.depends_on):
+        raise ValueError("task plan assignment requires completed dependencies")
+    steps = [
+        step.model_copy(
+            update={
+                "assigned_participant_id": assignment.participant_id,
+                "worker_session_id": assignment.worker_session_id,
+                "continuation_packet_id": assignment.continuation_packet_id,
+            }
+        )
+        if step.step_id == assignment.step_id
+        else step
+        for step in plan.steps
+    ]
+    return plan.model_copy(update={"steps": steps})
+
+
 __all__ = [
+    "apply_task_plan_assignment",
     "apply_task_plan_signals",
     "TaskPlan",
     "TaskPlanDifficulty",
     "TaskPlanRevision",
     "TaskPlanStatus",
     "TaskPlanStep",
+    "TaskPlanStepAssigned",
     "TaskPlanStepBlocked",
     "TaskPlanStepCompleted",
     "TaskPlanStepStatus",

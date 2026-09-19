@@ -19,6 +19,7 @@ from openminion.cli.interactive.runtime.messages import room_result_chat_message
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.presentation.models import MessageKind
 from openminion.base.config.core import OpenMinionConfig
+from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 
 
 @dataclass
@@ -688,6 +689,59 @@ def test_focus_room_creation_rejects_unknown_agent_before_write() -> None:
         )
 
     assert [item.id for item in rt.sessions.list_sessions(limit=100)] == before
+
+
+def test_focus_room_handoff_previews_without_write_then_applies(tmp_path) -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.room_invite_agent("beta")
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    rt.session_continuation_store = store
+    store.create_session(session_id=focus_rt.session_id, initial_agent_id="alpha")
+    store.put_working_state(
+        focus_rt.session_id,
+        state_inline={"session_work_summary": "Review the bounded change."},
+    )
+    store.append_event(
+        focus_rt.session_id,
+        event_type="task_plan.declared",
+        payload={
+            "plan": {
+                "plan_id": "plan-1",
+                "objective": "Review the bounded change.",
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "description": "Review the change.",
+                        "status": "pending",
+                    }
+                ],
+            }
+        },
+    )
+
+    preview = focus_rt.preview_room_handoff(
+        target_agent_id="beta",
+        task_step_id="step-1",
+    )
+    target_session_id = preview["binding"]["target_session_id"]
+
+    assert store.get_session(target_session_id) is None
+    assert (
+        store.get_events(
+            focus_rt.session_id,
+            types=["session.continuation.packet_created"],
+        )
+        == []
+    )
+
+    result = focus_rt.apply_room_handoff(preview)
+
+    assert result["status"] == "applied"
+    assert store.get_session(target_session_id) is not None
+    assigned_step = store.get_active_task_plan(focus_rt.session_id)["steps"][0]
+    assert assigned_step["assigned_participant_id"] == "beta"
+    assert assigned_step["worker_session_id"] == target_session_id
+    assert assigned_step["continuation_packet_id"] == result["packet_id"]
 
 
 def test_room_owner_mutations_use_configured_agents_and_bounded_roles() -> None:

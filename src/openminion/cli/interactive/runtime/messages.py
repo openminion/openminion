@@ -13,6 +13,11 @@ from openminion.api.queries.sessions import (
     SessionQueryError,
     list_session_context_traces,
 )
+from openminion.api.operations.session_continuations import (
+    resolve_session_continuation_store,
+)
+from openminion.modules.session import SessionContinuationService
+from openminion.modules.session.schemas import RoomHandoffBinding
 from openminion.modules.storage import (
     is_room_session_key,
     normalize_identity,
@@ -233,6 +238,96 @@ class RuntimeMessageMixin:
             raise RuntimeError("current agent is not an active room participant")
         self.bind_session(room_id)
         return room_id
+
+    def preview_room_handoff(
+        self,
+        *,
+        target_agent_id: str,
+        task_step_id: str,
+    ) -> dict[str, Any]:
+        session, _actor = self._room_owner()
+        target_agent = normalize_identity(target_agent_id)
+        if self._rt.sessions.get_participant(session.id, "agent", target_agent) is None:
+            raise ValueError(f"Agent {target_agent!r} is not an active participant")
+        binding = RoomHandoffBinding(
+            room_session_id=session.id,
+            local_human_authority_id=str(session.metadata["local_human_id"]),
+            source_agent_id=str(session.active_agent_id or ""),
+            target_agent_id=target_agent,
+            target_session_id=f"{session.id}::handoff:{target_agent}:{uuid4().hex}",
+            task_step_id=task_step_id,
+        )
+        store = resolve_session_continuation_store(self._rt)
+        owned_store = getattr(self._rt, "session_continuation_store", None) is None
+        try:
+            preview = SessionContinuationService(store).preview_room_handoff(binding)
+        finally:
+            if owned_store:
+                store.close()
+        return {
+            "binding": binding.model_dump(mode="json"),
+            "preview": preview.model_dump(mode="json"),
+        }
+
+    def apply_room_handoff(self, preview_payload: Mapping[str, Any]) -> dict[str, Any]:
+        binding = RoomHandoffBinding.model_validate(preview_payload.get("binding"))
+        session, _actor = self._room_owner()
+        if binding.room_session_id != session.id:
+            raise ValueError("room handoff preview is stale")
+        if (
+            self._rt.sessions.get_participant(
+                session.id, "agent", binding.target_agent_id
+            )
+            is None
+        ):
+            raise ValueError("room handoff target is no longer active")
+
+        self._rt.sessions.resolve_session(
+            agent_id=binding.target_agent_id,
+            channel=self._channel,
+            target=self._target,
+            session_id=binding.target_session_id,
+        )
+        store = resolve_session_continuation_store(self._rt)
+        owned_store = getattr(self._rt, "session_continuation_store", None) is None
+        try:
+            if store.get_session(binding.target_session_id) is None:
+                store.create_session(
+                    session_id=binding.target_session_id,
+                    initial_agent_id=binding.target_agent_id,
+                )
+            service = SessionContinuationService(store)
+            built = service.create_room_handoff(binding)
+            assert built.packet is not None
+            applied = service.apply(
+                binding.target_session_id,
+                packet_id=built.packet.packet_id,
+                room_binding=binding,
+            )
+            active_plan = store.get_active_task_plan(binding.room_session_id)
+            if active_plan is None:
+                raise RuntimeError("room task plan is no longer active")
+            store.append_event(
+                binding.room_session_id,
+                event_type="task_plan.assigned",
+                payload={
+                    "plan_id": active_plan["plan_id"],
+                    "step_id": binding.task_step_id,
+                    "participant_id": binding.target_agent_id,
+                    "worker_session_id": binding.target_session_id,
+                    "continuation_packet_id": built.packet.packet_id,
+                },
+                parent_event_id=built.packet.packet_id,
+            )
+        finally:
+            if owned_store:
+                store.close()
+        return {
+            "packet_id": built.packet.packet_id,
+            "target_session_id": binding.target_session_id,
+            "task_step_id": binding.task_step_id,
+            "status": applied.status,
+        }
 
     def room_invite_agent(self, agent_id: str) -> Any:
         session, _actor = self._room_owner()

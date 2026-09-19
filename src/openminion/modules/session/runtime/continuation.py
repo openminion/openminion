@@ -123,10 +123,9 @@ class SessionContinuationService:
         *,
         expires_in_seconds: int = DEFAULT_CONTINUATION_TTL_SECONDS,
     ) -> ContinuationPreview:
-        failure = _target_session_failure(
-            self._store,
-            binding.target_session_id,
-            binding.target_agent_id,
+        failure = _room_task_step_failure(
+            self._store.get_active_task_plan(binding.room_session_id),
+            binding.task_step_id,
         )
         if failure:
             raise ContinuationError(failure)
@@ -246,6 +245,13 @@ class SessionContinuationService:
         *,
         expires_in_seconds: int = DEFAULT_CONTINUATION_TTL_SECONDS,
     ) -> ContinuationBuildResult:
+        target_failure = _target_session_failure(
+            self._store,
+            binding.target_session_id,
+            binding.target_agent_id,
+        )
+        if target_failure:
+            raise ContinuationError(target_failure)
         preview = self.preview_room_handoff(
             binding,
             expires_in_seconds=expires_in_seconds,
@@ -585,6 +591,40 @@ def _target_session_failure(
         return "continuation_target_not_empty"
     if store.get_events(target_session_id, types=[PACKET_APPLIED]):
         return "continuation_target_already_initialized"
+    return None
+
+
+def _room_task_step_failure(
+    raw_plan: dict[str, Any] | None,
+    task_step_id: str,
+) -> str | None:
+    if not isinstance(raw_plan, dict):
+        return "continuation_room_task_plan_required"
+    steps = raw_plan.get("steps")
+    if not isinstance(steps, list):
+        return "continuation_room_task_plan_required"
+    selected = next(
+        (
+            step
+            for step in steps
+            if isinstance(step, dict) and step.get("step_id") == task_step_id
+        ),
+        None,
+    )
+    if selected is None:
+        return "continuation_room_task_step_not_found"
+    if selected.get("status") != "pending":
+        return "continuation_room_task_step_not_pending"
+    completed = {
+        str(step.get("step_id"))
+        for step in steps
+        if isinstance(step, dict) and step.get("status") == "completed"
+    }
+    dependencies = selected.get("depends_on") or []
+    if not isinstance(dependencies, list) or any(
+        str(dependency) not in completed for dependency in dependencies
+    ):
+        return "continuation_room_task_step_blocked"
     return None
 
 

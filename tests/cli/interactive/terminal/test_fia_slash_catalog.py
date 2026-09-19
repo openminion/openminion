@@ -57,11 +57,16 @@ class _ResumeOverlay:
 
 
 class _RoomOverlay(_StubOverlay):
-    def __init__(self, *answers: str | None) -> None:
+    def __init__(self, *answers: str | None, confirm: bool = False) -> None:
         self.answers = list(answers)
+        self.confirm = confirm
 
     async def present_prompt_async(self, _prompt: str) -> str | None:
         return self.answers.pop(0)
+
+    async def present_confirm_async(self, _prompt: str, *, default: bool) -> bool:
+        del default
+        return self.confirm
 
 
 class _VisibleRuntime:
@@ -213,10 +218,24 @@ class _HelpSafetyRuntime(_VisibleRuntime):
 class _RoomRuntime(_VisibleRuntime):
     def __init__(self) -> None:
         self.created: list[dict[str, object]] = []
+        self.applied: list[dict[str, object]] = []
 
     def create_room_session(self, **kwargs: object) -> str:
         self.created.append(dict(kwargs))
         return "room-1"
+
+    def preview_room_handoff(self, **kwargs: object) -> dict[str, object]:
+        return {
+            "binding": {
+                **kwargs,
+                "target_session_id": "worker-1",
+            },
+            "preview": {},
+        }
+
+    def apply_room_handoff(self, payload: dict[str, object]) -> dict[str, str]:
+        self.applied.append(payload)
+        return {"packet_id": "packet-1"}
 
 
 def _run_prompt_slash(
@@ -451,6 +470,28 @@ def test_terminal_room_create_cancel_writes_nothing() -> None:
     )
 
     assert runtime.created == []
+
+
+@pytest.mark.parametrize("confirm,expected", [(False, 0), (True, 1)])
+def test_terminal_room_handoff_requires_confirmation(
+    confirm: bool,
+    expected: int,
+) -> None:
+    runtime = _RoomRuntime()
+
+    asyncio.run(
+        _handle_slash(
+            "/handoff @beta --task step-1",
+            runtime=runtime,
+            console=Console(file=io.StringIO(), force_terminal=False, width=160),
+            transcript=TerminalTranscript(Console(file=io.StringIO())),
+            overlay=_RoomOverlay(confirm=confirm),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert len(runtime.applied) == expected
 
 
 def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> None:

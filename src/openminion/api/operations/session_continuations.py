@@ -144,6 +144,12 @@ def handle_build_room_handoff(
             source_room_session_id,
             "`target_session_id` is required.",
         )
+    task_step_id = str(payload.get("task_step_id") or "").strip()
+    if not task_step_id:
+        return _invalid_continuation_request(
+            source_room_session_id,
+            "`task_step_id` is required.",
+        )
     store = resolve_session_continuation_store(ctx.runtime)
     owned_store = getattr(ctx.runtime, "session_continuation_store", None) is None
     service = SessionContinuationService(
@@ -159,6 +165,7 @@ def handle_build_room_handoff(
             room_session_id=source_room_session_id,
             target_agent_id=target_agent_id,
             target_session_id=target_session_id,
+            task_step_id=task_step_id,
         )
         if bool(payload.get("dry_run", False)):
             result: dict[str, Any] = {
@@ -213,6 +220,11 @@ def handle_apply_continuation(
                     room_session_id=packet.source_session_id,
                     target_agent_id=packet.payload.target_agent_id,
                     target_session_id=target_session_id,
+                    task_step_id=(
+                        packet.payload.room_handoff_binding.task_step_id
+                        if packet.payload.room_handoff_binding is not None
+                        else ""
+                    ),
                 )
             except ContinuationError:
                 binding = None
@@ -240,6 +252,7 @@ def _room_handoff_binding(
     room_session_id: str,
     target_agent_id: str,
     target_session_id: str,
+    task_step_id: str = "",
 ) -> RoomHandoffBinding:
     sessions = runtime.sessions
     room = sessions.get_session(room_session_id)
@@ -264,6 +277,7 @@ def _room_handoff_binding(
         source_agent_id=source_agent_id,
         target_agent_id=target_agent_id,
         target_session_id=target_session_id,
+        task_step_id=task_step_id,
     )
 
 

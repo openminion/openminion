@@ -664,6 +664,7 @@ async def _handle_slash(
         return False
     if cmd in {
         "/room",
+        "/handoff",
         "/participants",
         "/invite",
         "/kick",

@@ -89,6 +89,14 @@ async def handle_room_slash(
 ) -> None:
     parts = str(args or "").split()
     try:
+        if cmd == "/handoff":
+            await _handle_room_handoff(
+                parts,
+                runtime=runtime,
+                console=console,
+                overlay=overlay,
+            )
+            return
         if cmd == "/room":
             await _handle_room_session(
                 parts,
@@ -139,6 +147,46 @@ async def handle_room_slash(
     except (RuntimeError, ValueError) as exc:
         body = f"{cmd}: {exc}"
     console.print(Text(body, style=token_rich_style(StyleToken.SYSTEM)))
+
+
+async def _handle_room_handoff(
+    parts: list[str],
+    *,
+    runtime: Any,
+    console: Console,
+    overlay: TerminalOverlayPresenter,
+) -> None:
+    if len(parts) != 3 or not parts[0].startswith("@") or parts[1] != "--task":
+        raise ValueError("usage: /handoff @agent --task <step-id>")
+    target_agent_id = parts[0][1:]
+    task_step_id = parts[2]
+    preview = runtime.preview_room_handoff(
+        target_agent_id=target_agent_id,
+        task_step_id=task_step_id,
+    )
+    binding = preview["binding"]
+    console.print(
+        Text(
+            f"handoff preview: {task_step_id} -> {target_agent_id}",
+            style=token_rich_style(StyleToken.SYSTEM),
+        )
+    )
+    confirmed = await overlay.present_confirm_async(
+        "Create and apply this handoff?",
+        default=False,
+    )
+    if not confirmed:
+        console.print(Text("(handoff cancelled)", style=_MUTED_ITALIC_STYLE))
+        return
+    result = runtime.apply_room_handoff(preview)
+    console.print(
+        Text(
+            "handoff applied: "
+            f"{binding['task_step_id']} -> {binding['target_agent_id']} "
+            f"({result['packet_id']})",
+            style=token_rich_style(StyleToken.SYSTEM),
+        )
+    )
 
 
 async def _handle_room_session(
