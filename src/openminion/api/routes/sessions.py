@@ -12,8 +12,7 @@ from openminion.api.operations.events import (
     handle_list_session_events,
 )
 from openminion.api.operations.session_continuations import (
-    handle_apply_continuation,
-    handle_build_continuation,
+    maybe_handle_session_continuation_request,
 )
 from openminion.api.queries.runs import RunQueryError, list_run_events, list_runs
 from openminion.api.queries.sessions import SessionQueryError, list_session_messages
@@ -29,12 +28,6 @@ _RUNS_RE = re.compile(r"/sessions/([^/]+)/runs")
 _RUN_EVENTS_RE = re.compile(r"/sessions/([^/]+)/runs/([^/]+)/events")
 _MESSAGES_RE = re.compile(r"/sessions/([^/]+)/messages")
 _EVENTS_RE = re.compile(r"/sessions/([^/]+)/events")
-_CONTINUATIONS_RE = re.compile(r"(?:/v1)?/sessions/([^/]+)/continuations")
-_CONTINUATION_APPLY_RE = re.compile(
-    r"(?:/v1)?/sessions/([^/]+)/continuations/([^/]+)/apply"
-)
-
-
 def _parse_limit(
     *,
     raw_value: str | None,
@@ -197,24 +190,11 @@ def handle_request(
     )
     if share_result is not None:
         return share_result
-    if (
-        method_name == "POST"
-        and (apply_route := _CONTINUATION_APPLY_RE.fullmatch(path)) is not None
-    ):
-        return handle_apply_continuation(
-            ctx,
-            target_session_id=unquote(apply_route.group(1)),
-            packet_id=unquote(apply_route.group(2)),
-        )
-    if (
-        method_name == "POST"
-        and (build_route := _CONTINUATIONS_RE.fullmatch(path)) is not None
-    ):
-        return handle_build_continuation(
-            ctx,
-            source_session_id=unquote(build_route.group(1)),
-            body=body,
-        )
+    continuation_result = maybe_handle_session_continuation_request(
+        ctx, method_name=method_name, path=path, body=body
+    )
+    if continuation_result is not None:
+        return continuation_result
     if (
         method_name == "POST"
         and (events_route := _EVENTS_RE.fullmatch(path)) is not None
