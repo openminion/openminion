@@ -188,9 +188,10 @@ def _execute_plan_action(
     loop_state: AdaptiveToolLoopState,
     arguments: dict[str, Any],
 ) -> ActionResult:
-    if loop_state.task_plan_completed is not None and str(
-        arguments.get("action", "") or ""
-    ).strip() == "declare":
+    if (
+        loop_state.task_plan_completed is not None
+        and str(arguments.get("action", "") or "").strip() == "declare"
+    ):
         return _failed_result(
             code="PLAN_ALREADY_COMPLETED",
             summary="The task plan is already complete for this turn.",

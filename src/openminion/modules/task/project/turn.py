@@ -103,12 +103,7 @@ def project_cycle_prompt(
         "The configured verifier, not final text, owns project completion.",
     ]
     active_plan = checkpoint_payload.get("task_plan")
-    lifecycle = cast(
-        Mapping[str, object], checkpoint_payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY, {})
-    )
-    objective = cast(
-        Mapping[str, object], lifecycle.get(project_run.objective_ledger_ref, {})
-    )
+    objective = _approved_project_objective(checkpoint)
     lines.extend(_approved_source_request_guidance(objective))
     lines.extend(_approved_objective_guidance(objective))
     if not isinstance(active_plan, Mapping):
@@ -121,7 +116,8 @@ def project_cycle_prompt(
     if verification := checkpoint_payload.get("verification"):
         evidence = cast(list[dict[str, object]], verification)
         failed = [
-            item for item in evidence
+            item
+            for item in evidence
             if item["status"] == TestEvidenceStatus.FAILED.value
         ]
         history = checkpoint_payload.get("verification_history")
@@ -191,6 +187,19 @@ def _approved_objective_guidance(objective: Mapping[str, object]) -> list[str]:
         ),
         "Approved verification commands: " + json.dumps(objective["verification"]),
     ]
+
+
+def _approved_project_objective(
+    checkpoint: ProjectCheckpoint,
+) -> Mapping[str, object]:
+    lifecycle = cast(
+        Mapping[str, object],
+        checkpoint.payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY, {}),
+    )
+    return cast(
+        Mapping[str, object],
+        lifecycle.get(checkpoint.project_run.objective_ledger_ref, {}),
+    )
 
 
 def _approved_source_request_guidance(objective: Mapping[str, object]) -> list[str]:
