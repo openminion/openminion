@@ -102,6 +102,7 @@ _ROOM_SLASHES = frozenset(
         "/participants",
         "/room",
         "/routing",
+        "/start",
     }
 )
 _FIGLET_FONT = "small"
@@ -682,6 +683,7 @@ async def _handle_slash(
             console=console,
             transcript=transcript,
             overlay=overlay,
+            approval_callback=approval_callback,
         )
         return False
     if cmd == "/readonly":

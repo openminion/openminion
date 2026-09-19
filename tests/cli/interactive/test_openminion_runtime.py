@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import itertools
+import json
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -796,6 +797,75 @@ def test_focus_room_peer_note_requires_one_active_handoff(tmp_path) -> None:
         focus_rt.create_room_peer_note("beta", "Review this")
 
     assert store.get_recent_turns(focus_rt.session_id, 10) == []
+
+
+def test_focus_room_task_starts_exact_worker_and_records_typed_handback(
+    tmp_path,
+) -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.room_invite_agent("beta")
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    rt.session_continuation_store = store
+    store.create_session(session_id=focus_rt.session_id, initial_agent_id="alpha")
+    store.append_event(
+        focus_rt.session_id,
+        event_type="task_plan.declared",
+        payload={
+            "plan": {
+                "plan_id": "plan-1",
+                "objective": "Review the bounded change.",
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "description": "Review the change.",
+                        "status": "pending",
+                    }
+                ],
+            }
+        },
+    )
+    applied = focus_rt.apply_room_handoff(
+        focus_rt.preview_room_handoff(
+            target_agent_id="beta",
+            task_step_id="step-1",
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    def run_turn(**kwargs):  # noqa: ANN003, ANN202
+        calls.append(dict(kwargs))
+        return {
+            "body": "Review passed.",
+            "metadata": {
+                "delegation_result_summary": json.dumps(
+                    {
+                        "summary": "Review passed.",
+                        "artifacts_produced": ["artifact-1"],
+                        "status": "complete",
+                    }
+                )
+            },
+        }
+
+    rt.run_turn = run_turn  # type: ignore[attr-defined]
+
+    result = asyncio.run(
+        focus_rt.start_room_task("step-1", cancel_event=threading.Event())
+    )
+
+    assert len(calls) == 1
+    payload = calls[0]["payload"]
+    assert payload["agent_id"] == "beta"
+    assert payload["session_id"] == applied["target_session_id"]
+    assert payload["message"] == "Review the change."
+    assert result["room_handback"]["status"] == "accepted"
+    assert result["room_handback"]["result"]["status"] == "completed"
+    events = store.get_events(
+        focus_rt.session_id,
+        types=["room.handoff.result"],
+    )
+    assert len(events) == 1
+    assert events[0]["payload"]["artifact_refs"] == ["artifact-1"]
 
 
 def test_room_owner_mutations_use_configured_agents_and_bounded_roles() -> None:

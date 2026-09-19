@@ -21,7 +21,9 @@ from ..schemas import (
     ContinuationProgressItem,
     DEFAULT_CONTINUATION_TTL_SECONDS,
     MAX_CONTINUATION_TTL_SECONDS,
+    RoomHandoffAcceptance,
     RoomHandoffBinding,
+    RoomHandoffResultV1,
     SessionContinuationPacket,
     SessionContinuationPayload,
 )
@@ -30,6 +32,7 @@ PACKET_CREATED = "session.continuation.packet_created"
 PACKET_APPLIED = "session.continuation.applied"
 PACKET_REJECTED = "session.continuation.rejected"
 PACKET_EXPIRED = "session.continuation.expired"
+ROOM_HANDBACK_ACCEPTED = "room.handoff.result"
 
 _STORE_LOCKS: dict[str, RLock] = {}
 _STORE_LOCKS_GUARD = Lock()
@@ -389,6 +392,76 @@ class SessionContinuationService:
             target_session_id,
             target_event_id=event_id,
             status="applied",
+        )
+
+    def accept_room_handback(
+        self,
+        result: RoomHandoffResultV1,
+    ) -> RoomHandoffAcceptance:
+        packet = self.get_packet(result.handoff_packet_id)
+        binding = packet.payload.room_handoff_binding
+        if packet.payload.continuation_kind != "room_agent_handoff" or binding is None:
+            raise ContinuationError("room_handback_packet_required")
+        if (
+            result.source_room_session_id != binding.room_session_id
+            or result.worker_session_id != binding.target_session_id
+            or result.source_agent_id != binding.source_agent_id
+            or result.target_agent_id != binding.target_agent_id
+        ):
+            raise ContinuationError("room_handback_binding_mismatch")
+        if not self._store.get_events_by_parent_and_type(
+            packet.packet_id,
+            PACKET_APPLIED,
+        ):
+            raise ContinuationError("room_handback_packet_not_applied")
+
+        active_plan = _dict(self._store.get_active_task_plan(binding.room_session_id))
+        step = next(
+            (
+                _dict(item)
+                for item in active_plan.get("steps", [])
+                if _dict(item).get("step_id") == binding.task_step_id
+            ),
+            {},
+        )
+        if (
+            step.get("assigned_participant_id") != binding.target_agent_id
+            or step.get("worker_session_id") != binding.target_session_id
+            or step.get("continuation_packet_id") != packet.packet_id
+        ):
+            raise ContinuationError("room_handback_task_binding_mismatch")
+
+        payload = result.model_dump(mode="json")
+        with self._lock:
+            prior = self._store.get_events_by_parent_and_type(
+                packet.packet_id,
+                ROOM_HANDBACK_ACCEPTED,
+            )
+            if prior:
+                if _dict(prior[0].get("payload")) != payload:
+                    raise ContinuationError("room_handback_conflict")
+                return RoomHandoffAcceptance(
+                    status="already_accepted",
+                    event_id=str(prior[0]["event_id"]),
+                    result=result,
+                )
+            event_id = self._store.append_event(
+                binding.room_session_id,
+                event_type=ROOM_HANDBACK_ACCEPTED,
+                parent_event_id=packet.packet_id,
+                payload=payload,
+                refs={
+                    "source_event_id": packet.packet_id,
+                    "source_session_id": binding.target_session_id,
+                    "artifact_refs": result.artifact_refs,
+                },
+                importance=2,
+                redaction="bounded",
+            )
+        return RoomHandoffAcceptance(
+            status="accepted",
+            event_id=str(event_id),
+            result=result,
         )
 
     def _append_applied_event(

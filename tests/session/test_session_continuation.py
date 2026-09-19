@@ -25,11 +25,13 @@ from openminion.modules.session.runtime.continuation import (
     PACKET_CREATED,
     PACKET_EXPIRED,
     PACKET_REJECTED,
+    ROOM_HANDBACK_ACCEPTED,
     SessionContinuationService,
 )
 from openminion.modules.session.schemas import (
     ContinuationError,
     RoomHandoffBinding,
+    RoomHandoffResultV1,
     SessionContinuationPayload,
 )
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
@@ -254,6 +256,90 @@ def test_room_handoff_creation_requires_an_empty_bound_target(tmp_path) -> None:
         service.create_room_handoff(binding)
 
     assert store.get_events(source_id, types=[PACKET_CREATED]) == []
+
+
+def test_room_handback_is_bound_idempotent_and_conflict_checked(tmp_path) -> None:
+    store = _store(tmp_path)
+    source_id = _seed_source(store, session_id="room-source")
+    target_id = _target(store, session_id="worker", agent_id="agent-b")
+    binding = RoomHandoffBinding(
+        room_session_id=source_id,
+        local_human_authority_id="human-a",
+        source_agent_id="agent-a",
+        target_agent_id="agent-b",
+        target_session_id=target_id,
+        task_step_id="step-1",
+    )
+    service = SessionContinuationService(store, now_ms=lambda: 10_000)
+    packet = service.create_room_handoff(binding).packet
+    assert packet is not None
+    service.apply(target_id, packet_id=packet.packet_id, room_binding=binding)
+    store.append_event(
+        source_id,
+        event_type="task_plan.assigned",
+        payload={
+            "plan_id": "plan-1",
+            "step_id": "step-1",
+            "participant_id": "agent-b",
+            "worker_session_id": target_id,
+            "continuation_packet_id": packet.packet_id,
+        },
+    )
+    result = RoomHandoffResultV1(
+        handoff_packet_id=packet.packet_id,
+        source_room_session_id=source_id,
+        worker_session_id=target_id,
+        source_agent_id="agent-a",
+        target_agent_id="agent-b",
+        status="completed",
+        summary="Review passed.",
+        artifact_refs=["artifact-1"],
+        validation_refs=["validation-1"],
+        completed_at="2026-09-19T12:00:00Z",
+    )
+
+    accepted = service.accept_room_handback(result)
+    repeated = service.accept_room_handback(result)
+
+    assert accepted.status == "accepted"
+    assert repeated.status == "already_accepted"
+    assert repeated.event_id == accepted.event_id
+    assert len(store.get_events(source_id, types=[ROOM_HANDBACK_ACCEPTED])) == 1
+
+    with pytest.raises(ContinuationError, match="room_handback_conflict"):
+        service.accept_room_handback(
+            result.model_copy(update={"summary": "Different result."})
+        )
+
+
+def test_room_handback_rejects_unapplied_or_unlinked_result(tmp_path) -> None:
+    store = _store(tmp_path)
+    source_id = _seed_source(store, session_id="room-source")
+    target_id = _target(store, session_id="worker", agent_id="agent-b")
+    binding = RoomHandoffBinding(
+        room_session_id=source_id,
+        local_human_authority_id="human-a",
+        source_agent_id="agent-a",
+        target_agent_id="agent-b",
+        target_session_id=target_id,
+        task_step_id="step-1",
+    )
+    service = SessionContinuationService(store, now_ms=lambda: 10_000)
+    packet = service.create_room_handoff(binding).packet
+    assert packet is not None
+    result = RoomHandoffResultV1(
+        handoff_packet_id=packet.packet_id,
+        source_room_session_id=source_id,
+        worker_session_id=target_id,
+        source_agent_id="agent-a",
+        target_agent_id="agent-b",
+        status="needs_human",
+        summary="Approval required.",
+        completed_at="2026-09-19T12:00:00Z",
+    )
+
+    with pytest.raises(ContinuationError, match="room_handback_packet_not_applied"):
+        service.accept_room_handback(result)
 
 
 def test_apply_is_idempotent_and_conflicting_target_is_rejected(tmp_path) -> None:

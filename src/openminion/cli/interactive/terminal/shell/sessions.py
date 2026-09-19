@@ -86,6 +86,7 @@ async def handle_room_slash(
     console: Console,
     transcript: TerminalTranscript,
     overlay: TerminalOverlayPresenter,
+    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> None:
     parts = str(args or "").split()
     try:
@@ -106,6 +107,19 @@ async def handle_room_slash(
                 " ".join(parts[1:]),
             )
             body = f"peer note queued for {target_agent_id} ({note_id})"
+        elif cmd == "/start":
+            if len(parts) != 2 or parts[0] != "--task":
+                raise ValueError("usage: /start --task <step-id>")
+            result = await runtime.start_room_task(
+                parts[1],
+                approval_callback=approval_callback,
+                cancel_event=Event(),
+            )
+            handback = result["room_handback"]
+            body = (
+                f"worker finished: {parts[1]} "
+                f"({handback['result']['status']}, {handback['event_id']})"
+            )
         elif cmd == "/room":
             await _handle_room_session(
                 parts,

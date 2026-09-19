@@ -243,6 +243,14 @@ class _RoomRuntime(_VisibleRuntime):
     def create_room_peer_note(self, _agent_id: str, _text: str) -> str:
         return "note-1"
 
+    async def start_room_task(self, task_step_id: str, **_kwargs: object) -> dict:
+        return {
+            "room_handback": {
+                "event_id": "result-1",
+                "result": {"status": "completed", "task_step_id": task_step_id},
+            }
+        }
+
 
 def _run_prompt_slash(
     text: str,
@@ -517,6 +525,24 @@ def test_terminal_room_message_queues_peer_note() -> None:
     )
 
     assert "peer note queued for beta (note-1)" in buf.getvalue()
+
+
+def test_terminal_room_start_runs_exact_task() -> None:
+    buf = io.StringIO()
+
+    asyncio.run(
+        _handle_slash(
+            "/start --task step-1",
+            runtime=_RoomRuntime(),
+            console=Console(file=buf, force_terminal=False, width=160),
+            transcript=TerminalTranscript(Console(file=io.StringIO())),
+            overlay=_RoomOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert "worker finished: step-1 (completed, result-1)" in buf.getvalue()
 
 
 def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> None:

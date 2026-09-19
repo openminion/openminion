@@ -53,6 +53,19 @@ def _contains_forbidden_content(value: Any, *, path: str = "payload") -> str | N
     return None
 
 
+def _normalize_unique_strings(value: Any, *, limit: int | None = None) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for raw in value or []:
+        item = str(raw or "").strip()
+        if item and item not in seen:
+            seen.add(item)
+            result.append(item)
+        if limit is not None and len(result) >= limit:
+            break
+    return result
+
+
 class ContinuationProgressItem(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -69,6 +82,49 @@ class RoomHandoffBinding(BaseModel):
     target_agent_id: str = Field(min_length=1, max_length=256)
     target_session_id: str = Field(min_length=1, max_length=256)
     task_step_id: str = Field(min_length=1, max_length=256)
+
+
+class RoomHandoffResultV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    handoff_packet_id: str = Field(min_length=1, max_length=256)
+    source_room_session_id: str = Field(min_length=1, max_length=256)
+    worker_session_id: str = Field(min_length=1, max_length=256)
+    source_agent_id: str = Field(min_length=1, max_length=256)
+    target_agent_id: str = Field(min_length=1, max_length=256)
+    status: Literal["completed", "failed", "cancelled", "needs_human"]
+    summary: str = Field(min_length=1, max_length=800)
+    artifact_refs: list[str] = Field(default_factory=list, max_length=48)
+    validation_refs: list[str] = Field(default_factory=list, max_length=48)
+    blocker_refs: list[str] = Field(default_factory=list, max_length=48)
+    conflict_refs: list[str] = Field(default_factory=list, max_length=48)
+    completed_at: str = Field(min_length=1, max_length=64)
+
+    @field_validator(
+        "artifact_refs",
+        "validation_refs",
+        "blocker_refs",
+        "conflict_refs",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_result_refs(cls, value: Any) -> list[str]:
+        return _normalize_unique_strings(value, limit=48)
+
+    @model_validator(mode="after")
+    def _reject_forbidden_content(self) -> "RoomHandoffResultV1":
+        forbidden_path = _contains_forbidden_content(self.model_dump(mode="python"))
+        if forbidden_path:
+            raise ValueError(f"room_handback_forbidden_field:{forbidden_path}")
+        return self
+
+
+class RoomHandoffAcceptance(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["accepted", "already_accepted"]
+    event_id: str = Field(min_length=1)
+    result: RoomHandoffResultV1
 
 
 class SessionContinuationPayload(BaseModel):
@@ -148,14 +204,7 @@ class SessionContinuationPayload(BaseModel):
     )
     @classmethod
     def _normalize_refs(cls, value: Any) -> list[str]:
-        seen: set[str] = set()
-        result: list[str] = []
-        for raw in value or []:
-            item = str(raw or "").strip()
-            if item and item not in seen:
-                seen.add(item)
-                result.append(item)
-        return result
+        return _normalize_unique_strings(value)
 
     @model_validator(mode="after")
     def _validate_contract(self) -> "SessionContinuationPayload":
@@ -248,7 +297,9 @@ __all__ = [
     "ContinuationProgressItem",
     "DEFAULT_CONTINUATION_TTL_SECONDS",
     "MAX_CONTINUATION_TTL_SECONDS",
+    "RoomHandoffAcceptance",
     "RoomHandoffBinding",
+    "RoomHandoffResultV1",
     "SessionContinuationPacket",
     "SessionContinuationPayload",
 ]
