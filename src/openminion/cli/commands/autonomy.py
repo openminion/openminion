@@ -49,6 +49,7 @@ from openminion.modules.task.autonomy import (
 )
 from openminion.modules.task.project import (
     ProjectControlAction,
+    ProjectCycleClaimUnavailable,
     ProjectCycleDecision,
     ProjectOperatorInboxItem,
     apply_project_control,
@@ -69,7 +70,6 @@ from openminion.modules.task.constants import (
     DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
     DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
 )
-from openminion.modules.task.runtime.lifecycle import ProjectCycleClaimUnavailable
 from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
     ProjectTurnResult,
