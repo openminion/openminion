@@ -187,6 +187,8 @@ class RuntimeProjectMixin:
         self,
         metadata: Mapping[str, Any] | None,
         approval_callback: Callable[[str, dict[str, Any], Any], Awaitable[bool]] | None,
+        *,
+        source_request: str = "",
     ) -> str:
         if (
             metadata is None
@@ -217,6 +219,7 @@ class RuntimeProjectMixin:
             permission_profile_id=self.permission_mode,
             verification_commands=handoff.verification_commands,
             success_criteria=handoff.success_criteria,
+            source_request=source_request,
             **handoff.model_dump(
                 include={"max_iterations", "max_wall_clock_ms", "max_tool_calls"},
                 exclude_none=True,

@@ -110,6 +110,15 @@ def project_cycle_prompt(
     objective = cast(
         Mapping[str, object], lifecycle.get(project_run.objective_ledger_ref, {})
     )
+    source_request = str(objective.get("source_request") or "").strip()
+    if source_request:
+        lines.extend(
+            (
+                "Original approved request (the project handoff is already approved; "
+                "preserve its post-approval requirements):",
+                source_request,
+            )
+        )
     lines.extend(_approved_objective_guidance(objective))
     if not isinstance(active_plan, Mapping):
         lines.append(

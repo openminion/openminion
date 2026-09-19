@@ -61,6 +61,7 @@ class ProjectLaunchRequest:
     expected_checks: tuple[str, ...]
     release_tools: bool
     success_criteria: tuple[str, ...] = ()
+    source_request: str = ""
 
 
 def focus_project_help() -> str:
@@ -111,6 +112,7 @@ def build_project_launch_request(
     expected_checks: tuple[str, ...] = (),
     release_tools: bool = False,
     success_criteria: tuple[str, ...] = (),
+    source_request: str = "",
 ) -> ProjectLaunchRequest:
     boundary = workspace_boundary.expanduser().resolve(strict=False)
     repo = repository.expanduser().resolve(strict=False)
@@ -158,6 +160,7 @@ def build_project_launch_request(
         expected_checks=check_names,
         release_tools=release_tools,
         success_criteria=success_criteria,
+        source_request=source_request,
     )
 
 
@@ -264,6 +267,7 @@ def launch_project(
         launch_approved=True,
         release_tools_approved=request.release_tools,
         success_criteria=request.success_criteria,
+        source_request=request.source_request,
     )
     return store.require(running.run_id)
 
@@ -378,6 +382,7 @@ def initialize_project(
     launch_approved: bool = False,
     release_tools_approved: bool = False,
     success_criteria: tuple[str, ...] = (),
+    source_request: str = "",
 ) -> None:
     assert run.task_id is not None
     manager.create_task(
@@ -415,6 +420,7 @@ def initialize_project(
                 release_tools_approved=release_tools_approved,
                 success_criteria=success_criteria,
                 verification_commands=run.execution_selectors.verification_commands,
+                source_request=source_request,
             ),
         },
     )

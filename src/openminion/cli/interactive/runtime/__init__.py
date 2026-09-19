@@ -740,7 +740,9 @@ class OpenMinionRuntime(
             if final_text and not emitted_text:
                 yield final_text
             if handoff_result := await self.approve_project_handoff(
-                final_metadata, approval_callback
+                final_metadata,
+                approval_callback,
+                source_request=text,
             ):
                 yield "\n\n" + handoff_result
             return
@@ -754,6 +756,7 @@ class OpenMinionRuntime(
         if handoff_result := await self.approve_project_handoff(
             response.metadata,
             approval_callback,
+            source_request=text,
         ):
             yield "\n\n" + handoff_result
 
