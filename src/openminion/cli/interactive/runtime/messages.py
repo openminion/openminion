@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, Mapping, cast
 from uuid import uuid4
 
+from openminion.base.redaction import redact_sensitive_text
 from openminion.base.types import Message
 from openminion.cli.interactive.runtime.agent_sidebar import build_session_sidebar_item
 from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
@@ -328,6 +329,50 @@ class RuntimeMessageMixin:
             "task_step_id": binding.task_step_id,
             "status": applied.status,
         }
+
+    def create_room_peer_note(self, target_agent_id: str, text: str) -> str:
+        session, actor = self._room_session_and_actor()
+        if actor.role == "observer":
+            raise RuntimeError("local room observer cannot send peer notes")
+        target_agent = normalize_identity(target_agent_id)
+        if self._rt.sessions.get_participant(session.id, "agent", target_agent) is None:
+            raise ValueError(f"Agent {target_agent!r} is not an active participant")
+        safe_text, _redaction_count = redact_sensitive_text(str(text or "").strip())
+        if not safe_text:
+            raise ValueError("peer note text is required")
+
+        store = resolve_session_continuation_store(self._rt)
+        owned_store = getattr(self._rt, "session_continuation_store", None) is None
+        try:
+            active_plan = store.get_active_task_plan(session.id)
+            steps = list(active_plan.get("steps", [])) if active_plan else []
+            worker_sessions = {
+                str(step.get("worker_session_id"))
+                for step in steps
+                if step.get("assigned_participant_id") == target_agent
+                and step.get("worker_session_id")
+                and step.get("status") in {"pending", "in_progress"}
+            }
+            if len(worker_sessions) != 1:
+                raise ValueError(
+                    "peer notes require exactly one active handoff for the target agent"
+                )
+            target_session_id = worker_sessions.pop()
+            note_id = store.append_turn(
+                target_session_id,
+                "system",
+                f"[PEER NOTE from {actor.participant_id}]\n{safe_text}",
+                meta={
+                    "kind": "room_peer_note",
+                    "room_session_id": session.id,
+                    "source_participant_id": actor.participant_id,
+                    "target_agent_id": target_agent,
+                },
+            )
+        finally:
+            if owned_store:
+                store.close()
+        return str(note_id)
 
     def room_invite_agent(self, agent_id: str) -> Any:
         session, _actor = self._room_owner()

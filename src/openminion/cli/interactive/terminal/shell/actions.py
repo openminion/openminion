@@ -93,7 +93,16 @@ _VISIBLE_PARITY_SLASHES = frozenset(
     }
 )
 _ROOM_SLASHES = frozenset(
-    {"/activate", "/handoff", "/invite", "/kick", "/participants", "/room", "/routing"}
+    {
+        "/activate",
+        "/handoff",
+        "/invite",
+        "/kick",
+        "/message",
+        "/participants",
+        "/room",
+        "/routing",
+    }
 )
 _FIGLET_FONT = "small"
 _FIGLET_TEXT = "OpenMinion"

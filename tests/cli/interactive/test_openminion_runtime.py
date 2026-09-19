@@ -744,6 +744,60 @@ def test_focus_room_handoff_previews_without_write_then_applies(tmp_path) -> Non
     assert assigned_step["continuation_packet_id"] == result["packet_id"]
 
 
+def test_focus_room_peer_note_is_redacted_and_does_not_invoke_agent(tmp_path) -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.room_invite_agent("beta")
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    rt.session_continuation_store = store
+    store.create_session(session_id=focus_rt.session_id, initial_agent_id="alpha")
+    store.create_session(session_id="worker-beta", initial_agent_id="beta")
+    store.append_event(
+        focus_rt.session_id,
+        event_type="task_plan.declared",
+        payload={
+            "plan": {
+                "plan_id": "plan-1",
+                "objective": "Review the bounded change.",
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "description": "Review the change.",
+                        "status": "pending",
+                        "assigned_participant_id": "beta",
+                        "worker_session_id": "worker-beta",
+                    }
+                ],
+            }
+        },
+    )
+
+    note_id = focus_rt.create_room_peer_note(
+        "beta",
+        "Please review. token=super-secret-value",
+    )
+
+    turns = store.get_recent_turns("worker-beta", 10)
+    assert [turn["turn_id"] for turn in turns] == [note_id]
+    assert turns[0]["role"] == "system"
+    assert turns[0]["text"] == (
+        "[PEER NOTE from local-human]\nPlease review. token=[REDACTED]"
+    )
+    assert rt.resolve_gateway("beta").calls == []
+
+
+def test_focus_room_peer_note_requires_one_active_handoff(tmp_path) -> None:
+    _rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.room_invite_agent("beta")
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    focus_rt._rt.session_continuation_store = store
+    store.create_session(session_id=focus_rt.session_id, initial_agent_id="alpha")
+
+    with pytest.raises(ValueError, match="exactly one active handoff"):
+        focus_rt.create_room_peer_note("beta", "Review this")
+
+    assert store.get_recent_turns(focus_rt.session_id, 10) == []
+
+
 def test_room_owner_mutations_use_configured_agents_and_bounded_roles() -> None:
     rt, focus_rt, _actor = _make_bound_room_runtime()
 

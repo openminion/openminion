@@ -240,6 +240,9 @@ class _RoomRuntime(_VisibleRuntime):
         self.applied.append(payload)
         return {"packet_id": "packet-1"}
 
+    def create_room_peer_note(self, _agent_id: str, _text: str) -> str:
+        return "note-1"
+
 
 def _run_prompt_slash(
     text: str,
@@ -496,6 +499,24 @@ def test_terminal_room_handoff_requires_confirmation(
     )
 
     assert len(runtime.applied) == expected
+
+
+def test_terminal_room_message_queues_peer_note() -> None:
+    buf = io.StringIO()
+
+    asyncio.run(
+        _handle_slash(
+            "/message @beta review the patch",
+            runtime=_RoomRuntime(),
+            console=Console(file=buf, force_terminal=False, width=160),
+            transcript=TerminalTranscript(Console(file=io.StringIO())),
+            overlay=_RoomOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert "peer note queued for beta (note-1)" in buf.getvalue()
 
 
 def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> None:

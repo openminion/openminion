@@ -97,7 +97,16 @@ async def handle_room_slash(
                 overlay=overlay,
             )
             return
-        if cmd == "/room":
+        if cmd == "/message":
+            if len(parts) < 2 or not parts[0].startswith("@"):
+                raise ValueError("usage: /message @agent <note>")
+            target_agent_id = parts[0][1:]
+            note_id = runtime.create_room_peer_note(
+                target_agent_id,
+                " ".join(parts[1:]),
+            )
+            body = f"peer note queued for {target_agent_id} ({note_id})"
+        elif cmd == "/room":
             await _handle_room_session(
                 parts,
                 runtime=runtime,
@@ -106,7 +115,7 @@ async def handle_room_slash(
                 overlay=overlay,
             )
             return
-        if cmd == "/participants":
+        elif cmd == "/participants":
             body = runtime.room_participants_report()
         elif cmd == "/invite":
             if len(parts) == 2 and parts[0] == "agent":

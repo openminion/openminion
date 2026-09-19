@@ -47,6 +47,11 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         ("/handoff @agent --task <step-id>",),
     ),
     SlashCommandMetadata(
+        "/message",
+        "Queue a non-waking note for a handed-off room agent",
+        ("/message @agent <note>",),
+    ),
+    SlashCommandMetadata(
         "/participants", "Show room participants and routing", ("/participants",)
     ),
     SlashCommandMetadata(
