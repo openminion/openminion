@@ -21,6 +21,7 @@ from ..schemas import (
     ContinuationProgressItem,
     DEFAULT_CONTINUATION_TTL_SECONDS,
     MAX_CONTINUATION_TTL_SECONDS,
+    RoomHandoffBinding,
     SessionContinuationPacket,
     SessionContinuationPayload,
 )
@@ -110,6 +111,40 @@ class SessionContinuationService:
         target_agent_id: str,
         expires_in_seconds: int = DEFAULT_CONTINUATION_TTL_SECONDS,
     ) -> ContinuationPreview:
+        return self._preview(
+            source_session_id,
+            target_agent_id=target_agent_id,
+            expires_in_seconds=expires_in_seconds,
+        )
+
+    def preview_room_handoff(
+        self,
+        binding: RoomHandoffBinding,
+        *,
+        expires_in_seconds: int = DEFAULT_CONTINUATION_TTL_SECONDS,
+    ) -> ContinuationPreview:
+        failure = _target_session_failure(
+            self._store,
+            binding.target_session_id,
+            binding.target_agent_id,
+        )
+        if failure:
+            raise ContinuationError(failure)
+        return self._preview(
+            binding.room_session_id,
+            target_agent_id=binding.target_agent_id,
+            expires_in_seconds=expires_in_seconds,
+            room_binding=binding,
+        )
+
+    def _preview(
+        self,
+        source_session_id: str,
+        *,
+        target_agent_id: str,
+        expires_in_seconds: int,
+        room_binding: RoomHandoffBinding | None = None,
+    ) -> ContinuationPreview:
         started = perf_counter()
         source = self._store.get_session(source_session_id)
         if source is None:
@@ -118,6 +153,7 @@ class SessionContinuationService:
             source,
             target_agent_id=target_agent_id,
             expires_in_seconds=expires_in_seconds,
+            room_binding=room_binding,
         )
 
         resume = self._store.get_resume_state(source_session_id)
@@ -143,6 +179,12 @@ class SessionContinuationService:
             source_latest_seq=latest_seq,
             source_agent_id=source_agent_id,
             target_agent_id=target_agent,
+            continuation_kind=(
+                "room_agent_handoff"
+                if room_binding is not None
+                else "same_agent_resume"
+            ),
+            room_handoff_binding=room_binding,
             source_checkpoint_ref=checkpoint_ref or None,
             workspace_ref=_optional_ref(meta, state, "workspace_ref"),
             project_run_ref=_optional_ref(meta, state, "project_run_ref"),
@@ -196,6 +238,25 @@ class SessionContinuationService:
             target_agent_id=target_agent_id,
             expires_in_seconds=expires_in_seconds,
         )
+        return self._create(source_session_id, preview)
+
+    def create_room_handoff(
+        self,
+        binding: RoomHandoffBinding,
+        *,
+        expires_in_seconds: int = DEFAULT_CONTINUATION_TTL_SECONDS,
+    ) -> ContinuationBuildResult:
+        preview = self.preview_room_handoff(
+            binding,
+            expires_in_seconds=expires_in_seconds,
+        )
+        return self._create(binding.room_session_id, preview)
+
+    def _create(
+        self,
+        source_session_id: str,
+        preview: ContinuationPreview,
+    ) -> ContinuationBuildResult:
         event_id = self._store.append_event(
             source_session_id,
             event_type=PACKET_CREATED,
@@ -239,6 +300,7 @@ class SessionContinuationService:
         target_session_id: str,
         *,
         packet_id: str,
+        room_binding: RoomHandoffBinding | None = None,
     ) -> ContinuationApplyResult:
         started = perf_counter()
         packet = self.get_packet(packet_id)
@@ -258,6 +320,18 @@ class SessionContinuationService:
                     packet,
                     target_session_id,
                     "continuation_target_conflict",
+                    started=started,
+                )
+            binding_failure = _room_binding_failure(
+                packet.payload,
+                room_binding,
+                target_session_id,
+            )
+            if binding_failure:
+                return self._reject(
+                    packet,
+                    target_session_id,
+                    binding_failure,
                     started=started,
                 )
 
@@ -344,18 +418,17 @@ class SessionContinuationService:
         packet: SessionContinuationPacket,
         target_session_id: str,
     ) -> str | None:
-        target = self._store.get_session(target_session_id)
-        if target is None:
-            return "continuation_target_not_found"
         if self._now_ms() >= packet.payload.expires_at_ms:
             return "continuation_expired"
-        target_agent = str(target.get("active_agent_id") or "").strip()
-        if target_agent != packet.payload.target_agent_id:
-            return "continuation_agent_mismatch"
-        if self._store.get_total_turn_count(target_session_id) != 0:
-            return "continuation_target_not_empty"
-        if self._store.get_events(target_session_id, types=[PACKET_APPLIED]):
-            return "continuation_target_already_initialized"
+        target_failure = _target_session_failure(
+            self._store,
+            target_session_id,
+            packet.payload.target_agent_id,
+        )
+        if target_failure:
+            return target_failure
+        target = self._store.get_session(target_session_id)
+        assert target is not None
         target_meta = _dict(target.get("meta"))
         for field in ("workspace_ref", "project_run_ref"):
             expected = getattr(packet.payload, field)
@@ -457,19 +530,62 @@ def _preview_inputs(
     *,
     target_agent_id: str,
     expires_in_seconds: int,
+    room_binding: RoomHandoffBinding | None = None,
 ) -> tuple[str, str, int]:
     source_agent_id = str(source.get("active_agent_id") or "").strip()
     target_agent = target_agent_id.strip()
+    if room_binding is not None:
+        source_agent_id = room_binding.source_agent_id
     if not source_agent_id:
         raise ContinuationError("continuation_source_agent_missing")
     if not target_agent:
         raise ContinuationError("continuation_target_agent_required")
-    if target_agent != source_agent_id:
+    if room_binding is None and target_agent != source_agent_id:
         raise ContinuationError("continuation_cross_agent_requires_room_handoff")
+    if room_binding is not None and (
+        room_binding.room_session_id != str(source.get("session_id") or "").strip()
+        or room_binding.target_agent_id != target_agent
+        or source_agent_id == target_agent
+    ):
+        raise ContinuationError("continuation_room_binding_mismatch")
     ttl = expires_in_seconds
     if ttl <= 0 or ttl > MAX_CONTINUATION_TTL_SECONDS:
         raise ContinuationError("invalid_continuation_expiry")
     return source_agent_id, target_agent, ttl
+
+
+def _room_binding_failure(
+    payload: SessionContinuationPayload,
+    binding: RoomHandoffBinding | None,
+    target_session_id: str,
+) -> str | None:
+    if payload.continuation_kind == "same_agent_resume":
+        return None
+    if binding is None:
+        return "continuation_room_binding_required"
+    if (
+        binding != payload.room_handoff_binding
+        or binding.target_session_id != target_session_id
+    ):
+        return "continuation_room_binding_mismatch"
+    return None
+
+
+def _target_session_failure(
+    store: Any,
+    target_session_id: str,
+    target_agent_id: str,
+) -> str | None:
+    target = store.get_session(target_session_id)
+    if target is None:
+        return "continuation_target_not_found"
+    if str(target.get("active_agent_id") or "").strip() != target_agent_id:
+        return "continuation_agent_mismatch"
+    if store.get_total_turn_count(target_session_id) != 0:
+        return "continuation_target_not_empty"
+    if store.get_events(target_session_id, types=[PACKET_APPLIED]):
+        return "continuation_target_already_initialized"
+    return None
 
 
 def _recent_refs(

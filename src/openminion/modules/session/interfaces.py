@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         ContinuationApplyResult,
         ContinuationBuildResult,
         ContinuationPreview,
+        RoomHandoffBinding,
         SessionContinuationPacket,
     )
 
@@ -127,6 +128,20 @@ class SessionContinuationAPI(Protocol):
         expires_in_seconds: int = 86_400,
     ) -> "ContinuationBuildResult": ...
 
+    def preview_room_handoff(
+        self,
+        binding: "RoomHandoffBinding",
+        *,
+        expires_in_seconds: int = 86_400,
+    ) -> "ContinuationPreview": ...
+
+    def create_room_handoff(
+        self,
+        binding: "RoomHandoffBinding",
+        *,
+        expires_in_seconds: int = 86_400,
+    ) -> "ContinuationBuildResult": ...
+
     def get_packet(self, packet_id: str) -> "SessionContinuationPacket": ...
 
     def apply(
@@ -134,6 +149,7 @@ class SessionContinuationAPI(Protocol):
         target_session_id: str,
         *,
         packet_id: str,
+        room_binding: "RoomHandoffBinding | None" = None,
     ) -> "ContinuationApplyResult": ...
 
 

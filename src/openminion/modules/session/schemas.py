@@ -60,6 +60,16 @@ class ContinuationProgressItem(BaseModel):
     status: str = Field(min_length=1, max_length=64)
 
 
+class RoomHandoffBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    room_session_id: str = Field(min_length=1, max_length=256)
+    local_human_authority_id: str = Field(min_length=1, max_length=256)
+    source_agent_id: str = Field(min_length=1, max_length=256)
+    target_agent_id: str = Field(min_length=1, max_length=256)
+    target_session_id: str = Field(min_length=1, max_length=256)
+
+
 class SessionContinuationPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -70,6 +80,10 @@ class SessionContinuationPayload(BaseModel):
     source_latest_seq: int = Field(ge=0)
     source_agent_id: str = Field(min_length=1, max_length=256)
     target_agent_id: str = Field(min_length=1, max_length=256)
+    continuation_kind: Literal[
+        "same_agent_resume", "room_agent_handoff"
+    ] = "same_agent_resume"
+    room_handoff_binding: RoomHandoffBinding | None = None
     binding_mode: Literal["local_session_store"] = "local_session_store"
     source_checkpoint_ref: str | None = Field(default=None, max_length=512)
     workspace_ref: str | None = Field(default=None, max_length=512)
@@ -152,6 +166,23 @@ class SessionContinuationPayload(BaseModel):
         forbidden_path = _contains_forbidden_content(self.model_dump(mode="python"))
         if forbidden_path:
             raise ValueError(f"continuation_forbidden_field:{forbidden_path}")
+        if self.continuation_kind == "same_agent_resume":
+            if self.source_agent_id != self.target_agent_id:
+                raise ValueError("continuation_same_agent_required")
+            if self.room_handoff_binding is not None:
+                raise ValueError("continuation_room_binding_not_allowed")
+        else:
+            binding = self.room_handoff_binding
+            if binding is None:
+                raise ValueError("continuation_room_binding_required")
+            if self.source_agent_id == self.target_agent_id:
+                raise ValueError("continuation_room_target_must_be_distinct")
+            if (
+                binding.room_session_id != self.source_session_id
+                or binding.source_agent_id != self.source_agent_id
+                or binding.target_agent_id != self.target_agent_id
+            ):
+                raise ValueError("continuation_room_binding_mismatch")
         return self
 
 
@@ -216,6 +247,7 @@ __all__ = [
     "ContinuationProgressItem",
     "DEFAULT_CONTINUATION_TTL_SECONDS",
     "MAX_CONTINUATION_TTL_SECONDS",
+    "RoomHandoffBinding",
     "SessionContinuationPacket",
     "SessionContinuationPayload",
 ]
