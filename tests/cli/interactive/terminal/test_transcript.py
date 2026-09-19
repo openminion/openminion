@@ -12,6 +12,7 @@ from openminion.cli.presentation.models import (
     MessageKind,
     ToolEvent,
 )
+from openminion.cli.theme import DARK
 
 
 def _make_transcript() -> tuple[TerminalTranscript, io.StringIO]:
@@ -47,7 +48,7 @@ def test_push_attributed_agent_message_renders_author() -> None:
             Console(
                 file=buf,
                 force_terminal=True,
-                color_system="standard",
+                color_system="truecolor",
                 no_color=False,
                 width=80,
             )
@@ -65,7 +66,9 @@ def test_push_attributed_agent_message_renders_author() -> None:
     output = buf.getvalue()
     assert "review-agent" in output
     assert "reply" in output
-    assert "\x1b[1;32mreview-agent" in output
+    assistant_color, _ = styles._hex_to_truecolor_ansi(DARK.state_ok)
+    bold_assistant_color = assistant_color.replace("\x1b[", "\x1b[1;", 1)
+    assert f"{bold_assistant_color}review-agent" in output
 
 
 def test_push_non_room_agent_message_omits_author_header() -> None:

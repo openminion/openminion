@@ -15,6 +15,7 @@ from openminion.cli.presentation.models import (
     MessageKind,
     ToolEvent,
 )
+from openminion.cli.theme import DARK
 
 
 def _event(*, exit_code: int | None, lines: int = 5, tool: str = "Bash") -> ToolEvent:
@@ -171,7 +172,7 @@ def test_tool_heading_uses_success_color(monkeypatch) -> None:
     title = _render_tool_block(_event(exit_code=0)).renderables[0]
 
     assert isinstance(title, Text)
-    assert any(span.style == "bold green" for span in title.spans)
+    assert any(span.style == f"bold {DARK.state_ok}" for span in title.spans)
 
 
 def test_tool_heading_uses_error_color(monkeypatch) -> None:
@@ -181,4 +182,4 @@ def test_tool_heading_uses_error_color(monkeypatch) -> None:
     title = _render_tool_block(_event(exit_code=1)).renderables[0]
 
     assert isinstance(title, Text)
-    assert any(span.style == "bold red" for span in title.spans)
+    assert any(span.style == f"bold {DARK.state_error}" for span in title.spans)
