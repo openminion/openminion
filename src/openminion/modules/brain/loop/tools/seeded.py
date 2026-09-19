@@ -226,6 +226,8 @@ def _run_seeded_command_step(
             call_id=str(getattr(action_result, "command_id", "") or ""),
             tool_name=tool_name or command_label,
             action_result=action_result,
+            turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+            job_pending=command_outcome.job is not None,
         )
     results = list(loop_state.scratchpad.get("seeded_command_results", []) or [])
     results.append(
@@ -296,13 +298,11 @@ def _run_seeded_command_step(
             allowed_tools=allowed_tools,
             action_result=action_result,
         )
-    recovery_message = None
     if (
         action_result.status != BRAIN_ACTION_STATUS_SUCCESS
         and profile.allow_llm_recovery_after_tool_failure
+        and (recovery_message := _seeded_failure_recovery_message(action_result))
     ):
-        recovery_message = _seeded_failure_recovery_message(action_result)
-    if recovery_message:
         seeded_queue.clear()
         loop_state.direct_tool_turn = None
         loop_state.direct_tool_requested_batch_satisfied = False
