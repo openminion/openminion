@@ -164,6 +164,15 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
     ) -> dict[str, Any]:
         parsed = ToolInspectArgs.model_validate(args)
         draft_row = self._store.get_draft(parsed.draft_id) if parsed.draft_id else None
+        if parsed.draft_id and draft_row is None:
+            return _error("DRAFT_NOT_FOUND", parsed.draft_id)
+        if draft_row is not None and (
+            parsed.source_code is not None or parsed.unit_tests_source is not None
+        ):
+            return _error(
+                "INSPECTION_SOURCE_MISMATCH",
+                "draft inspection does not accept source overrides",
+            )
         source_code = parsed.source_code or (draft_row.source_code if draft_row else "")
         unit_tests_source = parsed.unit_tests_source or (
             draft_row.unit_tests_source if draft_row else ""
@@ -213,6 +222,10 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             "recommend_reason": _recommend_reason(
                 risk_level=risk_level,
                 test_results=test_results,
+            ),
+            "version_hash": compute_version_hash(
+                source_code=source_code,
+                unit_tests_source=unit_tests_source,
             ),
         }
         if draft_row is not None:
@@ -264,6 +277,14 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
                 "INSPECT_NOT_PASSED", "draft must be inspected before register"
             )
         inspect_result = _parse_json_object(draft.inspect_result_json)
+        if inspect_result.get("version_hash") != version_hash:
+            inspect_result = self.inspect_draft(
+                {"draft_id": draft.draft_id, "run_tests": True},
+                agent_id=agent_id,
+                session_id=session_id,
+            )
+            if not inspect_result.get("ok"):
+                return inspect_result
         risk_level = str(inspect_result.get("risk_level", "") or "").strip().lower()
         if risk_level == "critical":
             return _error(
@@ -441,7 +462,9 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             session_id=None,
         )
         risk_level = str(inspect_result.get("risk_level", "") or "").strip().lower()
-        if risk_level not in {"low", "medium"}:
+        if risk_level not in {"low", "medium"} or not bool(
+            inspect_result.get("recommend_register", False)
+        ):
             return _error("PROMOTION_REJECTED", f"re-inspect risk={risk_level}")
         total = max(0, row.success_count + row.failure_count)
         failure_rate = (row.failure_count / total) if total else 1.0
