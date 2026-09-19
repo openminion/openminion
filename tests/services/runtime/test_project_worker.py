@@ -1213,6 +1213,7 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     assert "Omit predecessor_revision_id" in prompts[1]
     assert "verification:prun_" in prompts[1]
     assert "Prior verifier outcome:\nverification failed" in prompts[1]
+    assert "revision-only turn" in prompts[1]
     assert requests[0].allowed_tools != ("plan",)
     assert requests[1].allowed_tools == ("plan",)
     assert (

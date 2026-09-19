@@ -206,11 +206,15 @@ def _record_successful_plan_action(
         loop_state.task_plan = active_plan
     action = str(arguments.get("action", "") or "").strip()
     if action == "complete":
+        if isinstance(loop_state.task_plan, dict):
+            loop_state.task_plan = {**loop_state.task_plan, "status": "completed"}
         loop_state.task_plan_completed = {
             "plan_id": arguments.get("plan_id"),
             "reason": arguments.get("reason", ""),
         }
     elif action == "abandon":
+        if isinstance(loop_state.task_plan, dict):
+            loop_state.task_plan = {**loop_state.task_plan, "status": "abandoned"}
         loop_state.task_plan_abandoned = {
             "plan_id": arguments.get("plan_id"),
             "reason": arguments.get("reason", ""),

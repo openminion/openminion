@@ -93,10 +93,10 @@ def project_cycle_prompt(
         f"Current milestone: {milestone}",
         f"Committed cycles: {project_run.committed_cycle_count}",
         "Work on the smallest useful next step. Inspect current state before editing.",
-        "If an approved verification command called through a tool fails, your very "
-        "next tool call must use plan action=revise for the same plan_id, a new "
-        "revision_id, and verifier_refs containing that failed tool-call ref. Do not "
-        "edit, rerun verification, or complete steps first.",
+        "If an approved verification command called through a tool fails during "
+        "this turn, your very next tool call must use plan action=revise for the "
+        "same plan_id, a new revision_id, and verifier_refs containing that failed "
+        "tool-call ref. Do not edit, rerun verification, or complete steps first.",
         "The configured verifier runs the approved verification commands after the "
         "turn. Record step_completed as each plan step finishes. When every plan "
         "step is complete, call plan action=complete once and end the turn. Do not "
@@ -162,19 +162,18 @@ def project_cycle_prompt(
                 if predecessor_id
                 else "Omit predecessor_revision_id because this is the first revision."
             )
-            action_order = "Your first action must"
-            if active_plan.get("status") == "completed":
-                lines.append(
-                    "The checkpoint task plan completed before external verification "
-                    "failed. First redeclare the same plan_id with a pending repair "
-                    "step and continue_plan_autonomously=false so it is active again."
-                )
-                action_order = "Then"
             lines.append(
-                f"{action_order} use the existing plan loop-control "
+                "External verification failed after the prior turn. First redeclare "
+                "the same plan_id with its remaining or repair steps and "
+                "continue_plan_autonomously=false so it is active in this turn."
+            )
+            lines.append(
+                "Then use the existing plan loop-control "
                 f"tool with action=revise for plan_id={plan_id}. Use a new "
                 "revision_id, set continue_plan_autonomously=false, and bind "
-                f"verifier_refs to: {verifier_refs}. {predecessor_guidance}"
+                f"verifier_refs to: {verifier_refs}. {predecessor_guidance} End "
+                "the turn after the revision succeeds; do not complete plan steps "
+                "in this revision-only turn."
             )
     lines.extend(_project_reference_guidance("progress", project_run.progress_refs))
     lines.extend(_repository_check_guidance(repository_check_observation))

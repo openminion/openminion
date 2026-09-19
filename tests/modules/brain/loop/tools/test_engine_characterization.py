@@ -3410,6 +3410,8 @@ def test_duplicate_batch_does_not_force_answer_only_with_active_plan() -> None:
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "done"
+    assert outcome.state.task_plan is not None
+    assert outcome.state.task_plan["status"] == "completed"
     assert not outcome.state.scratchpad.get(
         "duplicate_batch_answer_only_closure_forced"
     )

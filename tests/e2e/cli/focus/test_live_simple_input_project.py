@@ -41,8 +41,10 @@ _SCENARIOS = (
         "research-then-code",
         "This is durable project work. Your only action in the first turn is to "
         "propose a project handoff; do not call any execution or research tool in "
-        "that turn. After approval, call web.search to find and then "
-        "web.fetch to read the current official PyPA guide for writing "
+        "that turn. After approval and plan declaration, the first non-plan tool "
+        "must be web.search. Do not inspect project files or guess the source URL "
+        "before searching. Use the search result URL with web.fetch to read the "
+        "current official PyPA guide for writing "
         "pyproject.toml before choosing the implementation. Update source_info.py "
         "and source_summary.md with the authoritative URL and a concise finding. "
         f"Use `{_PYTHON} -m pytest -q` as the verification command, exactly 4 "
