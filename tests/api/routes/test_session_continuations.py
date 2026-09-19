@@ -154,9 +154,12 @@ def test_room_handoff_route_rechecks_membership_before_apply(tmp_path) -> None:
         assert preview.status == HTTPStatus.OK
         payload = preview.payload["continuation"]["preview"]["payload"]
         assert payload["continuation_kind"] == "room_agent_handoff"
-        assert store.get_events(
-            "room-source", types=["session.continuation.packet_created"]
-        ) == []
+        assert (
+            store.get_events(
+                "room-source", types=["session.continuation.packet_created"]
+            )
+            == []
+        )
 
         created = handle_request(
             ctx,
@@ -186,9 +189,10 @@ def test_room_handoff_route_rechecks_membership_before_apply(tmp_path) -> None:
         assert applied is not None
         assert applied.status == HTTPStatus.CONFLICT
         assert applied.payload["reason_code"] == "continuation_room_binding_required"
-        assert store.get_events(
-            "worker", types=["session.continuation.packet_applied"]
-        ) == []
+        assert (
+            store.get_events("worker", types=["session.continuation.packet_applied"])
+            == []
+        )
         rejected = store.get_events(
             "room-source", types=["session.continuation.rejected"]
         )

@@ -165,17 +165,13 @@ def handle_build_room_handoff(
                 "status": "previewed",
                 "preview": service.preview_room_handoff(
                     binding,
-                    expires_in_seconds=int(
-                        payload.get("expires_in_seconds") or 86_400
-                    ),
+                    expires_in_seconds=int(payload.get("expires_in_seconds") or 86_400),
                 ).model_dump(mode="json"),
             }
         else:
             result = service.create_room_handoff(
                 binding,
-                expires_in_seconds=int(
-                    payload.get("expires_in_seconds") or 86_400
-                ),
+                expires_in_seconds=int(payload.get("expires_in_seconds") or 86_400),
             ).model_dump(mode="json")
     except (ContinuationError, TypeError, ValueError) as exc:
         return _continuation_error(exc, session_id=source_room_session_id)

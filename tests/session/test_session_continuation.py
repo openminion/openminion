@@ -166,9 +166,7 @@ def test_room_handoff_requires_current_binding_before_target_projection(
     assert missing.reason_code == "continuation_room_binding_required"
     assert store.get_events(target_id, types=[PACKET_APPLIED]) == []
 
-    mismatched = binding.model_copy(
-        update={"local_human_authority_id": "human-b"}
-    )
+    mismatched = binding.model_copy(update={"local_human_authority_id": "human-b"})
     rejected = service.apply(
         target_id,
         packet_id=packet.packet_id,
