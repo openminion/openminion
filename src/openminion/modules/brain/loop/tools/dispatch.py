@@ -14,7 +14,7 @@ from .contracts import (
     profile_include_reflect,
 )
 from .parallel import execute_parallel_tool_batch
-from .shortlisting import TOOL_REQUEST_TOOL_NAME, with_tool_request_spec
+from .shortlisting import activate_requestable_tool
 from .telemetry import _accumulate_parallel_telemetry
 
 
@@ -94,26 +94,20 @@ def _tool_request_result(
             ),
             False,
         )
-    active_tool_names.add(requested_name)
-    active_tool_specs[:] = with_tool_request_spec(
-        [
-            *[
-                spec
-                for spec in active_tool_specs
-                if str(getattr(spec, "name", "") or "").strip()
-                != TOOL_REQUEST_TOOL_NAME
-            ],
-            requested_spec,
-        ]
+    activated = activate_requestable_tool(
+        tool_name=requested_name,
+        active_tool_names=active_tool_names,
+        requestable_specs_by_name=requestable_specs_by_name,
+        active_tool_specs=active_tool_specs,
     )
     return (
         ActionResult(
             command_id=new_uuid(),
             status="success",
             summary=f"Activated tool schema: {requested_name}",
-            outputs={"tool_name": requested_name, "activated": True},
+            outputs={"tool_name": requested_name, "activated": activated},
         ),
-        True,
+        activated,
     )
 
 

@@ -3013,7 +3013,7 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
     assert outcome.final_text == "done"
 
 
-def test_inactive_tool_cannot_execute_before_activation() -> None:
+def test_exact_inactive_tool_activates_before_dispatch() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -3028,10 +3028,34 @@ def test_inactive_tool_cannot_execute_before_activation() -> None:
                     )
                 ],
                 finish_reason="tool_calls",
-            )
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="done",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The page was fetched.",
+                },
+                finish_reason="stop",
+            ),
         ]
     )
-    loop_ctx = _LoopContext(state=_state(tool_calls=2, llm_calls_max=2))
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=2, llm_calls_max=3),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="fetched",
+                    outputs={"url": "https://example.test"},
+                ),
+            )
+        ],
+    )
 
     outcome = run_adaptive_tool_loop(
         loop_ctx,
@@ -3046,9 +3070,12 @@ def test_inactive_tool_cannot_execute_before_activation() -> None:
         requestable_tool_specs=_tool_specs("web.search", "web.fetch"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_DISALLOWED_TOOL
-    assert outcome.tool_name == "web.fetch"
-    assert loop_ctx.commands == []
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert [command.tool_name for command in loop_ctx.commands] == ["web.fetch"]
+    assert "web.fetch" in [spec.name for spec in runtime.calls[1]["tools"]]
+    assert outcome.state.scratchpad[
+        "tool_schema_shortlisting.requested_tools"
+    ] == ["web.fetch"]
 
 
 def test_visible_tool_cannot_bypass_profile_allowlist() -> None:
