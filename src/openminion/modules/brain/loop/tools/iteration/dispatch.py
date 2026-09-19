@@ -10,6 +10,7 @@ from openminion.modules.brain.execution.child_tasks import (
 from openminion.modules.brain.loop.constants import (
     PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
 )
+from openminion.modules.brain.schemas.state import ActionResult
 from openminion.modules.llm.schemas import Message
 
 from ..budget import _effective_cap
@@ -180,6 +181,21 @@ def _handle_mixed_decompose_calls(
 
 def _is_plan_tool_call(tool_call: Any) -> bool:
     return str(getattr(tool_call, "name", "") or "").strip() == PLAN_TOOL_NAME
+
+
+def _execute_plan_action(
+    loop_ctx: AdaptiveToolLoopContext,
+    loop_state: AdaptiveToolLoopState,
+    arguments: dict[str, Any],
+) -> ActionResult:
+    if loop_state.task_plan_completed is not None and str(
+        arguments.get("action", "") or ""
+    ).strip() == "declare":
+        return _failed_result(
+            code="PLAN_ALREADY_COMPLETED",
+            summary="The task plan is already complete for this turn.",
+        )
+    return handle_plan_tool_call(loop_ctx=loop_ctx, arguments=arguments)
 
 
 def _record_successful_plan_action(
@@ -464,18 +480,7 @@ def _process_plan_tool_calls(
     for tool_call in plan_tool_calls:
         arguments = dict(getattr(tool_call, "arguments", {}) or {})
         loop_state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] = True
-        if (
-            loop_state.task_plan_completed is not None
-            and str(arguments.get("action", "") or "").strip() == "declare"
-        ):
-            action_result = _failed_result(
-                code="PLAN_ALREADY_COMPLETED",
-                summary="The task plan is already complete for this turn.",
-            )
-        else:
-            action_result = handle_plan_tool_call(
-                loop_ctx=loop_ctx, arguments=arguments
-            )
+        action_result = _execute_plan_action(loop_ctx, loop_state, arguments)
         _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
         if str(getattr(action_result, "status", "") or "") == "success":
             outputs = dict(getattr(action_result, "outputs", {}) or {})

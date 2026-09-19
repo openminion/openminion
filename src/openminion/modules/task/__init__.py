@@ -109,11 +109,8 @@ from .runtime.service import (
     TaskNotFoundError,
 )
 from .runtime.lifecycle import (
-    ProjectCycleClaimUnavailable,
-    TaskLifecycleRecord,
-    TaskLifecycleRepository,
-    TaskLifecycleState,
-    TaskManager,
+    ProjectCycleClaimUnavailable, TaskLifecycleRecord, TaskLifecycleRepository,
+    TaskLifecycleState, TaskManager,
 )
 from .runtime.persistent_service import SqlTaskCtl
 from .replay_commands import (
