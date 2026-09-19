@@ -32,6 +32,7 @@ from openminion.modules.task.project import (
 from openminion.tools.exec.constants import EXEC_ENABLE_HOST_EXEC_ENV
 from tests.e2e.cli.focus.conftest import require_complex_focus
 from tests.e2e.cli.focus.harness import FocusProbe
+from tests.e2e.cli.focus.harness.assertions import read_focus_evidence
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
 from tests.e2e.cli.focus.harness.scenarios import (
     FocusScenario,
@@ -71,18 +72,39 @@ def _telemetry_events(path: Path, event_type: str) -> list[dict[str, object]]:
 
 
 def _telemetry_event_rows(
-    path: Path, event_types: tuple[str, ...]
+    path: Path,
+    event_types: tuple[str, ...],
+    *,
+    after_id: int = 0,
 ) -> list[tuple[str, str, dict[str, object]]]:
     placeholders = ", ".join("?" for _ in event_types)
     with sqlite3.connect(path) as connection:
         rows = connection.execute(
             f"SELECT turn_id, event_type, data FROM events "
-            f"WHERE event_type IN ({placeholders}) ORDER BY id",
-            event_types,
+            f"WHERE id > ? AND event_type IN ({placeholders}) ORDER BY id",
+            (after_id, *event_types),
         ).fetchall()
     return [
         (str(turn_id), str(event_type), json.loads(raw_data))
         for turn_id, event_type, raw_data in rows
+    ]
+
+
+def _filter_focus_timing_rows(
+    rows: list[tuple[str, str, dict[str, object]]],
+    *,
+    agent_id: str,
+    session_id: str,
+) -> list[tuple[str, str, dict[str, object]]]:
+    return [
+        row
+        for row in rows
+        if row[1] != "chat.phase_timing"
+        or (
+            row[2].get("agent_id") == agent_id
+            and row[2].get("session_id") == session_id
+            and row[2].get("transport")
+        )
     ]
 
 
@@ -105,28 +127,70 @@ def _core_turn_evidence(
     rows: list[tuple[str, str, dict[str, object]]],
     turn_ids: set[str],
     transcript: str,
+    *,
+    timing_turn_ids: set[str] | None = None,
 ) -> dict[str, object]:
-    scoped = [row for row in rows if row[0] in turn_ids]
+    scoped = [
+        row for row in rows if row[0] in turn_ids and row[1] != "chat.phase_timing"
+    ]
     requests = [event for _, kind, event in scoped if kind == "tool.call.requested"]
     tool_sequence = [str(event["canonical_name"]) for event in requests]
-    assert set(tool_sequence) <= {*CODING_INITIAL_TOOL_IDS, "plan"}, (
-        "core-only tools required"
-    )
-    for _, kind, event in scoped:
-        if (
-            kind == "brain.execution_status"
-            and "tool_schema_shortlisting.initial_active_count" in event
-        ):
-            assert event["tool_schema_shortlisting.initial_active_count"] <= 7
-            assert event["tool_schema_shortlisting.control_schema_count"] <= 2
+    invocation_ids = {
+        str(event.get("turn_scope_id", ""))
+        for event in requests
+        if event.get("turn_scope_id")
+    }
+    execution_turn_ids = turn_ids | invocation_ids
+    executed_tools = [
+        str(event["tool_name"])
+        for row_turn_id, kind, event in rows
+        if kind == "tool.execution.started" and row_turn_id in execution_turn_ids
+    ]
+    core_tools = {*CODING_INITIAL_TOOL_IDS, "plan"}
+    assert set(tool_sequence) <= core_tools, "core-only tools required"
+    assert set(executed_tools) <= core_tools, "core-only tool execution required"
+    schema_rows = [
+        (turn_id, event)
+        for turn_id, kind, event in scoped
+        if kind == "brain.execution_status"
+        and "tool_schema_shortlisting.initial_active_count" in event
+    ]
+    for _, event in schema_rows:
+        assert int(event["tool_schema_shortlisting.initial_active_count"]) <= 7
+        assert int(event["tool_schema_shortlisting.control_schema_count"]) <= 2
     terminal_result_observed = (
         re.search(r"(?im)^\s*(?:[●•]\s*)?result:", transcript) is not None
     )
     assert terminal_result_observed, "exact result: marker required"
-    timings = [event for _, kind, event in scoped if kind == "chat.phase_timing"]
-    assert timings, "provider timing evidence required"
+    timing_scope = timing_turn_ids if timing_turn_ids is not None else turn_ids
+    assert timing_scope, "provider timing turn identity required"
+    timing_rows = [
+        row for row in rows if row[1] == "chat.phase_timing" and row[0] in timing_scope
+    ]
+    assert len(timing_rows) == len(timing_scope), (
+        "one provider timing record per core turn required"
+    )
+    assert {turn_id for turn_id, _, _ in timing_rows} == timing_scope, (
+        "provider timing must cover every core turn"
+    )
+    assert {turn_id for turn_id, _ in schema_rows} == turn_ids, (
+        "schema counts must cover every core turn"
+    )
+    timings = [event for _, _, event in timing_rows]
+    timing_fields = {
+        "provider_calls_total",
+        "provider_call_purposes",
+        "provider_attempts",
+        "provider_input_tokens",
+        "provider_output_tokens",
+        "total_turn_ms",
+    }
+    assert all(timing_fields <= event.keys() for event in timings), (
+        "complete provider timing evidence required"
+    )
     return {
         "turn_ids": sorted(turn_ids),
+        "timing_turn_ids": sorted(timing_scope),
         "tool_sequence": tool_sequence,
         "activated_tools": [],
         "provider_calls": sum(int(event["provider_calls_total"]) for event in timings),
@@ -292,32 +356,33 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
         (
             "tool.call.requested",
             "tool.call.completed",
+            "tool.execution.started",
             "brain.execution_status",
             "brain.act.bootstrap",
             "chat.phase_timing",
         ),
+        after_id=int(first_event_id),
+    )
+    rows = _filter_focus_timing_rows(
+        rows,
+        agent_id=probe.agent_id,
+        session_id=probe.session_id,
     )
     timing_turn_ids = {
-        turn_id
-        for turn_id, kind, event in rows
-        if kind == "chat.phase_timing"
-        and event["agent_id"] == probe.agent_id
-        and event["session_id"] == probe.session_id
-        and event.get("transport")
+        turn_id for turn_id, kind, _ in rows if kind == "chat.phase_timing"
     }
-    assert probe.session_id in session_ids
+    _, _, brain_session_id = read_focus_evidence(probe.environment(), probe.session_id)
+    assert session_ids == {brain_session_id}
     assert len(timing_turn_ids) == len(turn_ids), (
         "one Focus timing per submitted turn required"
     )
-    # Use the Focus timer owner, not its overlapping ingress timer.
-    rows = [
-        row
-        for row in rows
-        if row[1] != "chat.phase_timing" or row[0] in timing_turn_ids
-    ]
-    turn_ids.update(timing_turn_ids)
     scoped_rows = [row for row in rows if row[0] in turn_ids]
-    core_evidence = _core_turn_evidence(rows, turn_ids, transcript)
+    core_evidence = _core_turn_evidence(
+        rows,
+        turn_ids,
+        transcript,
+        timing_turn_ids=timing_turn_ids,
+    )
     requested_events = [
         event for _, kind, event in scoped_rows if kind == "tool.call.requested"
     ]
@@ -738,7 +803,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         "file.write" in code_sequence
         and "exec.run" in code_sequence
         and code_sequence.index("file.write") < code_sequence.index("exec.run")
-        and set(code_sequence) <= {"file.write", "file.read", "exec.run"}
+        and set(code_sequence) <= {"file.write", "file.read", "exec.run", "plan"}
         and _PYPA_GUIDE_URL in source_text
         and code_turn_exec_verified
         and verification.returncode == 0
