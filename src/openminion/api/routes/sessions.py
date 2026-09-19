@@ -28,6 +28,8 @@ _RUNS_RE = re.compile(r"/sessions/([^/]+)/runs")
 _RUN_EVENTS_RE = re.compile(r"/sessions/([^/]+)/runs/([^/]+)/events")
 _MESSAGES_RE = re.compile(r"/sessions/([^/]+)/messages")
 _EVENTS_RE = re.compile(r"/sessions/([^/]+)/events")
+
+
 def _parse_limit(
     *,
     raw_value: str | None,

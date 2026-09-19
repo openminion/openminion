@@ -80,9 +80,9 @@ class SessionContinuationPayload(BaseModel):
     source_latest_seq: int = Field(ge=0)
     source_agent_id: str = Field(min_length=1, max_length=256)
     target_agent_id: str = Field(min_length=1, max_length=256)
-    continuation_kind: Literal[
-        "same_agent_resume", "room_agent_handoff"
-    ] = "same_agent_resume"
+    continuation_kind: Literal["same_agent_resume", "room_agent_handoff"] = (
+        "same_agent_resume"
+    )
     room_handoff_binding: RoomHandoffBinding | None = None
     binding_mode: Literal["local_session_store"] = "local_session_store"
     source_checkpoint_ref: str | None = Field(default=None, max_length=512)
