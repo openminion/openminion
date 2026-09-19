@@ -423,17 +423,17 @@ class RuntimeProjectMixin:
             "goal_id": run.goal_id,
             "workspace_boundary": str(request.workspace_boundary),
             "execution_repository": str(request.repository),
+            "actor_type": "human" if reason_code else "system",
+            "actor_id": "operator" if reason_code else self.agent_id,
+            "task_id": run.task_id,
+            "status": status,
+            "redaction": "bounded",
             **({"reason_code": reason_code} if reason_code else {}),
         }
         self._rt.sessions.append_event(
             session_id=self.session_id,
             event_type=event_type,
-            actor_type="human" if reason_code else "system",
-            actor_id="operator" if reason_code else self.agent_id,
-            task_id=run.task_id,
             payload=payload,
-            status=status,
-            redaction="bounded",
         )
         emit_session_operation(
             telemetryctl=self._rt.telemetry_service,
