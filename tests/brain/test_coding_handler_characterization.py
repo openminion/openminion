@@ -115,7 +115,7 @@ class TestCodingProfileRunnerMethods:
         assert callable(getattr(CodingProfileRunner, name))
 
     def test_sync_loop_state_keeps_task_plan_terminal_state(self) -> None:
-        runner = object.__new__(CodingProfileRunner)
+        runner = CodingProfileRunner()
         runner._sync_loop_state(
             AdaptiveToolLoopState(
                 task_plan={"plan_id": "plan-1", "status": "active"},
@@ -136,6 +136,23 @@ class TestCodingProfileRunnerMethods:
             "revision_id": "revision-1",
         }
         assert runner._loop_state.task_plan_completed == {
+            "plan_id": "plan-1",
+            "reason": "done",
+        }
+
+        adaptive_state = runner._as_adaptive_state(runner._loop_state)
+        assert adaptive_state.task_plan_completed == {
+            "plan_id": "plan-1",
+            "reason": "done",
+        }
+
+        restored = CodingProfileRunner()
+        restored.restore_state(runner.snapshot_state())
+        assert restored._loop_state.task_plan_revision == {
+            "plan_id": "plan-1",
+            "revision_id": "revision-1",
+        }
+        assert restored._loop_state.task_plan_completed == {
             "plan_id": "plan-1",
             "reason": "done",
         }

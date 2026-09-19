@@ -715,6 +715,10 @@ class CodingProfileRunner(
             ),
             "scratchpad": dict(self._loop_state.scratchpad),
             "seen_signatures": list(self._loop_state.seen_signatures),
+            "task_plan": self._loop_state.task_plan,
+            "task_plan_revision": self._loop_state.task_plan_revision,
+            "task_plan_abandoned": self._loop_state.task_plan_abandoned,
+            "task_plan_completed": self._loop_state.task_plan_completed,
             "coding_plan": self._coding_plan.to_payload()
             if self._coding_plan is not None
             else None,
@@ -739,6 +743,10 @@ class CodingProfileRunner(
             ),
             scratchpad=dict(state.get("scratchpad", {}) or {}),
             seen_signatures=list(state.get("seen_signatures", []) or []),
+            task_plan=state.get("task_plan"),
+            task_plan_revision=state.get("task_plan_revision"),
+            task_plan_abandoned=state.get("task_plan_abandoned"),
+            task_plan_completed=state.get("task_plan_completed"),
         )
         raw_plan = state.get("coding_plan")
         self._coding_plan = (
@@ -778,6 +786,10 @@ class CodingProfileRunner(
             direct_tool_requested_batch_satisfied=loop_state.direct_tool_requested_batch_satisfied,
             scratchpad=dict(loop_state.scratchpad),
             seen_signatures=list(loop_state.seen_signatures),
+            task_plan=loop_state.task_plan,
+            task_plan_revision=loop_state.task_plan_revision,
+            task_plan_abandoned=loop_state.task_plan_abandoned,
+            task_plan_completed=loop_state.task_plan_completed,
         )
 
     def _sync_loop_state(self, adaptive_state: AdaptiveToolLoopState) -> None:
