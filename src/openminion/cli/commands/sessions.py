@@ -79,14 +79,14 @@ def run_sessions_continue(args) -> int:
                 ).model_dump(mode="json"),
             }
         else:
-            if not target_session_id:
-                target_session_id = store.create_session(initial_agent_id=agent_id)
             built = service.create(
                 source_session_id,
                 target_agent_id=agent_id,
                 expires_in_seconds=int(getattr(args, "expires_in_seconds", 86_400)),
             )
             assert built.packet is not None
+            if not target_session_id:
+                target_session_id = store.create_session(initial_agent_id=agent_id)
             applied = service.apply(
                 target_session_id,
                 packet_id=built.packet.packet_id,
