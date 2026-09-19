@@ -61,6 +61,16 @@ class RuntimeMessageMixin:
             self, timer: phase_timing.ChatPhaseTimer, *, turn_id: str
         ) -> None: ...
 
+        async def _run_off_loop_turn(
+            self,
+            payload: dict[str, object],
+            *,
+            progress_callback: Callable[[dict[str, Any]], None] | None,
+            approval_callback: Callable[[str, dict[str, Any], Any], Awaitable[bool]]
+            | None,
+            cancel_event: Any,
+        ) -> dict[str, object]: ...
+
         def _turn_inbound_metadata(
             self, inbound_metadata: dict[str, str] | None
         ) -> dict[str, str] | None: ...

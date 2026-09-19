@@ -4,14 +4,14 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Coroutine, cast
+from typing import TYPE_CHECKING, Any, Coroutine, Literal, cast
 from uuid import uuid4
 
 from openminion.api.operations.session_continuations import (
     resolve_session_continuation_store,
 )
 from openminion.base.redaction import redact_sensitive_text
-from openminion.modules.brain.schemas import DelegationResultSummary
+from openminion.modules.brain.schemas.decisions import DelegationResultSummary
 from openminion.modules.session import SessionContinuationService
 from openminion.modules.session.schemas import RoomHandoffResultV1
 from openminion.modules.telemetry.trace import phase_timing
@@ -191,12 +191,14 @@ class RuntimeRoomTaskMixin:
         if isinstance(raw_summary, str):
             raw_summary = json.loads(raw_summary)
         summary = DelegationResultSummary.model_validate(raw_summary)
-        status = {
+        statuses: dict[
+            str, Literal["completed", "failed", "cancelled", "needs_human"]
+        ] = {
             "complete": "completed",
             "failed": "failed",
             "partial": "needs_human",
             "blocked": "needs_human",
-        }[summary.status]
+        }
         safe_summary, _ = redact_sensitive_text(summary.summary)
         handback = RoomHandoffResultV1(
             handoff_packet_id=packet_id,
@@ -204,7 +206,7 @@ class RuntimeRoomTaskMixin:
             worker_session_id=worker_session_id,
             source_agent_id=source_agent_id,
             target_agent_id=target_agent_id,
-            status=status,
+            status=statuses[summary.status],
             summary=safe_summary,
             artifact_refs=summary.artifacts_produced,
             completed_at=datetime.now(timezone.utc).isoformat(),
@@ -216,4 +218,4 @@ class RuntimeRoomTaskMixin:
         finally:
             if owned_store:
                 store.close()
-        return accepted.model_dump(mode="json")
+        return cast(dict[str, Any], accepted.model_dump(mode="json"))
