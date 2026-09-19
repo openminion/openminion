@@ -160,6 +160,37 @@ class RuntimeMessageMixin:
             )
         return "\n".join(lines)
 
+    def room_tasks_report(self) -> str:
+        session, _actor = self._room_session_and_actor()
+        store = resolve_session_continuation_store(self._rt)
+        owned_store = getattr(self._rt, "session_continuation_store", None) is None
+        try:
+            plan = store.get_active_task_plan(session.id)
+            handbacks = {
+                str(event.get("parent_event_id") or ""): event.get("payload") or {}
+                for event in store.get_events(
+                    session.id,
+                    types=["room.handoff.result"],
+                )
+            }
+        finally:
+            if owned_store:
+                store.close()
+        if not plan:
+            return "Room tasks: (no active plan)"
+        lines = [f"Room tasks: {plan['objective']}"]
+        for step in plan.get("steps", []):
+            owner = str(step.get("assigned_participant_id") or "unassigned")
+            worker = str(step.get("worker_session_id") or "not started")
+            packet_id = str(step.get("continuation_packet_id") or "")
+            handback = handbacks.get(packet_id)
+            result = str(handback.get("status") or "pending") if handback else "pending"
+            lines.append(
+                f"  {step['step_id']} [{step['status']}] {step['description']}"
+            )
+            lines.append(f"    owner: {owner} · worker: {worker} · handback: {result}")
+        return "\n".join(lines)
+
     def list_room_sessions(self) -> list[Any]:
         items: list[Any] = []
         for session in self._rt.sessions.list_sessions(limit=50):

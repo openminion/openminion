@@ -866,6 +866,11 @@ def test_focus_room_task_starts_exact_worker_and_records_typed_handback(
     )
     assert len(events) == 1
     assert events[0]["payload"]["artifact_refs"] == ["artifact-1"]
+    report = focus_rt.room_tasks_report()
+    assert "step-1 [pending] Review the change." in report
+    assert "owner: beta" in report
+    assert f"worker: {applied['target_session_id']}" in report
+    assert "handback: completed" in report
 
 
 def test_room_owner_mutations_use_configured_agents_and_bounded_roles() -> None:
