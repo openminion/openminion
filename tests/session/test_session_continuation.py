@@ -27,8 +27,11 @@ from openminion.modules.session.runtime.continuation import (
     PACKET_REJECTED,
     SessionContinuationService,
 )
-from openminion.modules.session.schemas import SessionContinuationPayload
-from openminion.modules.session.schemas import ContinuationError
+from openminion.modules.session.schemas import (
+    ContinuationError,
+    RoomHandoffBinding,
+    SessionContinuationPayload,
+)
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 
 
@@ -82,6 +85,7 @@ def test_payload_rejects_unknown_version_expiry_and_secret() -> None:
     }
     payload = SessionContinuationPayload.model_validate(base)
     assert payload.schema_version == SESSION_CONTINUATION_SCHEMA_VERSION
+    assert payload.continuation_kind == "same_agent_resume"
 
     with pytest.raises(ValidationError, match="unsupported_continuation_schema"):
         SessionContinuationPayload.model_validate(
@@ -118,6 +122,116 @@ def test_preview_is_side_effect_free_and_create_reconstructs_event(tmp_path) -> 
     assert (
         store.get_event_by_id(result.packet.packet_id)["event_type"] == PACKET_CREATED
     )
+
+
+def test_generic_preview_rejects_cross_agent_before_writing(tmp_path) -> None:
+    store = _store(tmp_path)
+    source_id = _seed_source(store)
+    service = SessionContinuationService(store, now_ms=lambda: 10_000)
+    before = store.latest_event_seq(source_id)
+
+    with pytest.raises(
+        ContinuationError,
+        match="continuation_cross_agent_requires_room_handoff",
+    ):
+        service.preview(source_id, target_agent_id="agent-b")
+
+    assert store.latest_event_seq(source_id) == before
+
+
+def test_room_handoff_requires_current_binding_before_target_projection(
+    tmp_path,
+) -> None:
+    store = _store(tmp_path)
+    source_id = _seed_source(store, session_id="room-source")
+    target_id = _target(store, session_id="worker", agent_id="agent-b")
+    binding = RoomHandoffBinding(
+        room_session_id=source_id,
+        local_human_authority_id="human-a",
+        source_agent_id="agent-a",
+        target_agent_id="agent-b",
+        target_session_id=target_id,
+    )
+    service = SessionContinuationService(store, now_ms=lambda: 10_000)
+    before = store.latest_event_seq(source_id)
+
+    preview = service.preview_room_handoff(binding)
+    assert store.latest_event_seq(source_id) == before
+    assert preview.payload.continuation_kind == "room_agent_handoff"
+    assert preview.payload.room_handoff_binding == binding
+
+    packet = service.create_room_handoff(binding).packet
+    assert packet is not None
+    missing = service.apply(target_id, packet_id=packet.packet_id)
+    assert missing.reason_code == "continuation_room_binding_required"
+    assert store.get_events(target_id, types=[PACKET_APPLIED]) == []
+
+    mismatched = binding.model_copy(update={"local_human_authority_id": "human-b"})
+    rejected = service.apply(
+        target_id,
+        packet_id=packet.packet_id,
+        room_binding=mismatched,
+    )
+    assert rejected.reason_code == "continuation_room_binding_mismatch"
+    assert store.get_events(target_id, types=[PACKET_APPLIED]) == []
+
+    applied = service.apply(
+        target_id,
+        packet_id=packet.packet_id,
+        room_binding=binding,
+    )
+    assert applied.status == "applied"
+    rejection_count = len(store.get_events(source_id, types=[PACKET_REJECTED]))
+
+    repeated = service.apply(target_id, packet_id=packet.packet_id)
+    assert repeated.status == "already_applied"
+    assert len(store.get_events(source_id, types=[PACKET_REJECTED])) == rejection_count
+
+
+def test_room_handoff_is_bound_to_one_target_session(tmp_path) -> None:
+    store = _store(tmp_path)
+    source_id = _seed_source(store, session_id="room-source")
+    target_id = _target(store, session_id="worker", agent_id="agent-b")
+    other_target_id = _target(store, session_id="other-worker", agent_id="agent-b")
+    binding = RoomHandoffBinding(
+        room_session_id=source_id,
+        local_human_authority_id="human-a",
+        source_agent_id="agent-a",
+        target_agent_id="agent-b",
+        target_session_id=target_id,
+    )
+    service = SessionContinuationService(store, now_ms=lambda: 10_000)
+    packet = service.create_room_handoff(binding).packet
+    assert packet is not None
+
+    result = service.apply(
+        other_target_id,
+        packet_id=packet.packet_id,
+        room_binding=binding,
+    )
+
+    assert result.reason_code == "continuation_room_binding_mismatch"
+    assert store.get_events(other_target_id, types=[PACKET_APPLIED]) == []
+
+
+def test_room_handoff_creation_requires_an_empty_bound_target(tmp_path) -> None:
+    store = _store(tmp_path)
+    source_id = _seed_source(store, session_id="room-source")
+    target_id = _target(store, session_id="worker", agent_id="agent-b")
+    store.append_turn(target_id, "user", "already started")
+    binding = RoomHandoffBinding(
+        room_session_id=source_id,
+        local_human_authority_id="human-a",
+        source_agent_id="agent-a",
+        target_agent_id="agent-b",
+        target_session_id=target_id,
+    )
+    service = SessionContinuationService(store, now_ms=lambda: 10_000)
+
+    with pytest.raises(ContinuationError, match="continuation_target_not_empty"):
+        service.create_room_handoff(binding)
+
+    assert store.get_events(source_id, types=[PACKET_CREATED]) == []
 
 
 def test_apply_is_idempotent_and_conflicting_target_is_rejected(tmp_path) -> None:
