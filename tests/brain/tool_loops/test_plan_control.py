@@ -419,6 +419,24 @@ def test_plan_control_redeclare_preserves_in_progress_step() -> None:
     assert entry["output_summary"] == "Inspection underway."
 
 
+def test_plan_control_redeclare_rejects_changed_steps() -> None:
+    session_api = _FakeSessionAPI(active_plan=_active_plan())
+
+    result = handle_plan_tool_call(
+        loop_ctx=_Ctx(session_api=session_api),
+        arguments={
+            "action": "declare",
+            "plan_id": "plan-1",
+            "objective": "Research and summarize",
+            "steps": [{"step_id": "replacement", "description": "Start over"}],
+        },
+    )
+
+    assert result.status == "failed"
+    assert result.error.code == "PLAN_VALIDATION_FAILED"
+    assert "use action=revise" in result.error.message
+
+
 def test_plan_control_step_completed_records_active_step() -> None:
     session_api = _FakeSessionAPI(active_plan=_active_plan())
     result = handle_plan_tool_call(

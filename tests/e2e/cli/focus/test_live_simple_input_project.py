@@ -92,9 +92,9 @@ def _fixture(repo: Path, scenario_id: str) -> None:
             encoding="utf-8",
         )
         (repo / "verify_once.py").write_text(
-            "from pathlib import Path\nimport subprocess\nimport sys\n\n"
+            "from pathlib import Path\nimport os\nimport subprocess\nimport sys\n\n"
             "marker = Path('.verification-seen')\n"
-            "if not marker.exists():\n"
+            "if os.environ.get('OPENMINION_SILC_PROJECT_VERIFIER') and not marker.exists():\n"
             "    marker.write_text('seen\\n')\n"
             "    raise SystemExit(1)\n"
             "raise SystemExit(subprocess.call([sys.executable, '-m', 'pytest', '-q']))\n",
@@ -145,10 +145,15 @@ def _resume(probe: FocusProbe, run_id: str, *, iterations: int) -> dict:
     ]
     if probe.allow_unsandboxed_exec:
         command.insert(3, "--allow-unsandboxed-exec")
+    environment = {
+        **os.environ,
+        **probe.environment(),
+        "OPENMINION_SILC_PROJECT_VERIFIER": "1",
+    }
     completed = subprocess.run(
         command,
         cwd=probe.openminion_root,
-        env={**os.environ, **probe.environment()},
+        env=environment,
         capture_output=True,
         text=True,
         timeout=1200,
@@ -307,8 +312,8 @@ def test_live_focus_simple_input_project(
                 "project_launch_approvals": 1,
                 "process_boundary": "focus_exit_then_autonomy_resume",
                 "transcript": transcript_path.name,
-                "first_status": first.get("status"),
-                "final_status": final.get("status"),
+                "first_status": first.get("run", first).get("status"),
+                "final_status": final.get("run", final).get("status"),
                 "task_plan": checkpoint.payload.get("task_plan"),
                 "plan_revision_count": checkpoint.payload.get("plan_revision_count", 0),
                 **telemetry,

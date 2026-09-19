@@ -1186,6 +1186,7 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     assert "first action must use the existing plan loop-control tool" in prompts[0]
     assert "continue_plan_autonomously=false" in prompts[0]
     assert "After any approved verification command fails" in prompts[0]
+    assert "action=complete" in prompts[0]
     assert "action=revise for plan_id=plan-1" in prompts[1]
     assert "First redeclare the same plan_id" in prompts[1]
     assert "Then use the existing plan loop-control tool" in prompts[1]

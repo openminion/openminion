@@ -91,6 +91,9 @@ def project_cycle_prompt(
         "Work on the smallest useful next step. Inspect current state before editing.",
         "After any approved verification command fails, revise the active plan "
         "with a new revision_id and the configured verifier refs before repair or rerun.",
+        "After every plan step is complete, use the plan loop-control tool with "
+        "action=complete. That closes only the plan; the configured verifier still "
+        "owns project completion.",
         "Do not claim completion; the configured verifier owns completion.",
     ]
     active_plan = checkpoint_payload.get("task_plan")
