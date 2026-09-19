@@ -187,6 +187,8 @@ class RuntimeProjectMixin:
         self,
         metadata: Mapping[str, Any] | None,
         approval_callback: Callable[[str, dict[str, Any], Any], Awaitable[bool]] | None,
+        *,
+        source_request: str = "",
     ) -> str:
         if (
             metadata is None
@@ -213,9 +215,11 @@ class RuntimeProjectMixin:
             repository=resolve_project_repository(boundary, handoff.repository or ""),
             require_git_repository=False,
             config_ref=str(self._rt.config_path),
+            turn_target="focus",
             permission_profile_id=self.permission_mode,
             verification_commands=handoff.verification_commands,
             success_criteria=handoff.success_criteria,
+            source_request=source_request,
             **handoff.model_dump(
                 include={"max_iterations", "max_wall_clock_ms", "max_tool_calls"},
                 exclude_none=True,
@@ -423,17 +427,17 @@ class RuntimeProjectMixin:
             "goal_id": run.goal_id,
             "workspace_boundary": str(request.workspace_boundary),
             "execution_repository": str(request.repository),
+            "actor_type": "human" if reason_code else "system",
+            "actor_id": "operator" if reason_code else self.agent_id,
+            "task_id": run.task_id,
+            "status": status,
+            "redaction": "bounded",
             **({"reason_code": reason_code} if reason_code else {}),
         }
         self._rt.sessions.append_event(
             session_id=self.session_id,
             event_type=event_type,
-            actor_type="human" if reason_code else "system",
-            actor_id="operator" if reason_code else self.agent_id,
-            task_id=run.task_id,
             payload=payload,
-            status=status,
-            redaction="bounded",
         )
         emit_session_operation(
             telemetryctl=self._rt.telemetry_service,

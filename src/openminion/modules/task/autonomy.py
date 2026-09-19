@@ -99,6 +99,7 @@ class AutonomyExecutionSelectors(_StrictAutonomyModel):
     agent_id: str = "default"
     config_ref: str | None = None
     default_act_profile: str | None = None
+    turn_target: str = "autonomy"
     verification_domain: VerificationDomain = "cross_application"
     verifier_ref: str = "command"
     verification_commands: tuple[str, ...] = ()
@@ -292,6 +293,7 @@ def build_autonomy_run(
     agent_id: str = "default",
     config_ref: str | None = None,
     default_act_profile: str | None = None,
+    turn_target: str = "autonomy",
     verification_domain: VerificationDomain = "cross_application",
     verifier_ref: str = "command",
     verification_commands: tuple[str, ...] = (),
@@ -318,6 +320,7 @@ def build_autonomy_run(
             agent_id=agent_id,
             config_ref=config_ref,
             default_act_profile=default_act_profile,
+            turn_target=turn_target,
             verification_domain=verification_domain,
             verifier_ref=verifier_ref,
             verification_commands=verification_commands,

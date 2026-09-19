@@ -2425,6 +2425,81 @@ def test_engine_allows_consecutive_plan_lifecycle_transitions() -> None:
     )
 
 
+def test_engine_rejects_redeclaring_a_completed_plan_in_the_same_turn() -> None:
+    plan_id = "completed-plan"
+
+    def _plan_call(call_id: str, action: str, **arguments: Any) -> LLMResponse:
+        return LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            tool_calls=[
+                ToolCall(
+                    id=call_id,
+                    name=PLAN_TOOL_NAME,
+                    arguments={"action": action, "plan_id": plan_id, **arguments},
+                )
+            ],
+            finish_reason="tool_calls",
+        )
+
+    runtime = _FakeRuntime(
+        responses=[
+            _plan_call(
+                "declare",
+                "declare",
+                objective="Complete once",
+                steps=[{"step_id": "work", "description": "Do the work"}],
+            ),
+            _plan_call(
+                "complete-step",
+                "step_completed",
+                step_id="work",
+                output_summary="done",
+            ),
+            _plan_call("complete-plan", "complete", reason="all steps completed"),
+            _plan_call(
+                "redeclare",
+                "declare",
+                objective="Start over",
+                steps=[{"step_id": "replacement", "description": "Repeat work"}],
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Completed once.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The original plan completed.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    session_api = _FakeSessionAPI()
+
+    outcome = run_adaptive_tool_loop(
+        _LoopContext(
+            state=_state(tool_calls=2, llm_calls_max=10),
+            session_api=session_api,
+        ),
+        profile=_profile(allowed_tools=frozenset(), max_iterations=8),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="complete one plan")],
+        tool_specs=[],
+    )
+
+    assert outcome.final_text == "Completed once."
+    assert outcome.telemetry_payload()["task_plan.completed"]["plan_id"] == plan_id
+    assert [
+        event["event_type"]
+        for event in session_api.events
+        if event["event_type"] == "task_plan.declared"
+    ] == ["task_plan.declared"]
+
+
 def test_engine_preserves_final_answer_while_completing_active_plan() -> None:
     plan_id = "closeout-plan"
 

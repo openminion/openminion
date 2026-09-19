@@ -423,6 +423,7 @@ def test_focus_created_wake_advances_then_cancelled_stale_wake_is_inert(
     assert after.project_run.committed_cycle_count == 1
     assert before.project_run.committed_cycle_count == 0
     assert len(runtime_manager.submitted) == 1
+    assert runtime_manager.submitted[0].payload["meta"]["user"] == "focus"
 
     monkeypatch.setattr(
         "openminion.cli.commands.autonomy_project.configured_cron_store",

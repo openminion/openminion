@@ -351,6 +351,7 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
     turn_ids = {str(row[0]) for row in lifecycle_rows}
     session_ids = {str(row[1]) for row in lifecycle_rows}
     assert turn_ids, "core turn identity is required"
+    _, _, brain_session_id = read_focus_evidence(probe.environment(), probe.session_id)
     rows = _telemetry_event_rows(
         telemetry_path,
         (
@@ -371,7 +372,6 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
     timing_turn_ids = {
         turn_id for turn_id, kind, _ in rows if kind == "chat.phase_timing"
     }
-    _, _, brain_session_id = read_focus_evidence(probe.environment(), probe.session_id)
     assert session_ids == {brain_session_id}
     assert len(timing_turn_ids) == len(turn_ids), (
         "one Focus timing per submitted turn required"

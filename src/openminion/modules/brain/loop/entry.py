@@ -131,6 +131,10 @@ def decompose_tool_spec() -> ToolSpec:
 
 
 def coding_tool_spec() -> ToolSpec:
+    handoff_schema = ProjectHandoff.model_json_schema()
+    handoff_schema["properties"].pop("repository")
+    handoff_schema["properties"]["verification_commands"]["minItems"] = 1
+    handoff_schema["required"].append("verification_commands")
     return ToolSpec(
         name=ENTRY_CODING_TOOL_NAME,
         description=(
@@ -144,7 +148,7 @@ def coding_tool_spec() -> ToolSpec:
         input_schema={
             "type": "object",
             "properties": {
-                "project_handoff": ProjectHandoff.model_json_schema(),
+                "project_handoff": handoff_schema,
                 "sub_intents": {
                     "type": "array",
                     "items": {"type": "string", "minLength": 1},

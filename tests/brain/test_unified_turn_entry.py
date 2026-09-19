@@ -530,6 +530,10 @@ def test_coding_control_schema_exposes_optional_project_handoff() -> None:
 
     assert "project_handoff" in schema["properties"]
     assert "sub_intents" in schema["properties"]
+    handoff = schema["properties"]["project_handoff"]
+    assert "repository" not in handoff["properties"]
+    assert "verification_commands" in handoff["required"]
+    assert handoff["properties"]["verification_commands"]["minItems"] == 1
     assert "required" not in schema
 
 

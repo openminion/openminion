@@ -134,7 +134,8 @@ _TASK_PLAN_GUIDANCE = (
     "estimated_difficulty, and bounded tool_families. Only use these "
     "tool_families: browser, code, exec, fetch, file, ip, location, search, "
     "skill, task, time, utility, weather, web. Use at most one active plan per "
-    "session; a new declaration replaces the prior active plan."
+    "session. Redeclaring an active plan may restate the same step IDs; use "
+    "action=revise to change its structure."
 )
 _TASK_PLAN_PROGRESS_GUIDANCE = (
     "When updating an active task plan, call the plan tool with action "

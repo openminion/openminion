@@ -229,6 +229,7 @@ def test_project_turn_uses_canonical_successful_tool_results_as_progress(
     )
     assert captured_payloads[0]["inbound_metadata"]["conversation_id"] == "project-1"
     assert captured_payloads[0]["inbound_metadata"]["resume"] == "true"
+    assert captured_payloads[0]["target"] == "autonomy"
     assert captured_payloads[0]["timeout_seconds"] == 300
     assert captured_payloads[0]["inbound_metadata"]["turn_timeout_seconds"] == "300"
     assert json.loads(
@@ -1078,6 +1079,59 @@ def test_autonomy_start_interrupts_to_resumable_blocked_run(
     assert resume_code == 0
     assert resumed["run_id"] == run["run_id"]
     assert resumed["status"] == "completed"
+
+
+def test_autonomy_resume_keeps_live_cycle_claim_non_terminal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def interrupt_turn(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.run_project_turn",
+        interrupt_turn,
+    )
+    code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "preserve the active worker",
+            "--verification-waiver",
+            "local claim fixture",
+            "--json",
+        ]
+    )
+    run = json.loads(output)["run"]
+    manager = TaskManager.for_lifecycle_db(db_path=tmp_path / "data/task/task.db")
+    claim = manager.lifecycle_repository.acquire_project_cycle_claim(
+        task_id=run["task_id"],
+        owner_id="active-worker",
+        expected_checkpoint_id=run["checkpoint_id"],
+    )
+    try:
+        resume_code, resume_output = _run_cli(
+            [
+                *_root_args(tmp_path),
+                "autonomy",
+                "resume",
+                run["run_id"],
+                "--verification-waiver",
+                "local claim fixture",
+                "--json",
+            ]
+        )
+    finally:
+        manager.lifecycle_repository.release_project_cycle_claim(claim)
+        manager.close()
+
+    resumed = json.loads(resume_output)["run"]
+    assert code == 130
+    assert resume_code == 0
+    assert resumed["status"] == "running"
+    assert resumed["last_error"] is None
 
 
 def test_autonomy_resume_uses_approved_iteration_extension(tmp_path: Path) -> None:

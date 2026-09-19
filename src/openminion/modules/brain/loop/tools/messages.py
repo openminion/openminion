@@ -110,7 +110,7 @@ def format_blocking_tool_message(
     termination_reason: str,
 ) -> Message:
     return Message(
-        role="tool",
+        role="system",
         content=json.dumps(
             {
                 "status": "blocked",
