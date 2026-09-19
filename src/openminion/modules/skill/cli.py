@@ -398,6 +398,9 @@ def _add_learning_subcommands(sub: Any) -> None:
     learning_replay.add_argument("--proposal-id", required=True)
     learning_replay.add_argument("--shape-id", required=True)
     learning_replay.add_argument("--proof-id", required=True)
+    learning_replay.add_argument("--candidate-hash", required=True)
+    learning_replay.add_argument("--evaluator-id", required=True)
+    learning_replay.add_argument("--result-ref", required=True)
     learning_replay.add_argument(
         "--status", required=True, choices=_REPLAY_STATUS_CHOICES
     )
@@ -410,6 +413,9 @@ def _add_learning_subcommands(sub: Any) -> None:
     learning_apply.add_argument("--proposal-id", required=True)
     learning_apply.add_argument("--shape-id", required=True)
     learning_apply.add_argument("--proof-id", required=True)
+    learning_apply.add_argument("--candidate-hash", required=True)
+    learning_apply.add_argument("--evaluator-id", required=True)
+    learning_apply.add_argument("--result-ref", required=True)
     learning_apply.add_argument(
         "--proof-status",
         required=True,
@@ -862,6 +868,9 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
             proposal_id=args.proposal_id,
             shape_id=args.shape_id,
             proof_id=args.proof_id,
+            candidate_hash=args.candidate_hash,
+            evaluator_id=args.evaluator_id,
+            result_ref=args.result_ref,
             status=args.status,
             evidence=args.evidence,
         )
@@ -873,6 +882,9 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
             proposal_id=args.proposal_id,
             shape_id=args.shape_id,
             proof_id=args.proof_id,
+            candidate_hash=args.candidate_hash,
+            evaluator_id=args.evaluator_id,
+            result_ref=args.result_ref,
             status=args.proof_status,
             evidence=args.evidence,
         )

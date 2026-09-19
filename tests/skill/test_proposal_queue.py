@@ -23,6 +23,9 @@ from openminion.modules.skill.proposal.queue import (
     record_proposal_review,
 )
 from openminion.modules.skill.proposal.review import _RUNTIME_REVIEWER_IDS
+from openminion.modules.skill.errors import SkillError
+from openminion.modules.skill.interfaces import SkillIngestAuthority
+from openminion.modules.skill.runtime.skill import Skill
 from openminion.modules.skill.storage import SQLiteSkillStore
 
 
@@ -45,7 +48,7 @@ def _proposal(*, proposal_id: str = "sprq-proposal-1") -> SkillProposal:
             risk_class="low",
             applies_to={"intents": ["latest_news"], "steps": []},
             inputs_schema=[],
-            verification_rules=[],
+            verification_rules=["reviewed workflow passes its replay check"],
         ),
         evidence_refs=["performance:research_strategy|live_information|latest_news"],
         proposer_policy_id="skill_promotion_cadence_v1",
@@ -245,6 +248,97 @@ def test_apply_proposal_is_idempotent_after_first_apply(tmp_path: Path) -> None:
         assert first.review_ref == second.review_ref
     finally:
         store.close()
+
+
+def test_applied_proposal_persists_pending_version_until_operator_admission(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "skill.db"
+    store = _store(tmp_path)
+    try:
+        create_proposal(store, _proposal())
+        record_proposal_review(
+            store,
+            proposal_id="sprq-proposal-1",
+            reviewer_id="operator-42",
+            review_policy_id="sprq_review_policy_v1",
+            criterion_decisions=[
+                {"criterion_id": "fit", "status": "accepted", "comment": "Accept."}
+            ],
+        )
+        addition = apply_proposal(
+            store,
+            proposal_id="sprq-proposal-1",
+            current_catalog=[],
+        )
+        assert store.get_skill_package(
+            addition.added_skill_id, addition.version_hash
+        ) is not None
+        admission = store.get_skill_admission(
+            skill_id=addition.added_skill_id,
+            version_hash=addition.version_hash,
+        )
+        assert admission is not None
+        assert admission["state"] == "pending"
+        assert store.get_active_skill_version_hash(
+            skill_id=addition.added_skill_id
+        ) is None
+    finally:
+        store.close()
+
+    config = {
+        "skill": {
+            "sqlite_path": str(db_path),
+            "blob_root": str(tmp_path / "blob"),
+            "fallback_root": str(tmp_path / "fallback"),
+            "wal": False,
+        }
+    }
+    skill = Skill(config)
+    try:
+        with pytest.raises(SkillError, match="operator authority"):
+            skill.admit_skill_version(
+                skill_id=addition.added_skill_id,
+                version_hash=addition.version_hash,
+                expected_active_version_hash=None,
+                target_status="verified",
+                reason="runtime cannot admit",
+                authority=SkillIngestAuthority.runtime(
+                    surface="test", source_kind="local"
+                ),
+            )
+        assert skill.store.get_active_skill_version_hash(
+            skill_id=addition.added_skill_id
+        ) is None
+    finally:
+        skill.close()
+
+    reopened = Skill(config)
+    try:
+        result = reopened.admit_skill_version(
+            skill_id=addition.added_skill_id,
+            version_hash=addition.version_hash,
+            expected_active_version_hash=None,
+            target_status="verified",
+            reason="reviewed workflow",
+            authority=SkillIngestAuthority.local_operator(
+                surface="test", principal_id="operator-42"
+            ),
+        )
+        assert result["active_version_hash"] == addition.version_hash
+        selected = reopened.get_skill(addition.added_skill_id)
+        assert selected.version_hash == addition.version_hash
+        assert reopened.log_run(
+            session_id="session-1",
+            agent_id="agent-1",
+            skill_id=addition.added_skill_id,
+            version_hash=addition.version_hash,
+            used_for="act",
+            outcome="success",
+            evidence_refs=["proposal:sprq-proposal-1"],
+        )
+    finally:
+        reopened.close()
 
 
 def test_apply_proposal_refuses_pending_proposal(tmp_path: Path) -> None:

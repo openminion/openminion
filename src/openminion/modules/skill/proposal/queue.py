@@ -4,7 +4,7 @@ from typing import Any
 from openminion.base.time import utc_now_iso
 from .base import SkillProposal, SkillProposalDraft
 from .catalog import EmergentSkillCatalogAddition, apply_emergent_skill
-from openminion.modules.skill.models import canonical_json
+from openminion.modules.skill.models import SkillPackage, canonical_json
 from .review import (
     SkillProposalCriterionDecision,
     SkillProposalReview,
@@ -135,6 +135,7 @@ def apply_proposal(
     *,
     proposal_id: str,
     current_catalog: Iterable[Any],
+    replay_proof: object | None = None,
 ) -> EmergentSkillCatalogAddition:
     """Apply an accepted-review proposal with ``apply_emergent_skill()``."""
 
@@ -165,18 +166,69 @@ def apply_proposal(
             f"apply requires accepted review; got status={review.status!r}"
         )
     proposal = SkillProposal.model_validate(record["proposal"])
+    bound_replay_proof = None
+    if replay_proof is not None:
+        from openminion.modules.skill.learning.replay import (
+            ReplayProof,
+            require_replay_passed,
+        )
+
+        bound_replay_proof = ReplayProof.model_validate(replay_proof)
+        require_replay_passed(bound_replay_proof, proposal)
+    elif proposal.requires_replay_proof:
+        raise ProposalQueueError("learned proposal requires replay proof")
     draft: SkillProposalDraft = proposal.proposed_skill_definition
-    addition, _new_catalog = apply_emergent_skill(
+    addition, new_catalog = apply_emergent_skill(
         review,
         catalog=list(current_catalog),
         skill_definition=draft,
     )
+    package = new_catalog[-1]
+    _persist_pending_package(store, package)
+    if bound_replay_proof is not None:
+        addition = addition.model_copy(
+            update={"replay_proof": bound_replay_proof.model_dump(mode="json")}
+        )
     store.apply_proposal(
         proposal_id=str(proposal.proposal_id or ""),
         applied_at=utc_now_iso(),
         applied_addition_json=canonical_json(addition.model_dump(mode="json")),
     )
     return addition
+
+
+def _persist_pending_package(store: SkillStore, package: SkillPackage) -> None:
+    store.upsert_skill(
+        skill_id=package.skill_id,
+        name=package.name,
+        status=package.status,
+        scope=package.scope,
+        agent_id=package.agent_id,
+        ts=package.updated_at,
+    )
+    store.insert_skill_version(
+        skill_id=package.skill_id,
+        version_hash=package.version_hash,
+        source_artifact_ref=package.source_artifact_ref,
+        package_json=canonical_json(package.to_dict()),
+        created_at=package.created_at,
+        content_fingerprint=package.to_content_fingerprint(),
+    )
+    store.upsert_skill_index(
+        skill_id=package.skill_id,
+        version_hash=package.version_hash,
+        tags_json=canonical_json(package.tags),
+        tools_json=canonical_json(package.tools),
+        keywords_json=canonical_json(package.tags),
+        applies_to_json=canonical_json(package.applies_to),
+    )
+    store.stage_skill_version(
+        skill_id=package.skill_id,
+        version_hash=package.version_hash,
+        content_fingerprint=package.to_content_fingerprint(),
+        authority_class="runtime_untrusted",
+        created_at=package.created_at,
+    )
 
 
 __all__ = (

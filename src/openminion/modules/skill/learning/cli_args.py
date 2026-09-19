@@ -9,15 +9,24 @@ def replay_proof_from_args(
     proposal_id: str,
     shape_id: str,
     proof_id: str,
+    candidate_hash: str,
+    evaluator_id: str,
+    result_ref: str,
     status: str,
     evidence: str,
 ) -> ReplayProof:
+    evidence_refs = split_comma_tokens(evidence)
+    if result_ref not in evidence_refs:
+        evidence_refs.append(result_ref)
     return ReplayProof(
         proof_id=proof_id,
         proposal_id=proposal_id,
         shape_id=shape_id,
+        candidate_hash=candidate_hash,
+        evaluator_id=evaluator_id,
+        result_ref=result_ref,
         status=status,
-        evidence_refs=split_comma_tokens(evidence),
+        evidence_refs=evidence_refs,
     )
 
 

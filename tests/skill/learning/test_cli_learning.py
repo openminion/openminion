@@ -9,6 +9,7 @@ import pytest
 
 from openminion.modules.skill.cli import main
 from openminion.modules.skill.learning.shapes import WorkflowShape, command_fingerprint
+from openminion.modules.skill.models import stable_hash
 
 
 def _config_path(tmp_path: Path) -> Path:
@@ -152,6 +153,8 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
     result = proposed["result"]
     assert result["status"] == "staged"
     proposal_id = result["proposal"]["proposal_id"]
+    shape_ref = result["proposal"]["source_task_shape_ref"]
+    candidate_hash = stable_hash(result["proposal"]["proposed_skill_definition"])
 
     proof = _run_cli(
         [
@@ -161,9 +164,15 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
             "--proposal-id",
             proposal_id,
             "--shape-id",
-            shape.shape_id,
+            shape_ref,
             "--proof-id",
             "proof-1",
+            "--candidate-hash",
+            candidate_hash,
+            "--evaluator-id",
+            "evaluator-cli",
+            "--result-ref",
+            "replay:1",
             "--status",
             "passed",
             "--evidence",
@@ -193,9 +202,15 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
             "--proposal-id",
             proposal_id,
             "--shape-id",
-            shape.shape_id,
+            shape_ref,
             "--proof-id",
             "proof-2",
+            "--candidate-hash",
+            candidate_hash,
+            "--evaluator-id",
+            "evaluator-cli",
+            "--result-ref",
+            "replay:2",
             "--proof-status",
             "failed",
         ]
@@ -211,9 +226,15 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
             "--proposal-id",
             proposal_id,
             "--shape-id",
-            shape.shape_id,
+            shape_ref,
             "--proof-id",
             "proof-3",
+            "--candidate-hash",
+            candidate_hash,
+            "--evaluator-id",
+            "evaluator-cli",
+            "--result-ref",
+            "replay:3",
             "--proof-status",
             "passed",
         ]

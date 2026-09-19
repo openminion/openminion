@@ -32,6 +32,9 @@ class EmergentSkillCatalogAddition(BaseModel):
     source_field: str
     added_at: str
     added_by: str
+    version_hash: str = ""
+    admission_state: str = ""
+    replay_proof: dict[str, Any] | None = None
 
 
 def _review_field(review: Any, field: str) -> Any:
@@ -167,6 +170,8 @@ def apply_emergent_skill(
         source_field=SKILL_SOURCE_EMERGED_FROM_OBSERVATION,
         added_at=now,
         added_by=reviewer_id,
+        version_hash=package.version_hash,
+        admission_state="pending",
     )
     return addition, [*existing_catalog, package]
 

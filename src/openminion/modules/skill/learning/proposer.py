@@ -85,6 +85,7 @@ def _proposal_with_shape_evidence(
         update={
             "proposed_skill_definition": enriched_draft,
             "evidence_refs": list(shape.evidence_refs),
+            "requires_replay_proof": True,
         }
     )
 
