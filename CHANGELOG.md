@@ -7,6 +7,19 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Current package line - 2026-09-18
 
+- Add approval-gated long-running coding projects from Focus with typed
+  proposals before durable execution.
+- Preserve success criteria through planning, checkpoints, verification,
+  repair, delegated review, restart and reporting.
+- Add project status, inspection, pause, resume and cancellation controls,
+  with additive task API progress reporting.
+- Activate explicitly requested tools before dispatch while keeping semantic
+  tool selection model-owned, and preserve repeated write approval behavior.
+- Refine Focus project and terminal presentation and strengthen independent
+  Focus and model-neutral tool evidence gates.
+
+## Prior package line - 2026-09-18
+
 - Keep published runtime feed and immutable record JSON compatible with the
   single-version-owner guard, while continuing to reject duplicate live
   version literals in source, scripts and unrelated release files.
