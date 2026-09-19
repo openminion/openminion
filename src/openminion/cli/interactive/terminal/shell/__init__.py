@@ -94,7 +94,7 @@ _PROMPT_REPLAY_DEDUP_WINDOW_SECONDS = 0.35
 
 def _build_terminal_console() -> Console:
     if is_color_enabled():
-        return Console(force_terminal=True, color_system="standard", no_color=False)
+        return Console(force_terminal=True, color_system="truecolor", no_color=False)
     console = Console()
     console.no_color = True
     return console

@@ -45,12 +45,12 @@ DARK = Theme(
     text_primary="#f0f0f0",
     text_secondary="#c0c0c0",
     text_muted="#9a9a9a",
-    text_accent="#5c9eff",
-    state_ok="#66bb6a",
-    state_warning="#ffa726",
-    state_error="#ff7878",
+    text_accent="#579ead",
+    state_ok="#58a17a",
+    state_warning="#c2a05f",
+    state_error="#c56f76",
     state_offline="#9a9a9a",
-    state_highlight="#5c9eff",
+    state_highlight="#579ead",
 )
 
 
