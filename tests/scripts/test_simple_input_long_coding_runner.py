@@ -46,13 +46,16 @@ def test_telemetry_evidence_reads_canonical_event_data(tmp_path) -> None:
             [
                 (
                     "tool.call.requested",
-                    json.dumps({"canonical_name": "task.delegate"}),
+                    json.dumps(
+                        {
+                            "call_id": "delegate-1",
+                            "canonical_name": "task.delegate",
+                        }
+                    ),
                 ),
                 (
                     "tool.call.completed",
-                    json.dumps(
-                        {"canonical_name": "task.delegate", "output": {"ok": True}}
-                    ),
+                    json.dumps({"call_id": "delegate-1", "output": {"ok": True}}),
                 ),
                 (
                     "chat.phase_timing",

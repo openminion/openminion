@@ -23,7 +23,10 @@ from openminion.modules.task import (
     load_latest_project_checkpoint,
     save_project_run_checkpoint,
 )
-from openminion.modules.task.project import AutonomyLoopConditionKind
+from openminion.modules.task.project import (
+    AutonomyLoopConditionKind,
+    project_condition_from_metadata,
+)
 from openminion.modules.task.project.reports import (
     build_project_report_from_task,
     render_project_report,
@@ -136,6 +139,23 @@ def _project(
         },
     )
     return store, manager, run
+
+
+def test_project_turn_budget_rollover_remains_productive() -> None:
+    assert (
+        project_condition_from_metadata(
+            {
+                "brain_status": "waiting_user",
+                "tool_loop_termination_reason": "budget_exhausted",
+                "error_code": "act_adaptive_budget_exhausted",
+            }
+        )
+        == AutonomyLoopConditionKind.PRODUCTIVE
+    )
+    assert (
+        project_condition_from_metadata({"brain_status": "waiting_user"})
+        == AutonomyLoopConditionKind.WAITING
+    )
 
 
 def _save_ci_effect(
@@ -1165,6 +1185,7 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     ]
     assert "first action must use the existing plan loop-control tool" in prompts[0]
     assert "continue_plan_autonomously=false" in prompts[0]
+    assert "After any approved verification command fails" in prompts[0]
     assert "action=revise for plan_id=plan-1" in prompts[1]
     assert "First redeclare the same plan_id" in prompts[1]
     assert "Then use the existing plan loop-control tool" in prompts[1]

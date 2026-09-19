@@ -51,12 +51,14 @@ _SCENARIOS = (
     (
         "delegated-review",
         "This is durable project work. Before using any execution tool, propose a "
-        "project handoff. After approval, implement the requested changes in "
-        f"feature.py and CHANGELOG.md, run `{_PYTHON} -m pytest -q`, then delegate "
+        "project handoff. After approval, set feature.py `VALUE = 2`, add one concise "
+        f"`VALUE = 2` entry to CHANGELOG.md, run `{_PYTHON} -m pytest -q`, then delegate "
         "one independent read-only review "
         "to one exact agent_id returned by agent.list and explicitly accept, reject, "
-        "or reassign its findings before completion. Use exactly 4 project iterations, "
-        "a 10-minute wall-clock limit, and measurable success criteria.",
+        "or reassign its findings before completion. Keep the implementation minimal; "
+        "do not add unrelated APIs, type annotations, or docstring work. Use exactly 4 "
+        "project iterations, a 10-minute wall-clock limit, and measurable success "
+        "criteria.",
     ),
 )
 
@@ -165,6 +167,11 @@ def _telemetry_evidence(data_root: Path) -> dict[str, object]:
             "ORDER BY id"
         ).fetchall()
     events = [(str(kind), json.loads(data)) for kind, data in rows]
+    requested_names = {
+        str(event.get("call_id", "")): str(event.get("canonical_name", ""))
+        for kind, event in events
+        if kind == "tool.call.requested" and event.get("call_id")
+    }
     tool_names = [
         str(event.get("canonical_name", ""))
         for kind, event in events
@@ -177,7 +184,11 @@ def _telemetry_evidence(data_root: Path) -> dict[str, object]:
             event.get("output")
             for kind, event in events
             if kind == "tool.call.completed"
-            and event.get("canonical_name") == "task.delegate"
+            and (
+                event.get("canonical_name") == "task.delegate"
+                or requested_names.get(str(event.get("call_id", "")))
+                == "task.delegate"
+            )
         ],
         "provider_calls": sum(
             int(event.get("provider_calls_total", 0) or 0) for event in timings
