@@ -173,6 +173,9 @@ class CodingResumeMixin:
     def _apply_resume_input(self: Any, ctx: ExecutionContext) -> None:
         text = (ctx.user_input or "").strip()
         if text:
+            self._loop_state.task_plan_revision = None
+            self._loop_state.task_plan_abandoned = None
+            self._loop_state.task_plan_completed = None
             self._loop_state.messages.append(Message(role="user", content=text))
 
     def _append_confirmation_replay_continuation_marker(self: Any) -> None:

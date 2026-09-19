@@ -78,6 +78,7 @@ def initial_repository_lifecycle_payload(
     release_tools_approved: bool = False,
     success_criteria: tuple[str, ...] = (),
     verification_commands: tuple[str, ...] = (),
+    source_request: str = "",
 ) -> dict[str, object]:
     repository_ref = _bounded_repository_text(project_run.workspace_ref)
     repository_revision = _workspace_revision(repository_ref)
@@ -105,6 +106,7 @@ def initial_repository_lifecycle_payload(
                     mode="json"
                 ),
                 "constraints": [],
+                "source_request": _bounded_repository_text(source_request),
                 "approval": "approved" if launch_approved else None,
                 "spec_tracker_paths": [],
                 "source_revisions": {

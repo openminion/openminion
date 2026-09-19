@@ -511,6 +511,7 @@ class BrainRunner:
         capture_id: str | None = None,
     ) -> StepOutput:
         previous_callback = self._progress_callback
+        previous_telemetry_turn_active = self._telemetry_turn_active
         approval_setter = getattr(self.tool_api, "set_approval_callback", None)
         previous_approval_callback = (
             approval_setter(approval_callback) if callable(approval_setter) else None
@@ -587,7 +588,7 @@ class BrainRunner:
             )
             raise
         finally:
-            self._telemetry_turn_active = False
+            self._telemetry_turn_active = previous_telemetry_turn_active
             if progress_callback is not None:
                 self._progress_callback = previous_callback
             if callable(approval_setter):

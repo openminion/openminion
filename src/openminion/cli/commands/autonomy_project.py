@@ -61,6 +61,7 @@ class ProjectLaunchRequest:
     expected_checks: tuple[str, ...]
     release_tools: bool
     success_criteria: tuple[str, ...] = ()
+    source_request: str = ""
 
 
 def focus_project_help() -> str:
@@ -101,6 +102,7 @@ def build_project_launch_request(
     permission_profile_id: str = "local-safe",
     config_ref: str | None = None,
     verification_domain: VerificationDomain = "coding",
+    turn_target: str = "autonomy",
     verification_commands: tuple[str, ...] = (),
     turn_timeout_seconds: int = DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
     verification_timeout_seconds: int = DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
@@ -110,6 +112,7 @@ def build_project_launch_request(
     expected_checks: tuple[str, ...] = (),
     release_tools: bool = False,
     success_criteria: tuple[str, ...] = (),
+    source_request: str = "",
 ) -> ProjectLaunchRequest:
     boundary = workspace_boundary.expanduser().resolve(strict=False)
     repo = repository.expanduser().resolve(strict=False)
@@ -134,6 +137,7 @@ def build_project_launch_request(
         agent_id=agent_id,
         config_ref=config_ref,
         verification_domain=verification_domain,
+        turn_target=turn_target,
         verification_commands=verification_commands,
         turn_timeout_seconds=turn_timeout_seconds,
         verification_timeout_seconds=verification_timeout_seconds,
@@ -156,6 +160,7 @@ def build_project_launch_request(
         expected_checks=check_names,
         release_tools=release_tools,
         success_criteria=success_criteria,
+        source_request=source_request,
     )
 
 
@@ -220,6 +225,7 @@ def parse_focus_project_launch(
         max_tool_calls=parsed.max_tool_calls,
         config_ref=config_ref,
         verification_domain=parsed.verification_domain,
+        turn_target="focus",
         verification_commands=tuple(parsed.verify_command),
         task_plan_required=True,
         expected_checks=tuple(parsed.expected_check),
@@ -261,6 +267,7 @@ def launch_project(
         launch_approved=True,
         release_tools_approved=request.release_tools,
         success_criteria=request.success_criteria,
+        source_request=request.source_request,
     )
     return store.require(running.run_id)
 
@@ -303,7 +310,7 @@ def _request_project_turn(
         "agent_id": run.execution_selectors.agent_id,
         "session_id": request.session_id,
         "channel": "console",
-        "target": "autonomy",
+        "target": run.execution_selectors.turn_target,
         "deliver": False,
         "timeout_seconds": run.execution_selectors.turn_timeout_seconds,
         "inbound_metadata": project_turn_inbound_metadata(
@@ -375,6 +382,7 @@ def initialize_project(
     launch_approved: bool = False,
     release_tools_approved: bool = False,
     success_criteria: tuple[str, ...] = (),
+    source_request: str = "",
 ) -> None:
     assert run.task_id is not None
     manager.create_task(
@@ -412,6 +420,7 @@ def initialize_project(
                 release_tools_approved=release_tools_approved,
                 success_criteria=success_criteria,
                 verification_commands=run.execution_selectors.verification_commands,
+                source_request=source_request,
             ),
         },
     )
@@ -622,6 +631,7 @@ def schedule_project_wake(
                 "task_id": run.task_id,
                 "goal_id": run.goal_id,
                 "session_id": run.session_id,
+                "user": run.execution_selectors.turn_target,
                 "cycle_interval_seconds": cycle_interval_seconds,
             },
             agent_id=run.execution_selectors.agent_id,

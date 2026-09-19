@@ -443,7 +443,7 @@ def _add_payload_cron_meta(
     consolidation_metadata: MetadataResolver,
     watch_metadata: MetadataResolver,
 ) -> None:
-    for key in ("linked_task_id", "goal_id", "mission_id"):
+    for key in ("linked_task_id", "goal_id", "mission_id", "user"):
         value = str(payload.get(key, "") or "").strip()
         if value:
             cron_meta[key] = value

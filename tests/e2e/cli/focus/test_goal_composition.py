@@ -141,6 +141,7 @@ def _project_runtime(
         telemetry_service=telemetry,
     )
     runtime._session_id = "focus-project-session"
+    runtime._conversation_id = ""
     runtime._agent_id = "alpha"
     runtime._gateway = object()
     runtime._working_dir = str(tmp_path)
@@ -182,6 +183,7 @@ def test_terminal_project_launch_approval_persists_exact_repository(
     run = AutonomyRunStore(
         root=resolve_autonomy_state_root(runtime._rt.home_root)
     ).require(run_id)
+    assert run.execution_selectors.turn_target == "focus"
     manager = TaskManager.for_lifecycle_db(
         db_path=(runtime._rt.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve()
     )
@@ -191,7 +193,7 @@ def test_terminal_project_launch_approval_persists_exact_repository(
     assert f"Project: prun_{run_id}" in output
     assert f"Task: {run.task_id}" in output
     assert event["event_type"] == "project.launched"
-    assert event["task_id"] == run.task_id
+    assert event["payload"]["task_id"] == run.task_id
     assert checkpoint is not None
     resume = checkpoint.payload["repository_lifecycle"][
         checkpoint.project_run.resume_packet_ref
@@ -229,6 +231,7 @@ def test_terminal_project_launch_approval_persists_exact_repository(
     assert task.metadata["linked_cron_job_id"] == f"prun_{run_id}:wake:0"
     assert run.next_action_hint == f"Waiting for project cycle prun_{run_id}:wake:0."
     assert cron_store.jobs[0]["job_id"] == f"prun_{run_id}:wake:0"
+    assert cron_store.jobs[0]["payload"]["user"] == "focus"
 
 
 def test_terminal_project_missing_verifier_blocks_without_wake(tmp_path) -> None:
@@ -257,6 +260,7 @@ def test_terminal_project_missing_verifier_blocks_without_wake(tmp_path) -> None
     assert "rerun `/project start`" in output
     assert run.status.value == "blocked"
     assert sessions.events[0]["event_type"] == "project.launch_blocked"
+    assert sessions.events[0]["payload"]["status"] == "blocked"
     manager = TaskManager.for_lifecycle_db(
         db_path=(runtime._rt.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve()
     )
@@ -400,6 +404,7 @@ def test_terminal_project_denial_records_fact_without_creating_project(
 
     assert "Project launch denied" in output
     assert sessions.events[0]["event_type"] == "project.launch_denied"
+    assert sessions.events[0]["payload"]["actor_type"] == "human"
     assert sessions.events[0]["payload"]["reason_code"] == "operator_denied"
     assert (
         AutonomyRunStore(

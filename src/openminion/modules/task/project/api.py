@@ -9,6 +9,7 @@ from .checkpoints import (
     resume_project_run_from_latest_checkpoint,
     save_project_run_checkpoint,
 )
+from ..runtime.lifecycle import ProjectCycleClaimUnavailable
 from .budget import evaluate_project_budget
 from .control import apply_project_control, build_project_control_result
 from .effects import (
@@ -93,6 +94,7 @@ __all__ = [
     "ProjectBudgetPolicy",
     "ProjectCheckpoint",
     "ProjectCycleDecision",
+    "ProjectCycleClaimUnavailable",
     "ProjectCycleRecord",
     "ProjectEffectRecord",
     "ProjectEffectReplayDecision",

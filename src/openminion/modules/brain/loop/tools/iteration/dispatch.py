@@ -10,6 +10,7 @@ from openminion.modules.brain.execution.child_tasks import (
 from openminion.modules.brain.loop.constants import (
     PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
 )
+from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.llm.schemas import Message
 
 from ..budget import _effective_cap
@@ -36,9 +37,12 @@ from ..dispatch import (
     _dispatch_tool_batches,
     _tool_request_result,
 )
-from ..evidence import _count_substantive_non_control_tool_results
+from ..evidence import (
+    _count_substantive_non_control_tool_results,
+    _loop_tool_result_payloads,
+)
 from ..messages import action_result_to_tool_message
-from ..plan import _current_active_plan
+from ..plan import _current_active_plan, _failed_result
 from ..plan_control import (
     PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY,
     PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY,
@@ -182,6 +186,22 @@ def _is_plan_tool_call(tool_call: Any) -> bool:
     return str(getattr(tool_call, "name", "") or "").strip() == PLAN_TOOL_NAME
 
 
+def _execute_plan_action(
+    loop_ctx: AdaptiveToolLoopContext,
+    loop_state: AdaptiveToolLoopState,
+    arguments: dict[str, Any],
+) -> ActionResult:
+    if (
+        loop_state.task_plan_completed is not None
+        and str(arguments.get("action", "") or "").strip() == "declare"
+    ):
+        return _failed_result(
+            code="PLAN_ALREADY_COMPLETED",
+            summary="The task plan is already complete for this turn.",
+        )
+    return handle_plan_tool_call(loop_ctx=loop_ctx, arguments=arguments)
+
+
 def _record_successful_plan_action(
     loop_ctx: AdaptiveToolLoopContext,
     loop_state: AdaptiveToolLoopState,
@@ -206,11 +226,15 @@ def _record_successful_plan_action(
         loop_state.task_plan = active_plan
     action = str(arguments.get("action", "") or "").strip()
     if action == "complete":
+        if isinstance(loop_state.task_plan, dict):
+            loop_state.task_plan = {**loop_state.task_plan, "status": "completed"}
         loop_state.task_plan_completed = {
             "plan_id": arguments.get("plan_id"),
             "reason": arguments.get("reason", ""),
         }
     elif action == "abandon":
+        if isinstance(loop_state.task_plan, dict):
+            loop_state.task_plan = {**loop_state.task_plan, "status": "abandoned"}
         loop_state.task_plan_abandoned = {
             "plan_id": arguments.get("plan_id"),
             "reason": arguments.get("reason", ""),
@@ -319,8 +343,6 @@ def _handle_decompose_calls(
         )
     decompose_subtasks = _subtasks_from_decompose_control(payload)
     if decompose_subtasks:
-        from openminion.modules.brain.schemas import ActionResult
-
         persist_terminal_tool_result(
             loop_ctx,
             loop_state=loop_state,
@@ -384,6 +406,8 @@ def _handle_decompose_calls(
         call_id=str(getattr(decompose_calls[0], "id", "") or ""),
         tool_name=_DECOMPOSE_TOOL_NAME,
         action_result=action_result,
+        turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+        job_pending=False,
     )
     iter_tool_records.append(
         IterationToolCallRecord(
@@ -460,7 +484,7 @@ def _process_plan_tool_calls(
     for tool_call in plan_tool_calls:
         arguments = dict(getattr(tool_call, "arguments", {}) or {})
         loop_state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] = True
-        action_result = handle_plan_tool_call(loop_ctx=loop_ctx, arguments=arguments)
+        action_result = _execute_plan_action(loop_ctx, loop_state, arguments)
         _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
         if str(getattr(action_result, "status", "") or "") == "success":
             outputs = dict(getattr(action_result, "outputs", {}) or {})
@@ -643,6 +667,8 @@ def _process_single_review_tool_call(
             call_id=str(getattr(tool_call, "id", "") or ""),
             tool_name=REVIEW_TOOL_NAME,
             action_result=action_result,
+            turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+            job_pending=False,
         )
     set_turn_progress(
         loop_state,
@@ -710,12 +736,10 @@ def _process_tool_request_calls(
             arguments=arguments,
         )
         _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
-        _record_terminal_tool_request(
-            terminal_names,
-            action_result=action_result,
-            arguments=arguments,
-            requested_name=requested_name,
-        )
+        if action_result.status == "success" and arguments.get(
+            "terminal_after_success"
+        ):
+            terminal_names.append(requested_name)
         active_tool_specs[:] = with_enabled_plan_tool_spec(profile, active_tool_specs)
         requested_tools.append(requested_name)
         loop_state.messages.append(
@@ -760,7 +784,7 @@ def _process_tool_request_calls(
     scratchpad["tool_schema_shortlisting.inactive_tools"] = sorted(
         set(requestable_specs_by_name) - active_tool_names
     )
-    _stage_terminal_tool_request(loop_state, terminal_names, regular_tool_calls)
+    _stage_terminal_request(loop_ctx, loop_state, terminal_names, regular_tool_calls)
     refresh_shortlisting_state(
         loop_state.messages,
         scratchpad,
@@ -810,20 +834,8 @@ def _finish_tool_request_only_dispatch(
     )
 
 
-def _record_terminal_tool_request(
-    names: list[str],
-    *,
-    action_result: Any,
-    arguments: dict[str, Any],
-    requested_name: str,
-) -> None:
-    if str(getattr(action_result, "status", "") or "").strip() == "success" and bool(
-        arguments.get("terminal_after_success", False)
-    ):
-        names.append(requested_name)
-
-
-def _stage_terminal_tool_request(
+def _stage_terminal_request(
+    loop_ctx: AdaptiveToolLoopContext,
     loop_state: AdaptiveToolLoopState,
     names: list[str],
     regular_tool_calls: list[Any],
@@ -841,6 +853,19 @@ def _stage_terminal_tool_request(
         match_by_name_only=True,
     )
     loop_state.scratchpad["tool_schema_shortlisting.terminal_tool"] = requested_name
+    turn_scope_id = str(getattr(loop_ctx.state, "trace_id", "") or "")
+    for result in reversed(_loop_tool_result_payloads(loop_state)):
+        if (
+            turn_scope_id
+            and result.get("turn_scope_id") == turn_scope_id
+            and result.get("tool_name") == requested_name
+        ):
+            if result.get("ok") and result.get("job_pending") is False:
+                loop_state.direct_tool_requested_batch_satisfied = True
+                loop_state.scratchpad["direct_tool_completed_tool_names"] = [
+                    requested_name
+                ]
+            break
 
 
 def prepare_iteration_dispatch(
