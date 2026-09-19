@@ -92,6 +92,9 @@ _VISIBLE_PARITY_SLASHES = frozenset(
         "/undo",
     }
 )
+_ROOM_SLASHES = frozenset(
+    {"/activate", "/handoff", "/invite", "/kick", "/participants", "/room", "/routing"}
+)
 _FIGLET_FONT = "small"
 _FIGLET_TEXT = "OpenMinion"
 
@@ -662,15 +665,7 @@ async def _handle_slash(
     if cmd == "/agents":
         _handle_slash_agents(text, runtime=runtime, console=console)
         return False
-    if cmd in {
-        "/room",
-        "/handoff",
-        "/participants",
-        "/invite",
-        "/kick",
-        "/activate",
-        "/routing",
-    }:
+    if cmd in _ROOM_SLASHES:
         await handle_room_slash(
             cmd,
             _slash_arg(text),

@@ -227,7 +227,7 @@ class RuntimeMessageMixin:
             )
         self._rt.sessions.set_active_agent(session_id=room.id, agent_id=agents[0])
         self.bind_session(room.id)
-        return room.id
+        return str(room.id)
 
     def open_room_session(self, session_id: str) -> str:
         room_id = str(session_id or "").strip()
