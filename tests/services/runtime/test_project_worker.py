@@ -83,6 +83,7 @@ def _project(
     verification_domain: str = "coding",
     max_wall_clock_ms: int | None = None,
     max_tool_calls: int | None = None,
+    source_request: str = "",
 ):
     store = AutonomyRunStore(root=tmp_path / "autonomy")
     run = build_autonomy_run(
@@ -135,6 +136,7 @@ def _project(
                 expected_checks=expected_checks,
                 launch_approved=launch_approved,
                 release_tools_approved=release_tools_approved,
+                source_request=source_request,
             ),
         },
     )
@@ -1124,7 +1126,9 @@ def test_repository_project_requires_completed_public_task_plan(tmp_path) -> Non
 def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     tmp_path,
 ) -> None:
-    store, manager, run = _project(tmp_path)
+    store, manager, run = _project(
+        tmp_path, source_request="Search before inspecting project files."
+    )
     prompts: list[str] = []
     requests: list[ProjectTurnRequest] = []
     plan = TaskPlan(
@@ -1197,6 +1201,7 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
         "verification passed",
     ]
     assert "first action must use the existing plan loop-control tool" in prompts[0]
+    assert "Search before inspecting project files." in prompts[0]
     assert "continue_plan_autonomously=false" in prompts[0]
     assert "your very next tool call must use plan action=revise" in prompts[0]
     assert "verifier_refs containing that failed tool-call ref" in prompts[0]

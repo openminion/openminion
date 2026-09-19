@@ -81,13 +81,11 @@ def project_cycle_prompt(
     *,
     repository_check_observation: Mapping[str, object] | None = None,
 ) -> str:
-    project_run = checkpoint.project_run
-    checkpoint_payload = checkpoint.payload
-    workspace = project_workspace(run.workspace_ref)
+    project_run, checkpoint_payload = checkpoint.project_run, checkpoint.payload
     lines = [
         run.goal_text,
         "",
-        f"Workspace root: {workspace}",
+        f"Workspace root: {project_workspace(run.workspace_ref)}",
         "Use this workspace for repository tools. Do not infer another workspace "
         "from the goal text or verification command.",
         f"Current milestone: {milestone}",
@@ -106,22 +104,12 @@ def project_cycle_prompt(
     ]
     active_plan = checkpoint_payload.get("task_plan")
     lifecycle = cast(
-        Mapping[str, object],
-        checkpoint_payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY, {}),
+        Mapping[str, object], checkpoint_payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY, {})
     )
     objective = cast(
-        Mapping[str, object],
-        lifecycle.get(project_run.objective_ledger_ref, {}),
+        Mapping[str, object], lifecycle.get(project_run.objective_ledger_ref, {})
     )
-    source_request = str(objective.get("source_request") or "").strip()
-    if source_request:
-        lines.extend(
-            (
-                "Original approved request (the project handoff is already approved; "
-                "preserve its post-approval requirements):",
-                source_request,
-            )
-        )
+    lines.extend(_approved_source_request_guidance(objective))
     lines.extend(_approved_objective_guidance(objective))
     if not isinstance(active_plan, Mapping):
         lines.append(
@@ -133,8 +121,7 @@ def project_cycle_prompt(
     if verification := checkpoint_payload.get("verification"):
         evidence = cast(list[dict[str, object]], verification)
         failed = [
-            item
-            for item in evidence
+            item for item in evidence
             if item["status"] == TestEvidenceStatus.FAILED.value
         ]
         history = checkpoint_payload.get("verification_history")
@@ -203,6 +190,17 @@ def _approved_objective_guidance(objective: Mapping[str, object]) -> list[str]:
             )
         ),
         "Approved verification commands: " + json.dumps(objective["verification"]),
+    ]
+
+
+def _approved_source_request_guidance(objective: Mapping[str, object]) -> list[str]:
+    source_request = str(objective.get("source_request") or "").strip()
+    if not source_request:
+        return []
+    return [
+        "Original approved request (the project handoff is already approved; "
+        "preserve its post-approval requirements):",
+        source_request,
     ]
 
 
