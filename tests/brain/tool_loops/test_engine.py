@@ -3073,9 +3073,9 @@ def test_exact_inactive_tool_activates_before_dispatch() -> None:
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert [command.tool_name for command in loop_ctx.commands] == ["web.fetch"]
     assert "web.fetch" in [spec.name for spec in runtime.calls[1]["tools"]]
-    assert outcome.state.scratchpad[
-        "tool_schema_shortlisting.requested_tools"
-    ] == ["web.fetch"]
+    assert outcome.state.scratchpad["tool_schema_shortlisting.requested_tools"] == [
+        "web.fetch"
+    ]
 
 
 def test_visible_tool_cannot_bypass_profile_allowlist() -> None:

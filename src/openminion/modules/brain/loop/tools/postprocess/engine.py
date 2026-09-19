@@ -735,13 +735,11 @@ class AdaptiveLoopRunnerPostprocessMixin(
                     active_tool_specs=self.active_tool_specs,
                 )
                 requested_tools.append(tool_name)
-            self.loop_state.scratchpad[
-                "tool_schema_shortlisting.requested_tools"
-            ] = requested_tools
-            self.loop_state.scratchpad[
-                "tool_schema_shortlisting.inactive_tools"
-            ] = sorted(
-                set(self.requestable_specs_by_name) - self.active_tool_names
+            self.loop_state.scratchpad["tool_schema_shortlisting.requested_tools"] = (
+                requested_tools
+            )
+            self.loop_state.scratchpad["tool_schema_shortlisting.inactive_tools"] = (
+                sorted(set(self.requestable_specs_by_name) - self.active_tool_names)
             )
             refresh_shortlisting_state(
                 self.loop_state.messages,
