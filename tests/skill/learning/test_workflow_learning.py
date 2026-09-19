@@ -169,6 +169,50 @@ def test_miner_groups_structural_runs_and_rejects_prose_only() -> None:
     assert WorkflowShapeMiner().is_skill_ready(shapes[0])
 
 
+def test_miner_counts_serialized_replay_once() -> None:
+    original = bundle_from_autonomy_proof_packet(
+        _proof_packet("run-replayed"),
+        intent_category="test cleanup",
+        capability_category="cleanup",
+        strategy_id="test cleanup",
+        tool_names=["exec"],
+    )
+    replayed = WorkflowEvidenceBundle.model_validate_json(original.model_dump_json())
+
+    shapes = WorkflowShapeMiner().mine([original, replayed])
+
+    assert len(shapes) == 1
+    assert shapes[0].success_count == 1
+    assert not WorkflowShapeMiner().is_skill_ready(shapes[0])
+
+
+def test_miner_rejects_conflicting_duplicate_observation() -> None:
+    success = bundle_from_autonomy_proof_packet(
+        _proof_packet("run-conflict"),
+        intent_category="test cleanup",
+        capability_category="cleanup",
+        strategy_id="test cleanup",
+        tool_names=["exec"],
+    )
+    conflicting_payload = success.model_dump()
+    conflicting_payload["outcome"] = "failure"
+    failure = WorkflowEvidenceBundle.model_validate(conflicting_payload)
+    independent = bundle_from_autonomy_proof_packet(
+        _proof_packet("run-independent"),
+        intent_category="test cleanup",
+        capability_category="cleanup",
+        strategy_id="test cleanup",
+        tool_names=["exec"],
+    )
+
+    shapes = WorkflowShapeMiner().mine([success, failure, independent])
+
+    assert len(shapes) == 1
+    assert shapes[0].success_count == 1
+    assert shapes[0].failure_count == 0
+    assert not WorkflowShapeMiner().is_skill_ready(shapes[0])
+
+
 def test_user_save_signal_can_create_candidate_shape() -> None:
     bundle = bundle_from_autonomy_proof_packet(
         _proof_packet("run-save"),
@@ -183,6 +227,23 @@ def test_user_save_signal_can_create_candidate_shape() -> None:
     ready = WorkflowShapeMiner().skill_ready_shapes([bundle])
 
     assert len(ready) == 1
+    assert ready[0].explicit_save_count == 1
+
+
+def test_user_save_signal_survives_duplicate_observation() -> None:
+    observed = bundle_from_autonomy_proof_packet(
+        _proof_packet("run-save-later"),
+        intent_category="cleanup",
+        capability_category="cleanup",
+        strategy_id="cleanup",
+        tool_names=["exec"],
+    )
+    explicitly_saved = observed.model_copy(update={"explicit_save": True})
+
+    ready = WorkflowShapeMiner().skill_ready_shapes([observed, explicitly_saved])
+
+    assert len(ready) == 1
+    assert ready[0].success_count == 1
     assert ready[0].explicit_save_count == 1
 
 
