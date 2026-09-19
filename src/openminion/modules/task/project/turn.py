@@ -83,9 +83,13 @@ def project_cycle_prompt(
 ) -> str:
     project_run = checkpoint.project_run
     checkpoint_payload = checkpoint.payload
+    workspace = project_workspace(run.workspace_ref)
     lines = [
         run.goal_text,
         "",
+        f"Workspace root: {workspace}",
+        "Use this workspace for repository tools. Do not infer another workspace "
+        "from the goal text or verification command.",
         f"Current milestone: {milestone}",
         f"Committed cycles: {project_run.committed_cycle_count}",
         "Work on the smallest useful next step. Inspect current state before editing.",
@@ -94,9 +98,10 @@ def project_cycle_prompt(
         "revision_id, and verifier_refs containing that failed tool-call ref. Do not "
         "edit, rerun verification, or complete steps first.",
         "The configured verifier runs the approved verification commands after the "
-        "turn. When the active plan steps are complete, call plan action=complete "
-        "once and end the turn. Do not redeclare a completed plan unless a prior "
-        "verifier failure below explicitly requires reactivation.",
+        "turn. Record step_completed as each plan step finishes. When every plan "
+        "step is complete, call plan action=complete once and end the turn. Do not "
+        "redeclare a completed plan unless a prior verifier failure below explicitly "
+        "requires reactivation.",
         "The configured verifier, not final text, owns project completion.",
     ]
     active_plan = checkpoint_payload.get("task_plan")
