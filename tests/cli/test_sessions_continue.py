@@ -79,3 +79,23 @@ def test_cli_dry_run_writes_nothing(monkeypatch, tmp_path, capsys) -> None:
     assert (
         store.get_events("source", types=["session.continuation.packet_created"]) == []
     )
+
+
+def test_cli_rejects_cross_agent_before_creating_target(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    _seed(store)
+    runtime = _Runtime(store)
+    monkeypatch.setattr(
+        "openminion.cli.commands.sessions.APIRuntime.from_config_path",
+        lambda *args, **kwargs: runtime,
+    )
+
+    assert run_sessions_continue(_args(agent="agent-b")) == 1
+
+    assert "continuation_cross_agent_requires_room_handoff" in capsys.readouterr().err
+    assert [item["session_id"] for item in store.list_sessions()] == ["source"]
+    assert (
+        store.get_events("source", types=["session.continuation.packet_created"]) == []
+    )

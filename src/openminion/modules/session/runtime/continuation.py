@@ -464,6 +464,8 @@ def _preview_inputs(
         raise ContinuationError("continuation_source_agent_missing")
     if not target_agent:
         raise ContinuationError("continuation_target_agent_required")
+    if target_agent != source_agent_id:
+        raise ContinuationError("continuation_cross_agent_requires_room_handoff")
     ttl = expires_in_seconds
     if ttl <= 0 or ttl > MAX_CONTINUATION_TTL_SECONDS:
         raise ContinuationError("invalid_continuation_expiry")

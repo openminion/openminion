@@ -120,6 +120,21 @@ def test_preview_is_side_effect_free_and_create_reconstructs_event(tmp_path) -> 
     )
 
 
+def test_generic_preview_rejects_cross_agent_before_writing(tmp_path) -> None:
+    store = _store(tmp_path)
+    source_id = _seed_source(store)
+    service = SessionContinuationService(store, now_ms=lambda: 10_000)
+    before = store.latest_event_seq(source_id)
+
+    with pytest.raises(
+        ContinuationError,
+        match="continuation_cross_agent_requires_room_handoff",
+    ):
+        service.preview(source_id, target_agent_id="agent-b")
+
+    assert store.latest_event_seq(source_id) == before
+
+
 def test_apply_is_idempotent_and_conflicting_target_is_rejected(tmp_path) -> None:
     store = _store(tmp_path)
     source_id = _seed_source(store)
