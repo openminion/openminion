@@ -49,9 +49,9 @@ _SCENARIOS = (
         "This is durable project work. Propose a project handoff before changing "
         "files. Implement the requested changes in feature.py and CHANGELOG.md, "
         "run `python -m pytest -q`, then delegate one independent read-only review "
-        "to minimax-m2-7-research and explicitly accept, reject, or reassign its "
-        "findings before completion. Use at most 4 iterations and measurable "
-        "success criteria.",
+        "to one exact agent_id returned by agent.list and explicitly accept, reject, "
+        "or reassign its findings before completion. Use at most 4 iterations and "
+        "measurable success criteria.",
     ),
 )
 

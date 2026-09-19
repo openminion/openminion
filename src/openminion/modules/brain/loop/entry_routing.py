@@ -380,15 +380,31 @@ def _entry_coding_decision(
             answer=_internal_failure_answer(),
         )
 
+    arguments = dict(getattr(coding_calls[0], "arguments", {}) or {})
+    project_handoff = arguments.get("project_handoff")
     logger.emit(
         "brain.entry.coding_routed",
-        {"llm_call_id": llm_call_id},
+        {
+            "llm_call_id": llm_call_id,
+            "project_handoff": project_handoff is not None,
+        },
         trace_id=state.trace_id,
     )
     decision = ActDecision(
         confidence=0.5,
         reason_code="entry_coding_tool_call",
         act_profile=BRAIN_ACT_PROFILE_CODING,
+        sub_intents=list(arguments.get("sub_intents", [])),
+        request_readiness=(
+            {
+                "posture": "review_before_act",
+                "requested_outcome": "execute",
+                "state": "needs_plan_review",
+                "project_handoff": project_handoff,
+            }
+            if project_handoff is not None
+            else None
+        ),
     )
     decision._pre_resolved_act_route = _local_route(
         act_profile=BRAIN_ACT_PROFILE_CODING,

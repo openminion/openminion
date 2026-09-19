@@ -466,6 +466,45 @@ def test_unified_entry_coding_control_routes_to_coding_profile(tmp_path: Path) -
     assert getattr(getattr(route, "execution_target", None), "kind", "") == "local"
 
 
+def test_unified_entry_coding_control_preserves_project_handoff(tmp_path: Path) -> None:
+    response = _tool_response(
+        "coding",
+        {
+            "project_handoff": {
+                "goal": "Fix the calculator",
+                "success_criteria": ["Tests pass"],
+                "verification_commands": ["python -m pytest -q"],
+                "max_iterations": 3,
+            },
+            "sub_intents": ["Inspect the failure", "Implement and verify the fix"],
+        },
+    )
+    runner = _build_runner(tmp_path, llm_api=_RecordingEntryLLM(response))
+
+    decision = runner._decide(
+        state=_state("entry-coding-handoff"),
+        user_input="propose a project before changing files",
+        logger=fake_logger(),
+    )
+
+    assert decision.request_readiness is not None
+    assert decision.request_readiness.state == "needs_plan_review"
+    assert decision.request_readiness.project_handoff is not None
+    assert decision.request_readiness.project_handoff.goal == "Fix the calculator"
+    assert decision.sub_intents == [
+        "Inspect the failure",
+        "Implement and verify the fix",
+    ]
+
+
+def test_coding_control_schema_exposes_optional_project_handoff() -> None:
+    schema = coding_tool_spec().input_schema
+
+    assert "project_handoff" in schema["properties"]
+    assert "sub_intents" in schema["properties"]
+    assert "required" not in schema
+
+
 def test_unified_entry_file_write_seed_keeps_model_selected_general_profile(
     tmp_path: Path,
 ) -> None:
