@@ -34,7 +34,8 @@ _SCENARIOS = (
         "verify_once.py`, a "
         "maximum of 4 iterations, and measurable success criteria. The verifier "
         "intentionally fails its first invocation; revise the task plan from that "
-        "evidence, repair if needed, and finish only after verification passes.",
+        "evidence, repair if needed, and finish only after verification passes. "
+        "Use a 10-minute wall-clock limit.",
     ),
     (
         "research-then-code",
@@ -44,7 +45,8 @@ _SCENARIOS = (
         "pyproject.toml before choosing the implementation. Update source_info.py "
         "and source_summary.md with the authoritative URL and a concise finding. "
         f"Use `{_PYTHON} -m pytest -q` as the verification command, at most 4 "
-        "iterations, and finish only after the tests pass.",
+        "iterations, a 10-minute wall-clock limit, and finish only after the tests "
+        "pass.",
     ),
     (
         "delegated-review",
@@ -54,7 +56,7 @@ _SCENARIOS = (
         "one independent read-only review "
         "to one exact agent_id returned by agent.list and explicitly accept, reject, "
         "or reassign its findings before completion. Use at most 4 iterations and "
-        "measurable success criteria.",
+        "a 10-minute wall-clock limit with measurable success criteria.",
     ),
 )
 
@@ -139,6 +141,8 @@ def _resume(probe: FocusProbe, run_id: str, *, iterations: int) -> dict:
         str(iterations),
         "--json",
     ]
+    if probe.allow_unsandboxed_exec:
+        command.insert(3, "--allow-unsandboxed-exec")
     completed = subprocess.run(
         command,
         cwd=probe.openminion_root,

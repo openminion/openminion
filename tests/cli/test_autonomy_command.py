@@ -229,6 +229,7 @@ def test_project_turn_uses_canonical_successful_tool_results_as_progress(
     )
     assert captured_payloads[0]["inbound_metadata"]["conversation_id"] == "project-1"
     assert captured_payloads[0]["inbound_metadata"]["resume"] == "true"
+    assert captured_payloads[0]["target"] == "autonomy"
     assert captured_payloads[0]["timeout_seconds"] == 300
     assert captured_payloads[0]["inbound_metadata"]["turn_timeout_seconds"] == "300"
     assert json.loads(

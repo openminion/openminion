@@ -213,6 +213,7 @@ class RuntimeProjectMixin:
             repository=resolve_project_repository(boundary, handoff.repository or ""),
             require_git_repository=False,
             config_ref=str(self._rt.config_path),
+            turn_target="focus",
             permission_profile_id=self.permission_mode,
             verification_commands=handoff.verification_commands,
             success_criteria=handoff.success_criteria,
