@@ -213,6 +213,7 @@ def test_live_failure_reads_terminal_provider_error(tmp_path) -> None:
 
     assert categories == ["EMPTY_PROVIDER_RESPONSE"]
     assert _failure_disposition(categories) == "provider_residual"
+    assert _failure_disposition(["EMPTY_PAYLOAD"]) == "provider_residual"
 
 
 def test_live_evidence_removes_results_replayed_by_later_turns() -> None:

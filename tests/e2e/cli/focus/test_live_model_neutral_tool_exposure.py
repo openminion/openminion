@@ -180,6 +180,7 @@ def _provider_failure_categories(telemetry_path: Path) -> list[str]:
 
 def _failure_disposition(categories: list[str]) -> str:
     if {
+        "EMPTY_PAYLOAD",
         "EMPTY_PROVIDER_RESPONSE",
         "PROVIDER_ERROR",
         "RATE_LIMITED",
@@ -540,8 +541,6 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         )
         payloads = []
         wall_times_ms = []
-        failure_categories_by_turn: list[list[str]] = []
-        failed_event_count = 0
         for index in range(3):
             if index >= len(prompts):
                 break
@@ -580,9 +579,6 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
                 )
             )
             wall_times_ms.append(round((time.monotonic() - started) * 1000))
-            failure_categories = _provider_failure_categories(telemetry_path)
-            failure_categories_by_turn.append(failure_categories[failed_event_count:])
-            failed_event_count = len(failure_categories)
             if index == 0:
                 research_results = parse_tool_results(
                     _result_metadata(payloads[0]).get("tool_calls_cumulative")
@@ -708,6 +704,14 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         for event in phase_timing
         for attempt in event.get("provider_attempts", [])
     ]
+    failure_categories_by_turn = [
+        [
+            str(attempt["error_code"])
+            for attempt in event.get("provider_attempts", [])
+            if attempt.get("outcome") != "ok" and attempt.get("error_code")
+        ]
+        for event in phase_timing
+    ]
     code_turn_exec_results = [
         item
         for item in (tool_results_by_turn[1] if len(tool_results_by_turn) >= 2 else [])
@@ -770,12 +774,10 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
         else "failed"
     )
     input_tokens = sum(
-        int(metadata.get("total_input_tokens_used", 0) or 0)
-        for metadata in metadata_by_turn
+        int(event.get("provider_input_tokens", 0) or 0) for event in phase_timing
     )
     output_tokens = sum(
-        int(metadata.get("total_output_tokens_used", 0) or 0)
-        for metadata in metadata_by_turn
+        int(event.get("provider_output_tokens", 0) or 0) for event in phase_timing
     )
     _write_json(
         evidence_path,
