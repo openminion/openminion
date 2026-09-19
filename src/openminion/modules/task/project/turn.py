@@ -349,7 +349,10 @@ def project_condition_from_metadata(
         termination = str(
             metadata.get("tool_loop_termination_reason") or ""
         ).strip().lower()
-        if termination == "budget_exhausted":
+        error_code = str(metadata.get("error_code") or "").strip().lower()
+        if termination == "budget_exhausted" or (
+            error_code == "act_adaptive_budget_exhausted"
+        ):
             return AutonomyLoopConditionKind.PRODUCTIVE
         return AutonomyLoopConditionKind.WAITING
     if str(metadata.get("finish_reason") or "").strip().lower() == "error":

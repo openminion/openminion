@@ -12,6 +12,7 @@ from openminion.base.logging import format_structured_event, get_logger
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     select_coding_allowed_tools,
 )
+from openminion.modules.brain.loop.tools.plan_control import PLAN_TOOL_NAME
 from openminion.modules.brain.loop.tools.shortlisting import TOOL_REQUEST_TOOL_NAME
 from openminion.modules.config import resolve_module_data_root, resolve_module_home_root
 from openminion.modules.task import (
@@ -546,6 +547,8 @@ class ProjectWorker:
                     | {TOOL_REQUEST_TOOL_NAME}
                 )
             )
+        if checkpoint.payload.get("plan_revision_required") is True:
+            allowed_tools = (PLAN_TOOL_NAME,)
         request = ProjectTurnRequest(
             run_id=run.run_id,
             project_run_id=project_run.project_run_id,

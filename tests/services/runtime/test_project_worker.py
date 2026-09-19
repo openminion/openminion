@@ -163,7 +163,7 @@ def test_project_turn_budget_rollover_remains_productive() -> None:
                 "error_code": "act_adaptive_budget_exhausted",
             }
         )
-        == AutonomyLoopConditionKind.WAITING
+        == AutonomyLoopConditionKind.PRODUCTIVE
     )
 
 
@@ -1126,6 +1126,7 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
 ) -> None:
     store, manager, run = _project(tmp_path)
     prompts: list[str] = []
+    requests: list[ProjectTurnRequest] = []
     plan = TaskPlan(
         plan_id="plan-1",
         objective="Ship the fixture",
@@ -1144,8 +1145,10 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
         autonomy_store=store,
         turn=lambda request: (
             prompts.append(request.prompt)
+            or requests.append(request)
             or ProjectTurnResult(
                 summary="planned",
+                gateway_run_id="gateway-1",
                 evidence_refs=("artifact:plan",),
                 task_plan=plan,
             )
@@ -1167,6 +1170,7 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
         autonomy_store=store,
         turn=lambda request: (
             prompts.append(request.prompt)
+            or requests.append(request)
             or ProjectTurnResult(
                 summary="repaired",
                 evidence_refs=("artifact:repair",),
@@ -1209,6 +1213,8 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     assert "Omit predecessor_revision_id" in prompts[1]
     assert "verification:prun_" in prompts[1]
     assert "Prior verifier outcome:\nverification failed" in prompts[1]
+    assert requests[0].allowed_tools != ("plan",)
+    assert requests[1].allowed_tools == ("plan",)
     assert (
         build_project_report_from_task(
             manager,

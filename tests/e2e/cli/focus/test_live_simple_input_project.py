@@ -39,8 +39,9 @@ _SCENARIOS = (
     ),
     (
         "research-then-code",
-        "This is durable project work. Before using any execution or research tool, "
-        "propose a project handoff. After approval, call web.search to find and then "
+        "This is durable project work. Your only action in the first turn is to "
+        "propose a project handoff; do not call any execution or research tool in "
+        "that turn. After approval, call web.search to find and then "
         "web.fetch to read the current official PyPA guide for writing "
         "pyproject.toml before choosing the implementation. Update source_info.py "
         "and source_summary.md with the authoritative URL and a concise finding. "

@@ -271,6 +271,43 @@ class RunnerTests(unittest.TestCase):
 
         self.assertEqual(goal_runtime.calls, [("sess-lgmh", runner.session_api)])
 
+    def test_nested_run_restores_outer_turn_telemetry_scope(self) -> None:
+        runner = BrainRunner(profile=_profile(), session_api=MagicMock())
+        output = SimpleNamespace(
+            status="done",
+            response="ok",
+            action_result=None,
+            working_state=WorkingState(
+                session_id="session",
+                agent_id="router-agent",
+                budgets_remaining=BudgetCounters(
+                    ticks=10,
+                    tool_calls=5,
+                    a2a_calls=5,
+                    tokens=1000,
+                    time_ms=10000,
+                ),
+            ),
+        )
+        nested = False
+
+        def run_lifecycle(*_args, **_kwargs):
+            nonlocal nested
+            self.assertTrue(runner._telemetry_turn_active)
+            if not nested:
+                nested = True
+                runner.run(session_id="child", user_input="review")
+                self.assertTrue(runner._telemetry_turn_active)
+            return output
+
+        with unittest.mock.patch(
+            "openminion.modules.brain.runner.coordinator.run_until_idle_runner_lifecycle",
+            side_effect=run_lifecycle,
+        ):
+            runner.run(session_id="parent", user_input="delegate review")
+
+        self.assertFalse(runner._telemetry_turn_active)
+
     def test_idempotency_cache_reuses_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
