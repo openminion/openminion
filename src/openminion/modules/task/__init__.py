@@ -109,6 +109,7 @@ from .runtime.service import (
     TaskNotFoundError,
 )
 from .runtime.lifecycle import (
+    ProjectCycleClaimUnavailable,
     TaskLifecycleRecord,
     TaskLifecycleRepository,
     TaskLifecycleState,
@@ -158,6 +159,7 @@ __all__ = (
     "ProjectCapabilityRow",
     "ProjectCapabilitySupport",
     "ProjectCheckpoint",
+    "ProjectCycleClaimUnavailable",
     "ProjectCycleDecision",
     "ProjectCycleRecord",
     "ProjectMetricComparison",

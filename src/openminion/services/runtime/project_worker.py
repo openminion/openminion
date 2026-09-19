@@ -538,15 +538,11 @@ class ProjectWorker:
         if run.execution_selectors.verification_domain != "research":
             launch_grant = project_policy.repository_project_launch_approved(checkpoint)
             release_grant = project_policy.repository_release_tools_approved(checkpoint)
-            allowed_tools = tuple(
-                sorted(
-                    select_coding_allowed_tools(
-                        project_launch_approved=launch_grant,
-                        release_approved=release_grant,
-                    )
-                    | {TOOL_REQUEST_TOOL_NAME}
-                )
+            requestable_tools = select_coding_allowed_tools(
+                project_launch_approved=launch_grant,
+                release_approved=release_grant,
             )
+            allowed_tools = tuple(sorted(requestable_tools | {TOOL_REQUEST_TOOL_NAME}))
         if checkpoint.payload.get("plan_revision_required") is True:
             allowed_tools = (PLAN_TOOL_NAME,)
         request = ProjectTurnRequest(

@@ -64,8 +64,11 @@ from openminion.modules.task.project.reports import (
     build_project_report_from_task,
     render_project_report,
 )
-from openminion.modules.task import TaskLifecycleState, TaskManager
-from openminion.modules.task.runtime.lifecycle import ProjectCycleClaimUnavailable
+from openminion.modules.task import (
+    ProjectCycleClaimUnavailable,
+    TaskLifecycleState,
+    TaskManager,
+)
 from openminion.modules.task.constants import (
     DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
     DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
