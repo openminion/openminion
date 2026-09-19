@@ -65,6 +65,7 @@ from openminion.modules.task.project.reports import (
     render_project_report,
 )
 from openminion.modules.task import TaskLifecycleState, TaskManager
+from openminion.modules.task.runtime.lifecycle import ProjectCycleClaimUnavailable
 from openminion.modules.task.constants import (
     DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
     DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
@@ -348,6 +349,13 @@ def _execute_project(
     remaining = max(1, budget.remaining["iterations"])
     try:
         result = worker.run(run.run_id, max_cycles=remaining)
+    except ProjectCycleClaimUnavailable:
+        return ProjectWorkerResult(
+            run=store.require(run.run_id),
+            project_run=checkpoint.project_run,
+            decision=ProjectCycleDecision.CONTINUE,
+            verification=(),
+        )
     except Exception as exc:
         error_info = error_info_from_exception(exc, default_code=type(exc).__name__)
         failed = store.transition(
