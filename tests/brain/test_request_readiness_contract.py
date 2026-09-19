@@ -236,6 +236,7 @@ def test_llm_decision_guidance_names_request_readiness_contract() -> None:
 
     assert "Decision.request_readiness" in guidance
     assert "answer_only" in guidance
+    assert "before any execution tool call" in guidance
     assert (
         _build_request_readiness_guidance_message(
             purpose="act",
