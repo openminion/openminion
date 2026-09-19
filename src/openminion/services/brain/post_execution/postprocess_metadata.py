@@ -142,7 +142,9 @@ def _attach_session_task_plan_metadata(
         "task_plan.declared", "task_plan.revised", "task_plan.step_completed",
         "task_plan.step_blocked", "task_plan.abandoned", "task_plan.completed",
     ):
-        events = session_api.list_events(session_id, event_type=event_type, trace_id=request_id)
+        events = session_api.list_events(
+            session_id, event_type=event_type, trace_id=request_id
+        )
         if not events:
             continue
         if event_type == "task_plan.revised":
