@@ -479,7 +479,7 @@ def test_format_blocking_tool_message() -> None:
         reason="not allowed",
         termination_reason="disallowed_tool",
     )
-    assert msg.role == "tool"
+    assert msg.role == "system"
     import json
 
     payload = json.loads(msg.content)
