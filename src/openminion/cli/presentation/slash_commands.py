@@ -37,6 +37,11 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "/sessions", "List sessions", ("/sessions", "/session"), aliases=("/session",)
     ),
     SlashCommandMetadata(
+        "/room",
+        "Create or open a collaboration room",
+        ("/room", "/room create", "/room open"),
+    ),
+    SlashCommandMetadata(
         "/participants", "Show room participants and routing", ("/participants",)
     ),
     SlashCommandMetadata(

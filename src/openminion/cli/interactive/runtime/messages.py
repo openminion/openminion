@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, Mapping, 
 from uuid import uuid4
 
 from openminion.base.types import Message
+from openminion.cli.interactive.runtime.agent_sidebar import build_session_sidebar_item
 from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
 from openminion.cli.presentation.tool.formatting import tool_call_body
 from openminion.api.queries.sessions import (
@@ -62,6 +63,10 @@ class RuntimeMessageMixin:
         def _wrap_progress_callback(
             self, callback: Callable[[dict[str, Any]], None] | None
         ) -> Callable[[dict[str, Any]], None]: ...
+
+        def bind_session(self, session_id: str) -> None: ...
+
+        def list_sessions(self, *, scope: str = "all") -> list[Any]: ...
 
     def is_room_session(self) -> bool:
         session = self._rt.sessions.get_session(self.session_id)
@@ -145,6 +150,89 @@ class RuntimeMessageMixin:
                 f"{participant.participant_id} [{participant.role}]{active}"
             )
         return "\n".join(lines)
+
+    def list_room_sessions(self) -> list[Any]:
+        items: list[Any] = []
+        for session in self._rt.sessions.list_sessions(limit=50):
+            if not is_room_session_key(str(session.session_key or "")):
+                continue
+            if (
+                self._rt.sessions.get_participant(session.id, "agent", self.agent_id)
+                is None
+            ):
+                continue
+            items.append(
+                build_session_sidebar_item(
+                    self, session, active_session_id=self.session_id
+                )
+            )
+        return items
+
+    def create_room_session(
+        self,
+        *,
+        name: str,
+        local_human_id: str,
+        agent_ids: list[str],
+    ) -> str:
+        room_name = str(name or "").strip()
+        human_id = normalize_identity(local_human_id)
+        agents = [str(agent_id or "").strip() for agent_id in agent_ids]
+        if not room_name:
+            raise ValueError("room name is required")
+        if not human_id:
+            raise ValueError("local human id is required")
+        if not agents or any(not agent_id for agent_id in agents):
+            raise ValueError("at least one agent id is required")
+        if len(set(agents)) != len(agents):
+            raise ValueError("duplicate agent id")
+        unknown = next(
+            (agent_id for agent_id in agents if agent_id not in self._rt.config.agents),
+            None,
+        )
+        if unknown:
+            raise ValueError(f"Unknown configured agent: {unknown}")
+
+        room = self._rt.sessions.create_room(
+            channel=self._channel,
+            target=room_name,
+            metadata={
+                "name": room_name,
+                "local_human_id": human_id,
+                "room_routing_mode": "addressed",
+                "working_dir": self._working_dir or "",
+            },
+        )
+        self._rt.sessions.add_participant(
+            session_id=room.id,
+            participant_type="human",
+            participant_id=human_id,
+            channel=room.channel,
+            role="owner",
+            display_name=human_id,
+        )
+        for agent_id in agents:
+            self._rt.sessions.add_participant(
+                session_id=room.id,
+                participant_type="agent",
+                participant_id=agent_id,
+                channel=room.channel,
+                role="participant",
+                display_name=agent_id,
+            )
+        self._rt.sessions.set_active_agent(session_id=room.id, agent_id=agents[0])
+        self.bind_session(room.id)
+        return room.id
+
+    def open_room_session(self, session_id: str) -> str:
+        room_id = str(session_id or "").strip()
+        room = self._rt.sessions.get_session(room_id)
+        if room is None or not is_room_session_key(str(room.session_key or "")):
+            raise ValueError(f"Room not found: {room_id}")
+        if self._rt.sessions.get_participant(room_id, "agent", self.agent_id) is None:
+            raise RuntimeError("current agent is not an active room participant")
+        self.bind_session(room_id)
+        return room_id
 
     def room_invite_agent(self, agent_id: str) -> Any:
         session, _actor = self._room_owner()

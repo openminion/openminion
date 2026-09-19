@@ -78,15 +78,26 @@ def runtime_message_stream(
     return runtime.send_message(text, **kwargs)
 
 
-def handle_room_slash(
+async def handle_room_slash(
     cmd: str,
     args: str,
     *,
     runtime: Any,
     console: Console,
+    transcript: TerminalTranscript,
+    overlay: TerminalOverlayPresenter,
 ) -> None:
     parts = str(args or "").split()
     try:
+        if cmd == "/room":
+            await _handle_room_session(
+                parts,
+                runtime=runtime,
+                console=console,
+                transcript=transcript,
+                overlay=overlay,
+            )
+            return
         if cmd == "/participants":
             body = runtime.room_participants_report()
         elif cmd == "/invite":
@@ -128,6 +139,65 @@ def handle_room_slash(
     except (RuntimeError, ValueError) as exc:
         body = f"{cmd}: {exc}"
     console.print(Text(body, style=token_rich_style(StyleToken.SYSTEM)))
+
+
+async def _handle_room_session(
+    parts: list[str],
+    *,
+    runtime: Any,
+    console: Console,
+    transcript: TerminalTranscript,
+    overlay: TerminalOverlayPresenter,
+) -> None:
+    action = parts[0].lower() if parts else ""
+    if action not in {"", "create", "open", "resume"} or len(parts) > 1:
+        raise ValueError("usage: /room [create|open]")
+
+    rooms = list(runtime.list_room_sessions())
+    if not action:
+        choices: list[Any] = [{"id": "create", "label": "Create a new room"}]
+        choices.extend(rooms)
+        selected = str(overlay.present_resume_picker(choices) or "").strip()
+        if not selected:
+            console.print(Text("(room selection cancelled)", style=_MUTED_ITALIC_STYLE))
+            return
+        action = "create" if selected == "create" else "open"
+        selected_room_id = selected
+    else:
+        selected_room_id = ""
+
+    if action == "create":
+        name = await overlay.present_prompt_async("Room name (Enter to cancel): ")
+        if not name:
+            return
+        human_id = await overlay.present_prompt_async(
+            "Your room identity (Enter to cancel): "
+        )
+        if not human_id:
+            return
+        default_agent = str(getattr(runtime, "agent_id", "") or "")
+        agents = await overlay.present_prompt_async(
+            f"Agent IDs, comma-separated [{default_agent}]: "
+        )
+        if agents is None:
+            return
+        agent_ids = [item.strip() for item in agents.split(",") if item.strip()]
+        room_id = runtime.create_room_session(
+            name=name,
+            local_human_id=human_id,
+            agent_ids=agent_ids or [default_agent],
+        )
+        transcript.clear_messages()
+        console.print(Text(f"(created room: {room_id})", style=_MUTED_ITALIC_STYLE))
+        return
+
+    if not selected_room_id:
+        selected_room_id = str(overlay.present_resume_picker(rooms) or "").strip()
+    if not selected_room_id:
+        return
+    room_id = runtime.open_room_session(selected_room_id)
+    transcript.set_messages(list(runtime.get_current_history() or []))
+    console.print(Text(f"(opened room: {room_id})", style=_MUTED_ITALIC_STYLE))
 
 
 def start_new_session(

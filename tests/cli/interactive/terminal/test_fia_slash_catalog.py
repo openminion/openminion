@@ -42,6 +42,9 @@ class _StubOverlay:
     def present_approval(self, _prompt: str) -> str:
         return "deny"
 
+    def present_resume_picker(self, _sessions: list[object]) -> None:
+        return None
+
 
 class _ResumeOverlay:
     def __init__(self, choice: str) -> None:
@@ -51,6 +54,14 @@ class _ResumeOverlay:
     def present_resume_picker(self, sessions: list[object]) -> str:
         self.items = sessions
         return self.choice
+
+
+class _RoomOverlay(_StubOverlay):
+    def __init__(self, *answers: str | None) -> None:
+        self.answers = list(answers)
+
+    async def present_prompt_async(self, _prompt: str) -> str | None:
+        return self.answers.pop(0)
 
 
 class _VisibleRuntime:
@@ -103,6 +114,9 @@ class _VisibleRuntime:
         return [{"id": "demo-skill"}]
 
     def list_sessions(self) -> list[object]:
+        return []
+
+    def list_room_sessions(self) -> list[object]:
         return []
 
     def list_agents(self) -> list[object]:
@@ -194,6 +208,15 @@ class _HelpSafetyRuntime(_VisibleRuntime):
     def list_agents(self) -> list[object]:
         self.list_agents_calls += 1
         return []
+
+
+class _RoomRuntime(_VisibleRuntime):
+    def __init__(self) -> None:
+        self.created: list[dict[str, object]] = []
+
+    def create_room_session(self, **kwargs: object) -> str:
+        self.created.append(dict(kwargs))
+        return "room-1"
 
 
 def _run_prompt_slash(
@@ -384,6 +407,50 @@ def test_terminal_room_invite_rejects_agent_role_operand() -> None:
     )
 
     assert "usage: /invite agent <id>" in buf.getvalue()
+
+
+def test_terminal_room_create_collects_inputs_before_write() -> None:
+    runtime = _RoomRuntime()
+    console = Console(file=io.StringIO(), force_terminal=False, width=160)
+    transcript = TerminalTranscript(console)
+
+    asyncio.run(
+        _handle_slash(
+            "/room create",
+            runtime=runtime,
+            console=console,
+            transcript=transcript,
+            overlay=_RoomOverlay("Review room", "local-human", "alpha,beta"),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert runtime.created == [
+        {
+            "name": "Review room",
+            "local_human_id": "local-human",
+            "agent_ids": ["alpha", "beta"],
+        }
+    ]
+
+
+def test_terminal_room_create_cancel_writes_nothing() -> None:
+    runtime = _RoomRuntime()
+
+    asyncio.run(
+        _handle_slash(
+            "/room create",
+            runtime=runtime,
+            console=Console(file=io.StringIO(), force_terminal=False, width=160),
+            transcript=TerminalTranscript(Console(file=io.StringIO())),
+            overlay=_RoomOverlay(None),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert runtime.created == []
 
 
 def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> None:

@@ -97,6 +97,27 @@ class _FakeSessions:
         self._metadata.setdefault(sid, dict(metadata or {}))
         return record
 
+    def create_room(
+        self,
+        *,
+        channel: str,
+        target: str,
+        metadata: dict[str, object] | None = None,
+    ) -> _SessionRecord:
+        self._counter += 1
+        session_id = f"room-{self._counter:03d}"
+        record = _SessionRecord(
+            id=session_id,
+            channel=channel,
+            target=target,
+            session_key=f"room:{session_id}",
+            metadata=dict(metadata or {}),
+        )
+        self._by_id[session_id] = record
+        self._messages[session_id] = []
+        self._metadata[session_id] = dict(metadata or {})
+        return record
+
     def update_session_metadata(
         self, *, session_id: str, patch: dict[str, object]
     ) -> _SessionRecord:
@@ -633,6 +654,40 @@ def test_room_session_is_hidden_from_uninvited_agent_surface() -> None:
     focus_rt._agent_id = "beta"
 
     assert focus_rt.list_sessions(scope="current_agent") == []
+
+
+def test_focus_creates_and_reopens_room_through_session_owner() -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.create_new_session()
+
+    room_id = focus_rt.create_room_session(
+        name="Review room",
+        local_human_id="local-human",
+        agent_ids=["alpha", "beta"],
+    )
+
+    room = rt.sessions.get_session(room_id)
+    assert room is not None
+    assert room.metadata["name"] == "Review room"
+    assert room.metadata["local_human_id"] == "local-human"
+    assert room.active_agent_id == "alpha"
+    assert [item.id for item in focus_rt.list_room_sessions()] == [room_id]
+    assert focus_rt.open_room_session(room_id) == room_id
+    assert focus_rt.session_id == room_id
+
+
+def test_focus_room_creation_rejects_unknown_agent_before_write() -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    before = [item.id for item in rt.sessions.list_sessions(limit=100)]
+
+    with pytest.raises(ValueError, match="Unknown configured agent"):
+        focus_rt.create_room_session(
+            name="Review room",
+            local_human_id="local-human",
+            agent_ids=["missing"],
+        )
+
+    assert [item.id for item in rt.sessions.list_sessions(limit=100)] == before
 
 
 def test_room_owner_mutations_use_configured_agents_and_bounded_roles() -> None:

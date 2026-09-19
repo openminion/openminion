@@ -662,12 +662,21 @@ async def _handle_slash(
     if cmd == "/agents":
         _handle_slash_agents(text, runtime=runtime, console=console)
         return False
-    if cmd in {"/participants", "/invite", "/kick", "/activate", "/routing"}:
-        handle_room_slash(
+    if cmd in {
+        "/room",
+        "/participants",
+        "/invite",
+        "/kick",
+        "/activate",
+        "/routing",
+    }:
+        await handle_room_slash(
             cmd,
             _slash_arg(text),
             runtime=runtime,
             console=console,
+            transcript=transcript,
+            overlay=overlay,
         )
         return False
     if cmd == "/readonly":
