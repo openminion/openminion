@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -64,7 +64,7 @@ class TrustTransitionError(ValueError):
 
 
 def execution_trust_diagnostic(
-    *, skill_id: str, shape_id: str, lifecycle_facts: dict[str, object]
+    *, skill_id: str, shape_id: str, lifecycle_facts: dict[str, Any]
 ) -> SkillExecutionTrustDiagnostic:
     has_facts = bool(
         lifecycle_facts.get("active_version_hash")

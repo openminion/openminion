@@ -43,7 +43,7 @@ class ReplayGateError(ValueError):
 
 
 def proposal_draft_hash(proposal: SkillProposal) -> str:
-    return stable_hash(proposal.proposed_skill_definition.model_dump(mode="json"))
+    return str(stable_hash(proposal.proposed_skill_definition.model_dump(mode="json")))
 
 
 def require_replay_passed(proof: ReplayProof, proposal: SkillProposal) -> None:
