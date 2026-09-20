@@ -3,8 +3,7 @@ from typing import Any, Optional, cast
 import logging
 
 from openminion.base.channel import ChannelRegistry
-from openminion.base.config import AgentProfileConfig, OpenMinionConfig
-from openminion.base.config import ConfigManager
+from openminion.base.config import AgentProfileConfig, ConfigManager, OpenMinionConfig
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.artifact.refs import create_default_artifactctl
@@ -20,9 +19,7 @@ from openminion.services.agent.memory.gateway_adapter import (
     DisabledMemoryGatewayAdapter,
     MemoryServiceGatewayAdapter,
 )
-from openminion.modules.memory.smoke import (
-    EphemeralMemorySmokeProvider,
-)
+from openminion.modules.memory.smoke import EphemeralMemorySmokeProvider
 from openminion.modules.context.knowledge import (
     KNOWLEDGE_GRAPHS_CONFIG_KEY,
     KnowledgeGraphProviderFactory,
@@ -79,6 +76,7 @@ from openminion.modules.runtime.sandboxes.daytona import (
     DaytonaClient,
     DaytonaConfig,
     DaytonaRunner,
+    DaytonaSdkTransport,
 )
 from openminion.services.runtime.errors import (
     PluginActivationError,
@@ -139,7 +137,9 @@ def build_daytona_runner(
     daytona_config = DaytonaConfig.from_environment(merged_env)
     if daytona_config is None:
         return None
-    return DaytonaRunner(client=DaytonaClient(config=daytona_config))
+    return DaytonaRunner(
+        client=DaytonaClient(config=daytona_config, transport=DaytonaSdkTransport())
+    )
 
 
 def build_tool_authoring_service(

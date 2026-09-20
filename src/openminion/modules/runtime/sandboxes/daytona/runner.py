@@ -1,5 +1,6 @@
 from typing import Any
 import uuid
+from pathlib import Path
 
 from openminion.base.runtime.interfaces import RUNTIME_INTERFACE_VERSION
 from openminion.base.runtime.runners import (
@@ -59,13 +60,18 @@ class DaytonaRunner:
         real_cwd = _check_cwd(cwd, sandbox.workspace_root)
         filtered_env = _filter_exec_env(spec.env, allowlist=sandbox.env_allowlist)
         workspace = self._create_workspace_for_exec(sandbox=sandbox)
+        command = list(spec.cmd)
+        if Path(command[0]).name.startswith("python"):
+            command[0] = "python3"
+        remote_root = str(workspace.metadata.get("root_dir") or "")
+        remote_cwd = remote_root if remote_root else real_cwd
         try:
             if not self._client.connected:
                 self._client.open()
             result = self._client.execute_command(
                 workspace_id=workspace.workspace_id,
-                command=list(spec.cmd),
-                cwd=real_cwd,
+                command=command,
+                cwd=remote_cwd,
                 env=filtered_env,
                 env_allowlist=sandbox.env_allowlist,
                 timeout_s=sandbox.timeout_s,
