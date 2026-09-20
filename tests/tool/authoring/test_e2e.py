@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
+import base64
 import json
 from pathlib import Path
 import tempfile
@@ -11,7 +12,6 @@ from openminion.base.config import OpenMinionConfig, save_config
 from openminion.cli.commands.tool_control import run_toolctl
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool import ToolExecutionContext
-from openminion.tools.tool_authoring.runner import execute_tool_file
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -24,7 +24,7 @@ class _EndToEndSandboxRunner:
     def run_exec(self, spec, sandbox):
         self.calls.append((spec, sandbox))
         command = list(getattr(spec, "cmd", []) or [])
-        if "-c" in command:
+        if "pytest.main" in str(command[2]):
             self.test_runs += 1
             return Namespace(
                 returncode=0,
@@ -34,15 +34,12 @@ class _EndToEndSandboxRunner:
                 timed_out=False,
             )
         self.invoke_runs += 1
-        tool_file = str(command[command.index("--tool-file") + 1])
-        entry_function = str(command[command.index("--entry-function") + 1])
-        raw_args = str(command[command.index("--args-json") + 1])
-        payload = json.loads(raw_args or "{}")
-        result = execute_tool_file(
-            tool_file=tool_file,
-            entry_function=entry_function,
-            arguments=dict(payload),
-        )
+        namespace: dict[str, object] = {}
+        source = base64.b64decode(command[3]).decode("utf-8")
+        exec(compile(source, "tool_impl.py", "exec"), namespace)
+        function = namespace[str(command[4])]
+        payload = json.loads(str(command[5]) or "{}")
+        result = {"ok": True, "result": function(**payload)}
         return Namespace(
             returncode=0,
             stdout=json.dumps(result),
