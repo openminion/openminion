@@ -302,6 +302,15 @@ def test_turn_response_boundary_waits_for_done_on_chat_turn() -> None:
     )
 
 
+def test_turn_response_boundary_accepts_usage_after_done() -> None:
+    previous = "❯ "
+    current = previous + "● hello\nDone in 19s · 17.3k tokens\n"
+
+    assert _turn_response_boundary_detected_since(
+        previous, current, require_turn_done=True
+    )
+
+
 def test_runner_module_has_cli_entrypoint() -> None:
     source = inspect.getsource(runner)
     assert 'if __name__ == "__main__"' in source

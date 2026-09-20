@@ -63,7 +63,10 @@ def test_probe_waits_for_real_prompt_boundary_after_echoed_input() -> None:
     assert transcript.count("[probe|agent] you> ") >= 3
 
 
-@pytest.mark.parametrize("done_line", ("Done in 9s\n", "Done in 1m10s\n"))
+@pytest.mark.parametrize(
+    "done_line",
+    ("Done in 9s\n", "Done in 1m10s\n", "Done in 19s · 17.3k tokens\n"),
+)
 def test_probe_detects_turn_done_duration_boundaries(done_line: str) -> None:
     assert probe_runner._turn_response_boundary_detected(done_line)
 
