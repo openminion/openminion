@@ -190,6 +190,8 @@ def _append_tool_result_payload(
     call_id: str,
     tool_name: str,
     action_result: ActionResult,
+    turn_scope_id: str,
+    job_pending: bool,
 ) -> None:
     scratchpad = dict(loop_state.scratchpad or {})
     results = [
@@ -198,11 +200,15 @@ def _append_tool_result_payload(
         if isinstance(item, dict)
     ]
     results.append(
-        _tool_result_payload_from_action(
-            call_id=call_id,
-            tool_name=tool_name,
-            action_result=action_result,
-        )
+        {
+            **_tool_result_payload_from_action(
+                call_id=call_id,
+                tool_name=tool_name,
+                action_result=action_result,
+            ),
+            "turn_scope_id": turn_scope_id,
+            "job_pending": job_pending,
+        }
     )
     scratchpad["adaptive.tool_results"] = results
     loop_state.scratchpad = scratchpad

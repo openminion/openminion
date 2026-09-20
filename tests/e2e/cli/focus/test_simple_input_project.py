@@ -482,10 +482,10 @@ def test_focus_project_handoff_consumes_conversation_scoped_state(
 
     assert "Project queued:" in result
     assert len(cron.jobs) == 1
-    run = AutonomyRunStore(
-        root=resolve_autonomy_state_root(runtime._rt.home_root)
-    ).list_runs()[0]
-    assert run.execution_selectors.turn_target == "focus"
+    store = AutonomyRunStore(root=resolve_autonomy_state_root(runtime._rt.home_root))
+    runs = store.list_runs()
+    assert len(runs) == 1 and runs[0].session_id == runtime.session_id
+    assert runs[0].execution_selectors.turn_target == "focus"
 
 
 @pytest.mark.parametrize("approved", [False, None])

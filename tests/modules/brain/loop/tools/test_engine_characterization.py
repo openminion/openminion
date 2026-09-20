@@ -1235,7 +1235,12 @@ class TestAppendToolResultPayload:
         st = AdaptiveToolLoopState(messages=[])
         ar = ActionResult(command_id="x", status="success", summary="ok")
         _append_tool_result_payload(
-            st, call_id="call-x", tool_name="file.read", action_result=ar
+            st,
+            call_id="call-x",
+            tool_name="file.read",
+            action_result=ar,
+            turn_scope_id="current-turn",
+            job_pending=False,
         )
         assert len(st.scratchpad["adaptive.tool_results"]) == 1
         assert st.scratchpad["adaptive.tool_results"][0]["call_id"] == "call-x"

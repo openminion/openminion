@@ -230,6 +230,8 @@ def execute_iteration_results(
             call_id=tool_call.id,
             tool_name=tool_name,
             action_result=action_result,
+            turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+            job_pending=command_outcome.job is not None,
         )
         _record_plan_family_call(
             loop_state, tool_name=tool_name, action_result=action_result
@@ -243,12 +245,10 @@ def execute_iteration_results(
         )
         action_results.append(action_result)
 
-    iter_tc_idx = 0
     for result_index, (tool_call, command_outcome) in enumerate(ordered_tool_results):
         tool_name = tool_call.name.strip()
-        iter_tc_cache_hit = iter_tc_idx in cached_indices
+        iter_tc_cache_hit = result_index in cached_indices
         iter_tc_parallel = not iter_tc_cache_hit and iter_batch_parallel_count > 0
-        iter_tc_idx += 1
         set_turn_progress(
             loop_state,
             llm_call_count=loop_state.llm_calls,
