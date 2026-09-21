@@ -15,7 +15,6 @@ from openminion.modules.skill.cli_admission import (
 )
 from openminion.modules.skill.learning.cli_args import (
     parse_criterion_args,
-    replay_proof_from_args,
 )
 from openminion.cli.identity.operator import local_operator_id
 from openminion.modules.skill.runtime.skill import Skill
@@ -35,7 +34,6 @@ from openminion.modules.storage.module_cli import (
     run_module_storage_command,
 )
 
-_REPLAY_STATUS_CHOICES = ("passed", "failed", "blocked", "skipped")
 _LEARNING_COMMANDS = frozenset(
     {
         "learning-scan",
@@ -393,35 +391,16 @@ def _add_learning_subcommands(sub: Any) -> None:
 
     learning_replay = sub.add_parser(
         "learning-replay-proof",
-        help="Emit a deterministic replay proof payload.",
+        help="Retain an evaluator-owned replay result artifact.",
     )
     learning_replay.add_argument("--proposal-id", required=True)
-    learning_replay.add_argument("--shape-id", required=True)
-    learning_replay.add_argument("--proof-id", required=True)
-    learning_replay.add_argument("--candidate-hash", required=True)
-    learning_replay.add_argument("--evaluator-id", required=True)
     learning_replay.add_argument("--result-ref", required=True)
-    learning_replay.add_argument(
-        "--status", required=True, choices=_REPLAY_STATUS_CHOICES
-    )
-    learning_replay.add_argument("--evidence", default="")
 
     learning_apply = sub.add_parser(
         "learning-apply-proved",
-        help="Apply an accepted proposal only when replay proof passed.",
+        help="Apply an accepted proposal with its retained replay proof.",
     )
     learning_apply.add_argument("--proposal-id", required=True)
-    learning_apply.add_argument("--shape-id", required=True)
-    learning_apply.add_argument("--proof-id", required=True)
-    learning_apply.add_argument("--candidate-hash", required=True)
-    learning_apply.add_argument("--evaluator-id", required=True)
-    learning_apply.add_argument("--result-ref", required=True)
-    learning_apply.add_argument(
-        "--proof-status",
-        required=True,
-        choices=_REPLAY_STATUS_CHOICES,
-    )
-    learning_apply.add_argument("--evidence", default="")
 
     learning_trust = sub.add_parser(
         "learning-trust-status",
@@ -862,17 +841,21 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     if args.cmd == "learning-replay-proof":
-        proof = replay_proof_from_args(
-            proposal_id=args.proposal_id,
-            shape_id=args.shape_id,
-            proof_id=args.proof_id,
-            candidate_hash=args.candidate_hash,
-            evaluator_id=args.evaluator_id,
-            result_ref=args.result_ref,
-            status=args.status,
-            evidence=args.evidence,
-        )
-        _print_json({"ok": True, "proof": proof.model_dump(mode="json")})
+        from openminion.modules.artifact.control import ArtifactCtl
+        from openminion.modules.artifact.errors import ArtifactCtlError
+        from openminion.modules.skill.proposal.queue import record_replay_proof
+
+        try:
+            with ArtifactCtl({}) as artifactctl:
+                retained = record_replay_proof(
+                    ctl.store,
+                    proposal_id=args.proposal_id,
+                    result_ref=args.result_ref,
+                    artifactctl=artifactctl,
+                )
+        except (ArtifactCtlError, ValueError) as exc:
+            raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
+        _print_json({"ok": True, "proof": retained})
         return
 
     if args.cmd == "learning-apply-proved":
@@ -895,22 +878,11 @@ def _dispatch_learning_apply_proved(ctl: Skill, args: argparse.Namespace) -> Non
     from openminion.modules.skill.learning import apply_proposal_with_replay
     from openminion.modules.skill.learning.replay import ReplayGateError
 
-    proof = replay_proof_from_args(
-        proposal_id=args.proposal_id,
-        shape_id=args.shape_id,
-        proof_id=args.proof_id,
-        candidate_hash=args.candidate_hash,
-        evaluator_id=args.evaluator_id,
-        result_ref=args.result_ref,
-        status=args.proof_status,
-        evidence=args.evidence,
-    )
     try:
         addition = apply_proposal_with_replay(
             ctl.store,
             proposal_id=args.proposal_id,
             current_catalog=ctl.list_skills({}) or [],
-            replay_proof=proof,
         )
     except (ReplayGateError, ValueError) as exc:
         raise SkillError("INVALID_ARGUMENT", str(exc)) from exc

@@ -7,6 +7,17 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Current package line - 2026-09-21
 
+- Streamline provider onboarding and remote sandbox startup while preserving
+  explicit provider configuration and SDK transport boundaries.
+- Preserve collaborative task-plan continuity across Focus room restarts,
+  checkpoints, transcript recovery, and resumed execution.
+- Retain durable replay proof for learned-skill proposals, including exact
+  evidence and inspection records across storage and delivery.
+- Keep packaged Windows console handling active through lifecycle and PID-file
+  cleanup so foreground daemon shutdown completes deterministically.
+
+## Prior package line - 2026-09-21
+
 - Complete graceful shutdown for the packaged Windows daemon through native
   console events, including deterministic PID-file cleanup.
 

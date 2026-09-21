@@ -98,12 +98,12 @@ def test_primary_provider_menu_includes_local_ollama() -> None:
         "openai",
         "anthropic",
         "openrouter",
-        "cortensor-portal",
         "minimax",
         "ollama",
     }
     assert "ollama" not in more_ids
     assert "cortensor-router" in more_ids
+    assert "cortensor-portal" in more_ids
     assert "cortensor" not in first_ids | more_ids
     assert {
         "kimi",

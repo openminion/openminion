@@ -17,7 +17,7 @@ from openminion.api.operations.session_continuations import (
     resolve_session_continuation_store,
 )
 from openminion.modules.session import SessionContinuationService
-from openminion.modules.session.schemas import RoomHandoffBinding
+from openminion.modules.session.schemas import ContinuationPreview, RoomHandoffBinding
 from openminion.modules.storage import (
     is_room_session_key,
     normalize_identity,
@@ -302,6 +302,22 @@ class RuntimeMessageMixin:
         owned_store = getattr(self._rt, "session_continuation_store", None) is None
         try:
             preview = SessionContinuationService(store).preview_room_handoff(binding)
+            exposure = self._rt.tool_exposure_status(
+                session_id=session.id,
+                target_id=binding.source_agent_id,
+            )
+            active_profiles = sorted(
+                str(profile.get("profile_id") or "")
+                for profile in exposure.get("profiles", [])
+                if profile.get("active") and profile.get("profile_id")
+            )
+            preview = preview.model_copy(
+                update={
+                    "payload": preview.payload.model_copy(
+                        update={"tool_profile_ids": active_profiles}
+                    )
+                }
+            )
         finally:
             if owned_store:
                 store.close()
@@ -312,6 +328,7 @@ class RuntimeMessageMixin:
 
     def apply_room_handoff(self, preview_payload: Mapping[str, Any]) -> dict[str, Any]:
         binding = RoomHandoffBinding.model_validate(preview_payload.get("binding"))
+        preview = ContinuationPreview.model_validate(preview_payload.get("preview"))
         session, _actor = self._room_owner()
         if binding.room_session_id != session.id:
             raise ValueError("room handoff preview is stale")
@@ -322,22 +339,46 @@ class RuntimeMessageMixin:
             is None
         ):
             raise ValueError("room handoff target is no longer active")
-
-        self._rt.sessions.resolve_session(
-            agent_id=binding.target_agent_id,
-            channel=self._channel,
-            target=self._target,
-            session_id=binding.target_session_id,
-        )
         store = resolve_session_continuation_store(self._rt)
         owned_store = getattr(self._rt, "session_continuation_store", None) is None
         try:
+            service = SessionContinuationService(store)
+            current = service.preview_room_handoff(binding).payload
+            if current.permission_refs != preview.payload.permission_refs:
+                raise ValueError("room handoff permissions changed after preview")
+            source_exposure = self._rt.tool_exposure_status(
+                session_id=session.id,
+                target_id=binding.source_agent_id,
+            )
+            source_profiles = {
+                str(profile.get("profile_id") or "")
+                for profile in source_exposure.get("profiles", [])
+                if profile.get("active") and profile.get("profile_id")
+            }
+            if source_profiles != set(preview.payload.tool_profile_ids):
+                raise ValueError("room handoff tool profiles changed after preview")
+            target_exposure = self._rt.tool_exposure_status(
+                session_id=binding.target_session_id,
+                target_id=binding.target_agent_id,
+            )
+            target_profiles = {
+                str(profile.get("profile_id") or "")
+                for profile in target_exposure.get("profiles", [])
+                if profile.get("active") and profile.get("profile_id")
+            }
+            if not target_profiles.issubset(source_profiles):
+                raise ValueError("room handoff target has wider tool profiles")
+            self._rt.sessions.resolve_session(
+                agent_id=binding.target_agent_id,
+                channel=self._channel,
+                target=self._target,
+                session_id=binding.target_session_id,
+            )
             if store.get_session(binding.target_session_id) is None:
                 store.create_session(
                     session_id=binding.target_session_id,
                     initial_agent_id=binding.target_agent_id,
                 )
-            service = SessionContinuationService(store)
             built = service.create_room_handoff(binding)
             assert built.packet is not None
             applied = service.apply(

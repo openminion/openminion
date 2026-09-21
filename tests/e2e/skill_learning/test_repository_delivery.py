@@ -4,13 +4,19 @@ from pathlib import Path
 
 import pytest
 
-from openminion.modules.skill.learning import ReplayProof, apply_proposal_with_replay
+from openminion.modules.artifact.control import ArtifactCtl
+from openminion.modules.skill.learning import (
+    ReplayEvaluationResult,
+    ReplayProof,
+    apply_proposal_with_replay,
+)
 from openminion.modules.skill.learning.replay import proposal_draft_hash
 from openminion.modules.skill.proposal import SkillProposal, SkillProposalDraft
 from openminion.modules.skill.proposal.queue import (
     create_proposal,
     get_proposal,
     record_proposal_review,
+    record_replay_proof,
 )
 from openminion.modules.skill.runtime.skill import Skill
 from openminion.modules.skill.storage import SQLiteSkillStore
@@ -84,20 +90,46 @@ def test_repository_delivery_review_replay_apply_and_manual_use(tmp_path: Path) 
                 },
             ],
         )
+        proof = ReplayProof(
+            proof_id=f"repository-delivery-replay:{version_hash}",
+            proposal_id=proposal.proposal_id,
+            shape_id="task-shape:repository-delivery",
+            candidate_hash=proposal_draft_hash(proposal),
+            evaluator_id="repository-delivery-evaluator",
+            result_ref=artifact_ref,
+            status="passed",
+            evidence_refs=[artifact_ref],
+        )
+        evaluation = ReplayEvaluationResult.model_validate(
+            proof.model_dump(exclude={"result_ref"})
+        )
+        with ArtifactCtl(
+            {
+                "blob_store": {"root_dir": str(tmp_path / ".openminion/artifacts")},
+                "index": {
+                    "sqlite_path": str(tmp_path / ".openminion/artifacts/index.db")
+                },
+                "views": {"auto_generate": []},
+            }
+        ) as artifactctl:
+            result_ref = artifactctl.ingest_bytes(
+                evaluation.model_dump_json().encode(),
+                mime="application/json",
+                agent_id=evaluation.evaluator_id,
+            ).ref
+            proof = ReplayProof.model_validate(
+                record_replay_proof(
+                    proposal_store,
+                    proposal_id=proposal.proposal_id,
+                    result_ref=result_ref,
+                    artifactctl=artifactctl,
+                )
+            )
         addition = apply_proposal_with_replay(
             proposal_store,
             proposal_id=proposal.proposal_id,
             current_catalog=[],
-            replay_proof=ReplayProof(
-                proof_id=f"repository-delivery-replay:{version_hash}",
-                proposal_id=proposal.proposal_id,
-                shape_id="task-shape:repository-delivery",
-                candidate_hash=proposal_draft_hash(proposal),
-                evaluator_id="repository-delivery-evaluator",
-                result_ref=artifact_ref,
-                status="passed",
-                evidence_refs=[artifact_ref],
-            ),
+            replay_proof=proof,
         )
         assert addition.added_skill_id == "emergent.repository-delivery"
         assert addition.review_ref == proposal.proposal_id

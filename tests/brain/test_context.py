@@ -56,6 +56,7 @@ class _ContextAPI:
 class _Runner:
     def __init__(self) -> None:
         self.context_api = _ContextAPI()
+        self.session_api = SimpleNamespace()
         self.profile = SimpleNamespace(
             thinking="detailed",
             llm_profiles=SimpleNamespace(

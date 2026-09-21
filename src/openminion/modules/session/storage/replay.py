@@ -46,6 +46,8 @@ _KNOWN_CANONICAL_EVENT_TYPES = {
     "project.launched",
     "project.launch_denied",
     "task_plan.declared",
+    "task_plan.assigned",
+    "task_plan.step_started",
     "task_plan.step_completed",
     "task_plan.step_blocked",
     "task_plan.revised",

@@ -258,6 +258,50 @@ def test_room_handoff_creation_requires_an_empty_bound_target(tmp_path) -> None:
     assert store.get_events(source_id, types=[PACKET_CREATED]) == []
 
 
+def test_room_handoff_rejects_dependency_blocked_step_before_write(tmp_path) -> None:
+    store = _store(tmp_path)
+    source_id = _seed_source(store, session_id="room-source")
+    store.append_event(
+        source_id,
+        event_type="task_plan.revised",
+        payload={
+            "plan": {
+                "plan_id": "plan-2",
+                "objective": "Finish the bounded work.",
+                "steps": [
+                    {
+                        "step_id": "prepare",
+                        "description": "Prepare the change.",
+                        "status": "pending",
+                    },
+                    {
+                        "step_id": "review",
+                        "description": "Review the change.",
+                        "status": "pending",
+                        "depends_on": ["prepare"],
+                    },
+                ],
+            }
+        },
+    )
+    binding = RoomHandoffBinding(
+        room_session_id=source_id,
+        local_human_authority_id="human-a",
+        source_agent_id="agent-a",
+        target_agent_id="agent-b",
+        target_session_id="worker",
+        task_step_id="review",
+    )
+
+    with pytest.raises(
+        ContinuationError,
+        match="continuation_room_task_step_blocked",
+    ):
+        SessionContinuationService(store).preview_room_handoff(binding)
+
+    assert store.get_events(source_id, types=[PACKET_CREATED]) == []
+
+
 def test_room_handback_is_bound_idempotent_and_conflict_checked(tmp_path) -> None:
     database_path = tmp_path / "sessions.db"
     store = SQLiteSessionStore(database_path)
@@ -319,6 +363,91 @@ def test_room_handback_is_bound_idempotent_and_conflict_checked(tmp_path) -> Non
     )
     assert after_restart.status == "already_accepted"
     assert after_restart.event_id == accepted.event_id
+
+
+def test_room_task_start_is_durable_and_single_per_handoff(tmp_path) -> None:
+    store = _store(tmp_path)
+    source_id = _seed_source(store, session_id="room-source")
+    target_id = _target(store, session_id="worker", agent_id="agent-b")
+    binding = RoomHandoffBinding(
+        room_session_id=source_id,
+        local_human_authority_id="human-a",
+        source_agent_id="agent-a",
+        target_agent_id="agent-b",
+        target_session_id=target_id,
+        task_step_id="step-1",
+    )
+    service = SessionContinuationService(store, now_ms=lambda: 10_000)
+    packet = service.create_room_handoff(binding).packet
+    assert packet is not None
+    store.append_event(
+        source_id,
+        event_type="task_plan.assigned",
+        parent_event_id=packet.packet_id,
+        payload={
+            "plan_id": "plan-1",
+            "step_id": "step-1",
+            "participant_id": "agent-b",
+            "worker_session_id": target_id,
+            "continuation_packet_id": packet.packet_id,
+        },
+    )
+    stale_payload = {
+        "plan_id": "plan-1",
+        "step_id": "step-1",
+        "worker_session_id": target_id,
+        "continuation_packet_id": packet.packet_id,
+    }
+    second_target_id = _target(store, session_id="worker-2", agent_id="agent-b")
+    second_binding = binding.model_copy(update={"target_session_id": second_target_id})
+    second_packet = service.create_room_handoff(second_binding).packet
+    assert second_packet is not None
+    store.append_event(
+        source_id,
+        event_type="task_plan.assigned",
+        parent_event_id=second_packet.packet_id,
+        payload={
+            "plan_id": "plan-1",
+            "step_id": "step-1",
+            "participant_id": "agent-b",
+            "worker_session_id": second_target_id,
+            "continuation_packet_id": second_packet.packet_id,
+        },
+    )
+    with pytest.raises(ValueError, match="assigned worker"):
+        store.append_event(
+            source_id,
+            event_type="task_plan.step_started",
+            parent_event_id=packet.packet_id,
+            payload=stale_payload,
+        )
+    payload = {
+        "plan_id": "plan-1",
+        "step_id": "step-1",
+        "worker_session_id": second_target_id,
+        "continuation_packet_id": second_packet.packet_id,
+    }
+
+    store.append_event(
+        source_id,
+        event_type="task_plan.step_started",
+        parent_event_id=second_packet.packet_id,
+        payload=payload,
+    )
+
+    assert store.get_active_task_plan(source_id)["steps"][0]["status"] == (
+        "in_progress"
+    )
+    second_store = _store(tmp_path)
+    with pytest.raises(ValueError, match="pending step"):
+        second_store.append_event(
+            source_id,
+            event_type="task_plan.step_started",
+            parent_event_id=second_packet.packet_id,
+            payload=payload,
+        )
+    second_store.close()
+    store.close()
 
 
 def test_room_handback_rejects_unapplied_or_unlinked_result(tmp_path) -> None:

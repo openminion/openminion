@@ -206,6 +206,11 @@ SESSION_CONTINUATION_SCHEMA: tuple[str, ...] = (
       ON session_events(parent_event_id)
       WHERE event_type = 'session.continuation.applied'
     """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_task_plan_single_step_start
+      ON session_events(session_id, task_id)
+      WHERE event_type = 'task_plan.step_started'
+    """,
 )
 
 SESSION_SHARING_SCHEMA: tuple[str, ...] = (

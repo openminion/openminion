@@ -59,6 +59,8 @@ class DaytonaRunner:
         cwd = spec.cwd or sandbox.workspace_root
         real_cwd = _check_cwd(cwd, sandbox.workspace_root)
         filtered_env = _filter_exec_env(spec.env, allowlist=sandbox.env_allowlist)
+        if not self._client.connected:
+            self._client.open()
         workspace = self._create_workspace_for_exec(sandbox=sandbox)
         command = list(spec.cmd)
         if Path(command[0]).name.startswith("python"):
@@ -66,8 +68,6 @@ class DaytonaRunner:
         remote_root = str(workspace.metadata.get("root_dir") or "")
         remote_cwd = remote_root if remote_root else real_cwd
         try:
-            if not self._client.connected:
-                self._client.open()
             result = self._client.execute_command(
                 workspace_id=workspace.workspace_id,
                 command=command,

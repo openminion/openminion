@@ -293,9 +293,9 @@ def test_oacc_coding_repair_uses_frozen_typed_turns(
     test_file.write_text(
         scenario["seed_files"]["tests/test_calculator.py"], encoding="utf-8"
     )
-    verify = f"{shlex.quote(sys.executable)} -m pytest -q tests/test_calculator.py"
+    verify = f"{shlex.quote(sys.executable)} -B -m pytest -q tests/test_calculator.py"
     before = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "tests/test_calculator.py"],
+        [sys.executable, "-B", "-m", "pytest", "-q", "tests/test_calculator.py"],
         cwd=workspace,
         check=False,
         capture_output=True,
@@ -343,7 +343,7 @@ def test_oacc_coding_repair_uses_frozen_typed_turns(
         ]
     )["run"]
 
-    assert run["status"] == scenario["expected_terminal"]["run_status"]
+    assert run["status"] == scenario["expected_terminal"]["run_status"], run
     assert turns == 2
     assert (
         calculator.read_text(encoding="utf-8")

@@ -361,8 +361,9 @@ def _print_capability_note(preset: ProviderSetupPreset) -> None:
     if preset.preset_id == "cortensor-portal":
         print(
             fill(
-                "  support: hosted text, streaming, and native tool calls; Portal "
-                "requests do not automatically retry",
+                "  support: experimental hosted text, streaming, and native tool "
+                "calls; Portal can be slow or unstable and requests do not "
+                "automatically retry",
                 width=80,
                 subsequent_indent="    ",
             )

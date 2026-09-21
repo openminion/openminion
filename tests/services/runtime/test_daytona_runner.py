@@ -39,6 +39,10 @@ class _FakeDaytonaClient:
         image: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> DaytonaWorkspace:
+        if not self.connected:
+            raise DaytonaClientError(
+                code="SANDBOX_UNAVAILABLE", message="Daytona is closed"
+            )
         payload = {
             "name": name,
             "image": image,

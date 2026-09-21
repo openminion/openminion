@@ -318,6 +318,7 @@ def test_build_context_injects_model_capability_overrides_into_hints() -> None:
 
     runner = SimpleNamespace(
         context_api=_ContextAPI(),
+        session_api=SimpleNamespace(),
         profile=SimpleNamespace(
             model_capability_overrides={"gpt4_default": {"max_structured_retries": 5}}
         ),

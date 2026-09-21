@@ -198,13 +198,13 @@ Run the live setup-to-first-task proof only with explicit quota authorization:
 
 ```bash
 OPENMINION_LIVE_CLI_FOCUS_E2E=1 \
-CORTENSOR_API_KEY=... \
+MINIMAX_API_KEY=... \
 PYTHONDONTWRITEBYTECODE=1 \
 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py onboarding-live
 ```
 
 This live suite verifies the bounded provider check, enters Focus, and completes
-one model-backed first task through the Cortensor Portal preset. It must not be
+one model-backed first task through the MiniMax preset. It must not be
 used without explicit authorization for the provider credential and quota.
 
 Before release, run the deterministic Tier A coding-harness journey gate:

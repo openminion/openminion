@@ -125,8 +125,9 @@ owner can use `/invite`, `/kick`, `/activate`, and `/routing`; address one agent
 with `@reviewer`, or select `broadcast` or `sequential` routing for both agents.
 
 The first screen goes directly to the model provider. OpenAI, Anthropic,
-OpenRouter, Cortensor Portal, MiniMax, and local Ollama appear first; additional providers,
-custom endpoints, and config import remain available from the same menu.
+OpenRouter, MiniMax, and local Ollama appear first; additional providers,
+experimental endpoints, custom endpoints, and config import remain available
+from the same menu.
 
 Demo mode is not part of normal onboarding. It remains available through the
 explicit `openminion --demo` development/test path. A non-interactive demo can
@@ -164,7 +165,7 @@ Built-in hosted presets currently include:
 | `openrouter` | OpenAI-compatible | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | live-optional, otherwise recommended |
 | `cerebras` | OpenAI-compatible | `CEREBRAS_API_KEY` | `https://api.cerebras.ai/v1` | recommended |
 | `groq` | OpenAI-compatible | `GROQ_API_KEY` | `https://api.groq.com/openai/v1` | recommended |
-| `cortensor-portal` | OpenAI-compatible | `CORTENSOR_API_KEY` | `https://api.cortensor.app/v1` | recommended |
+| `cortensor-portal` | OpenAI-compatible | `CORTENSOR_API_KEY` | `https://api.cortensor.app/v1` | experimental; manual model selection |
 | `minimax` | OpenAI-compatible | `MINIMAX_API_KEY` | `https://api.minimax.io/v1` | live-optional, otherwise recommended |
 | `kimi` | OpenAI-compatible | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | recommended |
 | `zai` | OpenAI-compatible | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4/` | recommended |
@@ -176,10 +177,10 @@ Built-in hosted presets currently include:
 | `mistral` | OpenAI-compatible | `MISTRAL_API_KEY` | `https://api.mistral.ai/v1` | recommended |
 | `together` | OpenAI-compatible | `TOGETHER_API_KEY` | `https://api.together.ai/v1` | recommended |
 
-Cortensor Portal is the normal hosted path, similar to other hosted
-OpenAI-compatible endpoints: Portal owns routing, quota, capacity, and its
-internal request lifecycle. OpenMinion defaults its existing provider timeout
-to 480 seconds because responses can be slow; a larger configured
+Cortensor Portal remains an experimental hosted path because current service
+availability can be slow or unstable. Portal owns routing, quota, capacity,
+and its internal request lifecycle. OpenMinion defaults its existing provider
+timeout to 480 seconds; a larger configured
 `timeout_seconds` value is preserved by the runtime. Current Portal support is
 text, text streaming, native OpenAI tool calls, tool-result continuation, and
 streamed tool-call deltas. OpenMinion preserves Portal tool-call IDs,

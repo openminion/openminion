@@ -330,7 +330,7 @@ def test_bare_command_imports_config_and_reaches_focus(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your model provider:", "8")
+        _reply(session, "Choose your model provider:", "7")
         _reply(session, "OpenMinion config file:", str(import_path))
         _reply(session, r"Import this config\? \[Y/n\]:")
         session.wait_for_after(
@@ -493,7 +493,7 @@ def test_local_setup_is_keyless_and_cancellable(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your model provider:", "6")
+        _reply(session, "Choose your model provider:", "5")
         _reply(session, "Model \\[")
         _reply(session, "Ollama base URL")
         _reply(session, r"Save this configuration\? \[Y/n\]:", "n")
@@ -571,9 +571,9 @@ def test_hosted_more_menu_back_and_cancel_stays_readable_at_80_columns(
         env=_environment(home_root=home_root, data_root=data_root),
         cols=80,
     ) as session:
-        _reply(session, "Choose your model provider:", "7")
+        _reply(session, "Choose your model provider:", "6")
         _reply(session, "Choose another provider or custom endpoint:", "b")
-        _reply(session, "Choose your model provider:", "7")
+        _reply(session, "Choose your model provider:", "6")
         _reply(session, "Choose another provider or custom endpoint:", "c")
         transcript = session.wait_for_after(
             "Setup cancelled; configuration not written.",
@@ -613,7 +613,7 @@ def test_hosted_minimax_setup_lists_all_recommended_models(
             MINIMAX_API_KEY=fixture_key,
         ),
     ) as session:
-        _reply(session, "Choose your model provider:", "5")
+        _reply(session, "Choose your model provider:", "4")
         _reply(session, "Choose a recommended model", "2")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
         _reply(
@@ -659,7 +659,7 @@ def test_local_ollama_check_failure_does_not_claim_readiness(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your model provider:", "6")
+        _reply(session, "Choose your model provider:", "5")
         _reply(session, "Model \\[")
         _reply(session, "Ollama base URL", "http://127.0.0.1:1")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
@@ -703,7 +703,7 @@ def test_local_ollama_check_can_be_declined_after_config_is_saved(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your model provider:", "6")
+        _reply(session, "Choose your model provider:", "5")
         _reply(session, "Model \\[")
         _reply(session, "Ollama base URL")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
@@ -752,7 +752,7 @@ def test_local_ollama_check_can_verify_against_fixture_server(
                 OLLAMA_API_KEY=fixture_key,
             ),
         ) as session:
-            _reply(session, "Choose your model provider:", "6")
+            _reply(session, "Choose your model provider:", "5")
             _reply(
                 session,
                 "Model \\[",
@@ -916,7 +916,7 @@ def test_setup_cancellation_after_write_preserves_saved_truth(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your model provider:", "6")
+        _reply(session, "Choose your model provider:", "5")
         _reply(session, "Model \\[")
         _reply(session, "Ollama base URL")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
@@ -987,7 +987,7 @@ def test_setup_repairs_shared_adapter_without_changing_existing_agent(
             MINIMAX_API_KEY=fixture_key,
         ),
     ) as session:
-        _reply(session, "Choose your model provider:", "5")
+        _reply(session, "Choose your model provider:", "4")
         _reply(session, "Choose a recommended model", "1")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
         _reply(

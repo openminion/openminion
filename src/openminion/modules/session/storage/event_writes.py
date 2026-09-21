@@ -3,8 +3,9 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from openminion.base.redaction import redact_sensitive_text
 from openminion.modules.storage.record_store import RecordStore
+from openminion.modules.task.plan import TaskPlan, TaskPlanStepStarted
 
-from .events import EventStore
+from .events import EventStore, apply_task_plan_step_started
 from .json_utils import to_json
 
 _TOOL_TRANSCRIPT_EVENTS = {
@@ -58,6 +59,15 @@ def _required_text(payload: dict[str, Any], field: str) -> str:
     if not value:
         raise ValueError(f"canonical tool event requires {field}")
     return value
+
+
+def _validated_event_name(type: str | None, event_type: str | None) -> str:
+    name = (event_type or type or "").strip()
+    if not name:
+        raise ValueError("event_type is required")
+    if name in _UNSUPPORTED_TOOL_TERMINALS:
+        raise ValueError(f"unsupported tool terminal event: {name}")
+    return name
 
 
 def _stable_tool_event_id(
@@ -280,6 +290,23 @@ class SessionEventWriter:
             )
         return payload, event_id
 
+    def _task_plan_step_task_id(
+        self,
+        *,
+        session_id: str,
+        event_name: str,
+        payload: dict[str, Any],
+        current_task_id: str | None,
+    ) -> str | None:
+        if event_name != "task_plan.step_started":
+            return current_task_id
+        started = TaskPlanStepStarted.model_validate(payload)
+        active_plan = self._event_store.get_active_task_plan(session_id)
+        if active_plan is None:
+            raise ValueError("task plan start requires an active plan")
+        apply_task_plan_step_started(TaskPlan.model_validate(active_plan), started)
+        return f"{started.plan_id}:{started.step_id}"
+
     def append_event(
         self,
         session_id: str,
@@ -304,11 +331,7 @@ class SessionEventWriter:
         status: str | None = None,
         error: dict[str, Any] | None = None,
     ) -> str:
-        event_name = (event_type or type or "").strip()
-        if not event_name:
-            raise ValueError("event_type is required")
-        if event_name in _UNSUPPORTED_TOOL_TERMINALS:
-            raise ValueError(f"unsupported tool terminal event: {event_name}")
+        event_name = _validated_event_name(type, event_type)
 
         payload_obj = dict(payload or {})
         if status is not None and "status" not in payload_obj:
@@ -350,6 +373,12 @@ class SessionEventWriter:
 
         now = self._utc_now_iso()
         with self._record_store.transaction():
+            task_id_value = self._task_plan_step_task_id(
+                session_id=session_id,
+                event_name=event_name,
+                payload=payload_obj,
+                current_task_id=task_id_value,
+            )
             event_id = self._write_session_event_tx(
                 session_id=session_id,
                 timestamp=now,
