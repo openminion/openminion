@@ -279,6 +279,7 @@ test-e2e-ci: $(DEV_STAMP)
 		"$(REPO_ROOT)/tests/e2e/test_tool_transcript_continuity.py" \
 		"$(REPO_ROOT)/tests/e2e/test_project_learning_instruction_loop.py" \
 		"$(REPO_ROOT)/tests/e2e/test_cli_focus_e2e_runner.py" \
+		"$(REPO_ROOT)/tests/e2e/cli/focus/test_simple_input_project.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/test_runner_summary.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/test_harness_assertions.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/harness/test_provider_session_resilience.py"

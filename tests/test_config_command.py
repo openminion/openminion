@@ -423,7 +423,7 @@ class ConfigCommandTests(unittest.TestCase):
             with mock.patch(
                 "builtins.input",
                 side_effect=[
-                    "6",
+                    "5",
                     "qwen2.5:14b",
                     "http://localhost:11434",
                     "y",
@@ -479,7 +479,7 @@ class ConfigCommandTests(unittest.TestCase):
             with (
                 mock.patch(
                     "builtins.input",
-                    side_effect=["8", str(import_path), "y"],
+                    side_effect=["7", str(import_path), "y"],
                 ),
                 mock.patch(
                     "openminion.cli.commands.setup._run_setup_doctor",
@@ -513,7 +513,7 @@ class ConfigCommandTests(unittest.TestCase):
 
             with mock.patch(
                 "builtins.input",
-                side_effect=["9", "6", "", "", "y", "n"],
+                side_effect=["9", "5", "", "", "y", "n"],
             ):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
@@ -521,7 +521,7 @@ class ConfigCommandTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertIn(
-                "Invalid selection. Choose one of: 1, 2, 3, 4, 5, 6, 7, 8.",
+                "Invalid selection. Choose one of: 1, 2, 3, 4, 5, 6, 7.",
                 buf.getvalue(),
             )
             payload = json.loads(config_path.read_text(encoding="utf-8"))
@@ -575,7 +575,7 @@ class ConfigCommandTests(unittest.TestCase):
 
             with mock.patch(
                 "builtins.input",
-                side_effect=["8", str(missing_path)],
+                side_effect=["7", str(missing_path)],
             ):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
@@ -627,7 +627,7 @@ class ConfigCommandTests(unittest.TestCase):
         self.assertIn("MiniMax-M2.7-highspeed (recommended)", output)
 
     def test_setup_wizard_secondary_provider_menu_has_back_and_cancel(self) -> None:
-        with mock.patch("builtins.input", side_effect=["7", "b", "7", "c"]):
+        with mock.patch("builtins.input", side_effect=["6", "b", "6", "c"]):
             buf = io.StringIO()
             with (
                 redirect_stdout(buf),
@@ -975,7 +975,7 @@ class ConfigCommandTests(unittest.TestCase):
                 mock.patch(
                     "builtins.input",
                     side_effect=[
-                        "6",
+                        "5",
                         "qwen2.5:14b",
                         "http://localhost:11434",
                         "y",

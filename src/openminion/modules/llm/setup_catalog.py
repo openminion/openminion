@@ -306,7 +306,6 @@ _FIRST_SCREEN_IDS = (
     "openai",
     "anthropic",
     "openrouter",
-    "cortensor-portal",
     "minimax",
     "ollama",
 )
