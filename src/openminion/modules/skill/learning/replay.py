@@ -38,6 +38,29 @@ class ReplayProof(BaseModel):
         return self.status == "passed"
 
 
+class ReplayEvaluationResult(BaseModel):
+    """Content-addressed evaluator result retained by the artifact owner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    proof_id: str
+    proposal_id: str
+    shape_id: str
+    candidate_hash: str
+    evaluator_id: str
+    status: ReplayStatus
+    command: str = ""
+    evidence_refs: list[str] = Field(default_factory=list)
+    summary: str = ""
+
+    def to_proof(self, *, result_ref: str) -> ReplayProof:
+        return ReplayProof(
+            **self.model_dump(mode="python", exclude={"evidence_refs"}),
+            result_ref=result_ref,
+            evidence_refs=list(dict.fromkeys([result_ref, *self.evidence_refs])),
+        )
+
+
 class ReplayGateError(ValueError):
     """Raised when replay/eval proof blocks a learned-skill action."""
 
@@ -73,7 +96,7 @@ def apply_proposal_with_replay(
     *,
     proposal_id: str,
     current_catalog: Iterable[object],
-    replay_proof: ReplayProof,
+    replay_proof: ReplayProof | None = None,
 ) -> EmergentSkillCatalogAddition:
     """Apply a proposal only after accepted review and passing replay proof."""
 
@@ -87,6 +110,7 @@ def apply_proposal_with_replay(
 
 __all__ = (
     "ReplayGateError",
+    "ReplayEvaluationResult",
     "ReplayProof",
     "ReplayStatus",
     "apply_proposal_with_replay",

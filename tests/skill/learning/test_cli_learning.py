@@ -8,9 +8,11 @@ from typing import cast
 
 import pytest
 
+from openminion.modules.artifact.control import ArtifactCtl
 from openminion.modules.skill.cli import main
 from openminion.modules.skill.interfaces import SkillIngestAuthority
 from openminion.modules.skill.learning.shapes import WorkflowShape, command_fingerprint
+from openminion.modules.skill.learning.replay import ReplayEvaluationResult
 from openminion.modules.skill.models import stable_hash
 from openminion.modules.skill.runtime.skill import Skill
 
@@ -148,7 +150,9 @@ def test_learning_cli_scan_inspect_save_and_trust_status(tmp_path: Path) -> None
 
 
 def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
-    cfg = _config_path(tmp_path)
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    cfg = _config_path(data_root)
     shape = _shape()
     shape_path = _write_json(tmp_path, "shape.json", shape.model_dump(mode="json"))
 
@@ -160,31 +164,6 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
     proposal_id = result["proposal"]["proposal_id"]
     shape_ref = result["proposal"]["source_task_shape_ref"]
     candidate_hash = stable_hash(result["proposal"]["proposed_skill_definition"])
-
-    proof = _run_cli(
-        [
-            "--config",
-            str(cfg),
-            "learning-replay-proof",
-            "--proposal-id",
-            proposal_id,
-            "--shape-id",
-            shape_ref,
-            "--proof-id",
-            "proof-1",
-            "--candidate-hash",
-            candidate_hash,
-            "--evaluator-id",
-            "evaluator-cli",
-            "--result-ref",
-            "replay:1",
-            "--status",
-            "passed",
-            "--evidence",
-            "replay:1",
-        ]
-    )
-    assert proof["proof"]["status"] == "passed"
 
     _run_cli(
         [
@@ -206,22 +185,46 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
             "learning-apply-proved",
             "--proposal-id",
             proposal_id,
-            "--shape-id",
-            shape_ref,
-            "--proof-id",
-            "proof-2",
-            "--candidate-hash",
-            candidate_hash,
-            "--evaluator-id",
-            "evaluator-cli",
-            "--result-ref",
-            "replay:2",
-            "--proof-status",
-            "failed",
         ]
     )
     assert failed["ok"] is False
     assert failed["error"]["code"] == "INVALID_ARGUMENT"
+
+    evaluation = ReplayEvaluationResult(
+        proof_id="proof-1",
+        proposal_id=proposal_id,
+        shape_id=shape_ref,
+        candidate_hash=candidate_hash,
+        evaluator_id="evaluator-cli",
+        status="passed",
+        evidence_refs=["replay:1"],
+    )
+    with ArtifactCtl(
+        {
+            "blob_store": {"root_dir": str(data_root / "artifact")},
+            "index": {"sqlite_path": str(data_root / "artifact" / "index.db")},
+            "views": {"auto_generate": []},
+        }
+    ) as artifactctl:
+        result_ref = artifactctl.ingest_bytes(
+            evaluation.model_dump_json().encode(),
+            mime="application/json",
+            agent_id=evaluation.evaluator_id,
+        ).ref
+    proof = _run_cli(
+        [
+            "--data-root",
+            str(data_root),
+            "--config",
+            str(cfg),
+            "learning-replay-proof",
+            "--proposal-id",
+            proposal_id,
+            "--result-ref",
+            result_ref,
+        ]
+    )
+    assert proof["proof"]["status"] == "passed"
 
     applied = _run_cli(
         [
@@ -230,18 +233,6 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
             "learning-apply-proved",
             "--proposal-id",
             proposal_id,
-            "--shape-id",
-            shape_ref,
-            "--proof-id",
-            "proof-3",
-            "--candidate-hash",
-            candidate_hash,
-            "--evaluator-id",
-            "evaluator-cli",
-            "--result-ref",
-            "replay:3",
-            "--proof-status",
-            "passed",
         ]
     )
     assert applied["addition"]["added_skill_id"].startswith("emergent.")
@@ -266,7 +257,7 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
             version_hash=addition["version_hash"],
             used_for="act",
             outcome="success",
-            evidence_refs=["replay:3"],
+            evidence_refs=["replay:1"],
         )
     finally:
         skill.close()

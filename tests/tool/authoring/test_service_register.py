@@ -130,7 +130,7 @@ def test_register_draft_same_hash_is_idempotent(tmp_path) -> None:
 
 
 def test_register_draft_rejects_uninspected_or_high_risk(tmp_path) -> None:
-    service, _, _ = _inspectable_service(tmp_path)
+    service, registry, policy_ctl = _inspectable_service(tmp_path)
     try:
         draft = service.author_draft(
             _base_args(
@@ -143,6 +143,9 @@ def test_register_draft_rejects_uninspected_or_high_risk(tmp_path) -> None:
         service.inspect_draft({"draft_id": draft["draft_id"], "run_tests": False})
         critical = service.register_draft({"draft_id": draft["draft_id"]})
         assert critical["error"]["code"] == "INSPECT_NOT_PASSED"
+        assert registry.list() == {}
+        assert policy_ctl.list_grants(active_only=True) == []
+        assert policy_ctl.registered_risks == {}
     finally:
         service.close()
 

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from openminion.modules.artifact.control import ArtifactCtl
 from openminion.modules.skill.learning import (
     SkillDraftError,
     SkillExecutionTrustRecord,
@@ -20,6 +21,7 @@ from openminion.modules.skill.learning import (
 )
 from openminion.modules.skill.learning.reuse import matching_catalog_entries
 from openminion.modules.skill.learning.replay import (
+    ReplayEvaluationResult,
     ReplayGateError,
     ReplayProof,
     proposal_draft_hash,
@@ -37,6 +39,7 @@ from openminion.modules.skill.proposal.queue import (
     create_proposal,
     get_proposal,
     record_proposal_review,
+    record_replay_proof,
 )
 from openminion.modules.skill.proposal import SkillProposal, SkillProposalDraft
 from openminion.modules.skill.storage import SQLiteSkillStore
@@ -141,6 +144,38 @@ def _replay_proof(
         status=status,
         evidence_refs=[result_ref] if result_ref else [],
     )
+
+
+def _retain_proof(
+    store: SQLiteSkillStore,
+    proof: ReplayProof,
+    *,
+    proposal_id: str,
+    tmp_path: Path,
+    artifact_agent_id: str | None = None,
+) -> ReplayProof:
+    evaluation = ReplayEvaluationResult.model_validate(
+        proof.model_dump(exclude={"result_ref"})
+    )
+    with ArtifactCtl(
+        {
+            "blob_store": {"root_dir": str(tmp_path / ".openminion/artifacts")},
+            "index": {"sqlite_path": str(tmp_path / ".openminion/artifacts/index.db")},
+            "views": {"auto_generate": []},
+        }
+    ) as artifactctl:
+        result = artifactctl.ingest_bytes(
+            evaluation.model_dump_json().encode(),
+            mime="application/json",
+            agent_id=artifact_agent_id or evaluation.evaluator_id,
+        )
+        retained = record_replay_proof(
+            store,
+            proposal_id=proposal_id,
+            result_ref=result.ref,
+            artifactctl=artifactctl,
+        )
+    return ReplayProof.model_validate(retained)
 
 
 def test_evidence_bundle_redacts_and_round_trips() -> None:
@@ -325,7 +360,7 @@ def test_generic_apply_cannot_bypass_learned_replay_proof(tmp_path: Path) -> Non
             ],
         )
 
-        with pytest.raises(ProposalQueueError, match="requires replay proof"):
+        with pytest.raises(ProposalQueueError, match="retained replay proof"):
             apply_proposal(
                 store,
                 proposal_id=result.proposal.proposal_id,
@@ -389,19 +424,26 @@ def test_replay_proof_blocks_apply_until_passed(tmp_path: Path) -> None:
         assert record is not None
         assert record["queue_state"] == PROPOSAL_QUEUE_STATE_REVIEWED
 
-        with pytest.raises(ReplayGateError):
-            apply_proposal_with_replay(
+        with pytest.raises(ReplayGateError, match="not_passed"):
+            _retain_proof(
                 store,
-                proposal_id="wlsk-proposal",
-                current_catalog=[],
-                replay_proof=_replay_proof(proposal, status="failed"),
+                _replay_proof(proposal, status="failed"),
+                proposal_id=proposal.proposal_id,
+                tmp_path=tmp_path,
             )
 
+        passed_proof = _replay_proof(proposal)
+        passed_proof = _retain_proof(
+            store,
+            passed_proof,
+            proposal_id=proposal.proposal_id,
+            tmp_path=tmp_path,
+        )
         addition = apply_proposal_with_replay(
             store,
             proposal_id="wlsk-proposal",
             current_catalog=[],
-            replay_proof=_replay_proof(proposal),
+            replay_proof=passed_proof,
         )
         assert addition.added_skill_id == "emergent.test-cleanup-playbook"
         assert addition.version_hash
@@ -417,7 +459,6 @@ def test_replay_proof_blocks_apply_until_passed(tmp_path: Path) -> None:
         ({"shape_id": "workflow_shape:other"}, "shape_mismatch"),
         ({"candidate_hash": "stale"}, "candidate_mismatch"),
         ({"evaluator_id": "runtime"}, "evaluator_required"),
-        ({"result_ref": ""}, "result_required"),
     ],
 )
 def test_replay_proof_rejects_unbound_or_self_asserted_result(
@@ -438,16 +479,85 @@ def test_replay_proof_rejects_unbound_or_self_asserted_result(
         )
 
         with pytest.raises(ReplayGateError, match=message):
-            apply_proposal_with_replay(
+            _retain_proof(
                 store,
                 proposal_id=proposal.proposal_id,
-                current_catalog=[],
-                replay_proof=_replay_proof(proposal, **overrides),
+                proof=_replay_proof(proposal, **overrides),
+                tmp_path=tmp_path,
             )
 
         record = get_proposal(store, proposal_id=proposal.proposal_id)
         assert record is not None
         assert record["queue_state"] == PROPOSAL_QUEUE_STATE_REVIEWED
+    finally:
+        store.close()
+
+
+def test_apply_rejects_unretained_or_changed_replay_proof(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    proposal = _proposal()
+    try:
+        create_proposal(store, proposal)
+        record_proposal_review(
+            store,
+            proposal_id=proposal.proposal_id,
+            reviewer_id="operator-1",
+            review_policy_id="workflow_learning_review",
+            criterion_decisions=[
+                {"criterion_id": "fit", "status": "accepted", "comment": "ok"}
+            ],
+        )
+        retained = _replay_proof(proposal)
+        with pytest.raises(ProposalQueueError, match="does not match retained"):
+            apply_proposal_with_replay(
+                store,
+                proposal_id=proposal.proposal_id,
+                current_catalog=[],
+                replay_proof=retained,
+            )
+
+        retained = _retain_proof(
+            store,
+            retained,
+            proposal_id=proposal.proposal_id,
+            tmp_path=tmp_path,
+        )
+        with pytest.raises(ValueError, match="not available for replay proof"):
+            _retain_proof(
+                store,
+                retained.model_copy(update={"proof_id": "forged"}),
+                proposal_id=proposal.proposal_id,
+                tmp_path=tmp_path,
+            )
+        store.close()
+        store = _store(tmp_path)
+        restarted = get_proposal(store, proposal_id=proposal.proposal_id)
+        assert restarted is not None
+        assert ReplayProof.model_validate(restarted["replay_proof"]) == retained
+        with pytest.raises(ProposalQueueError, match="does not match retained"):
+            apply_proposal_with_replay(
+                store,
+                proposal_id=proposal.proposal_id,
+                current_catalog=[],
+                replay_proof=retained.model_copy(update={"proof_id": "forged"}),
+            )
+    finally:
+        store.close()
+
+
+def test_replay_result_requires_artifact_evaluator_provenance(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    proposal = _proposal()
+    try:
+        create_proposal(store, proposal)
+        with pytest.raises(ProposalQueueError, match="provenance mismatch"):
+            _retain_proof(
+                store,
+                _replay_proof(proposal),
+                proposal_id=proposal.proposal_id,
+                tmp_path=tmp_path,
+                artifact_agent_id="different-evaluator",
+            )
     finally:
         store.close()
 

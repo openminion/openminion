@@ -570,8 +570,8 @@ class _SkillStoreMixin(SkillStore):
             INSERT OR IGNORE INTO skill_proposals(
                 proposal_id, source_task_shape_ref, proposer_policy_id,
                 proposed_at, proposal_json, queue_state,
-                applied_addition_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
+                replay_proof_json, applied_addition_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?)
             """,
             (
                 proposal_id,
@@ -602,6 +602,7 @@ class _SkillStoreMixin(SkillStore):
                     p.proposed_at,
                     p.proposal_json,
                     p.queue_state,
+                    p.replay_proof_json,
                     p.applied_addition_json,
                     p.created_at,
                     p.updated_at,
@@ -627,6 +628,7 @@ class _SkillStoreMixin(SkillStore):
                     p.proposed_at,
                     p.proposal_json,
                     p.queue_state,
+                    p.replay_proof_json,
                     p.applied_addition_json,
                     p.created_at,
                     p.updated_at,
@@ -657,6 +659,7 @@ class _SkillStoreMixin(SkillStore):
                 p.proposed_at,
                 p.proposal_json,
                 p.queue_state,
+                p.replay_proof_json,
                 p.applied_addition_json,
                 p.created_at,
                 p.updated_at,
@@ -763,6 +766,28 @@ class _SkillStoreMixin(SkillStore):
                     str(applied_at),
                     str(proposal_id),
                 ),
+            )
+
+    def record_proposal_replay_proof(
+        self,
+        *,
+        proposal_id: str,
+        replay_proof_json: str,
+        recorded_at: str,
+    ) -> None:
+        affected = self._record_store.execute_count(
+            """
+            UPDATE skill_proposals
+            SET replay_proof_json = COALESCE(replay_proof_json, ?), updated_at = ?
+            WHERE proposal_id = ?
+              AND queue_state != 'applied'
+              AND (replay_proof_json IS NULL OR replay_proof_json = ?)
+            """,
+            (replay_proof_json, recorded_at, proposal_id, replay_proof_json),
+        )
+        if int(affected or 0) != 1:
+            raise ValueError(
+                f"proposal not available for replay proof: {proposal_id!r}"
             )
 
     def record_suggestion_event(
@@ -944,6 +969,12 @@ def _proposal_row(row: dict[str, Any]) -> dict[str, Any]:
     review_payload = (
         _json_loads(str(review_raw), None) if review_raw not in {None, ""} else None
     )
+    replay_proof_raw = row.get("replay_proof_json")
+    replay_proof = (
+        _json_loads(str(replay_proof_raw), None)
+        if replay_proof_raw not in {None, ""}
+        else None
+    )
     return {
         "proposal_id": str(row.get("proposal_id") or ""),
         "source_task_shape_ref": str(row.get("source_task_shape_ref") or ""),
@@ -951,6 +982,7 @@ def _proposal_row(row: dict[str, Any]) -> dict[str, Any]:
         "proposed_at": str(row.get("proposed_at") or ""),
         "proposal": proposal_payload,
         "queue_state": str(row.get("queue_state") or ""),
+        "replay_proof": replay_proof,
         "applied_addition": applied_addition,
         "created_at": str(row.get("created_at") or ""),
         "updated_at": str(row.get("updated_at") or ""),

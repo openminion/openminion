@@ -194,6 +194,16 @@ class SkillStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def record_proposal_replay_proof(
+        self,
+        *,
+        proposal_id: str,
+        replay_proof_json: str,
+        recorded_at: str,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def apply_proposal(
         self,
         *,

@@ -5,7 +5,9 @@ import pytest
 
 from pathlib import Path
 
+from openminion.modules.artifact.control import ArtifactCtl
 from openminion.modules.skill.learning import (
+    ReplayEvaluationResult,
     ReplayProof,
     SkillExecutionTrustRecord,
     WorkflowShapeMiner,
@@ -22,6 +24,7 @@ from openminion.modules.skill.proposal.queue import (
     create_proposal,
     get_proposal,
     record_proposal_review,
+    record_replay_proof,
 )
 from openminion.modules.skill.storage import SQLiteSkillStore
 
@@ -123,6 +126,31 @@ def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
             status="passed",
             evidence_refs=["replay:passed"],
         )
+        evaluation = ReplayEvaluationResult.model_validate(
+            proof.model_dump(exclude={"result_ref"})
+        )
+        with ArtifactCtl(
+            {
+                "blob_store": {"root_dir": str(tmp_path / ".openminion/artifacts")},
+                "index": {
+                    "sqlite_path": str(tmp_path / ".openminion/artifacts/index.db")
+                },
+                "views": {"auto_generate": []},
+            }
+        ) as artifactctl:
+            result_ref = artifactctl.ingest_bytes(
+                evaluation.model_dump_json().encode(),
+                mime="application/json",
+                agent_id=evaluation.evaluator_id,
+            ).ref
+            proof = ReplayProof.model_validate(
+                record_replay_proof(
+                    store,
+                    proposal_id=result.proposal.proposal_id,
+                    result_ref=result_ref,
+                    artifactctl=artifactctl,
+                )
+            )
         addition = apply_proposal_with_replay(
             store,
             proposal_id=result.proposal.proposal_id,

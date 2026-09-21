@@ -166,17 +166,25 @@ def apply_proposal(
             f"apply requires accepted review; got status={review.status!r}"
         )
     proposal = SkillProposal.model_validate(record["proposal"])
-    bound_replay_proof = None
-    if replay_proof is not None:
-        from openminion.modules.skill.learning.replay import (
-            ReplayProof,
-            require_replay_passed,
-        )
+    from openminion.modules.skill.learning.replay import (
+        ReplayProof,
+        require_replay_passed,
+    )
 
-        bound_replay_proof = ReplayProof.model_validate(replay_proof)
+    retained = record.get("replay_proof")
+    bound_replay_proof = (
+        ReplayProof.model_validate(retained) if isinstance(retained, Mapping) else None
+    )
+    if proposal.requires_replay_proof and bound_replay_proof is None:
+        raise ProposalQueueError("learned proposal requires retained replay proof")
+    if bound_replay_proof is not None:
         require_replay_passed(bound_replay_proof, proposal)
-    elif proposal.requires_replay_proof:
-        raise ProposalQueueError("learned proposal requires replay proof")
+    if replay_proof is not None:
+        supplied = ReplayProof.model_validate(replay_proof)
+        if bound_replay_proof is None or supplied != bound_replay_proof:
+            raise ProposalQueueError(
+                "replay proof does not match retained evaluator result"
+            )
     draft: SkillProposalDraft = proposal.proposed_skill_definition
     addition, new_catalog = apply_emergent_skill(
         review,
@@ -195,6 +203,40 @@ def apply_proposal(
         applied_addition_json=canonical_json(addition.model_dump(mode="json")),
     )
     return addition
+
+
+def record_replay_proof(
+    store: SkillStore,
+    *,
+    proposal_id: str,
+    result_ref: str,
+    artifactctl: Any,
+) -> dict[str, Any]:
+    record = get_proposal(store, proposal_id=proposal_id)
+    if record is None:
+        raise ProposalNotFoundError(f"proposal not found: {proposal_id!r}")
+    from openminion.modules.skill.learning.replay import (
+        ReplayEvaluationResult,
+        require_replay_passed,
+    )
+
+    meta = artifactctl.get(result_ref)
+    if getattr(meta, "deleted_at", None):
+        raise ProposalQueueError("replay evaluator result is deleted")
+    evaluation = ReplayEvaluationResult.model_validate_json(
+        artifactctl.read_bytes(result_ref)
+    )
+    if str(getattr(meta, "agent_id", "") or "") != evaluation.evaluator_id:
+        raise ProposalQueueError("replay evaluator provenance mismatch")
+    proof = evaluation.to_proof(result_ref=meta.to_ref().ref)
+    proposal = SkillProposal.model_validate(record["proposal"])
+    require_replay_passed(proof, proposal)
+    store.record_proposal_replay_proof(
+        proposal_id=proposal_id,
+        replay_proof_json=canonical_json(proof.model_dump(mode="json")),
+        recorded_at=utc_now_iso(),
+    )
+    return dict(proof.model_dump(mode="json"))
 
 
 def _persist_pending_package(store: SkillStore, package: SkillPackage) -> None:
@@ -242,4 +284,5 @@ __all__ = (
     "get_proposal",
     "list_proposals",
     "record_proposal_review",
+    "record_replay_proof",
 )
