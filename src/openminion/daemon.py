@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import os
 import signal
 import threading
 import time
 from pathlib import Path
 from types import FrameType
-from typing import Any, Sequence, cast
+from typing import Any, Callable, Sequence, cast
 
 import psutil
 
@@ -39,6 +40,8 @@ _DAEMON_LIFECYCLE_SESSION_ID = "lifecycle:daemon:primary"
 _DAEMON_HEARTBEAT_INTERVAL_SECONDS = 15.0
 _DAEMON_STALE_HEARTBEAT_WARN_MULTIPLIER = 2.0
 _DAEMON_STALE_HEARTBEAT_FAIL_MULTIPLIER = 4.0
+_WINDOWS_CTRL_C_EVENT = 0
+_WINDOWS_CTRL_BREAK_EVENT = 1
 
 
 def _daemon_stop_signals() -> tuple[signal.Signals, ...]:
@@ -47,6 +50,57 @@ def _daemon_stop_signals() -> tuple[signal.Signals, ...]:
     if windows_break is not None:
         signals.append(windows_break)
     return tuple(signals)
+
+
+def _install_windows_console_stop_handler(
+    on_stop: Callable[[], None],
+) -> Callable[[], None] | None:
+    if os.name != "nt":
+        return None
+
+    from ctypes import wintypes
+
+    callback_type = getattr(ctypes, "WINFUNCTYPE")(wintypes.BOOL, wintypes.DWORD)
+    kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
+    kernel32.SetConsoleCtrlHandler.argtypes = [callback_type, wintypes.BOOL]
+    kernel32.SetConsoleCtrlHandler.restype = wintypes.BOOL
+
+    def _on_console_event(control_type: int) -> bool:
+        if control_type not in (_WINDOWS_CTRL_C_EVENT, _WINDOWS_CTRL_BREAK_EVENT):
+            return False
+        on_stop()
+        return True
+
+    _handle_console_event = callback_type(_on_console_event)
+    if not kernel32.SetConsoleCtrlHandler(_handle_console_event, True):
+        error_code = getattr(ctypes, "get_last_error")()
+        raise OSError(error_code, "SetConsoleCtrlHandler registration failed")
+
+    def _remove_handler() -> None:
+        if not kernel32.SetConsoleCtrlHandler(_handle_console_event, False):
+            logger.warning("Failed to remove the Windows console stop handler.")
+
+    return _remove_handler
+
+
+def _install_daemon_stop_handlers(
+    on_signal: Callable[[int, FrameType | None], None],
+) -> Callable[[], None]:
+    previous_handlers: list[tuple[signal.Signals, object]] = []
+    for sig in _daemon_stop_signals():
+        previous_handlers.append((sig, signal.getsignal(sig)))
+        signal.signal(sig, on_signal)
+    remove_windows_handler = _install_windows_console_stop_handler(
+        lambda: on_signal(int(getattr(signal, "SIGBREAK", signal.SIGINT)), None)
+    )
+
+    def _restore_handlers() -> None:
+        if remove_windows_handler is not None:
+            remove_windows_handler()
+        for sig, previous in previous_handlers:
+            signal.signal(sig, cast(signal.Handlers | int | None, previous))
+
+    return _restore_handlers
 
 
 class _DaemonLifecycleEmitter:
@@ -412,10 +466,7 @@ def run_server(
         )
         thread.start()
 
-    previous_handlers: list[tuple[signal.Signals, object]] = []
-    for sig in _daemon_stop_signals():
-        previous_handlers.append((sig, signal.getsignal(sig)))
-        signal.signal(sig, _handle_signal)
+    restore_stop_handlers = _install_daemon_stop_handlers(_handle_signal)
 
     exit_code = 0
     try:
@@ -447,8 +498,7 @@ def run_server(
             if not crashed:
                 crashed = True
                 lifecycle.emit_crashed(reason="server_close_error", error=exc)
-        for sig, previous in previous_handlers:
-            signal.signal(sig, cast(signal.Handlers | int | None, previous))
+        restore_stop_handlers()
         if not crashed and exit_code == 0:
             lifecycle.emit_stopped(reason=shutdown_reason)
         try:
