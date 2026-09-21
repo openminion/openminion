@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Current package line - 2026-09-21
 
+- Complete graceful shutdown for the packaged Windows daemon through native
+  console events, including deterministic PID-file cleanup.
+
+## Prior package line - 2026-09-21
+
 - Strengthen long-running coding projects with durable workspace-bound
   handoffs, plan and verifier continuity, and reliable recovery through Focus.
 - Add collaborative Focus rooms with authorized task delegation, non-waking
