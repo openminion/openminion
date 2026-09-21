@@ -19,7 +19,11 @@ from openminion.modules.skill.learning import (
     workflow_learning_event,
 )
 from openminion.modules.skill.learning.reuse import matching_catalog_entries
-from openminion.modules.skill.learning.replay import ReplayGateError, ReplayProof
+from openminion.modules.skill.learning.replay import (
+    ReplayGateError,
+    ReplayProof,
+    proposal_draft_hash,
+)
 from openminion.modules.skill.learning.shapes import (
     WorkflowEvidenceBundle,
     WorkflowShape,
@@ -28,6 +32,8 @@ from openminion.modules.skill.learning.shapes import (
 from openminion.modules.skill.proposal.queue import (
     PROPOSAL_QUEUE_STATE_PENDING,
     PROPOSAL_QUEUE_STATE_REVIEWED,
+    ProposalQueueError,
+    apply_proposal,
     create_proposal,
     get_proposal,
     record_proposal_review,
@@ -116,6 +122,27 @@ def _proposal(proposal_id: str = "wlsk-proposal") -> SkillProposal:
     )
 
 
+def _replay_proof(
+    proposal: SkillProposal,
+    *,
+    status: str = "passed",
+    shape_id: str | None = None,
+    candidate_hash: str | None = None,
+    evaluator_id: str = "evaluator-1",
+    result_ref: str = "replay:result-1",
+) -> ReplayProof:
+    return ReplayProof(
+        proof_id="proof-1",
+        proposal_id=proposal.proposal_id,
+        shape_id=shape_id or proposal.source_task_shape_ref,
+        candidate_hash=candidate_hash or proposal_draft_hash(proposal),
+        evaluator_id=evaluator_id,
+        result_ref=result_ref,
+        status=status,
+        evidence_refs=[result_ref] if result_ref else [],
+    )
+
+
 def test_evidence_bundle_redacts_and_round_trips() -> None:
     bundle = bundle_from_autonomy_proof_packet(
         _proof_packet(),
@@ -169,6 +196,50 @@ def test_miner_groups_structural_runs_and_rejects_prose_only() -> None:
     assert WorkflowShapeMiner().is_skill_ready(shapes[0])
 
 
+def test_miner_counts_serialized_replay_once() -> None:
+    original = bundle_from_autonomy_proof_packet(
+        _proof_packet("run-replayed"),
+        intent_category="test cleanup",
+        capability_category="cleanup",
+        strategy_id="test cleanup",
+        tool_names=["exec"],
+    )
+    replayed = WorkflowEvidenceBundle.model_validate_json(original.model_dump_json())
+
+    shapes = WorkflowShapeMiner().mine([original, replayed])
+
+    assert len(shapes) == 1
+    assert shapes[0].success_count == 1
+    assert not WorkflowShapeMiner().is_skill_ready(shapes[0])
+
+
+def test_miner_rejects_conflicting_duplicate_observation() -> None:
+    success = bundle_from_autonomy_proof_packet(
+        _proof_packet("run-conflict"),
+        intent_category="test cleanup",
+        capability_category="cleanup",
+        strategy_id="test cleanup",
+        tool_names=["exec"],
+    )
+    conflicting_payload = success.model_dump()
+    conflicting_payload["outcome"] = "failure"
+    failure = WorkflowEvidenceBundle.model_validate(conflicting_payload)
+    independent = bundle_from_autonomy_proof_packet(
+        _proof_packet("run-independent"),
+        intent_category="test cleanup",
+        capability_category="cleanup",
+        strategy_id="test cleanup",
+        tool_names=["exec"],
+    )
+
+    shapes = WorkflowShapeMiner().mine([success, failure, independent])
+
+    assert len(shapes) == 1
+    assert shapes[0].success_count == 1
+    assert shapes[0].failure_count == 0
+    assert not WorkflowShapeMiner().is_skill_ready(shapes[0])
+
+
 def test_user_save_signal_can_create_candidate_shape() -> None:
     bundle = bundle_from_autonomy_proof_packet(
         _proof_packet("run-save"),
@@ -183,6 +254,23 @@ def test_user_save_signal_can_create_candidate_shape() -> None:
     ready = WorkflowShapeMiner().skill_ready_shapes([bundle])
 
     assert len(ready) == 1
+    assert ready[0].explicit_save_count == 1
+
+
+def test_user_save_signal_survives_duplicate_observation() -> None:
+    observed = bundle_from_autonomy_proof_packet(
+        _proof_packet("run-save-later"),
+        intent_category="cleanup",
+        capability_category="cleanup",
+        strategy_id="cleanup",
+        tool_names=["exec"],
+    )
+    explicitly_saved = observed.model_copy(update={"explicit_save": True})
+
+    ready = WorkflowShapeMiner().skill_ready_shapes([observed, explicitly_saved])
+
+    assert len(ready) == 1
+    assert ready[0].success_count == 1
     assert ready[0].explicit_save_count == 1
 
 
@@ -214,6 +302,35 @@ def test_stage_shape_uses_proposal_queue_and_suppresses_duplicates(
             ],
         )
         assert duplicate.status == "skipped_duplicate"
+    finally:
+        store.close()
+
+
+def test_generic_apply_cannot_bypass_learned_replay_proof(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    try:
+        result = stage_shape_as_skill_proposal(
+            _shape(),
+            store=store,
+            current_catalog=[],
+        )
+        assert result.proposal is not None
+        record_proposal_review(
+            store,
+            proposal_id=result.proposal.proposal_id,
+            reviewer_id="operator-1",
+            review_policy_id="workflow_learning_review",
+            criterion_decisions=[
+                {"criterion_id": "fit", "status": "accepted", "comment": "ok"}
+            ],
+        )
+
+        with pytest.raises(ProposalQueueError, match="requires replay proof"):
+            apply_proposal(
+                store,
+                proposal_id=result.proposal.proposal_id,
+                current_catalog=[],
+            )
     finally:
         store.close()
 
@@ -257,7 +374,8 @@ def test_skill_draft_requires_validation_for_source_changes() -> None:
 def test_replay_proof_blocks_apply_until_passed(tmp_path: Path) -> None:
     store = _store(tmp_path)
     try:
-        create_proposal(store, _proposal())
+        proposal = _proposal()
+        create_proposal(store, proposal)
         record_proposal_review(
             store,
             proposal_id="wlsk-proposal",
@@ -276,26 +394,60 @@ def test_replay_proof_blocks_apply_until_passed(tmp_path: Path) -> None:
                 store,
                 proposal_id="wlsk-proposal",
                 current_catalog=[],
-                replay_proof=ReplayProof(
-                    proof_id="proof-1",
-                    proposal_id="wlsk-proposal",
-                    shape_id="wlsh-test",
-                    status="failed",
-                ),
+                replay_proof=_replay_proof(proposal, status="failed"),
             )
 
         addition = apply_proposal_with_replay(
             store,
             proposal_id="wlsk-proposal",
             current_catalog=[],
-            replay_proof=ReplayProof(
-                proof_id="proof-2",
-                proposal_id="wlsk-proposal",
-                shape_id="wlsh-test",
-                status="passed",
-            ),
+            replay_proof=_replay_proof(proposal),
         )
         assert addition.added_skill_id == "emergent.test-cleanup-playbook"
+        assert addition.version_hash
+        assert addition.admission_state == "pending"
+        assert addition.replay_proof is not None
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"shape_id": "workflow_shape:other"}, "shape_mismatch"),
+        ({"candidate_hash": "stale"}, "candidate_mismatch"),
+        ({"evaluator_id": "runtime"}, "evaluator_required"),
+        ({"result_ref": ""}, "result_required"),
+    ],
+)
+def test_replay_proof_rejects_unbound_or_self_asserted_result(
+    tmp_path: Path, overrides: dict[str, str], message: str
+) -> None:
+    store = _store(tmp_path)
+    proposal = _proposal()
+    try:
+        create_proposal(store, proposal)
+        record_proposal_review(
+            store,
+            proposal_id=proposal.proposal_id,
+            reviewer_id="operator-1",
+            review_policy_id="workflow_learning_review",
+            criterion_decisions=[
+                {"criterion_id": "fit", "status": "accepted", "comment": "ok"}
+            ],
+        )
+
+        with pytest.raises(ReplayGateError, match=message):
+            apply_proposal_with_replay(
+                store,
+                proposal_id=proposal.proposal_id,
+                current_catalog=[],
+                replay_proof=_replay_proof(proposal, **overrides),
+            )
+
+        record = get_proposal(store, proposal_id=proposal.proposal_id)
+        assert record is not None
+        assert record["queue_state"] == PROPOSAL_QUEUE_STATE_REVIEWED
     finally:
         store.close()
 

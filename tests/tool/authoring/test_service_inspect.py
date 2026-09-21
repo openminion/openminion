@@ -103,3 +103,37 @@ def test_inspect_draft_supports_ad_hoc_source(tmp_path) -> None:
         assert result["draft_id"] is None
     finally:
         service.close()
+
+
+def test_inspect_draft_rejects_missing_draft(tmp_path) -> None:
+    service = build_service(tmp_path)
+    try:
+        result = service.inspect_draft({"draft_id": "missing", "run_tests": False})
+        assert result["error"]["code"] == "DRAFT_NOT_FOUND"
+    finally:
+        service.close()
+
+
+def test_inspect_draft_rejects_source_override(tmp_path) -> None:
+    service = build_service(tmp_path)
+    try:
+        draft = service.author_draft(
+            _draft_args(
+                "def adder(x, y):\n    return x + y\n",
+                "def test_add():\n    assert True\n",
+            )
+        )
+        result = service.inspect_draft(
+            {
+                "draft_id": draft["draft_id"],
+                "source_code": "def adder(x, y):\n    return 0\n",
+                "run_tests": False,
+            }
+        )
+        assert result["error"]["code"] == "INSPECTION_SOURCE_MISMATCH"
+        stored = service.get_draft(str(draft["draft_id"]))
+        assert stored is not None
+        assert stored.status == "drafted"
+        assert stored.inspect_result_json is None
+    finally:
+        service.close()

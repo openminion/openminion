@@ -25,7 +25,10 @@ from openminion.cli.interactive.terminal.shell.slash_output import (
     handle_debug_output_slash,
     render_context_review,
 )
-from openminion.cli.interactive.terminal.shell.sessions import resume_session
+from openminion.cli.interactive.terminal.shell.sessions import (
+    handle_room_slash,
+    resume_session,
+)
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.interactive.models import ModelSelection
@@ -42,6 +45,9 @@ class _StubOverlay:
     def present_approval(self, _prompt: str) -> str:
         return "deny"
 
+    def present_resume_picker(self, _sessions: list[object]) -> None:
+        return None
+
 
 class _ResumeOverlay:
     def __init__(self, choice: str) -> None:
@@ -51,6 +57,19 @@ class _ResumeOverlay:
     def present_resume_picker(self, sessions: list[object]) -> str:
         self.items = sessions
         return self.choice
+
+
+class _RoomOverlay(_StubOverlay):
+    def __init__(self, *answers: str | None, confirm: bool = False) -> None:
+        self.answers = list(answers)
+        self.confirm = confirm
+
+    async def present_prompt_async(self, _prompt: str) -> str | None:
+        return self.answers.pop(0)
+
+    async def present_confirm_async(self, _prompt: str, *, default: bool) -> bool:
+        del default
+        return self.confirm
 
 
 class _VisibleRuntime:
@@ -103,6 +122,9 @@ class _VisibleRuntime:
         return [{"id": "demo-skill"}]
 
     def list_sessions(self) -> list[object]:
+        return []
+
+    def list_room_sessions(self) -> list[object]:
         return []
 
     def list_agents(self) -> list[object]:
@@ -196,6 +218,40 @@ class _HelpSafetyRuntime(_VisibleRuntime):
         return []
 
 
+class _RoomRuntime(_VisibleRuntime):
+    def __init__(self) -> None:
+        self.created: list[dict[str, object]] = []
+        self.applied: list[dict[str, object]] = []
+
+    def create_room_session(self, **kwargs: object) -> str:
+        self.created.append(dict(kwargs))
+        return "room-1"
+
+    def preview_room_handoff(self, **kwargs: object) -> dict[str, object]:
+        return {
+            "binding": {
+                **kwargs,
+                "target_session_id": "worker-1",
+            },
+            "preview": {},
+        }
+
+    def apply_room_handoff(self, payload: dict[str, object]) -> dict[str, str]:
+        self.applied.append(payload)
+        return {"packet_id": "packet-1"}
+
+    def create_room_peer_note(self, _agent_id: str, _text: str) -> str:
+        return "note-1"
+
+    async def start_room_task(self, task_step_id: str, **_kwargs: object) -> dict:
+        return {
+            "room_handback": {
+                "event_id": "result-1",
+                "result": {"status": "completed", "task_step_id": task_step_id},
+            }
+        }
+
+
 def _run_prompt_slash(
     text: str,
     tmp_path: Path,
@@ -230,6 +286,7 @@ def _extract_implemented_slashes() -> set[str]:
         _handle_shell_preference_slash,
         _handle_visible_parity_slash,
         handle_debug_output_slash,
+        handle_room_slash,
     )
     for dispatcher in dispatchers:
         tree = ast.parse(inspect.getsource(dispatcher))
@@ -384,6 +441,108 @@ def test_terminal_room_invite_rejects_agent_role_operand() -> None:
     )
 
     assert "usage: /invite agent <id>" in buf.getvalue()
+
+
+def test_terminal_room_create_collects_inputs_before_write() -> None:
+    runtime = _RoomRuntime()
+    console = Console(file=io.StringIO(), force_terminal=False, width=160)
+    transcript = TerminalTranscript(console)
+
+    asyncio.run(
+        _handle_slash(
+            "/room create",
+            runtime=runtime,
+            console=console,
+            transcript=transcript,
+            overlay=_RoomOverlay("Review room", "local-human", "alpha,beta"),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert runtime.created == [
+        {
+            "name": "Review room",
+            "local_human_id": "local-human",
+            "agent_ids": ["alpha", "beta"],
+        }
+    ]
+
+
+def test_terminal_room_create_cancel_writes_nothing() -> None:
+    runtime = _RoomRuntime()
+
+    asyncio.run(
+        _handle_slash(
+            "/room create",
+            runtime=runtime,
+            console=Console(file=io.StringIO(), force_terminal=False, width=160),
+            transcript=TerminalTranscript(Console(file=io.StringIO())),
+            overlay=_RoomOverlay(None),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert runtime.created == []
+
+
+@pytest.mark.parametrize("confirm,expected", [(False, 0), (True, 1)])
+def test_terminal_room_handoff_requires_confirmation(
+    confirm: bool,
+    expected: int,
+) -> None:
+    runtime = _RoomRuntime()
+
+    asyncio.run(
+        _handle_slash(
+            "/handoff @beta --task step-1",
+            runtime=runtime,
+            console=Console(file=io.StringIO(), force_terminal=False, width=160),
+            transcript=TerminalTranscript(Console(file=io.StringIO())),
+            overlay=_RoomOverlay(confirm=confirm),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert len(runtime.applied) == expected
+
+
+def test_terminal_room_message_queues_peer_note() -> None:
+    buf = io.StringIO()
+
+    asyncio.run(
+        _handle_slash(
+            "/message @beta review the patch",
+            runtime=_RoomRuntime(),
+            console=Console(file=buf, force_terminal=False, width=160),
+            transcript=TerminalTranscript(Console(file=io.StringIO())),
+            overlay=_RoomOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert "peer note queued for beta (note-1)" in buf.getvalue()
+
+
+def test_terminal_room_start_runs_exact_task() -> None:
+    buf = io.StringIO()
+
+    asyncio.run(
+        _handle_slash(
+            "/start --task step-1",
+            runtime=_RoomRuntime(),
+            console=Console(file=buf, force_terminal=False, width=160),
+            transcript=TerminalTranscript(Console(file=io.StringIO())),
+            overlay=_RoomOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert "worker finished: step-1 (completed, result-1)" in buf.getvalue()
 
 
 def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> None:

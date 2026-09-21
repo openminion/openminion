@@ -34,6 +34,7 @@ class SkillProposal(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
     proposer_policy_id: str = ""
     proposed_at: str = ""
+    requires_replay_proof: bool = False
 
 
 def _shape_field(shape: Any, field: str) -> Any:

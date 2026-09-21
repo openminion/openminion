@@ -1,5 +1,6 @@
 """Subprocess dispatcher for registered authored tools."""
 
+import base64
 import json
 import os
 import sys
@@ -56,8 +57,6 @@ def _run_authored_tool(
 ) -> dict[str, Any]:
     with TemporaryDirectory(prefix="aat-dispatch-") as tmp_dir:
         workspace = Path(tmp_dir)
-        tool_file = workspace / "tool_impl.py"
-        tool_file.write_text(row.source_code, encoding="utf-8")
         sandbox = ExecutionSandboxSpec(
             workspace_root=str(workspace),
             read_allow=[str(workspace)],
@@ -78,13 +77,10 @@ def _run_authored_tool(
         exec_spec = ExecSpec(
             cmd=[
                 sys.executable,
-                "-m",
-                "openminion.tools.tool_authoring.runner",
-                "--tool-file",
-                str(tool_file),
-                "--entry-function",
+                "-c",
+                _REMOTE_TOOL_BOOTSTRAP,
+                base64.b64encode(row.source_code.encode("utf-8")).decode("ascii"),
                 row.local_name,
-                "--args-json",
                 json.dumps(args, ensure_ascii=True),
             ],
             cwd=str(workspace),
@@ -119,6 +115,24 @@ def _run_authored_tool(
             "content": json.dumps(result_value, ensure_ascii=True, sort_keys=True),
             "data": {"result": result_value},
         }
+
+
+_REMOTE_TOOL_BOOTSTRAP = """
+import base64
+import json
+import sys
+
+source = base64.b64decode(sys.argv[1]).decode("utf-8")
+namespace = {}
+exec(compile(source, "tool_impl.py", "exec"), namespace)
+function = namespace.get(sys.argv[2])
+if not callable(function):
+    raise RuntimeError(  # allow-bare-raise: isolated subprocess bootstrap
+        f"entry function not callable: {sys.argv[2]}"
+    )
+arguments = json.loads(sys.argv[3])
+print(json.dumps({"ok": True, "result": function(**arguments)}, ensure_ascii=True))
+""".strip()
 
 
 __all__ = ["AuthoredToolDispatcher"]

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from openminion.modules.brain.schemas import (
     ActionError,
     ActionResult,
@@ -2423,6 +2425,81 @@ def test_engine_allows_consecutive_plan_lifecycle_transitions() -> None:
     )
 
 
+def test_engine_rejects_redeclaring_a_completed_plan_in_the_same_turn() -> None:
+    plan_id = "completed-plan"
+
+    def _plan_call(call_id: str, action: str, **arguments: Any) -> LLMResponse:
+        return LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            tool_calls=[
+                ToolCall(
+                    id=call_id,
+                    name=PLAN_TOOL_NAME,
+                    arguments={"action": action, "plan_id": plan_id, **arguments},
+                )
+            ],
+            finish_reason="tool_calls",
+        )
+
+    runtime = _FakeRuntime(
+        responses=[
+            _plan_call(
+                "declare",
+                "declare",
+                objective="Complete once",
+                steps=[{"step_id": "work", "description": "Do the work"}],
+            ),
+            _plan_call(
+                "complete-step",
+                "step_completed",
+                step_id="work",
+                output_summary="done",
+            ),
+            _plan_call("complete-plan", "complete", reason="all steps completed"),
+            _plan_call(
+                "redeclare",
+                "declare",
+                objective="Start over",
+                steps=[{"step_id": "replacement", "description": "Repeat work"}],
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Completed once.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The original plan completed.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    session_api = _FakeSessionAPI()
+
+    outcome = run_adaptive_tool_loop(
+        _LoopContext(
+            state=_state(tool_calls=2, llm_calls_max=10),
+            session_api=session_api,
+        ),
+        profile=_profile(allowed_tools=frozenset(), max_iterations=8),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="complete one plan")],
+        tool_specs=[],
+    )
+
+    assert outcome.final_text == "Completed once."
+    assert outcome.telemetry_payload()["task_plan.completed"]["plan_id"] == plan_id
+    assert [
+        event["event_type"]
+        for event in session_api.events
+        if event["event_type"] == "task_plan.declared"
+    ] == ["task_plan.declared"]
+
+
 def test_engine_preserves_final_answer_while_completing_active_plan() -> None:
     plan_id = "closeout-plan"
 
@@ -3486,6 +3563,132 @@ def test_terminal_tool_request_uses_existing_direct_tool_closure() -> None:
     assert outcome.state.scratchpad["tool_schema_shortlisting.terminal_tool"] == (
         "time"
     )
+
+
+@pytest.mark.parametrize(
+    ("executions", "satisfied", "prior_scope", "pending_job"),
+    [
+        ([("time", "success")], True, None, False),
+        ([], False, None, False),
+        ([("file.read", "success")], False, None, False),
+        ([("time", "failed")], False, None, False),
+        ([("time", "success"), ("time", "failed")], False, None, False),
+        ([], False, "", False),
+        ([], False, "previous-turn", False),
+        ([], True, "current-turn", False),
+        ([("exec.run", "success")], False, None, True),
+    ],
+)
+def test_late_terminal_request_uses_latest_matching_execution(
+    executions: list[tuple[str, str]],
+    satisfied: bool,
+    prior_scope: str | None,
+    pending_job: bool,
+) -> None:
+    answer = "2026-09-19T10:00:00Z"
+    requested_name = "exec.run" if pending_job else "time"
+    initial_state = AdaptiveToolLoopState()
+    if prior_scope is not None:
+        initial_state.scratchpad["adaptive.tool_results"] = [
+            {
+                "tool_name": "time",
+                "ok": True,
+                "turn_scope_id": prior_scope,
+                "job_pending": False,
+            }
+        ]
+    responses = [
+        LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            tool_calls=[
+                ToolCall(
+                    id=f"execute-{index}",
+                    name=name,
+                    arguments={"timezone": "UTC" if index == 0 else "GMT"},
+                )
+            ],
+            finish_reason="tool_calls",
+        )
+        for index, (name, _) in enumerate(executions)
+    ]
+    responses.append(
+        LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            tool_calls=[
+                ToolCall(
+                    id="terminal-time",
+                    name=TOOL_REQUEST_TOOL_NAME,
+                    arguments={"name": requested_name, "terminal_after_success": True},
+                )
+            ],
+            finish_reason="tool_calls",
+        )
+    )
+    responses.extend(
+        LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            output_text=answer,
+            finish_reason="stop",
+        )
+        for _ in range(2)
+    )
+    runtime = _FakeRuntime(responses=responses)
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=8, llm_calls_max=10, trace_id="current-turn"),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(tool_name=name, args={}),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status=status,
+                    summary=answer if status == "success" else "tool failed",
+                ),
+                job=JobHandle(
+                    task_id="pending-task",
+                    command_id="pending-command",
+                    provider="tool",
+                    status="pending",
+                )
+                if pending_job
+                else None,
+            )
+            for name, status in executions
+        ],
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=AdaptiveToolLoopProfile(
+            mode_name="act_adaptive",
+            stop_on_job_pending=False,
+            allowed_tools=frozenset({"time", "file.read", "exec.run"}),
+            max_iterations=8,
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="Return current UTC")],
+        tool_specs=_tool_specs("time", "file.read", "exec.run"),
+        requestable_tool_specs=_tool_specs("time", "file.read", "exec.run"),
+        initial_state=initial_state,
+    )
+
+    assert [command.tool_name for command in loop_ctx.commands] == [
+        name for name, _ in executions
+    ]
+    assert outcome.state.direct_tool_requested_batch_satisfied is satisfied
+    if satisfied:
+        assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert outcome.final_text == answer
+        assert runtime.calls[-1]["tool_choice"] == "none"
+    else:
+        assert outcome.termination_reason == ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED
+        assert "requested tool was not executed" in outcome.error_message.lower()
 
 
 def test_failed_terminal_tool_request_reopens_normal_recovery() -> None:

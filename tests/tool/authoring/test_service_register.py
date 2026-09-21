@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from openminion.modules.tool import ToolRegistry
 
 from ._helpers import (
@@ -139,5 +143,89 @@ def test_register_draft_rejects_uninspected_or_high_risk(tmp_path) -> None:
         service.inspect_draft({"draft_id": draft["draft_id"], "run_tests": False})
         critical = service.register_draft({"draft_id": draft["draft_id"]})
         assert critical["error"]["code"] == "INSPECT_NOT_PASSED"
+    finally:
+        service.close()
+
+
+def test_register_draft_reinspects_stale_receipt(tmp_path) -> None:
+    service, _, _ = _inspectable_service(tmp_path)
+    try:
+        draft = service.author_draft(
+            _base_args(
+                "def adder(x, y):\n    return x + y\n",
+                "def test_add():\n    assert True\n",
+            )
+        )
+        service.inspect_draft({"draft_id": draft["draft_id"], "run_tests": True})
+        service._store.update_draft_inspection(
+            str(draft["draft_id"]),
+            status="inspected",
+            inspect_result_json=json.dumps(
+                {
+                    "ok": True,
+                    "risk_level": "low",
+                    "recommend_register": True,
+                    "version_hash": "stale",
+                }
+            ),
+        )
+
+        result = service.register_draft(
+            {"draft_id": draft["draft_id"]}, agent_id="agent-1"
+        )
+
+        assert result["ok"] is True
+        stored = service.get_draft(str(draft["draft_id"]))
+        assert stored is not None
+        assert stored.inspect_result_json is not None
+        assert json.loads(stored.inspect_result_json)["version_hash"] != "stale"
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize(
+    "failed_result",
+    [
+        FakeExecResult(returncode=1, stdout="1 failed in 0.01s\n"),
+        FakeExecResult(returncode=2, stderr="pytest collection error\n"),
+        FakeExecResult(returncode=0, stdout="no tests ran in 0.01s\n"),
+        FakeExecResult(returncode=124, timed_out=True),
+    ],
+)
+def test_promotion_requires_passing_reinspection(
+    tmp_path, failed_result: FakeExecResult, force: bool
+) -> None:
+    registry = ToolRegistry()
+    runner = RecordingSandboxRunner(
+        FakeExecResult(returncode=0, stdout="1 passed in 0.01s\n")
+    )
+    service = build_service(
+        tmp_path,
+        registry=registry,
+        policy_ctl=FakePolicyCtl(),
+        sandbox_runner=runner,
+    )
+    try:
+        draft = service.author_draft(
+            _base_args(
+                "def adder(x, y):\n    return x + y\n",
+                "def test_add():\n    assert True\n",
+            )
+        )
+        service.inspect_draft({"draft_id": draft["draft_id"], "run_tests": True})
+        registered = service.register_draft(
+            {"draft_id": draft["draft_id"]}, agent_id="agent-1"
+        )
+        runner.result = failed_result
+
+        result = service.promote_tool(
+            str(registered["tool_name"]), force=force, actor_id="agent-1"
+        )
+
+        assert result["error"]["code"] == "PROMOTION_REJECTED"
+        stored = service.get_authored_tool_detail(str(registered["tool_name"]))
+        assert stored is not None
+        assert stored["tier"] == "experimental"
     finally:
         service.close()

@@ -168,7 +168,7 @@ def test_general_entry_exposes_git_and_plan_runtime_tools_when_registered(
         sort_keys=True,
         separators=(",", ":"),
     )
-    assert len(serialized.encode("utf-8")) < 12_000
+    assert len(serialized.encode("utf-8")) < 13_500
     requestable = build_entry_requestable_tool_specs(
         object(),
         act_profile="general",

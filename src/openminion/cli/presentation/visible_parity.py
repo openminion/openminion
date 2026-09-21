@@ -283,6 +283,12 @@ def render_skills_report(runtime: Any, arg: str = "") -> str:
 
 
 def render_tasks_report(runtime: Any, task_id: str = "") -> str:
+    room_detector = getattr(runtime, "is_room_session", None)
+    room_report = getattr(runtime, "room_tasks_report", None)
+    if not str(task_id or "").strip() and callable(room_detector) and room_detector():
+        if callable(room_report):
+            return str(room_report())
+
     from openminion.modules.task.surface import (
         build_task_surface,
         resolve_task_surface_source,

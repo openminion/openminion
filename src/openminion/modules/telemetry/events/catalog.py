@@ -124,7 +124,9 @@ BRAIN_TUNING_ADJUSTED = "brain.threshold_adjustment"
 PROJECT_LAUNCHED = "project.launched"
 PROJECT_LAUNCH_BLOCKED = "project.launch_blocked"
 PROJECT_LAUNCH_DENIED = "project.launch_denied"
+ROOM_HANDOFF_RESULT = "room.handoff.result"
 TASK_PLAN_ABANDONED = "task_plan.abandoned"
+TASK_PLAN_ASSIGNED = "task_plan.assigned"
 TASK_PLAN_COMPLETED = "task_plan.completed"
 TASK_PLAN_DECLARED = "task_plan.declared"
 TASK_PLAN_INVALID_TRAILER = "task_plan.invalid_trailer"
@@ -352,8 +354,10 @@ EVENT_TYPES: frozenset[str] = frozenset(
         PROJECT_LAUNCHED,
         PROJECT_LAUNCH_BLOCKED,
         PROJECT_LAUNCH_DENIED,
+        ROOM_HANDOFF_RESULT,
         TASK_PLAN_ABANDONED,
         TASK_PLAN_COMPLETED,
+        TASK_PLAN_ASSIGNED,
         TASK_PLAN_DECLARED,
         TASK_PLAN_INVALID_TRAILER,
         TASK_PLAN_REVISED,
@@ -607,8 +611,10 @@ __all__ = [
     "PROJECT_LAUNCHED",
     "PROJECT_LAUNCH_BLOCKED",
     "PROJECT_LAUNCH_DENIED",
+    "ROOM_HANDOFF_RESULT",
     "TASK_PLAN_ABANDONED",
     "TASK_PLAN_COMPLETED",
+    "TASK_PLAN_ASSIGNED",
     "TASK_PLAN_DECLARED",
     "TASK_PLAN_INVALID_TRAILER",
     "TASK_PLAN_REVISED",

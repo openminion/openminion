@@ -398,6 +398,9 @@ def _add_learning_subcommands(sub: Any) -> None:
     learning_replay.add_argument("--proposal-id", required=True)
     learning_replay.add_argument("--shape-id", required=True)
     learning_replay.add_argument("--proof-id", required=True)
+    learning_replay.add_argument("--candidate-hash", required=True)
+    learning_replay.add_argument("--evaluator-id", required=True)
+    learning_replay.add_argument("--result-ref", required=True)
     learning_replay.add_argument(
         "--status", required=True, choices=_REPLAY_STATUS_CHOICES
     )
@@ -410,6 +413,9 @@ def _add_learning_subcommands(sub: Any) -> None:
     learning_apply.add_argument("--proposal-id", required=True)
     learning_apply.add_argument("--shape-id", required=True)
     learning_apply.add_argument("--proof-id", required=True)
+    learning_apply.add_argument("--candidate-hash", required=True)
+    learning_apply.add_argument("--evaluator-id", required=True)
+    learning_apply.add_argument("--result-ref", required=True)
     learning_apply.add_argument(
         "--proof-status",
         required=True,
@@ -800,14 +806,12 @@ def _dispatch_proposal_cmd(ctl: Skill, args: argparse.Namespace) -> None:
 
 def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
     from openminion.modules.skill.learning import (
-        SkillExecutionTrustRecord,
+        execution_trust_diagnostic,
         WorkflowEvidenceBundle,
         WorkflowShape,
         WorkflowShapeMiner,
-        apply_proposal_with_replay,
         stage_shape_as_skill_proposal,
     )
-    from openminion.modules.skill.learning.replay import ReplayGateError
 
     if args.cmd == "learning-scan":
         raw = _read_json_path(args.bundle_json)
@@ -862,6 +866,9 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
             proposal_id=args.proposal_id,
             shape_id=args.shape_id,
             proof_id=args.proof_id,
+            candidate_hash=args.candidate_hash,
+            evaluator_id=args.evaluator_id,
+            result_ref=args.result_ref,
             status=args.status,
             evidence=args.evidence,
         )
@@ -869,34 +876,45 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     if args.cmd == "learning-apply-proved":
-        proof = replay_proof_from_args(
-            proposal_id=args.proposal_id,
-            shape_id=args.shape_id,
-            proof_id=args.proof_id,
-            status=args.proof_status,
-            evidence=args.evidence,
-        )
-        try:
-            addition = apply_proposal_with_replay(
-                ctl.store,
-                proposal_id=args.proposal_id,
-                current_catalog=ctl.list_skills({}) or [],
-                replay_proof=proof,
-            )
-        except (ReplayGateError, ValueError) as exc:
-            raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
-        _print_json({"ok": True, "addition": addition.model_dump(mode="json")})
+        _dispatch_learning_apply_proved(ctl, args)
         return
 
     if args.cmd == "learning-trust-status":
-        record = SkillExecutionTrustRecord(
+        record = execution_trust_diagnostic(
             skill_id=args.skill_id,
             shape_id=args.shape_id,
+            lifecycle_facts=ctl.store.get_skill_lifecycle_facts(skill_id=args.skill_id),
         )
         _print_json({"ok": True, "trust": record.model_dump(mode="json")})
         return
 
     raise SkillError("INVALID_ARGUMENT", "Unsupported learning command")
+
+
+def _dispatch_learning_apply_proved(ctl: Skill, args: argparse.Namespace) -> None:
+    from openminion.modules.skill.learning import apply_proposal_with_replay
+    from openminion.modules.skill.learning.replay import ReplayGateError
+
+    proof = replay_proof_from_args(
+        proposal_id=args.proposal_id,
+        shape_id=args.shape_id,
+        proof_id=args.proof_id,
+        candidate_hash=args.candidate_hash,
+        evaluator_id=args.evaluator_id,
+        result_ref=args.result_ref,
+        status=args.proof_status,
+        evidence=args.evidence,
+    )
+    try:
+        addition = apply_proposal_with_replay(
+            ctl.store,
+            proposal_id=args.proposal_id,
+            current_catalog=ctl.list_skills({}) or [],
+            replay_proof=proof,
+        )
+    except (ReplayGateError, ValueError) as exc:
+        raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
+    _print_json({"ok": True, "addition": addition.model_dump(mode="json")})
 
 
 def _read_json_path(path: str) -> Any:

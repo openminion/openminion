@@ -12,6 +12,7 @@ from .client import (
 )
 from .config import DaytonaConfig
 from .runner import DaytonaRunner
+from .sdk_transport import DaytonaSdkTransport
 from .session import DaytonaSessionManager, DaytonaSessionRecord
 
 __all__ = [
@@ -20,6 +21,7 @@ __all__ = [
     "DaytonaCommandResult",
     "DaytonaConfig",
     "DaytonaRunner",
+    "DaytonaSdkTransport",
     "DaytonaSessionManager",
     "DaytonaSessionPollResult",
     "DaytonaSessionRecord",

@@ -164,6 +164,15 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
     ) -> dict[str, Any]:
         parsed = ToolInspectArgs.model_validate(args)
         draft_row = self._store.get_draft(parsed.draft_id) if parsed.draft_id else None
+        if parsed.draft_id and draft_row is None:
+            return _error("DRAFT_NOT_FOUND", parsed.draft_id)
+        if draft_row is not None and (
+            parsed.source_code is not None or parsed.unit_tests_source is not None
+        ):
+            return _error(
+                "INSPECTION_SOURCE_MISMATCH",
+                "draft inspection does not accept source overrides",
+            )
         source_code = parsed.source_code or (draft_row.source_code if draft_row else "")
         unit_tests_source = parsed.unit_tests_source or (
             draft_row.unit_tests_source if draft_row else ""
@@ -213,6 +222,10 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             "recommend_reason": _recommend_reason(
                 risk_level=risk_level,
                 test_results=test_results,
+            ),
+            "version_hash": compute_version_hash(
+                source_code=source_code,
+                unit_tests_source=unit_tests_source,
             ),
         }
         if draft_row is not None:
@@ -264,6 +277,14 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
                 "INSPECT_NOT_PASSED", "draft must be inspected before register"
             )
         inspect_result = _parse_json_object(draft.inspect_result_json)
+        if inspect_result.get("version_hash") != version_hash:
+            inspect_result = self.inspect_draft(
+                {"draft_id": draft.draft_id, "run_tests": True},
+                agent_id=agent_id,
+                session_id=session_id,
+            )
+            if not inspect_result.get("ok"):
+                return inspect_result
         risk_level = str(inspect_result.get("risk_level", "") or "").strip().lower()
         if risk_level == "critical":
             return _error(
@@ -297,34 +318,32 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
         except Exception as exc:
             return _error("POLICY_GRANT_FAILED", str(exc))
 
-        row = AuthoredToolRow(
+        row = _build_authored_tool_row(
+            draft=draft,
             tool_name=tool_name,
-            local_name=draft.local_name,
             version_number=version_number,
             version_hash=version_hash,
-            source_code=draft.source_code,
-            unit_tests_source=draft.unit_tests_source,
-            args_schema_json=draft.args_schema_json,
-            returns_schema_json=draft.returns_schema_json,
-            description=draft.description,
-            dependencies_json=draft.dependencies_json,
-            tier=TOOL_AUTHORING_TIER_EXPERIMENTAL,
-            min_scope=TOOL_AUTHORING_SCOPE_POWER_USER,
             policy_grant_id=policy_grant_id,
             created_at=now,
-            updated_at=now,
-            created_by_agent_id=agent_id,
-            promoted_at=None,
-            promoted_by=None,
-            success_count=0,
-            failure_count=0,
-            last_invocation_at=None,
-            removed_at=None,
-            removed_by=None,
+            agent_id=agent_id,
         )
         self._store.insert_authored_tool(row)
         self._store.mark_draft_registered(draft.draft_id)
         self._register_runtime_tool(row=row)
+        self._emit_registration_audits(
+            row=row,
+            agent_id=agent_id,
+            session_id=session_id,
+        )
+        return _registration_payload(row, idempotent=False)
+
+    def _emit_registration_audits(
+        self,
+        *,
+        row: AuthoredToolRow,
+        agent_id: str | None,
+        session_id: str | None,
+    ) -> None:
         self._emit_audit(
             event_type=TOOL_AUTHORING_EVENT_REGISTERED,
             target_kind=TOOL_AUTHORING_TARGET_TOOL,
@@ -349,12 +368,11 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             version_hash=row.version_hash,
             details={
                 "tool_name": row.tool_name,
-                "grant_id": policy_grant_id,
+                "grant_id": row.policy_grant_id,
                 "scope": TOOL_AUTHORING_SCOPE_POWER_USER,
                 "issued_by": "auto_register",
             },
         )
-        return _registration_payload(row, idempotent=False)
 
     def invoke(
         self,
@@ -441,7 +459,9 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             session_id=None,
         )
         risk_level = str(inspect_result.get("risk_level", "") or "").strip().lower()
-        if risk_level not in {"low", "medium"}:
+        if risk_level not in {"low", "medium"} or not bool(
+            inspect_result.get("recommend_register", False)
+        ):
             return _error("PROMOTION_REJECTED", f"re-inspect risk={risk_level}")
         total = max(0, row.success_count + row.failure_count)
         failure_rate = (row.failure_count / total) if total else 1.0
@@ -735,6 +755,43 @@ def _recommend_reason(*, risk_level: str, test_results: dict[str, Any]) -> str:
 
 def _error(code: str, message: str) -> dict[str, Any]:
     return {"ok": False, "error": {"code": code, "message": message}}
+
+
+def _build_authored_tool_row(
+    *,
+    draft: ToolDraftRow,
+    tool_name: str,
+    version_number: int,
+    version_hash: str,
+    policy_grant_id: str,
+    created_at: str,
+    agent_id: str | None,
+) -> AuthoredToolRow:
+    return AuthoredToolRow(
+        tool_name=tool_name,
+        local_name=draft.local_name,
+        version_number=version_number,
+        version_hash=version_hash,
+        source_code=draft.source_code,
+        unit_tests_source=draft.unit_tests_source,
+        args_schema_json=draft.args_schema_json,
+        returns_schema_json=draft.returns_schema_json,
+        description=draft.description,
+        dependencies_json=draft.dependencies_json,
+        tier=TOOL_AUTHORING_TIER_EXPERIMENTAL,
+        min_scope=TOOL_AUTHORING_SCOPE_POWER_USER,
+        policy_grant_id=policy_grant_id,
+        created_at=created_at,
+        updated_at=created_at,
+        created_by_agent_id=agent_id,
+        promoted_at=None,
+        promoted_by=None,
+        success_count=0,
+        failure_count=0,
+        last_invocation_at=None,
+        removed_at=None,
+        removed_by=None,
+    )
 
 
 def _registration_payload(

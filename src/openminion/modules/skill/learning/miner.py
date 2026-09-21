@@ -18,7 +18,7 @@ class WorkflowShapeMiner:
         grouped: dict[tuple[object, ...], list[WorkflowEvidenceBundle]] = defaultdict(
             list
         )
-        for bundle in bundles:
+        for bundle in self._deduplicate(bundles):
             if not self._has_structural_signal(bundle):
                 continue
             grouped[self._key(bundle)].append(bundle)
@@ -26,6 +26,48 @@ class WorkflowShapeMiner:
         shapes = [self._shape_from_group(items) for items in grouped.values()]
         shapes.sort(key=lambda item: item.shape_id)
         return shapes
+
+    @classmethod
+    def _deduplicate(
+        cls, bundles: Iterable[WorkflowEvidenceBundle]
+    ) -> list[WorkflowEvidenceBundle]:
+        observations: dict[tuple[str, tuple[str, ...]], WorkflowEvidenceBundle] = {}
+        conflicts: set[tuple[str, tuple[str, ...]]] = set()
+        for bundle in bundles:
+            identity = cls._observation_identity(bundle)
+            existing = observations.get(identity)
+            if existing is None:
+                observations[identity] = bundle
+            elif cls._observation_facts(existing) != cls._observation_facts(bundle):
+                conflicts.add(identity)
+            elif bundle.explicit_save and not existing.explicit_save:
+                observations[identity] = bundle
+        return [
+            bundle
+            for identity, bundle in observations.items()
+            if identity not in conflicts
+        ]
+
+    @staticmethod
+    def _observation_identity(
+        bundle: WorkflowEvidenceBundle,
+    ) -> tuple[str, tuple[str, ...]]:
+        for name in (
+            "source_run_refs",
+            "proof_packet_refs",
+            "skill_run_refs",
+            "strategy_outcome_refs",
+            "user_correction_refs",
+            "replay_refs",
+        ):
+            refs = tuple(getattr(bundle, name))
+            if refs:
+                return name, refs
+        return "bundle_id", (bundle.bundle_id,)
+
+    @classmethod
+    def _observation_facts(cls, bundle: WorkflowEvidenceBundle) -> tuple[object, ...]:
+        return (*cls._key(bundle), bundle.outcome)
 
     def skill_ready_shapes(
         self, bundles: Iterable[WorkflowEvidenceBundle]

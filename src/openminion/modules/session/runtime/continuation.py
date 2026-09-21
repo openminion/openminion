@@ -21,6 +21,9 @@ from ..schemas import (
     ContinuationProgressItem,
     DEFAULT_CONTINUATION_TTL_SECONDS,
     MAX_CONTINUATION_TTL_SECONDS,
+    RoomHandoffAcceptance,
+    RoomHandoffBinding,
+    RoomHandoffResultV1,
     SessionContinuationPacket,
     SessionContinuationPayload,
 )
@@ -29,6 +32,7 @@ PACKET_CREATED = "session.continuation.packet_created"
 PACKET_APPLIED = "session.continuation.applied"
 PACKET_REJECTED = "session.continuation.rejected"
 PACKET_EXPIRED = "session.continuation.expired"
+ROOM_HANDBACK_ACCEPTED = "room.handoff.result"
 
 _STORE_LOCKS: dict[str, RLock] = {}
 _STORE_LOCKS_GUARD = Lock()
@@ -110,6 +114,39 @@ class SessionContinuationService:
         target_agent_id: str,
         expires_in_seconds: int = DEFAULT_CONTINUATION_TTL_SECONDS,
     ) -> ContinuationPreview:
+        return self._preview(
+            source_session_id,
+            target_agent_id=target_agent_id,
+            expires_in_seconds=expires_in_seconds,
+        )
+
+    def preview_room_handoff(
+        self,
+        binding: RoomHandoffBinding,
+        *,
+        expires_in_seconds: int = DEFAULT_CONTINUATION_TTL_SECONDS,
+    ) -> ContinuationPreview:
+        failure = _room_task_step_failure(
+            self._store.get_active_task_plan(binding.room_session_id),
+            binding.task_step_id,
+        )
+        if failure:
+            raise ContinuationError(failure)
+        return self._preview(
+            binding.room_session_id,
+            target_agent_id=binding.target_agent_id,
+            expires_in_seconds=expires_in_seconds,
+            room_binding=binding,
+        )
+
+    def _preview(
+        self,
+        source_session_id: str,
+        *,
+        target_agent_id: str,
+        expires_in_seconds: int,
+        room_binding: RoomHandoffBinding | None = None,
+    ) -> ContinuationPreview:
         started = perf_counter()
         source = self._store.get_session(source_session_id)
         if source is None:
@@ -118,6 +155,7 @@ class SessionContinuationService:
             source,
             target_agent_id=target_agent_id,
             expires_in_seconds=expires_in_seconds,
+            room_binding=room_binding,
         )
 
         resume = self._store.get_resume_state(source_session_id)
@@ -143,6 +181,12 @@ class SessionContinuationService:
             source_latest_seq=latest_seq,
             source_agent_id=source_agent_id,
             target_agent_id=target_agent,
+            continuation_kind=(
+                "room_agent_handoff"
+                if room_binding is not None
+                else "same_agent_resume"
+            ),
+            room_handoff_binding=room_binding,
             source_checkpoint_ref=checkpoint_ref or None,
             workspace_ref=_optional_ref(meta, state, "workspace_ref"),
             project_run_ref=_optional_ref(meta, state, "project_run_ref"),
@@ -196,6 +240,32 @@ class SessionContinuationService:
             target_agent_id=target_agent_id,
             expires_in_seconds=expires_in_seconds,
         )
+        return self._create(source_session_id, preview)
+
+    def create_room_handoff(
+        self,
+        binding: RoomHandoffBinding,
+        *,
+        expires_in_seconds: int = DEFAULT_CONTINUATION_TTL_SECONDS,
+    ) -> ContinuationBuildResult:
+        target_failure = _target_session_failure(
+            self._store,
+            binding.target_session_id,
+            binding.target_agent_id,
+        )
+        if target_failure:
+            raise ContinuationError(target_failure)
+        preview = self.preview_room_handoff(
+            binding,
+            expires_in_seconds=expires_in_seconds,
+        )
+        return self._create(binding.room_session_id, preview)
+
+    def _create(
+        self,
+        source_session_id: str,
+        preview: ContinuationPreview,
+    ) -> ContinuationBuildResult:
         event_id = self._store.append_event(
             source_session_id,
             event_type=PACKET_CREATED,
@@ -239,6 +309,7 @@ class SessionContinuationService:
         target_session_id: str,
         *,
         packet_id: str,
+        room_binding: RoomHandoffBinding | None = None,
     ) -> ContinuationApplyResult:
         started = perf_counter()
         packet = self.get_packet(packet_id)
@@ -258,6 +329,18 @@ class SessionContinuationService:
                     packet,
                     target_session_id,
                     "continuation_target_conflict",
+                    started=started,
+                )
+            binding_failure = _room_binding_failure(
+                packet.payload,
+                room_binding,
+                target_session_id,
+            )
+            if binding_failure:
+                return self._reject(
+                    packet,
+                    target_session_id,
+                    binding_failure,
                     started=started,
                 )
 
@@ -311,6 +394,76 @@ class SessionContinuationService:
             status="applied",
         )
 
+    def accept_room_handback(
+        self,
+        result: RoomHandoffResultV1,
+    ) -> RoomHandoffAcceptance:
+        packet = self.get_packet(result.handoff_packet_id)
+        binding = packet.payload.room_handoff_binding
+        if packet.payload.continuation_kind != "room_agent_handoff" or binding is None:
+            raise ContinuationError("room_handback_packet_required")
+        if (
+            result.source_room_session_id != binding.room_session_id
+            or result.worker_session_id != binding.target_session_id
+            or result.source_agent_id != binding.source_agent_id
+            or result.target_agent_id != binding.target_agent_id
+        ):
+            raise ContinuationError("room_handback_binding_mismatch")
+        if not self._store.get_events_by_parent_and_type(
+            packet.packet_id,
+            PACKET_APPLIED,
+        ):
+            raise ContinuationError("room_handback_packet_not_applied")
+
+        active_plan = _dict(self._store.get_active_task_plan(binding.room_session_id))
+        step = next(
+            (
+                _dict(item)
+                for item in active_plan.get("steps", [])
+                if _dict(item).get("step_id") == binding.task_step_id
+            ),
+            {},
+        )
+        if (
+            step.get("assigned_participant_id") != binding.target_agent_id
+            or step.get("worker_session_id") != binding.target_session_id
+            or step.get("continuation_packet_id") != packet.packet_id
+        ):
+            raise ContinuationError("room_handback_task_binding_mismatch")
+
+        payload = result.model_dump(mode="json")
+        with self._lock:
+            prior = self._store.get_events_by_parent_and_type(
+                packet.packet_id,
+                ROOM_HANDBACK_ACCEPTED,
+            )
+            if prior:
+                if _dict(prior[0].get("payload")) != payload:
+                    raise ContinuationError("room_handback_conflict")
+                return RoomHandoffAcceptance(
+                    status="already_accepted",
+                    event_id=str(prior[0]["event_id"]),
+                    result=result,
+                )
+            event_id = self._store.append_event(
+                binding.room_session_id,
+                event_type=ROOM_HANDBACK_ACCEPTED,
+                parent_event_id=packet.packet_id,
+                payload=payload,
+                refs={
+                    "source_event_id": packet.packet_id,
+                    "source_session_id": binding.target_session_id,
+                    "artifact_refs": result.artifact_refs,
+                },
+                importance=2,
+                redaction="bounded",
+            )
+        return RoomHandoffAcceptance(
+            status="accepted",
+            event_id=str(event_id),
+            result=result,
+        )
+
     def _append_applied_event(
         self,
         packet: SessionContinuationPacket,
@@ -344,18 +497,17 @@ class SessionContinuationService:
         packet: SessionContinuationPacket,
         target_session_id: str,
     ) -> str | None:
-        target = self._store.get_session(target_session_id)
-        if target is None:
-            return "continuation_target_not_found"
         if self._now_ms() >= packet.payload.expires_at_ms:
             return "continuation_expired"
-        target_agent = str(target.get("active_agent_id") or "").strip()
-        if target_agent != packet.payload.target_agent_id:
-            return "continuation_agent_mismatch"
-        if self._store.get_total_turn_count(target_session_id) != 0:
-            return "continuation_target_not_empty"
-        if self._store.get_events(target_session_id, types=[PACKET_APPLIED]):
-            return "continuation_target_already_initialized"
+        target_failure = _target_session_failure(
+            self._store,
+            target_session_id,
+            packet.payload.target_agent_id,
+        )
+        if target_failure:
+            return target_failure
+        target = self._store.get_session(target_session_id)
+        assert target is not None
         target_meta = _dict(target.get("meta"))
         for field in ("workspace_ref", "project_run_ref"):
             expected = getattr(packet.payload, field)
@@ -457,17 +609,96 @@ def _preview_inputs(
     *,
     target_agent_id: str,
     expires_in_seconds: int,
+    room_binding: RoomHandoffBinding | None = None,
 ) -> tuple[str, str, int]:
     source_agent_id = str(source.get("active_agent_id") or "").strip()
     target_agent = target_agent_id.strip()
+    if room_binding is not None:
+        source_agent_id = room_binding.source_agent_id
     if not source_agent_id:
         raise ContinuationError("continuation_source_agent_missing")
     if not target_agent:
         raise ContinuationError("continuation_target_agent_required")
+    if room_binding is None and target_agent != source_agent_id:
+        raise ContinuationError("continuation_cross_agent_requires_room_handoff")
+    if room_binding is not None and (
+        room_binding.room_session_id != str(source.get("session_id") or "").strip()
+        or room_binding.target_agent_id != target_agent
+        or source_agent_id == target_agent
+    ):
+        raise ContinuationError("continuation_room_binding_mismatch")
     ttl = expires_in_seconds
     if ttl <= 0 or ttl > MAX_CONTINUATION_TTL_SECONDS:
         raise ContinuationError("invalid_continuation_expiry")
     return source_agent_id, target_agent, ttl
+
+
+def _room_binding_failure(
+    payload: SessionContinuationPayload,
+    binding: RoomHandoffBinding | None,
+    target_session_id: str,
+) -> str | None:
+    if payload.continuation_kind == "same_agent_resume":
+        return None
+    if binding is None:
+        return "continuation_room_binding_required"
+    if (
+        binding != payload.room_handoff_binding
+        or binding.target_session_id != target_session_id
+    ):
+        return "continuation_room_binding_mismatch"
+    return None
+
+
+def _target_session_failure(
+    store: Any,
+    target_session_id: str,
+    target_agent_id: str,
+) -> str | None:
+    target = store.get_session(target_session_id)
+    if target is None:
+        return "continuation_target_not_found"
+    if str(target.get("active_agent_id") or "").strip() != target_agent_id:
+        return "continuation_agent_mismatch"
+    if store.get_total_turn_count(target_session_id) != 0:
+        return "continuation_target_not_empty"
+    if store.get_events(target_session_id, types=[PACKET_APPLIED]):
+        return "continuation_target_already_initialized"
+    return None
+
+
+def _room_task_step_failure(
+    raw_plan: dict[str, Any] | None,
+    task_step_id: str,
+) -> str | None:
+    if not isinstance(raw_plan, dict):
+        return "continuation_room_task_plan_required"
+    steps = raw_plan.get("steps")
+    if not isinstance(steps, list):
+        return "continuation_room_task_plan_required"
+    selected = next(
+        (
+            step
+            for step in steps
+            if isinstance(step, dict) and step.get("step_id") == task_step_id
+        ),
+        None,
+    )
+    if selected is None:
+        return "continuation_room_task_step_not_found"
+    if selected.get("status") != "pending":
+        return "continuation_room_task_step_not_pending"
+    completed = {
+        str(step.get("step_id"))
+        for step in steps
+        if isinstance(step, dict) and step.get("status") == "completed"
+    }
+    dependencies = selected.get("depends_on") or []
+    if not isinstance(dependencies, list) or any(
+        str(dependency) not in completed for dependency in dependencies
+    ):
+        return "continuation_room_task_step_blocked"
+    return None
 
 
 def _recent_refs(

@@ -319,6 +319,13 @@ def _merge_redeclared_active_plan(
         if isinstance(step, dict) and str(step.get("step_id") or "").strip()
     }
     merged_payload = declared.model_dump(mode="json")
+    declared_step_ids = {
+        str(step.get("step_id") or "").strip()
+        for step in merged_payload.get("steps") or []
+        if isinstance(step, dict) and str(step.get("step_id") or "").strip()
+    }
+    if declared_step_ids != set(existing_steps):
+        raise ValueError("active plan step_ids are immutable; use action=revise")
     merged_steps: list[dict[str, Any]] = []
     for raw_step in merged_payload.get("steps") or []:
         step = dict(raw_step) if isinstance(raw_step, dict) else {}

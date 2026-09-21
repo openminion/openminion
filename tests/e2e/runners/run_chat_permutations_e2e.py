@@ -138,7 +138,7 @@ _INLINE_APPROVAL_RE = re.compile(
     r"(?:Approval required:[^\n]*\n)?\[y\]es / \[N\]o / \[a\]lways:\s*",
     re.IGNORECASE,
 )
-_TURN_DONE_RE = re.compile(r"(?:^|\n)Done in (?:\d+m)?\d+s\s*(?:\n|$)")
+_TURN_DONE_RE = re.compile(r"\bDone in \d+(?:m\d{2}s|s)\b")
 _KNOWN_FAILURE_RE = re.compile(
     r"General act work ended without the required typed "
     r"finalization_status contract|Adaptive loop stopped unexpectedly\.|"

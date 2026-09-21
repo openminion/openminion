@@ -24,6 +24,10 @@ class CodingLoopState:
     direct_tool_requested_batch_satisfied: bool = False
     scratchpad: dict[str, Any] = field(default_factory=dict)
     seen_signatures: list[str] = field(default_factory=list)
+    task_plan: dict[str, Any] | None = None
+    task_plan_revision: dict[str, Any] | None = None
+    task_plan_abandoned: dict[str, Any] | None = None
+    task_plan_completed: dict[str, Any] | None = None
 
     def append_tool_result(
         self,
@@ -114,4 +118,12 @@ class CodingLoopState:
         ):
             if key in self.scratchpad:
                 payload[key] = self.scratchpad[key]
+        for key, value in (
+            ("task_plan", self.task_plan),
+            ("task_plan.revision", self.task_plan_revision),
+            ("task_plan.abandoned", self.task_plan_abandoned),
+            ("task_plan.completed", self.task_plan_completed),
+        ):
+            if value:
+                payload[key] = dict(value)
         return payload

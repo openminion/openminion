@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from openminion.modules.skill.learning import ReplayProof, apply_proposal_with_replay
+from openminion.modules.skill.learning.replay import proposal_draft_hash
 from openminion.modules.skill.proposal import SkillProposal, SkillProposalDraft
 from openminion.modules.skill.proposal.queue import (
     create_proposal,
@@ -91,6 +92,9 @@ def test_repository_delivery_review_replay_apply_and_manual_use(tmp_path: Path) 
                 proof_id=f"repository-delivery-replay:{version_hash}",
                 proposal_id=proposal.proposal_id,
                 shape_id="task-shape:repository-delivery",
+                candidate_hash=proposal_draft_hash(proposal),
+                evaluator_id="repository-delivery-evaluator",
+                result_ref=artifact_ref,
                 status="passed",
                 evidence_refs=[artifact_ref],
             ),

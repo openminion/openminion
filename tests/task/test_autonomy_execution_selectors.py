@@ -18,6 +18,7 @@ def test_autonomy_selectors_survive_restart_without_secret_values(tmp_path) -> N
         config_ref="profiles/minimax.json",
         default_act_profile="coding",
         verification_domain="coding",
+        turn_target="focus",
         verifier_ref="command",
         verification_commands=("pytest -q",),
         turn_timeout_seconds=600,
@@ -34,6 +35,7 @@ def test_autonomy_selectors_survive_restart_without_secret_values(tmp_path) -> N
     assert loaded.execution_selectors == run.execution_selectors
     assert loaded.execution_selectors.agent_id == "coding-agent"
     assert loaded.execution_selectors.verification_domain == "coding"
+    assert loaded.execution_selectors.turn_target == "focus"
     assert loaded.execution_selectors.turn_timeout_seconds == 600
     assert loaded.execution_selectors.verification_timeout_seconds == 900
     assert "api_key" not in json.dumps(persisted).lower()
@@ -58,5 +60,6 @@ def test_legacy_autonomy_record_uses_compatible_selector_defaults(tmp_path) -> N
 
     assert loaded.execution_selectors.agent_id == "default"
     assert loaded.execution_selectors.verification_domain == "cross_application"
+    assert loaded.execution_selectors.turn_target == "autonomy"
     assert loaded.execution_selectors.turn_timeout_seconds == 300
     assert loaded.execution_selectors.verification_timeout_seconds == 120

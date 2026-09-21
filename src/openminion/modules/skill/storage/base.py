@@ -136,6 +136,10 @@ class SkillStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_skill_lifecycle_facts(self, *, skill_id: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
     def delete_skill(
         self,
         *,

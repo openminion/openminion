@@ -82,6 +82,13 @@ def test_project_handoff_round_trips_without_permission_overrides() -> None:
     assert restored.request_readiness.project_handoff.repository is None
 
 
+def test_project_handoff_budget_fields_are_explicit_user_limits() -> None:
+    properties = ProjectHandoff.model_json_schema()["properties"]
+
+    assert "user-requested" in properties["max_wall_clock_ms"]["description"]
+    assert "user-requested" in properties["max_tool_calls"]["description"]
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -236,6 +243,7 @@ def test_llm_decision_guidance_names_request_readiness_contract() -> None:
 
     assert "Decision.request_readiness" in guidance
     assert "answer_only" in guidance
+    assert "coding control with project_handoff" in guidance
     assert (
         _build_request_readiness_guidance_message(
             purpose="act",

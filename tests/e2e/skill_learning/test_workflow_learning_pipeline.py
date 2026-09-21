@@ -16,6 +16,7 @@ from openminion.modules.skill.learning import (
     record_skill_run_outcome,
     stage_shape_as_skill_proposal,
 )
+from openminion.modules.skill.learning.replay import proposal_draft_hash
 from openminion.modules.skill.proposal.queue import (
     PROPOSAL_QUEUE_STATE_PENDING,
     create_proposal,
@@ -115,7 +116,10 @@ def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
         proof = ReplayProof(
             proof_id="replay-proof-1",
             proposal_id=result.proposal.proposal_id,
-            shape_id=shape.shape_id,
+            shape_id=result.proposal.source_task_shape_ref,
+            candidate_hash=proposal_draft_hash(result.proposal),
+            evaluator_id="workflow-evaluator",
+            result_ref="replay:passed",
             status="passed",
             evidence_refs=["replay:passed"],
         )

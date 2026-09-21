@@ -38,6 +38,7 @@ from .messages import (
     RuntimeMessageMixin,
 )
 from .project import RuntimeProjectMixin
+from .room_tasks import RuntimeRoomTaskMixin
 from .token_usage import RuntimeTokenUsageMixin
 
 ApprovalCallback = Callable[[str, dict[str, Any], Any], Awaitable[bool]]
@@ -55,6 +56,7 @@ class OpenMinionRuntime(
     RuntimeControlsMixin,
     RuntimeDelegationMixin,
     RuntimeMCPMixin,
+    RuntimeRoomTaskMixin,
     RuntimeMessageMixin,
     RuntimeProjectMixin,
     RuntimeTokenUsageMixin,
@@ -740,7 +742,9 @@ class OpenMinionRuntime(
             if final_text and not emitted_text:
                 yield final_text
             if handoff_result := await self.approve_project_handoff(
-                final_metadata, approval_callback
+                final_metadata,
+                approval_callback,
+                source_request=text,
             ):
                 yield "\n\n" + handoff_result
             return
@@ -754,6 +758,7 @@ class OpenMinionRuntime(
         if handoff_result := await self.approve_project_handoff(
             response.metadata,
             approval_callback,
+            source_request=text,
         ):
             yield "\n\n" + handoff_result
 

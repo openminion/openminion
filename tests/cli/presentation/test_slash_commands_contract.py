@@ -20,7 +20,7 @@ def test_slash_metadata_has_unique_primary_names() -> None:
 
 
 def test_every_primary_command_has_explicit_usage() -> None:
-    assert len(SLASH_COMMANDS) == 51
+    assert len(SLASH_COMMANDS) == 55
     assert all(command.usage for command in SLASH_COMMANDS)
     assert all(
         all(line.strip() for line in command.usage) for command in SLASH_COMMANDS

@@ -1,17 +1,23 @@
-import asyncio
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, Mapping, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, cast
 from uuid import uuid4
 
+from openminion.base.redaction import redact_sensitive_text
 from openminion.base.types import Message
+from openminion.cli.interactive.runtime.agent_sidebar import build_session_sidebar_item
 from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
 from openminion.cli.presentation.tool.formatting import tool_call_body
 from openminion.api.queries.sessions import (
     SessionQueryError,
     list_session_context_traces,
 )
+from openminion.api.operations.session_continuations import (
+    resolve_session_continuation_store,
+)
+from openminion.modules.session import SessionContinuationService
+from openminion.modules.session.schemas import RoomHandoffBinding
 from openminion.modules.storage import (
     is_room_session_key,
     normalize_identity,
@@ -55,6 +61,16 @@ class RuntimeMessageMixin:
             self, timer: phase_timing.ChatPhaseTimer, *, turn_id: str
         ) -> None: ...
 
+        async def _run_off_loop_turn(
+            self,
+            payload: dict[str, object],
+            *,
+            progress_callback: Callable[[dict[str, Any]], None] | None,
+            approval_callback: Callable[[str, dict[str, Any], Any], Awaitable[bool]]
+            | None,
+            cancel_event: Any,
+        ) -> dict[str, object]: ...
+
         def _turn_inbound_metadata(
             self, inbound_metadata: dict[str, str] | None
         ) -> dict[str, str] | None: ...
@@ -62,6 +78,10 @@ class RuntimeMessageMixin:
         def _wrap_progress_callback(
             self, callback: Callable[[dict[str, Any]], None] | None
         ) -> Callable[[dict[str, Any]], None]: ...
+
+        def bind_session(self, session_id: str) -> None: ...
+
+        def list_sessions(self, *, scope: str = "all") -> list[Any]: ...
 
     def is_room_session(self) -> bool:
         session = self._rt.sessions.get_session(self.session_id)
@@ -146,6 +166,254 @@ class RuntimeMessageMixin:
             )
         return "\n".join(lines)
 
+    def room_tasks_report(self) -> str:
+        session, _actor = self._room_session_and_actor()
+        store = resolve_session_continuation_store(self._rt)
+        owned_store = getattr(self._rt, "session_continuation_store", None) is None
+        try:
+            plan = store.get_active_task_plan(session.id)
+            handbacks = {
+                str(event.get("parent_event_id") or ""): event.get("payload") or {}
+                for event in store.get_events(
+                    session.id,
+                    types=["room.handoff.result"],
+                )
+            }
+        finally:
+            if owned_store:
+                store.close()
+        if not plan:
+            return "Room tasks: (no active plan)"
+        lines = [f"Room tasks: {plan['objective']}"]
+        for step in plan.get("steps", []):
+            owner = str(step.get("assigned_participant_id") or "unassigned")
+            worker = str(step.get("worker_session_id") or "not started")
+            packet_id = str(step.get("continuation_packet_id") or "")
+            handback = handbacks.get(packet_id)
+            result = str(handback.get("status") or "pending") if handback else "pending"
+            lines.append(
+                f"  {step['step_id']} [{step['status']}] {step['description']}"
+            )
+            lines.append(f"    owner: {owner} · worker: {worker} · handback: {result}")
+        return "\n".join(lines)
+
+    def list_room_sessions(self) -> list[Any]:
+        items: list[Any] = []
+        for session in self._rt.sessions.list_sessions(limit=50):
+            if not is_room_session_key(str(session.session_key or "")):
+                continue
+            if (
+                self._rt.sessions.get_participant(session.id, "agent", self.agent_id)
+                is None
+            ):
+                continue
+            items.append(
+                build_session_sidebar_item(
+                    self, session, active_session_id=self.session_id
+                )
+            )
+        return items
+
+    def create_room_session(
+        self,
+        *,
+        name: str,
+        local_human_id: str,
+        agent_ids: list[str],
+    ) -> str:
+        room_name = str(name or "").strip()
+        human_id = normalize_identity(local_human_id)
+        agents = [str(agent_id or "").strip() for agent_id in agent_ids]
+        if not room_name:
+            raise ValueError("room name is required")
+        if not human_id:
+            raise ValueError("local human id is required")
+        if not agents or any(not agent_id for agent_id in agents):
+            raise ValueError("at least one agent id is required")
+        if len(set(agents)) != len(agents):
+            raise ValueError("duplicate agent id")
+        unknown = next(
+            (agent_id for agent_id in agents if agent_id not in self._rt.config.agents),
+            None,
+        )
+        if unknown:
+            raise ValueError(f"Unknown configured agent: {unknown}")
+
+        room = self._rt.sessions.create_room(
+            channel=self._channel,
+            target=room_name,
+            metadata={
+                "name": room_name,
+                "local_human_id": human_id,
+                "room_routing_mode": "addressed",
+                "working_dir": self._working_dir or "",
+            },
+        )
+        self._rt.sessions.add_participant(
+            session_id=room.id,
+            participant_type="human",
+            participant_id=human_id,
+            channel=room.channel,
+            role="owner",
+            display_name=human_id,
+        )
+        for agent_id in agents:
+            self._rt.sessions.add_participant(
+                session_id=room.id,
+                participant_type="agent",
+                participant_id=agent_id,
+                channel=room.channel,
+                role="participant",
+                display_name=agent_id,
+            )
+        self._rt.sessions.set_active_agent(session_id=room.id, agent_id=agents[0])
+        self.bind_session(room.id)
+        return str(room.id)
+
+    def open_room_session(self, session_id: str) -> str:
+        room_id = str(session_id or "").strip()
+        room = self._rt.sessions.get_session(room_id)
+        if room is None or not is_room_session_key(str(room.session_key or "")):
+            raise ValueError(f"Room not found: {room_id}")
+        if self._rt.sessions.get_participant(room_id, "agent", self.agent_id) is None:
+            raise RuntimeError("current agent is not an active room participant")
+        self.bind_session(room_id)
+        return room_id
+
+    def preview_room_handoff(
+        self,
+        *,
+        target_agent_id: str,
+        task_step_id: str,
+    ) -> dict[str, Any]:
+        session, _actor = self._room_owner()
+        target_agent = normalize_identity(target_agent_id)
+        if self._rt.sessions.get_participant(session.id, "agent", target_agent) is None:
+            raise ValueError(f"Agent {target_agent!r} is not an active participant")
+        binding = RoomHandoffBinding(
+            room_session_id=session.id,
+            local_human_authority_id=str(session.metadata["local_human_id"]),
+            source_agent_id=str(session.active_agent_id or ""),
+            target_agent_id=target_agent,
+            target_session_id=f"{session.id}::handoff:{target_agent}:{uuid4().hex}",
+            task_step_id=task_step_id,
+        )
+        store = resolve_session_continuation_store(self._rt)
+        owned_store = getattr(self._rt, "session_continuation_store", None) is None
+        try:
+            preview = SessionContinuationService(store).preview_room_handoff(binding)
+        finally:
+            if owned_store:
+                store.close()
+        return {
+            "binding": binding.model_dump(mode="json"),
+            "preview": preview.model_dump(mode="json"),
+        }
+
+    def apply_room_handoff(self, preview_payload: Mapping[str, Any]) -> dict[str, Any]:
+        binding = RoomHandoffBinding.model_validate(preview_payload.get("binding"))
+        session, _actor = self._room_owner()
+        if binding.room_session_id != session.id:
+            raise ValueError("room handoff preview is stale")
+        if (
+            self._rt.sessions.get_participant(
+                session.id, "agent", binding.target_agent_id
+            )
+            is None
+        ):
+            raise ValueError("room handoff target is no longer active")
+
+        self._rt.sessions.resolve_session(
+            agent_id=binding.target_agent_id,
+            channel=self._channel,
+            target=self._target,
+            session_id=binding.target_session_id,
+        )
+        store = resolve_session_continuation_store(self._rt)
+        owned_store = getattr(self._rt, "session_continuation_store", None) is None
+        try:
+            if store.get_session(binding.target_session_id) is None:
+                store.create_session(
+                    session_id=binding.target_session_id,
+                    initial_agent_id=binding.target_agent_id,
+                )
+            service = SessionContinuationService(store)
+            built = service.create_room_handoff(binding)
+            assert built.packet is not None
+            applied = service.apply(
+                binding.target_session_id,
+                packet_id=built.packet.packet_id,
+                room_binding=binding,
+            )
+            active_plan = store.get_active_task_plan(binding.room_session_id)
+            if active_plan is None:
+                raise RuntimeError("room task plan is no longer active")
+            store.append_event(
+                binding.room_session_id,
+                event_type="task_plan.assigned",
+                payload={
+                    "plan_id": active_plan["plan_id"],
+                    "step_id": binding.task_step_id,
+                    "participant_id": binding.target_agent_id,
+                    "worker_session_id": binding.target_session_id,
+                    "continuation_packet_id": built.packet.packet_id,
+                },
+                parent_event_id=built.packet.packet_id,
+            )
+        finally:
+            if owned_store:
+                store.close()
+        return {
+            "packet_id": built.packet.packet_id,
+            "target_session_id": binding.target_session_id,
+            "task_step_id": binding.task_step_id,
+            "status": applied.status,
+        }
+
+    def create_room_peer_note(self, target_agent_id: str, text: str) -> str:
+        session, actor = self._room_session_and_actor()
+        if actor.role == "observer":
+            raise RuntimeError("local room observer cannot send peer notes")
+        target_agent = normalize_identity(target_agent_id)
+        if self._rt.sessions.get_participant(session.id, "agent", target_agent) is None:
+            raise ValueError(f"Agent {target_agent!r} is not an active participant")
+        safe_text, _redaction_count = redact_sensitive_text(str(text or "").strip())
+        if not safe_text:
+            raise ValueError("peer note text is required")
+
+        store = resolve_session_continuation_store(self._rt)
+        owned_store = getattr(self._rt, "session_continuation_store", None) is None
+        try:
+            active_plan = store.get_active_task_plan(session.id)
+            steps = list(active_plan.get("steps", [])) if active_plan else []
+            worker_sessions = {
+                str(step.get("worker_session_id"))
+                for step in steps
+                if step.get("assigned_participant_id") == target_agent
+                and step.get("worker_session_id")
+                and step.get("status") in {"pending", "in_progress"}
+            }
+            if len(worker_sessions) != 1:
+                raise ValueError(
+                    "peer notes require exactly one active handoff for the target agent"
+                )
+            target_session_id = worker_sessions.pop()
+            note_id = store.append_turn(
+                target_session_id,
+                "system",
+                f"[PEER NOTE from {actor.participant_id}]\n{safe_text}",
+                meta={
+                    "kind": "room_peer_note",
+                    "room_session_id": session.id,
+                    "source_participant_id": actor.participant_id,
+                    "target_agent_id": target_agent,
+                },
+            )
+        finally:
+            if owned_store:
+                store.close()
+        return str(note_id)
+
     def room_invite_agent(self, agent_id: str) -> Any:
         session, _actor = self._room_owner()
         normalized_agent = normalize_identity(agent_id)
@@ -221,34 +489,6 @@ class RuntimeMessageMixin:
         if actor.role not in {"owner", "participant"}:
             raise RuntimeError("local room observer cannot post messages")
 
-        loop = asyncio.get_running_loop()
-        wrapped_progress = self._wrap_progress_callback(progress_callback)
-
-        def progress_from_worker(payload: object) -> None:
-            if isinstance(payload, Mapping):
-                mapped = dict(payload)
-            else:
-                model_dump = getattr(payload, "model_dump", None)
-                mapped = dict(model_dump(mode="json")) if callable(model_dump) else {}
-            if mapped:
-                loop.call_soon_threadsafe(wrapped_progress, mapped)
-
-        approval_from_worker = None
-        if approval_callback is not None:
-
-            def approval_from_worker(
-                tool_name: str, args: dict[str, Any], call_id: Any
-            ) -> bool:
-                return bool(
-                    asyncio.run_coroutine_threadsafe(
-                        cast(
-                            Coroutine[Any, Any, bool],
-                            approval_callback(tool_name, args, call_id),
-                        ),
-                        loop,
-                    ).result()
-                )
-
         merged_metadata = self._turn_inbound_metadata(inbound_metadata) or {}
         merged_metadata[CALLER_HANDLES_DELIVERY_METADATA_KEY] = "true"
         merged_metadata["participant_id"] = actor.participant_id
@@ -261,34 +501,12 @@ class RuntimeMessageMixin:
             "inbound_metadata": merged_metadata,
             "deliver": False,
         }
-        timer = phase_timing.ChatPhaseTimer(cold_start=False)
-        turn_id = uuid4().hex
-        result: dict[str, object] | None = None
-        succeeded = False
-        self._begin_turn_usage_tracking()
-        try:
-            with phase_timing.use_chat_phase_timer(timer):
-                result = cast(
-                    dict[str, object],
-                    await asyncio.to_thread(
-                        self._rt.run_turn,
-                        payload=payload,
-                        progress_callback=progress_from_worker,
-                        approval_callback=approval_from_worker,
-                        cancel_event=cancel_event,
-                    ),
-                )
-            succeeded = True
-            if str(result.get("body", "") or "").strip():
-                phase_timing.mark_active_chat_first_text()
-            return result
-        finally:
-            metadata = result.get("metadata") if result is not None else None
-            self._finalize_turn_usage(
-                metadata if isinstance(metadata, Mapping) else None,
-                succeeded=succeeded,
-            )
-            self._record_chat_phase_timing(timer, turn_id=turn_id)
+        return await self._run_off_loop_turn(
+            payload,
+            progress_callback=progress_callback,
+            approval_callback=approval_callback,
+            cancel_event=cancel_event,
+        )
 
     @staticmethod
     def _apply_focus_turn_metadata(metadata: dict[str, str]) -> None:

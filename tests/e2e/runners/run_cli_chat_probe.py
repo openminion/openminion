@@ -41,7 +41,7 @@ _INLINE_APPROVAL_RE = re.compile(
     r"(?:Approval required:[^\n]*\n)?\[y\]es / \[N\]o / \[a\]lways:\s*",
     re.IGNORECASE,
 )
-_TURN_DONE_RE = re.compile(r"(?:^|\n)Done in (?:\d+m)?\d+s\s*(?:\n|$)")
+_TURN_DONE_RE = re.compile(r"\bDone in \d+(?:m\d{2}s|s)\b")
 _TIMEOUT_EXIT_CODE = 124
 _PROBE_STATUS_PREFIX = "[probe-status]"
 _AUTO_CONFIRM_LIMIT_ENV = "OPENMINION_LIVE_CLI_CHAT_AUTO_CONFIRM_LIMIT"

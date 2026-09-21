@@ -37,6 +37,26 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "/sessions", "List sessions", ("/sessions", "/session"), aliases=("/session",)
     ),
     SlashCommandMetadata(
+        "/room",
+        "Create or open a collaboration room",
+        ("/room", "/room create", "/room open"),
+    ),
+    SlashCommandMetadata(
+        "/handoff",
+        "Preview and confirm a room task handoff",
+        ("/handoff @agent --task <step-id>",),
+    ),
+    SlashCommandMetadata(
+        "/message",
+        "Queue a non-waking note for a handed-off room agent",
+        ("/message @agent <note>",),
+    ),
+    SlashCommandMetadata(
+        "/start",
+        "Start one handed-off room task",
+        ("/start --task <step-id>",),
+    ),
+    SlashCommandMetadata(
         "/participants", "Show room participants and routing", ("/participants",)
     ),
     SlashCommandMetadata(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import itertools
+import json
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ from openminion.cli.interactive.runtime.messages import room_result_chat_message
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.presentation.models import MessageKind
 from openminion.base.config.core import OpenMinionConfig
+from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 
 
 @dataclass
@@ -95,6 +97,27 @@ class _FakeSessions:
         self._by_key[key] = sid
         self._messages.setdefault(sid, [])
         self._metadata.setdefault(sid, dict(metadata or {}))
+        return record
+
+    def create_room(
+        self,
+        *,
+        channel: str,
+        target: str,
+        metadata: dict[str, object] | None = None,
+    ) -> _SessionRecord:
+        self._counter += 1
+        session_id = f"room-{self._counter:03d}"
+        record = _SessionRecord(
+            id=session_id,
+            channel=channel,
+            target=target,
+            session_key=f"room:{session_id}",
+            metadata=dict(metadata or {}),
+        )
+        self._by_id[session_id] = record
+        self._messages[session_id] = []
+        self._metadata[session_id] = dict(metadata or {})
         return record
 
     def update_session_metadata(
@@ -633,6 +656,221 @@ def test_room_session_is_hidden_from_uninvited_agent_surface() -> None:
     focus_rt._agent_id = "beta"
 
     assert focus_rt.list_sessions(scope="current_agent") == []
+
+
+def test_focus_creates_and_reopens_room_through_session_owner() -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.create_new_session()
+
+    room_id = focus_rt.create_room_session(
+        name="Review room",
+        local_human_id="local-human",
+        agent_ids=["alpha", "beta"],
+    )
+
+    room = rt.sessions.get_session(room_id)
+    assert room is not None
+    assert room.metadata["name"] == "Review room"
+    assert room.metadata["local_human_id"] == "local-human"
+    assert room.active_agent_id == "alpha"
+    assert [item.id for item in focus_rt.list_room_sessions()] == [room_id]
+    assert focus_rt.open_room_session(room_id) == room_id
+    assert focus_rt.session_id == room_id
+
+
+def test_focus_room_creation_rejects_unknown_agent_before_write() -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    before = [item.id for item in rt.sessions.list_sessions(limit=100)]
+
+    with pytest.raises(ValueError, match="Unknown configured agent"):
+        focus_rt.create_room_session(
+            name="Review room",
+            local_human_id="local-human",
+            agent_ids=["missing"],
+        )
+
+    assert [item.id for item in rt.sessions.list_sessions(limit=100)] == before
+
+
+def test_focus_room_handoff_previews_without_write_then_applies(tmp_path) -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.room_invite_agent("beta")
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    rt.session_continuation_store = store
+    store.create_session(session_id=focus_rt.session_id, initial_agent_id="alpha")
+    store.put_working_state(
+        focus_rt.session_id,
+        state_inline={"session_work_summary": "Review the bounded change."},
+    )
+    store.append_event(
+        focus_rt.session_id,
+        event_type="task_plan.declared",
+        payload={
+            "plan": {
+                "plan_id": "plan-1",
+                "objective": "Review the bounded change.",
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "description": "Review the change.",
+                        "status": "pending",
+                    }
+                ],
+            }
+        },
+    )
+
+    preview = focus_rt.preview_room_handoff(
+        target_agent_id="beta",
+        task_step_id="step-1",
+    )
+    target_session_id = preview["binding"]["target_session_id"]
+
+    assert store.get_session(target_session_id) is None
+    assert (
+        store.get_events(
+            focus_rt.session_id,
+            types=["session.continuation.packet_created"],
+        )
+        == []
+    )
+
+    result = focus_rt.apply_room_handoff(preview)
+
+    assert result["status"] == "applied"
+    assert store.get_session(target_session_id) is not None
+    assigned_step = store.get_active_task_plan(focus_rt.session_id)["steps"][0]
+    assert assigned_step["assigned_participant_id"] == "beta"
+    assert assigned_step["worker_session_id"] == target_session_id
+    assert assigned_step["continuation_packet_id"] == result["packet_id"]
+
+
+def test_focus_room_peer_note_is_redacted_and_does_not_invoke_agent(tmp_path) -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.room_invite_agent("beta")
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    rt.session_continuation_store = store
+    store.create_session(session_id=focus_rt.session_id, initial_agent_id="alpha")
+    store.create_session(session_id="worker-beta", initial_agent_id="beta")
+    store.append_event(
+        focus_rt.session_id,
+        event_type="task_plan.declared",
+        payload={
+            "plan": {
+                "plan_id": "plan-1",
+                "objective": "Review the bounded change.",
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "description": "Review the change.",
+                        "status": "pending",
+                        "assigned_participant_id": "beta",
+                        "worker_session_id": "worker-beta",
+                    }
+                ],
+            }
+        },
+    )
+
+    note_id = focus_rt.create_room_peer_note(
+        "beta",
+        "Please review. token=super-secret-value",
+    )
+
+    turns = store.get_recent_turns("worker-beta", 10)
+    assert [turn["turn_id"] for turn in turns] == [note_id]
+    assert turns[0]["role"] == "system"
+    assert turns[0]["text"] == (
+        "[PEER NOTE from local-human]\nPlease review. token=[REDACTED]"
+    )
+    assert rt.resolve_gateway("beta").calls == []
+
+
+def test_focus_room_peer_note_requires_one_active_handoff(tmp_path) -> None:
+    _rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.room_invite_agent("beta")
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    focus_rt._rt.session_continuation_store = store
+    store.create_session(session_id=focus_rt.session_id, initial_agent_id="alpha")
+
+    with pytest.raises(ValueError, match="exactly one active handoff"):
+        focus_rt.create_room_peer_note("beta", "Review this")
+
+    assert store.get_recent_turns(focus_rt.session_id, 10) == []
+
+
+def test_focus_room_task_starts_exact_worker_and_records_typed_handback(
+    tmp_path,
+) -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.room_invite_agent("beta")
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    rt.session_continuation_store = store
+    store.create_session(session_id=focus_rt.session_id, initial_agent_id="alpha")
+    store.append_event(
+        focus_rt.session_id,
+        event_type="task_plan.declared",
+        payload={
+            "plan": {
+                "plan_id": "plan-1",
+                "objective": "Review the bounded change.",
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "description": "Review the change.",
+                        "status": "pending",
+                    }
+                ],
+            }
+        },
+    )
+    applied = focus_rt.apply_room_handoff(
+        focus_rt.preview_room_handoff(
+            target_agent_id="beta",
+            task_step_id="step-1",
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    def run_turn(**kwargs):  # noqa: ANN003, ANN202
+        calls.append(dict(kwargs))
+        return {
+            "body": "Review passed.",
+            "metadata": {
+                "delegation_result_summary": json.dumps(
+                    {
+                        "summary": "Review passed.",
+                        "artifacts_produced": ["artifact-1"],
+                        "status": "complete",
+                    }
+                )
+            },
+        }
+
+    rt.run_turn = run_turn  # type: ignore[attr-defined]
+
+    result = asyncio.run(
+        focus_rt.start_room_task("step-1", cancel_event=threading.Event())
+    )
+
+    assert len(calls) == 1
+    payload = calls[0]["payload"]
+    assert payload["agent_id"] == "beta"
+    assert payload["session_id"] == applied["target_session_id"]
+    assert payload["message"] == "Review the change."
+    assert result["room_handback"]["status"] == "accepted"
+    assert result["room_handback"]["result"]["status"] == "completed"
+    events = store.get_events(
+        focus_rt.session_id,
+        types=["room.handoff.result"],
+    )
+    assert len(events) == 1
+    assert events[0]["payload"]["artifact_refs"] == ["artifact-1"]
+    report = focus_rt.room_tasks_report()
+    assert "step-1 [pending] Review the change." in report
+    assert "owner: beta" in report
+    assert f"worker: {applied['target_session_id']}" in report
+    assert "handback: completed" in report
 
 
 def test_room_owner_mutations_use_configured_agents_and_bounded_roles() -> None:

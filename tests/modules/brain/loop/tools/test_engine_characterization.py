@@ -1235,7 +1235,12 @@ class TestAppendToolResultPayload:
         st = AdaptiveToolLoopState(messages=[])
         ar = ActionResult(command_id="x", status="success", summary="ok")
         _append_tool_result_payload(
-            st, call_id="call-x", tool_name="file.read", action_result=ar
+            st,
+            call_id="call-x",
+            tool_name="file.read",
+            action_result=ar,
+            turn_scope_id="current-turn",
+            job_pending=False,
         )
         assert len(st.scratchpad["adaptive.tool_results"]) == 1
         assert st.scratchpad["adaptive.tool_results"][0]["call_id"] == "call-x"
@@ -3410,6 +3415,8 @@ def test_duplicate_batch_does_not_force_answer_only_with_active_plan() -> None:
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "done"
+    assert outcome.state.task_plan is not None
+    assert outcome.state.task_plan["status"] == "completed"
     assert not outcome.state.scratchpad.get(
         "duplicate_batch_answer_only_closure_forced"
     )

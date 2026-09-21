@@ -23,7 +23,10 @@ from openminion.modules.task import (
     load_latest_project_checkpoint,
     save_project_run_checkpoint,
 )
-from openminion.modules.task.project import AutonomyLoopConditionKind
+from openminion.modules.task.project import (
+    AutonomyLoopConditionKind,
+    project_condition_from_metadata,
+)
 from openminion.modules.task.project.reports import (
     build_project_report_from_task,
     render_project_report,
@@ -80,6 +83,7 @@ def _project(
     verification_domain: str = "coding",
     max_wall_clock_ms: int | None = None,
     max_tool_calls: int | None = None,
+    source_request: str = "",
 ):
     store = AutonomyRunStore(root=tmp_path / "autonomy")
     run = build_autonomy_run(
@@ -132,10 +136,37 @@ def _project(
                 expected_checks=expected_checks,
                 launch_approved=launch_approved,
                 release_tools_approved=release_tools_approved,
+                source_request=source_request,
             ),
         },
     )
     return store, manager, run
+
+
+def test_project_turn_budget_rollover_remains_productive() -> None:
+    assert (
+        project_condition_from_metadata(
+            {
+                "brain_status": "waiting_user",
+                "tool_loop_termination_reason": "budget_exhausted",
+                "error_code": "act_adaptive_budget_exhausted",
+            }
+        )
+        == AutonomyLoopConditionKind.PRODUCTIVE
+    )
+    assert (
+        project_condition_from_metadata({"brain_status": "waiting_user"})
+        == AutonomyLoopConditionKind.WAITING
+    )
+    assert (
+        project_condition_from_metadata(
+            {
+                "brain_status": "waiting_user",
+                "error_code": "act_adaptive_budget_exhausted",
+            }
+        )
+        == AutonomyLoopConditionKind.PRODUCTIVE
+    )
 
 
 def _save_ci_effect(
@@ -1095,8 +1126,11 @@ def test_repository_project_requires_completed_public_task_plan(tmp_path) -> Non
 def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     tmp_path,
 ) -> None:
-    store, manager, run = _project(tmp_path)
+    store, manager, run = _project(
+        tmp_path, source_request="Search before inspecting project files."
+    )
     prompts: list[str] = []
+    requests: list[ProjectTurnRequest] = []
     plan = TaskPlan(
         plan_id="plan-1",
         objective="Ship the fixture",
@@ -1115,8 +1149,10 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
         autonomy_store=store,
         turn=lambda request: (
             prompts.append(request.prompt)
+            or requests.append(request)
             or ProjectTurnResult(
                 summary="planned",
+                gateway_run_id="gateway-1",
                 evidence_refs=("artifact:plan",),
                 task_plan=plan,
             )
@@ -1138,6 +1174,7 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
         autonomy_store=store,
         turn=lambda request: (
             prompts.append(request.prompt)
+            or requests.append(request)
             or ProjectTurnResult(
                 summary="repaired",
                 evidence_refs=("artifact:repair",),
@@ -1164,7 +1201,16 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
         "verification passed",
     ]
     assert "first action must use the existing plan loop-control tool" in prompts[0]
+    assert "Search before inspecting project files." in prompts[0]
     assert "continue_plan_autonomously=false" in prompts[0]
+    assert "your very next tool call must use plan action=revise" in prompts[0]
+    assert "verifier_refs containing that failed tool-call ref" in prompts[0]
+    assert "Do not edit, rerun verification, or complete steps first" in prompts[0]
+    assert "Workspace root:" in prompts[0]
+    assert "Do not infer another workspace" in prompts[0]
+    assert "Record step_completed as each plan step finishes" in prompts[0]
+    assert "call plan action=complete once and end the turn" in prompts[0]
+    assert "Do not redeclare a completed plan" in prompts[0]
     assert "action=revise for plan_id=plan-1" in prompts[1]
     assert "First redeclare the same plan_id" in prompts[1]
     assert "Then use the existing plan loop-control tool" in prompts[1]
@@ -1172,6 +1218,9 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     assert "Omit predecessor_revision_id" in prompts[1]
     assert "verification:prun_" in prompts[1]
     assert "Prior verifier outcome:\nverification failed" in prompts[1]
+    assert "revision-only turn" in prompts[1]
+    assert requests[0].allowed_tools != ("plan",)
+    assert requests[1].allowed_tools == ("plan",)
     assert (
         build_project_report_from_task(
             manager,

@@ -78,16 +78,58 @@ def runtime_message_stream(
     return runtime.send_message(text, **kwargs)
 
 
-def handle_room_slash(
+async def handle_room_slash(
     cmd: str,
     args: str,
     *,
     runtime: Any,
     console: Console,
+    transcript: TerminalTranscript,
+    overlay: TerminalOverlayPresenter,
+    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> None:
     parts = str(args or "").split()
     try:
-        if cmd == "/participants":
+        if cmd == "/handoff":
+            await _handle_room_handoff(
+                parts,
+                runtime=runtime,
+                console=console,
+                overlay=overlay,
+            )
+            return
+        if cmd == "/message":
+            if len(parts) < 2 or not parts[0].startswith("@"):
+                raise ValueError("usage: /message @agent <note>")
+            target_agent_id = parts[0][1:]
+            note_id = runtime.create_room_peer_note(
+                target_agent_id,
+                " ".join(parts[1:]),
+            )
+            body = f"peer note queued for {target_agent_id} ({note_id})"
+        elif cmd == "/start":
+            if len(parts) != 2 or parts[0] != "--task":
+                raise ValueError("usage: /start --task <step-id>")
+            result = await runtime.start_room_task(
+                parts[1],
+                approval_callback=approval_callback,
+                cancel_event=Event(),
+            )
+            handback = result["room_handback"]
+            body = (
+                f"worker finished: {parts[1]} "
+                f"({handback['result']['status']}, {handback['event_id']})"
+            )
+        elif cmd == "/room":
+            await _handle_room_session(
+                parts,
+                runtime=runtime,
+                console=console,
+                transcript=transcript,
+                overlay=overlay,
+            )
+            return
+        elif cmd == "/participants":
             body = runtime.room_participants_report()
         elif cmd == "/invite":
             if len(parts) == 2 and parts[0] == "agent":
@@ -128,6 +170,105 @@ def handle_room_slash(
     except (RuntimeError, ValueError) as exc:
         body = f"{cmd}: {exc}"
     console.print(Text(body, style=token_rich_style(StyleToken.SYSTEM)))
+
+
+async def _handle_room_handoff(
+    parts: list[str],
+    *,
+    runtime: Any,
+    console: Console,
+    overlay: TerminalOverlayPresenter,
+) -> None:
+    if len(parts) != 3 or not parts[0].startswith("@") or parts[1] != "--task":
+        raise ValueError("usage: /handoff @agent --task <step-id>")
+    target_agent_id = parts[0][1:]
+    task_step_id = parts[2]
+    preview = runtime.preview_room_handoff(
+        target_agent_id=target_agent_id,
+        task_step_id=task_step_id,
+    )
+    binding = preview["binding"]
+    console.print(
+        Text(
+            f"handoff preview: {task_step_id} -> {target_agent_id}",
+            style=token_rich_style(StyleToken.SYSTEM),
+        )
+    )
+    confirmed = await overlay.present_confirm_async(
+        "Create and apply this handoff?",
+        default=False,
+    )
+    if not confirmed:
+        console.print(Text("(handoff cancelled)", style=_MUTED_ITALIC_STYLE))
+        return
+    result = runtime.apply_room_handoff(preview)
+    console.print(
+        Text(
+            "handoff applied: "
+            f"{binding['task_step_id']} -> {binding['target_agent_id']} "
+            f"({result['packet_id']})",
+            style=token_rich_style(StyleToken.SYSTEM),
+        )
+    )
+
+
+async def _handle_room_session(
+    parts: list[str],
+    *,
+    runtime: Any,
+    console: Console,
+    transcript: TerminalTranscript,
+    overlay: TerminalOverlayPresenter,
+) -> None:
+    action = parts[0].lower() if parts else ""
+    if action not in {"", "create", "open", "resume"} or len(parts) > 1:
+        raise ValueError("usage: /room [create|open]")
+
+    rooms = list(runtime.list_room_sessions())
+    if not action:
+        choices: list[Any] = [{"id": "create", "label": "Create a new room"}]
+        choices.extend(rooms)
+        selected = str(overlay.present_resume_picker(choices) or "").strip()
+        if not selected:
+            console.print(Text("(room selection cancelled)", style=_MUTED_ITALIC_STYLE))
+            return
+        action = "create" if selected == "create" else "open"
+        selected_room_id = selected
+    else:
+        selected_room_id = ""
+
+    if action == "create":
+        name = await overlay.present_prompt_async("Room name (Enter to cancel): ")
+        if not name:
+            return
+        human_id = await overlay.present_prompt_async(
+            "Your room identity (Enter to cancel): "
+        )
+        if not human_id:
+            return
+        default_agent = str(getattr(runtime, "agent_id", "") or "")
+        agents = await overlay.present_prompt_async(
+            f"Agent IDs, comma-separated [{default_agent}]: "
+        )
+        if agents is None:
+            return
+        agent_ids = [item.strip() for item in agents.split(",") if item.strip()]
+        room_id = runtime.create_room_session(
+            name=name,
+            local_human_id=human_id,
+            agent_ids=agent_ids or [default_agent],
+        )
+        transcript.clear_messages()
+        console.print(Text(f"(created room: {room_id})", style=_MUTED_ITALIC_STYLE))
+        return
+
+    if not selected_room_id:
+        selected_room_id = str(overlay.present_resume_picker(rooms) or "").strip()
+    if not selected_room_id:
+        return
+    room_id = runtime.open_room_session(selected_room_id)
+    transcript.set_messages(list(runtime.get_current_history() or []))
+    console.print(Text(f"(opened room: {room_id})", style=_MUTED_ITALIC_STYLE))
 
 
 def start_new_session(

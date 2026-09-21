@@ -864,6 +864,23 @@ def test_run_server_emits_daemon_started_heartbeat_and_stopped(
     ]
 
 
+def test_daemon_stop_signals_include_windows_break(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        daemon_mod.signal,
+        "SIGBREAK",
+        daemon_mod.signal.SIGUSR1,
+        raising=False,
+    )
+
+    assert daemon_mod._daemon_stop_signals() == (
+        daemon_mod.signal.SIGTERM,
+        daemon_mod.signal.SIGINT,
+        daemon_mod.signal.SIGUSR1,
+    )
+
+
 def test_run_server_emits_daemon_crashed_on_server_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

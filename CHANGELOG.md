@@ -1,11 +1,24 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-09-18
+Last updated: 2026-09-21
 
 This file tracks package-facing release notes for `openminion`.
 
-## Current package line - 2026-09-18
+## Current package line - 2026-09-21
+
+- Strengthen long-running coding projects with durable workspace-bound
+  handoffs, plan and verifier continuity, and reliable recovery through Focus.
+- Add collaborative Focus rooms with authorized task delegation, non-waking
+  peer notes, typed handbacks, and restart-safe completion behavior.
+- Preserve proof-bound learned skills and authored-tool drafts with deduplicated
+  evidence, truthful trust diagnostics, and exact inspection records.
+- Run remote sandbox work through the official Daytona SDK transport and
+  support authored tools in those remote environments.
+- Verify binary runtime publication independently and handle graceful OpenMinion
+  daemon shutdown correctly on Windows.
+
+## Prior package line - 2026-09-18
 
 - Add approval-gated long-running coding projects from Focus with typed
   proposals before durable execution.

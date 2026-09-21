@@ -81,25 +81,30 @@ def project_cycle_prompt(
     *,
     repository_check_observation: Mapping[str, object] | None = None,
 ) -> str:
-    project_run = checkpoint.project_run
-    checkpoint_payload = checkpoint.payload
+    project_run, checkpoint_payload = checkpoint.project_run, checkpoint.payload
     lines = [
         run.goal_text,
         "",
+        f"Workspace root: {project_workspace(run.workspace_ref)}",
+        "Use this workspace for repository tools. Do not infer another workspace "
+        "from the goal text or verification command.",
         f"Current milestone: {milestone}",
         f"Committed cycles: {project_run.committed_cycle_count}",
         "Work on the smallest useful next step. Inspect current state before editing.",
-        "Do not claim completion; the configured verifier owns completion.",
+        "If an approved verification command called through a tool fails during "
+        "this turn, your very next tool call must use plan action=revise for the "
+        "same plan_id, a new revision_id, and verifier_refs containing that failed "
+        "tool-call ref. Do not edit, rerun verification, or complete steps first.",
+        "The configured verifier runs the approved verification commands after the "
+        "turn. Record step_completed as each plan step finishes. When every plan "
+        "step is complete, call plan action=complete once and end the turn. Do not "
+        "redeclare a completed plan unless a prior verifier failure below explicitly "
+        "requires reactivation.",
+        "The configured verifier, not final text, owns project completion.",
     ]
     active_plan = checkpoint_payload.get("task_plan")
-    lifecycle = cast(
-        Mapping[str, object],
-        checkpoint_payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY, {}),
-    )
-    objective = cast(
-        Mapping[str, object],
-        lifecycle.get(project_run.objective_ledger_ref, {}),
-    )
+    objective = _approved_project_objective(checkpoint)
+    lines.extend(_approved_source_request_guidance(objective))
     lines.extend(_approved_objective_guidance(objective))
     if not isinstance(active_plan, Mapping):
         lines.append(
@@ -149,19 +154,18 @@ def project_cycle_prompt(
                 if predecessor_id
                 else "Omit predecessor_revision_id because this is the first revision."
             )
-            action_order = "Your first action must"
-            if active_plan.get("status") == "completed":
-                lines.append(
-                    "The checkpoint task plan completed before external verification "
-                    "failed. First redeclare the same plan_id with a pending repair "
-                    "step and continue_plan_autonomously=false so it is active again."
-                )
-                action_order = "Then"
             lines.append(
-                f"{action_order} use the existing plan loop-control "
+                "External verification failed after the prior turn. First redeclare "
+                "the same plan_id with its remaining or repair steps and "
+                "continue_plan_autonomously=false so it is active in this turn."
+            )
+            lines.append(
+                "Then use the existing plan loop-control "
                 f"tool with action=revise for plan_id={plan_id}. Use a new "
                 "revision_id, set continue_plan_autonomously=false, and bind "
-                f"verifier_refs to: {verifier_refs}. {predecessor_guidance}"
+                f"verifier_refs to: {verifier_refs}. {predecessor_guidance} End "
+                "the turn after the revision succeeds; do not complete plan steps "
+                "in this revision-only turn."
             )
     lines.extend(_project_reference_guidance("progress", project_run.progress_refs))
     lines.extend(_repository_check_guidance(repository_check_observation))
@@ -182,6 +186,30 @@ def _approved_objective_guidance(objective: Mapping[str, object]) -> list[str]:
             )
         ),
         "Approved verification commands: " + json.dumps(objective["verification"]),
+    ]
+
+
+def _approved_project_objective(
+    checkpoint: ProjectCheckpoint,
+) -> Mapping[str, object]:
+    lifecycle = cast(
+        Mapping[str, object],
+        checkpoint.payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY, {}),
+    )
+    return cast(
+        Mapping[str, object],
+        lifecycle.get(checkpoint.project_run.objective_ledger_ref, {}),
+    )
+
+
+def _approved_source_request_guidance(objective: Mapping[str, object]) -> list[str]:
+    source_request = str(objective.get("source_request") or "").strip()
+    if not source_request:
+        return []
+    return [
+        "Original approved request (the project handoff is already approved; "
+        "preserve its post-approval requirements):",
+        source_request,
     ]
 
 
@@ -333,6 +361,14 @@ def project_condition_from_metadata(
         return AutonomyLoopConditionKind(explicit)
     brain_status = str(metadata.get("brain_status") or "").strip().lower()
     if brain_status == "waiting_user":
+        termination = (
+            str(metadata.get("tool_loop_termination_reason") or "").strip().lower()
+        )
+        error_code = str(metadata.get("error_code") or "").strip().lower()
+        if termination == "budget_exhausted" or (
+            error_code == "act_adaptive_budget_exhausted"
+        ):
+            return AutonomyLoopConditionKind.PRODUCTIVE
         return AutonomyLoopConditionKind.WAITING
     if str(metadata.get("finish_reason") or "").strip().lower() == "error":
         return AutonomyLoopConditionKind.RETRYABLE_FAILURE

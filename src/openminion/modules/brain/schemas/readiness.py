@@ -24,8 +24,22 @@ class ProjectHandoff(BaseModel):
         Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)], ...
     ] = ()
     max_iterations: int | None = Field(default=None, gt=0)
-    max_wall_clock_ms: int | None = Field(default=None, gt=0)
-    max_tool_calls: int | None = Field(default=None, gt=0)
+    max_wall_clock_ms: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Optional user-requested wall-clock limit in milliseconds. Omit when "
+            "the user did not request a limit so runtime defaults apply."
+        ),
+    )
+    max_tool_calls: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Optional user-requested tool-call limit. Omit when the user did not "
+            "request a limit so runtime defaults apply."
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -26,6 +26,7 @@ class _FakeDaytonaClient:
     created: list[dict[str, Any]] = field(default_factory=list)
     destroyed: list[str] = field(default_factory=list)
     executed: list[dict[str, Any]] = field(default_factory=list)
+    remote_root: str = ""
 
     def open(self) -> None:
         self.open_calls += 1
@@ -48,7 +49,11 @@ class _FakeDaytonaClient:
             workspace_id=f"ws-{len(self.created)}",
             name=name,
             image=str(image or "default"),
-            metadata=dict(metadata or {}),
+            metadata=(
+                {"root_dir": self.remote_root}
+                if self.remote_root
+                else dict(metadata or {})
+            ),
         )
 
     def destroy_workspace(self, workspace_id: str) -> None:
@@ -125,6 +130,19 @@ def test_daytona_runner_exec_happy_path(tmp_path) -> None:
     assert client.open_calls == 1
     assert len(client.created) == 1
     assert client.destroyed == ["ws-1"]
+
+
+def test_daytona_runner_maps_python_and_workspace_to_remote(tmp_path) -> None:
+    client = _FakeDaytonaClient(remote_root="/home/daytona")
+    runner = DaytonaRunner(client=client)
+
+    runner.run_exec(
+        ExecSpec(cmd=[sys.executable, "-c", "print('hello')"], cwd=str(tmp_path)),
+        _sandbox(tmp_path),
+    )
+
+    assert client.executed[0]["command"][0] == "python3"
+    assert client.executed[0]["cwd"] == "/home/daytona"
 
 
 def test_daytona_runner_fs_write_outside_allowlist_denied(tmp_path) -> None:
