@@ -1,0 +1,22 @@
+{
+  "channel": "stable",
+  "desktop_compatibility": null,
+  "distribution": "pypi",
+  "product": "openminion",
+  "promotion_status": "promoted",
+  "published_at": "2026-09-21T09:52:21Z",
+  "pypi": {
+    "filename": "openminion-0.0.24-py3-none-any.whl",
+    "package": "openminion",
+    "requires_python": ">=3.11",
+    "sha256": "89cec77a1944fb57d966b4299917639350921b0f8e2c8b609131f663b83baeb4",
+    "size_bytes": 4441032,
+    "url": "https://files.pythonhosted.org/packages/65/8c/dbec2ed4dd3eeb027ed42b414c595a8f453221713edadc73446375b8a6d5/openminion-0.0.24-py3-none-any.whl",
+    "version": "0.0.24"
+  },
+  "release_id": "source.35585405949.1",
+  "release_notes_url": "https://github.com/openminion/openminion/releases/tag/v0.0.24",
+  "runtime_version": "0.0.24",
+  "schema_version": 1,
+  "source_commit": "2ea4b02698f8af6e741b29488a0e2ce91df44814"
+}
