@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import logging
 import sys
+import threading
 
 import pytest
 
@@ -921,6 +922,60 @@ def test_windows_console_stop_handler_handles_break_and_unregisters(
     assert stop_calls == ["stop"]
     remove_handler()
     assert registrations == [(callback, True), (callback, False)]
+
+
+def test_windows_console_stop_handler_waits_for_daemon_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registrations: list[tuple[object, bool]] = []
+    stop_started = threading.Event()
+    stop_complete = threading.Event()
+
+    class SetConsoleCtrlHandler:
+        argtypes: object = None
+        restype: object = None
+
+        def __call__(self, callback: object, add: bool) -> bool:
+            registrations.append((callback, add))
+            return True
+
+    kernel32 = SimpleNamespace(SetConsoleCtrlHandler=SetConsoleCtrlHandler())
+    monkeypatch.setattr(daemon_mod.os, "name", "nt")
+    monkeypatch.setattr(
+        daemon_mod.ctypes,
+        "WINFUNCTYPE",
+        lambda *_args: lambda callback: callback,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        daemon_mod.ctypes,
+        "WinDLL",
+        lambda *_args, **_kwargs: kernel32,
+        raising=False,
+    )
+
+    remove_handler = daemon_mod._install_windows_console_stop_handler(
+        stop_started.set,
+        stop_complete=stop_complete,
+    )
+    assert remove_handler is not None
+    callback = registrations[0][0]
+    result: list[bool] = []
+    callback_thread = threading.Thread(
+        target=lambda: result.append(
+            callback(daemon_mod._WINDOWS_CTRL_BREAK_EVENT)
+        )
+    )
+
+    callback_thread.start()
+    assert stop_started.wait(timeout=1)
+    assert callback_thread.is_alive()
+    stop_complete.set()
+    callback_thread.join(timeout=1)
+
+    assert callback_thread.is_alive() is False
+    assert result == [True]
+    remove_handler()
 
 
 def test_run_server_emits_daemon_crashed_on_server_error(
