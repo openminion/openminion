@@ -209,6 +209,7 @@ class SessionContinuationService:
             project_refs=_strings(state.get("project_refs")),
             recent_event_refs=recent_event_refs,
             permission_refs=_strings(state.get("permission_refs")),
+            tool_profile_ids=_strings(state.get("tool_profile_ids")),
             omitted_field_reasons=omitted,
             redaction_summary={"omitted_fields": len(omitted)},
             owner_versions={
@@ -763,6 +764,7 @@ def _ref_count(payload: SessionContinuationPayload) -> int:
             payload.project_refs,
             payload.recent_event_refs,
             payload.permission_refs,
+            payload.tool_profile_ids,
         )
     )
 

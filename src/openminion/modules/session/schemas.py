@@ -184,6 +184,9 @@ class SessionContinuationPayload(BaseModel):
     permission_refs: list[str] = Field(
         default_factory=list, max_length=MAX_CONTINUATION_REFS
     )
+    tool_profile_ids: list[str] = Field(
+        default_factory=list, max_length=MAX_CONTINUATION_REFS
+    )
     omitted_field_reasons: list[str] = Field(
         default_factory=list, max_length=MAX_CONTINUATION_REFS
     )
@@ -199,6 +202,7 @@ class SessionContinuationPayload(BaseModel):
         "project_refs",
         "recent_event_refs",
         "permission_refs",
+        "tool_profile_ids",
         "omitted_field_reasons",
         mode="before",
     )

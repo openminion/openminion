@@ -301,6 +301,53 @@ def test_unified_entry_time_prompt_prefers_explicit_tool_sequence(
     assert "time" not in tool_names
 
 
+def test_unified_entry_replays_completed_tool_evidence(tmp_path: Path) -> None:
+    llm = _RecordingEntryLLM(_text_response("2026-09-20T14:22:45Z"))
+    runner = _build_runner(tmp_path, llm_api=llm)
+    state = _state("entry-tool-evidence")
+    request_id = runner.session_api.append_event(
+        state.session_id,
+        "tool.call.requested",
+        {
+            "schema_version": 1,
+            "turn_scope_id": "turn-1",
+            "call_id": "time-1",
+            "canonical_name": "time",
+            "sanitized_normalized_arguments": {},
+            "batch_index": 0,
+            "depends_on": [],
+        },
+    )
+    runner.session_api.append_event(
+        state.session_id,
+        "tool.call.completed",
+        {
+            "schema_version": 1,
+            "turn_scope_id": "turn-1",
+            "call_id": "time-1",
+            "status": "success",
+            "output": {"outputs": {"utc": "2026-09-20T14:22:45Z"}},
+        },
+        parent_event_id=request_id,
+    )
+
+    decision = runner._decide(
+        state=state,
+        user_input="what time is it in UTC?",
+        logger=fake_logger(),
+    )
+
+    assert decision.reason_code == "entry_text_response"
+    replayed = [
+        message
+        for message in llm.requests[0].messages
+        if message.meta.get("transcript_lane") == "canonical_events"
+    ]
+    assert [message.role for message in replayed] == ["assistant", "tool"]
+    assert replayed[0].tool_calls[0].name == "time"
+    assert replayed[1].tool_output == {"outputs": {"utc": "2026-09-20T14:22:45Z"}}
+
+
 def test_unified_entry_coding_category_exposes_only_coding_and_clarify(
     tmp_path: Path,
 ) -> None:

@@ -10,6 +10,7 @@ from openminion.modules.task.plan import (
     TaskPlan,
     TaskPlanStepBlocked,
     TaskPlanStepCompleted,
+    TaskPlanStepStarted,
     TaskPlanTerminalSignal,
 )
 
@@ -60,6 +61,29 @@ def _apply_step_blocked(plan: TaskPlan, blocked: TaskPlanStepBlocked) -> TaskPla
                 }
             )
         )
+    return plan.model_copy(update={"steps": steps})
+
+
+def apply_task_plan_step_started(
+    plan: TaskPlan, started: TaskPlanStepStarted
+) -> TaskPlan:
+    steps = []
+    matched = False
+    for step in plan.steps:
+        if step.step_id != started.step_id:
+            steps.append(step)
+            continue
+        matched = True
+        if step.status != "pending":
+            raise ValueError("task plan start requires a pending step")
+        if (
+            step.worker_session_id != started.worker_session_id
+            or step.continuation_packet_id != started.continuation_packet_id
+        ):
+            raise ValueError("task plan start must match the assigned worker")
+        steps.append(step.model_copy(update={"status": "in_progress"}))
+    if not matched:
+        raise ValueError(f"unknown task plan step: {started.step_id}")
     return plan.model_copy(update={"steps": steps})
 
 
@@ -404,6 +428,12 @@ class EventStore:
 
                     assigned = TaskPlanStepAssigned.model_validate(payload)
                     active_plan = apply_task_plan_assignment(active_plan, assigned)
+                    continue
+                if event_type == "task_plan.step_started":
+                    started = TaskPlanStepStarted.model_validate(payload)
+                    if started.plan_id != active_plan.plan_id:
+                        continue
+                    active_plan = apply_task_plan_step_started(active_plan, started)
                     continue
                 if event_type == "task_plan.step_completed":
                     completed = TaskPlanStepCompleted.model_validate(payload)

@@ -17,6 +17,36 @@ from .contracts import AdaptiveToolLoopContext
 _REQUEST_EVENT_IDS_KEY = "tool_transcript.request_event_ids"
 
 
+def successful_replayed_tool_names(messages: list[Message]) -> frozenset[str]:
+    calls = {
+        str(call.id or ""): str(call.name or "").strip()
+        for message in messages
+        for call in message.tool_calls
+        if str(call.id or "").strip() and str(call.name or "").strip()
+    }
+    return frozenset(
+        calls[str(message.tool_call_id or "")]
+        for message in messages
+        if message.role == "tool"
+        and message.tool_status == "success"
+        and str(message.tool_call_id or "") in calls
+    )
+
+
+def with_replayed_tool_messages(
+    context: dict[str, Any], session_api: Any, session_id: str
+) -> dict[str, Any]:
+    messages = replay_tool_messages(session_api, session_id)
+    if not messages:
+        return context
+    from openminion.modules.brain.adapters.llm.request import _messages_from_context
+
+    updated = dict(context)
+    updated["messages"] = [*_messages_from_context(context), *messages]
+    updated["turns"] = []
+    return updated
+
+
 def _persisted_arguments(
     tool_call: ToolCall, *, structural_only: bool = False
 ) -> dict[str, Any]:

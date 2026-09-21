@@ -120,6 +120,18 @@ class TaskPlanStepAssigned(BaseModel):
         return _trimmed_non_empty(value)
 
 
+class TaskPlanStepStarted(BaseModel):
+    plan_id: str = Field(min_length=1)
+    step_id: str = Field(min_length=1)
+    worker_session_id: str = Field(min_length=1)
+    continuation_packet_id: str = Field(min_length=1)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: Any) -> str:
+        return _trimmed_non_empty(value)
+
+
 class TaskPlan(BaseModel):
     """Session-scoped model-authored plan carried through context/session layers."""
 
@@ -398,6 +410,7 @@ __all__ = [
     "TaskPlanStepAssigned",
     "TaskPlanStepBlocked",
     "TaskPlanStepCompleted",
+    "TaskPlanStepStarted",
     "TaskPlanStepStatus",
     "TaskPlanTerminalSignal",
     "TaskPlanToolFamily",

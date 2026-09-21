@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Coroutine, Literal, cast
 from uuid import uuid4
+
+from sqlalchemy.exc import IntegrityError as SQLAlchemyIntegrityError
 
 from openminion.api.operations.session_continuations import (
     resolve_session_continuation_store,
@@ -14,6 +17,7 @@ from openminion.base.redaction import redact_sensitive_text
 from openminion.modules.brain.schemas.decisions import DelegationResultSummary
 from openminion.modules.session import SessionContinuationService
 from openminion.modules.session.schemas import RoomHandoffResultV1
+from openminion.modules.task.plan import TaskPlanStepStarted
 from openminion.modules.telemetry.trace import phase_timing
 from openminion.services.gateway.constants import (
     CALLER_HANDLES_DELIVERY_METADATA_KEY,
@@ -62,7 +66,7 @@ class RuntimeRoomTaskMixin:
                 (item for item in steps if item.get("step_id") == task_step_id),
                 None,
             )
-            if step is None or step.get("status") not in {"pending", "in_progress"}:
+            if step is None or step.get("status") != "pending":
                 raise ValueError("room task is not active")
             target_agent = str(step.get("assigned_participant_id") or "")
             worker_session = str(step.get("worker_session_id") or "")
@@ -74,11 +78,36 @@ class RuntimeRoomTaskMixin:
             if binding is None:
                 raise ValueError("room task handoff packet is invalid")
             instruction = str(step.get("description") or "").strip()
+            if (
+                self._rt.sessions.get_participant(session.id, "agent", target_agent)
+                is None
+            ):
+                raise ValueError("room task agent is no longer an active participant")
+            started = TaskPlanStepStarted(
+                plan_id=str(plan["plan_id"]),
+                step_id=task_step_id,
+                worker_session_id=worker_session,
+                continuation_packet_id=packet_id,
+            )
+            try:
+                store.append_event(
+                    session.id,
+                    event_type="task_plan.step_started",
+                    parent_event_id=packet_id,
+                    payload=started.model_dump(mode="json"),
+                    task_id=f"{started.plan_id}:{started.step_id}",
+                    importance=2,
+                    redaction="bounded",
+                )
+            except (
+                sqlite3.IntegrityError,
+                SQLAlchemyIntegrityError,
+                ValueError,
+            ) as exc:
+                raise ValueError("room task is not active") from exc
         finally:
             if owned_store:
                 store.close()
-        if self._rt.sessions.get_participant(session.id, "agent", target_agent) is None:
-            raise ValueError("room task agent is no longer an active participant")
 
         result = await self._run_off_loop_turn(
             {
@@ -191,9 +220,7 @@ class RuntimeRoomTaskMixin:
         if isinstance(raw_summary, str):
             raw_summary = json.loads(raw_summary)
         summary = DelegationResultSummary.model_validate(raw_summary)
-        statuses: dict[
-            str, Literal["completed", "failed", "cancelled", "needs_human"]
-        ] = {
+        statuses: dict[str, Literal["completed", "failed", "needs_human"]] = {
             "complete": "completed",
             "failed": "failed",
             "partial": "needs_human",
@@ -218,4 +245,4 @@ class RuntimeRoomTaskMixin:
         finally:
             if owned_store:
                 store.close()
-        return cast(dict[str, Any], accepted.model_dump(mode="json"))
+        return dict(accepted.model_dump(mode="json"))

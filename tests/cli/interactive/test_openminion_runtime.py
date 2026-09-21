@@ -361,6 +361,13 @@ class _FakeRuntime:
     def list_registered_agents(self) -> list[str]:
         return ["alpha", "beta"]
 
+    def tool_exposure_status(self, **_kwargs: object) -> dict[str, object]:
+        return {
+            "profiles": [
+                {"profile_id": "ops_minimal", "active": True},
+            ]
+        }
+
     def agent_discovery_snapshot(self) -> list[dict[str, object]]:
         return [
             {
@@ -745,6 +752,103 @@ def test_focus_room_handoff_previews_without_write_then_applies(tmp_path) -> Non
     assert assigned_step["continuation_packet_id"] == result["packet_id"]
 
 
+def test_focus_room_handoff_rejects_stale_authority_before_write(tmp_path) -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.room_invite_agent("beta")
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    rt.session_continuation_store = store
+    store.create_session(session_id=focus_rt.session_id, initial_agent_id="alpha")
+    store.put_working_state(
+        focus_rt.session_id,
+        state_inline={"permission_refs": ["approval-ref-1"]},
+    )
+    store.append_event(
+        focus_rt.session_id,
+        event_type="task_plan.declared",
+        payload={
+            "plan": {
+                "plan_id": "plan-1",
+                "objective": "Review the bounded change.",
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "description": "Review the change.",
+                        "status": "pending",
+                    }
+                ],
+            }
+        },
+    )
+    preview = focus_rt.preview_room_handoff(
+        target_agent_id="beta",
+        task_step_id="step-1",
+    )
+    target_session_id = preview["binding"]["target_session_id"]
+    focus_rt.room_kick("agent", "beta")
+
+    with pytest.raises(ValueError, match="target is no longer active"):
+        focus_rt.apply_room_handoff(preview)
+
+    assert store.get_session(target_session_id) is None
+    assert (
+        store.get_events(
+            focus_rt.session_id,
+            types=["session.continuation.packet_created"],
+        )
+        == []
+    )
+
+
+def test_focus_room_handoff_rejects_permission_drift_before_write(tmp_path) -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.room_invite_agent("beta")
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    rt.session_continuation_store = store
+    store.create_session(session_id=focus_rt.session_id, initial_agent_id="alpha")
+    store.put_working_state(
+        focus_rt.session_id,
+        state_inline={"permission_refs": ["approval-ref-1"]},
+    )
+    store.append_event(
+        focus_rt.session_id,
+        event_type="task_plan.declared",
+        payload={
+            "plan": {
+                "plan_id": "plan-1",
+                "objective": "Review the bounded change.",
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "description": "Review the change.",
+                        "status": "pending",
+                    }
+                ],
+            }
+        },
+    )
+    preview = focus_rt.preview_room_handoff(
+        target_agent_id="beta",
+        task_step_id="step-1",
+    )
+    target_session_id = preview["binding"]["target_session_id"]
+    store.put_working_state(
+        focus_rt.session_id,
+        state_inline={"permission_refs": ["approval-ref-2"]},
+    )
+
+    with pytest.raises(ValueError, match="permissions changed after preview"):
+        focus_rt.apply_room_handoff(preview)
+
+    assert store.get_session(target_session_id) is None
+    assert (
+        store.get_events(
+            focus_rt.session_id,
+            types=["session.continuation.packet_created"],
+        )
+        == []
+    )
+
+
 def test_focus_room_peer_note_is_redacted_and_does_not_invoke_agent(tmp_path) -> None:
     rt, focus_rt, _actor = _make_bound_room_runtime()
     focus_rt.room_invite_agent("beta")
@@ -807,6 +911,10 @@ def test_focus_room_task_starts_exact_worker_and_records_typed_handback(
     store = SQLiteSessionStore(tmp_path / "sessions.db")
     rt.session_continuation_store = store
     store.create_session(session_id=focus_rt.session_id, initial_agent_id="alpha")
+    store.put_working_state(
+        focus_rt.session_id,
+        state_inline={"permission_refs": ["approval-ref-1"]},
+    )
     store.append_event(
         focus_rt.session_id,
         event_type="task_plan.declared",
@@ -824,6 +932,9 @@ def test_focus_room_task_starts_exact_worker_and_records_typed_handback(
             }
         },
     )
+    rt.tool_exposure_status = lambda **_kwargs: {  # type: ignore[attr-defined]
+        "profiles": [{"profile_id": "profile-a", "active": True}]
+    }
     applied = focus_rt.apply_room_handoff(
         focus_rt.preview_room_handoff(
             target_agent_id="beta",
@@ -848,7 +959,6 @@ def test_focus_room_task_starts_exact_worker_and_records_typed_handback(
         }
 
     rt.run_turn = run_turn  # type: ignore[attr-defined]
-
     result = asyncio.run(
         focus_rt.start_room_task("step-1", cancel_event=threading.Event())
     )
@@ -867,10 +977,76 @@ def test_focus_room_task_starts_exact_worker_and_records_typed_handback(
     assert len(events) == 1
     assert events[0]["payload"]["artifact_refs"] == ["artifact-1"]
     report = focus_rt.room_tasks_report()
-    assert "step-1 [pending] Review the change." in report
+    assert "step-1 [in_progress] Review the change." in report
     assert "owner: beta" in report
     assert f"worker: {applied['target_session_id']}" in report
     assert "handback: completed" in report
+
+    with pytest.raises(ValueError, match="room task is not active"):
+        asyncio.run(focus_rt.start_room_task("step-1", cancel_event=threading.Event()))
+    assert len(calls) == 1
+
+
+def test_focus_room_task_revalidates_tool_profiles_before_execution(
+    tmp_path,
+) -> None:
+    rt, focus_rt, _actor = _make_bound_room_runtime()
+    focus_rt.room_invite_agent("beta")
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    rt.session_continuation_store = store
+    store.create_session(session_id=focus_rt.session_id, initial_agent_id="alpha")
+    store.put_working_state(
+        focus_rt.session_id,
+        state_inline={"permission_refs": ["approval-ref-1"]},
+    )
+    store.append_event(
+        focus_rt.session_id,
+        event_type="task_plan.declared",
+        payload={
+            "plan": {
+                "plan_id": "plan-1",
+                "objective": "Review the bounded change.",
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "description": "Review the change.",
+                        "status": "pending",
+                    }
+                ],
+            }
+        },
+    )
+    preview = focus_rt.preview_room_handoff(
+        target_agent_id="beta",
+        task_step_id="step-1",
+    )
+    rt.tool_exposure_status = lambda **_kwargs: {  # type: ignore[attr-defined]
+        "profiles": [{"profile_id": "profile-b", "active": True}]
+    }
+
+    with pytest.raises(ValueError, match="tool profiles changed after preview"):
+        focus_rt.apply_room_handoff(preview)
+
+    assert store.get_active_task_plan(focus_rt.session_id)["steps"][0]["status"] == (
+        "pending"
+    )
+
+    rt.tool_exposure_status = lambda **kwargs: {  # type: ignore[attr-defined]
+        "profiles": [
+            {"profile_id": "ops_minimal", "active": True},
+            *(
+                [{"profile_id": "profile-b", "active": True}]
+                if kwargs.get("target_id") == "beta"
+                else []
+            ),
+        ]
+    }
+    with pytest.raises(ValueError, match="target has wider tool profiles"):
+        focus_rt.apply_room_handoff(preview)
+
+    assert store.get_active_task_plan(focus_rt.session_id)["steps"][0]["status"] == (
+        "pending"
+    )
 
 
 def test_room_owner_mutations_use_configured_agents_and_bounded_roles() -> None:

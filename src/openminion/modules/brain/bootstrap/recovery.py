@@ -102,6 +102,16 @@ def _recover_simple_tool_parity_decision(
     llm_call_id: str,
 ) -> Decision | None:
     del capability_category
+    from openminion.modules.brain.loop.tools.transcript import (
+        replay_tool_messages,
+        successful_replayed_tool_names,
+    )
+
+    completed_tool_names = successful_replayed_tool_names(
+        replay_tool_messages(
+            getattr(runner, "session_api", None), str(state.session_id or "")
+        )
+    )
     command = _recover_seed_command_from_response(
         runner=runner,
         state=state,
@@ -122,6 +132,7 @@ def _recover_simple_tool_parity_decision(
             for tool_name in explicit_tool_name_sequence(raw_user_input)
             if tool_family_for_argument_repair(tool_name)
             in {MODEL_TIME, MODEL_LOCATION}
+            and tool_name not in completed_tool_names
         )
     )
     if command is None and not explicit_tool_sequence:

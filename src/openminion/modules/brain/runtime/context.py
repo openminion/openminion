@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from openminion.modules.brain.runtime.reasoning import (
     ThinkingCtl,
@@ -21,6 +21,7 @@ from ..schemas import WorkingState, iso_now
 from ..meta.schemas import LowProgressSignal, MetaConfig
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..interfaces import ContextAPI
     from ..runner import BrainRunner
 
 from openminion.modules.context.config import (
@@ -653,6 +654,33 @@ def _record_outcome_attribution_snapshot(
     state.decision_context_recorded_at = iso_now()
 
 
+def _build_runtime_context(
+    runner: "BrainRunner",
+    *,
+    state: WorkingState,
+    purpose: str,
+    budget: dict[str, Any],
+    hints: dict[str, Any],
+) -> dict[str, Any]:
+    context_api = cast("ContextAPI", runner.context_api)
+    context = context_api.build(
+        session_id=state.session_id,
+        agent_id=state.agent_id,
+        purpose=purpose,
+        budget=budget,
+        hints=hints,
+    )
+    if purpose != "decide":
+        return context
+    from openminion.modules.brain.loop.tools.transcript import (
+        with_replayed_tool_messages,
+    )
+
+    return dict(
+        with_replayed_tool_messages(context, runner.session_api, state.session_id)
+    )
+
+
 def build_context(
     runner: "BrainRunner",
     *,
@@ -748,12 +776,8 @@ def build_context(
             status="info",
         )
 
-    context = runner.context_api.build(
-        session_id=state.session_id,
-        agent_id=state.agent_id,
-        purpose=purpose,
-        budget=budget,
-        hints=hints,
+    context = _build_runtime_context(
+        runner, state=state, purpose=purpose, budget=budget, hints=hints
     )
     runner._emit_brain_operation(
         session_id=state.session_id,
