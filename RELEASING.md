@@ -1,7 +1,7 @@
 # OpenMinion Releasing
 
 Status: active
-Last updated: 2026-09-18
+Last updated: 2026-09-20
 
 Purpose: give maintainers a compact package-local release smoke checklist for
 the public `openminion` package surface on the active alpha line defined by
@@ -27,7 +27,9 @@ Merge the PR with a merge commit, never squash/rebase, so record SHAs remain
 reachable. Desktop reads the stable feed from `main`. Back-merge `main` into
 `dev` after publication; both branches retain the same published metadata,
 while `dev` can contain unreleased code. Uncertified Desktop bounds remain null.
-Existing releases/source files are not rewritten; binary promotion is not enabled.
+Existing release records are not rewritten. Binary promotion uses the same
+protected metadata-PR boundary but has an independent manual request and trust
+gate.
 
 Qualify the publication environment and public feeds before the first use;
 local files and passing tests are not deployment evidence. Verify without publishing:
@@ -84,6 +86,35 @@ local files and passing tests are not deployment evidence. Verify without publis
    before claiming end-to-end upgrade acceptance; this observer does not
    invent or publish that certification. Binary feed stays empty until its
    packaging/native/trust gates pass.
+
+### Binary runtime publication checklist
+
+1. Run `Runtime candidates` in `openminion/openminion-packaging` at a reviewed
+   commit. Require all native matrix jobs and the aggregate candidate job to
+   pass. The private draft release is evidence only.
+2. Sign and notarize the macOS pair, sign the Windows pair, and retain the exact
+   Linux pair. Run clean-host native checks and Desktop prepare/restart/reply
+   continuity for every advertised target and compatibility range.
+3. Create a final immutable `openminion/runtime` GitHub Release tagged
+   `runtime-v<runtime-version>-<release-id>`. Upload every exact executable,
+   `candidate.json`, and `verification.json`. The verification document must
+   map every target to its final native `verification_id`.
+4. Manually dispatch `Runtime manifests` on `openminion/openminion` with that
+   exact tag and release ID. Approve the `runtime-publication` environment.
+   The job independently verifies release immutability, metadata identity,
+   GitHub asset digests and sizes, and downloaded bytes before opening the
+   metadata-only PR.
+5. Run required PR checks and merge with a merge commit. Confirm `verify-main`
+   succeeds against anonymous public URLs; only then can Desktop discover the
+   binary release.
+6. Back-merge main into dev and record the candidate run, signing/notarization
+   evidence, native verification IDs, runtime release URL, publication run,
+   record/feed commits, and merge commit in the runtime-distribution tracker.
+
+Do not create the final runtime Release or dispatch binary publication while
+any signing, native verification, compatibility, or immutable-release gate is
+missing. A private candidate and a source PyPI release do not satisfy these
+binary gates.
 
 Manifest-only merges run verification and normal CI, not another package
 release. Main is the public discovery authority; dev's copy is for consistent

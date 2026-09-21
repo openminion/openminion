@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 
 from packaging.version import Version
 
+from scripts.ci.binary_manifest import official_binary_record
 from scripts.ci.release_manifest import official_record
 
 
@@ -286,7 +287,7 @@ def publish(record: dict, workspace: Path) -> dict:
             "--title",
             f"Publish OpenMinion {record['runtime_version']} runtime metadata",
             "--body",
-            "- publish verified release metadata only\n- retain both runtime feeds and commit-pinned records\n- merge with a merge commit, not squash/rebase, to retain record SHAs\n\nValidation\n- official PyPI and producer wheel digests match\n- anonymous record and proposed feed readback passed\n- main feed remains unchanged until protected merge\n\nAfter merge, verify public main readback and merge main back into dev.",
+            f"- publish verified {record['distribution']} runtime metadata only\n- retain both runtime feeds and commit-pinned records\n- merge with a merge commit, not squash/rebase, to retain record SHAs\n\nValidation\n- producer and public artifact identities match\n- anonymous record and proposed feed readback passed\n- main feed remains unchanged until protected merge\n\nAfter merge, verify public main readback and merge main back into dev.",
         )
     )
     return {
@@ -309,6 +310,8 @@ def main() -> None:
     )
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--producer-wheel", type=Path)
+    parser.add_argument("--binary-release-tag")
+    parser.add_argument("--binary-release-id")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verify-main", action="store_true")
     args = parser.parse_args()
@@ -317,6 +320,23 @@ def main() -> None:
             parser.error("main verification requires its full-history checkout")
         verify_published(args.workspace)
         print(json.dumps({"status": "public_main_verified"}))
+        return
+    if args.binary_release_tag or args.binary_release_id:
+        if not args.binary_release_tag or not args.binary_release_id:
+            parser.error("binary publication requires release tag and release id")
+        if any((args.version, args.source_commit, args.release_id, args.published_at)):
+            parser.error("binary publication does not accept source-release inputs")
+        record = official_binary_record(args.binary_release_tag, args.binary_release_id)
+        if args.dry_run:
+            print(
+                json.dumps(
+                    {"record_path": record_path(record), "record": record}, indent=2
+                )
+            )
+            return
+        if args.workspace is None:
+            parser.error("publication requires a fresh workspace directory")
+        print(json.dumps(publish(record, args.workspace)))
         return
     if not all((args.version, args.source_commit, args.release_id, args.published_at)):
         parser.error(

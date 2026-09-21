@@ -468,9 +468,7 @@ class _SkillStoreMixin(SkillStore):
             """,
             (skill_id,),
         )
-        admissions = {
-            str(row["state"]): int(row["n"] or 0) for row in admission_rows
-        }
+        admissions = {str(row["state"]): int(row["n"] or 0) for row in admission_rows}
         outcomes = {str(row["outcome"]): int(row["n"] or 0) for row in run_rows}
         last_used_at = max(
             (str(row["last_used_at"] or "") for row in run_rows), default=""

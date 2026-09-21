@@ -29,6 +29,19 @@ def test_observer_skips_testpypi_tags_before_publication_approval():
         )
 
 
+def test_binary_publication_is_a_protected_manual_release_request():
+    workflow = (
+        Path(__file__).resolve().parents[2] / ".github/workflows/runtime-manifests.yml"
+    ).read_text()
+    assert "binary_release_tag:" in workflow
+    assert "binary_release_id:" in workflow
+    assert "environment: runtime-publication" in workflow
+    assert (
+        "official_binary_record"
+        in Path("scripts/ci/publish_runtime_manifest.py").read_text()
+    )
+
+
 def seed_main(tmp_path, remote):
     root = tmp_path / "source"
     root.mkdir()
