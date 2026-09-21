@@ -962,9 +962,7 @@ def test_windows_console_stop_handler_waits_for_daemon_cleanup(
     callback = registrations[0][0]
     result: list[bool] = []
     callback_thread = threading.Thread(
-        target=lambda: result.append(
-            callback(daemon_mod._WINDOWS_CTRL_BREAK_EVENT)
-        )
+        target=lambda: result.append(callback(daemon_mod._WINDOWS_CTRL_BREAK_EVENT))
     )
 
     callback_thread.start()
