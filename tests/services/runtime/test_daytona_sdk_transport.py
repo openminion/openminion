@@ -78,7 +78,9 @@ def _fake_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_sdk_transport_create_execute_and_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sdk_transport_create_execute_and_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _fake_sdk(monkeypatch)
     transport = DaytonaSdkTransport()
     config = DaytonaConfig(

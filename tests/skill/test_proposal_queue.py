@@ -271,18 +271,20 @@ def test_applied_proposal_persists_pending_version_until_operator_admission(
             proposal_id="sprq-proposal-1",
             current_catalog=[],
         )
-        assert store.get_skill_package(
-            addition.added_skill_id, addition.version_hash
-        ) is not None
+        assert (
+            store.get_skill_package(addition.added_skill_id, addition.version_hash)
+            is not None
+        )
         admission = store.get_skill_admission(
             skill_id=addition.added_skill_id,
             version_hash=addition.version_hash,
         )
         assert admission is not None
         assert admission["state"] == "pending"
-        assert store.get_active_skill_version_hash(
-            skill_id=addition.added_skill_id
-        ) is None
+        assert (
+            store.get_active_skill_version_hash(skill_id=addition.added_skill_id)
+            is None
+        )
     finally:
         store.close()
 
@@ -307,9 +309,10 @@ def test_applied_proposal_persists_pending_version_until_operator_admission(
                     surface="test", source_kind="local"
                 ),
             )
-        assert skill.store.get_active_skill_version_hash(
-            skill_id=addition.added_skill_id
-        ) is None
+        assert (
+            skill.store.get_active_skill_version_hash(skill_id=addition.added_skill_id)
+            is None
+        )
     finally:
         skill.close()
 
