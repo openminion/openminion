@@ -42,6 +42,7 @@ _DAEMON_STALE_HEARTBEAT_WARN_MULTIPLIER = 2.0
 _DAEMON_STALE_HEARTBEAT_FAIL_MULTIPLIER = 4.0
 _WINDOWS_CTRL_C_EVENT = 0
 _WINDOWS_CTRL_BREAK_EVENT = 1
+_WINDOWS_CONSOLE_STOP_TIMEOUT_SECONDS = 30.0
 
 
 def _daemon_stop_signals() -> tuple[signal.Signals, ...]:
@@ -54,6 +55,8 @@ def _daemon_stop_signals() -> tuple[signal.Signals, ...]:
 
 def _install_windows_console_stop_handler(
     on_stop: Callable[[], None],
+    *,
+    stop_complete: threading.Event | None = None,
 ) -> Callable[[], None] | None:
     if os.name != "nt":
         return None
@@ -69,6 +72,8 @@ def _install_windows_console_stop_handler(
         if control_type not in (_WINDOWS_CTRL_C_EVENT, _WINDOWS_CTRL_BREAK_EVENT):
             return False
         on_stop()
+        if stop_complete is not None:
+            stop_complete.wait(_WINDOWS_CONSOLE_STOP_TIMEOUT_SECONDS)
         return True
 
     _handle_console_event = callback_type(_on_console_event)
@@ -85,13 +90,16 @@ def _install_windows_console_stop_handler(
 
 def _install_daemon_stop_handlers(
     on_signal: Callable[[int, FrameType | None], None],
+    *,
+    stop_complete: threading.Event | None = None,
 ) -> Callable[[], None]:
     previous_handlers: list[tuple[signal.Signals, object]] = []
     for sig in _daemon_stop_signals():
         previous_handlers.append((sig, signal.getsignal(sig)))
         signal.signal(sig, on_signal)
     remove_windows_handler = _install_windows_console_stop_handler(
-        lambda: on_signal(int(getattr(signal, "SIGBREAK", signal.SIGINT)), None)
+        lambda: on_signal(int(getattr(signal, "SIGBREAK", signal.SIGINT)), None),
+        stop_complete=stop_complete,
     )
 
     def _restore_handlers() -> None:
@@ -426,6 +434,7 @@ def run_server(
 
     _stop_event = threading.Event()
     _shutdown_started = threading.Event()
+    _shutdown_complete = threading.Event()
     shutdown_reason = "server_stop"
     crashed = False
 
@@ -466,7 +475,10 @@ def run_server(
         )
         thread.start()
 
-    restore_stop_handlers = _install_daemon_stop_handlers(_handle_signal)
+    restore_stop_handlers = _install_daemon_stop_handlers(
+        _handle_signal,
+        stop_complete=_shutdown_complete,
+    )
 
     exit_code = 0
     try:
@@ -498,7 +510,6 @@ def run_server(
             if not crashed:
                 crashed = True
                 lifecycle.emit_crashed(reason="server_close_error", error=exc)
-        restore_stop_handlers()
         if not crashed and exit_code == 0:
             lifecycle.emit_stopped(reason=shutdown_reason)
         try:
@@ -507,7 +518,11 @@ def run_server(
                 resolved_pid_file.unlink(missing_ok=True)
         except OSError:
             pass
-        lifecycle.close()
+        try:
+            lifecycle.close()
+        finally:
+            _shutdown_complete.set()
+            restore_stop_handlers()
     return exit_code
 
 
