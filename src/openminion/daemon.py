@@ -41,6 +41,14 @@ _DAEMON_STALE_HEARTBEAT_WARN_MULTIPLIER = 2.0
 _DAEMON_STALE_HEARTBEAT_FAIL_MULTIPLIER = 4.0
 
 
+def _daemon_stop_signals() -> tuple[signal.Signals, ...]:
+    signals = [signal.SIGTERM, signal.SIGINT]
+    windows_break = getattr(signal, "SIGBREAK", None)
+    if windows_break is not None:
+        signals.append(windows_break)
+    return tuple(signals)
+
+
 class _DaemonLifecycleEmitter:
     def __init__(
         self,
@@ -405,7 +413,7 @@ def run_server(
         thread.start()
 
     previous_handlers: list[tuple[signal.Signals, object]] = []
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    for sig in _daemon_stop_signals():
         previous_handlers.append((sig, signal.getsignal(sig)))
         signal.signal(sig, _handle_signal)
 
