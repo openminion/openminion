@@ -881,6 +881,48 @@ def test_daemon_stop_signals_include_windows_break(
     )
 
 
+def test_windows_console_stop_handler_handles_break_and_unregisters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registrations: list[tuple[object, bool]] = []
+    stop_calls: list[str] = []
+
+    class SetConsoleCtrlHandler:
+        argtypes: object = None
+        restype: object = None
+
+        def __call__(self, callback: object, add: bool) -> bool:
+            registrations.append((callback, add))
+            return True
+
+    kernel32 = SimpleNamespace(SetConsoleCtrlHandler=SetConsoleCtrlHandler())
+    monkeypatch.setattr(daemon_mod.os, "name", "nt")
+    monkeypatch.setattr(
+        daemon_mod.ctypes,
+        "WINFUNCTYPE",
+        lambda *_args: lambda callback: callback,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        daemon_mod.ctypes,
+        "WinDLL",
+        lambda *_args, **_kwargs: kernel32,
+        raising=False,
+    )
+
+    remove_handler = daemon_mod._install_windows_console_stop_handler(
+        lambda: stop_calls.append("stop")
+    )
+
+    assert remove_handler is not None
+    callback = registrations[0][0]
+    assert callback(daemon_mod._WINDOWS_CTRL_BREAK_EVENT) is True
+    assert callback(2) is False
+    assert stop_calls == ["stop"]
+    remove_handler()
+    assert registrations == [(callback, True), (callback, False)]
+
+
 def test_run_server_emits_daemon_crashed_on_server_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
