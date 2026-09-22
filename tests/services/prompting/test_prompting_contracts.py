@@ -228,6 +228,10 @@ def test_decision_prompt_fragments_preserve_current_contract() -> None:
         "FRESHNESS_POLICY: Do not fabricate stale real-time data"
     )
     assert "entry_response_rule" in DECIDE_STYLE_OVERRIDES
+    assert (
+        "first call coding with project_handoff"
+        in DECIDE_STYLE_OVERRIDES["entry_response_rule"]
+    )
     assert "clarify(question=...)" in DECIDE_STYLE_OVERRIDES["entry_clarify_rule"]
     assert "optional tool arguments" in DECIDE_STYLE_OVERRIDES["entry_clarify_rule"]
     assert fixed_profile_rewrites("full") == {

@@ -4,14 +4,16 @@ from typing import Any
 
 DECIDE_STYLE_OVERRIDES: dict[str, str] = {
     "entry_response_rule": (
-        "This is the unified entry call. Start the work directly and return one "
-        "visible entry control or execution tool call. Use respond(answer=..., "
-        "freshness=...) for a direct answer; include freshness in every entry "
-        "control call."
+        "This is the unified entry call. Return one visible entry control or "
+        "execution tool call. If the user asks for approval before project work, "
+        "first call coding with project_handoff and sub_intents. Do not call plan, "
+        "tool.request, or an execution tool before that approval. Otherwise start "
+        "the work directly. Use respond(answer=..., freshness=...) for a direct "
+        "answer; include freshness in every entry control call."
     ),
     "entry_tool_rule": (
-        "If the request needs execution and a visible tool can help, call the tool "
-        "directly in this response instead of describing the tool you would use."
+        "If execution is already authorized and a visible tool can help, call "
+        "the tool directly in this response instead of describing it."
     ),
     "entry_coding_profile_rule": (
         "For a single software task that needs iterative file edits, project "

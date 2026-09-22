@@ -141,9 +141,9 @@ def coding_tool_spec() -> ToolSpec:
             "Enter the dedicated coding loop when the whole request is a single "
             "software task that needs iterative file edits, project scaffolding, "
             "tests, command execution, and final verification before answering. "
-            "When the user requests a project proposal before changes, include "
-            "project_handoff and sub_intents; this returns the proposal for approval "
-            "without starting the coding loop."
+            "When the user requests approval before project work, call this "
+            "control first with project_handoff and sub_intents. It returns a "
+            "proposal without starting the coding loop or changing files."
         ),
         input_schema={
             "type": "object",
