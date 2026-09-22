@@ -107,9 +107,7 @@ def test_api_server_bind_failure_preserves_socket_error() -> None:
         listener.bind(("127.0.0.1", 0))
         listener.listen()
         with pytest.raises(OSError):
-            _OpenMinionThreadingHTTPServer(
-                listener.getsockname(), mock.Mock(), runtime
-            )
+            _OpenMinionThreadingHTTPServer(listener.getsockname(), mock.Mock(), runtime)
     runtime.close.assert_called_once_with()
 
 
