@@ -8,6 +8,7 @@ import re
 import sqlite3
 import subprocess
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -181,7 +182,9 @@ def _source_revision() -> str:
 
 def _project_owners(probe: FocusProbe) -> tuple[AutonomyRunStore, TaskManager]:
     home_root = probe.data_root.parent / "home-roots" / probe.session_id
-    store = AutonomyRunStore(root=resolve_autonomy_state_root(home_root))
+    with patch.dict(os.environ, probe.environment()):
+        state_root = resolve_autonomy_state_root(home_root)
+    store = AutonomyRunStore(root=state_root)
     manager = TaskManager.for_lifecycle_db(
         db_path=probe.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH
     )
