@@ -1,4 +1,5 @@
 import os
+import socket
 from unittest import mock
 
 import pytest
@@ -8,6 +9,7 @@ from tests._csc_fixtures import _csc_install_default_agent
 
 from openminion.api.core.deps import build_degraded_recovery_hint
 from openminion.api.server import build_api_server, dispatch_request
+from openminion.api.server.app import _OpenMinionThreadingHTTPServer
 from openminion.base.config import OpenMinionConfig, save_config
 
 
@@ -97,6 +99,18 @@ def test_build_api_server_starts_with_none_runtime_when_bootstrap_fails() -> Non
     handler_cls = server_ctor.call_args.args[1]
     assert getattr(handler_cls, "runtime") is None
     assert "bootstrap failed" in getattr(handler_cls, "runtime_bootstrap_error")
+
+
+def test_api_server_bind_failure_preserves_socket_error() -> None:
+    runtime = mock.Mock()
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        with pytest.raises(OSError):
+            _OpenMinionThreadingHTTPServer(
+                listener.getsockname(), mock.Mock(), runtime
+            )
+    runtime.close.assert_called_once_with()
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])

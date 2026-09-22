@@ -212,8 +212,8 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
         handler_cls: type[BaseHTTPRequestHandler],
         runtime: APIRuntime | None,
     ) -> None:
-        super().__init__(server_address, handler_cls)
         self._runtime = runtime
+        super().__init__(server_address, handler_cls)
 
     def server_close(self) -> None:
         try:
