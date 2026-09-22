@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from ._helpers import FakeExecResult, RecordingSandboxRunner, build_service
 
 
@@ -43,6 +45,15 @@ def test_inspect_draft_clean_path(tmp_path) -> None:
         assert stored is not None
         assert stored.status == "inspected"
         assert stored.inspect_result_json is not None
+        events = service._store.list_audit_events(target_id=str(draft["draft_id"]))  # noqa: SLF001
+        inspected = next(
+            event for event in events if event.event_type == "tool_authoring.inspected"
+        )
+        assert inspected.version_hash == result["version_hash"]
+        details = json.loads(inspected.details_json)
+        assert details["recommend_register"] is True
+        assert details["recommend_reason"] == "all checks passed"
+        assert "source_code" not in details
     finally:
         service.close()
 
@@ -82,6 +93,18 @@ def test_inspect_draft_failing_tests_block_register(tmp_path) -> None:
         )
         assert result["recommend_register"] is False
         assert result["test_results"]["failed"] == 1
+        events = service._store.list_audit_events(target_id=str(draft["draft_id"]))  # noqa: SLF001
+        inspected = next(
+            event for event in events if event.event_type == "tool_authoring.inspected"
+        )
+        assert inspected.version_hash == result["version_hash"]
+        details = json.loads(inspected.details_json)
+        assert details["recommend_register"] is False
+        assert details["tests_failed"] == 1
+        assert details["recommend_reason"] == "1 held-out tests failed"
+        assert not any(
+            event.event_type == "tool_authoring.registered" for event in events
+        )
     finally:
         service.close()
 
@@ -135,5 +158,11 @@ def test_inspect_draft_rejects_source_override(tmp_path) -> None:
         assert stored is not None
         assert stored.status == "drafted"
         assert stored.inspect_result_json is None
+        assert [
+            event.event_type
+            for event in service._store.list_audit_events(
+                target_id=str(draft["draft_id"])
+            )  # noqa: SLF001
+        ] == ["tool_authoring.drafted"]
     finally:
         service.close()
