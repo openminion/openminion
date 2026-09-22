@@ -4,7 +4,6 @@ from pathlib import Path
 
 from openminion.base.runtime.interfaces import RUNTIME_INTERFACE_VERSION
 from openminion.base.runtime.runners import (
-    LocalRunner,
     _check_cmd,
     _check_cwd,
 )
@@ -18,7 +17,10 @@ from openminion.base.runtime.sandbox import (
     NetFetchSpec,
     NetResult,
 )
-from openminion.modules.runtime.constants import SANDBOX_RESOURCE_LIMIT
+from openminion.modules.runtime.constants import (
+    SANDBOX_RESOURCE_LIMIT,
+    SANDBOX_UNAVAILABLE,
+)
 from .client import DaytonaClient, DaytonaClientError
 from .session import DaytonaSessionManager
 
@@ -48,10 +50,8 @@ class DaytonaRunner:
         self,
         *,
         client: DaytonaClient,
-        local_runner: LocalRunner | None = None,
     ) -> None:
         self._client = client
-        self._local = local_runner or LocalRunner()
         self._sessions = DaytonaSessionManager(client=client)
 
     def run_exec(self, spec: ExecSpec, sandbox: ExecutionSandboxSpec) -> ExecResult:
@@ -99,13 +99,22 @@ class DaytonaRunner:
                 pass
 
     def fs_write(self, spec: FsWriteSpec, sandbox: ExecutionSandboxSpec) -> FsResult:
-        return self._local.fs_write(spec, sandbox)
+        raise DaytonaClientError(
+            code=SANDBOX_UNAVAILABLE,
+            message="Daytona filesystem writes are not supported",
+        )
 
     def fs_delete(self, spec: FsDeleteSpec, sandbox: ExecutionSandboxSpec) -> FsResult:
-        return self._local.fs_delete(spec, sandbox)
+        raise DaytonaClientError(
+            code=SANDBOX_UNAVAILABLE,
+            message="Daytona filesystem deletes are not supported",
+        )
 
     def net_fetch(self, spec: NetFetchSpec, sandbox: ExecutionSandboxSpec) -> NetResult:
-        return self._local.net_fetch(spec, sandbox)
+        raise DaytonaClientError(
+            code=SANDBOX_UNAVAILABLE,
+            message="Daytona network fetches are not supported",
+        )
 
     def close(self) -> None:
         self._sessions.close()

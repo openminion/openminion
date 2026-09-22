@@ -140,7 +140,7 @@ tool_path = work / "tool_impl.py"
 tests_path = work / "test_tool_impl.py"
 tool_path.write_text(base64.b64decode(sys.argv[1]).decode("utf-8"), encoding="utf-8")
 tests_path.write_text(base64.b64decode(sys.argv[2]).decode("utf-8"), encoding="utf-8")
-raise SystemExit(pytest.main([str(tests_path), "-q", "--tb=short", "--timeout=10"]))
+raise SystemExit(pytest.main([str(tests_path), "-q", "--tb=short"]))
 """.strip()
 
 
