@@ -49,6 +49,7 @@ def _run_probe(*, config_basename: str, run_id: str) -> list[PhaseStatus]:
                 ),
                 "agent": _AGENT_ID,
                 "session_id": run_id,
+                "timeout_seconds": 180,
             },
             progress_callback=_capture,
         )

@@ -34,7 +34,11 @@ _PROBE_MESSAGE = (
     'turn, use the `plan` tool with action="step_completed" to mark '
     "the next step complete (still setting continue_plan_autonomously=true "
     "for steps 1 and 2). After step 3 is completed, call the `plan` "
-    'tool with action="complete". Do not ask me any questions — '
+    'tool with action="complete" in that same final turn because completing the '
+    "last step does not schedule another turn. Before the final turn, make exactly "
+    "one plan tool call per turn, then stop so the runtime can schedule the next "
+    "autonomous turn. Do not complete multiple steps in one turn. Do not ask me "
+    "any questions — "
     "work through the plan autonomously."
 )
 
