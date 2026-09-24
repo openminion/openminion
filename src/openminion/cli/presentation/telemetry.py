@@ -197,8 +197,7 @@ def _render_event_rows(runtime: Any, limit: int) -> str:
         timestamp = datetime.fromtimestamp(row["timestamp"], tz=timezone.utc)
         status = f"  status={json.dumps(row['status'])}" if "status" in row else ""
         lines.append(
-            f"  {timestamp:%Y-%m-%d %H:%M:%SZ}  "
-            f"{json.dumps(row['event_type'])}{status}"
+            f"  {timestamp:%Y-%m-%d %H:%M:%SZ}  {json.dumps(row['event_type'])}{status}"
         )
         details = "  ".join(
             f"{key}={json.dumps(value, sort_keys=True)}"
