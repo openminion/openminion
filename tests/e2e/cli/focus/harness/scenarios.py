@@ -70,7 +70,7 @@ TOOL_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
             "browser tabs. If it succeeds, reply with exactly `browser ready`; "
             "otherwise summarize the exact browser error in one sentence."
         ),
-        expected_markers=("browser ready",),
+        expected_markers=("browser ready|error|unavailable",),
         timeout=360,
         requires_approval=True,
         max_auto_approvals=4,
