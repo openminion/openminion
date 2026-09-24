@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 import shlex
 from typing import Any
@@ -165,8 +166,6 @@ def _render_event_rows(runtime: Any, limit: int) -> str:
     invocation_id = str(
         getattr(runtime, "_interactive_telemetry_invocation_id", "") or ""
     ).strip()
-    if not invocation_id:
-        return "telemetry: error\nerror: NO_SELECTED_INVOCATION"
     try:
         data_root = _runtime_data_root(runtime)
         with open_telemetry_inspection(
@@ -174,15 +173,17 @@ def _render_event_rows(runtime: Any, limit: int) -> str:
         ) as service:
             report = build_telemetry_debug_report(
                 service,
-                selector_kind="invocation_id",
-                invocation_id=invocation_id,
+                selector_kind="invocation_id" if invocation_id else "latest",
+                invocation_id=invocation_id or None,
                 trace_root=data_root / "traces",
                 session_id=session_id,
             )
             if report.error:
                 return f"telemetry: error\nerror: {report.error.code}"
-            if service is None:
-                return "telemetry: empty"
+            if report.selection is None or not report.selection.selected_invocation_id:
+                return "No model runs in this session yet. Send a prompt, then run /telemetry events."
+            invocation_id = report.selection.selected_invocation_id
+            setattr(runtime, "_interactive_telemetry_invocation_id", invocation_id)
             rows = read_safe_invocation_event_rows(
                 service,
                 invocation_id,
@@ -192,7 +193,20 @@ def _render_event_rows(runtime: Any, limit: int) -> str:
     except TELEMETRY_INSPECTION_EXCEPTIONS as exc:
         return f"telemetry: error\nerror: {telemetry_storage_error_code(exc)}"
     lines = [f"telemetry events: {invocation_id} ({len(rows)})"]
-    lines.extend(json.dumps(row, sort_keys=True) for row in rows)
+    for row in rows:
+        timestamp = datetime.fromtimestamp(row["timestamp"], tz=timezone.utc)
+        status = f"  status={json.dumps(row['status'])}" if "status" in row else ""
+        lines.append(
+            f"  {timestamp:%Y-%m-%d %H:%M:%SZ}  "
+            f"{json.dumps(row['event_type'])}{status}"
+        )
+        details = "  ".join(
+            f"{key}={json.dumps(value, sort_keys=True)}"
+            for key, value in row.items()
+            if key not in {"timestamp", "event_type", "status", "invocation_id"}
+        )
+        if details:
+            lines.append(f"    {details}")
     return "\n".join(lines)
 
 

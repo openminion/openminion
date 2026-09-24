@@ -358,19 +358,29 @@ def test_terminal_telemetry_events_are_safe_ordered_and_bounded(tmp_path: Path) 
     _record_invocation(tmp_path, "invocation-events", trace_path=relative)
     runtime = _Runtime(tmp_path)
 
-    missing = _run_slash("/telemetry events", runtime, tmp_path)
+    first = _run_slash("/telemetry events", runtime, tmp_path)
     _run_slash("/telemetry", runtime, tmp_path)
     default_output = _run_slash("/telemetry events", runtime, tmp_path)
     output = _run_slash("/telemetry events --limit 2", runtime, tmp_path)
     invalid = _run_slash("/telemetry events --limit 101", runtime, tmp_path)
 
-    assert "NO_SELECTED_INVOCATION" in missing
+    assert "telemetry events: invocation-events (3)" in first
+    assert "private response" not in first
     assert "telemetry events: invocation-events (3)" in default_output
     assert "telemetry events: invocation-events (2)" in output
     assert output.index("llm.call.completed") < output.index("agent.invocation.failed")
     assert "provider_round_trip_ms" in output
+    assert '"timestamp"' not in output
     assert "private response" not in output
     assert invalid.strip().startswith("usage: /telemetry")
+
+
+def test_terminal_telemetry_events_have_actionable_empty_state(tmp_path: Path) -> None:
+    (tmp_path / "telemetry").mkdir()
+    output = _run_slash("/telemetry events", _Runtime(tmp_path), tmp_path)
+
+    assert "No model runs in this session yet." in output
+    assert "Send a prompt" in output
 
 
 def test_terminal_telemetry_requires_an_active_session(tmp_path: Path) -> None:
