@@ -93,6 +93,76 @@ def test_run_until_idle_re_dispatches_continue_status() -> None:
     ]
 
 
+def test_run_until_idle_yields_current_trace_to_plan_continuation() -> None:
+    session_api = MagicMock()
+    session_api.list_events.return_value = [
+        {
+            "event_type": "task_plan.step_completed",
+            "trace_id": "trace-continue",
+            "payload": {
+                "plan_id": "plan-1",
+                "step_id": "step-1",
+                "continue_plan_autonomously": True,
+            },
+        }
+    ]
+    runner = _FakeRunner(
+        outputs=[
+            _step_output(status="continue", ticks=3),
+            _step_output(status="done", ticks=2),
+        ],
+        options=SimpleNamespace(plan_max_iterations=4),
+        profile=SimpleNamespace(agent_id="router-agent"),
+        session_api=session_api,
+        llm_api=MagicMock(),
+    )
+
+    result = run_until_idle(
+        runner,
+        session_id="s-continue",
+        user_input="start coding",
+        trace_id="trace-continue",
+        forced_tools=None,
+        capability_category=None,
+    )
+
+    assert result.status == "continue"
+    assert runner._index == 1
+
+
+def test_run_until_idle_yields_current_trace_after_plan_completion() -> None:
+    session_api = MagicMock()
+    session_api.list_events.return_value = [
+        {
+            "event_type": "task_plan.completed",
+            "trace_id": "trace-continue",
+            "payload": {"plan_id": "plan-1"},
+        }
+    ]
+    runner = _FakeRunner(
+        outputs=[
+            _step_output(status="continue", ticks=3),
+            _step_output(status="done", ticks=2),
+        ],
+        options=SimpleNamespace(plan_max_iterations=4),
+        profile=SimpleNamespace(agent_id="router-agent"),
+        session_api=session_api,
+        llm_api=MagicMock(),
+    )
+
+    result = run_until_idle(
+        runner,
+        session_id="s-continue",
+        user_input="finish coding",
+        trace_id="trace-continue",
+        forced_tools=None,
+        capability_category=None,
+    )
+
+    assert result.status == "continue"
+    assert runner._index == 1
+
+
 def test_run_until_idle_budget_checks_continue_tick() -> None:
     runner = _FakeRunner(
         outputs=[_step_output(status="continue", ticks=0)],

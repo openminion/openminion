@@ -96,6 +96,44 @@ def _normalize_run_trigger(trigger: str) -> str:
     )
 
 
+def _prepare_run_trigger(
+    runner: "BrainRunner",
+    session_id: str,
+    trace_id: str | None,
+    user_input: str | None,
+    trigger: str,
+) -> tuple[str, str | None]:
+    trigger_mode = _normalize_run_trigger(trigger)
+    if trigger_mode == RUN_TRIGGER_PLAN_CONTINUATION:
+        event = "brain.autonomous_continuation.started"
+    elif trigger_mode == RUN_TRIGGER_IDLE_TICK:
+        event = "brain.idle_tick.started"
+    else:
+        return trigger_mode, user_input
+    _emit_run_trigger_started(
+        runner=runner,
+        session_id=session_id,
+        trace_id=trace_id,
+        event=event,
+        trigger=trigger_mode,
+    )
+    return trigger_mode, None
+
+
+def _turn_reached_plan_boundary(
+    runner: "BrainRunner",
+    session_id: str,
+    result: "StepOutput",
+) -> bool:
+    from ..loop.continuation import plan_turn_boundary_reached_for_trace
+
+    return plan_turn_boundary_reached_for_trace(
+        session_api=runner.session_api,
+        session_id=session_id,
+        trace_id=str(result.working_state.trace_id or ""),
+    )
+
+
 def run_until_idle(
     runner: "BrainRunner",
     *,
@@ -107,25 +145,9 @@ def run_until_idle(
     trigger: str = RUN_TRIGGER_USER_INPUT,
     capture_identity: "CaptureIdentity | None" = None,
 ) -> "StepOutput":
-    trigger_mode = _normalize_run_trigger(trigger)
-    if trigger_mode == RUN_TRIGGER_PLAN_CONTINUATION:
-        user_input = None
-        _emit_run_trigger_started(
-            runner=runner,
-            session_id=session_id,
-            trace_id=trace_id,
-            event="brain.autonomous_continuation.started",
-            trigger=RUN_TRIGGER_PLAN_CONTINUATION,
-        )
-    elif trigger_mode == RUN_TRIGGER_IDLE_TICK:
-        user_input = None
-        _emit_run_trigger_started(
-            runner=runner,
-            session_id=session_id,
-            trace_id=trace_id,
-            event="brain.idle_tick.started",
-            trigger=RUN_TRIGGER_IDLE_TICK,
-        )
+    trigger_mode, user_input = _prepare_run_trigger(
+        runner, session_id, trace_id, user_input, trigger
+    )
 
     max_iterations = max(
         1, int(getattr(runner.options, "plan_max_iterations", 64) or 64)
@@ -140,6 +162,9 @@ def run_until_idle(
         capture_identity=capture_identity,
     )
     iterations = 1
+
+    if _turn_reached_plan_boundary(runner, session_id, last):
+        return last
 
     while last.status in BRAIN_ACTIVE_STATES:
         if iterations >= max_iterations:
@@ -215,6 +240,8 @@ def run_until_idle(
         previous_status = last.status
         last = _continue_run(runner, session_id, capture_identity)
         iterations += 1
+        if _turn_reached_plan_boundary(runner, session_id, last):
+            return last
         if (
             previous_status == BRAIN_STATE_JOB_PENDING
             and last.status == BRAIN_STATE_JOB_PENDING
