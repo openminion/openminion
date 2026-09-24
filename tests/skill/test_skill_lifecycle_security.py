@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from openminion.modules.skill.errors import SkillError
 from openminion.modules.skill.interfaces import SkillIngestAuthority
 from openminion.modules.skill.runtime.skill import Skill
 
@@ -52,6 +55,21 @@ Confirm the expected result before completion.
         assert explicit.bundle_metadata["agent_skills"]["allowed_tools"] == [
             "tool.admin"
         ]
+        with pytest.raises(SkillError) as denied:
+            ctl.admit_skill_version(
+                skill_id=skill_id,
+                version_hash=version_hash,
+                expected_active_version_hash=None,
+                target_status="verified",
+                reason="runtime cannot admit",
+                authority=SkillIngestAuthority.runtime(
+                    surface="test.lifecycle", source_kind="local"
+                ),
+            )
+        assert denied.value.code == "SKILL_OPERATOR_AUTH_REQUIRED"
+        assert ctl.list_skills({}) == []
+        assert not any(name == "skill.version_admitted" for name, _ in events)
+
         ctl.admit_skill_version(
             skill_id=skill_id,
             version_hash=version_hash,
@@ -62,6 +80,11 @@ Confirm the expected result before completion.
         )
         assert ctl.get_skill(skill_id).version_hash == version_hash
         assert ctl.get_skill(skill_id).tools == []
-        assert any(name == "skill.version_admitted" for name, _ in events)
+        admitted = [
+            payload for name, payload in events if name == "skill.version_admitted"
+        ]
+        assert len(admitted) == 1
+        assert admitted[0]["active_version_hash"] == version_hash
+        assert admitted[0]["admission_state"] == "admitted"
     finally:
         ctl.close()

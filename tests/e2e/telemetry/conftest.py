@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import shutil
 import socket
 import subprocess
+import tempfile
 import time
 
 import pytest
@@ -50,16 +50,15 @@ def _wait_for_collector() -> None:
 
 @pytest.fixture(scope="session")
 def collector_artifacts() -> Path:
-    shutil.rmtree(ARTIFACT_ROOT, ignore_errors=True)
-    ARTIFACT_ROOT.mkdir(parents=True, mode=0o777)
-    ARTIFACT_ROOT.chmod(0o777)
-    env = {**os.environ, "OTEL_E2E_ARTIFACTS": str(ARTIFACT_ROOT)}
-    compose = ["docker", "compose", "-f", str(COMPOSE_FILE)]
-
     _require_docker_daemon()
+    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    artifact_dir = Path(tempfile.mkdtemp(prefix="run-", dir=ARTIFACT_ROOT))
+    artifact_dir.chmod(0o777)
+    env = {**os.environ, "OTEL_E2E_ARTIFACTS": str(artifact_dir)}
+    compose = ["docker", "compose", "-f", str(COMPOSE_FILE)]
     subprocess.run([*compose, "down", "--remove-orphans"], env=env, check=False)
-    subprocess.run([*compose, "up", "-d"], env=env, check=True)
     try:
+        subprocess.run([*compose, "up", "-d"], env=env, check=True)
         _wait_for_collector()
         digest = subprocess.run(
             [
@@ -77,6 +76,6 @@ def collector_artifacts() -> Path:
         assert (
             "125bdbeb7590cc1952c5b3430ecf14063568980c2c93d5b38676cc0446ed8108" in digest
         )
-        yield ARTIFACT_ROOT
+        yield artifact_dir
     finally:
         subprocess.run([*compose, "down", "--remove-orphans"], env=env, check=False)

@@ -78,6 +78,16 @@ def _matches_weather_tool(tool_name: str) -> bool:
     } or normalized.endswith(".weather")
 
 
+def _audited_tool_names(data_root: Path) -> set[str]:
+    names: set[str] = set()
+    for audit_path in (data_root / "tool-runs").rglob("audit.jsonl"):
+        for line in audit_path.read_text(encoding="utf-8").splitlines():
+            event = json.loads(line)
+            if event.get("event") == "tool.completed":
+                names.add(str(event.get("tool", "")).strip())
+    return names
+
+
 @pytest.mark.e2e
 def test_live_minimax_m2_7_srtf_poisoned_session_still_uses_weather_tool() -> None:
     require_live_flag()
@@ -114,6 +124,7 @@ def test_live_minimax_m2_7_srtf_poisoned_session_still_uses_weather_tool() -> No
         for item in tool_results
         if str(item.get("tool_name", "")).strip()
     }
+    executed_tool_names.update(_audited_tool_names(data_root))
 
     assert any(_matches_weather_tool(name) for name in executed_tool_names), (
         "structured poisoned facts should not prevent a weather tool call\n"

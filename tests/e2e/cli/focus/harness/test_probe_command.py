@@ -4,11 +4,28 @@ import pytest
 
 
 import json
+import os
 from pathlib import Path
 
+from tests.e2e.cli.focus.conftest import _isolated_live_config
 from tests.e2e.cli.focus.harness.probe import FocusProbe
 
 pytestmark = pytest.mark.e2e
+
+
+def test_live_config_uses_private_file_and_separate_daemon_port(tmp_path: Path) -> None:
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps({"runtime": {"log_level": "INFO"}}), encoding="utf-8")
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+
+    isolated = _isolated_live_config(source, run_root)
+
+    assert json.loads(source.read_text(encoding="utf-8")) == {
+        "runtime": {"log_level": "INFO"}
+    }
+    assert json.loads(isolated.read_text(encoding="utf-8"))["runtime"]["ipc_port"] > 0
+    assert os.stat(isolated).st_mode & 0o777 == 0o600
 
 
 def test_focus_probe_adds_demo_flag_for_echo_agent(tmp_path: Path) -> None:

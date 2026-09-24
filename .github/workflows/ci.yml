@@ -111,6 +111,41 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Validate introduced commit messages
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$PR_HEAD_SHA" ]]; then
+            revision_args=("$PR_BASE_SHA..$PR_HEAD_SHA")
+          elif [[ -n "$BEFORE_SHA" && "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            revision_args=("$BEFORE_SHA..$GITHUB_SHA")
+          else
+            refs=()
+            while IFS= read -r ref; do
+              case "$ref" in
+                "refs/remotes/origin/$GITHUB_REF_NAME"|refs/remotes/origin/HEAD) ;;
+                *) refs+=("$ref") ;;
+              esac
+            done < <(git for-each-ref --format='%(refname)' refs/remotes/origin)
+            revision_args=("$GITHUB_SHA" --not "${refs[@]}")
+          fi
+          while IFS= read -r commit; do
+            git show -s --format=%B "$commit" > "$RUNNER_TEMP/commit-message"
+            echo "Checking commit $commit"
+            python scripts/commit_message.py "$RUNNER_TEMP/commit-message"
+          done < <(git rev-list --reverse "${revision_args[@]}")
 
       - name: Prepare isolated runtime roots
         run: |
@@ -123,12 +158,6 @@ jobs:
             "$RUNNER_TEMP/openminion-home" \
             "$RUNNER_TEMP/openminion-data" \
             "$RUNNER_TEMP/openminion-pycache"
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: "3.11"
-          cache: "pip"
 
       - name: Prepare lint workspace
         shell: bash
@@ -223,25 +252,24 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
 
-      - name: Prepare package test workspace (3.11)
-        if: matrix.python-version == '3.11'
-        shell: bash
-        run: |
-          sophiagraph_sha="4533d19c81ddabde51fe1393e69c2c76358238bb"
-          mkdir -p .deps
-          git init .deps/sophiagraph
-          git -C .deps/sophiagraph remote add origin https://github.com/openminion/sophiagraph
-          git -C .deps/sophiagraph fetch --depth 1 origin "$sophiagraph_sha"
-          git -C .deps/sophiagraph checkout --detach FETCH_HEAD
-
       - name: Bootstrap repo venv (3.11 package suite)
         if: matrix.python-version == '3.11'
         shell: bash
         run: |
           python -m venv .venv
           .venv/bin/python3.11 -m pip install --upgrade pip setuptools wheel
-          .venv/bin/python3.11 -m pip install -e .deps/sophiagraph
           .venv/bin/python3.11 -m pip install -e ".[dev,viewer,otel]"
+
+      - name: Report installed SophiaGraph (3.11)
+        if: matrix.python-version == '3.11'
+        run: |
+          .venv/bin/python3.11 - <<'PY'
+          import importlib.metadata
+          import sophiagraph
+
+          print("sophiagraph", importlib.metadata.version("sophiagraph"))
+          print("imported from", sophiagraph.__file__)
+          PY
 
       - name: Install dependencies (3.12 smoke)
         if: matrix.python-version == '3.12'

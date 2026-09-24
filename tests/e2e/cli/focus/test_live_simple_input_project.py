@@ -8,6 +8,7 @@ import re
 import sqlite3
 import subprocess
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -30,6 +31,7 @@ from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.task.project.models import ProjectVerificationState
 from tests.e2e.cli.focus.conftest import require_complex_focus
 from tests.e2e.cli.focus.harness import FocusProbe
+from tests.e2e.cli.focus.harness.assertions import assert_expected_markers
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
 from tests.e2e.cli.focus.harness.scenarios import FocusScenario
 
@@ -46,7 +48,7 @@ LIVE_SCENARIOS = {
         "Work only in this Git repository. Treat this as durable project work and "
         "propose a typed project handoff for approval before changing files. The "
         "measurable outcome is to implement stats.total(values) in stats.py and "
-        "stats.mean(values) in mean.py so `python -m pytest -q` passes. Use at most "
+        "stats.mean(values) in mean.py so `python3.11 -m pytest -q` passes. Use at most "
         "4 project iterations and 24 project tool calls. In the first project cycle, "
         "implement total correctly, write exactly `total-implemented` plus a newline "
         "to accepted_steps.log, but make mean return 0. Run the verifier, preserve "
@@ -61,14 +63,14 @@ LIVE_SCENARIOS = {
         "choosing the implementation, call web.search to discover and web.fetch to "
         "read the current official PyPA guide for writing pyproject.toml. Record its "
         "canonical URL in source_info.py as SOURCE_URL, then run "
-        "`python -m pytest -q`, inspect Git status, and complete only when the test "
+        "`python3.11 -m pytest -q`, inspect Git status, and complete only when the test "
         "passes. Use at most 3 project iterations and 20 project tool calls."
     ),
     "delegated-read-only-review": (
         "Work only in this Git repository. Treat this as durable project work and "
         "propose a typed project handoff for approval before changing files. "
         "Implement calc.add in calc.py and operations.multiply in operations.py so "
-        "`python -m pytest -q` passes. Delegate one bounded code-bearing subtask that "
+        "`python3.11 -m pytest -q` passes. Delegate one bounded code-bearing subtask that "
         "implements both functions in their two files to the exact agent "
         "minimax-m2-7-highspeed so it returns a child worktree artifact. The parent "
         "does not edit those files. Then use the "
@@ -154,7 +156,7 @@ def _fixture(root: Path, scenario_id: str) -> tuple[Path, dict[str, object]]:
         "delegated-read-only-review": ["calc.py", "operations.py"],
     }[scenario_id]
     oracle_text = (
-        "python -m pytest -q\0"
+        "python3.11 -m pytest -q\0"
         + fixture_text
         + json.dumps(changed_paths, separators=(",", ":"))
         + (
@@ -180,7 +182,9 @@ def _source_revision() -> str:
 
 def _project_owners(probe: FocusProbe) -> tuple[AutonomyRunStore, TaskManager]:
     home_root = probe.data_root.parent / "home-roots" / probe.session_id
-    store = AutonomyRunStore(root=resolve_autonomy_state_root(home_root))
+    with patch.dict(os.environ, probe.environment()):
+        state_root = resolve_autonomy_state_root(home_root)
+    store = AutonomyRunStore(root=state_root)
     manager = TaskManager.for_lifecycle_db(
         db_path=probe.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH
     )
@@ -446,7 +450,7 @@ def _run_live_scenario(
                 FocusScenario(
                     scenario_id=scenario_id,
                     prompt=LIVE_SCENARIOS[scenario_id],
-                    expected_markers=("Project queued:",),
+                    expected_markers=(),
                     requires_approval=True,
                     max_auto_approvals=8,
                     approval_reply="session",
@@ -454,6 +458,9 @@ def _run_live_scenario(
                 ),
             )
             write_transcript(root, scenario_id, transcript)
+            assert_expected_markers(
+                transcript, LIVE_SCENARIOS[scenario_id], ("Project queued:",)
+            )
             approval_classes = _approval_action_classes(transcript)
             assert approval_classes == ["project.start"]
             run_match = _RUN_ID_RE.search(transcript)
@@ -556,7 +563,9 @@ def _run_live_scenario(
             == ProjectVerificationState.VERIFIED
         )
         assert run.session_id == probe.session_id
-        assert run.execution_selectors.verification_commands == ("python -m pytest -q",)
+        assert run.execution_selectors.verification_commands == (
+            "python3.11 -m pytest -q",
+        )
         verification = subprocess.run(
             [str(probe.python_bin), "-m", "pytest", "-q"],
             cwd=workspace,

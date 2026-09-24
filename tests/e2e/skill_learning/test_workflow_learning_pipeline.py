@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import sqlite3
 import pytest
 
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from openminion.modules.artifact.control import ArtifactCtl
+from openminion.modules.brain.bootstrap.skill.hints import resolve_skill_hints
 from openminion.modules.skill.learning import (
     ReplayEvaluationResult,
     ReplayProof,
@@ -19,6 +23,7 @@ from openminion.modules.skill.learning import (
     stage_shape_as_skill_proposal,
 )
 from openminion.modules.skill.learning.replay import proposal_draft_hash
+from openminion.modules.skill.interfaces import SkillIngestAuthority
 from openminion.modules.skill.proposal.queue import (
     PROPOSAL_QUEUE_STATE_PENDING,
     create_proposal,
@@ -27,12 +32,13 @@ from openminion.modules.skill.proposal.queue import (
     record_replay_proof,
 )
 from openminion.modules.skill.storage import SQLiteSkillStore
+from openminion.modules.skill.runtime.skill import Skill
 
 pytestmark = pytest.mark.e2e
 
 
 def _store(tmp_path: Path) -> SQLiteSkillStore:
-    return SQLiteSkillStore(tmp_path / "skill.db", wal=False)
+    return SQLiteSkillStore(tmp_path / ".openminion" / "skill.db", wal=False)
 
 
 def _proof(run_id: str) -> dict[str, object]:
@@ -159,25 +165,88 @@ def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
         )
         assert addition.added_skill_id.startswith("emergent.")
 
-        class Runtime:
-            def __init__(self) -> None:
-                self.runs: list[dict[str, object]] = []
-
-            def log_run(self, **kwargs: object) -> str:
-                run_id = f"skill-run-{len(self.runs) + 1}"
-                self.runs.append({"run_id": run_id, **kwargs})
-                return run_id
-
-        runtime = Runtime()
-        run_id = record_learned_skill_reuse(
-            runtime,
-            session_id="session-1",
-            agent_id="agent-1",
-            skill_id=addition.added_skill_id,
-            version_hash="v1",
-            evidence_refs=["replay:passed"],
+        config = {
+            "skill": {
+                "sqlite_path": str(tmp_path / ".openminion" / "skill.db"),
+                "blob_root": str(tmp_path / ".openminion" / "blob"),
+                "fallback_root": str(tmp_path / ".openminion" / "fallback"),
+                "wal": False,
+            }
+        }
+        authority = SkillIngestAuthority.local_operator(
+            surface="test", principal_id="operator-e2e"
         )
-        assert runtime.runs[0]["outcome"] == "success"
+        skill = Skill(config)
+        try:
+            assert skill.catalog_summaries("agent-1") == []
+            admitted = skill.admit_skill_version(
+                skill_id=addition.added_skill_id,
+                version_hash=addition.version_hash,
+                expected_active_version_hash=None,
+                target_status="verified",
+                reason="reviewed workflow",
+                authority=authority,
+            )
+            assert admitted["active_version_hash"] == addition.version_hash
+        finally:
+            skill.close()
+
+        skill = Skill(config)
+        try:
+            runner = MagicMock()
+            runner.skill_api = skill
+            runner.profile = SimpleNamespace(
+                skill=None,
+                skill_catalog=[],
+                llm_profiles=SimpleNamespace(
+                    act_model="", summarize_model="test-model"
+                ),
+            )
+            runner.session_api.get_slice.return_value = {
+                "recent_turns": [],
+                "open_tasks": [],
+                "recent_tool_events": [],
+                "summary_short": "",
+            }
+            state = SimpleNamespace(
+                agent_id="agent-1",
+                session_id="session-2",
+                trace_id="trace-2",
+                active_skill_id=None,
+                active_skill_version_hash=None,
+                resolved_skill_ids=[],
+                resolved_skill_versions={},
+                session_skill_loaded=[],
+                session_skill_unloaded=[],
+                skill_selection_mode=None,
+            )
+            hints = resolve_skill_hints(
+                runner,
+                intent="run the learned workflow",
+                purpose="plan",
+                state=state,
+                logger=MagicMock(),
+            )
+            assert hints["skill_id"] == addition.added_skill_id
+            assert hints["skill_version_hash"] == addition.version_hash
+            assert state.active_skill_version_hash == addition.version_hash
+            runner.llm_api.call_structured.assert_not_called()
+            run_id = record_learned_skill_reuse(
+                skill,
+                session_id="session-2",
+                agent_id="agent-1",
+                skill_id=addition.added_skill_id,
+                version_hash=addition.version_hash,
+                evidence_refs=[proof.result_ref],
+            )
+            with sqlite3.connect(tmp_path / ".openminion" / "skill.db") as conn:
+                persisted = conn.execute(
+                    "SELECT run_id, version_hash, outcome FROM skill_runs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+            assert persisted == (run_id, addition.version_hash, "success")
+        finally:
+            skill.close()
 
         trust = SkillExecutionTrustRecord(
             skill_id=addition.added_skill_id,

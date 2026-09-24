@@ -311,10 +311,8 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
 
     proposal_apply = sub.add_parser(
         "proposal-apply",
-        help=(
-            "Apply an accepted proposal to the catalog via the shipped "
-            "apply_emergent_skill() seam."
-        ),
+        help="Persist an accepted proposal as a pending-admission skill draft.",
+        description="Persist an accepted proposal as a pending-admission skill draft.",
     )
     proposal_apply.add_argument("proposal_id")
 
@@ -398,7 +396,8 @@ def _add_learning_subcommands(sub: Any) -> None:
 
     learning_apply = sub.add_parser(
         "learning-apply-proved",
-        help="Apply an accepted proposal with its retained replay proof.",
+        help="Persist a proved proposal as a pending-admission skill draft.",
+        description="Persist a proved proposal as a pending-admission skill draft.",
     )
     learning_apply.add_argument("--proposal-id", required=True)
 

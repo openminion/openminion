@@ -1002,6 +1002,19 @@ def test_prompt_loop_passes_skill_id_to_skill_detail_report(tmp_path: Path) -> N
     assert transcript._messages[-1].body == "Skill detail: demo_skill"
 
 
+def test_skills_help_describes_existing_inspection_command(
+    tmp_path: Path,
+) -> None:
+    runtime = _HelpSafetyRuntime()
+    should_exit, transcript = _run_prompt_slash(
+        "/skills --help", tmp_path, runtime=runtime
+    )
+
+    assert should_exit is False
+    assert transcript._messages[-1].body.startswith("/skills — List skills or view one")
+    assert "Usage:\n  /skills\n  /skills <skill-id>" in transcript._messages[-1].body
+
+
 def test_resume_session_accepts_dict_session_message_count() -> None:
     buf = io.StringIO()
     console = Console(file=buf, force_terminal=False, width=160)

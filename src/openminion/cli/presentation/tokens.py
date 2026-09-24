@@ -130,8 +130,28 @@ def format_interactive_token_history(
             f"cost {_history_cost_label(used)}"
         ),
         _history_call_coverage(used),
-        "Recent sessions:",
     ]
+    daily: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0])
+    for summary in used:
+        for record in summary.records:
+            if record.surface != SURFACE_LLM_TOTAL:
+                continue
+            day = record.observed_at[:10] or "date unavailable"
+            totals = daily[day]
+            totals[0] += record.total_tokens
+            totals[1] += record.input_tokens
+            totals[2] += record.output_tokens
+    if daily:
+        lines.append("By day (UTC, metered model calls):")
+        for day, (total, input_tokens, output_tokens) in sorted(
+            daily.items(), reverse=True
+        ):
+            lines.append(
+                f"  {day}  {format_token_count(total)} model · "
+                f"{format_token_count(input_tokens)} input · "
+                f"{format_token_count(output_tokens)} output"
+            )
+    lines.append("Recent sessions:")
     for index, summary in enumerate(used):
         model, _ = _top_model(summary)
         tokens = summary.total_provider_tokens + summary.total_derived_tokens

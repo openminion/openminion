@@ -32,6 +32,7 @@ def _summary(
                 total_tokens=tokens,
                 input_tokens=tokens - 100,
                 output_tokens=100,
+                observed_at=observed_at,
             ),
             TokenUsageRecord(
                 session_id=session_id,
@@ -129,6 +130,9 @@ def test_interactive_token_history_uses_readable_rows_and_deltas() -> None:
 
     assert "Token history · 2 of 2 sessions with model calls" in output
     assert "2026-09-09 07:30" in output
+    assert "By day (UTC, metered model calls):" in output
+    assert "2026-09-09  6.5k model" in output
+    assert "2026-09-08  6k model" in output
     assert "6.4k input" in output
     assert "100 output" in output
     assert "change +500" in output
@@ -152,6 +156,46 @@ def test_interactive_token_history_keeps_unmetered_sessions_visible() -> None:
 
     assert "1 of 1 sessions with model calls" in output
     assert "tokens unavailable · 2 observed · 2 unmetered · 1 failed" in output
+    assert "By day" not in output
+
+
+def test_interactive_token_history_groups_calls_by_observed_day() -> None:
+    summary = TokenUsageSummary(
+        "session-across-days",
+        records=(
+            TokenUsageRecord(
+                session_id="session-across-days",
+                surface=SURFACE_LLM_TOTAL,
+                total_source="provider",
+                total_tokens=300,
+                input_tokens=200,
+                output_tokens=100,
+                observed_at="2026-09-08T23:30:00+00:00",
+            ),
+            TokenUsageRecord(
+                session_id="session-across-days",
+                surface=SURFACE_LLM_TOTAL,
+                total_source="provider",
+                total_tokens=400,
+                input_tokens=300,
+                output_tokens=100,
+                observed_at="2026-09-09T00:30:00+00:00",
+            ),
+            TokenUsageRecord(
+                session_id="session-across-days",
+                surface=SURFACE_CONTEXT_PACK,
+                estimated_tokens=500,
+                observed_at="2026-09-09T00:30:00+00:00",
+            ),
+        ),
+        coverage=TokenUsageCoverage(observed_llm_call_events=2),
+    )
+
+    output = format_interactive_token_history((summary,), requested=10)
+
+    assert "2026-09-09  400 model · 300 input · 100 output" in output
+    assert "2026-09-08  300 model · 200 input · 100 output" in output
+    assert "2026-09-09  900 model" not in output
 
 
 def test_interactive_token_history_does_not_compare_metered_to_unknown() -> None:

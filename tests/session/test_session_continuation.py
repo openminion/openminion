@@ -343,6 +343,19 @@ def test_room_handback_is_bound_idempotent_and_conflict_checked(tmp_path) -> Non
         completed_at="2026-09-19T12:00:00Z",
     )
 
+    with pytest.raises(ContinuationError, match="room_handback_task_not_started"):
+        service.accept_room_handback(result)
+    store.append_event(
+        source_id,
+        event_type="task_plan.step_started",
+        parent_event_id=packet.packet_id,
+        payload={
+            "plan_id": "plan-1",
+            "step_id": "step-1",
+            "worker_session_id": target_id,
+            "continuation_packet_id": packet.packet_id,
+        },
+    )
     accepted = service.accept_room_handback(result)
     repeated = service.accept_room_handback(result)
 
@@ -355,6 +368,13 @@ def test_room_handback_is_bound_idempotent_and_conflict_checked(tmp_path) -> Non
         service.accept_room_handback(
             result.model_copy(update={"summary": "Different result."})
         )
+
+    store.append_event(
+        source_id,
+        event_type="task_plan.step_completed",
+        payload={"plan_id": "plan-1", "step_id": "step-1"},
+    )
+    assert service.accept_room_handback(result).status == "already_accepted"
 
     store.close()
     reopened_store = SQLiteSessionStore(database_path)

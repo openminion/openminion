@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Mapping
+import os
+from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -9,7 +12,9 @@ import pytest
 from openminion.base.runtime.sandbox import (
     ExecSpec,
     ExecutionSandboxSpec,
+    FsDeleteSpec,
     FsWriteSpec,
+    NetFetchSpec,
 )
 from openminion.modules.runtime.sandboxes.daytona import (
     DaytonaClientError,
@@ -17,6 +22,7 @@ from openminion.modules.runtime.sandboxes.daytona import (
     DaytonaWorkspace,
 )
 from openminion.modules.runtime.sandboxes.daytona import DaytonaRunner
+from openminion.modules.tool.authoring.runtime.tests import run_tool_tests
 
 
 @dataclass
@@ -149,13 +155,67 @@ def test_daytona_runner_maps_python_and_workspace_to_remote(tmp_path) -> None:
     assert client.executed[0]["cwd"] == "/home/daytona"
 
 
-def test_daytona_runner_fs_write_outside_allowlist_denied(tmp_path) -> None:
+def test_daytona_runner_does_not_fall_back_to_host_operations(tmp_path) -> None:
     client = _FakeDaytonaClient()
     runner = DaytonaRunner(client=client)
-    sandbox = _sandbox(tmp_path, write_allow=[str(tmp_path)])
+    sandbox = _sandbox(tmp_path)
+    written = tmp_path / "written.txt"
+    existing = tmp_path / "existing.txt"
+    existing.write_text("keep", encoding="utf-8")
 
-    with pytest.raises(PermissionError, match="outside allowed roots"):
-        runner.fs_write(FsWriteSpec(path="/tmp/evil.txt", content="x"), sandbox)
+    with pytest.raises(DaytonaClientError, match="filesystem writes are not supported"):
+        runner.fs_write(FsWriteSpec(path=str(written), content="x"), sandbox)
+    with pytest.raises(
+        DaytonaClientError, match="filesystem deletes are not supported"
+    ):
+        runner.fs_delete(FsDeleteSpec(path=str(existing)), sandbox)
+    with pytest.raises(DaytonaClientError, match="network fetches are not supported"):
+        runner.net_fetch(NetFetchSpec(url="https://example.com"), sandbox)
+
+    assert not written.exists()
+    assert existing.read_text(encoding="utf-8") == "keep"
+    assert not client.created
+
+
+def test_daytona_runner_executes_self_contained_tool_tests_remotely(
+    tmp_path, monkeypatch
+) -> None:
+    remote_root = tmp_path / "remote"
+    remote_root.mkdir()
+    client = _FakeDaytonaClient(remote_root=str(remote_root))
+
+    def execute_command(**kwargs: Any) -> DaytonaCommandResult:
+        process = subprocess.run(
+            kwargs["command"],
+            cwd=kwargs["cwd"],
+            env={
+                **os.environ,
+                "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ['PATH']}",
+                **kwargs["env"],
+            },
+            capture_output=True,
+            text=True,
+            timeout=kwargs["timeout_s"],
+            check=False,
+        )
+        return DaytonaCommandResult(
+            workspace_id=kwargs["workspace_id"],
+            returncode=process.returncode,
+            stdout=process.stdout,
+            stderr=process.stderr,
+        )
+
+    monkeypatch.setattr(client, "execute_command", execute_command)
+    result = run_tool_tests(
+        source_code="def add(a, b):\n    return a + b\n",
+        unit_tests_source="from tool_impl import add\n\ndef test_add():\n    assert add(2, 3) == 5\n",
+        entry_function="add",
+        sandbox_runner=DaytonaRunner(client=client),
+    )
+
+    assert (result.ran, result.passed, result.failed) == (1, 1, 0)
+    assert (remote_root / "tool_impl.py").exists()
+    assert client.destroyed == ["ws-1"]
 
 
 def test_daytona_runner_strips_non_allowlisted_openminion_env(tmp_path) -> None:

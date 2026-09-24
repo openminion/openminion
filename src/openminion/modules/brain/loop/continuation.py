@@ -255,6 +255,11 @@ _ELIGIBLE_PLAN_EVENT_TYPES = (
     "task_plan.step_completed",
     "task_plan.revised",
 )
+_TERMINAL_PLAN_EVENT_TYPES = {
+    "task_plan.step_blocked",
+    "task_plan.abandoned",
+    "task_plan.completed",
+}
 
 
 def _signal_from_event(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -282,7 +287,7 @@ def _signal_from_event(event: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def peek_latest_continuation_signal(
+def _latest_plan_boundary_event(
     *,
     session_api: Any,
     session_id: str,
@@ -299,20 +304,51 @@ def peek_latest_continuation_signal(
     if not isinstance(events, list):
         return None
 
-    terminal_event_types = {
-        "task_plan.step_blocked",
-        "task_plan.abandoned",
-        "task_plan.completed",
-    }
     for event in reversed(events):
         if not isinstance(event, dict):
             continue
         event_type = _event_type(event)
-        if event_type in terminal_event_types:
-            return None
-        if event_type in _ELIGIBLE_PLAN_EVENT_TYPES:
-            return _signal_from_event(event)
+        if (
+            event_type in _TERMINAL_PLAN_EVENT_TYPES
+            or event_type in _ELIGIBLE_PLAN_EVENT_TYPES
+        ):
+            return event
     return None
+
+
+def peek_latest_continuation_signal(
+    *,
+    session_api: Any,
+    session_id: str,
+) -> dict[str, Any] | None:
+    event = _latest_plan_boundary_event(
+        session_api=session_api,
+        session_id=session_id,
+    )
+    if event is not None and _event_type(event) in _TERMINAL_PLAN_EVENT_TYPES:
+        return None
+    return _signal_from_event(event) if event is not None else None
+
+
+def plan_turn_boundary_reached_for_trace(
+    *,
+    session_api: Any,
+    session_id: str,
+    trace_id: str,
+) -> bool:
+    target_trace_id = str(trace_id or "").strip()
+    if not target_trace_id:
+        return False
+    event = _latest_plan_boundary_event(
+        session_api=session_api,
+        session_id=session_id,
+    )
+    if event is None or str(event.get("trace_id") or "").strip() != target_trace_id:
+        return False
+    if _event_type(event) in _TERMINAL_PLAN_EVENT_TYPES:
+        return True
+    signal = _signal_from_event(event)
+    return bool(signal and signal.get("continue_plan_autonomously"))
 
 
 def run_with_autonomous_continuation(

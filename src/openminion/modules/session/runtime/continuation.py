@@ -416,22 +416,6 @@ class SessionContinuationService:
         ):
             raise ContinuationError("room_handback_packet_not_applied")
 
-        active_plan = _dict(self._store.get_active_task_plan(binding.room_session_id))
-        step = next(
-            (
-                _dict(item)
-                for item in active_plan.get("steps", [])
-                if _dict(item).get("step_id") == binding.task_step_id
-            ),
-            {},
-        )
-        if (
-            step.get("assigned_participant_id") != binding.target_agent_id
-            or step.get("worker_session_id") != binding.target_session_id
-            or step.get("continuation_packet_id") != packet.packet_id
-        ):
-            raise ContinuationError("room_handback_task_binding_mismatch")
-
         payload = result.model_dump(mode="json")
         with self._lock:
             prior = self._store.get_events_by_parent_and_type(
@@ -446,6 +430,25 @@ class SessionContinuationService:
                     event_id=str(prior[0]["event_id"]),
                     result=result,
                 )
+            active_plan = _dict(
+                self._store.get_active_task_plan(binding.room_session_id)
+            )
+            step = next(
+                (
+                    _dict(item)
+                    for item in active_plan.get("steps", [])
+                    if _dict(item).get("step_id") == binding.task_step_id
+                ),
+                {},
+            )
+            if (
+                step.get("assigned_participant_id") != binding.target_agent_id
+                or step.get("worker_session_id") != binding.target_session_id
+                or step.get("continuation_packet_id") != packet.packet_id
+            ):
+                raise ContinuationError("room_handback_task_binding_mismatch")
+            if step.get("status") != "in_progress":
+                raise ContinuationError("room_handback_task_not_started")
             event_id = self._store.append_event(
                 binding.room_session_id,
                 event_type=ROOM_HANDBACK_ACCEPTED,

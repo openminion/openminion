@@ -1,7 +1,7 @@
 # OpenMinion Releasing
 
 Status: active
-Last updated: 2026-09-20
+Last updated: 2026-09-21
 
 Purpose: give maintainers a compact package-local release smoke checklist for
 the public `openminion` package surface on the active alpha line defined by
@@ -9,7 +9,7 @@ the public `openminion` package surface on the active alpha line defined by
 
 ## Release floor
 
-Runtime metadata is separate from source or CLI behavior. The new
+Runtime metadata is separate from source or CLI behavior. The
 `Runtime manifests` workflow observes a successful final-tag `Release` run and
 requires its production PyPI job to have succeeded. It reads trusted `main`
 helpers under `scripts/ci/`, verifies the official wheel bytes/package metadata,
@@ -39,7 +39,7 @@ local files and passing tests are not deployment evidence. Verify without publis
 .venv/bin/python3.11 -m pytest -q tests/scripts/test_release_manifest.py tests/scripts/test_publish_runtime_manifest.py
 ```
 
-### Next-release runtime metadata checklist
+### Runtime metadata checklist
 
 1. Land the publisher workflow/helpers and initial empty `releases/runtime/v1/`
    feeds through the normal `dev` → `main` PR. Ship the Desktop reader pointing
@@ -86,6 +86,13 @@ local files and passing tests are not deployment evidence. Verify without publis
    before claiming end-to-end upgrade acceptance; this observer does not
    invent or publish that certification. Binary feed stays empty until its
    packaging/native/trust gates pass.
+9. Treat observer runs as serialized requests, not a durable queue. If a
+   publication run was canceled while another metadata PR was pending, rerun
+   the observer for the successful final-tag `Release` producer after the
+   pending PR merges. Confirm the `source` job actually ran; a skipped
+   observer publishes nothing. If it failed only because another metadata PR
+   was open, rerun that observer after the merge. Do not rerun the producer,
+   republish PyPI, or regenerate an immutable record to recover sequencing.
 
 ### Binary runtime publication checklist
 
@@ -224,22 +231,91 @@ Do not rely on workspace-root repo docs alone for package-public claims.
 
 `openminion` uses this release path:
 
-1. prepare and validate an RC branch,
+1. prepare and validate the RC in an isolated local checkout; do not push its
+   temporary branch,
 2. push an RC tag such as `v<OPENMINION_VERSION>rc1` to publish to TestPyPI,
 3. install and smoke-test the RC artifact from TestPyPI,
-4. prepare and validate the final non-RC branch,
-5. dispatch the `Release` workflow from that final branch with
-   `target=testpypi`,
-6. install and smoke-test the final TestPyPI artifact,
-7. push the final non-RC tag such as `v<OPENMINION_VERSION>` to publish to PyPI,
+4. prepare the final non-RC version on `dev`, validate it, and merge its
+   reviewed PR into protected `main`,
+5. wait for the merge's build-only `Release` run, then dispatch `Release` from
+   `main` with `target=testpypi`,
+6. install and smoke-test the final TestPyPI artifact; confirm that successful
+   run's `headSha` is still remote `main` HEAD,
+7. push the final non-RC tag such as `v<OPENMINION_VERSION>` at that exact
+   reviewed commit to publish to PyPI,
 8. create the GitHub Release using the bare version title, such as
    `<OPENMINION_VERSION>`,
 9. merge the released `main` commit back into remote `dev`, then update the
    shared local `dev` checkout and verify it is not behind the remote branch.
 
-For `openminion`, step 7 should tag the already-reviewed remote `main` commit.
 Do not publish from a dirty local checkout just because the worktree happens to
-be sitting on `main`.
+be sitting on `main`. If `main` moves after the final TestPyPI publish, or the
+final artifact needs changes, stop and use a new version; TestPyPI cannot
+replace an uploaded final filename.
+
+The package-code back-merge in step 9 may happen before runtime metadata is
+approved. After the metadata PR merges into `main`, back-merge `main` into
+`dev` again and verify identical `releases/runtime/v1/` trees. One earlier
+back-merge does not complete both stages.
+
+### Independent index acceptance
+
+For both the RC and final TestPyPI versions, use the version-specific TestPyPI
+JSON to select the exact wheel URL and SHA-256. Install that direct URL with
+dependencies from production PyPI in a fresh Python 3.11 environment; do not
+use a mixed index search that might choose the package from PyPI instead.
+Install the final production version from PyPI in a separate fresh environment.
+For each, check `pip check`, `python -m openminion --version`, public imports,
+and `python -m openminion verify smoke` with isolated home/data/config paths.
+
+For example, from a scratch directory outside the package checkout, set
+`VERSION` to the exact RC or final TestPyPI version and run:
+
+```bash
+VERSION=X.Y.Z
+curl -fsSL "https://test.pypi.org/pypi/openminion/$VERSION/json" > testpypi.json
+test "$(jq '[.urls[] | select(.packagetype == "bdist_wheel")] | length' testpypi.json)" = 1
+WHEEL_URL=$(jq -r '.urls[] | select(.packagetype == "bdist_wheel") | .url' testpypi.json)
+WHEEL_SHA=$(jq -r '.urls[] | select(.packagetype == "bdist_wheel") | .digests.sha256' testpypi.json)
+python3.11 -m venv test-install
+test-install/bin/python -m pip install --index-url https://pypi.org/simple/ "$WHEEL_URL#sha256=$WHEEL_SHA"
+test-install/bin/python -m pip check
+test "$(test-install/bin/python -m openminion --version)" = "$VERSION"
+test-install/bin/python -c 'from openminion import APIRuntime, Agent, OpenMinionConfig, tool; from openminion.api import dispatch_request; assert callable(tool) and callable(dispatch_request)'
+OPENMINION_HOME="$PWD/home" OPENMINION_DATA_ROOT="$PWD/data" \
+  test-install/bin/python -m openminion --config "$PWD/config.json" config init --provider echo --force
+OPENMINION_HOME="$PWD/home" OPENMINION_DATA_ROOT="$PWD/data" \
+  test-install/bin/python -m openminion --config "$PWD/config.json" verify smoke
+```
+
+Use a different fresh directory/venv for the other index and release stage;
+replace the direct URL with `openminion==$VERSION` for the production PyPI
+install. Run the public import check shown above with the installed venv's
+Python, not with a checkout `PYTHONPATH` or its editable environment.
+
+The final TestPyPI dispatch and final-tag PyPI run rebuild separately. Before
+tagging, verify the successful TestPyPI run's `headSha` equals remote `main`
+HEAD using the shared process's exact command. Even identical source trees can
+yield different wheel archive hashes; retain both index hashes and do not
+claim exact artifact promotion. The source runtime record must match the
+production PyPI wheel's filename, size, and SHA-256, not TestPyPI's.
+
+Keep an evidence row per release with RC/final TestPyPI runs, final producer
+run and tag SHA, both index hashes and install-smoke results, metadata observer
+run/attempt, metadata PR merge commit, successful `verify-main` run, and
+post-publication back-merge PR. Record a private binary candidate separately
+from a signed final runtime Release and public binary-feed verification.
+
+Historical example (2026-09-21; not proof for later versions): RC
+TestPyPI run `35599400531`, final TestPyPI run `35599893339`, final-tag
+production run `35602030392`, source metadata observer `35602321089`, metadata
+PR `#115`, successful main readback run `35659613201`, and `main` to `dev` PR
+`#116`. The final TestPyPI and production wheel hashes differed, but their
+source trees and installed package files matched; separate clean installs and
+smoke checks passed. That final TestPyPI run used an older release branch; the
+current standard dispatches from reviewed `main` instead. Packaging candidate
+run `35605890344` succeeded only as a private draft, not a signed public binary
+or Desktop upgrade.
 
 OpenMinion release PRs also run hosted lint against the stable
 `openminion-eval` `main` branch by default. Normal feature PRs continue to use

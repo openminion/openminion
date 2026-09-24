@@ -52,6 +52,13 @@ def _run_cli_expect_failure(argv: list[str]) -> dict[str, object]:
     return json.loads(buf.getvalue())
 
 
+def test_learning_apply_help_names_pending_admission(capsys) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["learning-apply-proved", "--help"])
+    assert exit_info.value.code == 0
+    assert "pending-admission skill draft" in capsys.readouterr().out
+
+
 def _shape() -> WorkflowShape:
     return WorkflowShape(
         intent_category="task:test_cleanup",
@@ -236,10 +243,16 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
         ]
     )
     assert applied["addition"]["added_skill_id"].startswith("emergent.")
+    assert applied["addition"]["admission_state"] == "pending"
 
     addition = cast(dict[str, str], applied["addition"])
     skill = Skill(str(cfg))
     try:
+        assert skill.list_skills({}) == []
+        assert (
+            skill.get_skill(addition["added_skill_id"], addition["version_hash"]).status
+            == "draft"
+        )
         skill.admit_skill_version(
             skill_id=addition["added_skill_id"],
             version_hash=addition["version_hash"],
@@ -249,6 +262,10 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
             authority=SkillIngestAuthority.local_operator(
                 surface="test", principal_id="operator-cli"
             ),
+        )
+        assert (
+            skill.get_skill(addition["added_skill_id"]).version_hash
+            == addition["version_hash"]
         )
         skill.log_run(
             session_id="session-1",

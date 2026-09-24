@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from openminion.modules.tool.authoring.schemas import AuthoredToolRow
 
 from ._helpers import FakeExecResult, RecordingSandboxRunner, build_service
@@ -46,6 +48,11 @@ def test_service_invoke_updates_success_counters(tmp_path) -> None:
         assert row is not None
         assert row.success_count == 1
         assert row.failure_count == 0
+        audit = service.get_authored_tool_detail("authored.adder@v1")
+        assert audit is not None
+        invoked = audit["audit_events"][-1]
+        assert invoked["version_hash"] == row.version_hash
+        assert json.loads(invoked["details_json"])["error_code"] is None
     finally:
         service.close()
 
@@ -61,6 +68,13 @@ def test_service_invoke_surfaces_subprocess_error(tmp_path) -> None:
         row = service.get_authored_tool("authored.adder@v1")
         assert row is not None
         assert row.failure_count == 1
+        audit = service.get_authored_tool_detail("authored.adder@v1")
+        assert audit is not None
+        invoked = audit["audit_events"][-1]
+        assert invoked["version_hash"] == row.version_hash
+        assert (
+            json.loads(invoked["details_json"])["error_code"] == result["error"]["code"]
+        )
     finally:
         service.close()
 

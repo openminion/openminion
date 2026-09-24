@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from tests.e2e.cli.focus.harness import FocusProbe, PtySession
+from tests.e2e.cli.focus.harness import FocusProbe, FocusScenario, PtySession
 from tests.e2e.cli.focus.harness.assertions import visible_text
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
 from tests.e2e.runners.run_cli_focus_e2e import suite_names
@@ -161,6 +161,48 @@ def test_focus_pty_renders_durable_token_report(
         write_transcript(artifact_root(tmp_path), "local-token-history", history)
         write_transcript(artifact_root(tmp_path), "local-telemetry-empty", telemetry)
         write_transcript(artifact_root(tmp_path), "local-context-empty", context)
+
+
+def test_focus_pty_inspects_telemetry_after_a_turn(
+    focus_probe: FocusProbe,
+    tmp_path,
+) -> None:
+    with focus_probe.session() as session:
+        focus_probe.wait_ready(session)
+        turn = focus_probe.run_turn(
+            session,
+            FocusScenario(
+                scenario_id="local_telemetry",
+                prompt="Reply with exactly: local telemetry check",
+                expected_markers=("local telemetry check",),
+                timeout=60,
+            ),
+        )
+        events = visible_text(
+            focus_probe.run_slash(
+                session, "/telemetry events --limit 20", marker="telemetry events:"
+            )
+        )
+        telemetry = visible_text(
+            focus_probe.run_slash(session, "/telemetry", marker="latest invocation")
+        )
+        tokens = visible_text(
+            focus_probe.run_slash(session, "/tokens", marker="Token usage")
+        )
+        history = visible_text(
+            focus_probe.run_slash(session, "/tokens recent 3", marker="Token history")
+        )
+
+    assert "agent.invocation.completed" in events
+    assert "status: completed" in telemetry
+    assert "No model calls in this session yet." not in tokens
+    assert "Calls:" in tokens
+    assert "sessions with model calls" in history
+    write_transcript(
+        artifact_root(tmp_path),
+        "local-telemetry-post-turn",
+        "\n".join((turn, events, telemetry, tokens, history)),
+    )
 
 
 def test_focus_pty_handles_advertised_slash_aliases(

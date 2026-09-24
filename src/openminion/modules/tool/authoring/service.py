@@ -212,6 +212,14 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             risk_level=risk_level,
             test_results=test_results,
         )
+        recommend_reason = _recommend_reason(
+            risk_level=risk_level,
+            test_results=test_results,
+        )
+        version_hash = compute_version_hash(
+            source_code=source_code,
+            unit_tests_source=unit_tests_source,
+        )
         payload = {
             "ok": True,
             "draft_id": parsed.draft_id,
@@ -219,14 +227,8 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             "findings": [asdict(item) for item in static_findings],
             "test_results": test_results,
             "recommend_register": recommend_register,
-            "recommend_reason": _recommend_reason(
-                risk_level=risk_level,
-                test_results=test_results,
-            ),
-            "version_hash": compute_version_hash(
-                source_code=source_code,
-                unit_tests_source=unit_tests_source,
-            ),
+            "recommend_reason": recommend_reason,
+            "version_hash": version_hash,
         }
         if draft_row is not None:
             self._store.update_draft_inspection(
@@ -240,11 +242,14 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
                 target_id=draft_row.draft_id,
                 agent_id=agent_id,
                 session_id=session_id,
+                version_hash=version_hash,
                 details={
                     "risk_level": risk_level,
                     "findings_count": len(static_findings),
                     "tests_passed": test_results["passed"],
                     "tests_failed": test_results["failed"],
+                    "recommend_register": recommend_register,
+                    "recommend_reason": recommend_reason,
                 },
             )
         return payload
@@ -404,6 +409,7 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             details={
                 "tool_name": tool_name,
                 "outcome": "ok" if ok else "error",
+                "error_code": result.get("error", {}).get("code") if not ok else None,
                 "duration_ms": int((time.monotonic() - started) * 1000),
             },
         )

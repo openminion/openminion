@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,7 @@ from tests.e2e.cli.focus.test_live_simple_input_project import (
     _assert_completed_child_lifecycle,
     _assert_required_completed_tools,
     _fixture,
+    _project_owners,
 )
 from tests.e2e.runners.run_simple_input_long_coding_e2e import (
     _ARTIFACT_ENV,
@@ -70,6 +72,25 @@ def test_configured_artifact_root_is_absolute(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 
     assert _artifact_root({_ARTIFACT_ENV: "artifacts"}) == tmp_path / "artifacts"
+
+
+def test_live_project_reader_uses_focus_generated_root(tmp_path) -> None:
+    data_root = tmp_path / "data"
+    generated_root = data_root / "runtime"
+    probe = SimpleNamespace(
+        data_root=data_root,
+        session_id="focus-test",
+        environment=lambda: {
+            "OPENMINION_DATA_ROOT": str(data_root),
+            "OPENMINION_GENERATED_ROOT": str(generated_root),
+        },
+    )
+
+    store, manager = _project_owners(probe)
+    try:
+        assert store.root == generated_root / "state" / "task" / "autonomy"
+    finally:
+        manager.close()
 
 
 def test_live_summary_marks_every_missing_scenario_unavailable(tmp_path) -> None:

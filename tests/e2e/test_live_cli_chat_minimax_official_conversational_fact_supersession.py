@@ -73,7 +73,12 @@ def test_live_minimax_official_conversational_fact_supersession() -> None:
 
     run_cli_session(
         session_id_prefix=f"{run_id}-s1",
-        user_input=(f"remember: my work email is {old_email}\n/exit\n"),
+        user_input=(
+            "Use memory.write to remember this in persistent agent memory. "
+            'Use record_type="fact" and key="fact:work_email". '
+            "Omit the scope argument so the active agent scope is used: "
+            f"my work email is {old_email}\n/exit\n"
+        ),
         agent_id=agent_id,
         config_path=_OFFICIAL_CONFIG,
         data_root_override=data_root,
@@ -82,7 +87,10 @@ def test_live_minimax_official_conversational_fact_supersession() -> None:
     run_cli_session(
         session_id_prefix=f"{run_id}-s2",
         user_input=(
-            f"Correction: my work email is {new_email}. Remember this instead.\n/exit\n"
+            "Use memory.write to correct the persistent agent-memory record. "
+            'Reuse record_type="fact" and key="fact:work_email". '
+            "Omit the scope argument: "
+            f"my work email is {new_email}. Remember this instead.\n/exit\n"
         ),
         agent_id=agent_id,
         config_path=_OFFICIAL_CONFIG,
