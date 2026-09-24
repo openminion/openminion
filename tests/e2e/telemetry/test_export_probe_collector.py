@@ -12,6 +12,8 @@ from openminion.base.config.base import DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILEN
 from . import conftest as collector_setup
 from .assert_collector_evidence import assert_collector_evidence
 
+pytestmark = pytest.mark.e2e
+
 
 def test_unavailable_collector_keeps_prior_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -32,7 +34,6 @@ def test_unavailable_collector_keeps_prior_artifacts(
     assert list(tmp_path.iterdir()) == [prior]
 
 
-@pytest.mark.e2e
 def test_live_export_probe_reaches_pinned_collector(
     collector_artifacts: Path,
     tmp_path: Path,
