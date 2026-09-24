@@ -9,7 +9,27 @@ import pytest
 
 from openminion.base.config.base import DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILENAME
 
+from . import conftest as collector_setup
 from .assert_collector_evidence import assert_collector_evidence
+
+
+def test_unavailable_collector_keeps_prior_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prior = tmp_path / "prior-evidence.json"
+    prior.write_text("saved", encoding="utf-8")
+    monkeypatch.setattr(collector_setup, "ARTIFACT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        collector_setup,
+        "_require_docker_daemon",
+        lambda: pytest.skip("Docker unavailable"),
+    )
+
+    with pytest.raises(pytest.skip.Exception, match="Docker unavailable"):
+        next(collector_setup.collector_artifacts.__wrapped__())
+
+    assert prior.read_text(encoding="utf-8") == "saved"
+    assert list(tmp_path.iterdir()) == [prior]
 
 
 @pytest.mark.e2e
