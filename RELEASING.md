@@ -272,7 +272,7 @@ For example, from a scratch directory outside the package checkout, set
 `VERSION` to the exact RC or final TestPyPI version and run:
 
 ```bash
-VERSION=0.0.26
+VERSION=X.Y.Z
 curl -fsSL "https://test.pypi.org/pypi/openminion/$VERSION/json" > testpypi.json
 test "$(jq '[.urls[] | select(.packagetype == "bdist_wheel")] | length' testpypi.json)" = 1
 WHEEL_URL=$(jq -r '.urls[] | select(.packagetype == "bdist_wheel") | .url' testpypi.json)
@@ -306,7 +306,7 @@ run/attempt, metadata PR merge commit, successful `verify-main` run, and
 post-publication back-merge PR. Record a private binary candidate separately
 from a signed final runtime Release and public binary-feed verification.
 
-Historical 0.0.26 example (2026-09-21; not proof for later versions): RC
+Historical example (2026-09-21; not proof for later versions): RC
 TestPyPI run `35599400531`, final TestPyPI run `35599893339`, final-tag
 production run `35602030392`, source metadata observer `35602321089`, metadata
 PR `#115`, successful main readback run `35659613201`, and `main` to `dev` PR
