@@ -436,7 +436,7 @@ def supersede_by_contradiction(
                 if new_row is None:
                     raise NotFoundError(f"record not found: {new_record_id}")
             old_record = store._create_record_from_row(old_row)
-            new_record = store._create_record_from_row(new_row)
+            new_record: MemoryRecord = store._create_record_from_row(new_row)
             if expected_scope is not None:
                 if (
                     old_record.scope != expected_scope

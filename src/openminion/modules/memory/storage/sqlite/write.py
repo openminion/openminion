@@ -622,7 +622,7 @@ def supersede_by_contradiction(
             old_row = store._get_required_record(conn, old_record_id)
             new_row = store._get_required_record(conn, new_record_id)
             old_record = store._create_record_from_row(old_row)
-            new_record = store._create_record_from_row(new_row)
+            new_record: MemoryRecord = store._create_record_from_row(new_row)
             if expected_scope is not None:
                 if (
                     old_record.scope != expected_scope
