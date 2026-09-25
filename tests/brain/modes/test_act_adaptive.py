@@ -1615,7 +1615,7 @@ def test_act_adaptive_truncates_overlong_session_work_summary_mechanically() -> 
     assert "checkpoint-0" in stored
 
 
-def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
+def test_act_adaptive_counts_valid_and_off_batch_consolidation_decisions() -> None:
     llm_client = _FakeLLMClient(
         responses=[
             LLMResponse(
@@ -1678,6 +1678,9 @@ def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
     assert result.action_result.outputs["memory_consolidation.applied_count"] == 1
     assert result.action_result.outputs["memory_consolidation.promoted_count"] == 1
     assert result.action_result.outputs["memory_consolidation.deferred_count"] == 0
+    assert result.action_result.outputs["memory_consolidation.errors"] == [
+        "cand-2: candidate is not in the selected batch"
+    ]
     assert result.action_result.outputs["memory_consolidation.target_scope"] == (
         "agent:agent"
     )
