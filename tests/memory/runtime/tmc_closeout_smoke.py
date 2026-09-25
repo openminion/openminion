@@ -69,8 +69,8 @@ class _TrackingMemoryService:
     def __init__(self, store: InMemoryMemoryStore) -> None:
         self._service = MemoryService(store=store)
         self._store = store
-        self.promote_calls: list[tuple[str, str]] = []
-        self.update_calls: list[str] = []
+        self.apply_calls: list[tuple[str, str, str]] = []
+        self.applied_record_ids: list[str] = []
         self.supersede_calls: list[tuple[str, str, str]] = []
 
     def candidate_put(self, candidate: MemoryCandidate) -> str:
@@ -79,17 +79,28 @@ class _TrackingMemoryService:
     def candidate_get(self, candidate_id: str) -> MemoryCandidate:
         return self._service.candidate_get(candidate_id)
 
-    def candidate_update(
-        self, candidate_id: str, patch: dict[str, Any]
-    ) -> MemoryCandidate:
-        self.update_calls.append(candidate_id)
-        return self._service.candidate_update(candidate_id, patch)
-
-    def promote_candidate(self, candidate_id: str, target_scope: str) -> MemoryRecord:
-        self.promote_calls.append((candidate_id, target_scope))
-        if candidate_id == "cand-blocked":
+    def apply_consolidation_decision(
+        self,
+        candidate: MemoryCandidate,
+        *,
+        action: str,
+        target_scope: str,
+        review: Any,
+        meta: dict[str, Any],
+    ) -> MemoryCandidate | MemoryRecord:
+        self.apply_calls.append((candidate.candidate_id, action, target_scope))
+        if candidate.candidate_id == "cand-blocked":
             raise PromotionDeniedError("blocked by trust gate")
-        return self._service.promote_candidate(candidate_id, target_scope)
+        result = self._service.apply_consolidation_decision(
+            candidate,
+            action=action,
+            target_scope=target_scope,
+            review=review,
+            meta=meta,
+        )
+        if isinstance(result, MemoryRecord):
+            self.applied_record_ids.append(result.id)
+        return result
 
     def supersede_by_contradiction(
         self, old_record_id: str, new_record_id: str, reason: str = ""
@@ -236,8 +247,12 @@ def run_closeout_smoke(
             and merge_client.models == ["gpt-4.2-mini"]
         ),
         "durable_writes_via_memory_service": (
-            bool(service.update_calls)
-            and bool(service.promote_calls)
+            service.apply_calls
+            == [
+                ("cand-promote", "promote", "agent:agent-1"),
+                ("cand-blocked", "promote", "agent:agent-1"),
+            ]
+            and promoted_ids == service.applied_record_ids
             and bool(promoted_ids)
         ),
         "blocked_promotion_observed": bool(result.write_result.get("errors", [])),
