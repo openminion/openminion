@@ -1,5 +1,6 @@
 """Candidate and reinforcement helpers for ``MemoryService``."""
 
+from copy import deepcopy
 from typing import Any
 import uuid
 
@@ -269,3 +270,63 @@ class MemoryCandidateLifecycle:
             if "not found" in str(exc).lower():
                 raise NotFoundError(str(exc)) from exc
             raise InvalidArgumentError(str(exc)) from exc
+
+    def apply_consolidation_decision(
+        self,
+        candidate: MemoryCandidate,
+        *,
+        action: str,
+        target_scope: str,
+        review: Any,
+        meta: dict[str, Any],
+    ) -> MemoryCandidate | MemoryRecord:
+        handler = getattr(
+            self._service._store,  # noqa: SLF001
+            "_apply_consolidation_decision",
+            None,
+        )
+        if not callable(handler):
+            raise InvalidArgumentError(
+                "consolidation decisions are unsupported by the configured memory store"
+            )
+        snapshot = deepcopy(candidate)
+        if (
+            str(snapshot.status) != MEMORY_CANDIDATE_STATUS_PROPOSED
+            or snapshot.proposed_scope != target_scope
+        ):
+            raise InvalidArgumentError(
+                f"candidate {snapshot.candidate_id} is outside the active consolidation scope"
+            )
+        decision = None
+        if action == "promote":
+            decision = self._service._promotion_policy.evaluate(  # noqa: SLF001
+                snapshot, target_scope
+            )
+            if not bool(getattr(decision, "allowed", False)):
+                self._service._record_policy_decision(  # noqa: SLF001
+                    lane="promotion", decision=decision
+                )
+                raise PromotionDeniedError(
+                    str(
+                        getattr(decision, "reason", "") or "Promotion denied by policy"
+                    ),
+                    details={
+                        "candidate_id": candidate.candidate_id,
+                        "target_scope": target_scope,
+                        "reason_code": str(
+                            getattr(decision, "reason_code", "promotion_denied")
+                        ),
+                    },
+                )
+        result = handler(
+            snapshot,
+            action=action,
+            target_scope=target_scope,
+            review=review,
+            meta=meta,
+        )
+        if decision is not None:
+            self._service._record_policy_decision(  # noqa: SLF001
+                lane="promotion", decision=decision
+            )
+        return result

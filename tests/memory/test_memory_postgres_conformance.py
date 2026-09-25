@@ -26,8 +26,17 @@ from openminion.modules.memory.storage.base import (
     ListQueryOptions,
 )
 from openminion.modules.memory.storage.postgres.store import PostgresMemoryStore
+from openminion.modules.memory.storage.postgres import (
+    candidate_supersession as postgres_candidate_supersession,
+)
 from openminion.modules.memory.storage.postgres import write as postgres_write
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
+from openminion.modules.memory.service import MemoryService
+from openminion.modules.memory.errors import InvalidArgumentError, PromotionDeniedError
+from openminion.modules.memory.storage.audit import (
+    AuditedMemoryStore,
+    InMemoryMemoryAuditSink,
+)
 from tests.storage.postgres_test_utils import schema_url
 
 pytestmark = pytest.mark.postgres
@@ -160,6 +169,196 @@ def test_candidate_and_promotion_conformance_round_trip(store) -> None:
     assert [item.candidate_id for item in listed] == ["c1"]
     promoted = store.promote_candidate("c1", "agent:main")
     assert promoted.scope == "agent:main"
+
+
+def test_postgres_consolidation_serializes_and_rolls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    postgres_url = str(os.environ.get("OPENMINION_TEST_POSTGRES_URL", "")).strip()
+    if not postgres_url:
+        pytest.skip("OPENMINION_TEST_POSTGRES_URL is not set")
+    schema_name = f"memory_consolidation_{uuid.uuid4().hex}"
+    admin_engine = sa.create_engine(postgres_url, future=True)
+    with admin_engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE SCHEMA "{schema_name}"'))
+    engines = [
+        sa.create_engine(schema_url(postgres_url, schema_name), future=True)
+        for _ in range(2)
+    ]
+    try:
+        stores = [
+            PostgresMemoryStore(
+                engine,
+                database_path=tmp_path / f"memory-consolidation-{index}.db",
+                artifactctl=None,
+            )
+            for index, engine in enumerate(engines)
+        ]
+        candidate = MemoryCandidate(
+            candidate_id="candidate-consolidation",
+            session_id="s1",
+            proposed_scope="agent:main",
+            type="fact",
+            content={"text": "candidate"},
+            source="validated",
+            status="proposed",
+        )
+        stores[0].candidate_put(candidate)
+        snapshots = [store.candidate_get(candidate.candidate_id) for store in stores]
+        original_insert = postgres_candidate_supersession._insert_promoted_candidate
+        first_locked = threading.Event()
+        calls_lock = threading.Lock()
+        calls = 0
+
+        def delayed_insert(*args, **kwargs):
+            nonlocal calls
+            with calls_lock:
+                calls += 1
+                is_first = calls == 1
+            if is_first:
+                first_locked.set()
+                time.sleep(0.2)
+            return original_insert(*args, **kwargs)
+
+        monkeypatch.setattr(
+            postgres_candidate_supersession,
+            "_insert_promoted_candidate",
+            delayed_insert,
+        )
+        review = CandidateReview(
+            reviewer="memory_consolidation",
+            decided_at="2026-09-25T00:00:00+00:00",
+            note="reviewed",
+        )
+        promoted: list[MemoryRecord] = []
+        errors: list[Exception] = []
+
+        def apply(store: PostgresMemoryStore, snapshot: MemoryCandidate) -> None:
+            try:
+                result = MemoryService(store=store).apply_consolidation_decision(
+                    snapshot,
+                    action="promote",
+                    target_scope="agent:main",
+                    review=review,
+                    meta={"consolidation_action": "promote"},
+                )
+                assert isinstance(result, MemoryRecord)
+                promoted.append(result)
+            except Exception as exc:
+                errors.append(exc)
+
+        first = threading.Thread(target=apply, args=(stores[0], snapshots[0]))
+        second = threading.Thread(target=apply, args=(stores[1], snapshots[1]))
+        first.start()
+        assert first_locked.wait(timeout=2)
+        second.start()
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert len(promoted) == 1
+        assert len(errors) == 1
+        assert isinstance(errors[0], InvalidArgumentError)
+        assert "changed before consolidation" in str(errors[0])
+        assert stores[0].candidate_get(candidate.candidate_id).status == "promoted"
+        assert len(stores[0].list(ListQueryOptions(scopes=["agent:main"]))) == 1
+
+        sink = InMemoryMemoryAuditSink()
+        audited = AuditedMemoryStore(stores[0], sink=sink)
+        service = MemoryService(store=audited)
+        for action, expected_status, expected_fields in (
+            ("defer", "proposed", ["meta", "review"]),
+            ("discard", "rejected", ["meta", "review", "status"]),
+        ):
+            action_candidate = MemoryCandidate(
+                candidate_id=f"candidate-{action}",
+                session_id="s1",
+                proposed_scope=f"agent:{action}",
+                type="fact",
+                content={"text": f"{action} candidate"},
+                source="validated",
+                status="proposed",
+            )
+            audited.candidate_put(action_candidate)
+            sink.events.clear()
+            service.apply_consolidation_decision(
+                service.candidate_get(action_candidate.candidate_id),
+                action=action,
+                target_scope=f"agent:{action}",
+                review=review,
+                meta={"consolidation_action": action},
+            )
+            assert audited.candidate_get(action_candidate.candidate_id).status == (
+                expected_status
+            )
+            assert len(sink.events) == 1
+            assert sink.events[0].details["patched_fields"] == expected_fields
+
+        denied = MemoryCandidate(
+            candidate_id="candidate-denied",
+            session_id="s1",
+            proposed_scope="agent:denied",
+            type="fact",
+            content={"text": "denied candidate"},
+            source="agent_inferred",
+            status="proposed",
+        )
+        audited.candidate_put(denied)
+        sink.events.clear()
+        with pytest.raises(PromotionDeniedError):
+            service.apply_consolidation_decision(
+                service.candidate_get(denied.candidate_id),
+                action="promote",
+                target_scope="agent:denied",
+                review=review,
+                meta={"consolidation_action": "promote"},
+            )
+        assert audited.candidate_get(denied.candidate_id).status == "proposed"
+        assert audited.list(ListQueryOptions(scopes=["agent:denied"])) == []
+        assert sink.events == []
+
+        rollback_candidate = MemoryCandidate(
+            candidate_id="candidate-rollback",
+            session_id="s1",
+            proposed_scope="agent:rollback",
+            type="fact",
+            content={"text": "rollback candidate"},
+            source="validated",
+            status="proposed",
+        )
+        stores[0].candidate_put(rollback_candidate)
+
+        def fail_after_insert(*args, **kwargs):
+            original_insert(*args, **kwargs)
+            raise RuntimeError("induced promotion failure")
+
+        monkeypatch.setattr(
+            postgres_candidate_supersession,
+            "_insert_promoted_candidate",
+            fail_after_insert,
+        )
+        sink.events.clear()
+        with pytest.raises(RuntimeError, match="induced promotion failure"):
+            service.apply_consolidation_decision(
+                audited.candidate_get(rollback_candidate.candidate_id),
+                action="promote",
+                target_scope="agent:rollback",
+                review=review,
+                meta={"consolidation_action": "promote"},
+            )
+        assert stores[0].candidate_get(rollback_candidate.candidate_id).status == (
+            "proposed"
+        )
+        assert stores[0].list(ListQueryOptions(scopes=["agent:rollback"])) == []
+        assert sink.events == []
+    finally:
+        for engine in engines:
+            engine.dispose()
+        with admin_engine.begin() as conn:
+            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+        admin_engine.dispose()
 
 
 def test_capture_bundle_conformance_round_trip(store) -> None:

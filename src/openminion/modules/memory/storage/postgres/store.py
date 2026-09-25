@@ -27,6 +27,7 @@ from .capture_bundle import (
     apply_capture_bundle as _apply_capture_bundle_workflow,
 )
 from .candidate_supersession import (
+    apply_consolidation_decision as _apply_consolidation_decision_workflow,
     candidate_delete as _candidate_delete_workflow,
     candidate_get as _candidate_get_workflow,
     candidate_list as _candidate_list_workflow,
@@ -294,6 +295,7 @@ class PostgresMemoryStore(MemoryStore):
     candidate_delete = _candidate_delete_workflow
     candidate_list = _candidate_list_workflow
     candidate_update = _candidate_update_workflow
+    _apply_consolidation_decision = _apply_consolidation_decision_workflow
     promote_candidate = _promote_candidate_workflow
     history = _history_workflow
     supersede_by_contradiction = _supersede_by_contradiction_workflow

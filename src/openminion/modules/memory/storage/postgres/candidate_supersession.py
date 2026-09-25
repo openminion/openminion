@@ -2,7 +2,12 @@ import datetime
 from typing import Any
 import uuid
 
-from ...constants import MEMORY_CANDIDATE_STATUS_APPROVED
+from ...constants import (
+    MEMORY_CANDIDATE_STATUS_APPROVED,
+    MEMORY_CANDIDATE_STATUS_PROMOTED,
+    MEMORY_CANDIDATE_STATUS_PROPOSED,
+    MEMORY_CANDIDATE_STATUS_REJECTED,
+)
 from ...models import MemoryCandidate, MemoryRecord, MemoryType
 from ..base import CandidateListOptions
 from .candidate_records import (
@@ -19,12 +24,11 @@ from ...errors import (
 )
 
 
-def candidate_put(store: Any, candidate: MemoryCandidate) -> str:
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    existing = store.candidate_get(candidate.candidate_id)
-    with store._engine.begin() as conn:
-        store._execute(
-            """
+def _upsert_candidate(
+    store: Any, conn: Any, candidate: MemoryCandidate, now: str
+) -> None:
+    store._execute(
+        """
             INSERT INTO memory_candidates (
                 candidate_id, session_id, proposed_scope, type, key, title,
                 content_json, tags_json, entities_json, source, confidence,
@@ -54,9 +58,39 @@ def candidate_put(store: Any, candidate: MemoryCandidate) -> str:
                 created_at = EXCLUDED.created_at,
                 updated_at = EXCLUDED.updated_at
             """,
-            _candidate_insert_params(candidate, now),
+        _candidate_insert_params(candidate, now),
+        connection=conn,
+    )
+
+
+def _reject_terminal_regression(
+    current: MemoryCandidate | None, candidate: MemoryCandidate
+) -> None:
+    if (
+        current is not None
+        and str(current.status)
+        in {MEMORY_CANDIDATE_STATUS_PROMOTED, MEMORY_CANDIDATE_STATUS_REJECTED}
+        and str(candidate.status)
+        not in {MEMORY_CANDIDATE_STATUS_PROMOTED, MEMORY_CANDIDATE_STATUS_REJECTED}
+    ):
+        raise InvalidArgumentError(
+            f"candidate {candidate.candidate_id} cannot regress from terminal status"
+        )
+
+
+def candidate_put(store: Any, candidate: MemoryCandidate) -> str:
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    existing: MemoryCandidate | None = None
+    with store._lock, store._engine.begin() as conn:
+        row = store._fetchone(
+            "SELECT * FROM memory_candidates WHERE candidate_id = :candidate_id FOR UPDATE",
+            {"candidate_id": candidate.candidate_id},
             connection=conn,
         )
+        if row is not None:
+            existing = store._create_candidate_from_row(row)
+        _reject_terminal_regression(existing, candidate)
+        _upsert_candidate(store, conn, candidate, now)
     if existing is not None:
         store._remove_artifact_refs(
             owner_id=candidate.candidate_id,
@@ -117,16 +151,95 @@ def candidate_update(
     candidate_id: str,
     patch: dict[str, Any],
 ) -> MemoryCandidate:
-    current = store.candidate_get(candidate_id)
-    if current is None:
-        raise NotFoundError(f"Candidate {candidate_id} not found")
-    store.candidate_put(_patched_candidate(current, patch))
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with store._lock, store._engine.begin() as conn:
+        row = store._fetchone(
+            "SELECT * FROM memory_candidates WHERE candidate_id = :candidate_id FOR UPDATE",
+            {"candidate_id": candidate_id},
+            connection=conn,
+        )
+        if row is None:
+            raise NotFoundError(f"Candidate {candidate_id} not found")
+        current = store._create_candidate_from_row(row)
+        updated = _patched_candidate(current, patch)
+        _reject_terminal_regression(current, updated)
+        _upsert_candidate(store, conn, updated, now)
+    store._remove_artifact_refs(
+        owner_id=candidate_id,
+        ref_values=current.evidence_refs,
+    )
+    store._add_artifact_refs(
+        owner_id=candidate_id,
+        ref_values=updated.evidence_refs,
+    )
     refreshed = store.candidate_get(candidate_id)
     if refreshed is None:
         raise RuntimeError(
             f"Candidate {candidate_id} missing after update"
         )  # allow-bare-raise: internal invariant — post-write read-back guard
     return refreshed
+
+
+def _insert_promoted_candidate(
+    store: Any,
+    conn: Any,
+    candidate: MemoryCandidate,
+    target_scope: str,
+    new_id: str,
+    now: str,
+) -> tuple[str | None, list[Any]]:
+    existing = _find_target_key_collision(store, conn, candidate, target_scope)
+    superseded_owner_id = str(existing["id"]) if existing is not None else None
+    superseded_ref_values = (
+        store._decode_evidence_ref_values(existing.get("evidence_json"))
+        if existing is not None
+        else []
+    )
+    store._insert_record(
+        conn,
+        record_id=new_id,
+        scope=target_scope,
+        record_type=candidate.type,
+        key=candidate.key,
+        title=candidate.title,
+        content=candidate.content,
+        tags=list(candidate.tags),
+        entities=list(candidate.entities),
+        source=candidate.source,
+        confidence=candidate.confidence,
+        evidence_refs=list(candidate.evidence_refs),
+        meta={},
+        last_hit_at=None,
+        event_time=None,
+        valid_to=None,
+        tier="working",
+        access_count=0,
+        expires_at=None,
+        created_at=now,
+        updated_at=now,
+        supersedes_id=superseded_owner_id,
+        superseded_by_id=None,
+        supersession_reason=None,
+        is_deleted=existing is not None,
+    )
+    if superseded_owner_id is not None:
+        store._apply_supersession(
+            conn,
+            old_record_id=superseded_owner_id,
+            new_record_id=new_id,
+            now_iso=now,
+            valid_to_iso=now,
+            reason="keyed_upsert",
+        )
+    store._upsert_entities(
+        conn,
+        record_id=new_id,
+        scope=target_scope,
+        record_type=candidate.type,
+        entities=list(candidate.entities),
+        created_at=now,
+    )
+    return superseded_owner_id, superseded_ref_values
 
 
 def promote_candidate(store: Any, candidate_id: str, target_scope: str) -> MemoryRecord:
@@ -137,7 +250,7 @@ def promote_candidate(store: Any, candidate_id: str, target_scope: str) -> Memor
     with store._lock:
         with store._engine.begin() as conn:
             row = store._fetchone(
-                "SELECT * FROM memory_candidates WHERE candidate_id = :candidate_id",
+                "SELECT * FROM memory_candidates WHERE candidate_id = :candidate_id FOR UPDATE",
                 {"candidate_id": candidate_id},
                 connection=conn,
             )
@@ -149,57 +262,8 @@ def promote_candidate(store: Any, candidate_id: str, target_scope: str) -> Memor
                     details={"candidate_id": candidate_id},
                 )
             promoted_candidate = store._create_candidate_from_row(row)
-            existing = _find_target_key_collision(
-                store, conn, promoted_candidate, target_scope
-            )
-            if existing is not None:
-                superseded_owner_id = str(existing["id"])
-                superseded_ref_values = store._decode_evidence_ref_values(
-                    existing.get("evidence_json")
-                )
-            store._insert_record(
-                conn,
-                record_id=new_id,
-                scope=target_scope,
-                record_type=promoted_candidate.type,
-                key=promoted_candidate.key,
-                title=promoted_candidate.title,
-                content=promoted_candidate.content,
-                tags=list(promoted_candidate.tags),
-                entities=list(promoted_candidate.entities),
-                source=promoted_candidate.source,
-                confidence=promoted_candidate.confidence,
-                evidence_refs=list(promoted_candidate.evidence_refs),
-                meta={},
-                last_hit_at=None,
-                event_time=None,
-                valid_to=None,
-                tier="working",
-                access_count=0,
-                expires_at=None,
-                created_at=now,
-                updated_at=now,
-                supersedes_id=superseded_owner_id,
-                superseded_by_id=None,
-                supersession_reason=None,
-                is_deleted=existing is not None,
-            )
-            if superseded_owner_id is not None:
-                store._apply_supersession(
-                    conn,
-                    old_record_id=superseded_owner_id,
-                    new_record_id=new_id,
-                    now_iso=now,
-                    valid_to_iso=now,
-                    reason="keyed_upsert",
-                )
-            store._upsert_entities(
-                conn,
-                record_id=new_id,
-                scope=target_scope,
-                record_type=promoted_candidate.type,
-                entities=list(promoted_candidate.entities),
-                created_at=now,
+            superseded_owner_id, superseded_ref_values = _insert_promoted_candidate(
+                store, conn, promoted_candidate, target_scope, new_id, now
             )
             store._execute(
                 """
@@ -222,6 +286,99 @@ def promote_candidate(store: Any, candidate_id: str, target_scope: str) -> Memor
     store._remove_artifact_refs(
         owner_id=promoted_candidate.candidate_id,
         ref_values=promoted_candidate.evidence_refs,
+    )
+    return result
+
+
+def apply_consolidation_decision(
+    store: Any,
+    candidate: MemoryCandidate,
+    *,
+    action: str,
+    target_scope: str,
+    review: Any,
+    meta: dict[str, Any],
+) -> MemoryCandidate | MemoryRecord:
+    superseded_owner_id: str | None = None
+    superseded_ref_values: list[Any] = []
+    new_id = uuid.uuid4().hex
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with store._lock, store._engine.begin() as conn:
+        row = store._fetchone(
+            "SELECT * FROM memory_candidates WHERE candidate_id = :candidate_id FOR UPDATE",
+            {"candidate_id": candidate.candidate_id},
+            connection=conn,
+        )
+        if row is None:
+            raise NotFoundError(f"Candidate {candidate.candidate_id} not found")
+        current = store._create_candidate_from_row(row)
+        if current != candidate:
+            raise InvalidArgumentError(
+                f"candidate {candidate.candidate_id} changed before consolidation"
+            )
+        if (
+            str(current.status) != MEMORY_CANDIDATE_STATUS_PROPOSED
+            or current.proposed_scope != target_scope
+        ):
+            raise InvalidArgumentError(
+                f"candidate {candidate.candidate_id} is outside the active consolidation scope"
+            )
+        status = (
+            MEMORY_CANDIDATE_STATUS_PROMOTED
+            if action == "promote"
+            else MEMORY_CANDIDATE_STATUS_REJECTED
+            if action == "discard"
+            else MEMORY_CANDIDATE_STATUS_PROPOSED
+            if action == "defer"
+            else None
+        )
+        if status is None:
+            raise InvalidArgumentError(f"unsupported consolidation action: {action}")
+        if action == "promote":
+            superseded_owner_id, superseded_ref_values = _insert_promoted_candidate(
+                store, conn, current, target_scope, new_id, now
+            )
+        store._execute(
+            """
+            UPDATE memory_candidates
+               SET status = :status,
+                   review_json = CAST(:review_json AS JSONB),
+                   meta_json = CAST(:meta_json AS JSONB),
+                   updated_at = :updated_at
+             WHERE candidate_id = :candidate_id
+            """,
+            {
+                "status": status,
+                "review_json": (
+                    _candidate_insert_params(
+                        _patched_candidate(current, {"review": review}), now
+                    )["review_json"]
+                ),
+                "meta_json": _candidate_insert_params(
+                    _patched_candidate(current, {"meta": meta}), now
+                )["meta_json"],
+                "updated_at": now,
+                "candidate_id": candidate.candidate_id,
+            },
+            connection=conn,
+        )
+    if action != "promote":
+        refreshed = store.candidate_get(candidate.candidate_id)
+        if refreshed is None:
+            raise NotFoundError(f"Candidate {candidate.candidate_id} not found")
+        return refreshed
+    result = _load_record(
+        store, new_id, missing_error=NotFoundError(f"record not found: {new_id}")
+    )
+    store._add_artifact_refs(owner_id=result.id, ref_values=result.evidence_refs)
+    if superseded_owner_id is not None:
+        store._remove_artifact_refs(
+            owner_id=superseded_owner_id,
+            ref_values=superseded_ref_values,
+        )
+    store._remove_artifact_refs(
+        owner_id=candidate.candidate_id,
+        ref_values=candidate.evidence_refs,
     )
     return result
 
@@ -276,6 +433,7 @@ def supersede_by_contradiction(
 
 
 __all__ = [
+    "apply_consolidation_decision",
     "candidate_delete",
     "candidate_get",
     "candidate_list",

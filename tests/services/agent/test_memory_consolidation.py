@@ -24,6 +24,7 @@ from openminion.modules.llm.providers.factory import RuntimeLLMHandle
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
 from openminion.modules.memory.storage.base import ListQueryOptions
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
+from openminion.modules.memory.service import MemoryService
 
 
 def test_collect_memory_consolidation_candidates_returns_bounded_batch() -> None:
@@ -79,6 +80,7 @@ def test_apply_memory_consolidation_decisions_promotes_discards_and_defers() -> 
             title="Deploy region",
             content="Preferred deploy region is us-west-2.",
             confidence=0.8,
+            source="validated",
         )
     )
     store.candidate_put(
@@ -105,7 +107,7 @@ def test_apply_memory_consolidation_decisions_promotes_discards_and_defers() -> 
     )
 
     result = apply_memory_consolidation_decisions(
-        store,
+        MemoryService(store=store),
         decisions=[
             {
                 "candidate_id": "cand-promote",
@@ -135,7 +137,7 @@ def test_apply_memory_consolidation_decisions_promotes_discards_and_defers() -> 
     assert store.candidate_get("cand-discard").status == "rejected"
     assert store.candidate_get("cand-defer").status == "proposed"
     direct_result = apply_from_merge(
-        store,
+        MemoryService(store=store),
         decisions=[],
         target_scope="agent:test-agent",
         selected_candidate_ids=[],
@@ -176,7 +178,7 @@ def test_apply_memory_consolidation_decisions_rejects_unselected_and_duplicate_i
     }
 
     result = apply_memory_consolidation_decisions(
-        store,
+        MemoryService(store=store),
         decisions=[
             {"candidate_id": "selected", "action": "defer"},
             {"candidate_id": "selected", "action": "discard"},

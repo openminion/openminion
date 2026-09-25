@@ -70,6 +70,7 @@ from .search import (
     search as _search_query,
 )
 from .write import (
+    apply_consolidation_decision as _apply_consolidation_decision_workflow,
     apply_outcome_feedback as _apply_outcome_feedback_impl,
     history as _history_impl,
     promote_candidate as _promote_candidate_impl,
@@ -201,6 +202,7 @@ class SQLiteMemoryStore(MemoryStore):
     candidate_delete = _candidate_delete_workflow
     candidate_list = _candidate_list_workflow
     candidate_update = _candidate_update_workflow
+    _apply_consolidation_decision = _apply_consolidation_decision_workflow
 
     def put(self, record: MemoryRecord) -> str:
         with self._connect() as conn:

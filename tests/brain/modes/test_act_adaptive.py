@@ -1643,13 +1643,16 @@ def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
     )
     executor = _FakeCommandExecutor(outcomes=[])
     services = _FakeServices()
+    candidate = SimpleNamespace(candidate_id="cand-1", meta={})
     services.runner = SimpleNamespace(
         tool_api=None,
         options=SimpleNamespace(failure_strategy="halt"),
         memory_api=SimpleNamespace(
             _backend=SimpleNamespace(
-                candidate_update=MagicMock(),
-                promote_candidate=MagicMock(),
+                candidate_get=MagicMock(return_value=candidate),
+                apply_consolidation_decision=MagicMock(
+                    return_value=SimpleNamespace(id="record-1")
+                ),
             )
         ),
     )
@@ -1683,8 +1686,8 @@ def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
     ]
     assert result.action_result.outputs["memory_consolidation.state_hash"]
     backend = services.runner.memory_api._backend
-    assert backend.promote_candidate.call_count == 1
-    backend.candidate_update.assert_called_once()
+    backend.candidate_get.assert_called_once_with("cand-1")
+    backend.apply_consolidation_decision.assert_called_once()
 
 
 def test_act_adaptive_forces_answer_only_closure_for_direct_tool_turn() -> None:

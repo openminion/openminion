@@ -205,29 +205,6 @@ def _consolidation_meta(
     return merged
 
 
-def _decision_patch(
-    *,
-    action: str,
-    review: CandidateReview,
-    reasoning: str,
-    decided_at: str,
-    existing_meta: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    patch: dict[str, Any] = {
-        "review": review,
-        "meta": _consolidation_meta(
-            existing_meta,
-            action=action,
-            reasoning=reasoning,
-            decided_at=decided_at,
-        ),
-    }
-    status = {"promote": "approved", "discard": "rejected"}.get(action)
-    if status:
-        patch["status"] = status
-    return patch
-
-
 def apply_merge_decisions_via_service(
     memory_service: Any,
     *,
@@ -236,13 +213,12 @@ def apply_merge_decisions_via_service(
     target_scope: str,
     reviewer: str = "memory_consolidation",
 ) -> dict[str, Any]:
-    candidate_update = getattr(memory_service, "candidate_update", None)
     candidate_get = getattr(memory_service, "candidate_get", None)
-    promote_candidate = getattr(memory_service, "promote_candidate", None)
+    apply_decision = getattr(memory_service, "apply_consolidation_decision", None)
     supersede_by_contradiction = getattr(
         memory_service, "supersede_by_contradiction", None
     )
-    if not callable(candidate_update) or not callable(promote_candidate):
+    if not callable(candidate_get) or not callable(apply_decision):
         return {
             "applied_count": 0,
             "promoted_count": 0,
@@ -265,9 +241,7 @@ def apply_merge_decisions_via_service(
         reasoning = str(decision.reasoning or "").strip()
         if not candidate_id or action not in _MERGE_ACTIONS:
             continue
-        current_candidate = (
-            candidate_get(candidate_id) if callable(candidate_get) else None
-        )
+        current_candidate = candidate_get(candidate_id)
         review = CandidateReview(
             reviewer=reviewer,
             decided_at=decided_at,
@@ -275,25 +249,28 @@ def apply_merge_decisions_via_service(
         )
         try:
             if action == "keep":
-                current_candidate = current_candidate or (
-                    candidate_get(candidate_id) if callable(candidate_get) else None
-                )
                 if current_candidate is None:
                     raise NotFoundError(f"candidate not found: {candidate_id}")
             else:
-                candidate_update(
-                    candidate_id,
-                    _decision_patch(
-                        action=action,
-                        review=review,
-                        reasoning=reasoning,
-                        decided_at=decided_at,
-                        existing_meta=getattr(current_candidate, "meta", {}) or {},
-                    ),
+                if current_candidate is None:
+                    raise NotFoundError(f"candidate not found: {candidate_id}")
+                meta = _consolidation_meta(
+                    getattr(current_candidate, "meta", {}) or {},
+                    action=action,
+                    reasoning=reasoning,
+                    decided_at=decided_at,
+                )
+                applied = apply_decision(
+                    current_candidate,
+                    action=action,
+                    target_scope=str(
+                        decision.target_scope or target_scope or ""
+                    ).strip(),
+                    review=review,
+                    meta=meta,
                 )
             if action == "promote":
-                scope = str(decision.target_scope or target_scope or "").strip()
-                promoted = promote_candidate(candidate_id, scope)
+                promoted = applied
                 promoted_record_ids.append(
                     str(getattr(promoted, "id", "") or "").strip()
                 )
@@ -338,9 +315,9 @@ def apply_memory_consolidation_decisions(
     reviewer: str = "memory_consolidation",
 ) -> dict[str, Any]:
     backend = memory_backend(memory_api)
-    candidate_update = getattr(backend, "candidate_update", None)
-    promote_candidate = getattr(backend, "promote_candidate", None)
-    if not callable(candidate_update) or not callable(promote_candidate):
+    candidate_get = getattr(backend, "candidate_get", None)
+    apply_decision = getattr(backend, "apply_consolidation_decision", None)
+    if not callable(candidate_get) or not callable(apply_decision):
         return {
             "applied_count": 0,
             "promoted_count": 0,
@@ -381,17 +358,22 @@ def apply_memory_consolidation_decisions(
             note=reasoning or None,
         )
         try:
-            candidate_update(
-                candidate_id,
-                _decision_patch(
-                    action=action,
-                    review=review,
-                    reasoning=reasoning,
-                    decided_at=decided_at,
-                ),
+            candidate = candidate_get(candidate_id)
+            if candidate is None:
+                raise NotFoundError(f"candidate not found: {candidate_id}")
+            meta = _consolidation_meta(
+                getattr(candidate, "meta", {}) or {},
+                action=action,
+                reasoning=reasoning,
+                decided_at=decided_at,
             )
-            if action == "promote":
-                promote_candidate(candidate_id, str(target_scope or "").strip())
+            apply_decision(
+                candidate,
+                action=action,
+                target_scope=str(target_scope or "").strip(),
+                review=review,
+                meta=meta,
+            )
         except Exception as exc:
             errors.append(f"{candidate_id}: {exc}")
             continue

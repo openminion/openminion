@@ -6,14 +6,19 @@ from dataclasses import replace
 from typing import Any
 
 from ..base import CandidateListOptions
-from ...errors import NotFoundError
+from ...constants import (
+    MEMORY_CANDIDATE_STATUS_PROMOTED,
+    MEMORY_CANDIDATE_STATUS_REJECTED,
+)
+from ...errors import InvalidArgumentError, NotFoundError
 from ...models import MemoryCandidate
 
 
 def candidate_put(store: Any, candidate: MemoryCandidate) -> str:
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     previous_ref_values: list[Any] = []
-    with store._connect() as conn:
+    with store._write_lock, store._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         existing = conn.execute(
             """
             SELECT evidence_json
@@ -23,6 +28,22 @@ def candidate_put(store: Any, candidate: MemoryCandidate) -> str:
             (candidate.candidate_id,),
         ).fetchone()
         if existing is not None:
+            current = store._create_candidate_from_row(
+                conn.execute(
+                    "SELECT * FROM memory_candidates WHERE candidate_id = ?",
+                    (candidate.candidate_id,),
+                ).fetchone()
+            )
+            if str(current.status) in {
+                MEMORY_CANDIDATE_STATUS_PROMOTED,
+                MEMORY_CANDIDATE_STATUS_REJECTED,
+            } and str(candidate.status) not in {
+                MEMORY_CANDIDATE_STATUS_PROMOTED,
+                MEMORY_CANDIDATE_STATUS_REJECTED,
+            }:
+                raise InvalidArgumentError(
+                    f"candidate {candidate.candidate_id} cannot regress from terminal status"
+                )
             previous_ref_values = store._decode_evidence_ref_values(
                 existing["evidence_json"]
             )
@@ -54,6 +75,7 @@ def candidate_put(store: Any, candidate: MemoryCandidate) -> str:
                 candidate.updated_at or now,
             ),
         )
+        conn.execute("COMMIT")
     if previous_ref_values:
         store._remove_artifact_refs(
             owner_id=candidate.candidate_id,
@@ -128,7 +150,8 @@ def candidate_update(
     candidate_id: str,
     patch: dict[str, Any],
 ) -> MemoryCandidate:
-    with store._connect() as conn:
+    with store._write_lock, store._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT * FROM memory_candidates WHERE candidate_id = ?",
             (candidate_id,),
@@ -168,6 +191,16 @@ def candidate_update(
                 )
             ),
         )
+        if str(current.status) in {
+            MEMORY_CANDIDATE_STATUS_PROMOTED,
+            MEMORY_CANDIDATE_STATUS_REJECTED,
+        } and str(updated.status) not in {
+            MEMORY_CANDIDATE_STATUS_PROMOTED,
+            MEMORY_CANDIDATE_STATUS_REJECTED,
+        }:
+            raise InvalidArgumentError(
+                f"candidate {candidate_id} cannot regress from terminal status"
+            )
 
         conn.execute(
             """
@@ -202,6 +235,7 @@ def candidate_update(
             "SELECT * FROM memory_candidates WHERE candidate_id = ?",
             (candidate_id,),
         ).fetchone()
+        conn.execute("COMMIT")
     return store._create_candidate_from_row(refreshed)
 
 

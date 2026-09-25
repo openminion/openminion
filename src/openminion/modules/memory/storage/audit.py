@@ -414,6 +414,54 @@ class AuditedMemoryStore:
         )
         return record
 
+    def _apply_consolidation_decision(
+        self,
+        candidate: Any,
+        *,
+        action: str,
+        target_scope: str,
+        review: Any,
+        meta: dict[str, Any],
+    ) -> Any:
+        handler = getattr(self._store, "_apply_consolidation_decision", None)
+        if not callable(handler):
+            raise AttributeError(
+                "apply_consolidation_decision is unsupported by the wrapped store"
+            )
+        result = handler(
+            candidate,
+            action=action,
+            target_scope=target_scope,
+            review=review,
+            meta=meta,
+        )
+        if action == "promote":
+            event = MemoryAuditEvent(
+                event_type="memory.candidate.promote",
+                target_kind="record",
+                target_id=str(getattr(result, "id", "") or ""),
+                scope=str(getattr(result, "scope", "") or target_scope) or None,
+                record_type=str(getattr(result, "type", "") or "") or None,
+                record_key=str(getattr(result, "key", "") or "") or None,
+                details={"candidate_id": str(candidate.candidate_id or "")},
+            )
+        else:
+            patched_fields = ["meta", "review"]
+            if action == "discard":
+                patched_fields.append("status")
+            event = MemoryAuditEvent(
+                event_type="memory.candidate.update",
+                target_kind="candidate",
+                target_id=str(candidate.candidate_id or ""),
+                scope=str(getattr(result, "proposed_scope", "") or "") or None,
+                record_type=str(getattr(result, "type", "") or "") or None,
+                record_key=str(getattr(result, "key", "") or "") or None,
+                session_id=str(getattr(result, "session_id", "") or "") or None,
+                details={"patched_fields": patched_fields},
+            )
+        self._append(event)
+        return result
+
     def supersede_by_contradiction(
         self, old_record_id: str, new_record_id: str, reason: str = ""
     ) -> Any:

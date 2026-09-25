@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from builtins import list as list_type
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
+from threading import RLock
 import uuid
 from typing import Any, Literal, TypeVar
 
 from openminion.modules.memory.constants import (
+    MEMORY_CANDIDATE_STATUS_PROPOSED,
     MEMORY_CANDIDATE_STATUS_PROMOTED,
+    MEMORY_CANDIDATE_STATUS_REJECTED,
     PROMOTABLE_MEMORY_CANDIDATE_STATUSES,
 )
 from openminion.modules.memory.models import (
@@ -34,6 +38,10 @@ from openminion.base.time import utc_now_iso as _utc_now_iso
 from ..errors import InvalidArgumentError, NotFoundError, PromotionDeniedError
 
 T = TypeVar("T")
+_TERMINAL_CANDIDATE_STATUSES = {
+    MEMORY_CANDIDATE_STATUS_PROMOTED,
+    MEMORY_CANDIDATE_STATUS_REJECTED,
+}
 
 
 def _apply_limit(rows: list[T], limit: int | None) -> list[T]:
@@ -676,6 +684,7 @@ class InMemoryMemoryStore(CapabilityMemoryStore):
 
     def __init__(self) -> None:
         records = InMemoryRecordStore()
+        self._candidate_write_lock = RLock()
         super().__init__(
             records=records,
             search=InMemorySearchIndex(records),
@@ -688,6 +697,97 @@ class InMemoryMemoryStore(CapabilityMemoryStore):
                 supports_transactions=False,
             ),
         )
+
+    def candidate_put(self, candidate: MemoryCandidate) -> str:
+        with self._candidate_write_lock:
+            current = self._records.candidate_get(candidate.candidate_id)
+            if (
+                current is not None
+                and str(current.status) in _TERMINAL_CANDIDATE_STATUSES
+                and str(candidate.status) not in _TERMINAL_CANDIDATE_STATUSES
+            ):
+                raise InvalidArgumentError(
+                    f"candidate {candidate.candidate_id} cannot regress from terminal status"
+                )
+            return str(self._records.candidate_put(deepcopy(candidate)))
+
+    def candidate_get(self, candidate_id: str) -> MemoryCandidate | None:
+        with self._candidate_write_lock:
+            return deepcopy(self._records.candidate_get(candidate_id))
+
+    def candidate_list(self, options: CandidateListOptions) -> list[MemoryCandidate]:
+        with self._candidate_write_lock:
+            return deepcopy(self._records.candidate_list(options))
+
+    def promote_candidate(self, candidate_id: str, target_scope: str) -> MemoryRecord:
+        with self._candidate_write_lock:
+            return deepcopy(self._records.promote_candidate(candidate_id, target_scope))
+
+    def candidate_update(
+        self, candidate_id: str, patch: dict[str, Any]
+    ) -> MemoryCandidate:
+        with self._candidate_write_lock:
+            current = self._records.candidate_get(candidate_id)
+            if current is None:
+                raise NotFoundError(f"candidate not found: {candidate_id}")
+            requested_status = str(patch.get("status", current.status))
+            if (
+                str(current.status) in _TERMINAL_CANDIDATE_STATUSES
+                and requested_status not in _TERMINAL_CANDIDATE_STATUSES
+            ):
+                raise InvalidArgumentError(
+                    f"candidate {candidate_id} cannot regress from terminal status"
+                )
+            return deepcopy(
+                self._records.candidate_update(candidate_id, deepcopy(patch))
+            )
+
+    def _apply_consolidation_decision(
+        self,
+        candidate: MemoryCandidate,
+        *,
+        action: str,
+        target_scope: str,
+        review: Any,
+        meta: dict[str, Any],
+    ) -> MemoryCandidate | MemoryRecord:
+        with self._candidate_write_lock:
+            current = self._records.candidate_get(candidate.candidate_id)
+            if current is None:
+                raise NotFoundError(f"candidate not found: {candidate.candidate_id}")
+            if current != candidate:
+                raise InvalidArgumentError(
+                    f"candidate {candidate.candidate_id} changed before consolidation"
+                )
+            if (
+                str(current.status) != MEMORY_CANDIDATE_STATUS_PROPOSED
+                or current.proposed_scope != target_scope
+            ):
+                raise InvalidArgumentError(
+                    f"candidate {candidate.candidate_id} is outside the active consolidation scope"
+                )
+            if action == "promote":
+                record = self._records.promote_candidate(
+                    candidate.candidate_id, target_scope
+                )
+                self._records.candidate_update(
+                    candidate.candidate_id,
+                    {"review": review, "meta": deepcopy(meta)},
+                )
+                return deepcopy(record)
+            if action not in {"discard", "defer"}:
+                raise InvalidArgumentError(
+                    f"unsupported consolidation action: {action}"
+                )
+            patch: dict[str, Any] = {
+                "review": review,
+                "meta": deepcopy(meta),
+            }
+            if action == "discard":
+                patch["status"] = MEMORY_CANDIDATE_STATUS_REJECTED
+            return deepcopy(
+                self._records.candidate_update(candidate.candidate_id, patch)
+            )
 
 
 __all__ = [

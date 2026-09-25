@@ -8,7 +8,11 @@ import sqlite3
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from ...constants import MEMORY_CANDIDATE_STATUS_APPROVED
+from ...constants import (
+    MEMORY_CANDIDATE_STATUS_APPROVED,
+    MEMORY_CANDIDATE_STATUS_PROPOSED,
+    MEMORY_CANDIDATE_STATUS_REJECTED,
+)
 from ...errors import (
     InvalidArgumentError,
     NotFoundError,
@@ -380,6 +384,80 @@ def _sqlite_insert_upsert_record(
     )
 
 
+def _insert_promoted_candidate(
+    store: SQLiteMemoryStore,
+    conn: sqlite3.Connection,
+    candidate: MemoryCandidate,
+    target_scope: str,
+    new_id: str,
+    now: str,
+) -> tuple[str | None, list[Any]]:
+    existing = _sqlite_find_target_key_collision(conn, candidate, target_scope)
+    superseded_owner_id = str(existing["id"]) if existing is not None else None
+    superseded_ref_values = (
+        store._decode_evidence_ref_values(existing["evidence_json"])
+        if existing is not None
+        else []
+    )
+    _sqlite_insert_record(
+        conn,
+        record_id=new_id,
+        scope=target_scope,
+        namespace=None,
+        record_type=candidate.type,
+        key=candidate.key,
+        title=candidate.title,
+        content=candidate.content,
+        tags=list(candidate.tags),
+        entities=list(candidate.entities),
+        source=candidate.source,
+        confidence=candidate.confidence,
+        evidence_refs=list(candidate.evidence_refs),
+        meta={},
+        last_hit_at=None,
+        event_time=now,
+        valid_to=None,
+        tier="working",
+        access_count=0,
+        expires_at=None,
+        created_at=now,
+        updated_at=now,
+        supersedes_id=superseded_owner_id,
+        superseded_by_id=None,
+        supersession_reason=None,
+        is_deleted=existing is not None,
+    )
+    if superseded_owner_id is not None:
+        store._apply_supersession(
+            conn,
+            old_record_id=superseded_owner_id,
+            new_record_id=new_id,
+            now_iso=now,
+            valid_to_iso=now,
+            reason="keyed_upsert",
+        )
+    _sqlite_insert_fts_row(
+        conn,
+        record_id=new_id,
+        scope=target_scope,
+        record_type=candidate.type,
+        key=candidate.key,
+        title=candidate.title,
+        content=candidate.content,
+        tags=list(candidate.tags),
+        entities=list(candidate.entities),
+    )
+    _sqlite_upsert_entities(
+        conn,
+        record_id=new_id,
+        scope=target_scope,
+        record_type=candidate.type,
+        entities=list(candidate.entities),
+        created_at=now,
+    )
+    return superseded_owner_id, superseded_ref_values
+
+
 def promote_candidate(
     store: SQLiteMemoryStore,
     candidate_id: str,
@@ -397,71 +475,8 @@ def promote_candidate(
                 store,
                 candidate_id,
             )
-            existing = _sqlite_find_target_key_collision(
-                conn,
-                promoted_candidate,
-                target_scope,
-            )
-            if existing is not None:
-                superseded_owner_id = str(existing["id"])
-                superseded_ref_values = store._decode_evidence_ref_values(
-                    existing["evidence_json"]
-                )
-            _sqlite_insert_record(
-                conn,
-                record_id=new_id,
-                scope=target_scope,
-                namespace=None,
-                record_type=promoted_candidate.type,
-                key=promoted_candidate.key,
-                title=promoted_candidate.title,
-                content=promoted_candidate.content,
-                tags=list(promoted_candidate.tags),
-                entities=list(promoted_candidate.entities),
-                source=promoted_candidate.source,
-                confidence=promoted_candidate.confidence,
-                evidence_refs=list(promoted_candidate.evidence_refs),
-                meta={},
-                last_hit_at=None,
-                event_time=now,
-                valid_to=None,
-                tier="working",
-                access_count=0,
-                expires_at=None,
-                created_at=now,
-                updated_at=now,
-                supersedes_id=superseded_owner_id,
-                superseded_by_id=None,
-                supersession_reason=None,
-                is_deleted=existing is not None,
-            )
-            if superseded_owner_id is not None:
-                store._apply_supersession(
-                    conn,
-                    old_record_id=superseded_owner_id,
-                    new_record_id=new_id,
-                    now_iso=now,
-                    valid_to_iso=now,
-                    reason="keyed_upsert",
-                )
-            _sqlite_insert_fts_row(
-                conn,
-                record_id=new_id,
-                scope=target_scope,
-                record_type=promoted_candidate.type,
-                key=promoted_candidate.key,
-                title=promoted_candidate.title,
-                content=promoted_candidate.content,
-                tags=list(promoted_candidate.tags),
-                entities=list(promoted_candidate.entities),
-            )
-            _sqlite_upsert_entities(
-                conn,
-                record_id=new_id,
-                scope=target_scope,
-                record_type=promoted_candidate.type,
-                entities=list(promoted_candidate.entities),
-                created_at=now,
+            superseded_owner_id, superseded_ref_values = _insert_promoted_candidate(
+                store, conn, promoted_candidate, target_scope, new_id, now
             )
             conn.execute(
                 """
@@ -489,6 +504,85 @@ def promote_candidate(
     store._remove_artifact_refs(
         owner_id=promoted_candidate.candidate_id,
         ref_values=promoted_candidate.evidence_refs,
+    )
+    return result
+
+
+def apply_consolidation_decision(
+    store: SQLiteMemoryStore,
+    candidate: MemoryCandidate,
+    *,
+    action: str,
+    target_scope: str,
+    review: Any,
+    meta: dict[str, Any],
+) -> MemoryCandidate | MemoryRecord:
+    superseded_owner_id: str | None = None
+    superseded_ref_values: list[Any] = []
+    new_id = uuid.uuid4().hex
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with store._write_lock, store._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT * FROM memory_candidates WHERE candidate_id = ?",
+            (candidate.candidate_id,),
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(f"Candidate {candidate.candidate_id} not found")
+        current = store._create_candidate_from_row(row)
+        if current != candidate:
+            raise InvalidArgumentError(
+                f"candidate {candidate.candidate_id} changed before consolidation"
+            )
+        if (
+            str(current.status) != MEMORY_CANDIDATE_STATUS_PROPOSED
+            or current.proposed_scope != target_scope
+        ):
+            raise InvalidArgumentError(
+                f"candidate {candidate.candidate_id} is outside the active consolidation scope"
+            )
+        statuses = {
+            "promote": "promoted",
+            "discard": MEMORY_CANDIDATE_STATUS_REJECTED,
+            "defer": MEMORY_CANDIDATE_STATUS_PROPOSED,
+        }
+        status = statuses.get(action)
+        if status is None:
+            raise InvalidArgumentError(f"unsupported consolidation action: {action}")
+        if action == "promote":
+            superseded_owner_id, superseded_ref_values = _insert_promoted_candidate(
+                store, conn, current, target_scope, new_id, now
+            )
+        conn.execute(
+            """
+            UPDATE memory_candidates
+               SET status = ?, review_json = ?, meta_json = ?, updated_at = ?
+             WHERE candidate_id = ?
+            """,
+            (
+                status,
+                json.dumps(vars(review)) if review else None,
+                json.dumps(meta),
+                now,
+                candidate.candidate_id,
+            ),
+        )
+        conn.execute("COMMIT")
+    if action != "promote":
+        refreshed = store.candidate_get(candidate.candidate_id)
+        if refreshed is None:
+            raise NotFoundError(f"Candidate {candidate.candidate_id} not found")
+        return refreshed
+    result = _load_sqlite_record(store, new_id)
+    store._add_artifact_refs(owner_id=result.id, ref_values=result.evidence_refs)
+    if superseded_owner_id is not None:
+        store._remove_artifact_refs(
+            owner_id=superseded_owner_id,
+            ref_values=superseded_ref_values,
+        )
+    store._remove_artifact_refs(
+        owner_id=candidate.candidate_id,
+        ref_values=candidate.evidence_refs,
     )
     return result
 
@@ -646,6 +740,7 @@ def apply_outcome_feedback(
 
 
 __all__ = [
+    "apply_consolidation_decision",
     "apply_outcome_feedback",
     "history",
     "promote_candidate",

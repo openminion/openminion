@@ -70,7 +70,6 @@ src/openminion/modules/memory/runtime/consolidation/extract.py	extract_consolida
 src/openminion/modules/memory/runtime/session_lifecycle.py	SessionLifecycleMixin._format_session_summaries	247	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/staging.py	stage_extracted_candidates	147	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/service/queries.py	MemoryServiceQueryMixin.search_semantic	135	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/memory/storage/sqlite/write.py	promote_candidate	111	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/submissions/sdk_path.py	_dispatch_entity_episode	181	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/retrieve/config.py	load_config	138	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/retrieve/runtime/ingestion.py	build_raptor_tree	212	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
