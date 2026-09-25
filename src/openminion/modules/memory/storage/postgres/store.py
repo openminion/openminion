@@ -296,6 +296,7 @@ class PostgresMemoryStore(MemoryStore):
     candidate_list = _candidate_list_workflow
     candidate_update = _candidate_update_workflow
     _apply_consolidation_decision = _apply_consolidation_decision_workflow
+    _supersede_consolidation_hint = _supersede_by_contradiction_workflow
     promote_candidate = _promote_candidate_workflow
     history = _history_workflow
     supersede_by_contradiction = _supersede_by_contradiction_workflow

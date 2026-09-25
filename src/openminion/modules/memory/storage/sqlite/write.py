@@ -610,6 +610,8 @@ def supersede_by_contradiction(
     old_record_id: str,
     new_record_id: str,
     reason: str = "",
+    *,
+    expected_scope: str | None = None,
 ) -> MemoryRecord:
     if old_record_id == new_record_id:
         raise InvalidArgumentError("old and new records must differ")
@@ -620,6 +622,36 @@ def supersede_by_contradiction(
             old_row = store._get_required_record(conn, old_record_id)
             new_row = store._get_required_record(conn, new_record_id)
             old_record = store._create_record_from_row(old_row)
+            new_record = store._create_record_from_row(new_row)
+            if expected_scope is not None:
+                if (
+                    old_record.scope != expected_scope
+                    or new_record.scope != expected_scope
+                ):
+                    raise InvalidArgumentError(
+                        "consolidation supersession records are stale or outside the target scope"
+                    )
+                if (
+                    old_record.superseded_by_id == new_record_id
+                    and new_record.supersedes_id == old_record_id
+                    and old_record.is_deleted
+                    and not new_record.is_deleted
+                    and new_record.superseded_by_id is None
+                    and not new_record.is_invalidated_at()
+                ):
+                    conn.execute("COMMIT")
+                    return new_record
+                if (
+                    old_record.is_deleted
+                    or new_record.is_deleted
+                    or old_record.superseded_by_id is not None
+                    or new_record.superseded_by_id is not None
+                    or old_record.is_invalidated_at()
+                    or new_record.is_invalidated_at()
+                ):
+                    raise InvalidArgumentError(
+                        "consolidation supersession records are stale or outside the target scope"
+                    )
             store._apply_supersession(
                 conn,
                 old_record_id=old_record_id,

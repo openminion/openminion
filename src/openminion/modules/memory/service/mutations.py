@@ -400,6 +400,31 @@ class MemoryServiceMutationMixin:
                 raise NotFoundError(str(exc)) from exc
             raise InvalidArgumentError(str(exc)) from exc
 
+    def supersede_consolidation_hint(
+        self,
+        old_record_id: str,
+        new_record_id: str,
+        *,
+        target_scope: str,
+        reason: str = "",
+    ) -> MemoryRecord:
+        handler = getattr(self._store, "_supersede_consolidation_hint", None)
+        if not callable(handler):
+            raise InvalidArgumentError(
+                "checked consolidation supersession is unsupported by the configured memory store"
+            )
+        try:
+            return handler(
+                old_record_id,
+                new_record_id,
+                expected_scope=target_scope,
+                reason=reason,
+            )
+        except ValueError as exc:
+            if "not found" in str(exc).lower():
+                raise NotFoundError(str(exc)) from exc
+            raise InvalidArgumentError(str(exc)) from exc
+
     def invalidate(
         self,
         memory_id: str,

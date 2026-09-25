@@ -203,6 +203,7 @@ class SQLiteMemoryStore(MemoryStore):
     candidate_list = _candidate_list_workflow
     candidate_update = _candidate_update_workflow
     _apply_consolidation_decision = _apply_consolidation_decision_workflow
+    _supersede_consolidation_hint = _supersede_by_contradiction_impl
 
     def put(self, record: MemoryRecord) -> str:
         with self._connect() as conn:

@@ -152,3 +152,54 @@ def test_extract_consolidation_payload_never_touches_llm_clients() -> None:
 
     assert len(payload.candidate_refs) == 1
     assert api.llm_access_count == 0
+
+
+def test_extract_consolidation_payload_filters_agent_scope_across_sessions() -> None:
+    store = InMemoryMemoryStore()
+    for candidate_id, session_id, scope in (
+        ("cand-current-session", "session-1", "agent:test-agent"),
+        ("cand-other-session", "session-2", "agent:test-agent"),
+        ("cand-other-agent", "session-1", "agent:other-agent"),
+    ):
+        store.candidate_put(
+            MemoryCandidate(
+                candidate_id=candidate_id,
+                session_id=session_id,
+                proposed_scope=scope,
+                type="fact",
+                content=f"content {candidate_id}",
+            )
+        )
+
+    payload = extract_consolidation_payload(
+        store,
+        session_id="consolidation-run",
+        agent_id="test-agent",
+    )
+
+    assert payload.session_id == "consolidation-run"
+    assert [item["candidate_id"] for item in payload.candidate_refs] == [
+        "cand-current-session",
+        "cand-other-session",
+    ]
+
+
+def test_extract_consolidation_payload_rejects_empty_agent_id() -> None:
+    store = InMemoryMemoryStore()
+    store.candidate_put(
+        MemoryCandidate(
+            candidate_id="cand-1",
+            session_id="session-1",
+            proposed_scope="agent:test-agent",
+            type="fact",
+            content="content",
+        )
+    )
+
+    payload = extract_consolidation_payload(
+        store,
+        session_id="consolidation-run",
+        agent_id="",
+    )
+
+    assert payload.candidate_refs == []

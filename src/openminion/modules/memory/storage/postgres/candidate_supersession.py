@@ -399,16 +399,72 @@ def history(store: Any, scope: str, type: MemoryType, key: str) -> list[MemoryRe
 
 
 def supersede_by_contradiction(
-    store: Any, old_record_id: str, new_record_id: str, reason: str = ""
+    store: Any,
+    old_record_id: str,
+    new_record_id: str,
+    reason: str = "",
+    *,
+    expected_scope: str | None = None,
 ) -> MemoryRecord:
     if old_record_id == new_record_id:
         raise InvalidArgumentError("old and new records must differ")
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     with store._lock:
         with store._engine.begin() as conn:
-            old_row = store._get_required_record(conn, old_record_id)
-            new_row = store._get_required_record(conn, new_record_id)
+            if expected_scope is None:
+                old_row = store._get_required_record(conn, old_record_id)
+                new_row = store._get_required_record(conn, new_record_id)
+            else:
+                rows = store._fetchall(
+                    """
+                    SELECT * FROM memory_records
+                     WHERE id IN (:old_record_id, :new_record_id)
+                     ORDER BY id
+                     FOR UPDATE
+                    """,
+                    {
+                        "old_record_id": old_record_id,
+                        "new_record_id": new_record_id,
+                    },
+                    connection=conn,
+                )
+                records_by_id = {str(row["id"]): row for row in rows}
+                old_row = records_by_id.get(old_record_id)
+                new_row = records_by_id.get(new_record_id)
+                if old_row is None:
+                    raise NotFoundError(f"record not found: {old_record_id}")
+                if new_row is None:
+                    raise NotFoundError(f"record not found: {new_record_id}")
             old_record = store._create_record_from_row(old_row)
+            new_record = store._create_record_from_row(new_row)
+            if expected_scope is not None:
+                if (
+                    old_record.scope != expected_scope
+                    or new_record.scope != expected_scope
+                ):
+                    raise InvalidArgumentError(
+                        "consolidation supersession records are stale or outside the target scope"
+                    )
+                if (
+                    old_record.superseded_by_id == new_record_id
+                    and new_record.supersedes_id == old_record_id
+                    and old_record.is_deleted
+                    and not new_record.is_deleted
+                    and new_record.superseded_by_id is None
+                    and not new_record.is_invalidated_at()
+                ):
+                    return new_record
+                if (
+                    old_record.is_deleted
+                    or new_record.is_deleted
+                    or old_record.superseded_by_id is not None
+                    or new_record.superseded_by_id is not None
+                    or old_record.is_invalidated_at()
+                    or new_record.is_invalidated_at()
+                ):
+                    raise InvalidArgumentError(
+                        "consolidation supersession records are stale or outside the target scope"
+                    )
             store._apply_supersession(
                 conn,
                 old_record_id=old_record_id,

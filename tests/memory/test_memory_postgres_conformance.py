@@ -21,6 +21,14 @@ from openminion.modules.memory.runtime.capture_bundle import (
     CaptureBundleIntegrityError,
     CaptureCandidateInput,
 )
+from openminion.modules.memory.runtime.consolidation.coordinator import (
+    ExtractionPayload,
+    MergeDecision,
+    MergeDecisions,
+)
+from openminion.modules.memory.runtime.consolidation.merge import (
+    apply_merge_decisions_via_service,
+)
 from openminion.modules.memory.storage.base import (
     CandidateListOptions,
     ListQueryOptions,
@@ -169,6 +177,166 @@ def test_candidate_and_promotion_conformance_round_trip(store) -> None:
     assert [item.candidate_id for item in listed] == ["c1"]
     promoted = store.promote_candidate("c1", "agent:main")
     assert promoted.scope == "agent:main"
+
+
+def test_checked_consolidation_supersession_conformance(store) -> None:
+    old_record = _record("hint-old", scope="agent:main")
+    new_record = _record("hint-new", scope="agent:main")
+    cross_scope_record = _record("hint-other", scope="agent:other")
+    store.put(old_record)
+    store.put(new_record)
+    store.put(cross_scope_record)
+    service = MemoryService(store=store)
+
+    superseding = service.supersede_consolidation_hint(
+        old_record.id,
+        new_record.id,
+        target_scope="agent:main",
+        reason="consolidation hint",
+    )
+
+    assert superseding.supersedes_id == old_record.id
+    assert store.get(old_record.id).superseded_by_id == new_record.id
+    with pytest.raises(InvalidArgumentError, match="stale or outside"):
+        service.supersede_consolidation_hint(
+            cross_scope_record.id,
+            new_record.id,
+            target_scope="agent:main",
+            reason="cross-scope hint",
+        )
+    assert store.get(cross_scope_record.id).superseded_by_id is None
+
+
+def test_keyed_duplicate_hint_is_idempotent_after_promotion(store) -> None:
+    sink = InMemoryMemoryAuditSink()
+    audited = AuditedMemoryStore(store, sink=sink)
+    service = MemoryService(store=audited)
+    old_record = _record("hint-keyed-old", scope="agent:main", key="fact:keyed")
+    audited.put(old_record)
+    audited.candidate_put(
+        MemoryCandidate(
+            candidate_id="hint-keyed-candidate",
+            session_id="s1",
+            proposed_scope="agent:main",
+            type="fact",
+            key="fact:keyed",
+            content={"text": "new keyed fact"},
+            source="validated",
+            status="proposed",
+        )
+    )
+    sink.events.clear()
+
+    result = apply_merge_decisions_via_service(
+        service,
+        payload=ExtractionPayload(
+            session_id="run-keyed",
+            agent_id="main",
+            candidate_refs=[{"candidate_id": "hint-keyed-candidate"}],
+            duplicate_hints=[
+                {
+                    "candidate_id": "hint-keyed-candidate",
+                    "existing_record_id": old_record.id,
+                }
+            ],
+        ),
+        merge_decisions=MergeDecisions(
+            decisions=[
+                MergeDecision(
+                    candidate_id="hint-keyed-candidate",
+                    action="promote",
+                )
+            ]
+        ),
+        target_scope="agent:main",
+    )
+
+    promoted_id = result["promoted_record_ids"][0]
+    old_after = audited.get(old_record.id)
+    promoted_after = audited.get(promoted_id)
+    assert result["promoted_count"] == 1
+    assert result["supersession_errors"] == []
+    assert result["superseded_record_ids"] == [promoted_id]
+    assert old_after.superseded_by_id == promoted_id
+    assert old_after.updated_at == promoted_after.created_at
+    assert promoted_after.supersedes_id == old_record.id
+    assert [event.event_type for event in sink.events] == [
+        "memory.candidate.promote",
+        "memory.record.supersede",
+    ]
+
+
+def test_postgres_checked_hint_waits_and_rejects_committed_stale_record(
+    tmp_path: Path,
+) -> None:
+    postgres_url = str(os.environ.get("OPENMINION_TEST_POSTGRES_URL", "")).strip()
+    if not postgres_url:
+        pytest.skip("OPENMINION_TEST_POSTGRES_URL is not set")
+    schema_name = f"memory_hint_contention_{uuid.uuid4().hex}"
+    admin_engine = sa.create_engine(postgres_url, future=True)
+    with admin_engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE SCHEMA "{schema_name}"'))
+    engines = [
+        sa.create_engine(schema_url(postgres_url, schema_name), future=True)
+        for _ in range(2)
+    ]
+    try:
+        stores = [
+            PostgresMemoryStore(
+                engine,
+                database_path=tmp_path / f"memory-hint-{index}.db",
+                artifactctl=None,
+            )
+            for index, engine in enumerate(engines)
+        ]
+        old_record = _record("hint-a-old", scope="agent:main")
+        new_record = _record("hint-z-new", scope="agent:main")
+        stores[0].put(old_record)
+        stores[0].put(new_record)
+        started = threading.Event()
+        errors: list[Exception] = []
+
+        def apply_hint() -> None:
+            started.set()
+            try:
+                MemoryService(store=stores[1]).supersede_consolidation_hint(
+                    old_record.id,
+                    new_record.id,
+                    target_scope="agent:main",
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        with engines[0].begin() as conn:
+            conn.execute(
+                sa.text("SELECT id FROM memory_records WHERE id = :id FOR UPDATE"),
+                {"id": old_record.id},
+            )
+            hint = threading.Thread(target=apply_hint)
+            hint.start()
+            assert started.wait(timeout=2)
+            time.sleep(0.1)
+            assert hint.is_alive()
+            conn.execute(
+                sa.text(
+                    "UPDATE memory_records SET valid_to = :valid_to WHERE id = :id"
+                ),
+                {"id": old_record.id, "valid_to": "2026-01-01T00:00:00+00:00"},
+            )
+        hint.join(timeout=5)
+
+        assert not hint.is_alive()
+        assert len(errors) == 1
+        assert isinstance(errors[0], InvalidArgumentError)
+        assert "stale or outside" in str(errors[0])
+        assert stores[0].get(old_record.id).superseded_by_id is None
+        assert stores[0].get(new_record.id).supersedes_id is None
+    finally:
+        for engine in engines:
+            engine.dispose()
+        with admin_engine.begin() as conn:
+            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+        admin_engine.dispose()
 
 
 def test_postgres_consolidation_serializes_and_rolls_back(

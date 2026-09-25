@@ -7,6 +7,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from sophiagraph.audit.events import MemoryAuditEvent
 
+from openminion.modules.memory.errors import InvalidArgumentError
+
 
 @runtime_checkable
 class MemoryAuditSink(Protocol):
@@ -467,6 +469,41 @@ class AuditedMemoryStore:
     ) -> Any:
         record = self._store.supersede_by_contradiction(
             old_record_id, new_record_id, reason=reason
+        )
+        self._append(
+            MemoryAuditEvent(
+                event_type="memory.record.supersede",
+                target_kind="record",
+                target_id=str(new_record_id or ""),
+                scope=str(getattr(record, "scope", "") or "") or None,
+                record_type=str(getattr(record, "type", "") or "") or None,
+                record_key=str(getattr(record, "key", "") or "") or None,
+                details={
+                    "old_record_id": str(old_record_id or ""),
+                    "reason": str(reason or ""),
+                },
+            )
+        )
+        return record
+
+    def _supersede_consolidation_hint(
+        self,
+        old_record_id: str,
+        new_record_id: str,
+        *,
+        expected_scope: str,
+        reason: str = "",
+    ) -> Any:
+        handler = getattr(self._store, "_supersede_consolidation_hint", None)
+        if not callable(handler):
+            raise InvalidArgumentError(
+                "checked consolidation supersession is unsupported by the wrapped store"
+            )
+        record = handler(
+            old_record_id,
+            new_record_id,
+            expected_scope=expected_scope,
+            reason=reason,
         )
         self._append(
             MemoryAuditEvent(
