@@ -1672,9 +1672,9 @@ def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
 
     assert result.status == "done"
     assert result.action_result is not None
-    assert result.action_result.outputs["memory_consolidation.applied_count"] == 2
+    assert result.action_result.outputs["memory_consolidation.applied_count"] == 1
     assert result.action_result.outputs["memory_consolidation.promoted_count"] == 1
-    assert result.action_result.outputs["memory_consolidation.deferred_count"] == 1
+    assert result.action_result.outputs["memory_consolidation.deferred_count"] == 0
     assert result.action_result.outputs["memory_consolidation.target_scope"] == (
         "agent:agent"
     )
@@ -1684,6 +1684,7 @@ def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
     assert result.action_result.outputs["memory_consolidation.state_hash"]
     backend = services.runner.memory_api._backend
     assert backend.promote_candidate.call_count == 1
+    backend.candidate_update.assert_called_once()
 
 
 def test_act_adaptive_forces_answer_only_closure_for_direct_tool_turn() -> None:

@@ -372,6 +372,7 @@ def test_run_turn_propagates_empty_provider_response_error() -> None:
 def test_inject_resume_task_hints_attaches_memory_consolidation_module_state() -> None:
     bridge = DummyBridge()
     runner = _DummyRunner({"module_state": {}})
+    runner.profile.agent_id = "agent-1"
     store = InMemoryMemoryStore()
     store.candidate_put(
         MemoryCandidate(
@@ -406,6 +407,44 @@ def test_inject_resume_task_hints_attaches_memory_consolidation_module_state() -
     assert payload["target_scope"] == "agent:agent-1"
     assert payload["batch_limit"] == 5
     assert payload["candidates"][0]["candidate_id"] == "cand-1"
+
+
+@pytest.mark.parametrize(
+    "target_scope",
+    ["", "agent:other-agent"],
+)
+def test_inject_resume_task_hints_rejects_invalid_memory_consolidation_scope(
+    target_scope: str,
+) -> None:
+    bridge = DummyBridge()
+    runner = _DummyRunner({"module_state": {}})
+    store = InMemoryMemoryStore()
+    store.candidate_put(
+        MemoryCandidate(
+            candidate_id="cand-1",
+            session_id="sess-1",
+            proposed_scope="agent:other-agent",
+            type="fact",
+            title="Deploy region",
+            content="Preferred deploy region is us-west-2.",
+            confidence=0.8,
+        )
+    )
+    runner.memory_api = SimpleNamespace(store=store)
+
+    bridge._inject_resume_task_hints(
+        runner=runner,
+        session_id="sess-1",
+        inbound_metadata={
+            "cron_job_id": "job-1",
+            "memory_consolidation_job": "true",
+            "memory_consolidation_target_scope": target_scope,
+        },
+    )
+
+    payload = runner.session_api.written["module_state"]["memory_consolidation"]
+    assert payload["target_scope"] == ""
+    assert payload["candidates"] == []
 
 
 def test_inject_resume_task_hints_initializes_first_project_turn_state() -> None:

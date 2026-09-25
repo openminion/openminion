@@ -1421,7 +1421,7 @@ def test_finalize_success_stages_metadata_and_memory_paths(
     monkeypatch.setattr(
         adaptive_modes,
         "apply_memory_consolidation_decisions",
-        lambda memory_api, *, decisions, target_scope: staged.setdefault(
+        lambda memory_api, *, decisions, target_scope, selected_candidate_ids: staged.setdefault(
             "memory",
             {
                 "applied_count": 1,
@@ -1430,6 +1430,7 @@ def test_finalize_success_stages_metadata_and_memory_paths(
                 "deferred_count": 0,
                 "errors": ["e1"],
                 "target_scope": target_scope,
+                "selected_candidate_ids": selected_candidate_ids,
             },
         ),
     )

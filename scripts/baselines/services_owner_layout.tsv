@@ -31,7 +31,7 @@ scope	max_python_files	max_loc
 # task-outcome callback and one shared schedule operation.
 # OVGA (2026-09-06) carries the existing knowledge-graph service through the
 # current brain and agent tool-context assembly.
-services	206	40758
+services	206	40764
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

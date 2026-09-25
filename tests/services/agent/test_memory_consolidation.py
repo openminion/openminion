@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from openminion.modules.memory.config import ConsolidationConfig
 from openminion.modules.memory.models import MemoryCandidate
 from openminion.modules.memory.runtime.consolidation import (
@@ -18,6 +22,8 @@ from openminion.modules.memory.runtime.consolidation.merge import (
 )
 from openminion.modules.llm.providers.factory import RuntimeLLMHandle
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
+from openminion.modules.memory.storage.base import ListQueryOptions
+from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 
 
 def test_collect_memory_consolidation_candidates_returns_bounded_batch() -> None:
@@ -118,6 +124,7 @@ def test_apply_memory_consolidation_decisions_promotes_discards_and_defers() -> 
             },
         ],
         target_scope="agent:test-agent",
+        selected_candidate_ids=["cand-promote", "cand-discard", "cand-defer"],
     )
 
     assert result["applied_count"] == 3
@@ -131,8 +138,63 @@ def test_apply_memory_consolidation_decisions_promotes_discards_and_defers() -> 
         store,
         decisions=[],
         target_scope="agent:test-agent",
+        selected_candidate_ids=[],
     )
     assert direct_result["applied_count"] == 0
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_apply_memory_consolidation_decisions_rejects_unselected_and_duplicate_ids(
+    backend: str,
+    tmp_path: Path,
+) -> None:
+    store = (
+        InMemoryMemoryStore()
+        if backend == "memory"
+        else SQLiteMemoryStore(tmp_path / "memory.db")
+    )
+    for candidate_id, proposed_scope in (
+        ("selected", "agent:test-agent"),
+        ("outside", "agent:test-agent"),
+        ("other-agent", "agent:other-agent"),
+        ("ambiguous", "agent:test-agent"),
+    ):
+        store.candidate_put(
+            MemoryCandidate(
+                candidate_id=candidate_id,
+                session_id="s1",
+                proposed_scope=proposed_scope,
+                type="fact",
+                title=candidate_id,
+                content=f"{candidate_id} content",
+                confidence=0.8,
+            )
+        )
+    candidates_before = {
+        candidate_id: store.candidate_get(candidate_id)
+        for candidate_id in ("selected", "outside", "other-agent", "ambiguous")
+    }
+
+    result = apply_memory_consolidation_decisions(
+        store,
+        decisions=[
+            {"candidate_id": "selected", "action": "defer"},
+            {"candidate_id": "selected", "action": "discard"},
+            {"candidate_id": "outside", "action": "promote"},
+            {"candidate_id": "other-agent", "action": "discard"},
+            {"candidate_id": "ambiguous", "action": "discard"},
+        ],
+        target_scope="agent:test-agent",
+        selected_candidate_ids=["selected", "ambiguous", "ambiguous"],
+    )
+
+    assert result["applied_count"] == 0
+    assert result["deferred_count"] == 0
+    assert result["discarded_count"] == 0
+    assert len(result["errors"]) == 5
+    for candidate_id, candidate_before in candidates_before.items():
+        assert store.candidate_get(candidate_id) == candidate_before
+    assert store.list(ListQueryOptions(scopes=["agent:test-agent"])) == []
 
 
 def test_consolidation_contract_types_are_importable() -> None:

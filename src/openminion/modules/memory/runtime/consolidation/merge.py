@@ -334,6 +334,7 @@ def apply_memory_consolidation_decisions(
     *,
     decisions: list[dict[str, Any]],
     target_scope: str,
+    selected_candidate_ids: list[str],
     reviewer: str = "memory_consolidation",
 ) -> dict[str, Any]:
     backend = memory_backend(memory_api)
@@ -352,11 +353,27 @@ def apply_memory_consolidation_decisions(
     counters: Counter[str] = Counter()
     errors: list[str] = []
     applied_ids: list[str] = []
+    selected_counts = Counter(
+        candidate_id
+        for item in selected_candidate_ids
+        if (candidate_id := str(item or "").strip())
+    )
+    decision_counts = Counter(
+        candidate_id
+        for item in decisions
+        if (candidate_id := str(item.get("candidate_id", "") or "").strip())
+    )
     for item in decisions:
         candidate_id = str(item.get("candidate_id", "") or "").strip()
         action = str(item.get("action", "") or "").strip().lower()
         reasoning = str(item.get("reasoning", "") or "").strip()
         if not candidate_id or action not in {"promote", "discard", "defer"}:
+            continue
+        if selected_counts[candidate_id] != 1:
+            errors.append(f"{candidate_id}: candidate is not in the selected batch")
+            continue
+        if decision_counts[candidate_id] != 1:
+            errors.append(f"{candidate_id}: duplicate consolidation decision")
             continue
         review = CandidateReview(
             reviewer=reviewer,
