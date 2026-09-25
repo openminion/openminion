@@ -3,10 +3,11 @@ from __future__ import annotations
 import pytest
 
 from openminion.services.runtime.turn_input import (
-    QUEUE_EVENT_CANCEL_ACKNOWLEDGED,
+    QUEUE_EVENT_CANCELLED,
     QUEUE_EVENT_DEQUEUED,
     QUEUE_EVENT_ENQUEUED,
     QUEUE_EVENT_FULL,
+    QUEUE_EVENT_RUNNING,
     TurnInputIntent,
     TurnInputQueue,
     TurnInputQueueError,
@@ -123,6 +124,52 @@ def test_reserve_next_and_terminal_status() -> None:
     assert completed.status == TurnInputQueueStatus.COMPLETED
 
 
+def test_requeue_returns_reserved_entry_to_queue() -> None:
+    queue = _queue()
+    queue.enqueue(session_id="s1", agent_id="a1", text="first")
+    reserved = queue.reserve_next(session_id="s1", agent_id="a1")
+    assert reserved is not None
+
+    released = queue.requeue(queue_id=reserved.queue_id)
+
+    assert released.status == TurnInputQueueStatus.QUEUED
+    assert queue.reserve_next(session_id="s1", agent_id="a1") is not None
+
+
+def test_mark_running_requires_trace_id() -> None:
+    queue = _queue()
+    queued = queue.enqueue(session_id="s1", agent_id="a1", text="first")
+    queue.reserve_next(session_id="s1", agent_id="a1")
+
+    with pytest.raises(TurnInputQueueError) as exc_info:
+        queue.mark_running(queue_id=queued.queue_id, trace_id="")
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+
+
+def test_mark_terminal_by_trace_updates_running_entry() -> None:
+    queue = _queue()
+    entry = queue.enqueue(session_id="s1", agent_id="a1", text="first")
+    reserved = queue.reserve_next(session_id="s1", agent_id="a1")
+    assert reserved is not None
+    queue.mark_running(queue_id=entry.queue_id, trace_id="trace-1")
+
+    completed = queue.mark_terminal_by_trace(
+        trace_id="trace-1",
+        status=TurnInputQueueStatus.COMPLETED,
+    )
+
+    assert completed is not None
+    assert completed.status == TurnInputQueueStatus.COMPLETED
+    assert (
+        queue.mark_terminal_by_trace(
+            trace_id="unknown",
+            status=TurnInputQueueStatus.FAILED,
+        )
+        is None
+    )
+
+
 def test_reserve_next_detects_changed_head() -> None:
     queue = _queue()
     first = queue.enqueue(session_id="s1", agent_id="a1", text="first")
@@ -133,6 +180,34 @@ def test_reserve_next_detects_changed_head() -> None:
 
     assert exc_info.value.code == "QUEUE_CONFLICT"
     assert exc_info.value.details["actual_queue_id"] == first.queue_id
+
+
+def test_reserve_next_rejects_second_active_entry_for_scope() -> None:
+    queue = _queue()
+    queue.enqueue(session_id="s1", agent_id="a1", text="first")
+    queue.enqueue(session_id="s1", agent_id="a1", text="second")
+    reserved = queue.reserve_next(session_id="s1", agent_id="a1")
+    assert reserved is not None
+
+    with pytest.raises(TurnInputQueueError) as exc_info:
+        queue.reserve_next(session_id="s1", agent_id="a1")
+
+    assert exc_info.value.code == "QUEUE_CONFLICT"
+    assert exc_info.value.details == {"queue_id": "q1", "status": "reserved"}
+
+
+def test_running_entry_does_not_block_next_reservation() -> None:
+    queue = _queue()
+    first = queue.enqueue(session_id="s1", agent_id="a1", text="first")
+    second = queue.enqueue(session_id="s1", agent_id="a1", text="second")
+    reserved = queue.reserve_next(session_id="s1", agent_id="a1")
+    assert reserved is not None
+    queue.mark_running(queue_id=first.queue_id, trace_id="trace-1")
+
+    next_reserved = queue.reserve_next(session_id="s1", agent_id="a1")
+
+    assert next_reserved is not None
+    assert next_reserved.queue_id == second.queue_id
 
 
 def test_steer_current_is_deferred_without_semantic_inference() -> None:
@@ -160,6 +235,7 @@ def test_operational_events_are_emitted_without_text_payload() -> None:
     entry = queue.enqueue(session_id="s1", agent_id="a1", text="secret text")
     reserved = queue.reserve_next(session_id="s1", agent_id="a1")
     assert reserved is not None
+    queue.mark_running(queue_id=reserved.queue_id, trace_id="trace-cancelled")
     queue.mark_terminal(
         queue_id=reserved.queue_id,
         status=TurnInputQueueStatus.CANCELLED,
@@ -168,7 +244,8 @@ def test_operational_events_are_emitted_without_text_payload() -> None:
     assert [event_type for event_type, _payload in events] == [
         QUEUE_EVENT_ENQUEUED,
         QUEUE_EVENT_DEQUEUED,
-        QUEUE_EVENT_CANCEL_ACKNOWLEDGED,
+        QUEUE_EVENT_RUNNING,
+        QUEUE_EVENT_CANCELLED,
     ]
     assert events[0][1]["queue_id"] == entry.queue_id
     assert "text" not in events[0][1]

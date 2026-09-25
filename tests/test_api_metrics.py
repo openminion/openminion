@@ -15,6 +15,7 @@ from openminion.api.server import (
 )
 from openminion.base.config import OpenMinionConfig, save_config
 from openminion.api.turns import TurnTimeoutError
+from openminion.api.server.observability import route_metric_key
 
 
 class APIMetricsTests(unittest.TestCase):
@@ -23,6 +24,19 @@ class APIMetricsTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         reset_api_metrics()
+
+    def test_custom_command_routes_have_stable_metric_keys(self) -> None:
+        self.assertEqual(
+            route_metric_key(method="GET", path="/v1/sessions/s1/custom-commands"),
+            "GET /v1/sessions/{id}/custom-commands",
+        )
+        self.assertEqual(
+            route_metric_key(
+                method="POST",
+                path="/v1/sessions/s1/custom-commands/review/render",
+            ),
+            "POST /v1/sessions/{id}/custom-commands/{name}/render",
+        )
 
     def test_metrics_track_request_totals_route_totals_and_status_classes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

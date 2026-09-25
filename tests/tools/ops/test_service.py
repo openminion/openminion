@@ -1,4 +1,5 @@
 import threading
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -25,6 +26,7 @@ from openminion.tools.ops.service import (
 class _RecordingTransport:
     def __init__(self, *, block: bool = False) -> None:
         self.block = block
+        self.calls = 0
         self.started = threading.Event()
         self.cancelled = threading.Event()
         self.timeout_seconds = 0.0
@@ -41,6 +43,7 @@ class _RecordingTransport:
         cwd: str = "",
     ) -> TransportResult:
         del target, output_sink, cwd
+        self.calls += 1
         self.timeout_seconds = timeout_seconds
         self.operation_id = operation_id
         self.started.set()
@@ -78,6 +81,16 @@ def _approve_and_run(service: OpsService, plan) -> object:
         plan_hash=plan.plan_hash,
         session_id=plan.session_id,
     )
+
+
+def _pending_approval(service: OpsService, plan) -> str:
+    with pytest.raises(ToolRuntimeError, match="confirmation") as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+        )
+    return str(pending.value.details["approval_id"])
 
 
 def _request(**overrides: object) -> OperationRequest:
@@ -510,18 +523,9 @@ def test_command_evidence_redacts_configured_literals() -> None:
 
 
 def test_two_service_processes_dispatch_one_plan_once(tmp_path) -> None:
-    class CountingTransport(_RecordingTransport):
-        def __init__(self) -> None:
-            super().__init__()
-            self.calls = 0
-
-        def run(self, *args: object, **kwargs: object) -> TransportResult:
-            self.calls += 1
-            return super().run(*args, **kwargs)
-
     target = OperationTarget(target_id="staging", kind="local")
     targets = TargetRegistry((target,))
-    transport = CountingTransport()
+    transport = _RecordingTransport()
     paths = {
         "jobs": tmp_path / "jobs.db",
         "evidence": tmp_path / "evidence.db",
@@ -581,6 +585,161 @@ def test_two_service_processes_dispatch_one_plan_once(tmp_path) -> None:
     assert transport.calls == 1
     assert transport.operation_id == jobs[0].job_id
     assert first.inspect_job(jobs[0].job_id).status == "succeeded"
+
+
+def test_command_approval_continuation_runs_once() -> None:
+    transport = _RecordingTransport()
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="staging", kind="local"),)),
+        transports={"local": transport},
+        action_policy=_action_policy(),
+    )
+    plan = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
+    approval_id = _pending_approval(service, plan)
+
+    completed = service.continue_command_approval(
+        approval_id=approval_id,
+        decision="allow_once",
+    )
+    repeated = service.continue_command_approval(
+        approval_id=approval_id,
+        decision="allow_once",
+    )
+
+    assert completed.status == "succeeded"
+    assert repeated.job_id == completed.job_id
+    assert transport.calls == 1
+
+
+def test_command_approval_denial_never_dispatches() -> None:
+    transport = _RecordingTransport()
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="staging", kind="local"),)),
+        transports={"local": transport},
+        action_policy=_action_policy(),
+    )
+    plan = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
+    approval_id = _pending_approval(service, plan)
+
+    denied = service.continue_command_approval(
+        approval_id=approval_id,
+        decision="deny",
+    )
+
+    assert denied.status == "cancelled"
+    assert denied.remote_outcome == "not_dispatched"
+    assert transport.calls == 0
+
+
+def test_cancelled_command_rejects_late_allow_without_creating_grant() -> None:
+    transport = _RecordingTransport()
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="staging", kind="local"),)),
+        transports={"local": transport},
+        action_policy=_action_policy(),
+    )
+    plan = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
+    approval_id = _pending_approval(service, plan)
+    job = service.jobs.find_by_approval_id(approval_id)
+    assert job is not None
+    service.jobs.request_cancel(
+        job.job_id,
+        target_id=job.request.target_id,
+        session_id=job.request.session_id,
+    )
+
+    with pytest.raises(ValueError, match="no longer runnable"):
+        service.continue_command_approval(
+            approval_id=approval_id,
+            decision="allow_once",
+        )
+
+    assert service.action_policy.list_grants(active_only=True) == []
+    repeated_deny = service.continue_command_approval(
+        approval_id=approval_id,
+        decision="deny",
+    )
+    assert repeated_deny.status == "cancelled"
+    assert transport.calls == 0
+
+
+def test_running_command_retry_does_not_revalidate_expired_plan(monkeypatch) -> None:
+    transport = _RecordingTransport(block=True)
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="staging", kind="local"),)),
+        transports={"local": transport},
+        action_policy=_action_policy(),
+    )
+    plan = service.plan_command(
+        target_id="staging",
+        argv=("printf", "ready"),
+        session_id="session-1",
+        ttl_seconds=1,
+    )
+    approval_id = _pending_approval(service, plan)
+    completed = []
+
+    thread = threading.Thread(
+        target=lambda: completed.append(
+            service.continue_command_approval(
+                approval_id=approval_id,
+                decision="allow_once",
+            )
+        )
+    )
+    thread.start()
+    assert transport.started.wait(timeout=1)
+    expired_at = datetime.fromisoformat(plan.expires_at) + timedelta(seconds=1)
+    monkeypatch.setattr("openminion.tools.ops.plans.utc_now", lambda: expired_at)
+
+    repeated = service.continue_command_approval(
+        approval_id=approval_id,
+        decision="allow_once",
+    )
+    transport.cancelled.set()
+    thread.join(timeout=2)
+
+    assert repeated.status == "running"
+    assert len(completed) == 1
+    assert transport.calls == 1
+
+
+def test_command_approval_continuation_survives_reopen(tmp_path) -> None:
+    config = {"targets": [{"target_id": "staging", "kind": "local"}]}
+    policy_path = tmp_path / "policy.db"
+    service = configured_ops_service(
+        config,
+        data_root=tmp_path,
+        action_policy=PolicyCtl.with_sqlite(
+            policy_path, config=PolicyConfig(mode="enforce")
+        ),
+    )
+    plan = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
+    approval_id = _pending_approval(service, plan)
+    service.close()
+
+    reopened = configured_ops_service(
+        config,
+        data_root=tmp_path,
+        action_policy=PolicyCtl.with_sqlite(
+            policy_path, config=PolicyConfig(mode="enforce")
+        ),
+    )
+    completed = reopened.continue_command_approval(
+        approval_id=approval_id,
+        decision="allow_once",
+    )
+
+    assert completed.status == "succeeded"
+    assert completed.plan_id == plan.plan_id
 
 
 def test_consumed_approval_is_not_restored_after_capacity_failure() -> None:

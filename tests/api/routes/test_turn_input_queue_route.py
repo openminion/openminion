@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from http import HTTPStatus
+from threading import Event
+from types import SimpleNamespace
 
 from openminion.api.routes.contracts import APIRouteContext
 from openminion.api.routes.turns import handle_request
+from openminion.services.runtime import AgentRuntimeManager, TurnRequest, TurnResponse
 from openminion.services.runtime.turn_input import TurnInputQueue
+from openminion.services.runtime.turn_input.lifecycle import (
+    project_terminal_runtime_event,
+)
 
 
 @dataclass(frozen=True)
@@ -22,7 +28,11 @@ class _Sessions:
         self.events: list[_Event] = []
 
     def get_session(self, session_id: str):
-        return {"id": session_id}
+        return SimpleNamespace(
+            id=session_id,
+            channel="console",
+            target="api-user",
+        )
 
     def append_event(self, *, session_id: str, event_type: str, payload: dict):
         event = _Event(
@@ -38,10 +48,35 @@ class _Sessions:
 class _Manager:
     def __init__(self) -> None:
         self.cancelled: list[str] = []
+        self.handle = _Handle(trace_id="trace-1", session_id="s1", agent_id="a1")
+
+    def get_turn_handle(self, trace_id: str):
+        return self.handle if trace_id == self.handle.trace_id else None
 
     def cancel_turn(self, trace_id: str) -> bool:
         self.cancelled.append(trace_id)
         return trace_id != "missing"
+
+
+@dataclass(frozen=True)
+class _Handle:
+    trace_id: str
+    session_id: str
+    agent_id: str
+
+    def result(self, timeout_s=None):  # noqa: ANN001
+        del timeout_s
+        return object()
+
+
+@dataclass(frozen=True)
+class _TimeoutHandle:
+    trace_id: str
+    session_id: str
+    agent_id: str
+
+    def result(self, timeout_s=None):  # noqa: ANN001
+        raise TimeoutError(f"turn result timed out after {timeout_s}s")
 
 
 class _Runtime:
@@ -53,10 +88,45 @@ class _Runtime:
         )
         self.sessions = _Sessions()
         self.runtime_manager = _Manager()
+        self.config = SimpleNamespace(
+            gateway=SimpleNamespace(api_turn_timeout_seconds=1)
+        )
+        self.submitted: list[dict] = []
         self.closed = False
+
+    def submit_turn(self, *, payload: dict):
+        self.submitted.append(dict(payload))
+        return _Handle(
+            trace_id=str(payload["trace_id"]),
+            session_id=str(payload["session_id"]),
+            agent_id=str(payload["agent_id"]),
+        )
 
     def close(self) -> None:
         self.closed = True
+
+
+class _FailingRuntime(_Runtime):
+    def submit_turn(self, *, payload: dict):
+        del payload
+        raise RuntimeError("runtime stopped")
+
+
+class _ManagedRuntime(_Runtime):
+    def __init__(self, manager: AgentRuntimeManager) -> None:
+        super().__init__()
+        self.runtime_manager = manager
+
+    def submit_turn(self, *, payload: dict):
+        return self.runtime_manager.submit_turn(
+            TurnRequest(
+                trace_id=str(payload["trace_id"]),
+                agent_id=str(payload["agent_id"]),
+                session_id=str(payload["session_id"]),
+                input_text=str(payload["input_text"]),
+                meta={"channel": payload["channel"], "user": payload["user"]},
+            )
+        )
 
 
 def _ctx(runtime: _Runtime) -> APIRouteContext:
@@ -226,7 +296,7 @@ def test_steer_current_is_deferred_and_queued_for_next_turn() -> None:
     ]
 
 
-def test_cancel_and_run_next_reserves_head_and_reports_conflict() -> None:
+def test_cancel_and_run_next_dispatches_head_and_reports_conflict() -> None:
     runtime = _Runtime()
     created = handle_request(
         _ctx(runtime),
@@ -249,16 +319,268 @@ def test_cancel_and_run_next_reserves_head_and_reports_conflict() -> None:
     assert result is not None
     assert result.status == HTTPStatus.ACCEPTED
     assert runtime.runtime_manager.cancelled == ["trace-1"]
-    assert result.payload["reserved_entry"]["status"] == "reserved"
-    assert runtime.sessions.events[-2].event_type == "turn_input.cancel_requested"
-    assert runtime.sessions.events[-1].event_type == "turn_input.cancel_acknowledged"
+    assert runtime.submitted == [
+        {
+            "trace_id": result.payload["next_trace_id"],
+            "input_text": "next",
+            "agent_id": "a1",
+            "session_id": "s1",
+            "channel": "console",
+            "user": "api-user",
+        }
+    ]
+    assert result.payload["entry"]["status"] == "running"
+    assert [event.event_type for event in runtime.sessions.events[-3:]] == [
+        "turn_input.cancel_requested",
+        "turn_input.cancel_acknowledged",
+        "turn_input.running",
+    ]
 
+    handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/sessions/s1/turn-inputs",
+        body={"agent_id": "a1", "text": "another"},
+        query=None,
+    )
     changed = handle_request(
         _ctx(runtime),
         method_name="POST",
-        path="/v1/turn/trace-2/cancel-and-run-next",
+        path="/v1/turn/trace-1/cancel-and-run-next",
         body={"session_id": "s1", "agent_id": "a1", "expected_queue_id": "other"},
         query=None,
     )
     assert changed is not None
     assert changed.status == HTTPStatus.CONFLICT
+
+
+def test_cancel_and_run_next_releases_reservation_when_dispatch_fails() -> None:
+    runtime = _FailingRuntime()
+    handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/sessions/s1/turn-inputs",
+        body={"agent_id": "a1", "text": "next"},
+        query=None,
+    )
+
+    result = handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/turn/trace-1/cancel-and-run-next",
+        body={"session_id": "s1", "agent_id": "a1"},
+        query=None,
+    )
+
+    assert result is not None
+    assert result.status == HTTPStatus.CONFLICT
+    assert result.payload["error"]["code"] == "QUEUE_DISPATCH_FAILED"
+    entry = runtime.turn_input_queue.list_entries(session_id="s1")[0]
+    assert entry.status.value == "queued"
+    assert runtime.sessions.events[-1].event_type == "turn_input.requeued"
+
+
+def test_cancel_and_run_next_requeues_when_cancellation_does_not_settle() -> None:
+    runtime = _Runtime()
+    runtime.runtime_manager.handle = _TimeoutHandle(
+        trace_id="trace-1",
+        session_id="s1",
+        agent_id="a1",
+    )
+    handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/sessions/s1/turn-inputs",
+        body={"agent_id": "a1", "text": "next"},
+        query=None,
+    )
+
+    result = handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/turn/trace-1/cancel-and-run-next",
+        body={"session_id": "s1", "agent_id": "a1"},
+        query=None,
+    )
+
+    assert result is not None
+    assert result.status == HTTPStatus.GATEWAY_TIMEOUT
+    assert result.payload["error"]["code"] == "QUEUE_CANCEL_SETTLEMENT_TIMEOUT"
+    assert runtime.turn_input_queue.list_entries(session_id="s1")[0].status.value == (
+        "queued"
+    )
+
+
+def test_cancel_and_run_next_rejects_wrong_queue_scope() -> None:
+    runtime = _Runtime()
+    handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/sessions/s1/turn-inputs",
+        body={"agent_id": "a1", "text": "next"},
+        query=None,
+    )
+
+    result = handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/turn/trace-1/cancel-and-run-next",
+        body={"session_id": "s1", "agent_id": "other"},
+        query=None,
+    )
+
+    assert result is not None
+    assert result.status == HTTPStatus.CONFLICT
+    assert runtime.runtime_manager.cancelled == []
+    assert runtime.turn_input_queue.list_entries(session_id="s1")[0].status.value == (
+        "queued"
+    )
+
+
+def test_cancel_and_run_next_waits_for_terminal_before_next_turn() -> None:
+    first_started = Event()
+    turn_order: list[str] = []
+
+    def execute(request, _emit, cancel_event):  # noqa: ANN001
+        turn_order.append(f"start:{request.input_text}")
+        if request.input_text == "current":
+            first_started.set()
+            assert cancel_event.wait(timeout=2)
+            turn_order.append("terminal:current")
+        return TurnResponse(final_text=request.input_text)
+
+    manager = AgentRuntimeManager(turn_executor=execute)
+    runtime = _ManagedRuntime(manager)
+    current = manager.submit_turn(
+        TurnRequest(
+            trace_id="trace-current",
+            agent_id="a1",
+            session_id="s1",
+            input_text="current",
+        )
+    )
+    assert first_started.wait(timeout=2)
+    handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/sessions/s1/turn-inputs",
+        body={"agent_id": "a1", "text": "next"},
+        query=None,
+    )
+
+    try:
+        result = handle_request(
+            _ctx(runtime),
+            method_name="POST",
+            path="/v1/turn/trace-current/cancel-and-run-next",
+            body={"session_id": "s1", "agent_id": "a1"},
+            query=None,
+        )
+        assert result is not None
+        assert result.status == HTTPStatus.ACCEPTED
+        next_handle = manager.get_turn_handle(result.payload["next_trace_id"])
+        assert next_handle is not None
+        next_handle.result(timeout_s=2)
+    finally:
+        current.result(timeout_s=2)
+        manager.shutdown()
+
+    assert turn_order == ["start:current", "terminal:current", "start:next"]
+
+
+def test_cancel_and_run_next_advances_from_running_queue_entry() -> None:
+    runtime = _Runtime()
+    first = runtime.turn_input_queue.enqueue(
+        session_id="s1",
+        agent_id="a1",
+        text="current",
+    )
+    runtime.turn_input_queue.enqueue(
+        session_id="s1",
+        agent_id="a1",
+        text="next",
+    )
+    runtime.turn_input_queue.reserve_next(session_id="s1", agent_id="a1")
+    runtime.turn_input_queue.mark_running(
+        queue_id=first.queue_id,
+        trace_id="trace-1",
+    )
+
+    result = handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/turn/trace-1/cancel-and-run-next",
+        body={"session_id": "s1", "agent_id": "a1"},
+        query=None,
+    )
+
+    assert result is not None
+    assert result.status == HTTPStatus.ACCEPTED
+    assert result.payload["entry"]["queue_id"] == "q2"
+    assert result.payload["entry"]["status"] == "running"
+
+
+def test_cancel_and_run_next_records_fast_completion() -> None:
+    holder = {}
+
+    def on_runtime_event(event_type: str, payload: dict) -> None:
+        runtime = holder["runtime"]
+        project_terminal_runtime_event(
+            queue=runtime.turn_input_queue,
+            sessions=runtime.sessions,
+            event_type=event_type,
+            payload=payload,
+        )
+
+    current_started = Event()
+
+    def execute(request, _emit, cancel_event):  # noqa: ANN001
+        if request.input_text == "current":
+            current_started.set()
+            cancel_event.wait(timeout=2)
+        return TurnResponse(final_text=request.input_text)
+
+    manager = AgentRuntimeManager(
+        turn_executor=execute,
+        on_runtime_event=on_runtime_event,
+    )
+    runtime = _ManagedRuntime(manager)
+    holder["runtime"] = runtime
+    current = manager.submit_turn(
+        TurnRequest(
+            trace_id="trace-current",
+            agent_id="a1",
+            session_id="s1",
+            input_text="current",
+        )
+    )
+    assert current_started.wait(timeout=2)
+    handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/sessions/s1/turn-inputs",
+        body={"agent_id": "a1", "text": "next"},
+        query=None,
+    )
+
+    try:
+        result = handle_request(
+            _ctx(runtime),
+            method_name="POST",
+            path="/v1/turn/trace-current/cancel-and-run-next",
+            body={"session_id": "s1", "agent_id": "a1"},
+            query=None,
+        )
+        assert result is not None
+        next_handle = manager.get_turn_handle(result.payload["next_trace_id"])
+        if next_handle is not None:
+            next_handle.result(timeout_s=2)
+    finally:
+        current.result(timeout_s=2)
+        manager.shutdown()
+
+    entry = runtime.turn_input_queue.list_entries(session_id="s1")[0]
+    assert entry.status.value == "completed"
+    assert [event.event_type for event in runtime.sessions.events].count(
+        "turn_input.completed"
+    ) == 1

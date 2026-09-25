@@ -261,7 +261,12 @@ def _lift_payload_fields(*, meta: dict[str, Any], payload: dict[str, Any]) -> No
     idempotency_key = _optional_text(payload.get("idempotency_key"))
     if idempotency_key:
         meta["idempotency_key"] = idempotency_key
-    for key in ("override_provider", "override_model", "override_system_prompt"):
+    for key in (
+        "override_provider",
+        "override_model",
+        "override_system_prompt",
+        "override_thinking",
+    ):
         if key not in meta:
             value = _optional_text(payload.get(key))
             if value:

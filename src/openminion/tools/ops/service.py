@@ -339,6 +339,51 @@ class OpsService:
             )
         return self._finish_plan_result(job, claim_token, evidence, result)
 
+    def continue_command_approval(
+        self, *, approval_id: str, decision: str
+    ) -> OperationJob:
+        job = self.jobs.find_by_approval_id(approval_id)
+        if job is None or not job.plan_id:
+            raise KeyError(f"unknown command approval: {approval_id}")
+        if decision not in {"allow_once", "deny"}:
+            raise ValueError("command approval decision must be allow_once|deny")
+        if self.action_policy is None:
+            raise ToolRuntimeError(
+                "POLICY_DENIED",
+                "Operations command execution requires the canonical action policy.",
+            )
+        if (
+            job.status == "cancelled"
+            and not job.policy_grant_id
+            and decision == "allow_once"
+        ):
+            raise ValueError("cancelled command approval is no longer runnable")
+        awaiting_approval = (
+            job.status == "queued" and job.attempt_phase == "awaiting_approval"
+        )
+        if awaiting_approval:
+            plan = self.plans.get(job.plan_id)
+            self._validate_plan_execution(
+                plan_id=plan.plan_id,
+                plan_hash=plan.plan_hash,
+                session_id=job.request.session_id,
+            )
+        self.action_policy.resolve_confirmation(approval_id, decision)
+        if decision == "deny":
+            return self.jobs.request_cancel(
+                job.job_id,
+                target_id=job.request.target_id,
+                session_id=job.request.session_id,
+            )
+        if not awaiting_approval:
+            return self.jobs.get(job.job_id)
+        plan = self.plans.get(job.plan_id)
+        return self.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=job.request.session_id,
+        )
+
     def _validate_plan_execution(
         self,
         *,

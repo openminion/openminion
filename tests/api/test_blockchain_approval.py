@@ -72,11 +72,10 @@ def test_exact_blockchain_approval_returns_stable_policy_error(monkeypatch) -> N
     }
 
 
-def test_exact_ops_command_approval_resolves_server_owned_pending_row(
+def test_exact_ops_command_rejects_caller_supplied_invocation_without_pending_job(
     monkeypatch,
 ) -> None:
     runtime = MagicMock()
-    runtime.action_policy.resolve_confirmation.return_value = "grant-ops"
     monkeypatch.setattr(
         "openminion.api.operations.approve_pending.resolve_runtime_manager",
         lambda *, config_path, runtime: (None, runtime, False),
@@ -94,10 +93,8 @@ def test_exact_ops_command_approval_resolves_server_owned_pending_row(
         body=body,
     )
 
-    assert result["grant_id"] == "grant-ops"
-    runtime.action_policy.resolve_confirmation.assert_called_once_with(
-        "approval-1", "allow_once"
-    )
+    assert result["error"]["code"] == "OPS_APPROVAL_NOT_FOUND"
+    runtime.action_policy.resolve_confirmation.assert_not_called()
     runtime.action_policy.create_grant_from_confirmation.assert_not_called()
 
 

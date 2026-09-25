@@ -3,6 +3,7 @@
 from http import HTTPStatus
 from typing import Any, cast
 from urllib.parse import parse_qs
+from uuid import uuid4
 
 from openminion.api.config import close_api_runtime_if_owned, resolve_api_runtime
 from openminion.api.core.deps import resolve_runtime_manager
@@ -15,6 +16,8 @@ from openminion.services.runtime.turn_input import (
     QUEUE_EVENT_DROPPED,
     QUEUE_EVENT_ENQUEUED,
     QUEUE_EVENT_MOVED,
+    QUEUE_EVENT_REQUEUED,
+    QUEUE_EVENT_RUNNING,
     QUEUE_EVENT_STEER_DEFERRED,
     TurnInputIntent,
     TurnInputQueue,
@@ -33,7 +36,7 @@ from openminion.api.routes.contracts import (
 
 
 def _entry_payload(entry: TurnInputQueueEntry) -> dict[str, Any]:
-    return entry.to_dict(include_text=True)
+    return cast(dict[str, Any], entry.to_dict(include_text=True))
 
 
 def _turn_input_queue(runtime: APIRuntime) -> TurnInputQueue:
@@ -296,6 +299,166 @@ def move_turn_input(
         close_api_runtime_if_owned(runtime, own_runtime=own_runtime)
 
 
+def _resolve_active_queue_scope(
+    *,
+    manager: Any,
+    runtime: APIRuntime,
+    trace_id: str,
+    session_id: str,
+    agent_id: str,
+) -> tuple[Any, Any] | RouteResult:
+    handle = manager.get_turn_handle(trace_id)
+    if handle is None:
+        return error_route_result(
+            HTTPStatus.NOT_FOUND,
+            code="trace_not_found",
+            message=f"Trace not found: {trace_id}",
+            details={"trace_id": trace_id},
+            retryable=False,
+        )
+    if handle.session_id != session_id or handle.agent_id != agent_id:
+        return error_route_result(
+            HTTPStatus.CONFLICT,
+            code="QUEUE_CONFLICT",
+            message="The active turn does not match the requested queue scope.",
+            details={"trace_id": trace_id},
+            retryable=False,
+        )
+    session = runtime.sessions.get_session(session_id)
+    if session is None:
+        return error_route_result(
+            HTTPStatus.NOT_FOUND,
+            code="session_not_found",
+            message=f"Session not found: {session_id}",
+            details={"session_id": session_id},
+            retryable=False,
+        )
+    return handle, session
+
+
+def _requeue_reserved_entry(
+    *,
+    ctx: APIRouteContext,
+    runtime: APIRuntime,
+    entry: TurnInputQueueEntry,
+    trace_id: str,
+) -> None:
+    released = _turn_input_queue(runtime).requeue(queue_id=entry.queue_id)
+    _append_turn_input_event(
+        ctx=ctx,
+        runtime=runtime,
+        session_id=entry.session_id,
+        event_type=QUEUE_EVENT_REQUEUED,
+        entry=released,
+        payload={"trace_id": trace_id},
+    )
+
+
+def _cancel_and_settle_turn(
+    *,
+    ctx: APIRouteContext,
+    runtime: APIRuntime,
+    manager: Any,
+    handle: Any,
+    trace_id: str,
+    reserved: TurnInputQueueEntry,
+) -> RouteResult | None:
+    _append_turn_input_event(
+        ctx=ctx,
+        runtime=runtime,
+        session_id=reserved.session_id,
+        event_type=QUEUE_EVENT_CANCEL_REQUESTED,
+        entry=reserved,
+        payload={"trace_id": trace_id},
+    )
+    cancelled = bool(manager.cancel_turn(trace_id))
+    _append_turn_input_event(
+        ctx=ctx,
+        runtime=runtime,
+        session_id=reserved.session_id,
+        event_type=(
+            QUEUE_EVENT_CANCEL_ACKNOWLEDGED if cancelled else QUEUE_EVENT_CANCEL_FAILED
+        ),
+        entry=reserved,
+        payload={"trace_id": trace_id},
+    )
+    if not cancelled:
+        _requeue_reserved_entry(
+            ctx=ctx, runtime=runtime, entry=reserved, trace_id=trace_id
+        )
+        return error_route_result(
+            HTTPStatus.NOT_FOUND,
+            code="trace_not_found",
+            message=f"Trace not found: {trace_id}",
+            details={"trace_id": trace_id},
+            retryable=False,
+        )
+    try:
+        handle.result(timeout_s=float(runtime.config.gateway.api_turn_timeout_seconds))
+    except (RuntimeError, TimeoutError) as exc:
+        _requeue_reserved_entry(
+            ctx=ctx, runtime=runtime, entry=reserved, trace_id=trace_id
+        )
+        return error_route_result(
+            HTTPStatus.GATEWAY_TIMEOUT,
+            code="QUEUE_CANCEL_SETTLEMENT_TIMEOUT",
+            message=str(exc),
+            details={"trace_id": trace_id},
+            retryable=True,
+            retry_after_ms=1000,
+        )
+    return None
+
+
+def _dispatch_reserved_entry(
+    *,
+    ctx: APIRouteContext,
+    runtime: APIRuntime,
+    session: Any,
+    cancelled_trace_id: str,
+    reserved: TurnInputQueueEntry,
+) -> tuple[str, TurnInputQueueEntry] | RouteResult:
+    next_trace_id = uuid4().hex
+    running = _turn_input_queue(runtime).mark_running(
+        queue_id=reserved.queue_id,
+        trace_id=next_trace_id,
+    )
+    _append_turn_input_event(
+        ctx=ctx,
+        runtime=runtime,
+        session_id=reserved.session_id,
+        event_type=QUEUE_EVENT_RUNNING,
+        entry=running,
+        payload={"cancelled_trace_id": cancelled_trace_id},
+    )
+    try:
+        runtime.submit_turn(
+            payload={
+                "trace_id": next_trace_id,
+                "input_text": reserved.text,
+                "agent_id": reserved.agent_id,
+                "session_id": reserved.session_id,
+                "channel": session.channel,
+                "user": session.target,
+            }
+        )
+    except (RuntimeError, ValueError) as exc:
+        _requeue_reserved_entry(
+            ctx=ctx,
+            runtime=runtime,
+            entry=reserved,
+            trace_id=cancelled_trace_id,
+        )
+        return error_route_result(
+            HTTPStatus.CONFLICT,
+            code="QUEUE_DISPATCH_FAILED",
+            message=str(exc),
+            details={"queue_id": reserved.queue_id},
+            retryable=False,
+        )
+    return next_trace_id, running
+
+
 def cancel_and_run_next(
     ctx: APIRouteContext,
     *,
@@ -314,8 +477,20 @@ def cancel_and_run_next(
         return runtime_unavailable_route_result(path=path, exc=exc)
     session_id = str(body.get("session_id", "")).strip()
     agent_id = str(body.get("agent_id", "")).strip()
+    manager_api = cast(Any, manager)
     try:
-        reserved = _turn_input_queue(active_runtime).reserve_next(
+        scope = _resolve_active_queue_scope(
+            manager=manager_api,
+            runtime=active_runtime,
+            trace_id=trace_id,
+            session_id=session_id,
+            agent_id=agent_id,
+        )
+        if isinstance(scope, RouteResult):
+            return scope
+        current_handle, session = scope
+        queue = _turn_input_queue(active_runtime)
+        reserved = queue.reserve_next(
             session_id=session_id,
             agent_id=agent_id,
             expected_queue_id=str(body.get("expected_queue_id", "")).strip() or None,
@@ -328,41 +503,34 @@ def cancel_and_run_next(
                 details={"session_id": session_id, "agent_id": agent_id},
                 retryable=False,
             )
-        _append_turn_input_event(
+        settlement_error = _cancel_and_settle_turn(
             ctx=ctx,
             runtime=active_runtime,
-            session_id=session_id,
-            event_type=QUEUE_EVENT_CANCEL_REQUESTED,
-            entry=reserved,
-            payload={"trace_id": trace_id},
+            manager=manager_api,
+            handle=current_handle,
+            trace_id=trace_id,
+            reserved=reserved,
         )
-        cancelled = bool(cast(Any, manager).cancel_turn(trace_id))
-        event_type = (
-            QUEUE_EVENT_CANCEL_ACKNOWLEDGED if cancelled else QUEUE_EVENT_CANCEL_FAILED
-        )
-        _append_turn_input_event(
+        if settlement_error is not None:
+            return settlement_error
+        dispatched = _dispatch_reserved_entry(
             ctx=ctx,
             runtime=active_runtime,
-            session_id=session_id,
-            event_type=event_type,
-            entry=reserved,
-            payload={"trace_id": trace_id},
+            session=session,
+            cancelled_trace_id=trace_id,
+            reserved=reserved,
         )
-        if not cancelled:
-            return error_route_result(
-                HTTPStatus.NOT_FOUND,
-                code="trace_not_found",
-                message=f"Trace not found: {trace_id}",
-                details={"trace_id": trace_id},
-                retryable=False,
-            )
+        if isinstance(dispatched, RouteResult):
+            return dispatched
+        next_trace_id, running = dispatched
         return RouteResult(
             status=HTTPStatus.ACCEPTED,
             payload={
                 "ok": True,
                 "trace_id": trace_id,
                 "cancelled": True,
-                "reserved_entry": _entry_payload(reserved),
+                "next_trace_id": next_trace_id,
+                "entry": _entry_payload(running),
             },
             session_id=session_id,
         )

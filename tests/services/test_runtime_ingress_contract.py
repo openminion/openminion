@@ -309,6 +309,31 @@ def test_managed_turn_preserves_top_level_permission_mode_with_precedence() -> N
     assert request.inbound_metadata["permission_mode"] == "readonly"
 
 
+def test_managed_turn_applies_next_turn_model_thinking_and_permission() -> None:
+    runtime = _RuntimeStub()
+    manager_request = build_manager_turn_request(
+        {
+            "message": "review this",
+            "session_id": "controlled-turn",
+            "override_model": "custom-model-id",
+            "override_thinking": "high",
+            "permission_mode": "readonly",
+        },
+        default_agent_id="main",
+    )
+
+    request = runtime_turn_request_from_manager_request(
+        runtime=runtime,
+        request=manager_request,
+    )
+
+    assert request.run_profile_overrides.model == "custom-model-id"
+    assert request.run_profile_overrides.thinking == "high"
+    assert request.run_profile_overrides.permission_mode == "readonly"
+    assert request.inbound_metadata is not None
+    assert request.inbound_metadata["permission_mode"] == "readonly"
+
+
 def test_omitted_permission_mode_does_not_change_inbound_metadata() -> None:
     runtime = _RuntimeStub()
     request = runtime_turn_request_from_payload(

@@ -43,6 +43,7 @@ __all__ = [
     "TurnRequestError",
     "TurnTimeoutError",
     "_build_turn_context",
+    "_emit_chat_phase_timing",
     "_mutable_inbound_metadata",
     "apply_workspace_root",
     "apply_inbound_overrides",

@@ -206,6 +206,17 @@ class OperationJobStore:
             job = job.model_copy(update={"expires_at": expires.isoformat()})
         return job
 
+    def find_by_approval_id(self, approval_id: str) -> OperationJob | None:
+        normalized = str(approval_id or "").strip()
+        if not normalized:
+            return None
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT job_id FROM operation_jobs WHERE approval_id = ?",
+                (normalized,),
+            ).fetchone()
+        return self.get(str(row[0])) if row is not None else None
+
     def claim_plan_attempt(
         self,
         request: OperationRequest,

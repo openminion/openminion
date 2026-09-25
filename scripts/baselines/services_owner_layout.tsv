@@ -31,7 +31,9 @@ scope	max_python_files	max_loc
 # task-outcome callback and one shared schedule operation.
 # OVGA (2026-09-06) carries the existing knowledge-graph service through the
 # current brain and agent tool-context assembly.
-services	206	40764
+# PSCC (2026-09-25) adds one terminal turn-input event projector and the
+# bounded queue, manager, and ingress facts required for public client parity.
+services	207	40974
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

@@ -489,7 +489,11 @@ class AgentRuntimeManager:
             handle.cancel_event.set()
         self._emit(
             "runtime.turn.cancelled",
-            {"trace_id": normalized, "requested_at": _utc_now_iso()},
+            {
+                "trace_id": normalized,
+                "requested_at": _utc_now_iso(),
+                "terminal": False,
+            },
         )
         return True
 
@@ -607,8 +611,12 @@ class AgentRuntimeManager:
                 response=cancelled,
                 runtime_status=RUNTIME_TURN_STATUS_FAILED,
             )
-            with self._lock:
-                self._traces.pop(queued.request.trace_id, None)
+            self._finish_turn(
+                instance=instance,
+                request=queued.request,
+                response=cancelled,
+                status=RUNTIME_TURN_STATUS_FAILED,
+            )
         instance.stop_event.set()
         try:
             instance.queue.put_nowait(None)
@@ -755,7 +763,9 @@ class AgentRuntimeManager:
                 instance=instance, request=request, response=response, status=status
             )
 
-        # Cancel any queued turns during shutdown.
+        self._cancel_shutdown_queue(instance)
+
+    def _cancel_shutdown_queue(self, instance: _AgentInstance) -> None:
         while True:
             try:
                 leftover = instance.queue.get_nowait()
@@ -779,8 +789,12 @@ class AgentRuntimeManager:
                 cancelled_response,
                 RUNTIME_TURN_STATUS_CANCELLED,
             )
-            with self._lock:
-                self._traces.pop(leftover.request.trace_id, None)
+            self._finish_turn(
+                instance=instance,
+                request=leftover.request,
+                response=cancelled_response,
+                status=RUNTIME_TURN_STATUS_CANCELLED,
+            )
 
     def _finish_turn(
         self,
@@ -805,6 +819,7 @@ class AgentRuntimeManager:
                 "duration_ms": response.telemetry.duration_ms,
                 "queue_wait_ms": response.telemetry.queue_wait_ms,
                 "error_count": len(response.errors),
+                "terminal": True,
             },
         )
         if response.telemetry.retries > 0:
