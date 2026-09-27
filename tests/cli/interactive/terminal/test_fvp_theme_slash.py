@@ -15,13 +15,13 @@ from openminion.cli.interactive.terminal.shell import (
 )
 
 
-def _dispatch(text: str) -> str:
+def _dispatch(text: str, *, runtime: object | None = None) -> str:
     buf = io.StringIO()
     console = Console(file=buf, force_terminal=False, width=120)
     asyncio.run(
         _handle_slash(
             text,
-            runtime=SimpleNamespace(),
+            runtime=runtime or SimpleNamespace(),
             console=console,
             transcript=MagicMock(),
             overlay=MagicMock(),
@@ -66,18 +66,15 @@ def test_explicit_color_never_disables_console_color() -> None:
 
 def test_bare_theme_shows_active_and_available() -> None:
     out = _dispatch("/theme")
-    assert "active:" in out
-    assert "variant:" in out
-    assert "available:" in out
+    assert "Active Theme:" in out
+    assert "/theme list" in out
     assert "dark" in out.lower()
-    assert "light" in out.lower()
 
 
 def test_bare_theme_shows_switch_hint() -> None:
     out = _dispatch("/theme")
-    assert "Switch with" in out
-    assert "balanced" in out
-    assert "high_contrast" in out
+    assert "/theme <name>" in out
+    assert "/theme save <name>" in out
 
 
 def test_theme_switch_to_light_succeeds() -> None:
@@ -90,7 +87,7 @@ def test_theme_switch_to_light_succeeds() -> None:
     initial = get_active_theme_name()
     try:
         out = _dispatch("/theme light")
-        assert "switched to light" in out
+        assert "active theme is now 'light'" in out
         assert get_active_theme_name() == "light"
     finally:
         if initial == "dark":
@@ -109,7 +106,7 @@ def test_theme_switch_to_dark_succeeds() -> None:
         # First set to light, then switch back to dark.
         set_active_theme(LIGHT)
         out = _dispatch("/theme dark")
-        assert "switched to dark" in out
+        assert "active theme is now 'dark'" in out
         assert get_active_theme_name() == "dark"
     finally:
         if initial == "dark":
@@ -132,7 +129,7 @@ def test_theme_switch_is_case_insensitive() -> None:
 
     try:
         out = _dispatch("/theme LIGHT")
-        assert "switched to light" in out
+        assert "active theme is now 'light'" in out
     finally:
         set_active_theme(DARK)
 
@@ -157,3 +154,159 @@ def test_theme_variant_unknown_surfaces_error() -> None:
 def test_theme_variant_missing_arg_surfaces_error() -> None:
     out = _dispatch("/theme variant")
     assert "unknown variant" in out
+
+
+def test_theme_save_persists_through_existing_selection_owner(tmp_path) -> None:
+    from openminion.cli.presentation.styles import set_active_theme
+    from openminion.cli.theme import DARK
+    from openminion.cli.theme import read_persisted_theme
+
+    runtime = SimpleNamespace(_rt=SimpleNamespace(data_root=tmp_path))
+    try:
+        out = _dispatch("/theme save light", runtime=runtime)
+
+        assert "theme saved to" in out
+        assert read_persisted_theme(tmp_path) == "light"
+    finally:
+        set_active_theme(DARK)
+
+
+def test_invalid_theme_save_writes_nothing(tmp_path) -> None:
+    runtime = SimpleNamespace(_rt=SimpleNamespace(data_root=tmp_path))
+
+    out = _dispatch("/theme save neon", runtime=runtime)
+
+    assert "unknown theme" in out
+    assert not (tmp_path / "cli" / "theme.json").exists()
+
+
+def test_composer_and_shared_messages_follow_live_theme_switch() -> None:
+    from openminion.cli.interactive.terminal.composer import TerminalComposer
+    from openminion.cli.presentation.messages import (
+        render_error_text,
+        render_system_text,
+        render_user_text,
+    )
+    from openminion.cli.presentation.styles import set_active_theme, set_color_mode
+    from openminion.cli.theme import DARK, LIGHT
+
+    set_color_mode("always")
+    set_active_theme(DARK)
+    try:
+        composer = TerminalComposer(color=True)
+        dark_rules = dict(composer._session.style._style_rules)
+
+        set_active_theme(LIGHT)
+        composer.apply_theme()
+        light_rules = dict(composer._session.style._style_rules)
+
+        assert DARK.surface_panel_bg in dark_rules["bottom-toolbar"]
+        assert LIGHT.surface_panel_bg in light_rules["bottom-toolbar"]
+        assert LIGHT.text_accent in str(render_user_text("hello").style)
+        assert LIGHT.text_muted in str(render_system_text("notice").style)
+        assert LIGHT.state_error in str(render_error_text("failure").style)
+    finally:
+        set_active_theme(DARK)
+        set_color_mode(None)
+
+
+def test_shell_outputs_follow_live_theme_switch() -> None:
+    from openminion.cli.interactive.terminal.shell.actions import (
+        _handle_slash_expand,
+    )
+    from openminion.cli.interactive.terminal.shell import _build_ctrl_key_handlers
+    from openminion.cli.interactive.terminal.shell.delegation import (
+        handle_slash_delegate,
+    )
+    from openminion.cli.interactive.terminal.shell.model_setup import _cancel
+    from openminion.cli.interactive.terminal.shell.project import run_slash_goal
+    from openminion.cli.interactive.terminal.shell.renderers import (
+        _render_sessions_list,
+    )
+    from openminion.cli.interactive.terminal.shell.sessions import start_new_session
+    from openminion.cli.interactive.terminal.shell.slash_output import (
+        copy_latest_message,
+    )
+    from openminion.cli.presentation.styles import set_active_theme, set_color_mode
+    from openminion.cli.theme import DARK, LIGHT
+
+    def rendered_style(render) -> str:
+        console = MagicMock()
+        render(console)
+        return str(console.print.call_args.args[0].style)
+
+    transcript = MagicMock()
+    transcript.copy_last_copyable_message.return_value = ""
+    set_color_mode("always")
+    set_active_theme(LIGHT)
+    try:
+        error_outputs = [
+            rendered_style(
+                lambda console: run_slash_goal(
+                    "/goal",
+                    runtime=SimpleNamespace(),
+                    console=console,
+                    status_line=MagicMock(),
+                )
+            ),
+            rendered_style(
+                lambda console: handle_slash_delegate(
+                    "/delegate", runtime=SimpleNamespace(), console=console
+                )
+            ),
+            rendered_style(
+                lambda console: _handle_slash_expand(
+                    "/expand nope", transcript=transcript, console=console
+                )
+            ),
+        ]
+        muted_outputs = [
+            rendered_style(
+                lambda console: _build_ctrl_key_handlers(
+                    transcript=transcript,
+                    console=console,
+                )[1]()
+            ),
+            rendered_style(
+                lambda console: start_new_session(
+                    runtime=SimpleNamespace(),
+                    console=console,
+                    transcript=transcript,
+                )
+            ),
+            rendered_style(_cancel),
+            rendered_style(lambda console: copy_latest_message(transcript, console)),
+            rendered_style(
+                lambda console: _render_sessions_list(
+                    runtime=SimpleNamespace(), console=console
+                )
+            ),
+        ]
+
+        assert all(LIGHT.state_error in style for style in error_outputs)
+        assert all(LIGHT.text_muted in style for style in muted_outputs)
+        assert all(DARK.state_error not in style for style in error_outputs)
+        assert all(DARK.text_muted not in style for style in muted_outputs)
+    finally:
+        set_active_theme(DARK)
+        set_color_mode(None)
+
+
+def test_shell_outputs_remain_plain_when_color_is_disabled() -> None:
+    from openminion.cli.interactive.terminal.shell.actions import (
+        _handle_slash_expand,
+    )
+    from openminion.cli.presentation.styles import set_color_mode
+
+    console = MagicMock()
+    set_color_mode("never")
+    try:
+        _handle_slash_expand(
+            "/expand nope",
+            transcript=MagicMock(),
+            console=console,
+        )
+        style = str(console.print.call_args.args[0].style)
+        assert "#" not in style
+    finally:
+        set_color_mode(None)

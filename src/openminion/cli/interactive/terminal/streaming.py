@@ -364,9 +364,7 @@ class TerminalTurnHandle:
             status_label=self._status_label,
             spinner_frame=self._spinner.current_frame(now),
         )
-        queue_hint_row = Text(
-            "Type to queue while the current turn runs", style="dim italic"
-        )
+        queue_hint_row = Text("Type to queue for the next turn", style="dim italic")
         rows = []
         if running_block is not None:
             rows.append(running_block)

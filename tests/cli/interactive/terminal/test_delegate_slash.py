@@ -14,6 +14,7 @@ from openminion.cli.interactive.terminal.shell.delegation import (
 )
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
+from openminion.cli.presentation.models import MessageKind
 
 
 def test_terminal_slash_delegate_forwards_approval_callback() -> None:
@@ -104,11 +105,12 @@ async def test_terminal_slash_delegate_keeps_async_approval_responsive() -> None
             }
 
     console = Console(record=True, force_terminal=False)
+    transcript = TerminalTranscript(console)
     exited = await _handle_slash(
         "/delegate worker write file",
         runtime=_Runtime(),
         console=console,
-        transcript=TerminalTranscript(console),
+        transcript=transcript,
         overlay=object(),
         status_line=TerminalStatusLine(),
         working_dir=".",
@@ -118,6 +120,7 @@ async def test_terminal_slash_delegate_keeps_async_approval_responsive() -> None
     assert exited is False
     assert callback_loop is loop
     assert "Delegation:" in console.export_text()
+    assert "Delegation:" in str(transcript.copy_last_copyable_message())
 
 
 @pytest.mark.asyncio
@@ -161,3 +164,47 @@ async def test_terminal_slash_delegate_announces_work_before_completion() -> Non
 def test_delegation_start_message_ignores_non_start_modes() -> None:
     assert delegation_start_message("/delegate status task-1") == ""
     assert delegation_start_message("/delegate") == ""
+
+
+@pytest.mark.asyncio
+async def test_terminal_slash_delegate_records_invalid_request_as_error() -> None:
+    class _Runtime:
+        def delegate_task(self, **_kwargs: object) -> dict[str, object]:
+            raise AssertionError("invalid request must not delegate")
+
+    console = Console(record=True, force_terminal=False)
+    transcript = TerminalTranscript(console)
+
+    await _handle_slash(
+        "/delegate",
+        runtime=_Runtime(),
+        console=console,
+        transcript=transcript,
+        overlay=object(),
+        status_line=TerminalStatusLine(),
+        working_dir=".",
+    )
+
+    assert transcript._messages[-1].kind == MessageKind.ERROR
+
+
+@pytest.mark.asyncio
+async def test_terminal_slash_delegate_records_runtime_failure_as_error() -> None:
+    class _Runtime:
+        def delegate_task(self, **_kwargs: object) -> dict[str, object]:
+            return {"ok": False, "code": "NOT_FOUND", "message": "missing"}
+
+    console = Console(record=True, force_terminal=False)
+    transcript = TerminalTranscript(console)
+
+    await _handle_slash(
+        "/delegate missing-agent inspect",
+        runtime=_Runtime(),
+        console=console,
+        transcript=transcript,
+        overlay=object(),
+        status_line=TerminalStatusLine(),
+        working_dir=".",
+    )
+
+    assert transcript._messages[-1].kind == MessageKind.ERROR

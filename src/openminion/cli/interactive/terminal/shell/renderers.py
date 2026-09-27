@@ -17,13 +17,6 @@ from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from .labels import _runtime_label
 
-_ERR_STYLE = token_rich_style(StyleToken.ERROR)
-_INFO_STYLE = token_rich_style(StyleToken.INFO)
-_INFO_BOLD_STYLE = token_rich_style(StyleToken.INFO, bold=True)
-_MUTED_STYLE = token_rich_style(StyleToken.MUTED)
-_MUTED_ITALIC_STYLE = f"italic {_MUTED_STYLE}" if _MUTED_STYLE else "italic"
-_SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
-
 
 def _render_sessions_list(*, runtime: Any, console: Console) -> None:
     """Print past sessions as a Rich table."""
@@ -33,25 +26,34 @@ def _render_sessions_list(*, runtime: Any, console: Console) -> None:
     if not callable(lister):
         console.print(
             Text(
-                "(/sessions: runtime does not expose list_sessions)", style=_MUTED_STYLE
+                "(/sessions: runtime does not expose list_sessions)",
+                style=token_rich_style(StyleToken.MUTED),
             )
         )
         return
     try:
         items = lister()
     except Exception as exc:
-        console.print(Text(f"(/sessions: error — {exc})", style=_ERR_STYLE))
+        console.print(
+            Text(
+                f"(/sessions: error — {exc})",
+                style=token_rich_style(StyleToken.ERROR),
+            )
+        )
         return
     if not items:
-        console.print(Text("(no sessions)", style=_MUTED_ITALIC_STYLE))
+        console.print(
+            Text("(no sessions)", style=token_rich_style(StyleToken.MUTED, italic=True))
+        )
         return
     table = Table(show_header=True, header_style="bold", expand=False)
     table.add_column("")  # active marker
-    table.add_column("Session", style=_INFO_STYLE)
+    table.add_column("Session", style=token_rich_style(StyleToken.INFO))
     table.add_column("Label")
-    table.add_column("Updated", style=_MUTED_STYLE)
-    table.add_column("Channel", style=_MUTED_STYLE)
-    table.add_column("Room", style=_MUTED_STYLE)
+    muted_style = token_rich_style(StyleToken.MUTED)
+    table.add_column("Updated", style=muted_style)
+    table.add_column("Channel", style=muted_style)
+    table.add_column("Room", style=muted_style)
     for item in items:
         active = bool(getattr(item, "active", False))
         marker = "◆" if active else " "
@@ -67,7 +69,10 @@ def _render_sessions_list(*, runtime: Any, console: Console) -> None:
                 count = int(meta.get("participant_count", 0) or 0)
                 room = f"{routing}, {count} participants"
         table.add_row(
-            Text(marker, style=_INFO_BOLD_STYLE if active else ""),
+            Text(
+                marker,
+                style=token_rich_style(StyleToken.INFO, bold=True) if active else "",
+            ),
             sid,
             label,
             updated,
@@ -97,19 +102,23 @@ def _render_status_block(*, runtime: Any, console: Console, working_dir: str) ->
     console.print(Text(f"  model: {model}"))
     if adapter:
         console.print(Text(f"  API adapter: {adapter}"))
-    console.print(Text(f"  session: {session_id}", style=_MUTED_STYLE))
-    console.print(Text(f"  cwd: {working_dir}", style=_MUTED_STYLE))
+    console.print(
+        Text(f"  session: {session_id}", style=token_rich_style(StyleToken.MUTED))
+    )
+    console.print(
+        Text(f"  cwd: {working_dir}", style=token_rich_style(StyleToken.MUTED))
+    )
     console.print(
         Text(
             f"  permissions: {getattr(runtime, 'permission_mode', 'default')}",
-            style=_MUTED_STYLE,
+            style=token_rich_style(StyleToken.MUTED),
         )
     )
     console.print(
         Text(
             "  added directories: "
             f"{int(getattr(runtime, 'added_workspace_root_count', 0) or 0)}",
-            style=_MUTED_STYLE,
+            style=token_rich_style(StyleToken.MUTED),
         )
     )
     room_detector = getattr(runtime, "is_room_session", None)
@@ -118,9 +127,19 @@ def _render_status_block(*, runtime: Any, console: Console, working_dir: str) ->
         console.print()
         console.print(Text(room_reporter()))
     if usage_summary:
-        console.print(Text(f"  usage: {usage_summary}", style=_MUTED_STYLE))
+        console.print(
+            Text(
+                f"  usage: {usage_summary}",
+                style=token_rich_style(StyleToken.MUTED),
+            )
+        )
     else:
-        console.print(Text("  usage: (no usage data yet)", style=_MUTED_ITALIC_STYLE))
+        console.print(
+            Text(
+                "  usage: (no usage data yet)",
+                style=token_rich_style(StyleToken.MUTED, italic=True),
+            )
+        )
 
 
 def _render_tools_list(*, runtime: Any, console: Console) -> None:
@@ -130,19 +149,32 @@ def _render_tools_list(*, runtime: Any, console: Console) -> None:
     lister = getattr(runtime, "list_tools", None)
     if not callable(lister):
         console.print(
-            Text("(/tools: runtime does not expose list_tools)", style=_MUTED_STYLE)
+            Text(
+                "(/tools: runtime does not expose list_tools)",
+                style=token_rich_style(StyleToken.MUTED),
+            )
         )
         return
     try:
         pairs = lister()
     except Exception as exc:
-        console.print(Text(f"(/tools: error — {exc})", style=_ERR_STYLE))
+        console.print(
+            Text(
+                f"(/tools: error — {exc})",
+                style=token_rich_style(StyleToken.ERROR),
+            )
+        )
         return
     if not pairs:
-        console.print(Text("(no tools registered)", style=_MUTED_ITALIC_STYLE))
+        console.print(
+            Text(
+                "(no tools registered)",
+                style=token_rich_style(StyleToken.MUTED, italic=True),
+            )
+        )
         return
     table = Table(show_header=True, header_style="bold", expand=False)
-    table.add_column("Tool", style=_INFO_STYLE)
+    table.add_column("Tool", style=token_rich_style(StyleToken.INFO))
     table.add_column("Status")
     for name, enabled in pairs:
         status_text = Text("enabled" if enabled else "disabled")
@@ -162,41 +194,57 @@ def _render_model_status(*, runtime: Any, console: Console) -> None:
     lister = getattr(runtime, "list_models", None)
     if not callable(lister):
         console.print(
-            Text("(/model: runtime does not expose list_models)", style=_MUTED_STYLE)
+            Text(
+                "(/model: runtime does not expose list_models)",
+                style=token_rich_style(StyleToken.MUTED),
+            )
         )
         return
     try:
         rows = lister()
     except Exception as exc:
-        console.print(Text(f"(/model: error — {exc})", style=_ERR_STYLE))
+        console.print(
+            Text(
+                f"(/model: error — {exc})",
+                style=token_rich_style(StyleToken.ERROR),
+            )
+        )
         return
     model_name = _runtime_label(runtime)
     provider = format_connection_name(format_runtime_provider(runtime))
     adapter = format_runtime_adapter(runtime)
     agent = str(getattr(runtime, "agent_id", "") or "").strip() or "—"
     console.print(Text("Model selection", style="bold"))
-    console.print(Text(f"agent: {agent}", style=_MUTED_STYLE))
+    console.print(Text(f"agent: {agent}", style=token_rich_style(StyleToken.MUTED)))
     console.print(Text(f"current model: {model_name}", style="bold"))
     connection = f"connection: {provider}"
     if adapter:
         connection += f" · API format: {adapter}"
-    console.print(Text(connection, style=_MUTED_STYLE))
+    console.print(Text(connection, style=token_rich_style(StyleToken.MUTED)))
     if not rows:
         console.print(
-            Text("(this agent has no configured models)", style=_MUTED_ITALIC_STYLE)
+            Text(
+                "(this agent has no configured models)",
+                style=token_rich_style(StyleToken.MUTED, italic=True),
+            )
         )
         return
     table = Table(show_header=True, header_style="bold", expand=False)
     table.add_column("")
     table.add_column("#", justify="right")
-    table.add_column("Connection", style=_INFO_STYLE)
+    table.add_column("Connection", style=token_rich_style(StyleToken.INFO))
     table.add_column("Model")
     table.add_column("API format")
     table.add_column("Default")
     for row in rows:
         marker = "◆" if row.active else " "
         table.add_row(
-            Text(marker, style=_INFO_BOLD_STYLE if row.active else ""),
+            Text(
+                marker,
+                style=token_rich_style(StyleToken.INFO, bold=True)
+                if row.active
+                else "",
+            ),
             str(row.index),
             format_connection_name(row.connection_name),
             row.model,
@@ -213,8 +261,8 @@ def _render_model_status(*, runtime: Any, console: Console) -> None:
     ):
         console.print(
             Text.assemble(
-                (f"  {command:<20}", _SYSTEM_STYLE),
-                (description, _MUTED_STYLE),
+                (f"  {command:<20}", token_rich_style(StyleToken.SYSTEM)),
+                (description, token_rich_style(StyleToken.MUTED)),
             )
         )
 
@@ -228,24 +276,37 @@ def _render_model_command(arg: str, *, runtime: Any, console: Console) -> None:
     if action == "add":
         if not target.strip():
             console.print(
-                Text("(/model: use `/model add <model-id>`)", style=_ERR_STYLE)
+                Text(
+                    "(/model: use `/model add <model-id>`)",
+                    style=token_rich_style(StyleToken.ERROR),
+                )
             )
             return
         try:
             selected = runtime.add_model(target.strip())
         except (AgentConfigActivationError, OSError, ValueError) as exc:
-            console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
+            console.print(
+                Text(
+                    f"(/model: {exc})",
+                    style=token_rich_style(StyleToken.ERROR),
+                )
+            )
             return
         console.print(
             Text(
                 f"(model: added {selected.model} to {selected.connection_name}; "
                 "selected for this session; agent default unchanged)",
-                style=_MUTED_ITALIC_STYLE,
+                style=token_rich_style(StyleToken.MUTED, italic=True),
             )
         )
         return
     if action == "default" and not target.strip():
-        console.print(Text("(/model: use `/model default <#>`)", style=_ERR_STYLE))
+        console.print(
+            Text(
+                "(/model: use `/model default <#>`)",
+                style=token_rich_style(StyleToken.ERROR),
+            )
+        )
         return
     try:
         selected = (
@@ -254,7 +315,9 @@ def _render_model_command(arg: str, *, runtime: Any, console: Console) -> None:
             else runtime.switch_model(target.strip() if action == "use" else arg)
         )
     except (AgentConfigActivationError, OSError, ValueError) as exc:
-        console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
+        console.print(
+            Text(f"(/model: {exc})", style=token_rich_style(StyleToken.ERROR))
+        )
         return
     suffix = (
         f"is now the default for agent {runtime.agent_id}"
@@ -264,7 +327,7 @@ def _render_model_command(arg: str, *, runtime: Any, console: Console) -> None:
     console.print(
         Text(
             f"(model: {selected.connection_name} / {selected.model} — {suffix})",
-            style=_MUTED_ITALIC_STYLE,
+            style=token_rich_style(StyleToken.MUTED, italic=True),
         )
     )
 
@@ -274,75 +337,25 @@ def _render_mcp_status(*, runtime: Any, console: Console) -> None:
     if not callable(reporter):
         console.print(
             Text(
-                "(/mcp: runtime does not expose mcp_status_report)", style=_MUTED_STYLE
+                "(/mcp: runtime does not expose mcp_status_report)",
+                style=token_rich_style(StyleToken.MUTED),
             )
         )
         return
     try:
         body = str(reporter() or "").strip()
     except Exception as exc:
-        console.print(Text(f"(/mcp: error — {exc})", style=_ERR_STYLE))
-        return
-    console.print(Text(body or "(no MCP data available)", style=_MUTED_STYLE))
-
-
-def _render_theme_status(*, console: Console) -> None:
-    """Show the active theme, variant, and available themes."""
-    from openminion.cli.theme import SHIPPED_THEMES
-    from openminion.cli.presentation.styles import (
-        get_active_theme_name,
-        get_theme_variant,
-    )
-
-    active = get_active_theme_name()
-    variant = get_theme_variant()
-    body_lines = [
-        Text.assemble(
-            ("active:   ", _MUTED_STYLE),
-            (f"{active}", _SYSTEM_STYLE),
-        ),
-        Text.assemble(
-            ("variant:  ", _MUTED_STYLE),
-            (f"{variant}", _SYSTEM_STYLE),
-        ),
-        Text.assemble(
-            ("available:", _MUTED_STYLE),
-            (f"  {', '.join(sorted(SHIPPED_THEMES.keys()))}", _SYSTEM_STYLE),
-        ),
-    ]
-    for line in body_lines:
-        console.print(line)
-    console.print(
-        Text(
-            "Switch with `/theme <name>` or `/theme variant "
-            "<balanced|high_contrast>`. Session-scoped; restart reverts.",
-            style=_MUTED_ITALIC_STYLE,
-        )
-    )
-
-
-def _switch_theme(name: str, *, console: Console) -> None:
-    """Switch the active theme by name."""
-    from openminion.cli.theme import SHIPPED_THEMES
-    from openminion.cli.presentation.styles import set_active_theme
-
-    key = name.strip().lower()
-    if key not in SHIPPED_THEMES:
-        valid = ", ".join(sorted(SHIPPED_THEMES.keys()))
         console.print(
             Text(
-                f"(/theme: unknown theme {name!r}; valid options: {valid})",
-                style=_ERR_STYLE,
+                f"(/mcp: error — {exc})",
+                style=token_rich_style(StyleToken.ERROR),
             )
         )
         return
-    set_active_theme(SHIPPED_THEMES[key])
-    muted = token_rich_style(StyleToken.MUTED)
-    new_muted_italic = f"italic {muted}" if muted else "italic"
     console.print(
         Text(
-            f"(theme: switched to {key} — session-scoped)",
-            style=new_muted_italic,
+            body or "(no MCP data available)",
+            style=token_rich_style(StyleToken.MUTED),
         )
     )
 
@@ -358,7 +371,7 @@ def _switch_theme_variant(variant: str, *, console: Console) -> None:
         console.print(
             Text(
                 f"(/theme variant: unknown variant {variant!r}; valid: {valid})",
-                style=_ERR_STYLE,
+                style=token_rich_style(StyleToken.ERROR),
             )
         )
         return
@@ -366,7 +379,7 @@ def _switch_theme_variant(variant: str, *, console: Console) -> None:
     console.print(
         Text(
             f"(theme variant: switched to {key} — session-scoped)",
-            style=_MUTED_ITALIC_STYLE,
+            style=token_rich_style(StyleToken.MUTED, italic=True),
         )
     )
 
@@ -378,7 +391,7 @@ def _render_cost_snapshot(*, runtime: Any, console: Console) -> None:
         console.print(
             Text(
                 "(/cost: runtime does not expose token_usage_snapshot)",
-                style=_MUTED_STYLE,
+                style=token_rich_style(StyleToken.MUTED),
             )
         )
         return
@@ -386,10 +399,20 @@ def _render_cost_snapshot(*, runtime: Any, console: Console) -> None:
         snapshot = snapshot_getter()
         summary = format_token_usage_summary(snapshot)
     except Exception as exc:
-        console.print(Text(f"(/cost: error — {exc})", style=_ERR_STYLE))
+        console.print(
+            Text(
+                f"(/cost: error — {exc})",
+                style=token_rich_style(StyleToken.ERROR),
+            )
+        )
         return
     if not summary:
-        console.print(Text("(no usage data yet)", style=_MUTED_ITALIC_STYLE))
+        console.print(
+            Text(
+                "(no usage data yet)",
+                style=token_rich_style(StyleToken.MUTED, italic=True),
+            )
+        )
         return
     cost_usd = getattr(snapshot, "cost_usd", None)
     cost_summary = (

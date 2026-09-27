@@ -90,7 +90,7 @@ def test_set_busy_switches_placeholder_copy() -> None:
     c.set_busy(True)
     assert c._prompt_text() == "❯ "
     busy_placeholder = c._formatted_placeholder()[0][1]
-    assert "Type to queue while the current turn runs" in busy_placeholder
+    assert "Type to queue for the next turn" in busy_placeholder
     assert "Esc interrupts" in busy_placeholder
     assert c._session.app.erase_when_done is True
     c.set_busy(False)

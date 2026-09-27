@@ -238,7 +238,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     ),
     SlashCommandMetadata(
         "/review",
-        "Review the current or supplied diff",
+        "Run structural checks on the current or supplied diff",
         (
             "/review [--staged] [path]",
             "/review --file <workspace-diff>",
@@ -286,7 +286,10 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     ),
     SlashCommandMetadata("/export", "Show the transcript export command", ("/export",)),
     SlashCommandMetadata(
-        "/editor", "Show external-editor composition guidance", ("/editor",)
+        "/editor",
+        "Compose an unsent draft in your external editor",
+        ("/editor",),
+        note="Set VISUAL or EDITOR. Use Ctrl-X Ctrl-E to edit the live draft.",
     ),
     SlashCommandMetadata(
         "/readonly",
@@ -312,7 +315,6 @@ _BUSY_SAFE_SLASH_COMMANDS = frozenset(
         "/copy",
         "/cost",
         "/details",
-        "/editor",
         "/export",
         "/graph",
         "/help",

@@ -1,11 +1,17 @@
 from collections.abc import Callable, Iterable, Mapping
 import logging
+from pathlib import Path
+import shlex
+import subprocess
+import tempfile
 import time
 from typing import Any
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application import run_in_terminal
 from prompt_toolkit.application.current import get_app
-from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.completion import Completer, Completion, PathCompleter
+from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
 from prompt_toolkit.history import FileHistory
@@ -37,7 +43,7 @@ _PROMPT_DISABLED = "… "
 _PROMPT_BUSY = "❯ "
 _COMPLETION_MENU_ROWS = 10
 _PLACEHOLDER_IDLE = "Ask anything · @ to mention a file · / for commands"
-_PLACEHOLDER_BUSY = "Type to queue while the current turn runs · Esc interrupts"
+_PLACEHOLDER_BUSY = "Type to queue for the next turn · Esc interrupts"
 _SLASH_NAME_CHARS = tuple("abcdefghijklmnopqrstuvwxyz0123456789-_")
 _PHASE_ANIMATIONS = {
     "clarifying": "focusbeam",
@@ -56,14 +62,34 @@ _PHASE_ANIMATIONS = {
     "error": "warningpulse",
     "working": "sparkle",
 }
-_FOCUS_PROMPT_STYLE = Style.from_dict(
-    {
-        "bottom-toolbar": "noreverse bg:#111827 #8b949e",
-        "bottom-toolbar.text": "noreverse bg:#111827 #8b949e",
-        "busy-indicator": active_theme_color(StyleToken.SPINNER),
-        "placeholder": "italic #6b7280",
-    }
-)
+
+
+def _focus_prompt_style() -> Style:
+    from openminion.cli.presentation.styles import get_active_theme_name
+    from openminion.cli.theme import DARK, lookup_theme
+
+    theme = lookup_theme(get_active_theme_name()) or DARK
+    toolbar = f"noreverse bg:{theme.surface_panel_bg} {theme.text_muted}"
+    return Style.from_dict(
+        {
+            "bottom-toolbar": toolbar,
+            "bottom-toolbar.text": toolbar,
+            "busy-indicator": active_theme_color(StyleToken.SPINNER),
+            "placeholder": f"italic {theme.text_muted}",
+        }
+    )
+
+
+def edit_external_draft(text: str, editor_command: str) -> str:
+    argv = shlex.split(editor_command)
+    if not argv:
+        raise ValueError("VISUAL or EDITOR is empty")
+    with tempfile.TemporaryDirectory(prefix="openminion-editor-") as temp_dir:
+        draft_path = Path(temp_dir) / "draft.md"
+        draft_path.write_text(text, encoding="utf-8")
+        subprocess.run([*argv, str(draft_path)], check=True)
+        edited = draft_path.read_text(encoding="utf-8")
+    return edited
 
 
 def _completion_menu_is_open() -> bool:
@@ -232,18 +258,18 @@ class TerminalComposer:
         on_ctrl_o: object = None,
         on_shift_tab: object = None,
         on_escape: Callable[[], None] | None = None,
+        editor_command: str = "",
+        on_editor_error: Callable[[str], None] | None = None,
         working_dir: str | None = None,
         animation: AnimationResolution | None = None,
         progress: str = "full",
         color: bool | None = None,
     ) -> None:
         self._on_escape = on_escape
-        try:
-            from prompt_toolkit.completion import PathCompleter
-
-            path = PathCompleter(only_directories=False)
-        except ImportError:
-            path = None
+        self._editor_command = str(editor_command or "").strip()
+        self._on_editor_error = on_editor_error
+        self._next_draft: str | None = None
+        path = PathCompleter(only_directories=False)
         self._completer = _SlashAndAtCompleter(slash_commands, path)
         self._is_resumed = False
         self._disabled = False
@@ -310,17 +336,27 @@ class TerminalComposer:
                 _call_safely(self._on_escape)
                 event.app.invalidate()
 
-        self._key_bindings = kb
-        history = FileHistory(history_file) if history_file else None
+        kb.add("c-x", "c-e")(self._launch_editor)
+
         self._session: PromptSession[str] = PromptSession(
-            history=history,
+            history=FileHistory(history_file) if history_file else None,
             key_bindings=kb,
             enable_history_search=True,
             mouse_support=Condition(_completion_menu_is_open),
             reserve_space_for_menu=_COMPLETION_MENU_ROWS,
-            style=_FOCUS_PROMPT_STYLE if self._color else DummyStyle(),
+            style=_focus_prompt_style() if self._color else DummyStyle(),
         )
         _configure_completion_menu(self._session)
+
+    def apply_theme(self) -> None:
+        if not self._color:
+            return
+        style = _focus_prompt_style()
+        self._session.style = style
+        app = getattr(self._session, "app", None)
+        if app is not None:
+            app.style = style
+        self.invalidate()
 
     def set_resumed(self, is_resumed: bool) -> None:
         self._is_resumed = bool(is_resumed)
@@ -374,6 +410,40 @@ class TerminalComposer:
 
     def toggle_multiline(self) -> None:
         self._multiline = not self._multiline
+
+    def _launch_editor(self, event: Any) -> None:
+        event.app.create_background_task(self._edit_live_draft(event))
+
+    def prefill_draft(self, text: str) -> None:
+        self._next_draft = str(text or "")
+
+    async def edit_draft(self, text: str) -> str | None:
+        if not self._editor_command:
+            self._report_editor_error("set VISUAL or EDITOR to choose an editor")
+            return None
+        try:
+            return await run_in_terminal(
+                lambda: edit_external_draft(text, self._editor_command),
+                in_executor=True,
+            )
+        except (
+            OSError,
+            UnicodeError,
+            ValueError,
+            subprocess.CalledProcessError,
+        ) as exc:
+            self._report_editor_error(str(exc))
+            return None
+
+    async def _edit_live_draft(self, event: Any) -> None:
+        buffer = event.app.current_buffer
+        edited = await self.edit_draft(buffer.text)
+        if edited is not None:
+            buffer.document = Document(text=edited, cursor_position=len(edited))
+
+    def _report_editor_error(self, message: str) -> None:
+        if self._on_editor_error is not None:
+            self._on_editor_error(message)
 
     def _insert_newline(self, event) -> None:
         if not self._multiline:
@@ -433,6 +503,10 @@ class TerminalComposer:
     async def read_line(self) -> str:
         if self._disabled:
             raise RuntimeError("composer disabled — refuse to read input")
+        self.apply_theme()
+        draft = self._next_draft or ""
+        if "\n" in draft:
+            self._multiline = True
         # Historical guard: patch_stdout(raw=True)
         with patch_stdout():
             try:
@@ -444,7 +518,9 @@ class TerminalComposer:
                     bottom_toolbar=self._formatted_bottom_toolbar,
                     placeholder=self._formatted_placeholder,
                     refresh_interval=self._prompt_refresh_interval(),
+                    default=draft,
                 )
+                self._next_draft = None
             finally:
                 self._multiline = False
         return str(text or "").rstrip("\n")

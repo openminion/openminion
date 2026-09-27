@@ -247,7 +247,7 @@ def test_live_focus_contextual_help_while_busy(
 
         output = visible_text(help_transcript)
         assert "/permissions <default|readonly|bypass|cycle>" in output
-        assert "Queued message" not in output
+        assert "Queued for next turn" not in output
         assert f"permissions: {before_mode.group(1)}" in after_permissions
         assert "No queued messages." in queue
         write_transcript(

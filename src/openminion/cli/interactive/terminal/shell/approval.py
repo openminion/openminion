@@ -47,7 +47,10 @@ def build_terminal_approval_callback(
             if callable(pause_prompt):
                 await pause_prompt()
             try:
-                decision = await overlay.present_approval_async(prompt)
+                decision = await overlay.present_approval_async(
+                    prompt,
+                    always_label=(f"Always allow {normalized} for this shell session"),
+                )
             finally:
                 if callable(resume_prompt):
                     resume_prompt()

@@ -16,11 +16,7 @@ except ImportError:  # pragma: no cover - POSIX-only terminal interrupt support.
     tty = None  # type: ignore[assignment]
 from rich.console import Console
 from rich.text import Text
-from openminion.base.config.env import resolve_environment_config
 from openminion.cli.presentation.animation import AnimationResolution
-from openminion.cli.presentation.clipboard import (
-    copy_to_clipboard as _copy_to_clipboard,
-)
 from openminion.cli.presentation.models import ChatMessage, MessageKind
 from openminion.cli.presentation.queue import (
     is_queue_command,
@@ -41,8 +37,12 @@ from .approval import build_terminal_approval_callback as _build_approval_callba
 from . import progress as _progress
 from .queue_control import apply_queue_command
 from .startup import (
+    build_terminal_console as _build_terminal_console,
     cancel_startup_notice as _cancel_startup_notice,
+    configured_editor as _configured_editor,
+    push_greeter as _push_greeter,
     schedule_startup_notice as _schedule_startup_notice,
+    show_response_time_enabled as _show_response_time_enabled,
 )
 from .session_paths import (
     discover_custom_commands_for as _discover_custom_commands_for,
@@ -50,11 +50,11 @@ from .session_paths import (
 )
 from .slash_output import (
     PROMPT_SAFE_OUTPUT_SLASHES,
+    copy_latest_message as _copy_latest_message,
     handle_prompt_safe_output_slash,
 )
 from .actions import (
     _handle_slash,
-    _push_greeter,
     _run_shell_escape,
     _runtime_permission_mode,
     _cycle_permission_mode,
@@ -70,7 +70,7 @@ from .renderers import (
     _render_status_block as _render_status_block,
     _render_tools_list as _render_tools_list,
 )
-from openminion.cli.presentation.styles import StyleToken, is_color_enabled
+from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.slash_commands import (
     canonical_slash_command,
@@ -81,23 +81,9 @@ from openminion.cli.presentation.slash_commands import (
 from openminion.cli.presentation.visible_parity import statusline_label
 
 _LOGGER = logging.getLogger(__name__)
-_ERR_STYLE = token_rich_style(StyleToken.ERROR)
-_INFO_STYLE = token_rich_style(StyleToken.INFO)
-_INFO_BOLD_STYLE = token_rich_style(StyleToken.INFO, bold=True)
-_MUTED_STYLE = token_rich_style(StyleToken.MUTED)
-_MUTED_ITALIC_STYLE = f"italic {_MUTED_STYLE}" if _MUTED_STYLE else "italic"
-_SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 _ESCAPE_BYTE = b"\x1b"
 _TYPEAHEAD_REOPEN_DELAY_SECONDS = 0.05
 _PROMPT_REPLAY_DEDUP_WINDOW_SECONDS = 0.35
-
-
-def _build_terminal_console() -> Console:
-    if is_color_enabled():
-        return Console(force_terminal=True, color_system="truecolor", no_color=False)
-    console = Console()
-    console.no_color = True
-    return console
 
 
 @dataclass(frozen=True)
@@ -111,12 +97,13 @@ async def _confirm_terminal_exit(
 ) -> bool:
     should_exit = await overlay.present_confirm_async("Exit the interactive CLI?")
     if not should_exit:
-        console.print(Text("(exit cancelled)", style=_MUTED_ITALIC_STYLE))
+        console.print(
+            Text(
+                "(exit cancelled)",
+                style=token_rich_style(StyleToken.MUTED, italic=True),
+            )
+        )
     return should_exit
-
-
-def _show_response_time_enabled(env: Any | None = None) -> bool:
-    return resolve_environment_config(env=env).openminion_show_response_time
 
 
 def _start_escape_interrupt_watcher(
@@ -213,22 +200,7 @@ def _build_ctrl_key_handlers(
         transcript.clear_messages()
 
     def _handle_ctrl_o() -> None:
-        body = transcript.copy_last_copyable_message()
-        if not body:
-            console.print(Text("(no message to copy)", style=_MUTED_ITALIC_STYLE))
-            return
-        ok = _copy_to_clipboard(body)
-        if ok:
-            console.print(
-                Text("(copied last message to clipboard)", style=_MUTED_ITALIC_STYLE)
-            )
-        else:
-            console.print(
-                Text(
-                    "(no clipboard tool available — install pbcopy/xclip/wl-copy/clip.exe)",
-                    style=_MUTED_ITALIC_STYLE,
-                )
-            )
+        _copy_latest_message(transcript, console)
 
     return _handle_ctrl_l, _handle_ctrl_o
 
@@ -527,7 +499,7 @@ class _TerminalFocusLoop:
                 self.composer.set_busy(False)
             self.refresh_status_line(state="responding" if queued_next else "idle")
         if self.exit_after_turn:
-            self.console.print(Text("(exit)", style=_MUTED_STYLE))
+            self.console.print(Text("(exit)", style=token_rich_style(StyleToken.MUTED)))
             return 0
         if self.pending_turns and (run_next or not self.queue_auto_drain_paused):
             next_text = self.pending_turns.popleft()
@@ -542,6 +514,15 @@ class _TerminalFocusLoop:
         try:
             if is_queue_command(text):
                 await self.handle_queue_command(text)
+                self.start_read_task()
+                return None
+            if text == "/editor":
+                draft = await self.composer.edit_draft("")
+                if draft is not None:
+                    self.composer.prefill_draft(draft)
+                    self._push_system_message(
+                        "Editor draft loaded for review; press Enter to submit it."
+                    )
                 self.start_read_task()
                 return None
             if text.startswith("/"):
@@ -581,7 +562,9 @@ class _TerminalFocusLoop:
             await self.start_turn(text)
         except KeyboardInterrupt:
             if await _confirm_terminal_exit(console=self.console, overlay=self.overlay):
-                self.console.print(Text("(exit)", style=_MUTED_STYLE))
+                self.console.print(
+                    Text("(exit)", style=token_rich_style(StyleToken.MUTED))
+                )
                 return 0
             self.start_read_task()
         return None
@@ -604,11 +587,13 @@ class _TerminalFocusLoop:
                     )
                 )
                 return None
-            self.console.print(Text("(exit)", style=_MUTED_STYLE))
+            self.console.print(Text("(exit)", style=token_rich_style(StyleToken.MUTED)))
             return 0
         except KeyboardInterrupt:
             if await _confirm_terminal_exit(console=self.console, overlay=self.overlay):
-                self.console.print(Text("(exit)", style=_MUTED_STYLE))
+                self.console.print(
+                    Text("(exit)", style=token_rich_style(StyleToken.MUTED))
+                )
                 return 0
             self.start_read_task()
             return None
@@ -660,7 +645,7 @@ async def _run_terminal_focus_async(
     animation: AnimationResolution | None = None,
     startup_notice: Callable[[], str] | None = None,
 ) -> int:
-    console = _build_terminal_console()
+    console = _build_terminal_console(Console)
     transcript = TerminalTranscript(
         console,
         plain_spinner=plain_spinner,
@@ -702,6 +687,10 @@ async def _run_terminal_focus_async(
         on_ctrl_o=handle_ctrl_o,
         on_shift_tab=handle_shift_tab,
         on_escape=lambda: None,
+        editor_command=_configured_editor(runtime),
+        on_editor_error=lambda message: console.print(
+            Text(f"(editor: {message})", style=token_rich_style(StyleToken.ERROR))
+        ),
         working_dir=working_dir,
         animation=animation,
         progress=progress,
@@ -757,7 +746,7 @@ async def _run_one_shot_stdin(
             Text(
                 "openminion: empty stdin; nothing to ask. Either run "
                 "interactively or pipe a prompt.",
-                style=_ERR_STYLE,
+                style=token_rich_style(StyleToken.ERROR),
             )
         )
         return 1
@@ -770,7 +759,12 @@ async def _run_one_shot_stdin(
             status_line=None,
         )
     except Exception as exc:
-        console.print(Text(f"openminion: error — {exc}", style=_ERR_STYLE))
+        console.print(
+            Text(
+                f"openminion: error — {exc}",
+                style=token_rich_style(StyleToken.ERROR),
+            )
+        )
         return 1
     return 0
 

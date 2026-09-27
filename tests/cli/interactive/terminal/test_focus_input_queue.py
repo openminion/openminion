@@ -433,7 +433,8 @@ async def test_terminal_focus_keeps_accepting_input_while_turn_streams(
     transcript = _CapturedTranscript.last_instance
     assert transcript is not None
     assert any(
-        msg.kind == MessageKind.SYSTEM and "Queued message (1 pending)." in msg.body
+        msg.kind == MessageKind.SYSTEM
+        and "Queued for next turn (1 pending)." in msg.body
         for msg in transcript._messages
     )
     assert any(
@@ -491,11 +492,11 @@ async def test_terminal_focus_drains_multiple_queued_inputs_fifo(
     queue_messages = [
         msg.body
         for msg in transcript._messages
-        if msg.kind == MessageKind.SYSTEM and "Queued message" in msg.body
+        if msg.kind == MessageKind.SYSTEM and "Queued for next turn" in msg.body
     ]
     assert queue_messages == [
-        "Queued message (1 pending).",
-        "Queued messages (2 pending).",
+        "Queued for next turn (1 pending).",
+        "Queued for next turn (2 pending).",
     ]
     running_messages = [
         msg.body
@@ -549,7 +550,7 @@ async def test_terminal_focus_runs_safe_busy_commands_and_blocks_shell_escape(
     transcript = _CapturedTranscript.last_instance
     assert transcript is not None
     assert not any(
-        msg.kind == MessageKind.SYSTEM and "Queued message" in msg.body
+        msg.kind == MessageKind.SYSTEM and "Queued for next turn" in msg.body
         for msg in transcript._messages
     )
     assert any(
@@ -609,7 +610,7 @@ async def test_terminal_focus_runs_contextual_help_while_turn_streams(
     assert any(body.startswith("/agents —") for body in bodies)
     assert any(body.startswith("Unknown command: /statsu") for body in bodies)
     assert any(body.startswith("/exit —") for body in bodies)
-    assert not any("Queued message" in body for body in bodies)
+    assert not any("Queued for next turn" in body for body in bodies)
 
 
 @pytest.mark.asyncio
@@ -648,7 +649,7 @@ async def test_terminal_focus_queue_commands_work_while_turn_streams(
     transcript = _CapturedTranscript.last_instance
     assert transcript is not None
     bodies = [msg.body for msg in transcript._messages]
-    assert "Queued message (1 pending)." in bodies
+    assert "Queued for next turn (1 pending)." in bodies
     assert any("1. second" in body for body in bodies)
     assert any(body.startswith("Dropped queued message 1: second") for body in bodies)
     assert "No queued messages." in bodies
@@ -838,7 +839,7 @@ async def test_terminal_focus_ignores_immediate_prompt_replay_duplicate(
     transcript = _CapturedTranscript.last_instance
     assert transcript is not None
     assert not any(
-        msg.kind == MessageKind.SYSTEM and "Queued message" in msg.body
+        msg.kind == MessageKind.SYSTEM and "Queued for next turn" in msg.body
         for msg in transcript._messages
     )
 
@@ -848,8 +849,9 @@ async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() 
     events: list[str] = []
 
     class _Overlay:
-        async def present_approval_async(self, prompt: str) -> str:
+        async def present_approval_async(self, prompt: str, **kwargs: object) -> str:
             events.append(f"prompt:{prompt}")
+            events.append(f"label:{kwargs['always_label']}")
             return "allow"
 
     async def _pause_prompt() -> None:
@@ -870,9 +872,10 @@ async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() 
     assert approved is True
     assert events[0] == "pause"
     assert events[-1] == "resume"
-    assert len(events) == 3
+    assert len(events) == 4
     assert events[1].startswith("prompt:Approval required: exec.run(")
     assert "docker desktop start" in events[1]
+    assert events[2] == "label:Always allow exec.run for this shell session"
 
 
 def test_terminal_approval_prompt_preserves_full_exec_command() -> None:
@@ -940,7 +943,7 @@ async def test_terminal_approval_callback_serializes_bursty_session_grants() -> 
     release_first_prompt = asyncio.Event()
 
     class _Overlay:
-        async def present_approval_async(self, prompt: str) -> str:
+        async def present_approval_async(self, prompt: str, **_kwargs: object) -> str:
             prompts.append(prompt)
             first_prompt_entered.set()
             await release_first_prompt.wait()
@@ -961,3 +964,36 @@ async def test_terminal_approval_callback_serializes_bursty_session_grants() -> 
     assert await second is True
     assert len(prompts) == 1
     assert "one.py" in prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_terminal_approval_grant_is_tool_scoped_and_session_local() -> None:
+    prompts: list[str] = []
+
+    class _Overlay:
+        def __init__(self, decisions: list[str]) -> None:
+            self.decisions = iter(decisions)
+
+        async def present_approval_async(self, prompt: str, **_kwargs: object) -> str:
+            prompts.append(prompt)
+            return next(self.decisions)
+
+    callback = build_terminal_approval_callback(
+        overlay=_Overlay(["always", "deny"]),
+        session_grants=set(),
+    )
+
+    assert await callback("file.write", {"path": "one.py"}, "call-1") is True
+    assert await callback("file.write", {"path": "two.py"}, "call-2") is True
+    assert await callback("exec.run", {"command": "pwd"}, "call-3") is False
+    assert len(prompts) == 2
+
+    new_session_callback = build_terminal_approval_callback(
+        overlay=_Overlay(["deny"]),
+        session_grants=set(),
+    )
+    assert (
+        await new_session_callback("file.write", {"path": "three.py"}, "call-4")
+        is False
+    )
+    assert len(prompts) == 3

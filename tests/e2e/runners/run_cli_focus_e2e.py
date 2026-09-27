@@ -142,6 +142,18 @@ SUITES: dict[str, Suite] = {
         ),
         ("-k", "queued"),
     ),
+    "codex-first-local": Suite(
+        (
+            "tests/e2e/cli/focus/test_codex_first_flow.py",
+            "tests/cli/interactive/terminal/test_fle_transcript_lifecycle.py",
+            "tests/cli/interactive/terminal/test_focus_input_queue.py",
+            "tests/cli/interactive/terminal/test_overlays.py",
+            "tests/cli/interactive/terminal/test_editor_composition.py",
+            "tests/cli/interactive/terminal/test_fvp_theme_slash.py",
+            "tests/cli/interactive/terminal/test_fvi_greeter.py",
+            "tests/cli/presentation/test_review_workflow.py",
+        ),
+    ),
     "hlpe": Suite(("tests/e2e/cli/focus/test_live_high_level_request.py",)),
     "progress-visibility": Suite(
         (

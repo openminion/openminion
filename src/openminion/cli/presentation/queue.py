@@ -13,8 +13,7 @@ def queue_text_preview(text: str, *, max_width: int = _MAX_PREVIEW_WIDTH) -> str
 
 
 def queued_message_notice(count: int) -> str:
-    noun = "message" if int(count) == 1 else "messages"
-    return f"Queued {noun} ({int(count)} pending)."
+    return f"Queued for next turn ({int(count)} pending)."
 
 
 def queue_empty_notice() -> str:

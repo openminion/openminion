@@ -237,7 +237,7 @@ def test_completed_without_prior_started_still_renders() -> None:
     assert "ok" in out
 
 
-def test_repeated_tool_start_is_collapsed_by_signature() -> None:
+def test_distinct_repeated_tool_starts_remain_visible_without_live_status() -> None:
     t, buf = _make("normal")
     payload = {"tool_name": "web.search", "args": {"query": "MSFT stock"}}
 
@@ -245,12 +245,12 @@ def test_repeated_tool_start_is_collapsed_by_signature() -> None:
     t.handle_tool_started({"call_id": "c2", **payload})
 
     out = buf.getvalue()
-    assert out.count("Searching the web...") == 1
+    assert out.count("Searching the web...") == 2
     assert "c1" in t._live_narrated_call_ids
     assert "c2" in t._live_narrated_call_ids
 
 
-def test_repeated_tool_failure_result_is_collapsed_by_signature() -> None:
+def test_distinct_repeated_tool_failure_results_remain_visible() -> None:
     t, buf = _make("normal")
     payload = {
         "tool_name": "web.search",
@@ -261,12 +261,10 @@ def test_repeated_tool_failure_result_is_collapsed_by_signature() -> None:
 
     t.handle_tool_completed({"call_id": "c1", **payload})
     t.handle_tool_completed({"call_id": "c2", **payload})
-    t._maybe_print_collapsed_tool_summary()
 
     out = buf.getvalue()
-    assert out.count("tool_budget_calls_exceeded") == 1
-    assert "1 repeated tool result collapsed" in out
-    assert "Searched the web failed ×1" in out
+    assert out.count("tool_budget_calls_exceeded") == 2
+    assert "repeated tool result collapsed" not in out
     assert "MSFT stock" not in out
     assert "c1" in t._live_narrated_call_ids
     assert "c2" in t._live_narrated_call_ids
@@ -320,7 +318,6 @@ def test_repeated_tool_events_remain_exhaustive_in_verbose_mode() -> None:
     t.handle_tool_started({"call_id": "c2", **payload})
     t.handle_tool_completed({"call_id": "c1", **payload})
     t.handle_tool_completed({"call_id": "c2", **payload})
-    t._maybe_print_collapsed_tool_summary()
 
     out = buf.getvalue()
     assert out.count("Running web.search(MSFT stock)") == 2
@@ -376,7 +373,7 @@ def test_completed_during_live_turn_appends_via_handle() -> None:
     assert "second-marker" in out
 
 
-def test_started_during_live_turn_appends_running_block_via_handle() -> None:
+def test_started_during_live_turn_uses_transient_active_row() -> None:
     t, buf = _make("normal")
 
     class _CapturingHandle:
@@ -403,17 +400,61 @@ def test_started_during_live_turn_appends_running_block_via_handle() -> None:
 
     assert handle.active is not None
     assert handle.active["call_id"] == "c1"
-    assert len(handle.renderables) == 1
+    assert handle.renderables == []
     assert "Running" not in buf.getvalue()
     assert "c1" in t._live_narrated_call_ids
 
-    rendered = io.StringIO()
-    console = Console(file=rendered, force_terminal=False, width=160)
-    console.print(handle.renderables[0])
-    out = rendered.getvalue()
-    assert "List Directory in progress..." in out
-    assert "file.list_dir" not in out
-    assert "0s" not in out
+
+def test_duplicate_completion_for_same_call_id_is_not_rendered_twice() -> None:
+    t, buf = _make("normal")
+    payload = {
+        "call_id": "c1",
+        "tool_name": "file.read",
+        "args": {"path": "README.md"},
+        "content": "one result",
+    }
+
+    t.handle_tool_completed(payload)
+    t.handle_tool_completed(payload)
+
+    assert buf.getvalue().count("one result") == 1
+
+
+def test_quiet_completed_body_is_available_through_expand() -> None:
+    t, buf = _make("quiet")
+    t.handle_tool_started(
+        {"call_id": "c1", "tool_name": "file.read", "args": {"path": "README.md"}}
+    )
+    t.handle_tool_completed(
+        {
+            "call_id": "c1",
+            "tool_name": "file.read",
+            "args": {"path": "README.md"},
+            "content": "hidden result",
+        }
+    )
+
+    assert t.expand_block(1) is True
+    assert "hidden result" in buf.getvalue()
+
+
+def test_quiet_completion_without_start_counts_failure_and_keeps_detail() -> None:
+    t, buf = _make("quiet")
+
+    t.handle_tool_completed(
+        {
+            "call_id": "completion-only",
+            "tool_name": "exec.run",
+            "content": "completion-only failure",
+            "exit_code": 1,
+        }
+    )
+    t._maybe_print_hidden_tool_summary()
+
+    assert "1 tool call hidden" in buf.getvalue()
+    assert "1 failed" in buf.getvalue()
+    t.expand_block(1)
+    assert "completion-only failure" in buf.getvalue()
 
 
 def test_completed_ignores_live_clear_failure() -> None:

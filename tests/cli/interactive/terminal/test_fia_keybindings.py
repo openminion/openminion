@@ -9,8 +9,10 @@ from unittest.mock import patch
 from rich.console import Console
 
 from openminion.cli.interactive.terminal.composer import TerminalComposer
-from openminion.cli.interactive.terminal.shell import _copy_to_clipboard
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
+from openminion.cli.presentation.clipboard import (
+    copy_to_clipboard as _copy_to_clipboard,
+)
 
 
 def _make_console_and_transcript() -> tuple[Console, TerminalTranscript, io.StringIO]:

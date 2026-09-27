@@ -16,13 +16,18 @@ from openminion.services.bootstrap.provider_setup import (
 
 from ..overlays import TerminalOverlayPresenter
 
-_ERR_STYLE = token_rich_style(StyleToken.ERROR)
-_MUTED_STYLE = token_rich_style(StyleToken.MUTED)
-_MUTED_ITALIC_STYLE = f"italic {_MUTED_STYLE}" if _MUTED_STYLE else "italic"
-
 
 def _cancel(console: Console) -> None:
-    console.print(Text("(model setup cancelled)", style=_MUTED_ITALIC_STYLE))
+    console.print(
+        Text(
+            "(model setup cancelled)",
+            style=token_rich_style(StyleToken.MUTED, italic=True),
+        )
+    )
+
+
+def _print_error(console: Console, message: str) -> None:
+    console.print(Text(message, style=token_rich_style(StyleToken.ERROR)))
 
 
 def _render_preview(console: Console, preview: Any) -> None:
@@ -58,9 +63,7 @@ async def _prompt_setup_selection(
             preset = next((row for row in presets if row.preset_id == choice), None)
         if preset is not None:
             break
-        console.print(
-            Text(f"(/model: unknown connection {choice!r})", style=_ERR_STYLE)
-        )
+        _print_error(console, f"(/model: unknown connection {choice!r})")
 
     default_model = preset.recommended_models[0] if preset.recommended_models else ""
     model = await overlay.present_prompt_async(
@@ -88,7 +91,7 @@ async def _prompt_local_api_key(
     console.print(
         Text(
             f"No {exc.env_var} environment variable was found.",
-            style=_MUTED_STYLE,
+            style=token_rich_style(StyleToken.MUTED),
         )
     )
     if not await overlay.present_confirm_async(
@@ -146,7 +149,7 @@ async def handle_model_setup(
             except ProviderSetupMissingCredential:
                 raise
             except ProviderSetupError as exc:
-                console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
+                _print_error(console, f"(/model: {exc})")
                 prompt = "New connection id: "
 
     while True:
@@ -162,7 +165,7 @@ async def handle_model_setup(
             stored_api_key = entered_api_key
             continue
         except ProviderSetupError as exc:
-            console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
+            _print_error(console, f"(/model: {exc})")
             corrected_model = await overlay.present_prompt_async(f"Model [{model}]: ")
             if corrected_model is None:
                 _cancel(console)
@@ -190,12 +193,12 @@ async def handle_model_setup(
     try:
         selected = runtime.apply_model_setup(result)
     except (AgentConfigActivationError, OSError, ValueError) as exc:
-        console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
+        _print_error(console, f"(/model: {exc})")
         return
     console.print(
         Text(
             f"(model: saved {selected.connection_name} / {selected.model}; "
             "selected for this session; not tested yet)",
-            style=_MUTED_ITALIC_STYLE,
+            style=token_rich_style(StyleToken.MUTED, italic=True),
         )
     )

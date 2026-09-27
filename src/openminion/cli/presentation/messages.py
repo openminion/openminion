@@ -7,10 +7,6 @@ from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 
 _MARKDOWN_PREFIXES = ("#", "- ", "* ", "> ", "```", "1.", "|")
-_USER_PREFIX_STYLE = token_rich_style(StyleToken.USER, dim=True)
-_MUTED_BASE = token_rich_style(StyleToken.MUTED)
-_SYSTEM_STYLE = f"italic {_MUTED_BASE}" if _MUTED_BASE else "italic"
-_ERROR_STYLE = token_rich_style(StyleToken.ERROR)
 
 
 def looks_like_markdown(text: str) -> bool:
@@ -35,17 +31,18 @@ def render_body(text: str, *, markdown_allowed: bool = True) -> object:
 
 
 def render_user_text(text: str) -> Text:
-    body = Text("> ", style=_USER_PREFIX_STYLE)
+    body = Text("> ", style=token_rich_style(StyleToken.USER, dim=True))
     body.append(str(text or ""))
     return body
 
 
 def render_system_text(text: str) -> Text:
-    return Text(str(text or ""), style=_SYSTEM_STYLE)
+    muted = token_rich_style(StyleToken.MUTED)
+    return Text(str(text or ""), style=f"italic {muted}" if muted else "italic")
 
 
 def render_error_text(text: str) -> Text:
-    return Text(str(text or ""), style=_ERROR_STYLE)
+    return Text(str(text or ""), style=token_rich_style(StyleToken.ERROR))
 
 
 __all__ = [

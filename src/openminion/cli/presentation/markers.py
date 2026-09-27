@@ -35,16 +35,30 @@ def marker_ansi(marker: Marker) -> str:
 
 
 def token_rich_style(
-    token: StyleToken, *, bold: bool = False, dim: bool = False
+    token: StyleToken,
+    *,
+    bold: bool = False,
+    dim: bool = False,
+    italic: bool = False,
 ) -> str:
     if not is_color_enabled():
-        mods = [m for m in ("bold" if bold else "", "dim" if dim else "") if m]
+        mods = [
+            modifier
+            for modifier, enabled in (
+                ("bold", bold),
+                ("dim", dim),
+                ("italic", italic),
+            )
+            if enabled
+        ]
         return " ".join(mods)
     parts: list[str] = []
     if bold:
         parts.append("bold")
     if dim:
         parts.append("dim")
+    if italic:
+        parts.append("italic")
     parts.append(active_theme_color(token))
     return " ".join(parts)
 

@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
+import time
 from typing import Any
 
 
@@ -12,6 +13,8 @@ class OllamaFixtureHandler(BaseHTTPRequestHandler):
     requests: list[dict[str, Any]] = []
     turn_response_index = 0
     turn_response_messages: tuple[dict[str, Any], ...] = ()
+    response_delay_seconds = 0.0
+    last_turn_response_message: dict[str, Any] = {}
 
     def log_message(self, format: str, *args: object) -> None:
         del format, args
@@ -47,13 +50,14 @@ class OllamaFixtureHandler(BaseHTTPRequestHandler):
                 ),
             }
         elif schema_title == "ClosureJudgment":
-            task_complete = type(self).turn_response_index >= len(
-                type(self).turn_response_messages
+            final_content = str(
+                type(self).last_turn_response_message.get("content", "")
             )
+            task_complete = "<finalization_status>" in final_content or type(
+                self
+            ).turn_response_index >= len(type(self).turn_response_messages)
             final_answer = (
-                str(type(self).turn_response_messages[-1]["content"])
-                .partition("<finalization_status>")[0]
-                .strip()
+                final_content.partition("<finalization_status>")[0].strip()
                 if task_complete
                 else None
             )
@@ -75,10 +79,13 @@ class OllamaFixtureHandler(BaseHTTPRequestHandler):
                 ),
             }
         else:
+            if type(self).response_delay_seconds:
+                time.sleep(type(self).response_delay_seconds)
             response_message = type(self).turn_response_messages[
                 type(self).turn_response_index
             ]
             type(self).turn_response_index += 1
+            type(self).last_turn_response_message = response_message
         payload = json.dumps(
             {
                 "model": "qwen2.5:14b",
@@ -101,10 +108,14 @@ class OllamaFixtureHandler(BaseHTTPRequestHandler):
 @contextmanager
 def ollama_fixture_server(
     turn_response_messages: tuple[dict[str, Any], ...],
+    *,
+    response_delay_seconds: float = 0.0,
 ) -> Iterator[tuple[str, list[dict[str, Any]]]]:
     OllamaFixtureHandler.requests = []
     OllamaFixtureHandler.turn_response_index = 0
     OllamaFixtureHandler.turn_response_messages = turn_response_messages
+    OllamaFixtureHandler.response_delay_seconds = response_delay_seconds
+    OllamaFixtureHandler.last_turn_response_message = {}
     server = ThreadingHTTPServer(("127.0.0.1", 0), OllamaFixtureHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

@@ -22,11 +22,17 @@ class ReviewWorkflowResult:
 def run_review_workflow(
     working_dir: str | Path, args: str = ""
 ) -> ReviewWorkflowResult:
-    diff_text, source, no_target_message = _resolve_review_diff(working_dir, args)
+    diff_text, source, scope, no_target_message = _resolve_review_diff(
+        working_dir, args
+    )
     if no_target_message is not None:
         return ReviewWorkflowResult(
             action_result=None,
-            body=f"/review: no review target ({no_target_message})",
+            body=(
+                "Structural diff check not run\n"
+                f"Scope: {scope}\n"
+                f"Reason: {no_target_message}"
+            ),
             diff_source=source,
         )
 
@@ -35,7 +41,7 @@ def run_review_workflow(
     )
     return ReviewWorkflowResult(
         action_result=action_result,
-        body=_format_review_result(action_result, diff_source=source),
+        body=_format_review_result(action_result, scope=scope),
         diff_source=source,
     )
 
@@ -43,67 +49,95 @@ def run_review_workflow(
 def _resolve_review_diff(
     working_dir: str | Path,
     args: str,
-) -> tuple[str, str, str | None]:
+) -> tuple[str, str, str, str | None]:
     raw = str(args or "").strip()
     if raw.startswith("--diff"):
         payload = raw.removeprefix("--diff").strip()
-        return payload, "supplied-diff", None if payload else "empty supplied diff"
+        return (
+            payload,
+            "supplied-diff",
+            "supplied inline diff",
+            None if payload else "empty supplied diff",
+        )
     if raw.startswith("diff --git"):
-        return raw, "supplied-diff", None
+        return raw, "supplied-diff", "supplied inline diff", None
     if raw.startswith("--file"):
         return _read_workspace_diff_file(working_dir, raw)
 
     try:
         result = render_git_diff(working_dir, raw)
     except ValueError as exc:
-        return "", "git-diff", str(exc)
+        return "", "git-diff", "requested git diff", str(exc)
+    scope = _git_diff_scope(raw)
     if result.has_diff:
-        return result.output, "git-diff", None
-    return "", "git-diff", result.message.strip("()") or "no pending changes detected"
+        return result.output, "git-diff", scope, None
+    return (
+        "",
+        "git-diff",
+        scope,
+        result.message.strip("()") or "no pending changes detected",
+    )
+
+
+def _git_diff_scope(args: str) -> str:
+    tokens = shlex.split(str(args or "").strip())
+    staged = bool(tokens and tokens[0] == "--staged")
+    if staged:
+        tokens = tokens[1:]
+    base = "staged changes" if staged else "working tree (unstaged changes)"
+    return f"{base} for path {tokens[0]}" if tokens else base
 
 
 def _read_workspace_diff_file(
     working_dir: str | Path,
     raw: str,
-) -> tuple[str, str, str | None]:
+) -> tuple[str, str, str, str | None]:
     try:
         parts = shlex.split(raw)
     except ValueError as exc:
-        return "", "file", f"invalid --file argument: {exc}"
+        return "", "file", "workspace diff file", f"invalid --file argument: {exc}"
     if len(parts) != 2 or parts[0] != "--file":
-        return "", "file", "usage: /review [--file <workspace-diff>]"
+        return (
+            "",
+            "file",
+            "workspace diff file",
+            "usage: /review [--file <workspace-diff>]",
+        )
 
     root = Path(str(working_dir or ".")).expanduser().resolve(strict=False)
     candidate = (root / parts[1]).expanduser().resolve(strict=False)
+    scope = f"workspace diff file {parts[1]}"
     try:
         candidate.relative_to(root)
     except ValueError:
-        return "", "file", "diff file must stay inside the workspace"
+        return "", "file", scope, "diff file must stay inside the workspace"
     if not candidate.is_file():
-        return "", "file", f"diff file not found: {parts[1]}"
+        return "", "file", scope, f"diff file not found: {parts[1]}"
     try:
         payload = candidate.read_text(encoding="utf-8")
     except OSError as exc:
-        return "", "file", f"diff file unreadable: {exc}"
-    return payload, "file", None if payload.strip() else "diff file is empty"
+        return "", "file", scope, f"diff file unreadable: {exc}"
+    return payload, "file", scope, None if payload.strip() else "diff file is empty"
 
 
-def _format_review_result(action_result: ActionResult, *, diff_source: str) -> str:
+def _format_review_result(action_result: ActionResult, *, scope: str) -> str:
     if action_result.status != "success":
         error = action_result.error
         message = error.message if error is not None else action_result.summary
-        return f"/review failed ({diff_source}): {message}"
+        return f"Structural diff check failed\nScope: {scope}\nReason: {message}"
 
     outputs: dict[str, Any] = dict(action_result.outputs or {})
     review_result = dict(outputs.get("review_result") or {})
     findings = list(review_result.get("findings") or [])
     severity = str(outputs.get("severity") or review_result.get("severity") or "ok")
     lines = [
-        f"Review result ({diff_source}): severity={severity}; "
+        "Structural diff check",
+        f"Scope: {scope}",
+        f"Result: severity={severity}; "
         f"findings={outputs.get('findings_count', len(findings))}; "
         f"files={outputs.get('file_count', 0)}; "
         f"+{outputs.get('lines_added', 0)}/-{outputs.get('lines_removed', 0)}",
-        str(action_result.summary or "review.diff returned no findings."),
+        str(action_result.summary or "review.diff returned no structural findings."),
     ]
     if findings:
         lines.append("Findings:")
