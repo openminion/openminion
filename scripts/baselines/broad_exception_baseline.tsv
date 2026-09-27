@@ -101,7 +101,7 @@ src/openminion/modules/brain/loop/adaptive/context.py	1	0	current broad-handler 
 src/openminion/modules/brain/loop/adaptive/events.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/adaptive/finalization.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/adaptive/seeded.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/brain/loop/continuation.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/brain/loop/continuation.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/orchestration.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/proactive_entrypoint.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/recursive/llm.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -216,7 +216,7 @@ src/openminion/modules/memory/portability/service.py	1	0	current broad-handler b
 src/openminion/modules/memory/runtime/candidate_lifecycle.py	3	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/consolidation/eligibility.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/consolidation/extract.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/memory/runtime/consolidation/merge.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/memory/runtime/consolidation/merge.py	3	0	batch-item and post-commit hint boundaries report failures without losing completed decisions
 src/openminion/modules/memory/runtime/gc_capacity.py	1	0	current broad-handler baseline; transaction rollback boundary moved from gc.py by MRGC
 src/openminion/modules/memory/runtime/gc_confidence.py	1	0	current broad-handler baseline; transaction rollback boundary moved from gc.py by MRGC
 src/openminion/modules/memory/runtime/gc_insights.py	1	0	current broad-handler baseline; transaction rollback boundary moved from gc.py by MRGC
