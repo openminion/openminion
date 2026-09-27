@@ -38,7 +38,10 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _READY_PROMPT_RE = re.compile(r"(?:^|\n)(?:\[[^\]\n]+\]\s+you>|\u276f)\s*$")
 _CONFIRMATION_REQUIRED_RE = re.compile(r"Policy confirmation required\.", re.IGNORECASE)
 _INLINE_APPROVAL_RE = re.compile(
-    r"(?:Approval required:[^\n]*\n)?\[y\]es / \[N\]o / \[a\]lways:\s*",
+    r"(?:Approval required:[^\n]*\n)?"
+    r"\[y\]\s*(?:es|Allow once)\s*/\s*"
+    r"\[N\]\s*(?:o|Deny \(default\))\s*/\s*"
+    r"\[a\]\s*(?:lways|Always allow [^:]+):\s*",
     re.IGNORECASE,
 )
 _TURN_DONE_RE = re.compile(r"\bDone in \d+(?:m\d{2}s|s)\b")
@@ -924,10 +927,12 @@ def _read_until(
             if now - last_durable_completion_check >= 1.0:
                 last_durable_completion_check = now
                 if durable_completion_predicate():
-                    raise _ProbeDurableCompletion(
-                        phase=phase,
-                        trailing_text=combined,
-                    )
+                    pending, _, _ = select.select([master_fd], [], [], 0)
+                    if not pending:
+                        raise _ProbeDurableCompletion(
+                            phase=phase,
+                            trailing_text=combined,
+                        )
         try:
             ready, _, _ = select.select([master_fd], [], [], min(0.05, remaining))
             if not ready:

@@ -11,7 +11,11 @@ from pathlib import Path
 import pytest
 
 from openminion.base.generated_paths import resolve_generated_root
-from tests.helpers.live_cli_chat_alibaba import skip_if_provider_auth_rejected
+from tests.helpers.live_cli_chat_alibaba import (
+    skip_if_provider_auth_rejected,
+    transcript_has_assistant_output,
+    transcript_has_cli_ready,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -336,21 +340,27 @@ def test_live_cli_chat_identity_yaml_matrix(scenario: _Scenario) -> None:
             attempt_suffix="retry1",
         )
 
-    assert f"chat ready agent={scenario.agent_id}" in transcript, (
+    assert transcript_has_cli_ready(
+        transcript=transcript,
+        agent_id=scenario.agent_id,
+    ), (
         f"missing chat ready marker for scenario={scenario.id}\n"
         f"transcript={transcript_path}"
     )
-    assistant_marker = f"[{session_id}|{scenario.agent_id}] {scenario.agent_id}:"
+    has_assistant_output = transcript_has_assistant_output(
+        transcript=transcript,
+        session_id=session_id,
+        agent_id=scenario.agent_id,
+    )
     if scenario.expected_turn_failure_token:
         assert (
-            assistant_marker in transcript
-            or scenario.expected_turn_failure_token in transcript
+            has_assistant_output or scenario.expected_turn_failure_token in transcript
         ), (
             f"missing assistant response or expected policy failure marker for scenario={scenario.id}\n"
             f"transcript={transcript_path}"
         )
     else:
-        assert assistant_marker in transcript, (
+        assert has_assistant_output, (
             f"missing assistant response marker for scenario={scenario.id}\n"
             f"transcript={transcript_path}"
         )

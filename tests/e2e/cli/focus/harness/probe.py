@@ -25,7 +25,9 @@ _LEGACY_INLINE_APPROVAL_RE = re.compile(
     r"\[A\]\s*Allow once\s+\[S\]\s*Session allow\s+\[D\]\s*Deny"
 )
 _COMPACT_INLINE_APPROVAL_RE = re.compile(
-    r"\[y\]es\s*/\s*\[N\]o\s*/\s*\[a\]lways:",
+    r"\[y\]\s*(?:es|Allow once)\s*/\s*"
+    r"\[N\]\s*(?:o|Deny \(default\))\s*/\s*"
+    r"\[a\]\s*(?:lways|Always allow [^:]+):",
     re.IGNORECASE,
 )
 _DONE_RE = re.compile(r"\bDone in \d+(?:m\d{2}s|s)\b")
@@ -55,7 +57,8 @@ _APPROVAL_RESOLVED_RE = re.compile(
     r"(?:Approved\.|Approval denied\.)"
 )
 _ACTIVE_TURN_STATUS_RE = re.compile(
-    r"(?:thinking…|responding\s*\||Analyzing request\.\.\.|Working\.\.\.)",
+    r"(?:thinking…|responding\s*\||Analyzing request\.\.\.|Working\.\.\.|"
+    r"Type to queue for the next turn)",
     re.IGNORECASE,
 )
 _COMPOSER_ECHO_PROBE_LENGTH = 48

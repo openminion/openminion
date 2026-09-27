@@ -14,6 +14,8 @@ from tests.helpers.live_cli_chat_alibaba import (
     is_unknown_tool_flake,
     parse_tool_results,
     run_cli_session,
+    transcript_has_assistant_output,
+    transcript_has_cli_ready,
 )
 
 pytestmark = pytest.mark.e2e
@@ -134,11 +136,15 @@ def test_live_cli_chat_alibaba_minimax_matrix(scenario: _Scenario) -> None:
     transcript = result.transcript
     transcript_path = result.transcript_path
 
-    assert f"chat ready agent={agent_id}" in transcript, (
+    assert transcript_has_cli_ready(transcript=transcript, agent_id=agent_id), (
         f"missing chat ready marker for scenario={scenario.id}\n"
         f"transcript={transcript_path}"
     )
-    assert f"[{session_id}|{agent_id}] {agent_id}:" in transcript, (
+    assert transcript_has_assistant_output(
+        transcript=transcript,
+        session_id=session_id,
+        agent_id=agent_id,
+    ), (
         f"missing assistant response marker for scenario={scenario.id}\n"
         f"transcript={transcript_path}"
     )

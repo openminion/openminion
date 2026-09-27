@@ -108,6 +108,14 @@ def test_turn_response_boundary_accepts_inline_approval_prompt() -> None:
     assert _turn_response_boundary_detected(screen)
     assert _latest_prompt_requires_confirmation("", screen)
 
+    current_screen = (
+        'Approval required: file.write("README.md")\n'
+        "[y] Allow once / [N] Deny (default) / [a] Always allow file.write "
+        "for this shell session: "
+    )
+    assert _turn_response_boundary_detected(current_screen)
+    assert _latest_prompt_requires_confirmation("", current_screen)
+
 
 def test_inferred_dispatch_sites_maps_coding_and_research_routes() -> None:
     coding = _inferred_dispatch_sites(

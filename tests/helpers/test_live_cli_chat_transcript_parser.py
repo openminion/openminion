@@ -21,6 +21,19 @@ def test_focus_banner_is_accepted_as_cli_ready_with_flexible_spacing() -> None:
     assert transcript_has_cli_ready(transcript=transcript, agent_id="minimax-m2-7")
 
 
+def test_focus_banner_uses_structured_agent_when_card_omits_agent() -> None:
+    transcript = "\n".join(
+        (
+            "OpenMinion CLI",
+            "│ model:       MiniMax-M2.7",
+            json.dumps({"last_turn": {"metadata": {"agent": "minimax-m2-7"}}}),
+        )
+    )
+
+    assert transcript_has_cli_ready(transcript=transcript, agent_id="minimax-m2-7")
+    assert not transcript_has_cli_ready(transcript=transcript, agent_id="other-agent")
+
+
 def test_legacy_prose_marker_path_extracts_assistant_body() -> None:
     transcript = (
         f"[chat ready] agent={_AGENT_ID} session={_SESSION_ID}\n"

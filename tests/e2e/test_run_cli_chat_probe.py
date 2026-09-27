@@ -257,7 +257,7 @@ def test_probe_auto_confirm_replies_always_to_confirmation_prompts() -> None:
     assert "[probe-status]" not in transcript
 
 
-def test_probe_auto_confirm_replies_always_to_budget_approval_prompt() -> None:
+def test_probe_auto_confirm_replies_to_current_approval_prompt() -> None:
     command = _helper_command(
         """
         import sys
@@ -277,7 +277,10 @@ def test_probe_auto_confirm_replies_always_to_budget_approval_prompt() -> None:
                 break
             if not awaiting_confirmation:
                 write("Budget: allocated\\n\\n")
-                write("[y]es / [N]o / [a]lways: ")
+                write(
+                    "[y] Allow once / [N] Deny (default) / [a] Always allow "
+                    "file.write for this shell session: "
+                )
                 awaiting_confirmation = True
                 continue
             write(f"{PREFIX} agent: confirmed {message}\\n")
@@ -354,6 +357,55 @@ def test_probe_confirmation_wait_can_return_on_durable_completion(tmp_path) -> N
 
     assert exit_code == 0
     assert "[probe-status] phase=durable_turn_completed exit_code=0" in transcript
+
+
+def test_probe_visible_approval_precedes_durable_completion(tmp_path) -> None:
+    marker = tmp_path / "completed"
+    command = _helper_command(
+        f"""
+        import sys
+        from pathlib import Path
+
+        PREFIX = "[probe|agent]"
+        MARKER = Path({str(marker)!r})
+
+        def write(text: str) -> None:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+
+        awaiting_confirmation = False
+        write("chat ready\\n")
+        write(f"{{PREFIX}} you> ")
+        for raw in sys.stdin:
+            message = raw.rstrip("\\n")
+            if message == "/exit":
+                break
+            if not awaiting_confirmation:
+                MARKER.write_text("done", encoding="utf-8")
+                write(
+                    "[y] Allow once / [N] Deny (default) / [a] Always allow "
+                    "file.write for this shell session: "
+                )
+                awaiting_confirmation = True
+                continue
+            write(f"{{PREFIX}} agent: confirmed {{message}}\\n")
+            write(f"{{PREFIX}} you> ")
+        """
+    )
+
+    exit_code, transcript = _run_probe_session(
+        cmd=command,
+        env=dict(os.environ),
+        cwd=os.getcwd(),
+        messages=["write scratch file"],
+        timeout_seconds=2.0,
+        auto_confirm=True,
+        durable_completion_predicate=marker.exists,
+    )
+
+    assert exit_code == 0
+    assert "[probe|agent] agent: confirmed always" in transcript
+    assert "[probe-status] phase=durable_turn_completed" not in transcript
 
 
 def test_probe_uses_one_timeout_budget_across_confirmation_wait() -> None:
