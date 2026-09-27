@@ -233,9 +233,9 @@ def _attach_postprocess_action_metadata(
     _attach_cumulative_tool_result_metadata(
         metadata=metadata, tool_results_payload=cumulative_tool_results_payload
     )
+    action_result = getattr(step_out, "action_result", None)
     _attach_structured_action_output_metadata(
-        metadata=metadata,
-        action_result=getattr(step_out, "action_result", None),
+        metadata=metadata, action_result=action_result
     )
     if (
         finalization_payload is not None
@@ -245,14 +245,8 @@ def _attach_postprocess_action_metadata(
             finalization_payload,
             sort_keys=True,
         )
-    _attach_watch_outcome_metadata(
-        metadata=metadata,
-        action_result=getattr(step_out, "action_result", None),
-    )
-    _attach_delegation_result_metadata(
-        metadata=metadata,
-        action_result=getattr(step_out, "action_result", None),
-    )
+    _attach_watch_outcome_metadata(metadata=metadata, action_result=action_result)
+    _attach_delegation_result_metadata(metadata=metadata, action_result=action_result)
 
 
 def _agent_response_from_postprocess(

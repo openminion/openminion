@@ -179,8 +179,9 @@ def _cumulative_tool_results_from_step_output(
     tool_results_payload: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     working_state = getattr(step_out, STATE_KEY_WORKING, None)
-    module_state = getattr(working_state, STATE_KEY_MODULE_STATE, {})
-    adaptive_loop = module_state.get("adaptive_loop", {})
+    adaptive_loop = getattr(working_state, STATE_KEY_MODULE_STATE, {}).get(
+        "adaptive_loop", {}
+    )
     trace_id = str(getattr(working_state, "trace_id", "") or "").strip()
     candidates = _coerce_tool_results_payload(adaptive_loop.get("tool_results"))
     last_result = getattr(working_state, "last_result", None)
@@ -190,8 +191,7 @@ def _cumulative_tool_results_from_step_output(
         for item in candidates
         if trace_id and str(item.get("turn_scope_id", "") or "") == trace_id
     ]
-    candidates.extend(tool_results_payload or [])
-    return _dedupe_tool_results(candidates)
+    return _dedupe_tool_results(candidates + tool_results_payload)
 
 
 def _action_result_termination_reason(action_result: Any | None) -> str:

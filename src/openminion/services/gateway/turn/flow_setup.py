@@ -243,8 +243,9 @@ class GatewayTurnSetupMixin:
         session_turn_fence_token: int | None = None,
     ) -> TurnContext:
         with active_chat_phase("memory_followup_flush"):
-            flush = self._memory_followup_queue.flush
-            await asyncio.to_thread(flush, session_id=routing.session.id)
+            await asyncio.to_thread(
+                self._memory_followup_queue.flush, session_id=routing.session.id
+            )
         return build_turn_context(
             history=history,
             agent_id=self._agent_id,
