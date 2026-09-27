@@ -191,6 +191,7 @@ def _h_process_poll(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]
             extra={"session_id": params.session_id},
         )
         result = ProcessPollResult(
+            ok=False,
             status=EXEC_PROCESS_STATUS_KILLED,
             summary="Session not found.",
             error=ExecErrorModel(code="NOT_FOUND", message="session not found"),
@@ -208,6 +209,7 @@ def _h_process_poll(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]
     )
 
     result = ProcessPollResult(
+        ok=True,
         status=_status_for_entry(snapshot),  # type: ignore[arg-type]
         exit_code=snapshot.exit_code,
         new_stdout_artifact=stdout_artifact,

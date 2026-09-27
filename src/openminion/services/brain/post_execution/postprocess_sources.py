@@ -3,6 +3,7 @@ import re
 from typing import Any
 
 from openminion.base.constants import STATE_KEY_WORKING
+from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 
 _SEARCH_SOURCE_MARKER_RE = re.compile(
     r"(source=|via\s+[a-z0-9_.-]+)",
@@ -174,17 +175,21 @@ def _dedupe_tool_results(
 
 
 def _cumulative_tool_results_from_step_output(
-    *,
     step_out: Any,
     tool_results_payload: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     working_state = getattr(step_out, STATE_KEY_WORKING, None)
-    prior_action_result = getattr(working_state, "last_result", None)
-    candidates: list[dict[str, Any]] = []
-    if prior_action_result is not None:
-        candidates.extend(
-            _tool_results_from_action_outputs(action_result=prior_action_result)
-        )
+    module_state = getattr(working_state, STATE_KEY_MODULE_STATE, {})
+    adaptive_loop = module_state.get("adaptive_loop", {})
+    trace_id = str(getattr(working_state, "trace_id", "") or "").strip()
+    candidates = _coerce_tool_results_payload(adaptive_loop.get("tool_results"))
+    last_result = getattr(working_state, "last_result", None)
+    candidates += _tool_results_from_action_outputs(action_result=last_result)
+    candidates = [
+        item
+        for item in candidates
+        if trace_id and str(item.get("turn_scope_id", "") or "") == trace_id
+    ]
     candidates.extend(tool_results_payload or [])
     return _dedupe_tool_results(candidates)
 

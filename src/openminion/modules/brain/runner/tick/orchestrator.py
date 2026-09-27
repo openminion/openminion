@@ -72,9 +72,8 @@ def _mission_route_for_tick(runner: "BrainRunner", state, user_input: str | None
 
 
 def _capture_new_user_input(
-    runner: "BrainRunner", state, *, user_input: str | None, trace_id: str | None
+    runner: "BrainRunner", state, *, user_input: str | None
 ) -> None:
-    state.trace_id = trace_id or new_uuid()
     if state.pending_confirmation_command is not None:
         reply = confirmation._parse_confirmation_response(  # noqa: SLF001
             runner,
@@ -257,6 +256,8 @@ def run_step(
         forced_tools=forced_tools,
         capability_category=capability_category,
     )
+    if pending_trigger or tick_ctx.has_new_user_input:
+        state.trace_id = tick_ctx.trace_id or new_uuid()
 
     try:
         tick_ctx.mission_route = _mission_route_for_tick(
@@ -267,7 +268,6 @@ def run_step(
                 runner,
                 state,
                 user_input=tick_ctx.user_input,
-                trace_id=trace_id,
             )
 
         with active_chat_phase("brain_pre_dispatch"):

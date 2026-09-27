@@ -6,12 +6,19 @@ from pydantic import BaseModel, ConfigDict
 
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
+from openminion.tools.exec.schemas import ProcessPollResult
 
 
 class _Args(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     outcome: Literal["success", "failure"]
+
+
+class _PollArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
 
 
 class _Telemetry:
@@ -136,3 +143,35 @@ def test_tool_adapter_closes_raised_handler_lifecycle_without_exposing_text(
             {"tool_call_id": "call-raised", "tool_name": "blockchain.debug"},
         ),
     ]
+
+
+def test_tool_adapter_accepts_successful_terminal_process_poll(tmp_path) -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="exec.poll",
+            args_model=_PollArgs,
+            min_scope="READ_ONLY",
+            handler=lambda _args, _context: ProcessPollResult(
+                ok=True,
+                status="exited",
+                exit_code=0,
+                summary="Session exited",
+            ).model_dump(),
+        )
+    )
+    adapter = ToolAdapter(workspace_root=tmp_path, runtime_registry=registry)
+
+    result = adapter.execute(
+        command={
+            "command_id": "call-poll",
+            "tool_name": "exec.poll",
+            "args": {"session_id": "execproc-1"},
+        },
+        session_id="session",
+        trace_id="turn",
+    )
+
+    assert result["status"] == "success"
+    assert result["outputs"]["status"] == "exited"
+    assert "error" not in result

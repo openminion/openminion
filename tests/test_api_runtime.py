@@ -236,6 +236,41 @@ class APIRuntimeTests(unittest.TestCase):
             ],
         )
 
+    def test_runtime_close_uses_components_attached_after_initialization(self) -> None:
+        runtime = object.__new__(APIRuntime)
+        order: list[str] = []
+
+        class FakeManager:
+            def shutdown(self, *, grace_s: int) -> None:
+                order.append(f"manager.shutdown:{grace_s}")
+
+        class FakeLifecycleBridge:
+            def close(self) -> None:
+                order.append("lifecycle_bridge.close")
+
+        class FakeExposureService:
+            def bind_event_sink(self, sink: object) -> None:
+                self.event_sink = sink
+
+        runtime._closed = False
+        runtime.runtime_manager = None
+        runtime.tools = type(
+            "FakeTools",
+            (),
+            {"exposure_service": FakeExposureService()},
+        )()
+
+        APIRuntime.__post_init__(runtime)
+        runtime.runtime_manager = FakeManager()
+        runtime._lifecycle_event_bridge = FakeLifecycleBridge()
+
+        runtime.close()
+
+        self.assertEqual(
+            order,
+            ["manager.shutdown:2", "lifecycle_bridge.close"],
+        )
+
     def test_runtime_injects_single_action_policy_service_into_brain_runner(
         self,
     ) -> None:

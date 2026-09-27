@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from functools import partial
 from typing import Any, Optional
@@ -230,7 +231,7 @@ class GatewayTurnSetupMixin:
         )
         return run_id, lifecycle_payload
 
-    def _build_memory_context(
+    async def _build_memory_context(
         self,
         routing: _RoutingResult,
         *,
@@ -242,7 +243,8 @@ class GatewayTurnSetupMixin:
         session_turn_fence_token: int | None = None,
     ) -> TurnContext:
         with active_chat_phase("memory_followup_flush"):
-            self._memory_followup_queue.flush(session_id=routing.session.id)
+            flush = self._memory_followup_queue.flush
+            await asyncio.to_thread(flush, session_id=routing.session.id)
         return build_turn_context(
             history=history,
             agent_id=self._agent_id,

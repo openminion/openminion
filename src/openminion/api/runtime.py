@@ -173,9 +173,8 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
         close_external_a2a_runtime(self)
         finalizer = getattr(self, "_finalizer", None)
         if finalizer is not None and finalizer.alive:
-            finalizer()
-        elif finalizer is None:
-            close_unregistered_runtime_components(self)
+            finalizer.detach()
+        close_unregistered_runtime_components(self)
         self._closed = True
 
 

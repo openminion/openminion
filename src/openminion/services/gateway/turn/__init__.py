@@ -108,7 +108,7 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
                 session_turn_fence_token=session_turn_fence_token,
             )
         with active_chat_phase("memory_retrieval"):
-            turn_context = self._build_memory_context(
+            turn_context = await self._build_memory_context(
                 routing,
                 channel=channel,
                 target=target,
