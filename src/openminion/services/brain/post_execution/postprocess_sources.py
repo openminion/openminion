@@ -176,7 +176,7 @@ def _dedupe_tool_results(
 
 def _cumulative_tool_results_from_step_output(
     step_out: Any,
-    tool_results_payload: list[dict[str, Any]],
+    tool_results_payload: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
     working_state = getattr(step_out, STATE_KEY_WORKING, None)
     adaptive_loop = getattr(working_state, STATE_KEY_MODULE_STATE, {}).get(
@@ -191,7 +191,7 @@ def _cumulative_tool_results_from_step_output(
         for item in candidates
         if trace_id and str(item.get("turn_scope_id", "") or "") == trace_id
     ]
-    return _dedupe_tool_results(candidates + tool_results_payload)
+    return _dedupe_tool_results(candidates + (tool_results_payload or []))
 
 
 def _action_result_termination_reason(action_result: Any | None) -> str:
