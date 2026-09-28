@@ -63,6 +63,19 @@ class _RecordingTransport:
         return True
 
 
+class _ChunkingTransport(_RecordingTransport):
+    def run(self, *args: object, **kwargs: object) -> TransportResult:
+        output_sink = kwargs["output_sink"]
+        assert callable(output_sink)
+        output_sink("stdout", "token=secret-")
+        output_sink("stdout", "value\nready")
+        return TransportResult(
+            argv=("printf", "ready"),
+            return_code=0,
+            stdout="token=secret-value\nready",
+        )
+
+
 def _action_policy() -> PolicyCtl:
     return PolicyCtl.with_sqlite(":memory:", config=PolicyConfig(mode="enforce"))
 
@@ -558,6 +571,100 @@ def test_command_evidence_redacts_configured_literals() -> None:
     evidence = service.inspect_evidence(job.evidence_id)
     assert evidence.stdout_preview == "token=[REDACTED]"
     assert "secret-value" not in evidence.model_dump_json()
+
+
+def test_command_stream_redacts_configured_literal_across_chunks() -> None:
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="staging", kind="local"),)),
+        transports={"local": _ChunkingTransport()},
+        redaction_resolver=lambda _target: ("secret-value",),
+        action_policy=_action_policy(),
+    )
+    plan = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
+    chunks: list[tuple[str, str]] = []
+    approval_id = _pending_approval(service, plan)
+    service.action_policy.resolve_confirmation(approval_id, "allow_once")
+
+    job = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        session_id=plan.session_id,
+        output_sink=lambda stream, chunk: chunks.append((stream, chunk)),
+    )
+
+    assert job.status == "succeeded"
+    assert "".join(chunk for _stream, chunk in chunks) == "token=[REDACTED]\nready"
+
+
+def test_stream_redaction_resolution_failure_finishes_claimed_job() -> None:
+    def unavailable_redactions(_target: OperationTarget) -> tuple[str, ...]:
+        raise RuntimeError("credential unavailable")
+
+    transport = _RecordingTransport()
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="staging", kind="local"),)),
+        transports={"local": transport},
+        redaction_resolver=unavailable_redactions,
+        action_policy=_action_policy(),
+    )
+    plan = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
+    approval_id = _pending_approval(service, plan)
+    service.action_policy.resolve_confirmation(approval_id, "allow_once")
+
+    job = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        session_id=plan.session_id,
+        output_sink=lambda _stream, _chunk: None,
+    )
+
+    assert job.status == "failed"
+    assert job.attempt_phase == "terminal"
+    assert job.remote_outcome == "not_dispatched"
+    assert job.error == "credential unavailable"
+    assert transport.calls == 0
+
+
+def test_stream_finalizer_failure_finishes_claimed_job() -> None:
+    def fail_sink(_stream: str, _chunk: str) -> None:
+        raise RuntimeError("sink failed")
+
+    class PartialSecretTransport(_RecordingTransport):
+        def run(self, *args: object, **kwargs: object) -> TransportResult:
+            output_sink = kwargs["output_sink"]
+            assert callable(output_sink)
+            output_sink("stdout", "secret-")
+            return TransportResult(argv=("printf",), return_code=0, stdout="secret-")
+
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="staging", kind="local"),)),
+        transports={"local": PartialSecretTransport()},
+        redaction_resolver=lambda _target: ("secret-value",),
+        action_policy=_action_policy(),
+    )
+    plan = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
+    approval_id = _pending_approval(service, plan)
+    service.action_policy.resolve_confirmation(approval_id, "allow_once")
+
+    with pytest.raises(RuntimeError, match="sink failed"):
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+            output_sink=fail_sink,
+        )
+
+    job = service.jobs.list()[0]
+    assert job.status == "succeeded"
+    assert job.attempt_phase == "terminal"
+    assert job.remote_outcome == "exit_observed"
+    assert job.evidence_id
 
 
 def test_two_service_processes_dispatch_one_plan_once(tmp_path) -> None:

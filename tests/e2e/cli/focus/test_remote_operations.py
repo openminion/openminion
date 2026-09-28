@@ -94,6 +94,9 @@ def test_focus_remote_command_shows_exact_effect_and_reprompts(
         )
         assert result["status"] == "success"
         assert result["outputs"]["verified"] is False
+        assert result["outputs"]["content"] == text
+        assert result["outputs"]["data"]["evidence"]["stdout_preview"] == text
+        assert "failure" not in result["outputs"]["data"]["evidence"]
 
     assert len(overlay.prompts) == 3
     assert '"argv":["printf","denied"]' in overlay.prompts[0]

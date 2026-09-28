@@ -8,7 +8,7 @@ from typing import Any, cast
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 
-from .api import job_view, target_view
+from .api import job_result_view, target_view
 from .args import (
     EmptyArgs,
     CommandPlanArgs,
@@ -318,10 +318,18 @@ def _command_run(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         job=job,
         error_code="transport_failed" if job.status == "failed" else "",
     )
+    content = f"Command job {job.job_id} finished with status {job.status}."
+    if evidence is not None:
+        content = (
+            evidence.stdout_preview
+            or evidence.stderr_preview
+            or evidence.reason
+            or content
+        )
     return {
         "ok": job.status == "succeeded",
-        "content": f"Command job {job.job_id} finished with status {job.status}.",
-        "data": job.model_dump(mode="json"),
+        "content": content,
+        "data": job_result_view(job, evidence),
         "verified": False,
     }
 
@@ -372,27 +380,31 @@ def _session_id(ctx: Any) -> str:
 
 def _job_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     parsed = JobArgs.model_validate(args)
-    job = _service(ctx).inspect_job(
+    session_id = _job_session(parsed, ctx)
+    service = _service(ctx)
+    job = service.inspect_job(
         parsed.job_id,
         target_id=parsed.target_id,
-        session_id=parsed.session_id,
+        session_id=session_id,
     )
-    return {"ok": True, "data": job_view(job)}
+    evidence = service.inspect_evidence(job.evidence_id) if job.evidence_id else None
+    return {"ok": True, "data": job_result_view(job, evidence)}
 
 
 def _job_cancel(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     parsed = JobArgs.model_validate(args)
+    session_id = _job_session(parsed, ctx)
     service = _service(ctx)
     existing = service.inspect_job(
         parsed.job_id,
         target_id=parsed.target_id,
-        session_id=parsed.session_id,
+        session_id=session_id,
     )
     target = service.inspect_target(existing.request.target_id)
     job = service.cancel_job(
         parsed.job_id,
         target_id=parsed.target_id,
-        session_id=parsed.session_id,
+        session_id=session_id,
     )
     emit_transport_event(
         ctx,
@@ -403,3 +415,10 @@ def _job_cancel(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         job=job,
     )
     return {"ok": True, "data": job.model_dump(mode="json")}
+
+
+def _job_session(parsed: JobArgs, ctx: Any) -> str:
+    session_id = _session_id(ctx)
+    if parsed.session_id != session_id:
+        raise PermissionError("operation job belongs to another session")
+    return session_id

@@ -41,9 +41,7 @@ class PortOwnerArgs(ObservationArgs):
 
 
 class ProfileArgs(ObservationArgs):
-    profile_id: str = Field(
-        description="Closed runtime-owned profile such as disk.usage or memory.usage."
-    )
+    profile_id: Literal["disk.usage", "memory.usage", "process.list"]
 
 
 class JobArgs(StrictArgs):

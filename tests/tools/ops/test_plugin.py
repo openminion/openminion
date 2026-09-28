@@ -12,11 +12,16 @@ from openminion.modules.policy.models import PolicyConfig, PolicyControlError
 from openminion.modules.policy.runtime.service import PolicyCtl
 from openminion.modules.tool.framework import derive_manifest, derive_tool_specs
 from openminion.modules.tool.base import ToolExecutionContext
+from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
 from openminion.tools.ops import OPS_FAMILY, REGISTRAR, local_ops_service
 from openminion.tools.ops.args import PortOwnerArgs, ProcessArgs, ProfileArgs
-from openminion.tools.ops.contracts import OperationRequest, OperationTarget
+from openminion.tools.ops.contracts import (
+    OperationRequest,
+    OperationTarget,
+    TransportResult,
+)
 from openminion.tools.ops.interfaces import (
     ALL_OPS_TOOLS,
     TOOL_OPS_HOST_SNAPSHOT,
@@ -288,6 +293,13 @@ def test_command_observe_rejects_free_form_execution_fields(field: str) -> None:
         )
 
 
+def test_command_observe_rejects_unknown_profile_before_dispatch() -> None:
+    with pytest.raises(ValidationError):
+        ProfileArgs.model_validate(
+            {"target_id": "local", "profile_id": "shell.anything"}
+        )
+
+
 def test_command_tools_use_injected_service_and_require_confirmation() -> None:
     registry = ToolRegistry()
     REGISTRAR.register(registry)
@@ -300,9 +312,12 @@ def test_command_tools_use_injected_service_and_require_confirmation() -> None:
         channel="cli",
         target="local",
         session_id="session-1",
+        metadata={"agent_id": "agent-1", "trace_id": "trace-1"},
         telemetryctl=telemetry,
         ops_service=service,
     )
+    policy_check = MagicMock(wraps=service.action_policy.check)
+    service.action_policy.check = policy_check
     planned = execute_tool_spec_call(
         tool=registry.get(TOOL_OPS_COMMAND_PLAN),
         arguments={"target_id": "local", "argv": ["printf", "ready"]},
@@ -329,6 +344,12 @@ def test_command_tools_use_injected_service_and_require_confirmation() -> None:
     assert "confirmation" in denied.error
     assert completed.ok is True
     assert completed.data["status"] == "succeeded"
+    assert completed.data["evidence"]["stdout_preview"] == "ready"
+    assert "failure" not in completed.data["evidence"]
+    assert completed.content == "ready"
+    policy_context = policy_check.call_args_list[0].args[1]
+    assert policy_context["agent_id"] == "agent-1"
+    assert policy_context["trace_id"] == "trace-1"
     assert [event[0][3] for event in telemetry.events] == [
         "transport.authorization",
         "transport.dispatch",
@@ -341,6 +362,108 @@ def test_command_tools_use_injected_service_and_require_confirmation() -> None:
     assert result_facts["remote_outcome"] == "exit_observed"
     assert result_facts["approval_id"] == approval_id
     assert result_facts["policy_grant_id"]
+
+    observed = execute_tool_spec_call(
+        tool=registry.get(TOOL_OPS_HOST_SNAPSHOT),
+        arguments={"target_id": "local"},
+        context=context,
+    )
+    assert completed.verified is False
+    assert observed.ok is True
+    assert observed.verified is True
+
+
+@pytest.mark.parametrize(
+    (
+        "transport_result",
+        "expected_status",
+        "expected_content",
+        "expected_claim",
+    ),
+    [
+        (
+            TransportResult(argv=("check",), return_code=1, stderr="failed"),
+            "failed",
+            "failed",
+            "failed",
+        ),
+        (
+            TransportResult(argv=("check",), return_code=124, timed_out=True),
+            "failed",
+            "operation timed out",
+            "partial",
+        ),
+        (
+            TransportResult(argv=("check",), return_code=130, cancelled=True),
+            "cancelled",
+            "operation cancelled before observation",
+            "unknown",
+        ),
+        (
+            TransportResult(
+                argv=("check",), return_code=0, stdout="partial", truncated=True
+            ),
+            "succeeded",
+            "partial",
+            "observed",
+        ),
+        (
+            TransportResult(argv=("check",), return_code=0),
+            "succeeded",
+            "command returned no observable output",
+            "unknown",
+        ),
+    ],
+)
+def test_command_run_projects_terminal_evidence_without_false_verification(
+    transport_result: TransportResult,
+    expected_status: str,
+    expected_content: str,
+    expected_claim: str,
+) -> None:
+    registry = ToolRegistry()
+    REGISTRAR.register(registry)
+    transport = MagicMock()
+    transport.run.return_value = transport_result
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="staging", kind="local"),)),
+        transports={"local": transport},
+        action_policy=PolicyCtl.with_sqlite(
+            ":memory:", config=PolicyConfig(mode="enforce")
+        ),
+    )
+    context = ToolExecutionContext(
+        channel="cli",
+        target="staging",
+        session_id="session-1",
+        ops_service=service,
+    )
+    plan = service.plan_command(
+        target_id="staging", argv=("check",), session_id="session-1"
+    )
+    with pytest.raises(ToolRuntimeError) as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+        )
+    service.action_policy.resolve_confirmation(
+        str(pending.value.details["approval_id"]), "allow_once"
+    )
+
+    completed = execute_tool_spec_call(
+        tool=registry.get(TOOL_OPS_COMMAND_RUN),
+        arguments={"plan_id": plan.plan_id, "plan_hash": plan.plan_hash},
+        context=context,
+    )
+
+    assert completed.data["status"] == expected_status
+    assert completed.content == expected_content
+    assert completed.verified is False
+    assert completed.data["evidence"]["claim_status"] == expected_claim
+    assert completed.data["evidence"]["timed_out"] is transport_result.timed_out
+    assert completed.data["evidence"]["cancelled"] is transport_result.cancelled
+    assert completed.data["evidence"]["truncated"] is transport_result.truncated
 
 
 def test_focus_tool_adapter_resolves_ops_confirmation_once(tmp_path) -> None:
@@ -446,3 +569,41 @@ def test_focus_tool_adapter_returns_policy_resolution_error(tmp_path) -> None:
 
     assert result["status"] == "error"
     assert result["error"]["code"] == "PENDING_CONFIRMATION_EXPIRED"
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [TOOL_OPS_JOB_INSPECT, TOOL_OPS_JOB_CANCEL],
+)
+def test_job_tools_bind_ownership_to_execution_context_session(tool_name: str) -> None:
+    registry = ToolRegistry()
+    REGISTRAR.register(registry)
+    service = local_ops_service()
+    job = service.jobs.submit(
+        OperationRequest(
+            operation_id="job-session",
+            target_id="local",
+            profile_id="host.snapshot",
+            session_id="session-1",
+        ),
+        target_revision=1,
+    )
+    context = ToolExecutionContext(
+        channel="cli",
+        target="local",
+        session_id="session-1",
+        ops_service=service,
+    )
+
+    result = execute_tool_spec_call(
+        tool=registry.get(tool_name),
+        arguments={
+            "job_id": job.job_id,
+            "target_id": "local",
+            "session_id": "session-2",
+        },
+        context=context,
+    )
+
+    assert result.ok is False
+    assert "another session" in result.error

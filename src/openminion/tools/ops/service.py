@@ -42,6 +42,47 @@ _TRANSPORT_DEPENDENCIES = {
 }
 
 
+class _RedactedOutputSink:
+    def __init__(
+        self,
+        sink: Callable[[str, str], None],
+        secrets: tuple[str, ...],
+    ) -> None:
+        self._sink = sink
+        self._secrets = tuple(secret for secret in secrets if secret)
+        self._pending: dict[str, str] = {}
+
+    def feed(self, stream: str, chunk: str) -> None:
+        pending = self._pending.get(stream, "") + chunk
+        hold = self._partial_secret_suffix_length(pending)
+        end = len(pending) - hold if hold else len(pending)
+        if end:
+            self._sink(stream, self._redact(pending[:end]))
+        self._pending[stream] = pending[end:]
+
+    def finish(self) -> None:
+        for stream, pending in self._pending.items():
+            if self._partial_secret_suffix_length(pending):
+                pending = "[REDACTED]"
+            else:
+                pending = self._redact(pending)
+            if pending:
+                self._sink(stream, pending)
+        self._pending.clear()
+
+    def _redact(self, value: str) -> str:
+        for secret in self._secrets:
+            value = value.replace(secret, "[REDACTED]")
+        return value
+
+    def _partial_secret_suffix_length(self, value: str) -> int:
+        maximum = max((len(secret) - 1 for secret in self._secrets), default=0)
+        for size in range(min(len(value), maximum), 0, -1):
+            if any(value.endswith(secret[:size]) for secret in self._secrets):
+                return size
+        return 0
+
+
 class OpsService:
     def __init__(
         self,
@@ -325,24 +366,64 @@ class OpsService:
             raise
         if intent.status == "cancelled":
             return intent
+        return self._dispatch_plan(
+            plan=plan,
+            target=target,
+            transport=transport,
+            request=request,
+            job=job,
+            claim_token=claim_token,
+            policy_outcome=decision.outcome,
+            approval_id=str(policy_decision.approval_id or ""),
+            output_sink=output_sink,
+        )
+
+    def _dispatch_plan(
+        self,
+        *,
+        plan: CommandPlan,
+        target: OperationTarget,
+        transport: TargetTransport,
+        request: OperationRequest,
+        job: OperationJob,
+        claim_token: str,
+        policy_outcome: str,
+        approval_id: str,
+        output_sink: Callable[[str, str], None] | None,
+    ) -> OperationJob:
+        try:
+            redactions = self._redaction_resolver(target)
+        except (OSError, RuntimeError, ValueError) as exc:
+            return self.jobs.finish_plan_attempt(
+                job.job_id,
+                claim_token=claim_token,
+                status="failed",
+                error=str(exc),
+                remote_outcome="not_dispatched",
+            )
+        redacted_sink = (
+            _RedactedOutputSink(output_sink, redactions)
+            if output_sink is not None
+            else None
+        )
         try:
             result = transport.run(
                 target,
                 plan.argv,
                 timeout_seconds=plan.timeout_seconds,
                 operation_id=job.job_id,
-                output_sink=output_sink,
+                output_sink=redacted_sink.feed if redacted_sink is not None else None,
                 cwd=plan.cwd,
             )
             evidence = self.evidence.put(
                 build_evidence(
                     request,
                     result,
-                    redactions=self._redaction_resolver(target),
+                    redactions=redactions,
                     target_revision=target.revision,
                     transport=target.kind,
-                    policy_outcome=decision.outcome,
-                    approval_id=str(policy_decision.approval_id or ""),
+                    policy_outcome=policy_outcome,
+                    approval_id=approval_id,
                 )
             )
         except (OSError, RuntimeError, ValueError) as exc:
@@ -353,7 +434,10 @@ class OpsService:
                 error=str(exc),
                 remote_outcome="unknown",
             )
-        return self._finish_plan_result(job, claim_token, evidence, result)
+        terminal = self._finish_plan_result(job, claim_token, evidence, result)
+        if redacted_sink is not None:
+            redacted_sink.finish()
+        return terminal
 
     def continue_command_approval(
         self, *, approval_id: str, decision: str
