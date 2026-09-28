@@ -465,9 +465,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
             )
         summary = build_correction_history_summary(self.loop_state.scratchpad)
         if summary is not None:
-            self.loop_state.messages.append(
-                Message(role="system", content=summary)
-            )
+            self.loop_state.messages.append(Message(role="system", content=summary))
         intent_state_message = _build_intent_execution_state_message(self.loop_ctx)
         if intent_state_message is not None:
             self.loop_state.messages.append(intent_state_message)
