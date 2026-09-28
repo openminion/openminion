@@ -50,6 +50,8 @@ def operator_state(service: OpsService) -> dict[str, Any]:
         readiness = service.inspect_target_readiness(target.target_id)
         if not readiness["dependency_available"]:
             disabled[target.target_id] = _DEPENDENCIES[target.kind]
+        elif not readiness["transport_available"]:
+            disabled[target.target_id] = "transport is unavailable"
     target_payloads = []
     for target in targets:
         payload = target_view(target)
@@ -57,8 +59,14 @@ def operator_state(service: OpsService) -> dict[str, Any]:
         payload["transport_capabilities"] = service.transport_capabilities(
             target.target_id
         )
-        payload["transport_ready"] = target.target_id not in disabled
         target_payloads.append(payload)
+    awaiting_jobs = []
+    for job in service.jobs.list():
+        if job.attempt_phase != "awaiting_approval":
+            continue
+        payload = job_view(job)
+        payload["approval_validity"] = "unverified"
+        awaiting_jobs.append(payload)
     return {
         "ok": True,
         "data": {
@@ -73,7 +81,7 @@ def operator_state(service: OpsService) -> dict[str, Any]:
             "evidence": [
                 item.model_dump(mode="json") for item in service.list_evidence()
             ],
-            "pending_approvals": [],
+            "approval_awaiting_jobs": awaiting_jobs,
             "disabled_reasons": disabled,
         },
     }
@@ -107,11 +115,18 @@ def job_inspect(service: OpsService, job_id: str) -> dict[str, Any]:
 
 def job_view(job: Any) -> dict[str, Any]:
     payload: dict[str, Any] = job.model_dump(mode="json")
-    payload["current_liveness"] = (
+    current_liveness = (
         "unverified"
         if job.status == "running" or job.attempt_phase == "claimed"
         else "not_running"
     )
+    payload["current_liveness"] = current_liveness
+    payload["reconciliation_required"] = current_liveness == "unverified"
+    if current_liveness == "unverified":
+        payload["reconciliation_hint"] = (
+            "Inspect remote state, then use the existing mark-interrupted action "
+            "only if this attempt is no longer running."
+        )
     return payload
 
 

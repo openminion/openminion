@@ -89,6 +89,7 @@ class OpsService:
         dependency_available = (
             dependency is None or importlib.util.find_spec(dependency) is not None
         )
+        transport_available = target.kind in self._transports
         result: dict[str, object] = {
             "status": "not_requested",
             "reason_code": "",
@@ -119,7 +120,8 @@ class OpsService:
                         )
         return {
             "dependency_available": dependency_available,
-            "transport_ready": dependency_available,
+            "transport_available": transport_available,
+            "transport_ready": dependency_available and transport_available,
             "probe": result,
         }
 
@@ -161,6 +163,20 @@ class OpsService:
         decision = decide_operation_policy(target, risk="read")
         if decision.outcome != "allow":
             raise PermissionError(decision.reason)
+        if target.service_scopes and request.profile_id in {
+            "service.inspect",
+            "logs.query",
+        }:
+            service = str(request.parameters.get("service", "")).strip()
+            if service not in target.service_scopes:
+                raise ToolRuntimeError(
+                    "POLICY_DENIED",
+                    "service is outside configured service scopes",
+                    {
+                        "target_id": request.target_id,
+                        "profile_id": request.profile_id,
+                    },
+                )
         transport = self._transports.get(target.kind)
         if transport is None:
             raise RuntimeError(f"transport unavailable for target kind: {target.kind}")
@@ -466,7 +482,16 @@ class OpsService:
                 {
                     "tool": "ops.command",
                     "method": "run",
-                    "args": {"plan_id": plan.plan_id, "plan_hash": plan.plan_hash},
+                    "args": {
+                        "plan_id": plan.plan_id,
+                        "plan_hash": plan.plan_hash,
+                        "target_id": plan.target_id,
+                        "target_revision": plan.target_revision,
+                        "argv": list(plan.argv),
+                        "cwd": plan.cwd,
+                        "timeout_seconds": plan.timeout_seconds,
+                        "expires_at": plan.expires_at,
+                    },
                     "invocation_id": plan.plan_id,
                 },
                 {
@@ -497,6 +522,9 @@ class OpsService:
                     "choices": ["allow_once", "deny"],
                     "job_id": job.job_id,
                     "plan_id": plan.plan_id,
+                    "preview": dict(
+                        (decision.confirm_request or {}).get("preview", {})
+                    ),
                 },
             )
         if (

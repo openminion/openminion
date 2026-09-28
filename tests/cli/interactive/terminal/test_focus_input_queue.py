@@ -878,6 +878,39 @@ async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() 
     assert events[2] == "label:Always allow exec.run for this shell session"
 
 
+@pytest.mark.asyncio
+async def test_ops_command_approval_is_allow_once_without_session_grant() -> None:
+    prompts: list[str] = []
+
+    class _Overlay:
+        async def present_confirm_async(self, prompt: str) -> bool:
+            prompts.append(prompt)
+            return True
+
+        async def present_approval_async(
+            self, *_args: object, **_kwargs: object
+        ) -> str:
+            raise AssertionError("ops commands must not offer session approval")
+
+    session_grants = {"ops.command.run"}
+    callback = build_terminal_approval_callback(
+        overlay=_Overlay(),
+        session_grants=session_grants,
+    )
+    args = {
+        "target_id": "staging",
+        "target_revision": 2,
+        "argv": ["systemctl", "restart", "demo.service"],
+        "plan_hash": "abc",
+    }
+
+    assert await callback("ops.command.run", args, "approval-1") is True
+    assert await callback("ops.command.run", args, "approval-2") is True
+    assert len(prompts) == 2
+    assert "demo.service" in prompts[0]
+    assert session_grants == {"ops.command.run"}
+
+
 def test_terminal_approval_prompt_preserves_full_exec_command() -> None:
     command = (
         "ssh -o BatchMode=yes -o ConnectTimeout=3 "

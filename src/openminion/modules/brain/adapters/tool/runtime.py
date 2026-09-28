@@ -300,15 +300,10 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
                 details={"reason": "operator_denied"},
             )
-
         inputs = command.get("inputs")
         replay_inputs = dict(inputs) if isinstance(inputs, Mapping) else {}
-        replay_inputs.update(
-            {
-                "confirmation_grant_id": approval_id,
-                "confirmation_source": "policy_replay",
-            }
-        )
+        replay_inputs["confirmation_grant_id"] = approval_id
+        replay_inputs["confirmation_source"] = "policy_replay"
         return self.execute(
             command={**command, "inputs": replay_inputs},
             session_id=session_id,
@@ -751,7 +746,7 @@ class ToolAdapter:
                 replay = self._replay_inline_approval(
                     command=command,
                     tool_name=tool_name,
-                    args=validated_args,
+                    args=dict(details.get("preview") or validated_args),
                     approval_id=approval_id,
                     session_id=str(ctx.session_id or ""),
                     trace_id=ctx.trace_id,

@@ -81,6 +81,9 @@ class BlockchainSendConfirmationPreview:
     opaque_calldata: bool
 
 
+ToolConfirmationPreview = BlockchainSendConfirmationPreview | dict[str, Any]
+
+
 @dataclass(frozen=True)
 class PolicyAuthorization:
     tool: Literal["blockchain"]

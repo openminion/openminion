@@ -87,7 +87,7 @@ def _observed(
     )
     try:
         evidence = service.observe(request)
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (ToolRuntimeError, OSError, RuntimeError, ValueError) as exc:
         emit_transport_event(
             ctx,
             phase="result",
@@ -95,7 +95,9 @@ def _observed(
             capability="command",
             status="failed",
             duration_ms=int((time.monotonic() - started) * 1000),
-            error_code=type(exc).__name__,
+            error_code=(
+                exc.code if isinstance(exc, ToolRuntimeError) else type(exc).__name__
+            ),
         )
         raise
     emit_transport_event(
@@ -320,7 +322,7 @@ def _command_run(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         "ok": job.status == "succeeded",
         "content": f"Command job {job.job_id} finished with status {job.status}.",
         "data": job.model_dump(mode="json"),
-        "verified": job.status == "succeeded",
+        "verified": False,
     }
 
 

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from openminion.modules.policy.models import PolicyConfig
 from openminion.modules.policy.runtime.service import PolicyCtl
+from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.runtime.credentials import resolve_credential_ref
 from openminion.tools.ops import cli
 from openminion.tools.ops.api import operator_state, target_inspect
@@ -18,7 +20,11 @@ from openminion.tools.ops.contracts import (
     TransportResult,
 )
 from openminion.tools.ops.registry import TargetRegistry
-from openminion.tools.ops.service import OpsService, local_ops_service
+from openminion.tools.ops.service import (
+    OpsService,
+    configured_ops_service,
+    local_ops_service,
+)
 
 
 def test_operator_state_is_redacted_and_renderer_neutral() -> None:
@@ -31,7 +37,7 @@ def test_operator_state_is_redacted_and_renderer_neutral() -> None:
         "jobs",
         "plans",
         "evidence",
-        "pending_approvals",
+        "approval_awaiting_jobs",
         "disabled_reasons",
     }
     assert state["data"]["tool_family"]["id"] == "ops"
@@ -39,6 +45,9 @@ def test_operator_state_is_redacted_and_renderer_neutral() -> None:
     target = state["data"]["targets"][0]
     assert "credential_ref" not in target
     assert "endpoint_trust" not in target
+    assert target["dependency_available"] is True
+    assert target["transport_available"] is True
+    assert target["transport_ready"] is True
 
 
 def test_cli_status_matches_shared_api_envelope(monkeypatch) -> None:
@@ -105,6 +114,106 @@ def test_operator_state_reports_protocol_scoped_missing_extras(monkeypatch) -> N
         "node": "install the 'remote-aws' extra",
     }
     assert all(target["transport_ready"] is False for target in state["targets"])
+    assert all(target["transport_available"] is False for target in state["targets"])
+
+
+def test_operator_state_does_not_call_dependency_only_transport_ready() -> None:
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="local", kind="local"),)),
+        transports={},
+    )
+
+    state = operator_state(service)["data"]
+    target = state["targets"][0]
+    assert target["dependency_available"] is True
+    assert target["transport_available"] is False
+    assert target["transport_ready"] is False
+    assert state["disabled_reasons"] == {"local": "transport is unavailable"}
+
+
+def test_operator_state_projects_awaiting_job_without_claiming_approval_validity() -> (
+    None
+):
+    service = local_ops_service()
+    service.action_policy = PolicyCtl.with_sqlite(
+        ":memory:", config=PolicyConfig(mode="enforce")
+    )
+    plan = service.plan_command(
+        target_id="local", argv=("printf", "ready"), session_id="session-1"
+    )
+    with pytest.raises(ToolRuntimeError):
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id="session-1",
+        )
+
+    state = operator_state(service)["data"]
+    awaiting = state["approval_awaiting_jobs"]
+    assert len(awaiting) == 1
+    assert awaiting[0]["attempt_phase"] == "awaiting_approval"
+    assert awaiting[0]["approval_validity"] == "unverified"
+
+
+def test_job_view_marks_running_work_for_explicit_reconciliation() -> None:
+    service = local_ops_service()
+    job = service.jobs.submit(
+        OperationRequest(
+            operation_id="running-1",
+            target_id="local",
+            profile_id="host.snapshot",
+            session_id="session-1",
+        ),
+        target_revision=1,
+    )
+    service.jobs.update(job.job_id, status="running")
+
+    projected = operator_state(service)["data"]["jobs"][0]
+    assert projected["current_liveness"] == "unverified"
+    assert projected["reconciliation_required"] is True
+    assert "mark-interrupted" in projected["reconciliation_hint"]
+
+
+def test_operator_projection_survives_store_reopen(tmp_path) -> None:
+    config = {"targets": [{"target_id": "staging", "kind": "local"}]}
+    policy_path = tmp_path / "policy.db"
+    service = configured_ops_service(
+        config,
+        data_root=tmp_path,
+        action_policy=PolicyCtl.with_sqlite(
+            policy_path, config=PolicyConfig(mode="enforce")
+        ),
+    )
+    plan = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
+    with pytest.raises(ToolRuntimeError):
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id="session-1",
+        )
+    running = service.jobs.submit(
+        OperationRequest(
+            operation_id="running-1",
+            target_id="staging",
+            profile_id="host.snapshot",
+            session_id="session-1",
+        ),
+        target_revision=1,
+    )
+    service.jobs.update(running.job_id, status="running")
+    service.close()
+
+    reopened = configured_ops_service(config, data_root=tmp_path)
+    state = operator_state(reopened)["data"]
+    reopened.close()
+
+    assert len(state["approval_awaiting_jobs"]) == 1
+    assert state["approval_awaiting_jobs"][0]["plan_id"] == plan.plan_id
+    restored = next(job for job in state["jobs"] if job["job_id"] == running.job_id)
+    assert restored["reconciliation_required"] is True
+    assert "mark-interrupted" in restored["reconciliation_hint"]
 
 
 def test_target_inspect_probe_is_explicit_and_ssh_only(monkeypatch) -> None:

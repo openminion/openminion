@@ -937,11 +937,17 @@ def finalize_tool_result(
             action_result=normalized,
             command=prepared_dispatch.original_command,
         )
+    error_details = normalized.error.details if normalized.error is not None else {}
+    confirmation_preview = error_details.get("preview")
     return CommandExecutionOutcome(
         approved_command=prepared_dispatch.approved_command,
         action_result=normalized,
         job=job,
         tool_budget_debited=True,
+        policy_approval_id=(str(error_details.get("approval_id", "")).strip() or None),
+        policy_confirmation_preview=(
+            confirmation_preview if isinstance(confirmation_preview, dict) else None
+        ),
     )
 
 

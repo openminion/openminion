@@ -110,6 +110,44 @@ def test_service_observes_closed_profile() -> None:
     assert evidence.output_digest
 
 
+@pytest.mark.parametrize("profile_id", ["service.inspect", "logs.query"])
+def test_service_scope_refuses_unlisted_service_before_dispatch(
+    profile_id: str,
+) -> None:
+    target = OperationTarget(
+        target_id="staging",
+        kind="local",
+        service_scopes=("allowed.service",),
+    )
+    transport = _RecordingTransport()
+    service = OpsService(
+        targets=TargetRegistry((target,)),
+        transports={"local": transport},
+    )
+
+    with pytest.raises(ToolRuntimeError, match="configured service scopes") as denied:
+        service.observe(
+            _request(
+                target_id="staging",
+                profile_id=profile_id,
+                parameters={"service": "other.service"},
+            )
+        )
+
+    assert denied.value.code == "POLICY_DENIED"
+    assert transport.calls == 0
+    allowed = service.observe(
+        _request(
+            operation_id="observe-2",
+            target_id="staging",
+            profile_id=profile_id,
+            parameters={"service": "allowed.service"},
+        )
+    )
+    assert allowed.claim_status == "observed"
+    assert transport.calls == 1
+
+
 def test_file_read_is_bounded_to_configured_scopes(tmp_path) -> None:
     allowed = tmp_path / "workspace"
     allowed.mkdir()

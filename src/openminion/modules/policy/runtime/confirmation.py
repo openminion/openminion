@@ -66,6 +66,12 @@ def get_or_create_exact_confirmation(
         preview = {
             "plan_id": str(invocation.args.get("plan_id", "")),
             "plan_hash": str(invocation.args.get("plan_hash", "")),
+            "target_id": str(invocation.args.get("target_id", "")),
+            "target_revision": invocation.args.get("target_revision"),
+            "argv": list(invocation.args.get("argv", ())),
+            "cwd": str(invocation.args.get("cwd", "")),
+            "timeout_seconds": invocation.args.get("timeout_seconds"),
+            "expires_at": str(invocation.args.get("expires_at", "")),
         }
         ttl_seconds = OPS_COMMAND_CONFIRMATION_TTL_SECONDS
     return store.get_or_create_pending_confirmation(

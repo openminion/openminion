@@ -11,7 +11,10 @@ from openminion.modules.brain.constants import (
     CONFIRMATION_MESSAGE_ARG_VALUE_LIMIT,
 )
 from openminion.modules.brain.schemas import Command, WorkingState
-from openminion.modules.tool.plugin_api import BlockchainSendConfirmationPreview
+from openminion.modules.tool.plugin_api import (
+    BlockchainSendConfirmationPreview,
+    ToolConfirmationPreview,
+)
 
 _COMMAND_ADAPTER = TypeAdapter(Command)
 _CONFIRMATION_REPLAY_QUEUE_KEY = "_confirmation_replay_queue"
@@ -34,7 +37,10 @@ def requires_individual_confirmation(command: Command | dict[str, Any] | None) -
         if isinstance(command, dict)
         else getattr(command, "tool_name", "")
     )
-    return str(tool_name or "").strip() == "blockchain.send_transaction"
+    return str(tool_name or "").strip() in {
+        "blockchain.send_transaction",
+        "ops.command.run",
+    }
 
 
 def _bounded_confirmation_arg_value(value: Any) -> str:
@@ -145,7 +151,7 @@ def apply_session_confirmation_grant(state: WorkingState, command: Command) -> b
 
 def confirmation_required_user_message(
     command: Command,
-    confirmation_preview: BlockchainSendConfirmationPreview | None = None,
+    confirmation_preview: ToolConfirmationPreview | None = None,
 ) -> str:
     tool_name = str(command.tool_name or "tool").strip() or "tool"
     title = str(command.title or "").strip()
@@ -156,7 +162,9 @@ def confirmation_required_user_message(
     if arg_preview:
         subject = f"{subject} ({arg_preview})"
     lines = ["Policy confirmation required.", subject]
-    if tool_name == "blockchain.send_transaction" and confirmation_preview is not None:
+    if tool_name == "blockchain.send_transaction" and isinstance(
+        confirmation_preview, BlockchainSendConfirmationPreview
+    ):
         preview = confirmation_preview
         lines.extend(
             [
@@ -191,13 +199,22 @@ def confirmation_required_user_message(
                     ),
                 ]
             )
+    elif tool_name == "ops.command.run" and isinstance(confirmation_preview, dict):
+        lines.append(
+            "Effect: "
+            + json.dumps(
+                confirmation_preview,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+        )
     additional_count = max(0, confirmation_replay_batch_size(command) - 1)
     if additional_count:
         noun = "command" if additional_count == 1 else "commands"
         lines.append(
             f"This approval also covers {additional_count} queued {noun} from the same batch."
         )
-    if tool_name == "blockchain.send_transaction":
+    if requires_individual_confirmation(command):
         lines.append("Reply exactly yes to allow once, or no to cancel.")
     else:
         lines.append(
