@@ -869,7 +869,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         telemetryctl=service._telemetryctl,
         task_manager=task_manager,
         cron_api=cron_repository,
-        turn_input_queue=runtime_handle.turn_input_queue,
+        turn_input_queue=getattr(runtime_handle, "turn_input_queue", None),
         options=options,
         terminal_capture_writer=service._terminal_capture_writer,
     )

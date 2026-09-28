@@ -208,7 +208,16 @@ def test_ops_command_requires_exact_pending_once_grant(tmp_path) -> None:
         assert pending.confirm_request == {
             "approval_id": pending.approval_id,
             "choices": ["allow_once", "deny"],
-            "preview": {"plan_id": "plan-1", "plan_hash": "a" * 64},
+            "preview": {
+                "plan_id": "plan-1",
+                "plan_hash": "a" * 64,
+                "target_id": "",
+                "target_revision": None,
+                "argv": [],
+                "cwd": "",
+                "timeout_seconds": None,
+                "expires_at": "",
+            },
         }
 
         ctl.resolve_confirmation(pending.approval_id, "allow_once")
