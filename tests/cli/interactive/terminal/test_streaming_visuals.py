@@ -170,7 +170,7 @@ def test_wait_state_suppresses_empty_assistant_row_before_first_token() -> None:
     assert "▍" not in output
     assert "minimax-m2-7" in output
     assert "esc interrupts" in output
-    assert "Type to queue while the current turn runs" in output
+    assert "Type to queue for the next turn" in output
     assert "esc interrupts · type to queue" not in output
 
 

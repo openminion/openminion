@@ -88,7 +88,9 @@ def test_approval_yes_returns_allow() -> None:
     overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
     assert overlay.present_approval("Run dangerous command?") == "allow"
     assert output.getvalue() == ""
-    assert session.prompts == ["Run dangerous command?\n[y]es / [N]o / [a]lways: "]
+    assert session.prompts == [
+        "Run dangerous command?\n[y] Allow once / [N] Deny (default) / [a] Always: "
+    ]
 
 
 def test_approval_keeps_full_long_command_in_input_prompt() -> None:
@@ -109,7 +111,25 @@ def test_approval_keeps_full_long_command_in_input_prompt() -> None:
     assert "StrictHostKeyChecking=yes" in rendered
     assert 'localhost true")' in rendered
     assert "…" not in rendered
-    assert rendered.endswith("\n[y]es / [N]o / [a]lways: ")
+    assert rendered.endswith("\n[y] Allow once / [N] Deny (default) / [a] Always: ")
+
+
+def test_approval_names_session_tool_grant_scope() -> None:
+    console, _ = _make_console()
+    session = _StubSession(["a"])
+    overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
+
+    result = asyncio.run(
+        overlay.present_approval_async(
+            "Approval required: file.write(path=README.md)",
+            always_label="Always allow file.write for this shell session",
+        )
+    )
+
+    assert result == "always"
+    assert session.prompts[0].endswith(
+        "[a] Always allow file.write for this shell session: "
+    )
 
 
 def test_approval_always_returns_always() -> None:

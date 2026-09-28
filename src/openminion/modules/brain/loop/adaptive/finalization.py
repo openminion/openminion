@@ -434,6 +434,7 @@ class ActLoopFinalizationMixin:
         module_state = dict(getattr(ctx.state, STATE_KEY_MODULE_STATE, {}) or {})
         raw_consolidation = module_state.get(MEMORY_CONSOLIDATION_MODULE_STATE_KEY)
         target_scope = ""
+        candidate_ids: list[str] = []
         if isinstance(raw_consolidation, dict):
             from openminion.modules.memory.runtime.consolidation.eligibility import (
                 candidate_state_hash,
@@ -466,6 +467,7 @@ class ActLoopFinalizationMixin:
                 memory_api,
                 decisions=list(loop_outcome.memory_consolidation_decisions),
                 target_scope=target_scope or f"agent:{ctx.state.agent_id}",
+                selected_candidate_ids=candidate_ids,
             )
             telemetry_payload.update(
                 {

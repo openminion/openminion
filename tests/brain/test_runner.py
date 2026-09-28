@@ -1,7 +1,9 @@
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from openminion.modules.brain.adapters.llm import LocalLLMAdapter
 from openminion.modules.brain.state import update_session_summary
+from openminion.modules.brain.runner.tick.orchestrator import run_step
 
 from tests.brain.runner_test_support import (
     BudgetCounters,
@@ -26,6 +28,48 @@ from tests.brain.runner_test_support import (
 
 
 class RunnerTests(unittest.TestCase):
+    def test_turn_input_queue_dependency_is_optional_and_explicit(self) -> None:
+        queue = object()
+
+        default_runner = BrainRunner(profile=_profile(), session_api=MagicMock())
+        bound_runner = BrainRunner(
+            profile=_profile(), session_api=MagicMock(), turn_input_queue=queue
+        )
+
+        self.assertIsNone(default_runner.turn_input_queue)
+        self.assertIs(bound_runner.turn_input_queue, queue)
+
+    def test_plan_continuation_stamps_the_new_run_trace(self) -> None:
+        runner = BrainRunner(profile=_profile(), session_api=MagicMock())
+        state = WorkingState(
+            session_id="s-continuation-trace",
+            agent_id="router-agent",
+            budgets_remaining=BudgetCounters(
+                ticks=10,
+                tool_calls=5,
+                a2a_calls=5,
+                tokens=1000,
+                time_ms=10000,
+            ),
+            trace_id="trace-stale",
+        )
+        runner._pending_run_trigger = "plan_continuation"
+        runner._load_or_init_state = MagicMock(return_value=state)
+        expected = SimpleNamespace(working_state=state)
+
+        with patch(
+            "openminion.modules.brain.runner.tick.orchestrator._run_pre_dispatch_checks",
+            return_value=expected,
+        ):
+            result = run_step(
+                runner,
+                session_id=state.session_id,
+                trace_id="trace-fresh",
+            )
+
+        self.assertIs(result, expected)
+        self.assertEqual(state.trace_id, "trace-fresh")
+
     def test_load_or_init_state_normalizes_legacy_strict_clarify_mode(self) -> None:
         session_api = MagicMock()
         seed_state = WorkingState(

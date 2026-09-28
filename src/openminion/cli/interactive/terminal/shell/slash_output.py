@@ -25,7 +25,6 @@ from ..overlays import TerminalOverlayPresenter
 from ..status_line import TerminalStatusLine
 from ..transcript import TerminalTranscript
 
-_MUTED_ITALIC_STYLE = f"italic {token_rich_style(StyleToken.MUTED)}"
 
 PROMPT_SAFE_OUTPUT_SLASHES = frozenset(
     """
@@ -75,14 +74,19 @@ def render_context_review(runtime: Any, args: str) -> str:
 def copy_latest_message(transcript: TerminalTranscript, console: Console) -> None:
     body = transcript.copy_last_copyable_message()
     if not body:
-        console.print(Text("(no message to copy)", style=_MUTED_ITALIC_STYLE))
+        console.print(
+            Text(
+                "(no message to copy)",
+                style=token_rich_style(StyleToken.MUTED, italic=True),
+            )
+        )
         return
     message = (
         "(copied last message to clipboard)"
         if copy_to_clipboard(body)
         else "(no clipboard tool available)"
     )
-    console.print(Text(message, style=_MUTED_ITALIC_STYLE))
+    console.print(Text(message, style=token_rich_style(StyleToken.MUTED, italic=True)))
 
 
 def handle_debug_output_slash(

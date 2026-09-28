@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from tests.services.gateway._gateway_service_support import (
     GatewayServiceTestCase,
@@ -40,6 +41,35 @@ def _make_v2_memory(
 
 
 class GatewayServiceMemoryTests(GatewayServiceTestCase):
+    def test_gateway_flushes_memory_followups_off_event_loop(self) -> None:
+        gateway, _sink = self._build_gateway(
+            provider=_CaptureProvider(),
+            logger_name="openminion.tests.gateway.memory_followup_thread",
+            agent_logger_name="openminion.tests.gateway.agent.memory_followup_thread",
+            auto_resume=False,
+        )
+        queue = gateway._turn_runner._memory_followup_queue
+        caller_thread = threading.get_ident()
+        flush_threads: list[int] = []
+        original_flush = queue.flush
+
+        def _recording_flush(*, session_id: str | None = None) -> None:
+            flush_threads.append(threading.get_ident())
+            original_flush(session_id=session_id)
+
+        with patch.object(queue, "flush", side_effect=_recording_flush):
+            asyncio.run(
+                gateway.run_once(
+                    channel="console",
+                    target="local-user",
+                    message="hello",
+                    session_id="memory-followup-thread",
+                )
+            )
+
+        self.assertEqual(len(flush_threads), 1)
+        self.assertNotEqual(flush_threads[0], caller_thread)
+
     def test_assured_capture_result_bypasses_legacy_turn_parser(self) -> None:
         class _Memory:
             enabled = True
@@ -1088,13 +1118,15 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
                 inbound_metadata=None,
                 deliver=False,
             )
-            turn_context = gateway._turn_runner._build_memory_context(
-                routing,
-                channel="console",
-                target="local-user",
-                body="remember: direct runner context",
-                run_id="run-runner-memory-context",
-                history=[],
+            turn_context = asyncio.run(
+                gateway._turn_runner._build_memory_context(
+                    routing,
+                    channel="console",
+                    target="local-user",
+                    body="remember: direct runner context",
+                    run_id="run-runner-memory-context",
+                    history=[],
+                )
             )
 
         self.assertFalse(turn_context.prior_transcript_available)

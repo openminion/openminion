@@ -218,6 +218,7 @@ class ProcessPollArgs(BaseModel):
 class ProcessPollResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    ok: bool
     status: ProcessStatus
     exit_code: Optional[int] = None
     new_stdout_artifact: Optional[ArtifactRefModel] = None

@@ -15,14 +15,6 @@ class _RecordingLock:
         self._events.append("lock_exit")
 
 
-class _ForbiddenLock:
-    def __enter__(self) -> None:
-        raise AssertionError("basic candidate methods must not acquire _lock")
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        return None
-
-
 class _RecordingTxn:
     def __init__(self, events: list[str], connection: object) -> None:
         self._events = events
@@ -120,13 +112,22 @@ def test_put_acquires_lock_before_transaction_and_adds_artifact_refs_after_close
     ]
 
 
-def test_basic_candidate_put_does_not_acquire_store_lock() -> None:
+def test_candidate_put_acquires_lock_before_transaction() -> None:
     events: list[str] = []
     txn_connection = object()
     store = _new_store_shell()
-    store._lock = _ForbiddenLock()
+    store._lock = _RecordingLock(events)
     store._engine = _RecordingEngine(events, txn_connection)
-    store.candidate_get = lambda _candidate_id: None
+
+    def fetchone(_sql, _params=None, *, connection=None):
+        events.append(
+            "fetch_with_caller_connection"
+            if connection is txn_connection
+            else "fetch_with_wrong_connection"
+        )
+        return None
+
+    store._fetchone = fetchone
     store._execute = lambda _sql, _params=None, *, connection=None: events.append(
         "execute_with_caller_connection"
         if connection is txn_connection
@@ -137,10 +138,13 @@ def test_basic_candidate_put_does_not_acquire_store_lock() -> None:
     assert store.candidate_put(_memory_candidate("candidate-1")) == "candidate-1"
 
     assert events == [
+        "lock_enter",
         "engine_begin",
         "txn_enter",
+        "fetch_with_caller_connection",
         "execute_with_caller_connection",
         "txn_exit",
+        "lock_exit",
         "add_refs",
     ]
 

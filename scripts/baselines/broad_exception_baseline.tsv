@@ -101,7 +101,7 @@ src/openminion/modules/brain/loop/adaptive/context.py	1	0	current broad-handler 
 src/openminion/modules/brain/loop/adaptive/events.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/adaptive/finalization.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/adaptive/seeded.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/brain/loop/continuation.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/brain/loop/continuation.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/orchestration.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/proactive_entrypoint.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/recursive/llm.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

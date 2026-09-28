@@ -100,6 +100,16 @@ one bounded authenticated SSH handshake and closes it; it does not persist a
 live connection. `command-run --stream` optionally writes redacted SSH output
 chunks to stderr while keeping the final job JSON on stdout. Focus and API
 callers continue to receive pending or final results rather than live chunks.
+Readiness separates local dependency availability, registered transport
+availability, and the explicit probe result. The compatibility
+`transport_ready` field means the dependency and transport are available; it
+does not claim connectivity.
+
+Before an interactive `ops.command.run`, the approval prompt shows the exact
+stored target/revision, structured argv, cwd, timeout, expiry, plan ID and hash.
+The display is derived from the immutable server-side plan, not model-supplied
+preview fields. Operations commands support allow-once or deny only; a second
+plan requires another approval.
 
 If the client process exits while a command remains last-known running, inspect
 the remote state independently before correcting the local record:
@@ -116,6 +126,19 @@ does not prove remote termination and never makes the same plan replayable.
 Plans, jobs, and redacted evidence are stored below
 `OPENMINION_DATA_ROOT/ops/`. A successful exit records process facts only; it
 does not claim that a server was semantically configured.
+
+Operator state calls last-known running work `unverified` and directs the
+operator to inspect remote state before using `job-mark-interrupted`. Its
+`approval_awaiting_jobs` projection reports durable jobs waiting at approval
+but intentionally labels approval validity `unverified`; canonical policy TTL
+and resolution remain owned by the policy store.
+
+The configured remote account's permissions plus the exact approval are the
+real authority. The direct shell/privilege/dangerous-command filters are useful
+guards, not a complete privilege sandbox or semantic command classifier.
+Non-empty `service_scopes` constrain service and service-log observations;
+`policy_profile`, `capabilities`, and `maintenance_window` are descriptive
+metadata until a separately reviewed workflow gives them enforcement meaning.
 
 The managed command path is intentionally bounded: one target, structured
 argv, no environment/stdin forwarding, no PTY or file transfer, no

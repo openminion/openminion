@@ -46,6 +46,16 @@ _PATTERN_ROUTES = (
         "GET /sessions/{id}/runs/{run_id}/events",
     ),
     ("GET", re.compile(r"/sessions/([^/]+)/messages"), "GET /sessions/{id}/messages"),
+    (
+        "GET",
+        re.compile(r"/v1/sessions/([^/]+)/custom-commands"),
+        "GET /v1/sessions/{id}/custom-commands",
+    ),
+    (
+        "POST",
+        re.compile(r"/v1/sessions/([^/]+)/custom-commands/([^/]+)/render"),
+        "POST /v1/sessions/{id}/custom-commands/{name}/render",
+    ),
 )
 
 

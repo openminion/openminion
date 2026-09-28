@@ -2,10 +2,18 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 
-from openminion.modules.memory.errors import PromotionDeniedError
-from openminion.modules.memory.models import MemoryCandidate, MemoryRecord
+import pytest
+
+from openminion.modules.memory.errors import InvalidArgumentError, PromotionDeniedError
+from openminion.modules.memory.models import (
+    CandidateReview,
+    MemoryCandidate,
+    MemoryRecord,
+)
 from openminion.modules.memory.runtime.consolidation.coordinator import (
     ExtractionPayload,
     MergeDecision,
@@ -16,6 +24,13 @@ from openminion.modules.memory.runtime.consolidation.merge import (
 )
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
+from openminion.modules.memory.storage.base import ListQueryOptions
+from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
+from openminion.modules.memory.storage.sqlite import write as sqlite_write
+from openminion.modules.memory.storage.audit import (
+    AuditedMemoryStore,
+    InMemoryMemoryAuditSink,
+)
 
 
 def _now() -> str:
@@ -43,7 +58,7 @@ def _candidate(candidate_id: str, **overrides: object) -> MemoryCandidate:
 def _payload() -> ExtractionPayload:
     return ExtractionPayload(
         session_id="session-1",
-        agent_id="agent-1",
+        agent_id="test",
         candidate_refs=[
             {"candidate_id": "cand-promote"},
             {"candidate_id": "cand-discard"},
@@ -103,28 +118,46 @@ class _FakeMemoryService:
         self.update_calls.append((candidate_id, dict(patch)))
         return updated
 
-    def promote_candidate(self, candidate_id: str, target_scope: str) -> MemoryRecord:
-        self.promote_calls.append((candidate_id, target_scope))
-        if candidate_id in self.blocked_ids:
+    def apply_consolidation_decision(
+        self,
+        candidate: MemoryCandidate,
+        *,
+        action: str,
+        target_scope: str,
+        review: object,
+        meta: dict[str, object],
+    ) -> MemoryCandidate | MemoryRecord:
+        if action == "promote" and candidate.candidate_id in self.blocked_ids:
             raise PromotionDeniedError("blocked by trust gate")
-        now = _now()
-        return MemoryRecord(
-            id=f"mem-promoted-{candidate_id}",
-            scope=target_scope,
-            type="fact",
-            content={"text": f"promoted-{candidate_id}"},
-            created_at=now,
-            updated_at=now,
-        )
+        patch: dict[str, object] = {"review": review, "meta": meta}
+        if action == "discard":
+            patch["status"] = "rejected"
+        updated = self.candidate_update(candidate.candidate_id, patch)
+        if action == "promote":
+            self.promote_calls.append((candidate.candidate_id, target_scope))
+            return MemoryRecord(
+                id=f"mem-promoted-{candidate.candidate_id}",
+                scope=target_scope,
+                type="fact",
+                content={"text": f"promoted-{candidate.candidate_id}"},
+                created_at=_now(),
+                updated_at=_now(),
+            )
+        return updated
 
-    def supersede_by_contradiction(
-        self, old_record_id: str, new_record_id: str, reason: str = ""
+    def supersede_consolidation_hint(
+        self,
+        old_record_id: str,
+        new_record_id: str,
+        *,
+        target_scope: str,
+        reason: str = "",
     ) -> MemoryRecord:
         self.supersede_calls.append((old_record_id, new_record_id, reason))
         now = _now()
         return MemoryRecord(
             id=new_record_id,
-            scope="agent:test",
+            scope=target_scope,
             type="fact",
             content={"text": "updated"},
             created_at=now,
@@ -180,7 +213,7 @@ def test_apply_merge_decisions_routes_each_action_via_service() -> None:
     assert service.supersede_calls == [
         ("old-1", "mem-promoted-cand-promote", "durable lesson")
     ]
-    assert service.candidates["cand-promote"].status == "approved"
+    assert service.candidates["cand-promote"].status == "proposed"
     assert service.candidates["cand-discard"].status == "rejected"
     assert service.candidates["cand-defer"].status == "proposed"
     assert service.candidates["cand-keep"].status == "proposed"
@@ -194,7 +227,7 @@ def test_apply_merge_decisions_keeps_blocked_candidate_in_pool() -> None:
         service,
         payload=ExtractionPayload(
             session_id="session-1",
-            agent_id="agent-1",
+            agent_id="test",
             candidate_refs=[{"candidate_id": "cand-blocked"}],
             evidence_window={"recent_rollout_limit": 256},
         ),
@@ -214,8 +247,9 @@ def test_apply_merge_decisions_keeps_blocked_candidate_in_pool() -> None:
     assert result["promoted_count"] == 0
     assert len(result["errors"]) == 1
     assert "cand-blocked" in result["errors"][0]
-    assert service.candidates["cand-blocked"].status == "approved"
-    assert service.candidates["cand-blocked"].meta["consolidation_action"] == "promote"
+    assert service.candidates["cand-blocked"].status == "proposed"
+    assert service.candidates["cand-blocked"].meta["existing"] == "preserved"
+    assert "consolidation_action" not in service.candidates["cand-blocked"].meta
 
 
 def test_apply_merge_decisions_sets_valid_to_on_superseded_record() -> None:
@@ -234,7 +268,7 @@ def test_apply_merge_decisions_sets_valid_to_on_superseded_record() -> None:
     store.candidate_put(
         _candidate(
             "cand-promote",
-            status="approved",
+            status="proposed",
             source="validated",
             meta={},
         )
@@ -244,7 +278,7 @@ def test_apply_merge_decisions_sets_valid_to_on_superseded_record() -> None:
         service,
         payload=ExtractionPayload(
             session_id="session-1",
-            agent_id="agent-1",
+            agent_id="test",
             candidate_refs=[{"candidate_id": "cand-promote"}],
             contradiction_hints=[
                 {
@@ -277,3 +311,628 @@ def test_apply_merge_decisions_sets_valid_to_on_superseded_record() -> None:
     assert old_after.valid_to is not None
     assert old_after.superseded_by_id == promoted_id
     assert promoted_after.supersedes_id == "old-1"
+
+
+def test_apply_merge_decisions_rejects_scope_and_payload_expansion() -> None:
+    service = _FakeMemoryService()
+    payload = _payload()
+
+    mismatched_scope = apply_merge_decisions_via_service(
+        service,
+        payload=payload,
+        merge_decisions=MergeDecisions(
+            decisions=[MergeDecision(candidate_id="cand-promote", action="promote")]
+        ),
+        target_scope="agent:other",
+    )
+    off_payload = apply_merge_decisions_via_service(
+        service,
+        payload=payload,
+        merge_decisions=MergeDecisions(
+            decisions=[MergeDecision(candidate_id="cand-blocked", action="keep")]
+        ),
+        target_scope="agent:test",
+    )
+
+    assert mismatched_scope["applied_count"] == 0
+    assert off_payload["applied_count"] == 0
+    assert service.update_calls == []
+    assert "not in the extraction payload" in off_payload["errors"][0]
+
+
+def test_apply_merge_decisions_ignores_model_target_scope() -> None:
+    service = _FakeMemoryService()
+
+    result = apply_merge_decisions_via_service(
+        service,
+        payload=ExtractionPayload(
+            session_id="session-1",
+            agent_id="test",
+            candidate_refs=[{"candidate_id": "cand-promote"}],
+        ),
+        merge_decisions=MergeDecisions(
+            decisions=[
+                MergeDecision(
+                    candidate_id="cand-promote",
+                    action="promote",
+                    target_scope="agent:other",
+                )
+            ]
+        ),
+        target_scope="agent:test",
+    )
+
+    assert result["promoted_count"] == 1
+    assert service.promote_calls == [("cand-promote", "agent:test")]
+
+
+@pytest.mark.parametrize(
+    ("candidate_id", "action", "count_key"),
+    [
+        ("cand-keep", "keep", "kept_count"),
+        ("cand-defer", "defer", "deferred_count"),
+    ],
+)
+def test_apply_merge_decisions_rejects_duplicate_candidate_actions(
+    candidate_id: str,
+    action: str,
+    count_key: str,
+) -> None:
+    service = _FakeMemoryService()
+
+    result = apply_merge_decisions_via_service(
+        service,
+        payload=_payload(),
+        merge_decisions=MergeDecisions(
+            decisions=[
+                MergeDecision(candidate_id=candidate_id, action=action),
+                MergeDecision(candidate_id=candidate_id, action=action),
+            ]
+        ),
+        target_scope="agent:test",
+    )
+
+    assert result["applied_count"] == 0
+    assert result[count_key] == 0
+    assert service.update_calls == []
+    assert len(result["errors"]) == 2
+    assert all(
+        "duplicate consolidation decision" in error for error in result["errors"]
+    )
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+@pytest.mark.parametrize("hint_kind", ["duplicate", "contradiction"])
+def test_checked_hint_supersession_keeps_successful_promotion(
+    store_kind: str,
+    hint_kind: str,
+    tmp_path: Path,
+) -> None:
+    store = (
+        InMemoryMemoryStore()
+        if store_kind == "memory"
+        else SQLiteMemoryStore(tmp_path / f"{hint_kind}.db")
+    )
+    service = MemoryService(store=store)
+    old_record = MemoryRecord(
+        id="old-checked",
+        scope="agent:test",
+        type="fact",
+        content={"text": "old fact"},
+        created_at="2026-09-01T00:00:00+00:00",
+        updated_at="2026-09-01T00:00:00+00:00",
+    )
+    store.put(old_record)
+    store.candidate_put(_candidate("cand-checked", meta={}))
+    hint = {"candidate_id": "cand-checked"}
+    if hint_kind == "duplicate":
+        hint["existing_record_id"] = old_record.id
+    else:
+        hint["record_id"] = old_record.id
+        hint["record_is_current"] = True
+    payload_kwargs = (
+        {"duplicate_hints": [hint]}
+        if hint_kind == "duplicate"
+        else {"contradiction_hints": [hint]}
+    )
+
+    result = apply_merge_decisions_via_service(
+        service,
+        payload=ExtractionPayload(
+            session_id="run-1",
+            agent_id="test",
+            candidate_refs=[{"candidate_id": "cand-checked"}],
+            **payload_kwargs,
+        ),
+        merge_decisions=MergeDecisions(
+            decisions=[MergeDecision(candidate_id="cand-checked", action="promote")]
+        ),
+        target_scope="agent:test",
+    )
+
+    promoted_id = result["promoted_record_ids"][0]
+    assert result["promoted_count"] == 1
+    assert result["supersession_errors"] == []
+    assert store.get(old_record.id).superseded_by_id == promoted_id
+    assert store.get(promoted_id).supersedes_id == old_record.id
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_keyed_duplicate_hint_accepts_existing_promotion_link(
+    store_kind: str,
+    tmp_path: Path,
+) -> None:
+    base_store = (
+        InMemoryMemoryStore()
+        if store_kind == "memory"
+        else SQLiteMemoryStore(tmp_path / "keyed-duplicate.db")
+    )
+    sink = InMemoryMemoryAuditSink()
+    store = AuditedMemoryStore(base_store, sink=sink)
+    service = MemoryService(store=store)
+    old_record = MemoryRecord(
+        id="keyed-old",
+        scope="agent:test",
+        type="fact",
+        key="fact:keyed",
+        content={"text": "old keyed fact"},
+        created_at="2026-09-01T00:00:00+00:00",
+        updated_at="2026-09-01T00:00:00+00:00",
+    )
+    store.put(old_record)
+    store.candidate_put(
+        _candidate("cand-keyed", key="fact:keyed", meta={}, status="proposed")
+    )
+    sink.events.clear()
+
+    result = apply_merge_decisions_via_service(
+        service,
+        payload=ExtractionPayload(
+            session_id="run-keyed",
+            agent_id="test",
+            candidate_refs=[{"candidate_id": "cand-keyed"}],
+            duplicate_hints=[
+                {
+                    "candidate_id": "cand-keyed",
+                    "existing_record_id": old_record.id,
+                }
+            ],
+        ),
+        merge_decisions=MergeDecisions(
+            decisions=[MergeDecision(candidate_id="cand-keyed", action="promote")]
+        ),
+        target_scope="agent:test",
+    )
+
+    promoted_id = result["promoted_record_ids"][0]
+    old_after = store.get(old_record.id)
+    promoted_after = store.get(promoted_id)
+    assert result["promoted_count"] == 1
+    assert result["supersession_errors"] == []
+    assert result["superseded_record_ids"] == [promoted_id]
+    assert old_after.superseded_by_id == promoted_id
+    assert old_after.valid_to == promoted_after.created_at
+    assert old_after.updated_at == promoted_after.created_at
+    assert promoted_after.supersedes_id == old_record.id
+    assert [event.event_type for event in sink.events] == [
+        "memory.candidate.promote",
+        "memory.record.supersede",
+    ]
+    assert sink.events[-1].target_id == promoted_id
+    assert sink.events[-1].details["old_record_id"] == old_record.id
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+@pytest.mark.parametrize("hint_kind", ["duplicate", "contradiction"])
+@pytest.mark.parametrize("invalid_hint", ["stale", "cross_scope"])
+def test_invalid_hint_does_not_erase_successful_promotion(
+    store_kind: str,
+    hint_kind: str,
+    invalid_hint: str,
+    tmp_path: Path,
+) -> None:
+    store = (
+        InMemoryMemoryStore()
+        if store_kind == "memory"
+        else SQLiteMemoryStore(tmp_path / f"{hint_kind}-{invalid_hint}.db")
+    )
+    service = MemoryService(store=store)
+    old_record = MemoryRecord(
+        id="old-invalid",
+        scope="agent:other" if invalid_hint == "cross_scope" else "agent:test",
+        type="fact",
+        content={"text": "old fact"},
+        created_at="2026-08-01T00:00:00+00:00",
+        updated_at="2026-08-01T00:00:00+00:00",
+        valid_to=("2026-08-02T00:00:00+00:00" if invalid_hint == "stale" else None),
+    )
+    store.put(old_record)
+    old_before = store.get(old_record.id)
+    store.candidate_put(_candidate("cand-invalid", meta={}))
+    hint = {"candidate_id": "cand-invalid"}
+    if hint_kind == "duplicate":
+        hint["existing_record_id"] = old_record.id
+    else:
+        hint["record_id"] = old_record.id
+        hint["record_is_current"] = invalid_hint != "stale"
+    payload_kwargs = (
+        {"duplicate_hints": [hint]}
+        if hint_kind == "duplicate"
+        else {"contradiction_hints": [hint]}
+    )
+
+    result = apply_merge_decisions_via_service(
+        service,
+        payload=ExtractionPayload(
+            session_id="run-1",
+            agent_id="test",
+            candidate_refs=[{"candidate_id": "cand-invalid"}],
+            **payload_kwargs,
+        ),
+        merge_decisions=MergeDecisions(
+            decisions=[MergeDecision(candidate_id="cand-invalid", action="promote")]
+        ),
+        target_scope="agent:test",
+    )
+
+    assert result["promoted_count"] == 1
+    assert result["applied_count"] == 1
+    assert result["superseded_record_ids"] == []
+    assert len(result["supersession_errors"]) == 1
+    assert store.get(old_record.id) == old_before
+    assert store.get(result["promoted_record_ids"][0]) is not None
+
+
+def test_checked_hint_audits_only_successful_supersession() -> None:
+    sink = InMemoryMemoryAuditSink()
+    store = AuditedMemoryStore(InMemoryMemoryStore(), sink=sink)
+    service = MemoryService(store=store)
+    now = _now()
+    old_record = MemoryRecord(
+        id="audit-old",
+        scope="agent:test",
+        type="fact",
+        content={"text": "old"},
+        created_at=now,
+        updated_at=now,
+    )
+    new_record = MemoryRecord(
+        id="audit-new",
+        scope="agent:test",
+        type="fact",
+        content={"text": "new"},
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(old_record)
+    store.put(new_record)
+    sink.events.clear()
+
+    service.supersede_consolidation_hint(
+        old_record.id,
+        new_record.id,
+        target_scope="agent:test",
+        reason="checked hint",
+    )
+
+    assert [event.event_type for event in sink.events] == ["memory.record.supersede"]
+    cross_scope = MemoryRecord(
+        id="audit-other",
+        scope="agent:other",
+        type="fact",
+        content={"text": "other"},
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(cross_scope)
+    sink.events.clear()
+    with pytest.raises(InvalidArgumentError, match="stale or outside"):
+        service.supersede_consolidation_hint(
+            cross_scope.id,
+            new_record.id,
+            target_scope="agent:test",
+        )
+    assert sink.events == []
+
+
+def test_in_memory_checked_hint_rejects_concurrent_invalidation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryMemoryStore()
+    service = MemoryService(store=store)
+    now = _now()
+    old_record = MemoryRecord(
+        id="concurrent-old",
+        scope="agent:test",
+        type="fact",
+        content={"text": "old"},
+        created_at=now,
+        updated_at=now,
+    )
+    new_record = MemoryRecord(
+        id="concurrent-new",
+        scope="agent:test",
+        type="fact",
+        content={"text": "new"},
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(old_record)
+    store.put(new_record)
+    original_invalidate = store._records.invalidate
+    writer_locked = Event()
+    release_writer = Event()
+
+    def delayed_invalidate(*args, **kwargs):
+        with store._records._write_lock:
+            writer_locked.set()
+            assert release_writer.wait(timeout=2)
+            return original_invalidate(*args, **kwargs)
+
+    monkeypatch.setattr(store._records, "invalidate", delayed_invalidate)
+    errors: list[Exception] = []
+    hint_started = Event()
+
+    def apply_hint() -> None:
+        hint_started.set()
+        try:
+            service.supersede_consolidation_hint(
+                old_record.id,
+                new_record.id,
+                target_scope="agent:test",
+            )
+        except Exception as exc:
+            errors.append(exc)
+
+    writer = Thread(
+        target=store.invalidate,
+        args=(old_record.id,),
+        kwargs={"valid_to": "2026-01-01T00:00:00+00:00", "reason": "stale"},
+    )
+    writer.start()
+    assert writer_locked.wait(timeout=2)
+    hint = Thread(target=apply_hint)
+    hint.start()
+    assert hint_started.wait(timeout=2)
+    assert hint.is_alive()
+    release_writer.set()
+    writer.join(timeout=2)
+    hint.join(timeout=2)
+
+    assert not writer.is_alive()
+    assert not hint.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], InvalidArgumentError)
+    assert "stale or outside" in str(errors[0])
+    assert store.get(old_record.id).superseded_by_id is None
+    assert store.get(new_record.id).supersedes_id is None
+
+
+@pytest.fixture(params=["memory", "sqlite"])
+def conditional_store(request: pytest.FixtureRequest, tmp_path: Path):
+    if request.param == "memory":
+        return InMemoryMemoryStore()
+    return SQLiteMemoryStore(tmp_path / "memory.db")
+
+
+def _review() -> CandidateReview:
+    return CandidateReview(
+        reviewer="memory_consolidation",
+        decided_at="2026-09-25T00:00:00+00:00",
+        note="reviewed",
+    )
+
+
+def test_conditional_promotion_commits_directly_from_proposed(
+    conditional_store,
+) -> None:
+    candidate = _candidate("cand-promote", source="validated", status="proposed")
+    conditional_store.candidate_put(candidate)
+    service = MemoryService(store=conditional_store)
+
+    record = service.apply_consolidation_decision(
+        service.candidate_get(candidate.candidate_id),
+        action="promote",
+        target_scope="agent:test",
+        review=_review(),
+        meta={"consolidation_action": "promote"},
+    )
+
+    promoted = conditional_store.candidate_get(candidate.candidate_id)
+    assert promoted is not None
+    assert promoted.status == "promoted"
+    assert promoted.review == _review()
+    assert promoted.meta["consolidation_action"] == "promote"
+    assert record.scope == "agent:test"
+    assert service.last_policy_decisions()[-1]["allowed"] is True
+
+
+def test_conditional_promotion_denial_leaves_candidate_unchanged(
+    conditional_store,
+) -> None:
+    candidate = _candidate("cand-denied", source="agent_inferred", status="proposed")
+    conditional_store.candidate_put(candidate)
+    service = MemoryService(store=conditional_store)
+    before = service.candidate_get(candidate.candidate_id)
+
+    with pytest.raises(PromotionDeniedError):
+        service.apply_consolidation_decision(
+            before,
+            action="promote",
+            target_scope="agent:test",
+            review=_review(),
+            meta={"consolidation_action": "promote"},
+        )
+
+    assert service.candidate_get(candidate.candidate_id) == before
+    assert conditional_store.list(ListQueryOptions(scopes=["agent:test"])) == []
+    assert service.last_policy_decisions()[-1]["allowed"] is False
+
+
+def test_conditional_promotion_rejects_scope_before_policy(conditional_store) -> None:
+    candidate = _candidate(
+        "cand-other-scope",
+        proposed_scope="agent:other",
+        source="agent_inferred",
+        status="proposed",
+    )
+    conditional_store.candidate_put(candidate)
+    service = MemoryService(store=conditional_store)
+
+    with pytest.raises(InvalidArgumentError, match="outside the active"):
+        service.apply_consolidation_decision(
+            service.candidate_get(candidate.candidate_id),
+            action="promote",
+            target_scope="agent:test",
+            review=_review(),
+            meta={"consolidation_action": "promote"},
+        )
+
+    assert service.candidate_get(candidate.candidate_id) == candidate
+    assert service.last_policy_decisions() == []
+
+
+def test_conditional_decision_rejects_stale_snapshot(conditional_store) -> None:
+    candidate = _candidate("cand-stale", source="validated", status="proposed")
+    conditional_store.candidate_put(candidate)
+    service = MemoryService(store=conditional_store)
+    stale = service.candidate_get(candidate.candidate_id)
+    service.candidate_update(candidate.candidate_id, {"content": {"text": "changed"}})
+
+    with pytest.raises(InvalidArgumentError, match="changed before consolidation"):
+        service.apply_consolidation_decision(
+            stale,
+            action="promote",
+            target_scope="agent:test",
+            review=_review(),
+            meta={"consolidation_action": "promote"},
+        )
+
+    assert service.candidate_get(candidate.candidate_id).status == "proposed"
+    assert conditional_store.list(ListQueryOptions(scopes=["agent:test"])) == []
+    assert service.last_policy_decisions() == []
+
+
+def test_sqlite_conditional_promotion_rolls_back_after_insert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SQLiteMemoryStore(tmp_path / "rollback.db")
+    service = MemoryService(store=store)
+    candidate = _candidate("cand-rollback", source="validated", status="proposed")
+    store.candidate_put(candidate)
+    original_insert = sqlite_write._insert_promoted_candidate
+
+    def fail_after_insert(*args, **kwargs):
+        original_insert(*args, **kwargs)
+        raise RuntimeError("induced promotion failure")
+
+    monkeypatch.setattr(sqlite_write, "_insert_promoted_candidate", fail_after_insert)
+    with pytest.raises(RuntimeError, match="induced promotion failure"):
+        service.apply_consolidation_decision(
+            service.candidate_get(candidate.candidate_id),
+            action="promote",
+            target_scope="agent:test",
+            review=_review(),
+            meta={"consolidation_action": "promote"},
+        )
+
+    assert store.candidate_get(candidate.candidate_id).status == "proposed"
+    assert store.list(ListQueryOptions(scopes=["agent:test"])) == []
+    assert service.last_policy_decisions() == []
+
+
+def test_terminal_candidate_rejects_stale_writer(conditional_store) -> None:
+    candidate = _candidate("cand-terminal", source="validated", status="proposed")
+    conditional_store.candidate_put(candidate)
+    service = MemoryService(store=conditional_store)
+    stale = service.candidate_get(candidate.candidate_id)
+    service.apply_consolidation_decision(
+        stale,
+        action="promote",
+        target_scope="agent:test",
+        review=_review(),
+        meta={"consolidation_action": "promote"},
+    )
+
+    with pytest.raises(
+        InvalidArgumentError, match="cannot regress from terminal status"
+    ):
+        conditional_store.candidate_put(stale)
+    with pytest.raises(
+        InvalidArgumentError, match="cannot regress from terminal status"
+    ):
+        conditional_store.candidate_update(
+            candidate.candidate_id, {"status": "proposed"}
+        )
+    assert conditional_store.candidate_get(candidate.candidate_id).status == "promoted"
+
+
+def test_in_memory_candidates_detach_nested_values() -> None:
+    store = InMemoryMemoryStore()
+    candidate = _candidate("cand-alias", meta={"nested": {"value": "original"}})
+    store.candidate_put(candidate)
+    candidate.meta["nested"]["value"] = "input-mutated"
+    loaded = store.candidate_get(candidate.candidate_id)
+    assert loaded is not None
+    loaded.meta["nested"]["value"] = "read-mutated"
+
+    assert store.candidate_get(candidate.candidate_id).meta["nested"] == {
+        "value": "original"
+    }
+    service = MemoryService(store=store)
+    with pytest.raises(InvalidArgumentError, match="changed before consolidation"):
+        service.apply_consolidation_decision(
+            loaded,
+            action="promote",
+            target_scope="agent:test",
+            review=_review(),
+            meta={"consolidation_action": "promote"},
+        )
+    assert store.list(ListQueryOptions(scopes=["agent:test"])) == []
+
+
+def test_conditional_consolidation_audits_only_committed_write() -> None:
+    sink = InMemoryMemoryAuditSink()
+    store = AuditedMemoryStore(InMemoryMemoryStore(), sink=sink)
+    service = MemoryService(store=store)
+    candidate = _candidate("cand-audit", source="validated", status="proposed")
+    store.candidate_put(candidate)
+    snapshot = service.candidate_get(candidate.candidate_id)
+    sink.events.clear()
+
+    service.apply_consolidation_decision(
+        snapshot,
+        action="promote",
+        target_scope="agent:test",
+        review=_review(),
+        meta={"consolidation_action": "promote"},
+    )
+
+    assert [event.event_type for event in sink.events] == ["memory.candidate.promote"]
+
+
+@pytest.mark.parametrize(
+    ("action", "patched_fields"),
+    [("defer", ["meta", "review"]), ("discard", ["meta", "review", "status"])],
+)
+def test_conditional_consolidation_audit_reports_changed_fields(
+    action: str, patched_fields: list[str]
+) -> None:
+    sink = InMemoryMemoryAuditSink()
+    store = AuditedMemoryStore(InMemoryMemoryStore(), sink=sink)
+    service = MemoryService(store=store)
+    candidate = _candidate(f"cand-audit-{action}", status="proposed")
+    store.candidate_put(candidate)
+    snapshot = service.candidate_get(candidate.candidate_id)
+    sink.events.clear()
+
+    service.apply_consolidation_decision(
+        snapshot,
+        action=action,
+        target_scope="agent:test",
+        review=_review(),
+        meta={"consolidation_action": action},
+    )
+
+    assert len(sink.events) == 1
+    assert sink.events[0].details["patched_fields"] == patched_fields

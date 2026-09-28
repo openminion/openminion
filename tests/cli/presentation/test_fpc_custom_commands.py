@@ -7,6 +7,7 @@ from openminion.cli.presentation.custom_commands import (
     discover_custom_commands,
     discover_with_warnings,
     render_command,
+    render_command_arguments,
 )
 
 
@@ -21,6 +22,20 @@ def test_discover_finds_project_commands(tmp_path: Path) -> None:
     result = discover_custom_commands(project_dir=project, user_dir=None)
     assert "/review" in result
     assert result["/review"].source == "project"
+
+
+def test_argument_only_render_matches_focus_argument_stage() -> None:
+    command = CustomCommand(
+        slash="/review",
+        body="first=$1 all=$ARGUMENTS",
+        source="project",
+        path=Path("review.md"),
+    )
+
+    assert (
+        render_command_arguments(command, arg_string='"two words" tail')
+        == 'first=two words all="two words" tail'
+    )
 
 
 def test_discover_finds_user_commands(tmp_path: Path) -> None:

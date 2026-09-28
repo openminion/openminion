@@ -9,7 +9,12 @@ from typing import Any
 
 from openminion.modules.llm import RuntimeLLMHandle
 from openminion.modules.llm.schemas import Message
-from openminion.modules.memory.errors import NotFoundError, PromotionDeniedError
+from openminion.modules.memory.constants import MEMORY_CANDIDATE_STATUS_PROPOSED
+from openminion.modules.memory.errors import (
+    InvalidArgumentError,
+    NotFoundError,
+    PromotionDeniedError,
+)
 from openminion.modules.memory.models import CandidateReview
 from openminion.modules.memory.runtime.consolidation.coordinator import (
     ConsolidationConfig,
@@ -178,9 +183,7 @@ def _hint_record_id(
             if record_id:
                 return record_id
     for item in payload.contradiction_hints:
-        if str(item.get("candidate_id", "") or "").strip() == candidate_id and bool(
-            item.get("record_is_current", False)
-        ):
+        if str(item.get("candidate_id", "") or "").strip() == candidate_id:
             record_id = str(item.get("record_id", "") or "").strip()
             if record_id:
                 return record_id
@@ -205,27 +208,82 @@ def _consolidation_meta(
     return merged
 
 
-def _decision_patch(
+def _apply_merge_action(
+    candidate: Any,
+    apply_decision: Any,
     *,
+    candidate_id: str,
     action: str,
-    review: CandidateReview,
     reasoning: str,
+    target_scope: str,
+    reviewer: str,
     decided_at: str,
-    existing_meta: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    patch: dict[str, Any] = {
-        "review": review,
-        "meta": _consolidation_meta(
-            existing_meta,
+) -> Any:
+    if candidate is None:
+        raise NotFoundError(f"candidate not found: {candidate_id}")
+    if action == "keep":
+        if (
+            str(candidate.status) != MEMORY_CANDIDATE_STATUS_PROPOSED
+            or candidate.proposed_scope != target_scope
+        ):
+            raise InvalidArgumentError(
+                f"candidate {candidate_id} is outside the active consolidation scope"
+            )
+        return None
+    return apply_decision(
+        candidate,
+        action=action,
+        target_scope=target_scope,
+        review=CandidateReview(
+            reviewer=reviewer,
+            decided_at=decided_at,
+            note=reasoning or None,
+        ),
+        meta=_consolidation_meta(
+            getattr(candidate, "meta", {}) or {},
             action=action,
             reasoning=reasoning,
             decided_at=decided_at,
         ),
+    )
+
+
+def _empty_merge_result(error: str) -> dict[str, Any]:
+    return {
+        "applied_count": 0,
+        "promoted_count": 0,
+        "discarded_count": 0,
+        "deferred_count": 0,
+        "kept_count": 0,
+        "errors": [error],
+        "supersession_errors": [],
     }
-    status = {"promote": "approved", "discard": "rejected"}.get(action)
-    if status:
-        patch["status"] = status
-    return patch
+
+
+def _apply_consolidation_hint(
+    handler: Any,
+    payload: ExtractionPayload,
+    *,
+    candidate_id: str,
+    promoted_record_id: str,
+    target_scope: str,
+    reason: str,
+) -> tuple[str | None, str | None]:
+    prior_record_id = _hint_record_id(payload, candidate_id=candidate_id)
+    if not prior_record_id:
+        return None, None
+    if not callable(handler):
+        return None, "checked consolidation supersession is unsupported"
+    try:
+        superseded = handler(
+            prior_record_id,
+            promoted_record_id,
+            target_scope=target_scope,
+            reason=reason or "memory_consolidation",
+        )
+    except (InvalidArgumentError, NotFoundError) as exc:
+        return None, str(exc)
+    return str(getattr(superseded, "id", "") or "").strip(), None
 
 
 def apply_merge_decisions_via_service(
@@ -236,21 +294,21 @@ def apply_merge_decisions_via_service(
     target_scope: str,
     reviewer: str = "memory_consolidation",
 ) -> dict[str, Any]:
-    candidate_update = getattr(memory_service, "candidate_update", None)
     candidate_get = getattr(memory_service, "candidate_get", None)
-    promote_candidate = getattr(memory_service, "promote_candidate", None)
-    supersede_by_contradiction = getattr(
-        memory_service, "supersede_by_contradiction", None
+    apply_decision = getattr(memory_service, "apply_consolidation_decision", None)
+    supersede_consolidation_hint = getattr(
+        memory_service, "supersede_consolidation_hint", None
     )
-    if not callable(candidate_update) or not callable(promote_candidate):
-        return {
-            "applied_count": 0,
-            "promoted_count": 0,
-            "discarded_count": 0,
-            "deferred_count": 0,
-            "kept_count": 0,
-            "errors": ["memory service does not support consolidation decisions"],
-        }
+    expected_scope = f"agent:{str(payload.agent_id or '').strip()}"
+    normalized_target_scope = str(target_scope or "").strip()
+    if expected_scope == "agent:" or normalized_target_scope != expected_scope:
+        return _empty_merge_result(
+            "target scope does not match the consolidation agent"
+        )
+    if not callable(candidate_get) or not callable(apply_decision):
+        return _empty_merge_result(
+            "memory service does not support consolidation decisions"
+        )
 
     decided_at = datetime.now(timezone.utc).isoformat()
     counters: Counter[str] = Counter()
@@ -258,6 +316,15 @@ def apply_merge_decisions_via_service(
     applied_ids: list[str] = []
     promoted_record_ids: list[str] = []
     superseded_record_ids: list[str] = []
+    supersession_errors: list[str] = []
+    payload_candidate_ids = {
+        str(item.get("candidate_id", "") or "").strip()
+        for item in payload.candidate_refs
+    }
+    decision_counts = Counter(
+        str(decision.candidate_id or "").strip()
+        for decision in merge_decisions.decisions
+    )
 
     for decision in merge_decisions.decisions:
         candidate_id = str(decision.candidate_id or "").strip()
@@ -265,48 +332,23 @@ def apply_merge_decisions_via_service(
         reasoning = str(decision.reasoning or "").strip()
         if not candidate_id or action not in _MERGE_ACTIONS:
             continue
-        current_candidate = (
-            candidate_get(candidate_id) if callable(candidate_get) else None
-        )
-        review = CandidateReview(
-            reviewer=reviewer,
-            decided_at=decided_at,
-            note=reasoning or None,
-        )
+        if candidate_id not in payload_candidate_ids:
+            errors.append(f"{candidate_id}: candidate is not in the extraction payload")
+            continue
+        if decision_counts[candidate_id] != 1:
+            errors.append(f"{candidate_id}: duplicate consolidation decision")
+            continue
         try:
-            if action == "keep":
-                current_candidate = current_candidate or (
-                    candidate_get(candidate_id) if callable(candidate_get) else None
-                )
-                if current_candidate is None:
-                    raise NotFoundError(f"candidate not found: {candidate_id}")
-            else:
-                candidate_update(
-                    candidate_id,
-                    _decision_patch(
-                        action=action,
-                        review=review,
-                        reasoning=reasoning,
-                        decided_at=decided_at,
-                        existing_meta=getattr(current_candidate, "meta", {}) or {},
-                    ),
-                )
-            if action == "promote":
-                scope = str(decision.target_scope or target_scope or "").strip()
-                promoted = promote_candidate(candidate_id, scope)
-                promoted_record_ids.append(
-                    str(getattr(promoted, "id", "") or "").strip()
-                )
-                prior_record_id = _hint_record_id(payload, candidate_id=candidate_id)
-                if prior_record_id and callable(supersede_by_contradiction):
-                    superseded = supersede_by_contradiction(
-                        prior_record_id,
-                        str(getattr(promoted, "id", "") or "").strip(),
-                        reason=reasoning or "memory_consolidation",
-                    )
-                    superseded_record_ids.append(
-                        str(getattr(superseded, "id", "") or "").strip()
-                    )
+            applied = _apply_merge_action(
+                candidate_get(candidate_id),
+                apply_decision,
+                candidate_id=candidate_id,
+                action=action,
+                reasoning=reasoning,
+                target_scope=normalized_target_scope,
+                reviewer=reviewer,
+                decided_at=decided_at,
+            )
         except PromotionDeniedError as exc:
             errors.append(f"{candidate_id}: {exc}")
             continue
@@ -315,6 +357,22 @@ def apply_merge_decisions_via_service(
             continue
         counters[action] += 1
         applied_ids.append(candidate_id)
+        if action != "promote":
+            continue
+        promoted_record_id = str(getattr(applied, "id", "") or "").strip()
+        promoted_record_ids.append(promoted_record_id)
+        superseded_id, hint_error = _apply_consolidation_hint(
+            supersede_consolidation_hint,
+            payload,
+            candidate_id=candidate_id,
+            promoted_record_id=promoted_record_id,
+            target_scope=normalized_target_scope,
+            reason=reasoning,
+        )
+        if superseded_id:
+            superseded_record_ids.append(superseded_id)
+        if hint_error:
+            supersession_errors.append(f"{candidate_id}: {hint_error}")
 
     return {
         "applied_count": sum(counters.values()),
@@ -326,6 +384,7 @@ def apply_merge_decisions_via_service(
         "promoted_record_ids": promoted_record_ids,
         "superseded_record_ids": superseded_record_ids,
         "errors": errors,
+        "supersession_errors": supersession_errors,
     }
 
 
@@ -334,12 +393,13 @@ def apply_memory_consolidation_decisions(
     *,
     decisions: list[dict[str, Any]],
     target_scope: str,
+    selected_candidate_ids: list[str],
     reviewer: str = "memory_consolidation",
 ) -> dict[str, Any]:
     backend = memory_backend(memory_api)
-    candidate_update = getattr(backend, "candidate_update", None)
-    promote_candidate = getattr(backend, "promote_candidate", None)
-    if not callable(candidate_update) or not callable(promote_candidate):
+    candidate_get = getattr(backend, "candidate_get", None)
+    apply_decision = getattr(backend, "apply_consolidation_decision", None)
+    if not callable(candidate_get) or not callable(apply_decision):
         return {
             "applied_count": 0,
             "promoted_count": 0,
@@ -352,11 +412,27 @@ def apply_memory_consolidation_decisions(
     counters: Counter[str] = Counter()
     errors: list[str] = []
     applied_ids: list[str] = []
+    selected_counts = Counter(
+        candidate_id
+        for item in selected_candidate_ids
+        if (candidate_id := str(item or "").strip())
+    )
+    decision_counts = Counter(
+        candidate_id
+        for item in decisions
+        if (candidate_id := str(item.get("candidate_id", "") or "").strip())
+    )
     for item in decisions:
         candidate_id = str(item.get("candidate_id", "") or "").strip()
         action = str(item.get("action", "") or "").strip().lower()
         reasoning = str(item.get("reasoning", "") or "").strip()
         if not candidate_id or action not in {"promote", "discard", "defer"}:
+            continue
+        if selected_counts[candidate_id] != 1:
+            errors.append(f"{candidate_id}: candidate is not in the selected batch")
+            continue
+        if decision_counts[candidate_id] != 1:
+            errors.append(f"{candidate_id}: duplicate consolidation decision")
             continue
         review = CandidateReview(
             reviewer=reviewer,
@@ -364,17 +440,22 @@ def apply_memory_consolidation_decisions(
             note=reasoning or None,
         )
         try:
-            candidate_update(
-                candidate_id,
-                _decision_patch(
-                    action=action,
-                    review=review,
-                    reasoning=reasoning,
-                    decided_at=decided_at,
-                ),
+            candidate = candidate_get(candidate_id)
+            if candidate is None:
+                raise NotFoundError(f"candidate not found: {candidate_id}")
+            meta = _consolidation_meta(
+                getattr(candidate, "meta", {}) or {},
+                action=action,
+                reasoning=reasoning,
+                decided_at=decided_at,
             )
-            if action == "promote":
-                promote_candidate(candidate_id, str(target_scope or "").strip())
+            apply_decision(
+                candidate,
+                action=action,
+                target_scope=str(target_scope or "").strip(),
+                review=review,
+                meta=meta,
+            )
         except Exception as exc:
             errors.append(f"{candidate_id}: {exc}")
             continue

@@ -51,10 +51,9 @@ def test_greeter_contains_interactive_terminal_label() -> None:
     assert "interactive terminal" in out
 
 
-def test_greeter_contains_agent_label_and_value() -> None:
+def test_greeter_leads_with_model_directory_and_permissions() -> None:
     out = _capture_greeter()
-    assert "agent:" in out
-    assert "test-agent" in out
+    assert out.index("model:") < out.index("directory:") < out.index("permissions:")
 
 
 def test_greeter_contains_model_label_and_value() -> None:
@@ -64,7 +63,7 @@ def test_greeter_contains_model_label_and_value() -> None:
     assert "openai/gpt-4" not in out
 
 
-def test_greeter_separates_model_service_and_api() -> None:
+def test_greeter_defers_provider_and_api_adapter_to_status() -> None:
     runtime = _StubRuntime(
         model_name="google/gemma-4-31b-it",
         service_vendor_name="nvidia",
@@ -75,9 +74,9 @@ def test_greeter_separates_model_service_and_api() -> None:
     _push_greeter(console, runtime=runtime, working_dir="/tmp/project")
     out = buf.getvalue()
 
-    assert "provider:    nvidia" in out
     assert "model:       google/gemma-4-31b-it" in out
-    assert "API adapter: OpenAI-compatible" in out
+    assert "provider:" not in out
+    assert "API adapter:" not in out
     assert "openai/google/gemma-4-31b-it" not in out
 
 
@@ -187,7 +186,6 @@ def test_greeter_handles_missing_provider_gracefully() -> None:
     _push_greeter(console, runtime=_Bare(), working_dir="/tmp")
     out = buf.getvalue()
     assert "openminion" in out.lower()
-    assert "bare" in out
     assert "minimax-m2" in out
 
 
@@ -200,27 +198,9 @@ def test_greeter_handles_bare_runtime() -> None:
     console = Console(file=buf, force_terminal=False, width=120)
     _push_greeter(console, runtime=_Bare(), working_dir="/tmp")
     out = buf.getvalue()
-    assert "openminion" in out
-
-
-def test_greeter_uses_rich_panel() -> None:
-    import inspect
-
-    from openminion.cli.interactive.terminal import shell
-
-    src = inspect.getsource(shell._push_greeter)
-    assert "Panel" in src
+    assert "OpenMinion" in out
 
 
 def test_greeter_includes_version_label() -> None:
     out = _capture_greeter()
     assert "(v" in out
-
-
-def test_greeter_panel_uses_dim_border() -> None:
-    import inspect
-
-    from openminion.cli.interactive.terminal import shell
-
-    src = inspect.getsource(shell._push_greeter)
-    assert 'border_style="dim"' in src

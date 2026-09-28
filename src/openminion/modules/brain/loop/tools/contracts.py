@@ -17,7 +17,7 @@ from openminion.modules.brain.runtime.improvement.contracts import (
     SelfImprovementPolicy,
 )
 from openminion.modules.llm.schemas import LLMResponse, Message, ToolCall, ToolSpec
-from openminion.modules.tool.plugin_api import BlockchainSendConfirmationPreview
+from openminion.modules.tool.plugin_api import ToolConfirmationPreview
 from openminion.modules.tool.diagnostics.events import (
     structural_security_tool_results,
     structural_tool_results,
@@ -122,7 +122,7 @@ class CommandExecutionOutcome:
     reflect_report: ReflectReport | None = None
     tool_budget_debited: bool = False
     policy_approval_id: str | None = None
-    policy_confirmation_preview: BlockchainSendConfirmationPreview | None = None
+    policy_confirmation_preview: ToolConfirmationPreview | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +160,7 @@ class PrepareOutcome:
     action_result: ActionResult
     tool_budget_debited: bool = False
     policy_approval_id: str | None = None
-    policy_confirmation_preview: BlockchainSendConfirmationPreview | None = None
+    policy_confirmation_preview: ToolConfirmationPreview | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +190,8 @@ class AdaptiveToolLoopContext(Protocol):
     state: WorkingState
     session_api: Any | None
     provider_retry_max_attempts: int
+
+    def apply_turn_steering(self, messages: list[Message]) -> list[Message]: ...
 
     def execute_command(
         self,

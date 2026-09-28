@@ -214,7 +214,7 @@ def test_streaming_render_exposes_only_one_elapsed_counter() -> None:
     output = buffer.getvalue()
     assert output.count("0.2s") <= 1
     assert output.count("esc interrupts") == 1
-    assert output.count("Type to queue while the current turn runs") == 1
+    assert output.count("Type to queue for the next turn") == 1
     assert output.count("responding") == 1
 
 

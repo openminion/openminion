@@ -16,6 +16,7 @@ class RuntimeFacade(Protocol):
     run_profile_overrides: Any
     tool_workspace_root: Any
     telemetry_service: Any
+    turn_input_queue: Any
 
     def close(self) -> None: ...
 

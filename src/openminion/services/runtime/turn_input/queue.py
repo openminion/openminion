@@ -33,10 +33,13 @@ class TurnInputQueueStatus(StrEnum):
 
 QUEUE_EVENT_ENQUEUED = "turn_input.enqueued"
 QUEUE_EVENT_DEQUEUED = "turn_input.dequeued"
+QUEUE_EVENT_REQUEUED = "turn_input.requeued"
+QUEUE_EVENT_RUNNING = "turn_input.running"
 QUEUE_EVENT_DROPPED = "turn_input.dropped"
 QUEUE_EVENT_MOVED = "turn_input.moved"
 QUEUE_EVENT_CANCEL_REQUESTED = "turn_input.cancel_requested"
 QUEUE_EVENT_CANCEL_ACKNOWLEDGED = "turn_input.cancel_acknowledged"
+QUEUE_EVENT_CANCELLED = "turn_input.cancelled"
 QUEUE_EVENT_CANCEL_FAILED = "turn_input.cancel_failed"
 QUEUE_EVENT_STEER_DEFERRED = "turn_input.steer_deferred"
 QUEUE_EVENT_FULL = "turn_input.queue_full"
@@ -52,7 +55,7 @@ _QUEUE_ACTIVE_STATUSES = {
 
 _TERMINAL_EVENTS = {
     TurnInputQueueStatus.COMPLETED: QUEUE_EVENT_COMPLETED,
-    TurnInputQueueStatus.CANCELLED: QUEUE_EVENT_CANCEL_ACKNOWLEDGED,
+    TurnInputQueueStatus.CANCELLED: QUEUE_EVENT_CANCELLED,
     TurnInputQueueStatus.FAILED: QUEUE_EVENT_FAILED,
 }
 
@@ -74,6 +77,7 @@ class TurnInputQueueEntry:
     started_at: str | None = None
     completed_at: str | None = None
     trace_id: str | None = None
+    target_trace_id: str | None = None
 
     def to_dict(self, *, include_text: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -91,6 +95,7 @@ class TurnInputQueueEntry:
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "trace_id": self.trace_id,
+            "target_trace_id": self.target_trace_id,
             "text_preview": redact_text_preview(self.text),
         }
         if include_text:
@@ -99,6 +104,17 @@ class TurnInputQueueEntry:
 
     def event_payload(self) -> dict[str, Any]:
         return self.to_dict(include_text=False)
+
+    def steering_event_fact(self) -> dict[str, Any]:
+        return {
+            "queue_id": self.queue_id,
+            "session_id": self.session_id,
+            "agent_id": self.agent_id,
+            "target_trace_id": self.target_trace_id,
+            "status": self.status.value,
+            "status_version": self.status_version,
+            "text_preview": redact_text_preview(self.text),
+        }
 
 
 class TurnInputQueueError(RuntimeError):
@@ -136,6 +152,8 @@ class TurnInputQueue:
         idempotency_key: str | None = None,
         priority: int = 0,
         metadata: dict[str, Any] | None = None,
+        steer_supported: bool = False,
+        target_trace_id: str | None = None,
     ) -> TurnInputQueueEntry:
         normalized_session_id = _require_non_empty(session_id, "session_id")
         normalized_agent_id = _require_non_empty(agent_id, "agent_id")
@@ -143,7 +161,12 @@ class TurnInputQueue:
         normalized_intent = _coerce_intent(intent)
         queue_status = TurnInputQueueStatus.QUEUED
         entry_metadata = dict(metadata or {})
-        if normalized_intent == TurnInputIntent.STEER_CURRENT:
+        normalized_target_trace_id = str(target_trace_id or "").strip() or None
+        if normalized_intent == TurnInputIntent.STEER_CURRENT and steer_supported:
+            normalized_target_trace_id = _require_non_empty(
+                normalized_target_trace_id or "", "target_trace_id"
+            )
+        elif normalized_intent == TurnInputIntent.STEER_CURRENT:
             queue_status = TurnInputQueueStatus.STEER_DEFERRED
             entry_metadata.setdefault("deferred_to", TurnInputIntent.QUEUE_NEXT.value)
             entry_metadata.setdefault("reason", "steer_current_unsupported_v1")
@@ -172,6 +195,7 @@ class TurnInputQueue:
                 else None,
                 priority=int(priority or 0),
                 metadata=entry_metadata,
+                target_trace_id=normalized_target_trace_id,
             )
             self._entries.append(entry)
             if key is not None:
@@ -280,11 +304,31 @@ class TurnInputQueue:
         expected_queue_id: str | None = None,
     ) -> TurnInputQueueEntry | None:
         with self._lock:
+            active = next(
+                (
+                    entry
+                    for entry in self._entries
+                    if entry.session_id == session_id
+                    and entry.agent_id == agent_id
+                    and entry.status == TurnInputQueueStatus.RESERVED
+                ),
+                None,
+            )
+            if active is not None:
+                raise TurnInputQueueError(
+                    "QUEUE_CONFLICT",
+                    "A queued entry is already reserved.",
+                    {
+                        "queue_id": active.queue_id,
+                        "status": active.status.value,
+                    },
+                )
             for index, entry in enumerate(self._entries):
                 if (
                     entry.session_id == session_id
                     and entry.agent_id == agent_id
                     and entry.status == TurnInputQueueStatus.QUEUED
+                    and entry.intent == TurnInputIntent.QUEUE_NEXT
                 ):
                     if expected_queue_id and entry.queue_id != expected_queue_id:
                         raise TurnInputQueueError(
@@ -305,38 +349,125 @@ class TurnInputQueue:
                     return updated
         return None
 
-    def mark_running(self, *, queue_id: str, trace_id: str | None = None) -> None:
-        self._replace_by_id(
-            queue_id,
-            lambda entry: replace(
-                entry,
-                status=TurnInputQueueStatus.RUNNING,
-                started_at=_utc_now_iso(),
-                trace_id=str(trace_id or "").strip() or entry.trace_id,
-                status_version=entry.status_version + 1,
-            ),
+    def reserve_steering(
+        self,
+        *,
+        session_id: str,
+        agent_id: str,
+        target_trace_id: str,
+    ) -> list[TurnInputQueueEntry]:
+        normalized_session_id = _require_non_empty(session_id, "session_id")
+        normalized_agent_id = _require_non_empty(agent_id, "agent_id")
+        normalized_trace_id = _require_non_empty(target_trace_id, "target_trace_id")
+        reserved: list[TurnInputQueueEntry] = []
+        with self._lock:
+            for index, entry in enumerate(self._entries):
+                if (
+                    entry.session_id != normalized_session_id
+                    or entry.agent_id != normalized_agent_id
+                    or entry.target_trace_id != normalized_trace_id
+                    or entry.intent != TurnInputIntent.STEER_CURRENT
+                    or entry.status != TurnInputQueueStatus.QUEUED
+                ):
+                    continue
+                updated = replace(
+                    entry,
+                    status=TurnInputQueueStatus.RESERVED,
+                    status_version=entry.status_version + 1,
+                )
+                self._entries[index] = updated
+                reserved.append(updated)
+                self._emit(QUEUE_EVENT_DEQUEUED, updated.event_payload())
+        return reserved
+
+    def complete_steering(
+        self,
+        *,
+        queue_ids: Iterable[str],
+        target_trace_id: str,
+    ) -> list[TurnInputQueueEntry]:
+        return self._transition_steering_batch(
+            queue_ids=queue_ids,
+            target_trace_id=target_trace_id,
+            allowed_statuses={TurnInputQueueStatus.RESERVED},
+            target_status=TurnInputQueueStatus.COMPLETED,
         )
+
+    def compensate_steering(
+        self,
+        *,
+        queue_ids: Iterable[str],
+        target_trace_id: str,
+    ) -> list[TurnInputQueueEntry]:
+        return self._transition_steering_batch(
+            queue_ids=queue_ids,
+            target_trace_id=target_trace_id,
+            allowed_statuses={
+                TurnInputQueueStatus.RESERVED,
+                TurnInputQueueStatus.COMPLETED,
+            },
+            target_status=TurnInputQueueStatus.QUEUED,
+        )
+
+    def mark_running(self, *, queue_id: str, trace_id: str) -> TurnInputQueueEntry:
+        normalized_trace_id = _require_non_empty(trace_id, "trace_id")
+        updated = self._replace_by_id(
+            queue_id,
+            lambda entry: _mark_running_entry(entry, trace_id=normalized_trace_id),
+        )
+        self._emit(QUEUE_EVENT_RUNNING, updated.event_payload())
+        return updated
+
+    def requeue(self, *, queue_id: str) -> TurnInputQueueEntry:
+        updated = self._replace_by_id(
+            queue_id,
+            _requeue_entry,
+        )
+        self._emit(QUEUE_EVENT_REQUEUED, updated.event_payload())
+        return updated
 
     def mark_terminal(
         self,
         *,
         queue_id: str,
         status: TurnInputQueueStatus | str,
-    ) -> None:
+    ) -> TurnInputQueueEntry:
         terminal = _coerce_status(status)
         if terminal not in _TERMINAL_EVENTS:
             raise TurnInputQueueError(
                 "INVALID_STATUS", f"Invalid terminal status: {status}"
             )
-        self._replace_by_id(
+        return self._replace_by_id(
             queue_id,
-            lambda entry: replace(
-                entry,
-                status=terminal,
-                completed_at=_utc_now_iso(),
-                status_version=entry.status_version + 1,
-            ),
+            lambda entry: _mark_terminal_entry(entry, status=terminal),
         )
+
+    def mark_terminal_by_trace(
+        self,
+        *,
+        trace_id: str,
+        status: TurnInputQueueStatus | str,
+    ) -> TurnInputQueueEntry | None:
+        normalized_trace_id = str(trace_id or "").strip()
+        if not normalized_trace_id:
+            return None
+        terminal = _coerce_status(status)
+        if terminal not in _TERMINAL_EVENTS:
+            raise TurnInputQueueError(
+                "INVALID_STATUS", f"Invalid terminal status: {status}"
+            )
+        with self._lock:
+            for index, entry in enumerate(self._entries):
+                if (
+                    entry.trace_id != normalized_trace_id
+                    or entry.status != TurnInputQueueStatus.RUNNING
+                ):
+                    continue
+                updated = _mark_terminal_entry(entry, status=terminal)
+                self._entries[index] = updated
+                self._emit(_TERMINAL_EVENTS[terminal], updated.event_payload())
+                return updated
+        return None
 
     def pending_count(self, *, session_id: str, agent_id: str | None = None) -> int:
         return len(
@@ -436,7 +567,7 @@ class TurnInputQueue:
         self,
         queue_id: str,
         updater: Callable[[TurnInputQueueEntry], TurnInputQueueEntry],
-    ) -> None:
+    ) -> TurnInputQueueEntry:
         with self._lock:
             for index, entry in enumerate(self._entries):
                 if entry.queue_id == queue_id:
@@ -444,12 +575,70 @@ class TurnInputQueue:
                     self._entries[index] = updated
                     if event_type := _TERMINAL_EVENTS.get(updated.status):
                         self._emit(event_type, updated.event_payload())
-                    return
+                    return updated
         raise TurnInputQueueError(
             "QUEUE_ENTRY_NOT_FOUND",
             "Turn input queue entry was not found.",
             {"queue_id": queue_id},
         )
+
+    def _transition_steering_batch(
+        self,
+        *,
+        queue_ids: Iterable[str],
+        target_trace_id: str,
+        allowed_statuses: set[TurnInputQueueStatus],
+        target_status: TurnInputQueueStatus,
+    ) -> list[TurnInputQueueEntry]:
+        requested_ids = [str(queue_id or "").strip() for queue_id in queue_ids]
+        requested_ids = [queue_id for queue_id in requested_ids if queue_id]
+        if not requested_ids:
+            return []
+        normalized_trace_id = _require_non_empty(target_trace_id, "target_trace_id")
+        requested = set(requested_ids)
+        with self._lock:
+            matches = [
+                (index, entry)
+                for index, entry in enumerate(self._entries)
+                if entry.queue_id in requested
+            ]
+            if len(matches) != len(requested):
+                raise TurnInputQueueError(
+                    "QUEUE_ENTRY_NOT_FOUND",
+                    "A steering queue entry was not found.",
+                    {"queue_ids": requested_ids},
+                )
+            for _index, entry in matches:
+                if (
+                    entry.intent != TurnInputIntent.STEER_CURRENT
+                    or entry.target_trace_id != normalized_trace_id
+                    or entry.status not in allowed_statuses
+                ):
+                    raise TurnInputQueueError(
+                        "QUEUE_CONFLICT",
+                        "The steering batch state changed before transition.",
+                        {"queue_id": entry.queue_id, "status": entry.status.value},
+                    )
+            now = _utc_now_iso()
+            updated_by_id: dict[str, TurnInputQueueEntry] = {}
+            for index, entry in matches:
+                updated = replace(
+                    entry,
+                    status=target_status,
+                    completed_at=(
+                        now if target_status == TurnInputQueueStatus.COMPLETED else None
+                    ),
+                    status_version=entry.status_version + 1,
+                )
+                self._entries[index] = updated
+                updated_by_id[updated.queue_id] = updated
+                event_type = (
+                    QUEUE_EVENT_COMPLETED
+                    if target_status == TurnInputQueueStatus.COMPLETED
+                    else QUEUE_EVENT_REQUEUED
+                )
+                self._emit(event_type, updated.event_payload())
+            return [updated_by_id[queue_id] for queue_id in requested_ids]
 
     def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
         if self._on_event is None:
@@ -493,6 +682,60 @@ def _coerce_status(value: TurnInputQueueStatus | str) -> TurnInputQueueStatus:
         ) from exc
 
 
+def _mark_running_entry(
+    entry: TurnInputQueueEntry, *, trace_id: str
+) -> TurnInputQueueEntry:
+    if entry.status != TurnInputQueueStatus.RESERVED:
+        raise TurnInputQueueError(
+            "QUEUE_CONFLICT",
+            "Only reserved entries can start running.",
+            {"queue_id": entry.queue_id, "status": entry.status.value},
+        )
+    return replace(
+        entry,
+        status=TurnInputQueueStatus.RUNNING,
+        started_at=_utc_now_iso(),
+        trace_id=trace_id,
+        status_version=entry.status_version + 1,
+    )
+
+
+def _requeue_entry(entry: TurnInputQueueEntry) -> TurnInputQueueEntry:
+    if entry.status not in {
+        TurnInputQueueStatus.RESERVED,
+        TurnInputQueueStatus.RUNNING,
+    }:
+        raise TurnInputQueueError(
+            "QUEUE_CONFLICT",
+            "Only reserved or running entries can be requeued.",
+            {"queue_id": entry.queue_id, "status": entry.status.value},
+        )
+    return replace(
+        entry,
+        status=TurnInputQueueStatus.QUEUED,
+        started_at=None,
+        trace_id=None,
+        status_version=entry.status_version + 1,
+    )
+
+
+def _mark_terminal_entry(
+    entry: TurnInputQueueEntry, *, status: TurnInputQueueStatus
+) -> TurnInputQueueEntry:
+    if entry.status != TurnInputQueueStatus.RUNNING:
+        raise TurnInputQueueError(
+            "QUEUE_CONFLICT",
+            "Only running entries can become terminal.",
+            {"queue_id": entry.queue_id, "status": entry.status.value},
+        )
+    return replace(
+        entry,
+        status=status,
+        completed_at=_utc_now_iso(),
+        status_version=entry.status_version + 1,
+    )
+
+
 def _idempotency_lookup_key(
     session_id: str,
     agent_id: str,
@@ -521,6 +764,7 @@ def _utc_now_iso() -> str:
 
 __all__ = [
     "QUEUE_EVENT_CANCEL_ACKNOWLEDGED",
+    "QUEUE_EVENT_CANCELLED",
     "QUEUE_EVENT_CANCEL_FAILED",
     "QUEUE_EVENT_CANCEL_REQUESTED",
     "QUEUE_EVENT_COMPLETED",
@@ -530,6 +774,8 @@ __all__ = [
     "QUEUE_EVENT_FAILED",
     "QUEUE_EVENT_FULL",
     "QUEUE_EVENT_MOVED",
+    "QUEUE_EVENT_REQUEUED",
+    "QUEUE_EVENT_RUNNING",
     "QUEUE_EVENT_STEER_DEFERRED",
     "TurnInputIntent",
     "TurnInputQueue",

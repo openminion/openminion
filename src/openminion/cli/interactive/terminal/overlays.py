@@ -8,8 +8,6 @@ from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.modules.runtime.sync import run_async_compat
 
-_ERR_STYLE = token_rich_style(StyleToken.ERROR)
-
 
 class TerminalOverlayPresenter:
     """Inline overlays for terminal flow."""
@@ -50,10 +48,20 @@ class TerminalOverlayPresenter:
         try:
             idx = int(choice)
         except ValueError:
-            self._console.print(Text(f"(invalid number: {choice!r})", style=_ERR_STYLE))
+            self._console.print(
+                Text(
+                    f"(invalid number: {choice!r})",
+                    style=token_rich_style(StyleToken.ERROR),
+                )
+            )
             return None
         if idx < 1 or idx > len(items):
-            self._console.print(Text(f"(out of range: {idx})", style=_ERR_STYLE))
+            self._console.print(
+                Text(
+                    f"(out of range: {idx})",
+                    style=token_rich_style(StyleToken.ERROR),
+                )
+            )
             return None
         return _session_id(items[idx - 1])
 
@@ -61,11 +69,14 @@ class TerminalOverlayPresenter:
         return run_async_compat(self.present_approval_async(prompt))
 
     async def present_approval_async(
-        self, prompt: str
+        self,
+        prompt: str,
+        *,
+        always_label: str = "Always",
     ) -> Literal["allow", "deny", "always"]:
         try:
             text = await self._session.prompt_async(
-                f"{prompt}\n[y]es / [N]o / [a]lways: "
+                f"{prompt}\n[y] Allow once / [N] Deny (default) / [a] {always_label}: "
             )
         except (EOFError, KeyboardInterrupt):
             return "deny"

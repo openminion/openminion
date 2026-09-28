@@ -644,6 +644,7 @@ def test_exec_run_background_then_poll_until_exit(tmp_path):
         time.sleep(0.05)
 
     assert final
+    assert final["ok"] is True
     assert final["status"] == "exited"
     assert final["exit_code"] == 0
     assert "done" in "\n".join(combined)
@@ -767,6 +768,7 @@ def test_process_kill_and_clear(tmp_path):
     assert clear_result["status"] == "ok"
 
     polled_again = _h_process_poll({"session_id": session_id, "tail_lines": 10}, ctx)
+    assert polled_again["ok"] is False
     assert polled_again["status"] == "killed"
     assert polled_again["error"]["code"] == "NOT_FOUND"
 

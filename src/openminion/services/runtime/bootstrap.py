@@ -600,7 +600,6 @@ def _build_a2a_runtime_apis(
 
 def build_brain_runner_bundle(service: Any) -> Any:
     """BBSE-02: canonical bootstrap path for the bridge's runner bundle."""
-    from pathlib import Path as _Path
     import openminion.services.brain.service as bridge_module
     from openminion.base.config import configured_agent_ids
     from openminion.modules.session.storage.repository import (
@@ -660,7 +659,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         )
     )
 
-    db_path = _Path(service.db_path)
+    db_path = Path(service.db_path)
     db_dir = db_path.parent if db_path.suffix else db_path
     memory_assembly = service._runtime_memory_assembly
     vector_adapter = getattr(memory_assembly, "vector_adapter", None)
@@ -870,6 +869,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         telemetryctl=service._telemetryctl,
         task_manager=task_manager,
         cron_api=cron_repository,
+        turn_input_queue=getattr(runtime_handle, "turn_input_queue", None),
         options=options,
         terminal_capture_writer=service._terminal_capture_writer,
     )

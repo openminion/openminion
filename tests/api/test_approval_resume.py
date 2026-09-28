@@ -13,6 +13,12 @@ from openminion.api.operations.approve_pending import (
 from openminion.api.routes.approve_pending import handle_request
 from openminion.api.routes.contracts import APIRouteContext
 from openminion.api.server import dispatch_request
+from openminion.modules.policy.models import PolicyConfig
+from openminion.modules.policy.runtime.service import PolicyCtl
+from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.tools.ops.contracts import OperationTarget
+from openminion.tools.ops.registry import TargetRegistry
+from openminion.tools.ops.service import OpsService
 
 
 @pytest.mark.parametrize("typed", APPROVAL_CHOICES)
@@ -136,6 +142,84 @@ def test_process_deny_does_not_create_grant(fake_runtime, monkeypatch):
         "grant_id": None,
     }
     fake_runtime.action_policy.create_grant_from_confirmation.assert_not_called()
+
+
+def test_ops_approval_runs_server_owned_plan_without_caller_invocation(
+    monkeypatch,
+) -> None:
+    policy = PolicyCtl.with_sqlite(":memory:", config=PolicyConfig(mode="enforce"))
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="local", kind="local"),)),
+        action_policy=policy,
+    )
+    plan = service.plan_command(
+        target_id="local",
+        argv=("printf", "ready"),
+        session_id="session-1",
+    )
+    with pytest.raises(ToolRuntimeError) as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+        )
+    runtime = MagicMock()
+    runtime.action_policy = policy
+    runtime.ops_service = service
+    monkeypatch.setattr(
+        "openminion.api.operations.approve_pending.resolve_runtime_manager",
+        lambda *, config_path, runtime: (None, runtime, False),
+    )
+
+    result = process_approval_decision(
+        config_path=None,
+        runtime=runtime,
+        body={
+            "approval_id": str(pending.value.details["approval_id"]),
+            "decision": "allow_once",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["job"]["status"] == "succeeded"
+    assert result["job"]["plan_id"] == plan.plan_id
+
+
+def test_ops_approval_rejects_long_lived_decision_with_exact_choices(
+    monkeypatch,
+) -> None:
+    policy = PolicyCtl.with_sqlite(":memory:", config=PolicyConfig(mode="enforce"))
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="local", kind="local"),)),
+        action_policy=policy,
+    )
+    plan = service.plan_command(
+        target_id="local", argv=("printf", "ready"), session_id="session-1"
+    )
+    with pytest.raises(ToolRuntimeError) as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+        )
+    runtime = MagicMock(action_policy=policy, ops_service=service)
+    monkeypatch.setattr(
+        "openminion.api.operations.approve_pending.resolve_runtime_manager",
+        lambda *, config_path, runtime: (None, runtime, False),
+    )
+
+    result = process_approval_decision(
+        config_path=None,
+        runtime=runtime,
+        body={
+            "approval_id": str(pending.value.details["approval_id"]),
+            "decision": "allow_session",
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "INVALID_DECISION"
+    assert result["error"]["details"]["choices"] == ["allow_once", "deny"]
 
 
 def test_approval_resume_route_exposes_typed_operation(fake_runtime, monkeypatch):

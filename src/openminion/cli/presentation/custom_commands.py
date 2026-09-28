@@ -69,18 +69,7 @@ def render_command(
     arg_string: str,
     working_dir: Path | None = None,
 ) -> str:
-    args = shlex.split(arg_string) if arg_string.strip() else []
-
-    def _arg_sub(match: re.Match[str]) -> str:
-        key = match.group(1)
-        if key == "ARGUMENTS":
-            return arg_string
-        idx = int(key) - 1
-        if 0 <= idx < len(args):
-            return args[idx]
-        return ""
-
-    body = _ARG_PLACEHOLDER_RE.sub(_arg_sub, cmd.body)
+    body = render_command_arguments(cmd, arg_string=arg_string)
 
     def _file_sub(match: re.Match[str]) -> str:
         rel = match.group(1)
@@ -117,8 +106,27 @@ def render_command(
         out = (completed.stdout or b"").decode("utf-8", errors="replace").rstrip()
         return out
 
-    body = _BANG_CMD_RE.sub(_cmd_sub, body)
-    return body
+    return _BANG_CMD_RE.sub(_cmd_sub, body)
+
+
+def render_command_arguments(cmd: CustomCommand, *, arg_string: str) -> str:
+    """Render only explicit argument placeholders from a command template."""
+    args = shlex.split(arg_string) if arg_string.strip() else []
+
+    def _arg_sub(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if key == "ARGUMENTS":
+            return arg_string
+        idx = int(key) - 1
+        if 0 <= idx < len(args):
+            return args[idx]
+        return ""
+
+    return _ARG_PLACEHOLDER_RE.sub(_arg_sub, cmd.body)
+
+
+def command_requires_local_expansion(cmd: CustomCommand) -> bool:
+    return bool(_AT_FILE_RE.search(cmd.body) or _BANG_CMD_RE.search(cmd.body))
 
 
 class _CustomCommandError(ValueError):
@@ -218,7 +226,9 @@ def _parse_minimal_yaml(text: str) -> dict[str, str]:
 
 __all__ = [
     "CustomCommand",
+    "command_requires_local_expansion",
     "discover_custom_commands",
     "discover_with_warnings",
     "render_command",
+    "render_command_arguments",
 ]

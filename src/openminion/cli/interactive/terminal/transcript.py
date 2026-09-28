@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
-from collections import Counter
 from typing import Any, Callable, Iterable, Literal, cast
 
 from rich.console import Console
@@ -12,7 +9,6 @@ from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.models import ChatMessage, MessageKind
 from openminion.cli.presentation.tool.progress import build_tool_event_from_progress
-from openminion.cli.status.tool_calls import format_public_tool_activity
 from openminion.cli.presentation.messages import (
     render_body,
     render_error_text,
@@ -31,7 +27,6 @@ from .streaming import (
     is_truncated,
 )
 
-_ERROR_STYLE = token_rich_style(StyleToken.ERROR)
 DEFAULT_MAX_RETAINED_MESSAGES = 1000
 
 
@@ -61,9 +56,7 @@ class TerminalTranscript:
         self._hidden_failed_count: int = 0
         self._truncated_blocks: list[Any] = []
         self._live_narrated_call_ids: set[str] = set()
-        self._started_tool_signatures: set[tuple[str, str]] = set()
-        self._completed_tool_signatures: set[tuple[str, str, str, str]] = set()
-        self._collapsed_tool_results: Counter[str] = Counter()
+        self._completed_call_ids: set[str] = set()
         self._active_handle: Any | None = None
         self._terminal_writer: Callable[[Callable[[], None]], Any] | None = None
         self._max_retained_messages = (
@@ -104,7 +97,7 @@ class TerminalTranscript:
             handle.set_terminal_writer(self._terminal_writer)
         handle.start()
         self._active_handle = handle
-        self._reset_turn_tool_compaction()
+        self._completed_call_ids.clear()
         original_complete = handle.complete
 
         def _complete(final_text: str | None = None) -> None:
@@ -115,7 +108,6 @@ class TerminalTranscript:
             original_complete(final_text)
             self._active_handle = None
             self._maybe_print_hidden_tool_summary()
-            self._maybe_print_collapsed_tool_summary()
 
         handle.complete = _complete  # type: ignore[method-assign]
         return handle
@@ -124,14 +116,12 @@ class TerminalTranscript:
         if message.kind == MessageKind.USER:
             self._hidden_tool_count = 0
             self._hidden_failed_count = 0
-            self._reset_turn_tool_compaction()
         self._messages.append(message)
         self._trim_retained_messages()
         if render:
             self._render(message)
         if render and message.kind == MessageKind.AGENT:
             self._maybe_print_hidden_tool_summary()
-            self._maybe_print_collapsed_tool_summary()
 
     def render_user_input(self, body: str) -> None:
         self._write_render(lambda: self._console.print(render_user_text(body)))
@@ -153,31 +143,6 @@ class TerminalTranscript:
         self._hidden_tool_count = 0
         self._hidden_failed_count = 0
 
-    def _maybe_print_collapsed_tool_summary(self) -> None:
-        if not self._collapsed_tool_results:
-            return
-        hidden_count = sum(self._collapsed_tool_results.values())
-        noun = "tool result" if hidden_count == 1 else "tool results"
-        examples = self._format_collapsed_tool_examples()
-        suffix = f" — {examples}" if examples else ""
-        line = f"({hidden_count} repeated {noun} collapsed{suffix})"
-        self._console.print(Text(line, style="dim italic"))
-        self._collapsed_tool_results.clear()
-
-    def _format_collapsed_tool_examples(self) -> str:
-        parts: list[str] = []
-        for label, count in self._collapsed_tool_results.most_common(3):
-            parts.append(f"{label} ×{count}")
-        remaining = len(self._collapsed_tool_results) - len(parts)
-        if remaining > 0:
-            parts.append(f"+{remaining} more")
-        return ", ".join(parts)
-
-    def _reset_turn_tool_compaction(self) -> None:
-        self._started_tool_signatures = set()
-        self._completed_tool_signatures = set()
-        self._collapsed_tool_results = Counter()
-
     def set_messages(self, messages: list[ChatMessage]) -> None:
         self.reset_session_state()
         self._messages = []
@@ -194,7 +159,7 @@ class TerminalTranscript:
         self._hidden_failed_count = 0
         self._truncated_blocks = []
         self._live_narrated_call_ids = set()
-        self._reset_turn_tool_compaction()
+        self._completed_call_ids = set()
 
     def copy_last_copyable_message(self) -> str | None:
         for msg in reversed(self._messages):
@@ -307,11 +272,6 @@ class TerminalTranscript:
             if call_id:
                 self._live_narrated_call_ids.add(call_id)
             return
-        should_render_start = (
-            True
-            if self._verbosity == "verbose"
-            else self._remember_tool_start(tool_name, args)
-        )
         rendered_tool_name = (
             tool_name
             if self._verbosity == "verbose"
@@ -331,20 +291,19 @@ class TerminalTranscript:
                     args=args,
                     started_at=_time.monotonic(),
                 )
-                if should_render_start and not self._append_live_renderable(renderable):
-                    self._write_render(lambda: self._console.print(renderable))
                 if call_id:
                     self._live_narrated_call_ids.add(call_id)
                 return
             except (AttributeError, RuntimeError, ValueError):
                 pass
-        if should_render_start:
-            self._console.print(renderable)
+        self._console.print(renderable)
         if call_id:
             self._live_narrated_call_ids.add(call_id)
 
     def handle_tool_completed(self, payload: dict[str, Any]) -> None:
         call_id = str(payload.get("call_id") or payload.get("id") or "").strip()
+        if call_id and call_id in self._completed_call_ids:
+            return
         tool_name = str(
             payload.get("tool_name") or payload.get("name") or payload.get("tool") or ""
         ).strip()
@@ -385,10 +344,14 @@ class TerminalTranscript:
                 pass
 
         if self._verbosity == "quiet":
+            if not call_id or call_id not in self._live_narrated_call_ids:
+                self._hidden_tool_count += 1
             if exit_code is not None and exit_code != 0:
                 self._hidden_failed_count += 1
+            self._truncated_blocks.append(event)
             if call_id:
                 self._live_narrated_call_ids.add(call_id)
+                self._completed_call_ids.add(call_id)
             return
 
         if self._verbosity == "verbose":
@@ -401,11 +364,7 @@ class TerminalTranscript:
                 self._truncated_blocks.append(event)
             if call_id:
                 self._live_narrated_call_ids.add(call_id)
-            return
-
-        if self._collapse_repeated_tool_result(event):
-            if call_id:
-                self._live_narrated_call_ids.add(call_id)
+                self._completed_call_ids.add(call_id)
             return
 
         renderable = _render_tool_block(event)
@@ -415,37 +374,7 @@ class TerminalTranscript:
             self._truncated_blocks.append(event)
         if call_id:
             self._live_narrated_call_ids.add(call_id)
-
-    def _remember_tool_start(self, tool_name: str, args: dict[str, Any]) -> bool:
-        signature = (tool_name, _stable_digest(args))
-        if signature in self._started_tool_signatures:
-            return False
-        self._started_tool_signatures.add(signature)
-        return True
-
-    def _collapse_repeated_tool_result(self, event: Any) -> bool:
-        args_digest = _stable_digest(getattr(event, "args", {}))
-        body_digest = _stable_digest(getattr(event, "full_content", "") or "")
-        exit_label = str(getattr(event, "exit_code", None))
-        signature = (
-            getattr(event, "tool_name", ""),
-            args_digest,
-            exit_label,
-            body_digest,
-        )
-        if signature not in self._completed_tool_signatures:
-            self._completed_tool_signatures.add(signature)
-            return False
-        label = _tool_summary_label(
-            str(
-                getattr(event, "model_tool_name", "")
-                or getattr(event, "tool_name", "")
-                or "tool"
-            ),
-            getattr(event, "exit_code", None),
-        )
-        self._collapsed_tool_results[label] += 1
-        return True
+            self._completed_call_ids.add(call_id)
 
     def _append_live_renderable(self, renderable: Any) -> bool:
         handle = self._active_handle
@@ -530,42 +459,13 @@ class TerminalTranscript:
             self._console.print(
                 Text(
                     f"(no truncated block at index {index})",
-                    style=_ERROR_STYLE,
+                    style=token_rich_style(StyleToken.ERROR),
                 )
             )
             return False
         event = list(reversed(self._truncated_blocks))[index - 1]
         self._console.print(_render_full_tool_block(event))
         return True
-
-
-def _stable_digest(value: Any) -> str:
-    normalized = json.dumps(
-        _json_safe(value),
-        sort_keys=True,
-        ensure_ascii=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
-def _json_safe(value: Any) -> Any:
-    if isinstance(value, dict):
-        return [(str(key), _json_safe(value[key])) for key in sorted(value, key=str)]
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return repr(value)
-
-
-def _tool_summary_label(
-    tool_name: str,
-    exit_code: int | None,
-) -> str:
-    name = format_public_tool_activity(tool_name, pending=False).rstrip(".")
-    status = "failed" if exit_code not in (None, 0) else ""
-    return f"{name} {status}".strip()
 
 
 def _copyable_text(message: ChatMessage) -> str | None:

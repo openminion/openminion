@@ -16,10 +16,6 @@ from openminion.modules.telemetry.trace.phase_timing import mark_active_chat_fir
 from ..overlays import TerminalOverlayPresenter
 from ..transcript import TerminalTranscript
 
-_ERR_STYLE = token_rich_style(StyleToken.ERROR)
-_MUTED_STYLE = token_rich_style(StyleToken.MUTED)
-_MUTED_ITALIC_STYLE = f"italic {_MUTED_STYLE}" if _MUTED_STYLE else "italic"
-
 
 async def run_room_turn_if_bound(
     runtime: Any,
@@ -199,7 +195,12 @@ async def _handle_room_handoff(
         default=False,
     )
     if not confirmed:
-        console.print(Text("(handoff cancelled)", style=_MUTED_ITALIC_STYLE))
+        console.print(
+            Text(
+                "(handoff cancelled)",
+                style=token_rich_style(StyleToken.MUTED, italic=True),
+            )
+        )
         return
     result = runtime.apply_room_handoff(preview)
     console.print(
@@ -230,7 +231,12 @@ async def _handle_room_session(
         choices.extend(rooms)
         selected = str(overlay.present_resume_picker(choices) or "").strip()
         if not selected:
-            console.print(Text("(room selection cancelled)", style=_MUTED_ITALIC_STYLE))
+            console.print(
+                Text(
+                    "(room selection cancelled)",
+                    style=token_rich_style(StyleToken.MUTED, italic=True),
+                )
+            )
             return
         action = "create" if selected == "create" else "open"
         selected_room_id = selected
@@ -259,7 +265,12 @@ async def _handle_room_session(
             agent_ids=agent_ids or [default_agent],
         )
         transcript.clear_messages()
-        console.print(Text(f"(created room: {room_id})", style=_MUTED_ITALIC_STYLE))
+        console.print(
+            Text(
+                f"(created room: {room_id})",
+                style=token_rich_style(StyleToken.MUTED, italic=True),
+            )
+        )
         return
 
     if not selected_room_id:
@@ -268,7 +279,12 @@ async def _handle_room_session(
         return
     room_id = runtime.open_room_session(selected_room_id)
     transcript.set_messages(list(runtime.get_current_history() or []))
-    console.print(Text(f"(opened room: {room_id})", style=_MUTED_ITALIC_STYLE))
+    console.print(
+        Text(
+            f"(opened room: {room_id})",
+            style=token_rich_style(StyleToken.MUTED, italic=True),
+        )
+    )
 
 
 def start_new_session(
@@ -280,13 +296,21 @@ def start_new_session(
     creator = getattr(runtime, "create_new_session", None)
     if not callable(creator):
         console.print(
-            Text("(runtime does not expose create_new_session)", style=_MUTED_STYLE)
+            Text(
+                "(runtime does not expose create_new_session)",
+                style=token_rich_style(StyleToken.MUTED),
+            )
         )
         return
     try:
         session_id = str(creator() or "").strip()
     except Exception as exc:
-        console.print(Text(f"(could not start new session: {exc})", style=_ERR_STYLE))
+        console.print(
+            Text(
+                f"(could not start new session: {exc})",
+                style=token_rich_style(StyleToken.ERROR),
+            )
+        )
         return
     transcript.clear_messages()
     message = (
@@ -294,7 +318,7 @@ def start_new_session(
         if session_id
         else "(started new session)"
     )
-    console.print(Text(message, style=_MUTED_ITALIC_STYLE))
+    console.print(Text(message, style=token_rich_style(StyleToken.MUTED, italic=True)))
 
 
 def close_current_session(
@@ -306,19 +330,27 @@ def close_current_session(
     closer = getattr(runtime, "close_current_session", None)
     if not callable(closer):
         console.print(
-            Text("(runtime does not expose close_current_session)", style=_MUTED_STYLE)
+            Text(
+                "(runtime does not expose close_current_session)",
+                style=token_rich_style(StyleToken.MUTED),
+            )
         )
         return
     try:
         session_id = str(closer() or "").strip()
     except (RuntimeError, ValueError) as exc:
-        console.print(Text(f"(could not close session: {exc})", style=_ERR_STYLE))
+        console.print(
+            Text(
+                f"(could not close session: {exc})",
+                style=token_rich_style(StyleToken.ERROR),
+            )
+        )
         return
     transcript.clear_messages()
     console.print(
         Text(
             f"(closed session: {session_id}; use /new or /resume)",
-            style=_MUTED_ITALIC_STYLE,
+            style=token_rich_style(StyleToken.MUTED, italic=True),
         )
     )
 
@@ -335,13 +367,21 @@ def resume_session(
     history_getter = getattr(runtime, "get_current_history", None)
     if not callable(lister) or not callable(binder) or not callable(history_getter):
         console.print(
-            Text("(runtime does not expose resume session helpers)", style=_MUTED_STYLE)
+            Text(
+                "(runtime does not expose resume session helpers)",
+                style=token_rich_style(StyleToken.MUTED),
+            )
         )
         return
     try:
         sessions = list(lister(limit=50) or [])
     except Exception as exc:
-        console.print(Text(f"(could not list sessions: {exc})", style=_ERR_STYLE))
+        console.print(
+            Text(
+                f"(could not list sessions: {exc})",
+                style=token_rich_style(StyleToken.ERROR),
+            )
+        )
         return
     non_empty = [item for item in sessions if _session_message_count(item) > 0]
     if not non_empty:
@@ -349,7 +389,7 @@ def resume_session(
             Text(
                 "No prior sessions with messages found in this directory. "
                 "Use `/new` to start one.",
-                style=_MUTED_ITALIC_STYLE,
+                style=token_rich_style(StyleToken.MUTED, italic=True),
             )
         )
         return
@@ -360,10 +400,20 @@ def resume_session(
         binder(chosen_id)
         history = list(history_getter() or [])
     except Exception as exc:
-        console.print(Text(f"(could not resume session: {exc})", style=_ERR_STYLE))
+        console.print(
+            Text(
+                f"(could not resume session: {exc})",
+                style=token_rich_style(StyleToken.ERROR),
+            )
+        )
         return
     transcript.set_messages(history)
-    console.print(Text(f"(resumed session: {chosen_id})", style=_MUTED_ITALIC_STYLE))
+    console.print(
+        Text(
+            f"(resumed session: {chosen_id})",
+            style=token_rich_style(StyleToken.MUTED, italic=True),
+        )
+    )
 
 
 def _session_message_count(item: Any) -> int:

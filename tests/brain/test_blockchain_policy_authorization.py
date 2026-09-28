@@ -355,7 +355,6 @@ def test_blockchain_session_reply_is_captured_as_user_input() -> None:
         runner,
         state,
         user_input="session",
-        trace_id="trace-session-reply",
     )
 
     assert state.last_user_input == "session"

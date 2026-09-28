@@ -177,3 +177,61 @@ def test_foreground_visibility_excludes_cron_and_metadata_survives() -> None:
         assert manager.has_foreground_work() is False
     finally:
         manager.shutdown()
+
+
+def test_active_turn_handle_excludes_queued_and_terminal_turns() -> None:
+    started = Event()
+    release = Event()
+
+    def _executor(req, emit_chunk, cancel_event):  # noqa: ANN001
+        del emit_chunk, cancel_event
+        started.set()
+        release.wait(timeout=2.0)
+        return TurnResponse(final_text=f"ok:{req.trace_id}")
+
+    manager = AgentRuntimeManager(turn_executor=_executor, max_global_concurrency=1)
+    manager.start()
+    try:
+        first = manager.submit_turn(
+            TurnRequest(
+                trace_id="trace-active",
+                agent_id="agent",
+                session_id="session",
+                input_text="first",
+                meta={"override_model": "model-a"},
+            )
+        )
+        assert started.wait(timeout=1.0)
+        second = manager.submit_turn(
+            TurnRequest(
+                trace_id="trace-queued",
+                agent_id="agent",
+                session_id="session",
+                input_text="second",
+            )
+        )
+
+        active = manager.get_active_turn_handle(
+            trace_id="trace-active", session_id="session", agent_id="agent"
+        )
+        assert active is first
+        assert active.request_meta == {"override_model": "model-a"}
+        assert (
+            manager.get_active_turn_handle(
+                trace_id="trace-queued", session_id="session", agent_id="agent"
+            )
+            is None
+        )
+
+        release.set()
+        first.result(timeout_s=2.0)
+        second.result(timeout_s=2.0)
+        assert (
+            manager.get_active_turn_handle(
+                trace_id="trace-active", session_id="session", agent_id="agent"
+            )
+            is None
+        )
+    finally:
+        release.set()
+        manager.shutdown()

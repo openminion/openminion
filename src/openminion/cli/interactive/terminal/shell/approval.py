@@ -12,7 +12,9 @@ def format_terminal_approval_prompt(tool_name: str, args: dict[str, Any]) -> str
     if name.startswith("sidecar.") and name.endswith(".autostart"):
         sidecar = str(args.get("sidecar", "") or "local service").strip()
         return f"Approval required: start local {sidecar} service and continue"
-    full_command = name.lower().startswith(("exec.", "git."))
+    full_command = (
+        name.lower().startswith(("exec.", "git.")) or name == "ops.command.run"
+    )
     args_preview = format_tool_args_preview(
         name,
         dict(args or {}),
@@ -38,16 +40,22 @@ def build_terminal_approval_callback(
     ) -> bool:
         del call_id
         normalized = str(tool_name or "").strip()
-        if normalized and normalized in session_grants:
+        allow_session_grant = normalized != "ops.command.run"
+        if normalized and allow_session_grant and normalized in session_grants:
             return True
         async with approval_lock:
-            if normalized and normalized in session_grants:
+            if normalized and allow_session_grant and normalized in session_grants:
                 return True
             prompt = format_terminal_approval_prompt(normalized, dict(args or {}))
             if callable(pause_prompt):
                 await pause_prompt()
             try:
-                decision = await overlay.present_approval_async(prompt)
+                if normalized == "ops.command.run":
+                    return await overlay.present_confirm_async(prompt)
+                decision = await overlay.present_approval_async(
+                    prompt,
+                    always_label=(f"Always allow {normalized} for this shell session"),
+                )
             finally:
                 if callable(resume_prompt):
                     resume_prompt()

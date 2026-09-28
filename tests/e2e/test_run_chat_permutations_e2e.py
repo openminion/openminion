@@ -53,6 +53,16 @@ def test_latest_prompt_requires_confirmation_ignores_old_confirmation_text() -> 
     assert _latest_prompt_requires_confirmation(previous, current) is False
 
 
+def test_latest_prompt_requires_confirmation_accepts_current_inline_menu() -> None:
+    current = (
+        'Approval required: file.write("README.md")\n'
+        "[y] Allow once / [N] Deny (default) / [a] Always allow file.write "
+        "for this shell session: "
+    )
+
+    assert _latest_prompt_requires_confirmation("", current) is True
+
+
 def test_transcript_has_known_failure_detects_fail_closed_contracts() -> None:
     assert (
         _transcript_has_known_failure(

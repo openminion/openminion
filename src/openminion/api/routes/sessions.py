@@ -211,7 +211,7 @@ def handle_request(
         method_name == "GET"
         and (events_route := _EVENTS_RE.fullmatch(path)) is not None
     ):
-        return handle_list_session_events(  # type: ignore[no-any-return]
+        return handle_list_session_events(
             ctx,
             session_id=unquote(events_route.group(1)),
             query=query,

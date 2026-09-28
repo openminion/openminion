@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from builtins import list as list_type
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
+from threading import RLock
 import uuid
 from typing import Any, Literal, TypeVar
 
 from openminion.modules.memory.constants import (
+    MEMORY_CANDIDATE_STATUS_PROPOSED,
     MEMORY_CANDIDATE_STATUS_PROMOTED,
+    MEMORY_CANDIDATE_STATUS_REJECTED,
     PROMOTABLE_MEMORY_CANDIDATE_STATUSES,
 )
 from openminion.modules.memory.models import (
@@ -34,6 +38,10 @@ from openminion.base.time import utc_now_iso as _utc_now_iso
 from ..errors import InvalidArgumentError, NotFoundError, PromotionDeniedError
 
 T = TypeVar("T")
+_TERMINAL_CANDIDATE_STATUSES = {
+    MEMORY_CANDIDATE_STATUS_PROMOTED,
+    MEMORY_CANDIDATE_STATUS_REJECTED,
+}
 
 
 def _apply_limit(rows: list[T], limit: int | None) -> list[T]:
@@ -64,16 +72,24 @@ def _is_temporally_current(
 
 class InMemoryRecordStore:
     def __init__(self) -> None:
+        self._write_lock = RLock()
         self._records: dict[str, MemoryRecord] = {}
         self._candidates: dict[str, MemoryCandidate] = {}
         self._relations: dict[str, MemoryRelation] = {}
         self._tier_transitions: dict[str, MemoryTierTransition] = {}
 
     def put(self, record: MemoryRecord) -> str:
-        self._records[record.id] = record
-        return record.id
+        with self._write_lock:
+            self._records[record.id] = record
+            return record.id
 
     def upsert(
+        self, scope: str, type: MemoryType, key: str, record_patch: dict[str, Any]
+    ) -> MemoryRecord:
+        with self._write_lock:
+            return self._upsert(scope, type, key, record_patch)
+
+    def _upsert(
         self, scope: str, type: MemoryType, key: str, record_patch: dict[str, Any]
     ) -> MemoryRecord:
         active = [
@@ -167,34 +183,36 @@ class InMemoryRecordStore:
     ) -> None:
         """Runtime helper."""
 
-        current = self._records.get(record_id)
-        if current is None:
-            return
-        now = _utc_now_iso()
-        audit_supplied = reason is not None
-        self._records[record_id] = replace(
-            current,
-            is_deleted=True,
-            updated_at=now,
-            deleted_at=(
-                (deleted_at if deleted_at is not None else now)
-                if audit_supplied
-                else current.deleted_at
-            ),
-            deleted_reason=(reason if audit_supplied else current.deleted_reason),
-        )
+        with self._write_lock:
+            current = self._records.get(record_id)
+            if current is None:
+                return
+            now = _utc_now_iso()
+            audit_supplied = reason is not None
+            self._records[record_id] = replace(
+                current,
+                is_deleted=True,
+                updated_at=now,
+                deleted_at=(
+                    (deleted_at if deleted_at is not None else now)
+                    if audit_supplied
+                    else current.deleted_at
+                ),
+                deleted_reason=(reason if audit_supplied else current.deleted_reason),
+            )
 
     def tombstone(self, scope: str, type: MemoryType, key: str) -> None:
-        for record_id, record in list(self._records.items()):
-            if (
-                record.scope == scope
-                and record.type == type
-                and record.key == key
-                and not record.is_deleted
-            ):
-                self._records[record_id] = replace(
-                    record, is_deleted=True, updated_at=_utc_now_iso()
-                )
+        with self._write_lock:
+            for record_id, record in list(self._records.items()):
+                if (
+                    record.scope == scope
+                    and record.type == type
+                    and record.key == key
+                    and not record.is_deleted
+                ):
+                    self._records[record_id] = replace(
+                        record, is_deleted=True, updated_at=_utc_now_iso()
+                    )
 
     def list(self, options: ListQueryOptions) -> list[MemoryRecord]:
         allowed_types = {str(t) for t in options.types} if options.types else None
@@ -443,6 +461,10 @@ class InMemoryRecordStore:
         return updated
 
     def promote_candidate(self, candidate_id: str, target_scope: str) -> MemoryRecord:
+        with self._write_lock:
+            return self._promote_candidate(candidate_id, target_scope)
+
+    def _promote_candidate(self, candidate_id: str, target_scope: str) -> MemoryRecord:
         current = self._candidates.get(candidate_id)
         if current is None:
             raise NotFoundError(f"candidate not found: {candidate_id}")
@@ -504,35 +526,69 @@ class InMemoryRecordStore:
         return record
 
     def supersede_by_contradiction(
-        self, old_record_id: str, new_record_id: str, reason: str = ""
+        self,
+        old_record_id: str,
+        new_record_id: str,
+        reason: str = "",
+        *,
+        expected_scope: str | None = None,
     ) -> MemoryRecord:
-        old_record = self._records.get(old_record_id)
-        new_record = self._records.get(new_record_id)
-        if old_record is None:
-            raise NotFoundError(f"record not found: {old_record_id}")
-        if new_record is None:
-            raise NotFoundError(f"record not found: {new_record_id}")
-        if old_record_id == new_record_id:
-            raise InvalidArgumentError("old and new records must differ")
-        now = _utc_now_iso()
-        self._records[old_record_id] = replace(
-            old_record,
-            superseded_by_id=new_record_id,
-            supersession_reason=reason or None,
-            valid_to=new_record.created_at or now,
-            is_deleted=True,
-            updated_at=now,
-        )
-        updated_new = replace(
-            new_record,
-            key=old_record.key or new_record.key,
-            supersedes_id=old_record_id,
-            supersession_reason=None,
-            is_deleted=False,
-            updated_at=now,
-        )
-        self._records[new_record_id] = updated_new
-        return updated_new
+        with self._write_lock:
+            old_record = self._records.get(old_record_id)
+            new_record = self._records.get(new_record_id)
+            if old_record is None:
+                raise NotFoundError(f"record not found: {old_record_id}")
+            if new_record is None:
+                raise NotFoundError(f"record not found: {new_record_id}")
+            if old_record_id == new_record_id:
+                raise InvalidArgumentError("old and new records must differ")
+            if expected_scope is not None:
+                if (
+                    old_record.scope != expected_scope
+                    or new_record.scope != expected_scope
+                ):
+                    raise InvalidArgumentError(
+                        "consolidation supersession records are stale or outside the target scope"
+                    )
+                if (
+                    old_record.superseded_by_id == new_record_id
+                    and new_record.supersedes_id == old_record_id
+                    and old_record.is_deleted
+                    and not new_record.is_deleted
+                    and new_record.superseded_by_id is None
+                    and _is_temporally_current(new_record)
+                ):
+                    return new_record
+                if (
+                    old_record.is_deleted
+                    or new_record.is_deleted
+                    or old_record.superseded_by_id is not None
+                    or new_record.superseded_by_id is not None
+                    or not _is_temporally_current(old_record)
+                    or not _is_temporally_current(new_record)
+                ):
+                    raise InvalidArgumentError(
+                        "consolidation supersession records are stale or outside the target scope"
+                    )
+            now = _utc_now_iso()
+            self._records[old_record_id] = replace(
+                old_record,
+                superseded_by_id=new_record_id,
+                supersession_reason=reason or None,
+                valid_to=new_record.created_at or now,
+                is_deleted=True,
+                updated_at=now,
+            )
+            updated_new = replace(
+                new_record,
+                key=old_record.key or new_record.key,
+                supersedes_id=old_record_id,
+                supersession_reason=None,
+                is_deleted=False,
+                updated_at=now,
+            )
+            self._records[new_record_id] = updated_new
+            return updated_new
 
     def invalidate(
         self,
@@ -542,12 +598,13 @@ class InMemoryRecordStore:
         reason: str,
     ) -> MemoryRecord:
         del reason
-        record = self._records.get(record_id)
-        if record is None:
-            raise NotFoundError(f"record not found: {record_id}")
-        updated = replace(record, valid_to=valid_to, updated_at=_utc_now_iso())
-        self._records[record_id] = updated
-        return updated
+        with self._write_lock:
+            record = self._records.get(record_id)
+            if record is None:
+                raise NotFoundError(f"record not found: {record_id}")
+            updated = replace(record, valid_to=valid_to, updated_at=_utc_now_iso())
+            self._records[record_id] = updated
+            return updated
 
     def history(self, scope: str, type: MemoryType, key: str) -> list[MemoryRecord]:
         rows = [
@@ -676,6 +733,7 @@ class InMemoryMemoryStore(CapabilityMemoryStore):
 
     def __init__(self) -> None:
         records = InMemoryRecordStore()
+        self._candidate_write_lock = RLock()
         super().__init__(
             records=records,
             search=InMemorySearchIndex(records),
@@ -688,6 +746,115 @@ class InMemoryMemoryStore(CapabilityMemoryStore):
                 supports_transactions=False,
             ),
         )
+
+    def candidate_put(self, candidate: MemoryCandidate) -> str:
+        with self._candidate_write_lock:
+            current = self._records.candidate_get(candidate.candidate_id)
+            if (
+                current is not None
+                and str(current.status) in _TERMINAL_CANDIDATE_STATUSES
+                and str(candidate.status) not in _TERMINAL_CANDIDATE_STATUSES
+            ):
+                raise InvalidArgumentError(
+                    f"candidate {candidate.candidate_id} cannot regress from terminal status"
+                )
+            return str(self._records.candidate_put(deepcopy(candidate)))
+
+    def candidate_get(self, candidate_id: str) -> MemoryCandidate | None:
+        with self._candidate_write_lock:
+            return deepcopy(self._records.candidate_get(candidate_id))
+
+    def candidate_list(self, options: CandidateListOptions) -> list[MemoryCandidate]:
+        with self._candidate_write_lock:
+            return deepcopy(self._records.candidate_list(options))
+
+    def promote_candidate(self, candidate_id: str, target_scope: str) -> MemoryRecord:
+        with self._candidate_write_lock:
+            return deepcopy(self._records.promote_candidate(candidate_id, target_scope))
+
+    def candidate_update(
+        self, candidate_id: str, patch: dict[str, Any]
+    ) -> MemoryCandidate:
+        with self._candidate_write_lock:
+            current = self._records.candidate_get(candidate_id)
+            if current is None:
+                raise NotFoundError(f"candidate not found: {candidate_id}")
+            requested_status = str(patch.get("status", current.status))
+            if (
+                str(current.status) in _TERMINAL_CANDIDATE_STATUSES
+                and requested_status not in _TERMINAL_CANDIDATE_STATUSES
+            ):
+                raise InvalidArgumentError(
+                    f"candidate {candidate_id} cannot regress from terminal status"
+                )
+            return deepcopy(
+                self._records.candidate_update(candidate_id, deepcopy(patch))
+            )
+
+    def _apply_consolidation_decision(
+        self,
+        candidate: MemoryCandidate,
+        *,
+        action: str,
+        target_scope: str,
+        review: Any,
+        meta: dict[str, Any],
+    ) -> MemoryCandidate | MemoryRecord:
+        with self._candidate_write_lock:
+            current = self._records.candidate_get(candidate.candidate_id)
+            if current is None:
+                raise NotFoundError(f"candidate not found: {candidate.candidate_id}")
+            if current != candidate:
+                raise InvalidArgumentError(
+                    f"candidate {candidate.candidate_id} changed before consolidation"
+                )
+            if (
+                str(current.status) != MEMORY_CANDIDATE_STATUS_PROPOSED
+                or current.proposed_scope != target_scope
+            ):
+                raise InvalidArgumentError(
+                    f"candidate {candidate.candidate_id} is outside the active consolidation scope"
+                )
+            if action == "promote":
+                record = self._records.promote_candidate(
+                    candidate.candidate_id, target_scope
+                )
+                self._records.candidate_update(
+                    candidate.candidate_id,
+                    {"review": review, "meta": deepcopy(meta)},
+                )
+                return deepcopy(record)
+            if action not in {"discard", "defer"}:
+                raise InvalidArgumentError(
+                    f"unsupported consolidation action: {action}"
+                )
+            patch: dict[str, Any] = {
+                "review": review,
+                "meta": deepcopy(meta),
+            }
+            if action == "discard":
+                patch["status"] = MEMORY_CANDIDATE_STATUS_REJECTED
+            return deepcopy(
+                self._records.candidate_update(candidate.candidate_id, patch)
+            )
+
+    def _supersede_consolidation_hint(
+        self,
+        old_record_id: str,
+        new_record_id: str,
+        *,
+        expected_scope: str,
+        reason: str = "",
+    ) -> MemoryRecord:
+        with self._candidate_write_lock:
+            return deepcopy(
+                self._records.supersede_by_contradiction(
+                    old_record_id,
+                    new_record_id,
+                    reason,
+                    expected_scope=expected_scope,
+                )
+            )
 
 
 __all__ = [

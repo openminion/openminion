@@ -5,11 +5,13 @@ from typing import Any
 
 from openminion.modules.brain.loop.continuation import (
     AUTONOMOUS_TURN_FIRED_EVENT,
+    AutonomousContinuationCapsExceeded,
     DEFAULT_MAX_AUTONOMOUS_TURNS_PER_PLAN,
     DEFAULT_MAX_AUTONOMOUS_TURNS_PER_SESSION,
     check_autonomous_continuation_caps,
     count_autonomous_turns,
     peek_latest_continuation_signal,
+    plan_turn_boundary_reached_for_trace,
     record_autonomous_turn,
     run_with_autonomous_continuation,
     should_schedule_continuation,
@@ -69,6 +71,7 @@ class _InMemorySessionAPI:
         plan_id: str,
         continue_plan_autonomously: bool = False,
         step_id: str | None = None,
+        trace_id: str | None = None,
     ) -> None:
         if event_type in ("task_plan.declared", "task_plan.revised"):
             payload = {
@@ -92,7 +95,7 @@ class _InMemorySessionAPI:
             }
         else:
             payload = {"plan_id": plan_id}
-        self.append_event(session_id, event_type, payload)
+        self.append_event(session_id, event_type, payload, trace_id=trace_id)
 
 
 class _RuntimeShapedSessionAPI(_InMemorySessionAPI):
@@ -491,6 +494,17 @@ class AutonomousTurnCapsTests(unittest.TestCase):
 
 
 class PeekContinuationSignalTests(unittest.TestCase):
+    def test_same_turn_boundary_treats_unreadable_events_as_unavailable(self) -> None:
+        class _UnreadableAPI:
+            def list_events(self, session_id: str) -> list[dict[str, Any]]:
+                raise RuntimeError("event log offline")
+
+        self.assertFalse(
+            plan_turn_boundary_reached_for_trace(
+                session_api=_UnreadableAPI(), session_id="s1", trace_id="trace-1"
+            )
+        )
+
     def test_returns_none_for_empty_session(self) -> None:
         api = _InMemorySessionAPI()
         self.assertIsNone(
@@ -609,10 +623,12 @@ class _StubRunner:
                 "capture_id": capture_id,
             }
         )
+        result_trace_id = trace_id or f"trace-{len(self.call_log)}"
         step: dict[str, Any] = {}
         if self._idx < len(self._script):
             step = self._script[self._idx]
             self._idx += 1
+        if step:
             event_type = step.get("event_type", "task_plan.step_completed")
             if event_type == "task_plan.step_blocked":
                 self.session_api.append_event(
@@ -623,6 +639,7 @@ class _StubRunner:
                         "step_id": step.get("step_id", "s1"),
                         "blocker_type": step.get("blocker_type", "user_input_required"),
                     },
+                    trace_id=result_trace_id,
                 )
             else:
                 self.session_api.seed_plan_event(
@@ -633,6 +650,7 @@ class _StubRunner:
                         step.get("continue_plan_autonomously", False)
                     ),
                     step_id=step.get("step_id"),
+                    trace_id=result_trace_id,
                 )
 
         # Mock StepOutput — only `.working_state.trace_id` is read.
@@ -646,10 +664,76 @@ class _StubRunner:
                 self.terminal_capture_intent_receipt = values.get("capture_receipt")
                 self.memory_capture_bundle_result = values.get("capture_result")
 
-        return _StepOutput(trace_id or "trace-autonomous", step)
+        return _StepOutput(result_trace_id, step)
 
 
 class RunWithAutonomousContinuationTests(unittest.TestCase):
+    def test_event_read_failure_records_stopped_outcome(self) -> None:
+        class _UnreadableAPI(_InMemorySessionAPI):
+            def list_events(self, session_id: str) -> list[dict[str, Any]]:
+                raise RuntimeError("event log offline")
+
+            def append_event(
+                self,
+                session_id: str,
+                type: str,
+                payload: dict[str, Any],
+                **kwargs: Any,
+            ) -> str:
+                if type == "brain.autonomous_continuation.stopped":
+                    raise RuntimeError("event log write offline")
+                return super().append_event(session_id, type, payload, **kwargs)
+
+        session_api = _UnreadableAPI()
+        runner = _StubRunner(
+            session_api=session_api,
+            script=[
+                {
+                    "event_type": "task_plan.declared",
+                    "plan_id": "p1",
+                    "continue_plan_autonomously": True,
+                }
+            ],
+        )
+
+        with self.assertRaises(AutonomousContinuationCapsExceeded):
+            run_with_autonomous_continuation(runner, session_id="s1", user_input="go")
+
+        self.assertEqual(len(runner.call_log), 1)
+
+    def test_malformed_event_read_records_stopped_outcome(self) -> None:
+        class _MalformedAPI(_InMemorySessionAPI):
+            def list_events(self, session_id: str) -> Any:
+                return {"events": super().list_events(session_id)}
+
+        session_api = _MalformedAPI()
+        runner = _StubRunner(
+            session_api=session_api,
+            script=[
+                {
+                    "event_type": "task_plan.declared",
+                    "plan_id": "p1",
+                    "continue_plan_autonomously": True,
+                }
+            ],
+        )
+
+        with self.assertRaises(AutonomousContinuationCapsExceeded):
+            run_with_autonomous_continuation(runner, session_id="s1", user_input="go")
+
+        stopped = [
+            event
+            for event in session_api._events["s1"]
+            if event["event_type"] == "brain.autonomous_continuation.stopped"
+        ]
+        self.assertEqual(len(runner.call_log), 1)
+        self.assertEqual(len(stopped), 1)
+        self.assertEqual(stopped[0]["payload"]["reason"], "counter_unavailable")
+        self.assertEqual(
+            stopped[0]["payload"]["counter_error"],
+            "list_events_returned_non_list",
+        )
+
     def test_autonomous_roots_keep_runtime_session_and_initial_capture_result(
         self,
     ) -> None:
@@ -844,6 +928,30 @@ class RunWithAutonomousContinuationTests(unittest.TestCase):
         self.assertEqual(
             count_autonomous_turns(session_api=session_api, session_id="s1"),
             0,
+        )
+
+    def test_stale_signal_does_not_repeat_when_next_turn_emits_no_plan_boundary(
+        self,
+    ) -> None:
+        session_api = _InMemorySessionAPI()
+        runner = _StubRunner(
+            session_api=session_api,
+            script=[
+                {
+                    "event_type": "task_plan.declared",
+                    "plan_id": "p1",
+                    "continue_plan_autonomously": True,
+                },
+                {},
+            ],
+        )
+
+        run_with_autonomous_continuation(runner, session_id="s1", user_input="go")
+
+        self.assertEqual(len(runner.call_log), 2)
+        self.assertEqual(
+            count_autonomous_turns(session_api=session_api, session_id="s1"),
+            1,
         )
 
     def test_user_initiated_turn_does_not_emit_autonomous_turn_fired(

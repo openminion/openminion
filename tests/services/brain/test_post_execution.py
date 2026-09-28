@@ -372,6 +372,7 @@ def test_run_turn_propagates_empty_provider_response_error() -> None:
 def test_inject_resume_task_hints_attaches_memory_consolidation_module_state() -> None:
     bridge = DummyBridge()
     runner = _DummyRunner({"module_state": {}})
+    runner.profile.agent_id = "agent-1"
     store = InMemoryMemoryStore()
     store.candidate_put(
         MemoryCandidate(
@@ -406,6 +407,44 @@ def test_inject_resume_task_hints_attaches_memory_consolidation_module_state() -
     assert payload["target_scope"] == "agent:agent-1"
     assert payload["batch_limit"] == 5
     assert payload["candidates"][0]["candidate_id"] == "cand-1"
+
+
+@pytest.mark.parametrize(
+    "target_scope",
+    ["", "agent:other-agent"],
+)
+def test_inject_resume_task_hints_rejects_invalid_memory_consolidation_scope(
+    target_scope: str,
+) -> None:
+    bridge = DummyBridge()
+    runner = _DummyRunner({"module_state": {}})
+    store = InMemoryMemoryStore()
+    store.candidate_put(
+        MemoryCandidate(
+            candidate_id="cand-1",
+            session_id="sess-1",
+            proposed_scope="agent:other-agent",
+            type="fact",
+            title="Deploy region",
+            content="Preferred deploy region is us-west-2.",
+            confidence=0.8,
+        )
+    )
+    runner.memory_api = SimpleNamespace(store=store)
+
+    bridge._inject_resume_task_hints(
+        runner=runner,
+        session_id="sess-1",
+        inbound_metadata={
+            "cron_job_id": "job-1",
+            "memory_consolidation_job": "true",
+            "memory_consolidation_target_scope": target_scope,
+        },
+    )
+
+    payload = runner.session_api.written["module_state"]["memory_consolidation"]
+    assert payload["target_scope"] == ""
+    assert payload["candidates"] == []
 
 
 def test_inject_resume_task_hints_initializes_first_project_turn_state() -> None:
@@ -2913,6 +2952,7 @@ def test_postprocess_turn_exposes_cumulative_tool_results_from_last_result() -> 
                     "ok": True,
                     "verified": True,
                     "call_id": "write-1",
+                    "turn_scope_id": "trace-cumulative",
                     "content": "wrote pyproject",
                 },
                 {
@@ -2920,6 +2960,7 @@ def test_postprocess_turn_exposes_cumulative_tool_results_from_last_result() -> 
                     "ok": True,
                     "verified": True,
                     "call_id": "write-2",
+                    "turn_scope_id": "trace-cumulative",
                     "content": "wrote tests",
                 },
             ]
@@ -2939,6 +2980,7 @@ def test_postprocess_turn_exposes_cumulative_tool_results_from_last_result() -> 
                         "ok": True,
                         "verified": True,
                         "call_id": "list-1",
+                        "turn_scope_id": "trace-cumulative",
                         "content": "pyproject.toml, tests/",
                     }
                 ]
@@ -2950,6 +2992,7 @@ def test_postprocess_turn_exposes_cumulative_tool_results_from_last_result() -> 
             active_mode_name="act",
             unresolved_clarify_items=[],
             last_result=prior_result,
+            trace_id="trace-cumulative",
         ),
     )
 
@@ -2974,6 +3017,123 @@ def test_postprocess_turn_exposes_cumulative_tool_results_from_last_result() -> 
         "file.write",
         "file.list_dir",
     ]
+
+
+def test_postprocess_turn_ignores_last_result_from_prior_turn() -> None:
+    bridge = DummyBridge()
+    bridge._config = OpenMinionConfig()
+    _csc_install_default_agent(bridge._config)
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    bridge._telemetryctl = _DummyTelemetry()
+    bridge._identity_metadata = dict
+    runner = SimpleNamespace(session_api=_DummySessionAPI({}))
+    prior_result = SimpleNamespace(
+        outputs={
+            "tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "verified": True,
+                    "call_id": "write-old",
+                    "turn_scope_id": "trace-old",
+                    "content": "wrote old file",
+                }
+            ]
+        }
+    )
+    step_out = SimpleNamespace(
+        message="No tools were needed.",
+        status="done",
+        action_result=None,
+        working_state=SimpleNamespace(
+            plan=SimpleNamespace(steps=[]),
+            llm_calls_used=1,
+            active_mode_name="respond",
+            unresolved_clarify_items=[],
+            last_result=prior_result,
+            trace_id="trace-new",
+            module_state={},
+        ),
+    )
+
+    response = asyncio.run(
+        bridge._postprocess_turn(
+            runner=runner,
+            step_out=step_out,
+            message=Message(channel="console", target="user", body="answer directly"),
+            history=[],
+            session_id="s-no-stale-tool",
+            request_id="trace-new",
+            turn_id="turn-no-stale-tool",
+            turn_start_time=0.0,
+        )
+    )
+
+    assert "tool_execution_count" not in response.metadata
+    assert "tool_execution_count_cumulative" not in response.metadata
+    assert "tool_results" not in response.metadata
+    assert "tool_calls_cumulative" not in response.metadata
+
+
+def test_postprocess_turn_uses_current_adaptive_snapshot_tool_results() -> None:
+    bridge = DummyBridge()
+    bridge._config = OpenMinionConfig()
+    _csc_install_default_agent(bridge._config)
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    bridge._telemetryctl = _DummyTelemetry()
+    bridge._identity_metadata = dict
+    runner = SimpleNamespace(session_api=_DummySessionAPI({}))
+    tool_result = {
+        "tool_name": "time",
+        "ok": True,
+        "verified": True,
+        "call_id": "time-1",
+        "turn_scope_id": "trace-current",
+        "content": "12:00 UTC",
+    }
+    step_out = SimpleNamespace(
+        message="It is 12:00 UTC.",
+        status="done",
+        action_result=None,
+        working_state=SimpleNamespace(
+            plan=SimpleNamespace(steps=[]),
+            llm_calls_used=2,
+            active_mode_name="respond",
+            unresolved_clarify_items=[],
+            last_result=None,
+            trace_id="trace-current",
+            module_state={
+                "adaptive_loop": {
+                    "tool_results": [
+                        tool_result,
+                        {
+                            **tool_result,
+                            "call_id": "stale-1",
+                            "turn_scope_id": "trace-stale",
+                        },
+                    ]
+                }
+            },
+        ),
+    )
+
+    response = asyncio.run(
+        bridge._postprocess_turn(
+            runner=runner,
+            step_out=step_out,
+            message=Message(channel="console", target="user", body="time now"),
+            history=[],
+            session_id="s-adaptive-snapshot",
+            request_id="trace-current",
+            turn_id="turn-adaptive-snapshot",
+            turn_start_time=0.0,
+        )
+    )
+
+    assert response.metadata["tool_execution_count"] == "1"
+    assert response.metadata["tool_execution_count_cumulative"] == "1"
+    assert json.loads(response.metadata["tool_results"]) == [tool_result]
+    assert json.loads(response.metadata["tool_calls_cumulative"]) == [tool_result]
 
 
 def test_postprocess_turn_attaches_watch_outcome_metadata() -> None:

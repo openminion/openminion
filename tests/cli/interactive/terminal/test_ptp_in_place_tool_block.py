@@ -93,7 +93,12 @@ def test_transcript_routes_tool_started_to_active_handle() -> None:
             {"call_id": "c1", "tool_name": "bash", "args": {"command": "ls"}}
         )
         assert handle.has_active_tool() is True
-        out = buf.getvalue()
+        assert buf.getvalue() == ""
+        rendered = io.StringIO()
+        Console(file=rendered, force_terminal=False, width=120, no_color=True).print(
+            handle._render(force_no_status=True)
+        )
+        out = rendered.getvalue()
         assert "Using a tool..." in out
         assert "bash" not in out.lower()
         assert "ls" not in out

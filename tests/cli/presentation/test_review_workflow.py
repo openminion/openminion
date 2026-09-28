@@ -41,7 +41,10 @@ def test_review_workflow_reports_no_target_when_git_diff_empty(
     result = run_review_workflow(tmp_path)
 
     assert result.action_result is None
-    assert "no review target" in result.body
+    assert result.body.startswith("Structural diff check not run")
+    assert "Scope: working tree (unstaged changes)" in result.body
+    assert "no pending changes detected" in result.body
+    assert "clean" not in result.body.lower()
 
 
 def test_review_workflow_runs_current_git_diff(monkeypatch, tmp_path: Path) -> None:
@@ -56,7 +59,8 @@ def test_review_workflow_runs_current_git_diff(monkeypatch, tmp_path: Path) -> N
     result = run_review_workflow(tmp_path)
 
     assert result.action_result is not None
-    assert "Review result (git-diff)" in result.body
+    assert result.body.startswith("Structural diff check")
+    assert "Scope: working tree (unstaged changes)" in result.body
     assert "severity=ok" in result.body
 
 
@@ -75,8 +79,22 @@ def test_review_workflow_reads_workspace_diff_file(tmp_path: Path) -> None:
     result = run_review_workflow(tmp_path, "--file review.diff")
 
     assert result.action_result is not None
-    assert "Review result (file)" in result.body
+    assert "Scope: workspace diff file review.diff" in result.body
     assert "severity=ok" in result.body
+
+
+def test_review_workflow_names_staged_path_scope(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "openminion.cli.presentation.review.render_git_diff",
+        lambda _working_dir, _args="": SimpleNamespace(
+            has_diff=True,
+            output=_CLEAN_DIFF,
+        ),
+    )
+
+    result = run_review_workflow(tmp_path, "--staged src/openminion")
+
+    assert "Scope: staged changes for path src/openminion" in result.body
 
 
 def test_review_workflow_rejects_diff_file_outside_workspace(tmp_path: Path) -> None:

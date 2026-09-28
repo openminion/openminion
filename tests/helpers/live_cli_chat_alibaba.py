@@ -186,9 +186,18 @@ def extract_all_debug_payloads(transcript: str) -> list[dict]:
 def transcript_has_cli_ready(*, transcript: str, agent_id: str) -> bool:
     if f"chat ready agent={agent_id}" in transcript:
         return True
-    return "OpenMinion CLI" in transcript and bool(
-        re.search(rf"\bagent:\s+{re.escape(agent_id)}\b", transcript)
-    )
+    if "OpenMinion CLI" not in transcript:
+        return False
+    if re.search(rf"\bagent:\s+{re.escape(agent_id)}\b", transcript):
+        return True
+    for payload in extract_all_debug_payloads(transcript):
+        last_turn = payload.get("last_turn")
+        if not isinstance(last_turn, dict):
+            continue
+        metadata = last_turn.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("agent") == agent_id:
+            return True
+    return False
 
 
 def transcript_has_assistant_output(

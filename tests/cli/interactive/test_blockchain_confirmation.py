@@ -2,6 +2,7 @@ from web3 import Web3
 
 from openminion.modules.brain.loop.tools.confirmation import (
     confirmation_required_user_message,
+    requires_individual_confirmation,
 )
 from openminion.modules.brain.schemas import ToolCommand
 from openminion.tools.blockchain.confirmation import (
@@ -47,6 +48,44 @@ def test_focus_and_terminal_shared_renderer_has_no_blockchain_session_choice() -
     assert rendered.splitlines()[-1] == (
         "Reply exactly yes to allow once, or no to cancel."
     )
+
+
+def test_ops_command_confirmation_is_individual_without_session_choice() -> None:
+    command = ToolCommand(
+        kind="tool",
+        title="Run approved command",
+        tool_name="ops.command.run",
+        args={"plan_id": "plan-1", "plan_hash": "abc"},
+        inputs={},
+    )
+
+    rendered = confirmation_required_user_message(command)
+
+    assert requires_individual_confirmation(command) is True
+    assert rendered.splitlines()[-1] == (
+        "Reply exactly yes to allow once, or no to cancel."
+    )
+    assert "session" not in rendered.lower()
+
+
+def test_ops_command_confirmation_renders_trusted_effect_preview() -> None:
+    command = ToolCommand(
+        kind="tool",
+        title="Run approved command",
+        tool_name="ops.command.run",
+        args={"plan_id": "plan-1", "plan_hash": "abc"},
+        inputs={},
+    )
+    preview = {
+        "target_id": "staging",
+        "target_revision": 2,
+        "argv": ["systemctl", "restart", "demo.service"],
+    }
+
+    rendered = confirmation_required_user_message(command, preview)
+
+    assert 'Effect: {"target_id":"staging","target_revision":2' in rendered
+    assert '"argv":["systemctl","restart","demo.service"]}' in rendered
 
 
 def test_shared_renderer_shows_ordered_tuple_call_facts() -> None:

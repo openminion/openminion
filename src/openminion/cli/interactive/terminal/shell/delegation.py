@@ -16,9 +16,6 @@ from openminion.cli.presentation.styles import StyleToken
 
 from ..transcript import TerminalTranscript
 
-_ERR_STYLE = token_rich_style(StyleToken.ERROR)
-_SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
-
 
 def delegation_start_message(text: str) -> str:
     parts = text.split(maxsplit=1)
@@ -38,19 +35,26 @@ def handle_slash_delegate(
     runtime: Any,
     console: Console,
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
-) -> None:
+    render: bool = True,
+) -> ChatMessage:
     runner = getattr(runtime, "delegate_task", None)
     if not callable(runner):
-        console.print(
-            Text("(/delegate: runtime does not expose delegation)", style=_ERR_STYLE)
+        message = ChatMessage(
+            kind=MessageKind.ERROR,
+            sender="system",
+            body="(/delegate: runtime does not expose delegation)",
         )
-        return
+        if render:
+            console.print(Text(message.body, style=token_rich_style(StyleToken.ERROR)))
+        return message
     arg = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
     try:
         request = request_from_slash_args(arg)
     except ValueError as exc:
-        console.print(Text(str(exc), style=_ERR_STYLE))
-        return
+        message = ChatMessage(kind=MessageKind.ERROR, sender="system", body=str(exc))
+        if render:
+            console.print(Text(message.body, style=token_rich_style(StyleToken.ERROR)))
+        return message
     result = runner(
         mode=request.mode,
         target_agent_id=request.target_agent_id,
@@ -63,9 +67,19 @@ def handle_slash_delegate(
         repository_instructions=request.repository_instructions,
         approval_callback=approval_callback,
     )
-    console.print(
-        Text(render_agent_delegate_result(dict(result or {})), style=_SYSTEM_STYLE)
+    result_payload = dict(result or {})
+    message_kind = MessageKind.AGENT if result_payload.get("ok") else MessageKind.ERROR
+    message = ChatMessage(
+        kind=message_kind,
+        sender=request.target_agent_id or "delegate",
+        body=render_agent_delegate_result(result_payload),
     )
+    if render:
+        token = (
+            StyleToken.SYSTEM if message_kind == MessageKind.AGENT else StyleToken.ERROR
+        )
+        console.print(Text(message.body, style=token_rich_style(token)))
+    return message
 
 
 async def run_slash_delegate(
@@ -98,13 +112,16 @@ async def run_slash_delegate(
             ).result()
 
         delegated_approval_callback = approval_from_worker
-    await asyncio.to_thread(
+    result_message = await asyncio.to_thread(
         handle_slash_delegate,
         text,
         runtime=runtime,
         console=console,
         approval_callback=delegated_approval_callback,
+        render=transcript is None,
     )
+    if transcript is not None:
+        transcript.push_message(result_message)
 
 
 __all__ = [

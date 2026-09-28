@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import logging
+from threading import Event, Thread
 from types import SimpleNamespace
 
-from openminion.services.runtime import TurnRequest, TurnResponse
+from openminion.services.runtime import AgentRuntimeManager, TurnRequest, TurnResponse
 from openminion.services.runtime import daemon as runtime_daemon
+from openminion.services.runtime.turn_input import (
+    TurnInputQueue,
+    TurnInputQueueStatus,
+)
+from openminion.services.runtime.turn_input.lifecycle import (
+    project_terminal_runtime_event,
+)
 
 
 def test_build_runtime_manager_records_canonical_lifecycle_events(
@@ -35,6 +43,8 @@ def test_build_runtime_manager_records_canonical_lifecycle_events(
         home_root=tmp_path,
         config=SimpleNamespace(runtime=SimpleNamespace(env={})),
         evict_agent_runtime=lambda agent_id, reason: None,
+        turn_input_queue=TurnInputQueue(),
+        sessions=SimpleNamespace(append_event=lambda **_kwargs: None),
     )
 
     manager = runtime_daemon.build_runtime_manager(runtime)
@@ -76,6 +86,177 @@ def test_build_runtime_manager_records_canonical_lifecycle_events(
     assert stopped.data["component"]["component_kind"] == "runtime_manager"
     assert stopped.event_type == "component.stopped"
     assert stopped.data["source_classification"] == "native_canonical"
+
+
+def test_turn_input_projection_records_each_terminal_status_once() -> None:
+    cases = (
+        ("runtime.turn.completed", TurnInputQueueStatus.COMPLETED),
+        ("runtime.turn.failed", TurnInputQueueStatus.FAILED),
+        ("runtime.turn.cancelled", TurnInputQueueStatus.CANCELLED),
+    )
+    for event_type, status in cases:
+        queue = TurnInputQueue(id_factory=lambda: "q1")
+        queued = queue.enqueue(session_id="sess-1", agent_id="agent-1", text="next")
+        queue.reserve_next(session_id="sess-1", agent_id="agent-1")
+        queue.mark_running(queue_id=queued.queue_id, trace_id="trace-next")
+        events: list[dict] = []
+        sessions = SimpleNamespace(
+            append_event=lambda **kwargs: events.append(dict(kwargs))
+        )
+
+        project_terminal_runtime_event(
+            queue=queue,
+            sessions=sessions,
+            event_type="runtime.turn.cancelled",
+            payload={"trace_id": "trace-next", "terminal": False},
+        )
+        project_terminal_runtime_event(
+            queue=queue,
+            sessions=sessions,
+            event_type=event_type,
+            payload={"trace_id": "trace-next", "terminal": True},
+        )
+        project_terminal_runtime_event(
+            queue=queue,
+            sessions=sessions,
+            event_type=event_type,
+            payload={"trace_id": "trace-next", "terminal": True},
+        )
+
+        entry = queue.list_entries(session_id="sess-1")[0]
+        assert entry.status == status
+        assert len(events) == 1
+        assert events[0]["payload"] == entry.event_payload()
+
+
+def test_turn_input_audit_failure_does_not_stop_runtime_worker() -> None:
+    queue = TurnInputQueue(id_factory=iter(("q1", "q2")).__next__)
+    for trace_id in ("trace-1", "trace-2"):
+        queued = queue.enqueue(
+            session_id="sess-1",
+            agent_id="agent-1",
+            text=trace_id,
+        )
+        queue.reserve_next(session_id="sess-1", agent_id="agent-1")
+        queue.mark_running(queue_id=queued.queue_id, trace_id=trace_id)
+
+    def append_event(**_kwargs) -> None:
+        raise OSError("session store unavailable")
+
+    def on_runtime_event(event_type: str, payload: dict) -> None:
+        project_terminal_runtime_event(
+            queue=queue,
+            sessions=SimpleNamespace(append_event=append_event),
+            event_type=event_type,
+            payload=payload,
+        )
+
+    manager = AgentRuntimeManager(
+        turn_executor=lambda request, _emit, _cancel: TurnResponse(
+            final_text=request.input_text
+        ),
+        on_runtime_event=on_runtime_event,
+    )
+    first = manager.submit_turn(TurnRequest("trace-1", "agent-1", "sess-1", "first"))
+    second = manager.submit_turn(TurnRequest("trace-2", "agent-1", "sess-1", "second"))
+    try:
+        assert first.result(timeout_s=2).final_text == "first"
+        assert second.result(timeout_s=2).final_text == "second"
+    finally:
+        manager.shutdown()
+
+    assert [entry.status for entry in queue.list_entries(session_id="sess-1")] == [
+        TurnInputQueueStatus.COMPLETED,
+        TurnInputQueueStatus.COMPLETED,
+    ]
+
+
+def test_shutdown_terminalizes_queued_turn_input() -> None:
+    queue = TurnInputQueue(id_factory=lambda: "q1")
+    queued = queue.enqueue(session_id="sess-1", agent_id="agent-1", text="next")
+    queue.reserve_next(session_id="sess-1", agent_id="agent-1")
+    queue.mark_running(queue_id=queued.queue_id, trace_id="trace-next")
+    events: list[dict] = []
+    active_started = Event()
+
+    def execute(request, _emit, cancel_event):  # noqa: ANN001
+        if request.trace_id == "trace-active":
+            active_started.set()
+            cancel_event.wait(timeout=2)
+        return TurnResponse(final_text=request.input_text)
+
+    def on_runtime_event(event_type: str, payload: dict) -> None:
+        project_terminal_runtime_event(
+            queue=queue,
+            sessions=SimpleNamespace(
+                append_event=lambda **kwargs: events.append(dict(kwargs))
+            ),
+            event_type=event_type,
+            payload=payload,
+        )
+
+    manager = AgentRuntimeManager(
+        turn_executor=execute,
+        on_runtime_event=on_runtime_event,
+    )
+    manager.submit_turn(TurnRequest("trace-active", "agent-1", "sess-1", "active"))
+    assert active_started.wait(timeout=2)
+    pending = manager.submit_turn(
+        TurnRequest("trace-next", "agent-1", "sess-1", "next")
+    )
+
+    manager.shutdown()
+
+    assert pending.result(timeout_s=2).errors[0].code == "cancelled"
+    assert queue.list_entries(session_id="sess-1")[0].status == (
+        TurnInputQueueStatus.CANCELLED
+    )
+    assert [event["event_type"] for event in events] == ["turn_input.cancelled"]
+
+
+def test_forced_eviction_terminalizes_queued_turn_input() -> None:
+    queue = TurnInputQueue(id_factory=lambda: "q1")
+    queued = queue.enqueue(session_id="sess-1", agent_id="agent-1", text="next")
+    queue.reserve_next(session_id="sess-1", agent_id="agent-1")
+    queue.mark_running(queue_id=queued.queue_id, trace_id="trace-next")
+    active_started = Event()
+    release_active = Event()
+
+    def execute(request, _emit, _cancel_event):  # noqa: ANN001
+        if request.trace_id == "trace-active":
+            active_started.set()
+            release_active.wait(timeout=2)
+        return TurnResponse(final_text=request.input_text)
+
+    def on_runtime_event(event_type: str, payload: dict) -> None:
+        project_terminal_runtime_event(
+            queue=queue,
+            sessions=SimpleNamespace(append_event=lambda **_kwargs: None),
+            event_type=event_type,
+            payload=payload,
+        )
+
+    manager = AgentRuntimeManager(
+        turn_executor=execute,
+        on_runtime_event=on_runtime_event,
+    )
+    manager.submit_turn(TurnRequest("trace-active", "agent-1", "sess-1", "active"))
+    assert active_started.wait(timeout=2)
+    pending = manager.submit_turn(
+        TurnRequest("trace-next", "agent-1", "sess-1", "next")
+    )
+    evict_thread = Thread(target=lambda: manager.evict("agent-1", "test"))
+    evict_thread.start()
+    try:
+        assert pending.result(timeout_s=2).errors[0].code == "evicted"
+    finally:
+        release_active.set()
+        evict_thread.join(timeout=2)
+        manager.shutdown()
+
+    assert queue.list_entries(session_id="sess-1")[0].status == (
+        TurnInputQueueStatus.FAILED
+    )
 
 
 def test_lifecycle_bridge_emits_single_info_owner_for_canonical_events(

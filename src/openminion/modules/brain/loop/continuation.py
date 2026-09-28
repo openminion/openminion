@@ -291,21 +291,18 @@ def _latest_plan_boundary_event(
     *,
     session_api: Any,
     session_id: str,
+    trace_id: str | None = None,
 ) -> dict[str, Any] | None:
-    if not session_api or not session_id:
-        return None
-    lister = getattr(session_api, "list_events", None)
-    if not callable(lister):
-        return None
-    try:
-        events = lister(session_id)
-    except Exception:  # noqa: BLE001
-        return None
-    if not isinstance(events, list):
-        return None
+    events = _read_session_events_strict(session_api=session_api, session_id=session_id)
 
+    target_trace_id = str(trace_id or "").strip()
     for event in reversed(events):
         if not isinstance(event, dict):
+            continue
+        if (
+            target_trace_id
+            and str(event.get("trace_id") or "").strip() != target_trace_id
+        ):
             continue
         event_type = _event_type(event)
         if (
@@ -320,10 +317,12 @@ def peek_latest_continuation_signal(
     *,
     session_api: Any,
     session_id: str,
+    trace_id: str | None = None,
 ) -> dict[str, Any] | None:
     event = _latest_plan_boundary_event(
         session_api=session_api,
         session_id=session_id,
+        trace_id=trace_id,
     )
     if event is not None and _event_type(event) in _TERMINAL_PLAN_EVENT_TYPES:
         return None
@@ -339,16 +338,38 @@ def plan_turn_boundary_reached_for_trace(
     target_trace_id = str(trace_id or "").strip()
     if not target_trace_id:
         return False
-    event = _latest_plan_boundary_event(
-        session_api=session_api,
-        session_id=session_id,
-    )
+    try:
+        event = _latest_plan_boundary_event(
+            session_api=session_api,
+            session_id=session_id,
+        )
+    except AutonomousContinuationCapsExceeded:
+        return False
     if event is None or str(event.get("trace_id") or "").strip() != target_trace_id:
         return False
     if _event_type(event) in _TERMINAL_PLAN_EVENT_TYPES:
         return True
     signal = _signal_from_event(event)
     return bool(signal and signal.get("continue_plan_autonomously"))
+
+
+def _continuation_signal_or_raise(
+    *, runner: "BrainRunner", session_id: str, trace_id: str
+) -> dict[str, Any] | None:
+    try:
+        return peek_latest_continuation_signal(
+            session_api=getattr(runner, "session_api", None),
+            session_id=session_id,
+            trace_id=trace_id,
+        )
+    except AutonomousContinuationCapsExceeded as exc:
+        _emit_continuation_stopped(
+            runner=runner,
+            session_id=session_id,
+            decision={"reason": exc.reason, **exc.details},
+            trace_id=trace_id,
+        )
+        raise
 
 
 def run_with_autonomous_continuation(
@@ -384,20 +405,20 @@ def run_with_autonomous_continuation(
         capture_id=capture_id,
     )
     initial_capture = _capture_result_payload(result)
-
     session_api = getattr(runner, "session_api", None)
     agent_id = getattr(getattr(runner, "profile", None), "agent_id", "") or ""
-
     while True:
-        signal = peek_latest_continuation_signal(
-            session_api=session_api, session_id=session_id
+        result_trace_id = str(
+            getattr(getattr(result, STATE_KEY_WORKING, None), "trace_id", None) or ""
+        ).strip()
+        if not result_trace_id:
+            break
+        signal = _continuation_signal_or_raise(
+            runner=runner, session_id=session_id, trace_id=result_trace_id
         )
         if signal is None or not signal.get("continue_plan_autonomously"):
             break
         plan_id = str(signal.get("plan_id") or "").strip()
-        result_trace_id = getattr(
-            getattr(result, STATE_KEY_WORKING, None), "trace_id", None
-        )
         decision = should_schedule_continuation(
             runner=runner,
             session_id=session_id,
@@ -441,9 +462,6 @@ def run_with_autonomous_continuation(
         result = runner.run(
             session_id=session_id,
             user_input=None,
-            trace_id=None,  # fresh trace per autonomous turn
-            forced_tools=None,
-            capability_category=None,
             trigger="plan_continuation",
             progress_callback=progress_callback,
             approval_callback=approval_callback,

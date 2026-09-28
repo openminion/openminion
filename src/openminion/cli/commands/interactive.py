@@ -162,8 +162,10 @@ def _launch_terminal_focus(
 ) -> int:
     from openminion.cli.interactive.project_context import resolve_project_context
     from openminion.cli.interactive.runtime import OpenMinionRuntime
-    from openminion.cli.interactive.terminal import run_terminal_focus
     from openminion.cli.presentation.animation import resolve_focus_animation
+    from openminion.cli.presentation.styles import set_active_theme
+    from openminion.cli.presentation.theme_roots import resolve_theme_data_root
+    from openminion.cli.theme import resolve_theme
 
     requested_agent = str(getattr(args, "agent", "") or "").strip() or None
     requested_session = str(getattr(args, "session", "") or "").strip() or None
@@ -183,6 +185,14 @@ def _launch_terminal_focus(
         terminal_runtime.create_new_session()
     if not bool(getattr(args, "no_context", False)):
         terminal_runtime.set_project_context(resolve_project_context(working_dir))
+    set_active_theme(
+        resolve_theme(
+            cli_flag=getattr(args, "theme", None),
+            data_root=resolve_theme_data_root(terminal_runtime),
+        )
+    )
+    from openminion.cli.interactive.terminal import run_terminal_focus
+
     progress = _resolve_focus_progress(args)
     return run_terminal_focus(
         terminal_runtime,

@@ -477,6 +477,69 @@ def test_finalize_tool_result_failure_stages_tool_outcome_candidate() -> None:
         )
 
 
+def test_finalize_tool_result_preserves_ops_confirmation_facts() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, session = _build_runner(Path(tmp), policy_api=LocalPolicyAdapter())
+        state = runner._load_or_init_state("s-ops-confirmation")
+        logger = CanonicalEventLogger(
+            session_api=session,
+            session_id=state.session_id,
+            agent_id=runner.profile.agent_id,
+        )
+        executor = RunnerCommandExecutor(runner)
+        command = ToolCommand(
+            command_id="cmd-ops-confirmation",
+            title="Run remote command",
+            tool_name="ops.command.run",
+            args={"plan_id": "plan-1", "plan_hash": "hash-1"},
+        )
+        prepared = PreparedToolDispatch(
+            approved_command=command,
+            original_command=command,
+            command_id=command.command_id,
+            tool_name=command.tool_name,
+            validated_args=dict(command.args),
+            session_id=state.session_id,
+            trace_id=str(state.trace_id or ""),
+            agent_id=runner.profile.agent_id,
+            lineage={},
+            permission_mode="ask",
+            payload={},
+        )
+        preview = {
+            "plan_id": "plan-1",
+            "plan_hash": "hash-1",
+            "target_id": "staging",
+            "argv": ["systemctl", "restart", "demo.service"],
+        }
+        pending = ActionResult(
+            command_id=command.command_id,
+            status="needs_user",
+            summary="confirmation required",
+            error=ActionError(
+                code="CONFIRM_REQUIRED",
+                message="confirmation required",
+                details={"approval_id": "approval-1", "preview": preview},
+            ),
+        )
+        with patch.object(
+            runner, "_normalize_execution_result", return_value=(pending, None)
+        ):
+            outcome = executor.finalize_tool_result(
+                state=state,
+                prepared_dispatch=prepared,
+                raw_result=RawToolResult(
+                    command_id=command.command_id,
+                    tool_name=command.tool_name,
+                    raw_output={"ok": False},
+                ),
+                logger=logger,
+            )
+
+        assert outcome.policy_approval_id == "approval-1"
+        assert outcome.policy_confirmation_preview == preview
+
+
 def test_finalize_tool_result_timeout_stages_tool_outcome_candidate() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         runner, session = _build_runner(Path(tmp), policy_api=LocalPolicyAdapter())

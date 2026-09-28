@@ -72,6 +72,10 @@ class _LoopContext:
     def emit_status(self, **kwargs) -> None:
         self.statuses.append(dict(kwargs))
 
+    def apply_turn_steering(self, messages: list[Message]) -> list[Message]:
+        del messages
+        return []
+
 
 def _state() -> WorkingState:
     return WorkingState(

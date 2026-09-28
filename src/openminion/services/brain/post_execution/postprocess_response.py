@@ -222,22 +222,20 @@ def _attach_postprocess_action_metadata(
     termination_reason: str,
     finalization_payload: dict[str, Any] | None,
 ) -> None:
+    cumulative_tool_results_payload = _cumulative_tool_results_from_step_output(
+        step_out=step_out, tool_results_payload=tool_results_payload
+    )
     self._attach_tool_result_metadata(
         metadata=metadata,
-        tool_results_payload=tool_results_payload,
         termination_reason=termination_reason,
-    )
-    cumulative_tool_results_payload = _cumulative_tool_results_from_step_output(
-        step_out=step_out,
-        tool_results_payload=tool_results_payload,
+        tool_results_payload=tool_results_payload or cumulative_tool_results_payload,
     )
     _attach_cumulative_tool_result_metadata(
-        metadata=metadata,
-        tool_results_payload=cumulative_tool_results_payload,
+        metadata=metadata, tool_results_payload=cumulative_tool_results_payload
     )
+    action_result = getattr(step_out, "action_result", None)
     _attach_structured_action_output_metadata(
-        metadata=metadata,
-        action_result=getattr(step_out, "action_result", None),
+        metadata=metadata, action_result=action_result
     )
     if (
         finalization_payload is not None
@@ -247,14 +245,8 @@ def _attach_postprocess_action_metadata(
             finalization_payload,
             sort_keys=True,
         )
-    _attach_watch_outcome_metadata(
-        metadata=metadata,
-        action_result=getattr(step_out, "action_result", None),
-    )
-    _attach_delegation_result_metadata(
-        metadata=metadata,
-        action_result=getattr(step_out, "action_result", None),
-    )
+    _attach_watch_outcome_metadata(metadata=metadata, action_result=action_result)
+    _attach_delegation_result_metadata(metadata=metadata, action_result=action_result)
 
 
 def _agent_response_from_postprocess(

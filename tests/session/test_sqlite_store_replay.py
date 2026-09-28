@@ -68,6 +68,37 @@ def test_cache_metrics_is_a_known_canonical_event(store: SQLiteSessionStore) -> 
     assert "_warnings" not in event["payload"]
 
 
+def test_turn_input_steer_applied_is_a_known_canonical_event(
+    store: SQLiteSessionStore,
+) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="pv1"
+    )
+
+    event_id = store.emit_canonical_event(
+        session_id,
+        "turn_input.steer_applied",
+        {
+            "entries": [
+                {
+                    "queue_id": "q1",
+                    "session_id": session_id,
+                    "agent_id": "agent.main",
+                    "target_trace_id": "trace-1",
+                    "status": "completed",
+                    "status_version": 3,
+                    "text_preview": "use the revised criterion",
+                }
+            ]
+        },
+    )
+
+    event = next(
+        item for item in store.get_events(session_id) if item["event_id"] == event_id
+    )
+    assert "_warnings" not in event["payload"]
+
+
 def test_get_resume_state_includes_context_and_clarify_events(
     store: SQLiteSessionStore,
 ) -> None:

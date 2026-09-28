@@ -24,6 +24,9 @@ from openminion.modules.telemetry.lifecycle import (
 from openminion.modules.telemetry.service import TelemetryService
 from openminion.modules.telemetry.trace import phase_timing
 from openminion.base.logging import format_structured_event, get_logger
+from openminion.services.runtime.turn_input.lifecycle import (
+    project_terminal_runtime_event,
+)
 from openminion.services.runtime.ingress import (
     _emit_chat_phase_timing,
     build_manager_turn_request,
@@ -128,6 +131,15 @@ def build_runtime_manager(runtime: "RuntimeFacade") -> Any:
     lifecycle_bridge = _LifecycleTelemetryBridge(runtime)
     setattr(runtime, "_lifecycle_event_bridge", lifecycle_bridge)
 
+    def _on_runtime_event(event_type: str, payload: dict[str, Any]) -> None:
+        project_terminal_runtime_event(
+            queue=runtime.turn_input_queue,
+            sessions=runtime.sessions,
+            event_type=event_type,
+            payload=payload,
+        )
+        lifecycle_bridge.handle_runtime_event(event_type, payload)
+
     def _on_agent_evict(agent_id: str, reason: str) -> None:
         runtime.evict_agent_runtime(agent_id=agent_id, reason=reason)
 
@@ -142,7 +154,7 @@ def build_runtime_manager(runtime: "RuntimeFacade") -> Any:
         max_global_concurrency=8,
         agent_ttl_seconds=30 * 60,
         sweep_interval_seconds=5,
-        on_runtime_event=lifecycle_bridge.handle_runtime_event,
+        on_runtime_event=_on_runtime_event,
         on_agent_evict=_on_agent_evict,
     )
     manager.start()

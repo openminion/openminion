@@ -1076,6 +1076,7 @@ class ReviewRoundTwoFixesTests(unittest.TestCase):
                         "s1",
                         etype,
                         {"plan": ev["plan"]},
+                        trace_id="t1",
                     )
                 else:
                     session_api.append_event(
@@ -1088,6 +1089,7 @@ class ReviewRoundTwoFixesTests(unittest.TestCase):
                                 "continue_plan_autonomously", False
                             ),
                         },
+                        trace_id="t1",
                     )
 
             class _State:
@@ -1372,7 +1374,9 @@ class ReviewRoundThreeFixesTests(unittest.TestCase):
             if step:
                 etype = step["event_type"]
                 if etype in ("task_plan.declared", "task_plan.revised"):
-                    session_api.append_event("s1", etype, {"plan": step["plan"]})
+                    session_api.append_event(
+                        "s1", etype, {"plan": step["plan"]}, trace_id="t1"
+                    )
                 else:
                     session_api.append_event(
                         "s1",
@@ -1382,6 +1386,7 @@ class ReviewRoundThreeFixesTests(unittest.TestCase):
                             "step_id": step.get("step_id", "s1"),
                             "continue_plan_autonomously": step.get("continue", False),
                         },
+                        trace_id="t1",
                     )
 
             class _State:

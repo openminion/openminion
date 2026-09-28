@@ -368,6 +368,23 @@ class MemoryServiceMutationMixin:
     def promote_candidate(self, candidate_id: str, target_scope: str) -> MemoryRecord:
         return self._candidate_helper().promote_candidate(candidate_id, target_scope)
 
+    def apply_consolidation_decision(
+        self,
+        candidate: MemoryCandidate,
+        *,
+        action: str,
+        target_scope: str,
+        review: Any,
+        meta: dict[str, Any],
+    ) -> MemoryCandidate | MemoryRecord:
+        return self._candidate_helper().apply_consolidation_decision(
+            candidate,
+            action=action,
+            target_scope=target_scope,
+            review=review,
+            meta=meta,
+        )
+
     def supersede_by_contradiction(
         self, old_record_id: str, new_record_id: str, reason: str = ""
     ) -> MemoryRecord:
@@ -378,6 +395,31 @@ class MemoryServiceMutationMixin:
             )
         try:
             return handler(old_record_id, new_record_id, reason=reason)
+        except ValueError as exc:
+            if "not found" in str(exc).lower():
+                raise NotFoundError(str(exc)) from exc
+            raise InvalidArgumentError(str(exc)) from exc
+
+    def supersede_consolidation_hint(
+        self,
+        old_record_id: str,
+        new_record_id: str,
+        *,
+        target_scope: str,
+        reason: str = "",
+    ) -> MemoryRecord:
+        handler = getattr(self._store, "_supersede_consolidation_hint", None)
+        if not callable(handler):
+            raise InvalidArgumentError(
+                "checked consolidation supersession is unsupported by the configured memory store"
+            )
+        try:
+            return handler(
+                old_record_id,
+                new_record_id,
+                expected_scope=target_scope,
+                reason=reason,
+            )
         except ValueError as exc:
             if "not found" in str(exc).lower():
                 raise NotFoundError(str(exc)) from exc

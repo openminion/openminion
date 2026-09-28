@@ -2,17 +2,211 @@ from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from threading import Event, RLock
 from time import sleep
+from unittest.mock import MagicMock
 
 import pytest
 
+from openminion.modules.memory.models import MemoryCandidate
+from openminion.modules.memory.runtime.consolidation.merge import (
+    apply_memory_consolidation_decisions,
+)
+from openminion.modules.memory.service import MemoryService
+from openminion.modules.memory.storage.base import ListQueryOptions
+from openminion.modules.memory.storage.memory import InMemoryMemoryStore
+from openminion.modules.tool.runtime import RuntimeContext
+from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 from openminion.modules.task.scheduling.schedule import to_iso_utc, utc_now
+from openminion.services.brain.post_execution import BrainBridgeTurnMixin
 from openminion.services.cron import CronScheduler
+from openminion.services.runtime.cron.executor import CronTurnExecutor
+from openminion.tools.task.plugin import (
+    _h_task_consolidate_memory,
+    _resolve_cron_store,
+)
 
 
 pytestmark = pytest.mark.e2e
+
+
+def test_scheduled_consolidation_rejects_off_batch_then_preserves_valid_counts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+    workspace = tmp_path / "workspace"
+    run_root = tmp_path / "run"
+    workspace.mkdir(parents=True)
+    run_root.mkdir(parents=True)
+    policy = Policy(
+        raw={
+            "workspace_root": str(workspace),
+            "context_metadata": {"agent_id": "agent-a"},
+            "paths": {
+                "read_allow": [str(workspace)],
+                "write_allow": [str(workspace)],
+                "deny": [],
+            },
+            "tools": {"allow_prefix": [""]},
+        }
+    )
+    task_context = RuntimeContext(
+        policy=policy,
+        workspace=workspace,
+        run_root=run_root,
+        scope="WRITE_SAFE",
+        confirm=False,
+    )
+    created = _h_task_consolidate_memory(
+        {"interval_hours": 12, "batch_limit": 2},
+        task_context,
+    )
+    cron_store = _resolve_cron_store(task_context)
+    job = cron_store.get_cron_job(created["task_id"])
+    assert job is not None
+
+    memory_store = InMemoryMemoryStore()
+    for candidate_id, created_at in (
+        ("cand-promote", "2026-09-25T00:00:00+00:00"),
+        ("cand-defer", "2026-09-25T00:00:01+00:00"),
+        ("cand-off-batch", "2026-09-25T00:00:02+00:00"),
+    ):
+        memory_store.candidate_put(
+            MemoryCandidate(
+                candidate_id=candidate_id,
+                session_id="source-session",
+                proposed_scope="agent:agent-a",
+                type="fact",
+                title=candidate_id,
+                content=f"{candidate_id} content",
+                source="validated",
+                confidence=0.8,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+        )
+    memory_service = MemoryService(store=memory_store)
+    payload = dict(job["payload"])
+    cron_executor = CronTurnExecutor(
+        runtime=SimpleNamespace(),
+        cron_store=cron_store,
+        request_builder=MagicMock(),
+        timeout_s=30,
+        max_attempts=1,
+    )
+    request_payload = cron_executor._request_payload(
+        job=job,
+        run={
+            "run_id": "run-consolidation",
+            "due_at": "2026-09-25T01:00:00+00:00",
+        },
+        message=payload["message"],
+        payload=payload,
+    )
+    session_api = MagicMock()
+    session_api.get_latest_working_state.return_value = {"module_state": {}}
+    runner = SimpleNamespace(
+        profile=SimpleNamespace(agent_id="agent-a"),
+        memory_api=memory_service,
+        session_api=session_api,
+    )
+    BrainBridgeTurnMixin()._inject_resume_task_hints(
+        runner=runner,
+        session_id=request_payload["session_id"],
+        inbound_metadata=request_payload["meta"],
+    )
+    state_inline = session_api.put_working_state.call_args.kwargs["state_inline"]
+    consolidation = state_inline["module_state"]["memory_consolidation"]
+    selected_ids = [str(item["candidate_id"]) for item in consolidation["candidates"]]
+    assert selected_ids == ["cand-promote", "cand-defer"]
+
+    candidates_before = {
+        candidate_id: memory_store.candidate_get(candidate_id)
+        for candidate_id in selected_ids + ["cand-off-batch"]
+    }
+    ordinary_job = {
+        **job,
+        "job_id": "ordinary-job",
+        "payload": {"kind": "agentTurn", "message": "ordinary task"},
+    }
+    ordinary_request = cron_executor._request_payload(
+        job=ordinary_job,
+        run={"run_id": "run-ordinary", "due_at": "2026-09-25T01:00:00+00:00"},
+        message="ordinary task",
+        payload=ordinary_job["payload"],
+    )
+    assert "memory_consolidation_job" not in ordinary_request["meta"]
+    ordinary_session_api = MagicMock()
+    ordinary_session_api.get_latest_working_state.return_value = {"module_state": {}}
+    ordinary_runner = SimpleNamespace(
+        profile=SimpleNamespace(agent_id="agent-a"),
+        memory_api=memory_service,
+        session_api=ordinary_session_api,
+    )
+    BrainBridgeTurnMixin()._inject_resume_task_hints(
+        runner=ordinary_runner,
+        session_id=ordinary_request["session_id"],
+        inbound_metadata=ordinary_request["meta"],
+    )
+    ordinary_state = ordinary_session_api.put_working_state.call_args.kwargs[
+        "state_inline"
+    ]
+    assert "memory_consolidation" not in ordinary_state["module_state"]
+    assert {
+        candidate_id: memory_store.candidate_get(candidate_id)
+        for candidate_id in candidates_before
+    } == candidates_before
+    assert memory_store.list(ListQueryOptions(scopes=["agent:agent-a"])) == []
+
+    rejected = apply_memory_consolidation_decisions(
+        memory_service,
+        decisions=[
+            {
+                "candidate_id": "cand-off-batch",
+                "action": "promote",
+                "reasoning": "Existing but outside this selected batch.",
+            }
+        ],
+        target_scope=consolidation["target_scope"],
+        selected_candidate_ids=selected_ids,
+    )
+
+    assert rejected["applied_count"] == 0
+    assert rejected["promoted_count"] == 0
+    assert "not in the selected batch" in rejected["errors"][0]
+    assert memory_store.candidate_get("cand-off-batch").status == "proposed"
+    assert memory_store.list(ListQueryOptions(scopes=["agent:agent-a"])) == []
+
+    accepted = apply_memory_consolidation_decisions(
+        memory_service,
+        decisions=[
+            {
+                "candidate_id": "cand-promote",
+                "action": "promote",
+                "reasoning": "Validated durable fact.",
+            },
+            {
+                "candidate_id": "cand-defer",
+                "action": "defer",
+                "reasoning": "Needs another confirming observation.",
+            },
+        ],
+        target_scope=consolidation["target_scope"],
+        selected_candidate_ids=selected_ids,
+    )
+
+    assert accepted["applied_count"] == 2
+    assert accepted["promoted_count"] == 1
+    assert accepted["deferred_count"] == 1
+    assert accepted["errors"] == []
+    assert memory_store.candidate_get("cand-promote").status == "promoted"
+    assert memory_store.candidate_get("cand-defer").status == "proposed"
+    assert memory_store.candidate_get("cand-off-batch").status == "proposed"
+    assert len(memory_store.list(ListQueryOptions(scopes=["agent:agent-a"]))) == 1
 
 
 def test_expired_consolidation_yields_then_persists_scope_watermark(

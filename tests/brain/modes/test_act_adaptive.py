@@ -1615,7 +1615,7 @@ def test_act_adaptive_truncates_overlong_session_work_summary_mechanically() -> 
     assert "checkpoint-0" in stored
 
 
-def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
+def test_act_adaptive_counts_valid_and_off_batch_consolidation_decisions() -> None:
     llm_client = _FakeLLMClient(
         responses=[
             LLMResponse(
@@ -1643,13 +1643,16 @@ def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
     )
     executor = _FakeCommandExecutor(outcomes=[])
     services = _FakeServices()
+    candidate = SimpleNamespace(candidate_id="cand-1", meta={})
     services.runner = SimpleNamespace(
         tool_api=None,
         options=SimpleNamespace(failure_strategy="halt"),
         memory_api=SimpleNamespace(
             _backend=SimpleNamespace(
-                candidate_update=MagicMock(),
-                promote_candidate=MagicMock(),
+                candidate_get=MagicMock(return_value=candidate),
+                apply_consolidation_decision=MagicMock(
+                    return_value=SimpleNamespace(id="record-1")
+                ),
             )
         ),
     )
@@ -1672,9 +1675,12 @@ def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
 
     assert result.status == "done"
     assert result.action_result is not None
-    assert result.action_result.outputs["memory_consolidation.applied_count"] == 2
+    assert result.action_result.outputs["memory_consolidation.applied_count"] == 1
     assert result.action_result.outputs["memory_consolidation.promoted_count"] == 1
-    assert result.action_result.outputs["memory_consolidation.deferred_count"] == 1
+    assert result.action_result.outputs["memory_consolidation.deferred_count"] == 0
+    assert result.action_result.outputs["memory_consolidation.errors"] == [
+        "cand-2: candidate is not in the selected batch"
+    ]
     assert result.action_result.outputs["memory_consolidation.target_scope"] == (
         "agent:agent"
     )
@@ -1683,7 +1689,8 @@ def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
     ]
     assert result.action_result.outputs["memory_consolidation.state_hash"]
     backend = services.runner.memory_api._backend
-    assert backend.promote_candidate.call_count == 1
+    backend.candidate_get.assert_called_once_with("cand-1")
+    backend.apply_consolidation_decision.assert_called_once()
 
 
 def test_act_adaptive_forces_answer_only_closure_for_direct_tool_turn() -> None:

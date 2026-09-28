@@ -16,7 +16,7 @@ from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
 from openminion.tools.ops import OPS_FAMILY, REGISTRAR, local_ops_service
 from openminion.tools.ops.args import PortOwnerArgs, ProcessArgs, ProfileArgs
-from openminion.tools.ops.contracts import OperationRequest
+from openminion.tools.ops.contracts import OperationRequest, OperationTarget
 from openminion.tools.ops.interfaces import (
     ALL_OPS_TOOLS,
     TOOL_OPS_HOST_SNAPSHOT,
@@ -25,8 +25,11 @@ from openminion.tools.ops.interfaces import (
     TOOL_OPS_JOB_CANCEL,
     TOOL_OPS_JOB_INSPECT,
     TOOL_OPS_PROCESS_INSPECT,
+    TOOL_OPS_SERVICE_INSPECT,
     TOOL_OPS_TARGET_INSPECT,
 )
+from openminion.tools.ops.registry import TargetRegistry
+from openminion.tools.ops.service import OpsService
 
 
 class _Telemetry:
@@ -141,6 +144,44 @@ def test_ops_transport_telemetry_is_structural_and_redacted() -> None:
         "policy_invocation_hash",
     }
     assert not {"argv", "stdout", "stderr", "content", "credential"} & set(result_facts)
+
+
+def test_service_scope_refusal_is_typed_before_transport_dispatch() -> None:
+    registry = ToolRegistry()
+    REGISTRAR.register(registry)
+    transport = MagicMock()
+    service = OpsService(
+        targets=TargetRegistry(
+            (
+                OperationTarget(
+                    target_id="staging",
+                    kind="local",
+                    service_scopes=("allowed.service",),
+                ),
+            )
+        ),
+        transports={"local": transport},
+    )
+    context = ToolExecutionContext(
+        channel="cli",
+        target="staging",
+        session_id="ops-scope",
+        ops_service=service,
+    )
+
+    result = execute_tool_spec_call(
+        tool=registry.get(TOOL_OPS_SERVICE_INSPECT),
+        arguments={"target_id": "staging", "service": "other.service"},
+        context=context,
+    )
+
+    assert result.ok is False
+    assert result.data["error_code"] == "POLICY_DENIED"
+    assert result.data["details"] == {
+        "target_id": "staging",
+        "profile_id": "service.inspect",
+    }
+    transport.run.assert_not_called()
 
 
 def test_explicit_target_probe_emits_one_structural_event() -> None:
@@ -338,8 +379,37 @@ def test_focus_tool_adapter_resolves_ops_confirmation_once(tmp_path) -> None:
 
     assert result["status"] == "success"
     assert result["outputs"]["data"]["status"] == "succeeded"
+    assert result["outputs"]["verified"] is False
     assert len(approvals) == 1
+    preview = approvals[0][1]
+    assert preview == {
+        "plan_id": plan.plan_id,
+        "plan_hash": plan.plan_hash,
+        "target_id": "local",
+        "target_revision": 1,
+        "argv": ["printf", "ready"],
+        "cwd": "",
+        "timeout_seconds": 30.0,
+        "expires_at": plan.expires_at,
+    }
     assert service.jobs.list()[0].policy_grant_id
+
+    second_plan = service.plan_command(
+        target_id="local", argv=("printf", "again"), session_id="session-1"
+    )
+    second = adapter.execute(
+        command={
+            "tool_name": TOOL_OPS_COMMAND_RUN,
+            "args": {
+                "plan_id": second_plan.plan_id,
+                "plan_hash": second_plan.plan_hash,
+            },
+        },
+        session_id="session-1",
+        trace_id="trace-2",
+    )
+    assert second["status"] == "success"
+    assert len(approvals) == 2
 
 
 def test_focus_tool_adapter_returns_policy_resolution_error(tmp_path) -> None:

@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -50,6 +51,9 @@ from openminion.modules.brain.loop.constants import (
     PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
 )
 from openminion.modules.brain.loop.entry import decompose_tool_spec
+from openminion.modules.brain.loop.adaptive import context as adaptive_context
+from openminion.modules.brain.loop.adaptive.context import _AdaptiveLoopContextAdapter
+from openminion.modules.brain.loop.services import apply_turn_steering
 from openminion.modules.brain.loop.tools.engine import (
     _repeated_plan_only_without_substantive_work,
     _suppress_plan_family_tools,
@@ -71,6 +75,7 @@ from openminion.modules.llm.schemas import (
     ToolSpec,
     UsageInfo,
 )
+from openminion.services.runtime.turn_input import TurnInputIntent, TurnInputQueue
 
 
 def test_finalization_guidance_preserves_user_requested_answer_format() -> None:
@@ -239,6 +244,8 @@ class _LoopContext:
     call_windows: list[tuple[str, float, float]] = field(default_factory=list)
     session_api: Any | None = None
     provider_retry_max_attempts: int = 3
+    steering_by_call: dict[int, list[Message]] = field(default_factory=dict)
+    steering_calls: int = 0
     _index: int = 0
 
     def execute_command(self, *, command, include_reflect: bool = False):
@@ -260,6 +267,12 @@ class _LoopContext:
 
     def emit_status(self, **kwargs) -> None:
         self.statuses.append(dict(kwargs))
+
+    def apply_turn_steering(self, messages: list[Message]) -> list[Message]:
+        self.steering_calls += 1
+        added = list(self.steering_by_call.get(self.steering_calls, []))
+        messages.extend(added)
+        return added
 
 
 @dataclass
@@ -290,6 +303,20 @@ class _FakeSessionAPI:
     def get_active_task_plan(self, session_id: str) -> dict[str, Any] | None:
         del session_id
         return dict(self.active_plan) if isinstance(self.active_plan, dict) else None
+
+    def emit_canonical_event(
+        self,
+        session_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        **kwargs: Any,
+    ) -> str:
+        return self.append_event(
+            session_id,
+            event_type=event_type,
+            payload=payload,
+            **kwargs,
+        )
 
 
 def _state(
@@ -435,6 +462,280 @@ def test_engine_runs_multiple_rounds_and_appends_tool_messages() -> None:
         (item.get("payload") or {}).get("adaptive.tool_calls_total") == 2
         for item in loop_ctx.statuses
     )
+
+
+def test_engine_applies_steering_after_tool_result_before_next_primary_call() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[ToolCall(id="call-1", name="file.read", arguments={})],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="revised answer",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "Applied the new requirement.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=2, trace_id="trace-steer"),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="read ok",
+                ),
+            )
+        ],
+        steering_by_call={
+            2: [
+                Message(
+                    role="user",
+                    content="Use the new acceptance criterion.",
+                    meta={"turn_input_intent": "steer_current"},
+                ),
+                Message(
+                    role="user",
+                    content="Keep the response concise.",
+                    meta={"turn_input_intent": "steer_current"},
+                ),
+            ]
+        },
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.read"})),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="inspect")],
+        tool_specs=_tool_specs("file.read"),
+    )
+
+    assert outcome.final_text == "revised answer"
+    second_messages = runtime.calls[1]["messages"]
+    tool_index = next(
+        index for index, message in enumerate(second_messages) if message.role == "tool"
+    )
+    steering_index = next(
+        index
+        for index, message in enumerate(second_messages)
+        if message.content == "Use the new acceptance criterion."
+    )
+    assert tool_index < steering_index
+    assert [
+        message.content
+        for message in second_messages
+        if message.meta.get("turn_input_intent") == "steer_current"
+    ] == ["Use the new acceptance criterion.", "Keep the response concise."]
+
+
+def test_seeded_response_does_not_consume_steering_before_fresh_call() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="done",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "Applied after the seeded tool result.",
+                },
+                finish_reason="stop",
+            )
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=2, trace_id="trace-seeded"),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(), status="success", summary="seeded read ok"
+                ),
+            )
+        ],
+        steering_by_call={
+            1: [Message(role="user", content="Apply only at the fresh call.")]
+        },
+    )
+    seed_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text="",
+        tool_calls=[ToolCall(id="seed-call", name="file.read", arguments={})],
+        finish_reason="tool_calls",
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.read"})),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="inspect")],
+        tool_specs=_tool_specs("file.read"),
+        seed_response=seed_response,
+    )
+
+    assert outcome.final_text == "done"
+    assert loop_ctx.steering_calls == 1
+    assert any(
+        message.content == "Apply only at the fresh call."
+        for message in runtime.calls[0]["messages"]
+    )
+
+
+def test_steering_failure_propagates_before_provider_call() -> None:
+    runtime = _FakeRuntime(responses=[])
+    loop_ctx = _LoopContext(state=_state(trace_id="trace-steer-failure"))
+
+    with (
+        patch.object(
+            loop_ctx,
+            "apply_turn_steering",
+            side_effect=OSError("steering event unavailable"),
+        ),
+        pytest.raises(OSError, match="steering event unavailable"),
+    ):
+        run_adaptive_tool_loop(
+            loop_ctx,
+            profile=_profile(allowed_tools=frozenset()),
+            runtime=runtime,
+            model="fake-model",
+            initial_messages=[Message(role="user", content="inspect")],
+            tool_specs=[],
+        )
+
+    assert runtime.calls == []
+
+
+def test_turn_steering_helper_records_bounded_batch_and_requeues_on_event_failure() -> (
+    None
+):
+    queue = TurnInputQueue(id_factory=lambda: "steer-1")
+    queue.enqueue(
+        session_id="s-adaptive",
+        agent_id="agent",
+        text="Use secret token abc123 only in the model input.",
+        intent=TurnInputIntent.STEER_CURRENT,
+        steer_supported=True,
+        target_trace_id="trace-steer",
+        metadata={"unbounded": "must not be copied"},
+    )
+    session_api = _FakeSessionAPI()
+    runner = SimpleNamespace(turn_input_queue=queue, session_api=session_api)
+    messages = [Message(role="user", content="original")]
+
+    applied = apply_turn_steering(
+        runner=runner,
+        state=_state(trace_id="trace-steer"),
+        messages=messages,
+    )
+
+    assert [message.content for message in applied] == [
+        "Use secret token abc123 only in the model input."
+    ]
+    assert session_api.events[0]["event_type"] == "turn_input.steer_applied"
+    fact = session_api.events[0]["payload"]["entries"][0]
+    assert "text" not in fact
+    assert "metadata" not in fact
+    assert fact["status"] == "completed"
+
+    retry_queue = TurnInputQueue(id_factory=lambda: "steer-2")
+    retry_queue.enqueue(
+        session_id="s-adaptive",
+        agent_id="agent",
+        text="retry me",
+        intent=TurnInputIntent.STEER_CURRENT,
+        steer_supported=True,
+        target_trace_id="trace-steer",
+    )
+
+    class _FailingSessionAPI:
+        def emit_canonical_event(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            del args, kwargs
+            raise OSError("event store unavailable")
+
+    retry_messages = [Message(role="user", content="original")]
+    with pytest.raises(OSError, match="event store unavailable"):
+        apply_turn_steering(
+            runner=SimpleNamespace(
+                turn_input_queue=retry_queue,
+                session_api=_FailingSessionAPI(),
+            ),
+            state=_state(trace_id="trace-steer"),
+            messages=retry_messages,
+        )
+    assert [message.content for message in retry_messages] == ["original"]
+    assert retry_queue.list_entries(session_id="s-adaptive")[0].status.value == (
+        "queued"
+    )
+
+    completion_queue = TurnInputQueue(id_factory=lambda: "steer-3")
+    completion_queue.enqueue(
+        session_id="s-adaptive",
+        agent_id="agent",
+        text="retry completion",
+        intent=TurnInputIntent.STEER_CURRENT,
+        steer_supported=True,
+        target_trace_id="trace-steer",
+    )
+    completion_messages = [Message(role="user", content="original")]
+    with (
+        patch.object(
+            completion_queue,
+            "complete_steering",
+            side_effect=OSError("completion store unavailable"),
+        ),
+        pytest.raises(OSError, match="completion store unavailable"),
+    ):
+        apply_turn_steering(
+            runner=SimpleNamespace(
+                turn_input_queue=completion_queue,
+                session_api=_FakeSessionAPI(),
+            ),
+            state=_state(trace_id="trace-steer"),
+            messages=completion_messages,
+        )
+    assert [message.content for message in completion_messages] == ["original"]
+    assert completion_queue.list_entries(session_id="s-adaptive")[0].status.value == (
+        "queued"
+    )
+
+
+def test_adaptive_context_forwards_turn_steering_to_shared_helper() -> None:
+    runner = SimpleNamespace()
+    state = _state(trace_id="trace-adapter")
+    adapter = object.__new__(_AdaptiveLoopContextAdapter)
+    adapter._runner = runner
+    adapter.state = state
+    messages = [Message(role="user", content="original")]
+    expected = [Message(role="user", content="steer")]
+
+    with patch.object(
+        adaptive_context,
+        "apply_turn_steering",
+        return_value=expected,
+    ) as shared:
+        result = adapter.apply_turn_steering(messages)
+
+    assert result == expected
+    shared.assert_called_once_with(runner=runner, state=state, messages=messages)
 
 
 def test_engine_debits_each_tool_result_once() -> None:
@@ -2270,6 +2571,7 @@ def test_plan_control_reaches_persisted_project_checkpoint(tmp_path) -> None:
         options=SimpleNamespace(failure_strategy="halt"),
         tool_api=None,
         profile=SimpleNamespace(),
+        turn_input_queue=None,
     )
     ctx, _services = _ctx(
         llm,

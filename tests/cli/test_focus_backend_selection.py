@@ -173,6 +173,11 @@ def test_terminal_focus_starts_fresh_unless_session_is_requested(monkeypatch) ->
 
 def test_terminal_focus_receives_selected_activity_animation(monkeypatch) -> None:
     from openminion.cli.commands import interactive as interactive_cmd
+    from openminion.cli.presentation.styles import (
+        get_active_theme_name,
+        set_active_theme,
+    )
+    from openminion.cli.theme import DARK
 
     animation = AnimationSpec("unicode", "helix", ("◐", "◓"), 100)
     resolution = AnimationResolution(animation, source="cli")
@@ -206,6 +211,7 @@ def test_terminal_focus_receives_selected_activity_animation(monkeypatch) -> Non
             progress="full",
             verbosity="normal",
             no_update_check=True,
+            theme="light",
         ),
         object(),
         working_dir="/tmp/project",
@@ -213,3 +219,5 @@ def test_terminal_focus_receives_selected_activity_animation(monkeypatch) -> Non
 
     assert launch_kwargs[0]["animation"] is resolution
     assert launch_kwargs[0]["progress"] == "full"
+    assert get_active_theme_name() == "light"
+    set_active_theme(DARK)

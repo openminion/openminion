@@ -3724,7 +3724,10 @@ def _measure_queue_pressure(
                 session_id=session_id,
                 agent_id="omfla-agent",
             ):
-                turn_queue.mark_running(queue_id=entry.queue_id)
+                turn_queue.mark_running(
+                    queue_id=entry.queue_id,
+                    trace_id=f"omfla-queue-{cycle_index}-{entry.idempotency_key}",
+                )
                 turn_queue.mark_terminal(
                     queue_id=entry.queue_id,
                     status=TurnInputQueueStatus.COMPLETED,

@@ -518,9 +518,7 @@ def test_run_turn_ignores_repeated_old_completion_after_inline_approval(
             if self.state == 0:
                 return "Approval required: file.write\n[y]es / [N]o / [a]lways:"
             if self.state < 3:
-                return (
-                    "Status: Thinking...\n❯ Type to queue while the current turn runs"
-                )
+                return "Status: Thinking...\n❯ Type to queue for the next turn"
             return "result: complete\nDone in 2s\n❯ Ask anything"
 
     session = Session()
@@ -935,7 +933,7 @@ def test_approval_prompt_does_not_need_reply_after_reply_was_queued() -> None:
         "Reply exactly yes to allow once, session to allow this tool for the "
         "session, or no to cancel.\n"
         " > session\n"
-        "▊  Queued message (1 pending).\n"
+        "▊  Queued for next turn (1 pending).\n"
     )
 
     assert not approval_prompt_needs_reply(transcript, offset=0)
@@ -975,6 +973,11 @@ def test_sidecar_consent_prompt_ignores_completed_response() -> None:
     (
         ("[A] Allow once   [S] Session allow   [D] Deny", "legacy"),
         ("[y]es / [N]o / [a]lways:", "compact"),
+        (
+            "[y] Allow once / [N] Deny (default) / [a] Always allow file.write "
+            "for this shell\n session:",
+            "compact",
+        ),
     ),
 )
 def test_inline_approval_menu_supports_both_focus_surfaces(
@@ -1074,6 +1077,12 @@ def test_inline_approval_menu_uses_latest_overlapping_prompt() -> None:
         ("[y]es / [N]o / [a]lways:", "yes", "yes"),
         ("[y]es / [N]o / [a]lways:", "session", "a"),
         ("[y]es / [N]o / [a]lways:", "no", "no"),
+        (
+            "[y] Allow once / [N] Deny (default) / [a] Always allow file.write "
+            "for this shell session:",
+            "no",
+            "no",
+        ),
     ),
 )
 def test_inline_approval_key_matches_the_visible_menu(
@@ -1139,6 +1148,12 @@ def test_active_turn_busy_accepts_current_responding_footer() -> None:
         "> session\n"
         "\u25cf responding | 0s | model: openai/MiniMax-M2.7 | Esc cancel\n"
     )
+
+    assert active_turn_busy(screen)
+
+
+def test_active_turn_busy_accepts_current_busy_composer() -> None:
+    screen = "❯ Type to queue for the next turn · Esc interrupts"
 
     assert active_turn_busy(screen)
 

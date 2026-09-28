@@ -125,10 +125,12 @@ class TurnHandle:
         background: bool = False,
         agent_id: str = "",
         session_id: str = "",
+        request_meta: dict[str, Any] | None = None,
     ) -> None:
         self.trace_id = trace_id
         self.agent_id = agent_id
         self.session_id = session_id
+        self._request_meta = dict(request_meta or {})
         self._on_cancel = on_cancel
         self._background = background
         self._cancel_event = Event()
@@ -143,6 +145,10 @@ class TurnHandle:
     @property
     def cancel_event(self) -> Event:
         return self._cancel_event
+
+    @property
+    def request_meta(self) -> dict[str, Any]:
+        return dict(self._request_meta)
 
     def cancel(self) -> bool:
         self._cancel_event.set()
@@ -411,6 +417,35 @@ class AgentRuntimeManager:
         with self._lock:
             return self._traces.get(normalized)
 
+    def get_active_turn_handle(
+        self,
+        *,
+        trace_id: str,
+        session_id: str,
+        agent_id: str,
+    ) -> TurnHandle | None:
+        normalized_trace_id = str(trace_id or "").strip()
+        normalized_session_id = str(session_id or "").strip()
+        normalized_agent_id = str(agent_id or "").strip()
+        if (
+            not normalized_trace_id
+            or not normalized_session_id
+            or not normalized_agent_id
+        ):
+            return None
+        with self._lock:
+            handle = self._traces.get(normalized_trace_id)
+            instance = self._instances.get(normalized_agent_id)
+            if (
+                handle is None
+                or instance is None
+                or handle.session_id != normalized_session_id
+                or handle.agent_id != normalized_agent_id
+                or instance.active_trace_id != normalized_trace_id
+            ):
+                return None
+            return handle
+
     def current_phase_status(self, trace_id: str) -> dict[str, Any] | None:
         handle = self.get_turn_handle(trace_id)
         return handle.current_phase_status() if handle is not None else None
@@ -459,6 +494,7 @@ class AgentRuntimeManager:
             background=background,
             agent_id=request.agent_id,
             session_id=request.session_id,
+            request_meta=request.meta,
         )
         queued = _QueuedTurn(
             request=request, handle=handle, enqueued_at_mono=monotonic()
@@ -489,7 +525,11 @@ class AgentRuntimeManager:
             handle.cancel_event.set()
         self._emit(
             "runtime.turn.cancelled",
-            {"trace_id": normalized, "requested_at": _utc_now_iso()},
+            {
+                "trace_id": normalized,
+                "requested_at": _utc_now_iso(),
+                "terminal": False,
+            },
         )
         return True
 
@@ -607,8 +647,12 @@ class AgentRuntimeManager:
                 response=cancelled,
                 runtime_status=RUNTIME_TURN_STATUS_FAILED,
             )
-            with self._lock:
-                self._traces.pop(queued.request.trace_id, None)
+            self._finish_turn(
+                instance=instance,
+                request=queued.request,
+                response=cancelled,
+                status=RUNTIME_TURN_STATUS_FAILED,
+            )
         instance.stop_event.set()
         try:
             instance.queue.put_nowait(None)
@@ -755,7 +799,9 @@ class AgentRuntimeManager:
                 instance=instance, request=request, response=response, status=status
             )
 
-        # Cancel any queued turns during shutdown.
+        self._cancel_shutdown_queue(instance)
+
+    def _cancel_shutdown_queue(self, instance: _AgentInstance) -> None:
         while True:
             try:
                 leftover = instance.queue.get_nowait()
@@ -779,8 +825,12 @@ class AgentRuntimeManager:
                 cancelled_response,
                 RUNTIME_TURN_STATUS_CANCELLED,
             )
-            with self._lock:
-                self._traces.pop(leftover.request.trace_id, None)
+            self._finish_turn(
+                instance=instance,
+                request=leftover.request,
+                response=cancelled_response,
+                status=RUNTIME_TURN_STATUS_CANCELLED,
+            )
 
     def _finish_turn(
         self,
@@ -805,6 +855,7 @@ class AgentRuntimeManager:
                 "duration_ms": response.telemetry.duration_ms,
                 "queue_wait_ms": response.telemetry.queue_wait_ms,
                 "error_count": len(response.errors),
+                "terminal": True,
             },
         )
         if response.telemetry.retries > 0:

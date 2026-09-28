@@ -56,6 +56,17 @@ def test_stateful_command_summaries_match_bare_command_effects() -> None:
     }
 
 
+def test_review_and_editor_help_describe_current_terminal_behavior() -> None:
+    review = slash_command_metadata("review")
+    editor = slash_command_metadata("editor")
+
+    assert review is not None
+    assert review.description == "Run structural checks on the current or supplied diff"
+    assert editor is not None
+    assert editor.description == "Compose an unsent draft in your external editor"
+    assert "Ctrl-X Ctrl-E" in editor.note
+
+
 def test_new_metadata_preserves_multi_token_alternate_form() -> None:
     command = slash_command_metadata("new")
 

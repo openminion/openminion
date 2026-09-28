@@ -2,6 +2,7 @@
 
 from openminion.services.runtime.turn_input.queue import (
     QUEUE_EVENT_CANCEL_ACKNOWLEDGED,
+    QUEUE_EVENT_CANCELLED,
     QUEUE_EVENT_CANCEL_FAILED,
     QUEUE_EVENT_CANCEL_REQUESTED,
     QUEUE_EVENT_COMPLETED,
@@ -11,6 +12,8 @@ from openminion.services.runtime.turn_input.queue import (
     QUEUE_EVENT_FAILED,
     QUEUE_EVENT_FULL,
     QUEUE_EVENT_MOVED,
+    QUEUE_EVENT_REQUEUED,
+    QUEUE_EVENT_RUNNING,
     QUEUE_EVENT_STEER_DEFERRED,
     TurnInputIntent,
     TurnInputQueue,
@@ -22,6 +25,7 @@ from openminion.services.runtime.turn_input.queue import (
 
 __all__ = [
     "QUEUE_EVENT_CANCEL_ACKNOWLEDGED",
+    "QUEUE_EVENT_CANCELLED",
     "QUEUE_EVENT_CANCEL_FAILED",
     "QUEUE_EVENT_CANCEL_REQUESTED",
     "QUEUE_EVENT_COMPLETED",
@@ -31,6 +35,8 @@ __all__ = [
     "QUEUE_EVENT_FAILED",
     "QUEUE_EVENT_FULL",
     "QUEUE_EVENT_MOVED",
+    "QUEUE_EVENT_REQUEUED",
+    "QUEUE_EVENT_RUNNING",
     "QUEUE_EVENT_STEER_DEFERRED",
     "TurnInputIntent",
     "TurnInputQueue",

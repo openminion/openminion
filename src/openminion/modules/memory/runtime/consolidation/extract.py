@@ -115,13 +115,17 @@ def _backend_list(memory_api: Any, method_name: str, options: Any) -> list[Any]:
 
 def _list_candidate_objects(
     memory_api: Any,
-    *,
+    agent_id: str,
     recent_rollout_limit: int,
 ) -> list[Any]:
+    proposed_scope = f"agent:{agent_id}" if agent_id else ""
+    if not proposed_scope:
+        return []
     return _backend_list(
         memory_api,
         "candidate_list",
         CandidateListOptions(
+            proposed_scope=proposed_scope,
             status="proposed",
             limit=max(1, int(recent_rollout_limit)),
         ),
@@ -155,9 +159,9 @@ def extract_consolidation_payload(
     now: datetime | None = None,
 ) -> ExtractionPayload:
     target_now = now or datetime.now(timezone.utc)
+    normalized_agent_id = str(agent_id or "").strip()
     candidates = _list_candidate_objects(
-        memory_api,
-        recent_rollout_limit=recent_rollout_limit,
+        memory_api, normalized_agent_id, recent_rollout_limit
     )
     candidate_refs: list[dict[str, Any]] = []
     contradiction_hints: list[dict[str, Any]] = []
@@ -251,7 +255,7 @@ def extract_consolidation_payload(
 
     return ExtractionPayload(
         session_id=str(session_id or "").strip(),
-        agent_id=str(agent_id or "").strip(),
+        agent_id=normalized_agent_id,
         candidate_refs=candidate_refs,
         topic_clusters=topic_clusters,
         contradiction_hints=contradiction_hints,

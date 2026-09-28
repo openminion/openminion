@@ -7,10 +7,6 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
-from openminion.cli.interactive.project_context import (
-    find_project_context_target_root,
-    write_init_template,
-)
 from openminion.cli.interactive.tool_exposure import tool_exposure_command
 from openminion.cli.presentation.models import (
     ChatMessage,
@@ -18,10 +14,11 @@ from openminion.cli.presentation.models import (
     ToolEvent,
 )
 from openminion.cli.presentation.styles import StyleToken
-from openminion.cli.presentation.markers import token_rich_style
+from openminion.cli.presentation.markers import token_rich_style as _style
+from openminion.cli.presentation.theme import handle_theme
+from openminion.cli.presentation.theme_roots import resolve_theme_data_root
 from openminion.cli.presentation.detail_modes import resolve_details_mode
 from .delegation import run_slash_delegate
-from .labels import _runtime_label
 from .model_setup import handle_model_setup
 from openminion.cli.presentation.slash_commands import (
     format_slash_help,
@@ -50,12 +47,10 @@ from .renderers import (
     _render_model_command,
     _render_sessions_list,
     _render_status_block,
-    _render_theme_status,
     _render_tools_list,
-    _switch_theme,
     _switch_theme_variant,
 )
-from .project import run_slash_goal, run_slash_project
+from .project import run_init_command, run_slash_goal, run_slash_project
 from .sessions import (
     close_current_session,
     handle_room_slash,
@@ -67,13 +62,6 @@ from .slash_output import (
     handle_debug_output_slash,
     render_context_review,
 )
-
-_ERR_STYLE = token_rich_style(StyleToken.ERROR)
-_INFO_STYLE = token_rich_style(StyleToken.INFO)
-_INFO_BOLD_STYLE = token_rich_style(StyleToken.INFO, bold=True)
-_MUTED_STYLE = token_rich_style(StyleToken.MUTED)
-_MUTED_ITALIC_STYLE = f"italic {_MUTED_STYLE}" if _MUTED_STYLE else "italic"
-_SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 
 _SLASH_COMMANDS = terminal_slash_commands()
 _VISIBLE_PARITY_SLASHES = frozenset(
@@ -109,6 +97,22 @@ _FIGLET_FONT = "small"
 _FIGLET_TEXT = "OpenMinion"
 
 
+def _error_style() -> str:
+    return str(_style(StyleToken.ERROR))
+
+
+def _info_bold_style() -> str:
+    return str(_style(StyleToken.INFO, bold=True))
+
+
+def _muted_style(*, italic: bool = False) -> str:
+    return str(_style(StyleToken.MUTED, italic=italic))
+
+
+def _system_style() -> str:
+    return str(_style(StyleToken.SYSTEM))
+
+
 def _slash_arg(text: str) -> str:
     parts = text.split(maxsplit=1)
     return parts[1] if len(parts) > 1 else ""
@@ -118,12 +122,12 @@ def _render_openminion_figlet() -> Text:
     try:
         from pyfiglet import Figlet
     except ImportError:
-        return Text(_FIGLET_TEXT, style=_INFO_BOLD_STYLE)
+        return Text(_FIGLET_TEXT, style=_info_bold_style())
 
     rendered = Figlet(font=_FIGLET_FONT, width=72).renderText(_FIGLET_TEXT).rstrip()
     if not rendered:
-        return Text(_FIGLET_TEXT, style=_INFO_BOLD_STYLE)
-    return Text(rendered, style=_INFO_BOLD_STYLE)
+        return Text(_FIGLET_TEXT, style=_info_bold_style())
+    return Text(rendered, style=_info_bold_style())
 
 
 def _handle_slash_expand(
@@ -138,22 +142,24 @@ def _handle_slash_expand(
             console.print(
                 Text(
                     f"(expected a number after /expand, got {parts[1]!r})",
-                    style=_ERR_STYLE,
+                    style=_error_style(),
                 )
             )
             return
     transcript.expand_block(index)
 
 
-def _handle_slash_theme(text: str, *, console: Console) -> None:
+def _handle_slash_theme(text: str, *, runtime: Any, console: Console) -> None:
     parts = text.split(maxsplit=2)
-    if len(parts) == 1:
-        _render_theme_status(console=console)
-    elif parts[1].strip().lower() == "variant":
+    if len(parts) > 1 and parts[1].strip().lower() == "variant":
         arg = parts[2].strip().lower() if len(parts) >= 3 else ""
         _switch_theme_variant(arg, console=console)
-    else:
-        _switch_theme(parts[1].strip(), console=console)
+        return
+    handle_theme(
+        line=text,
+        data_root=resolve_theme_data_root(runtime),
+        output=lambda message: console.print(Text.from_ansi(message)),
+    )
 
 
 def _handle_slash_model(text: str, *, runtime: Any, console: Console) -> None:
@@ -196,7 +202,7 @@ def _cycle_permission_mode(
         console.print(
             Text(
                 f"(permissions: {new_mode} — Shift+Tab cycles modes)",
-                style=_MUTED_ITALIC_STYLE,
+                style=_muted_style(italic=True),
             )
         )
     return new_mode
@@ -222,7 +228,7 @@ def _handle_slash_permissions(
         console.print(
             Text(
                 f"(permissions: {mode}{override_text}; use `/permissions default|readonly|bypass`, `/permissions <tool> <ask|auto|bypass|readonly|default>`, or Shift+Tab)",
-                style=_MUTED_ITALIC_STYLE,
+                style=_muted_style(italic=True),
             )
         )
         return
@@ -234,7 +240,12 @@ def _handle_slash_permissions(
                 status_line=status_line,
             )
         except RuntimeError as exc:
-            console.print(Text(f"(/permissions: {exc})", style=_MUTED_STYLE))
+            console.print(
+                Text(
+                    f"(/permissions: {exc})",
+                    style=_muted_style(),
+                )
+            )
         return
     arg_parts = arg.split()
     if len(arg_parts) == 2:
@@ -244,30 +255,40 @@ def _handle_slash_permissions(
             console.print(
                 Text(
                     "(/permissions: runtime does not expose set_permission_override)",
-                    style=_ERR_STYLE,
+                    style=_error_style(),
                 )
             )
             return
         try:
             mode = str(setter(tool_name, tool_mode) or "default")
         except ValueError as exc:
-            console.print(Text(f"(/permissions: {exc})", style=_ERR_STYLE))
+            console.print(
+                Text(
+                    f"(/permissions: {exc})",
+                    style=_error_style(),
+                )
+            )
             return
         if mode == "default":
             message = f"(permissions: cleared override for {tool_name})"
         else:
             message = f"(permissions: {tool_name} → {mode} — session-scoped)"
-        console.print(Text(message, style=_MUTED_ITALIC_STYLE))
+        console.print(Text(message, style=_muted_style(italic=True)))
         return
     try:
         mode = _set_permission_mode(arg, runtime=runtime, status_line=status_line)
     except (RuntimeError, ValueError) as exc:
-        console.print(Text(f"(/permissions: {exc})", style=_ERR_STYLE))
+        console.print(
+            Text(
+                f"(/permissions: {exc})",
+                style=_error_style(),
+            )
+        )
         return
     console.print(
         Text(
             _permission_mode_message(mode),
-            style=_MUTED_ITALIC_STYLE,
+            style=_muted_style(italic=True),
         )
     )
 
@@ -286,13 +307,16 @@ def _handle_slash_agents(text: str, *, runtime: Any, console: Console) -> None:
     lister = getattr(runtime, "list_agents", None)
     if not callable(lister):
         console.print(
-            Text("(/agents: runtime does not expose list_agents)", style=_ERR_STYLE)
+            Text(
+                "(/agents: runtime does not expose list_agents)",
+                style=_error_style(),
+            )
         )
         return
     try:
         agents = list(lister() or [])
     except Exception as exc:
-        console.print(Text(f"(/agents: {exc})", style=_ERR_STYLE))
+        console.print(Text(f"(/agents: {exc})", style=_error_style()))
         return
     rows = []
     for item in agents:
@@ -303,12 +327,22 @@ def _handle_slash_agents(text: str, *, runtime: Any, console: Console) -> None:
             continue
         rows.append((agent_id, label, active))
     if not rows:
-        console.print(Text("(/agents: none found)", style=_MUTED_ITALIC_STYLE))
+        console.print(
+            Text(
+                "(/agents: none found)",
+                style=_muted_style(italic=True),
+            )
+        )
         return
     for agent_id, label, active in rows:
         marker = "◆" if active else " "
         suffix = f" — {label}" if label and label != agent_id else ""
-        console.print(Text(f"{marker} {agent_id}{suffix}", style=_SYSTEM_STYLE))
+        console.print(
+            Text(
+                f"{marker} {agent_id}{suffix}",
+                style=_system_style(),
+            )
+        )
 
 
 def _handle_slash_diff(
@@ -324,10 +358,10 @@ def _handle_slash_diff(
     try:
         result = render_git_diff(working_dir, args)
     except ValueError as exc:
-        console.print(Text(f"(/diff: {exc})", style=_ERR_STYLE))
+        console.print(Text(f"(/diff: {exc})", style=_error_style()))
         return
     if not result.has_diff:
-        style = _ERR_STYLE if result.exit_code else _MUTED_ITALIC_STYLE
+        style = _error_style() if result.exit_code else _muted_style(italic=True)
         console.print(Text(result.message, style=style))
         return
     label = " ".join(result.command[1:])
@@ -359,7 +393,8 @@ def _handle_slash_review(
 
     args = _slash_arg(text).strip()
     result = run_review_workflow(working_dir, args)
-    style = _ERR_STYLE if result.action_result is None else _SYSTEM_STYLE
+    token = StyleToken.ERROR if result.action_result is None else StyleToken.SYSTEM
+    style = _style(token)
     console.print(Text(result.body, style=style))
 
 
@@ -376,7 +411,7 @@ def _handle_slash_readonly(
         console.print(
             Text(
                 "(/readonly: runtime does not expose set_read_only_mode)",
-                style=_MUTED_STYLE,
+                style=_muted_style(),
             )
         )
         return
@@ -391,7 +426,7 @@ def _handle_slash_readonly(
         console.print(
             Text(
                 f"(/readonly: unknown arg {arg!r}; use `/readonly on|off|toggle` or bare `/readonly`)",
-                style=_ERR_STYLE,
+                style=_error_style(),
             )
         )
         return
@@ -404,7 +439,10 @@ def _handle_slash_readonly(
         else "all tools allowed (default)"
     )
     console.print(
-        Text(f"(read-only mode: {label} — {hint})", style=_MUTED_ITALIC_STYLE)
+        Text(
+            f"(read-only mode: {label} — {hint})",
+            style=_muted_style(italic=True),
+        )
     )
 
 
@@ -414,32 +452,42 @@ def _handle_slash_compact(*, runtime: Any, console: Console) -> None:
         console.print(
             Text(
                 "(/compact: runtime does not expose compact_history)",
-                style=_MUTED_STYLE,
+                style=_muted_style(),
             )
         )
         return
     try:
         result = compacter()
     except Exception as exc:
-        console.print(Text(f"(/compact: error — {exc})", style=_ERR_STYLE))
+        console.print(
+            Text(
+                f"(/compact: error — {exc})",
+                style=_error_style(),
+            )
+        )
         return
     if not isinstance(result, dict):
         console.print(
             Text(
                 f"(/compact: unexpected result shape: {type(result).__name__})",
-                style=_ERR_STYLE,
+                style=_error_style(),
             )
         )
         return
     if result.get("reason") == "no_session":
-        console.print(Text("(/compact: no active session)", style=_MUTED_ITALIC_STYLE))
+        console.print(
+            Text(
+                "(/compact: no active session)",
+                style=_muted_style(italic=True),
+            )
+        )
         return
     count = int(result.get("compacted_count", 0) or 0)
     if count == 0:
         console.print(
             Text(
                 "(/compact: nothing to compact — recent messages are below the keep threshold)",
-                style=_MUTED_ITALIC_STYLE,
+                style=_muted_style(italic=True),
             )
         )
         return
@@ -451,7 +499,7 @@ def _handle_slash_compact(*, runtime: Any, console: Console) -> None:
     console.print(
         Text(
             f"(/compact: compacted {count} {noun}{suffix})",
-            style=_MUTED_ITALIC_STYLE,
+            style=_muted_style(italic=True),
         )
     )
 
@@ -467,7 +515,12 @@ def _handle_slash_verbosity(
         hint = "tool blocks show full output until /normal or /quiet"
     else:  # normal
         hint = "tool blocks truncated to 6 lines, /expand for full"
-    console.print(Text(f"(verbosity: {new_level} — {hint})", style=_MUTED_ITALIC_STYLE))
+    console.print(
+        Text(
+            f"(verbosity: {new_level} — {hint})",
+            style=_muted_style(italic=True),
+        )
+    )
 
 
 def _handle_slash_details(
@@ -476,11 +529,21 @@ def _handle_slash_details(
     arg = _slash_arg(text)
     new_level, message = resolve_details_mode(transcript._verbosity, arg)
     transcript.set_verbosity(new_level)
-    console.print(Text(f"(details: {message})", style=_MUTED_ITALIC_STYLE))
+    console.print(
+        Text(
+            f"(details: {message})",
+            style=_muted_style(italic=True),
+        )
+    )
 
 
 def _print_slash_help(console: Console) -> None:
-    console.print(Text(format_slash_help(width=console.width), style=_SYSTEM_STYLE))
+    console.print(
+        Text(
+            format_slash_help(width=console.width),
+            style=_system_style(),
+        )
+    )
 
 
 def _print_unknown_slash_notice(cmd: str, console: Console) -> None:
@@ -490,7 +553,7 @@ def _print_unknown_slash_notice(cmd: str, console: Console) -> None:
                 cmd,
                 available_commands=_SLASH_COMMANDS,
             ),
-            style=_ERR_STYLE,
+            style=_error_style(),
         )
     )
 
@@ -506,9 +569,19 @@ def _handle_visible_parity_slash(
 ) -> None:
     arg = _slash_arg(text)
     if cmd == "/context":
-        console.print(Text(render_context_report(runtime), style=_SYSTEM_STYLE))
+        console.print(
+            Text(
+                render_context_report(runtime),
+                style=_system_style(),
+            )
+        )
     elif cmd == "/context-review":
-        console.print(Text(render_context_review(runtime, arg), style=_SYSTEM_STYLE))
+        console.print(
+            Text(
+                render_context_review(runtime, arg),
+                style=_system_style(),
+            )
+        )
     elif cmd == "/overview":
         from openminion.cli.status.overview import (
             build_operations_overview,
@@ -516,36 +589,62 @@ def _handle_visible_parity_slash(
         )
 
         snapshot = build_operations_overview(runtime, working_dir=working_dir)
-        console.print(Text(render_operations_overview(snapshot), style=_SYSTEM_STYLE))
+        console.print(
+            Text(
+                render_operations_overview(snapshot),
+                style=_system_style(),
+            )
+        )
     elif cmd == "/memory":
-        console.print(Text(render_memory_report(runtime), style=_SYSTEM_STYLE))
+        console.print(
+            Text(
+                render_memory_report(runtime),
+                style=_system_style(),
+            )
+        )
     elif cmd == "/graph":
-        console.print(Text(render_graph_command(arg), style=_SYSTEM_STYLE))
+        console.print(Text(render_graph_command(arg), style=_system_style()))
     elif cmd == "/skills":
-        console.print(Text(render_skills_report(runtime, arg), style=_SYSTEM_STYLE))
+        console.print(
+            Text(
+                render_skills_report(runtime, arg),
+                style=_system_style(),
+            )
+        )
     elif cmd == "/browser":
         console.print(
             Text(
                 render_browser_command(arg, working_dir=working_dir),
-                style=_SYSTEM_STYLE,
+                style=_system_style(),
             )
         )
     elif cmd == "/tasks":
-        console.print(Text(render_tasks_report(runtime, arg), style=_SYSTEM_STYLE))
+        console.print(
+            Text(
+                render_tasks_report(runtime, arg),
+                style=_system_style(),
+            )
+        )
     elif cmd == "/effort":
         console.print(
-            Text(handle_effort_command(runtime, arg), style=_MUTED_ITALIC_STYLE)
+            Text(
+                handle_effort_command(runtime, arg),
+                style=_muted_style(italic=True),
+            )
         )
     elif cmd == "/statusline":
         console.print(
-            Text(handle_statusline_command(runtime, arg), style=_MUTED_ITALIC_STYLE)
+            Text(
+                handle_statusline_command(runtime, arg),
+                style=_muted_style(italic=True),
+            )
         )
         status_line.set_state(custom=statusline_label(runtime))
     elif cmd == "/undo":
         console.print(
             Text(
                 handle_undo_command(runtime, arg, working_dir=working_dir),
-                style=_MUTED_ITALIC_STYLE,
+                style=_muted_style(italic=True),
             )
         )
     elif cmd == "/goal":
@@ -577,7 +676,7 @@ async def _handle_session_slash(
     if cmd == "/clear":
         transcript.clear_messages()
     elif cmd == "/init":
-        _run_init_command(
+        run_init_command(
             runtime=runtime,
             console=console,
             overlay=overlay,
@@ -729,7 +828,7 @@ async def _handle_tool_view_slash(
     elif cmd == "/mcp":
         _render_mcp_status(runtime=runtime, console=console)
     elif cmd == "/theme":
-        _handle_slash_theme(text, console=console)
+        _handle_slash_theme(text, runtime=runtime, console=console)
     elif cmd == "/model":
         if _slash_arg(text).strip() == "setup":
             await handle_model_setup(runtime=runtime, console=console, overlay=overlay)
@@ -752,7 +851,7 @@ def _handle_shell_preference_slash(
         console.print(
             Text(
                 "(/queue is handled by the interactive input loop; use it from the CLI prompt)",
-                style=_MUTED_ITALIC_STYLE,
+                style=_muted_style(italic=True),
             )
         )
     elif cmd in ("/quiet", "/verbose", "/normal"):
@@ -773,10 +872,10 @@ def _handle_shell_preference_slash(
             )
         else:
             message = (
-                "(editor: external-editor composition is not bound in this renderer yet; "
-                "use multiline input, paste content, or @-mention files)"
+                "(editor: use /editor from the idle prompt for a new external-editor draft, or "
+                "Ctrl-X Ctrl-E to edit the live draft)"
             )
-        console.print(Text(message, style=_MUTED_ITALIC_STYLE))
+        console.print(Text(message, style=_muted_style(italic=True)))
     else:
         return False
     return True
@@ -855,144 +954,3 @@ async def _run_shell_escape(
             tool_result=combined,
         )
     )
-
-
-def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
-    from openminion import __version__
-    from openminion.cli.presentation.header import (
-        format_runtime_adapter,
-        format_runtime_permission_posture,
-        format_runtime_provider,
-        shorten_working_dir,
-    )
-    from rich.panel import Panel
-
-    agent = str(getattr(runtime, "agent_id", "openminion") or "openminion")
-    model = _runtime_label(runtime)
-    provider = format_runtime_provider(runtime)
-    adapter = format_runtime_adapter(runtime)
-    cwd_label = shorten_working_dir(working_dir) or working_dir or "."
-    permission_posture = format_runtime_permission_posture(runtime)
-    body_lines = [
-        Text.assemble(
-            ("OpenMinion CLI", token_rich_style(StyleToken.INFO, bold=True)),
-            ("  ", ""),
-            (f"(v{__version__})", _MUTED_STYLE),
-        ),
-        Text.assemble(
-            ("interactive terminal", _SYSTEM_STYLE),
-            ("  ·  ", _MUTED_STYLE),
-            ("type-ahead queue enabled", _MUTED_STYLE),
-        ),
-        Text.assemble(
-            ("", ""),
-        ),
-        Text.assemble(
-            ("provider:    ", _MUTED_STYLE),
-            (provider, _SYSTEM_STYLE),
-        ),
-        Text.assemble(
-            ("model:       ", _MUTED_STYLE),
-            (model, _SYSTEM_STYLE),
-        ),
-    ]
-    if adapter:
-        body_lines.append(
-            Text.assemble(
-                ("API adapter: ", _MUTED_STYLE),
-                (adapter, _SYSTEM_STYLE),
-            )
-        )
-    body_lines.extend(
-        [
-            Text.assemble(
-                ("directory:   ", _MUTED_STYLE),
-                (cwd_label, _SYSTEM_STYLE),
-            ),
-            Text.assemble(
-                ("agent:       ", _MUTED_STYLE),
-                (agent, _SYSTEM_STYLE),
-            ),
-            Text(f"permissions: {permission_posture}", style=_SYSTEM_STYLE),
-        ]
-    )
-    project_context = getattr(runtime, "project_context", None)
-    if project_context is not None:
-        context_bits = [
-            ("context:     ", _MUTED_STYLE),
-            (f"{project_context.display_name}", _SYSTEM_STYLE),
-            ("  ", ""),
-            (f"({project_context.size_bytes} bytes)", _MUTED_STYLE),
-        ]
-        body_lines.append(Text.assemble(*context_bits))
-    panel_body = Text("\n").join(body_lines)
-    console.print()
-    console.print(
-        Panel(
-            panel_body,
-            border_style="dim",
-            padding=(0, 1),
-            expand=False,
-        )
-    )
-    console.print(
-        Text(
-            "Tip: / for commands · @ to mention a file · keep typing while a turn runs",
-            style=_MUTED_ITALIC_STYLE,
-        )
-    )
-    if project_context is not None and not bool(
-        getattr(project_context, "is_canonical_name", False)
-    ):
-        console.print(
-            Text(
-                f"loaded project context from {project_context.display_name}; OpenMinion-native filename: OPENMINION.md",
-                style=_MUTED_ITALIC_STYLE,
-            )
-        )
-    console.print()
-
-
-def _run_init_command(
-    *,
-    runtime: Any,
-    console: Console,
-    overlay: TerminalOverlayPresenter,
-    working_dir: str,
-) -> None:
-    agent_id = (
-        str(getattr(runtime, "agent_id", "") or "openminion").strip() or "openminion"
-    )
-    target_preview = str(
-        find_project_context_target_root(working_dir) / "OPENMINION.md"
-    )
-    decision = overlay.present_approval(
-        f"Create OPENMINION.md for this project?\nPath: {target_preview}"
-    )
-    if decision not in ("allow", "always"):
-        console.print(Text("(init cancelled)", style=_MUTED_ITALIC_STYLE))
-        return
-    try:
-        target_path = write_init_template(working_dir=working_dir, agent_id=agent_id)
-    except FileExistsError as exc:
-        console.print(
-            Text(
-                f"(project context file already exists: {exc})",
-                style=_MUTED_ITALIC_STYLE,
-            )
-        )
-        return
-    except (OSError, TypeError, ValueError) as exc:
-        console.print(Text(f"(could not write OPENMINION.md: {exc})", style=_ERR_STYLE))
-        return
-    setter = getattr(runtime, "set_project_context", None)
-    if callable(setter):
-        try:
-            from openminion.cli.interactive.project_context import (
-                resolve_project_context,
-            )
-
-            setter(resolve_project_context(working_dir))
-        except (AttributeError, OSError, TypeError, ValueError):
-            pass
-    console.print(Text(f"(wrote {target_path})", style=_MUTED_ITALIC_STYLE))

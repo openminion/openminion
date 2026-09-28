@@ -324,12 +324,14 @@ def _attach_memory_consolidation_resume_context(
     target_scope = str(
         inbound_metadata.get("memory_consolidation_target_scope", "") or ""
     ).strip()
+    expected_scope = f"agent:{runner.profile.agent_id}"
+    scope_is_valid = target_scope == expected_scope
     batch_limit = int(
         inbound_metadata.get("memory_consolidation_batch_limit", 12) or 12
     )
     module_state["memory_consolidation"] = {
         "enabled": True,
-        "target_scope": target_scope,
+        "target_scope": target_scope if scope_is_valid else "",
         "batch_limit": batch_limit,
         "max_iterations": int(
             inbound_metadata.get("memory_consolidation_max_iterations", 2) or 2
@@ -337,10 +339,14 @@ def _attach_memory_consolidation_resume_context(
         "timeout_seconds": int(
             inbound_metadata.get("memory_consolidation_timeout_seconds", 30) or 30
         ),
-        "candidates": collect_memory_consolidation_candidates(
-            getattr(runner, "memory_api", None),
-            proposed_scope=target_scope,
-            limit=batch_limit,
+        "candidates": (
+            collect_memory_consolidation_candidates(
+                getattr(runner, "memory_api", None),
+                proposed_scope=target_scope,
+                limit=batch_limit,
+            )
+            if scope_is_valid
+            else []
         ),
     }
     state_inline[STATE_KEY_MODULE_STATE] = module_state

@@ -194,6 +194,24 @@ def test_pending_plan_can_be_reclaimed_but_active_claim_cannot() -> None:
     assert resumed_token and resumed_token != first_token
 
 
+def test_pending_plan_is_found_by_approval_id() -> None:
+    store = OperationJobStore()
+    request = _request("plan-1", profile_id="command.run")
+    job, token = store.claim_plan_attempt(
+        request,
+        plan_id="plan-1",
+        target_revision=1,
+    )
+    pending = store.await_approval(
+        job.job_id,
+        claim_token=token,
+        approval_id="approval-1",
+    )
+
+    assert store.find_by_approval_id("approval-1") == pending
+    assert store.find_by_approval_id("unknown") is None
+
+
 def test_plan_capacity_and_dispatch_intent_are_atomic() -> None:
     store = OperationJobStore(per_target_limit=1)
     first, token = store.claim_plan_attempt(
