@@ -2,9 +2,75 @@ from collections.abc import Mapping
 from contextlib import nullcontext
 from typing import Any
 
+from openminion.modules.llm.schemas import Message
+
 
 def runner_from_context(ctx: Any) -> Any | None:
     return getattr(getattr(ctx, "_services", None), "runner", None)
+
+
+def apply_turn_steering(
+    *,
+    runner: Any | None,
+    state: Any,
+    messages: list[Message],
+) -> list[Message]:
+    if runner is None:
+        return []
+    queue = getattr(runner, "turn_input_queue", None)
+    if queue is None:
+        return []
+    session_id = str(state.session_id or "").strip()
+    agent_id = str(state.agent_id or "").strip()
+    trace_id = str(state.trace_id or "").strip()
+    if not session_id or not agent_id or not trace_id:
+        return []
+    entries = queue.reserve_steering(
+        session_id=session_id,
+        agent_id=agent_id,
+        target_trace_id=trace_id,
+    )
+    if not entries:
+        return []
+    queue_ids = [entry.queue_id for entry in entries]
+    steering_messages = [
+        Message(
+            role="user",
+            content=entry.text,
+            meta={
+                "turn_input_intent": entry.intent.value,
+                "turn_input_queue_id": entry.queue_id,
+                "target_trace_id": trace_id,
+            },
+        )
+        for entry in entries
+    ]
+    message_start = len(messages)
+    applied = False
+    try:
+        messages.extend(steering_messages)
+        completed = queue.complete_steering(
+            queue_ids=queue_ids,
+            target_trace_id=trace_id,
+        )
+        runner.session_api.emit_canonical_event(
+            session_id,
+            "turn_input.steer_applied",
+            {"entries": [entry.steering_event_fact() for entry in completed]},
+            actor_type="user",
+            actor_id=agent_id,
+            trace_id=trace_id,
+            importance=2,
+        )
+        applied = True
+    finally:
+        if not applied:
+            del messages[message_start:]
+            queue.compensate_steering(
+                queue_ids=queue_ids,
+                target_trace_id=trace_id,
+            )
+    return steering_messages
 
 
 def runtime_allows_tool(runner: Any, tool_name: str) -> bool:

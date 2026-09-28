@@ -463,12 +463,10 @@ class AdaptiveLoopRunnerPostprocessMixin(
                     ),
                 )
             )
-        correction_summary = build_correction_history_summary(
-            self.loop_state.scratchpad
-        )
-        if correction_summary is not None:
+        summary = build_correction_history_summary(self.loop_state.scratchpad)
+        if summary is not None:
             self.loop_state.messages.append(
-                Message(role="system", content=correction_summary)
+                Message(role="system", content=summary)
             )
         intent_state_message = _build_intent_execution_state_message(self.loop_ctx)
         if intent_state_message is not None:
@@ -496,6 +494,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
             response = self.pending_response
             self.pending_response = None
         else:
+            self.loop_ctx.apply_turn_steering(self.loop_state.messages)
             try:
                 response = self.runtime.complete(
                     messages=self.loop_state.messages,

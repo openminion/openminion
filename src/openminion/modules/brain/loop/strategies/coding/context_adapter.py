@@ -9,12 +9,16 @@ from openminion.modules.brain.loop.tools.iteration.helpers import (
     _execute_prepared_tool_dispatch_from_context,
     _finalize_tool_result_from_context,
 )
-from openminion.modules.brain.loop.services import runner_from_context
+from openminion.modules.brain.loop.services import (
+    apply_turn_steering,
+    runner_from_context,
+)
 from openminion.modules.brain.loop.providers.retry import build_provider_retry_policy
 from openminion.modules.brain.runner.tick.context import (
     _store_pending_confirmation_metadata,
 )
 from openminion.modules.brain.schemas import ActionResult, ToolCommand
+from openminion.modules.llm.schemas import Message
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 
 
@@ -70,11 +74,11 @@ class _CodingLoopContextAdapter:
     ) -> None:
         self.state = ctx.state
         self._ctx = ctx
-        runner = runner_from_context(ctx)
-        self.session_api = getattr(runner, "session_api", None)
+        self._runner = runner_from_context(ctx)
+        self.session_api = getattr(self._runner, "session_api", None)
         self.provider_retry_max_attempts = build_provider_retry_policy(
-            getattr(runner, "options", None),
-            getattr(runner, "llm_api", None),
+            getattr(self._runner, "options", None),
+            getattr(self._runner, "llm_api", None),
         ).max_attempts
         self.prepared_parallel_dispatch_supported = all(
             callable(getattr(ctx.command_executor, name, None))
@@ -85,6 +89,15 @@ class _CodingLoopContextAdapter:
             )
         )
         self._on_command_result = on_command_result
+
+    def apply_turn_steering(self, messages: list[Message]) -> list[Message]:
+        return list(
+            apply_turn_steering(
+                runner=self._runner,
+                state=self.state,
+                messages=messages,
+            )
+        )
 
     def execute_command(
         self,

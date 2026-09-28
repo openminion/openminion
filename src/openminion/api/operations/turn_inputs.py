@@ -5,6 +5,7 @@ from typing import Any, cast
 from urllib.parse import parse_qs
 from uuid import uuid4
 
+from openminion.base.config import run_profile_overrides_from_mapping
 from openminion.api.config import close_api_runtime_if_owned, resolve_api_runtime
 from openminion.api.core.deps import resolve_runtime_manager
 from openminion.api.queries.sessions import append_session_event
@@ -130,10 +131,27 @@ def enqueue_turn_input(
         requested_intent = str(body.get("intent", TurnInputIntent.QUEUE_NEXT.value))
         metadata = dict(body.get("metadata") or {})
         intent = TurnInputIntent(requested_intent)
+        target_trace_id: str | None = None
+        steer_supported = False
         if intent == TurnInputIntent.STEER_CURRENT:
-            metadata.setdefault("requested_intent", intent.value)
-            metadata.setdefault("steer_status", "steer_deferred")
-            intent = TurnInputIntent.QUEUE_NEXT
+            target_trace_id = str(body.get("trace_id", "")).strip()
+            if not target_trace_id:
+                raise ValueError("trace_id is required for steer_current.")
+            manager = runtime.runtime_manager
+            active = _resolve_active_steering_scope(
+                manager=manager,
+                runtime=runtime,
+                trace_id=target_trace_id,
+                session_id=session_id,
+                agent_id=str(body.get("agent_id", "")).strip(),
+            )
+            if isinstance(active, RouteResult):
+                return active
+            steer_supported = active
+            if not steer_supported:
+                metadata.setdefault("requested_intent", intent.value)
+                metadata.setdefault("steer_status", "steer_deferred")
+                intent = TurnInputIntent.QUEUE_NEXT
         entry = _turn_input_queue(runtime).enqueue(
             session_id=session_id,
             agent_id=str(body.get("agent_id", "")).strip(),
@@ -143,8 +161,13 @@ def enqueue_turn_input(
             idempotency_key=body.get("idempotency_key"),
             priority=int(body.get("priority", 0) or 0),
             metadata=metadata,
+            steer_supported=steer_supported,
+            target_trace_id=target_trace_id if steer_supported else None,
         )
-        if requested_intent == TurnInputIntent.STEER_CURRENT.value:
+        if (
+            requested_intent == TurnInputIntent.STEER_CURRENT.value
+            and not steer_supported
+        ):
             _append_turn_input_event(
                 ctx=ctx,
                 runtime=runtime,
@@ -334,6 +357,65 @@ def _resolve_active_queue_scope(
             retryable=False,
         )
     return handle, session
+
+
+def _resolve_active_steering_scope(
+    *,
+    manager: Any,
+    runtime: APIRuntime,
+    trace_id: str,
+    session_id: str,
+    agent_id: str,
+) -> bool | RouteResult:
+    handle = manager.get_turn_handle(trace_id)
+    if handle is None:
+        return error_route_result(
+            HTTPStatus.NOT_FOUND,
+            code="trace_not_found",
+            message=f"Trace not found: {trace_id}",
+            details={"trace_id": trace_id},
+            retryable=False,
+        )
+    if handle.session_id != session_id or handle.agent_id != agent_id:
+        return error_route_result(
+            HTTPStatus.CONFLICT,
+            code="QUEUE_CONFLICT",
+            message="The active turn does not match the requested queue scope.",
+            details={"trace_id": trace_id},
+            retryable=False,
+        )
+    active_handle = manager.get_active_turn_handle(
+        trace_id=trace_id,
+        session_id=session_id,
+        agent_id=agent_id,
+    )
+    if active_handle is None:
+        return error_route_result(
+            HTTPStatus.CONFLICT,
+            code="turn_not_active",
+            message="The requested turn is not actively executing.",
+            details={"trace_id": trace_id},
+            retryable=False,
+        )
+    overrides = run_profile_overrides_from_mapping(active_handle.request_meta)
+    runtime.resolve_agent_service(agent_id, overrides=overrides)
+    runtime_info = runtime.get_agent_runtime_info(agent_id, overrides=overrides)
+    if (
+        manager.get_active_turn_handle(
+            trace_id=trace_id,
+            session_id=session_id,
+            agent_id=agent_id,
+        )
+        is None
+    ):
+        return error_route_result(
+            HTTPStatus.CONFLICT,
+            code="turn_not_active",
+            message="The requested turn is not actively executing.",
+            details={"trace_id": trace_id},
+            retryable=False,
+        )
+    return bool(runtime_info.get("brain_bridge_active"))
 
 
 def _requeue_reserved_entry(

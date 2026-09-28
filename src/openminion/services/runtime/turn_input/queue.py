@@ -77,6 +77,7 @@ class TurnInputQueueEntry:
     started_at: str | None = None
     completed_at: str | None = None
     trace_id: str | None = None
+    target_trace_id: str | None = None
 
     def to_dict(self, *, include_text: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -94,6 +95,7 @@ class TurnInputQueueEntry:
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "trace_id": self.trace_id,
+            "target_trace_id": self.target_trace_id,
             "text_preview": redact_text_preview(self.text),
         }
         if include_text:
@@ -102,6 +104,17 @@ class TurnInputQueueEntry:
 
     def event_payload(self) -> dict[str, Any]:
         return self.to_dict(include_text=False)
+
+    def steering_event_fact(self) -> dict[str, Any]:
+        return {
+            "queue_id": self.queue_id,
+            "session_id": self.session_id,
+            "agent_id": self.agent_id,
+            "target_trace_id": self.target_trace_id,
+            "status": self.status.value,
+            "status_version": self.status_version,
+            "text_preview": redact_text_preview(self.text),
+        }
 
 
 class TurnInputQueueError(RuntimeError):
@@ -139,6 +152,8 @@ class TurnInputQueue:
         idempotency_key: str | None = None,
         priority: int = 0,
         metadata: dict[str, Any] | None = None,
+        steer_supported: bool = False,
+        target_trace_id: str | None = None,
     ) -> TurnInputQueueEntry:
         normalized_session_id = _require_non_empty(session_id, "session_id")
         normalized_agent_id = _require_non_empty(agent_id, "agent_id")
@@ -146,7 +161,12 @@ class TurnInputQueue:
         normalized_intent = _coerce_intent(intent)
         queue_status = TurnInputQueueStatus.QUEUED
         entry_metadata = dict(metadata or {})
-        if normalized_intent == TurnInputIntent.STEER_CURRENT:
+        normalized_target_trace_id = str(target_trace_id or "").strip() or None
+        if normalized_intent == TurnInputIntent.STEER_CURRENT and steer_supported:
+            normalized_target_trace_id = _require_non_empty(
+                normalized_target_trace_id or "", "target_trace_id"
+            )
+        elif normalized_intent == TurnInputIntent.STEER_CURRENT:
             queue_status = TurnInputQueueStatus.STEER_DEFERRED
             entry_metadata.setdefault("deferred_to", TurnInputIntent.QUEUE_NEXT.value)
             entry_metadata.setdefault("reason", "steer_current_unsupported_v1")
@@ -175,6 +195,7 @@ class TurnInputQueue:
                 else None,
                 priority=int(priority or 0),
                 metadata=entry_metadata,
+                target_trace_id=normalized_target_trace_id,
             )
             self._entries.append(entry)
             if key is not None:
@@ -307,6 +328,7 @@ class TurnInputQueue:
                     entry.session_id == session_id
                     and entry.agent_id == agent_id
                     and entry.status == TurnInputQueueStatus.QUEUED
+                    and entry.intent == TurnInputIntent.QUEUE_NEXT
                 ):
                     if expected_queue_id and entry.queue_id != expected_queue_id:
                         raise TurnInputQueueError(
@@ -326,6 +348,66 @@ class TurnInputQueue:
                     self._emit(QUEUE_EVENT_DEQUEUED, updated.event_payload())
                     return updated
         return None
+
+    def reserve_steering(
+        self,
+        *,
+        session_id: str,
+        agent_id: str,
+        target_trace_id: str,
+    ) -> list[TurnInputQueueEntry]:
+        normalized_session_id = _require_non_empty(session_id, "session_id")
+        normalized_agent_id = _require_non_empty(agent_id, "agent_id")
+        normalized_trace_id = _require_non_empty(target_trace_id, "target_trace_id")
+        reserved: list[TurnInputQueueEntry] = []
+        with self._lock:
+            for index, entry in enumerate(self._entries):
+                if (
+                    entry.session_id != normalized_session_id
+                    or entry.agent_id != normalized_agent_id
+                    or entry.target_trace_id != normalized_trace_id
+                    or entry.intent != TurnInputIntent.STEER_CURRENT
+                    or entry.status != TurnInputQueueStatus.QUEUED
+                ):
+                    continue
+                updated = replace(
+                    entry,
+                    status=TurnInputQueueStatus.RESERVED,
+                    status_version=entry.status_version + 1,
+                )
+                self._entries[index] = updated
+                reserved.append(updated)
+                self._emit(QUEUE_EVENT_DEQUEUED, updated.event_payload())
+        return reserved
+
+    def complete_steering(
+        self,
+        *,
+        queue_ids: Iterable[str],
+        target_trace_id: str,
+    ) -> list[TurnInputQueueEntry]:
+        return self._transition_steering_batch(
+            queue_ids=queue_ids,
+            target_trace_id=target_trace_id,
+            allowed_statuses={TurnInputQueueStatus.RESERVED},
+            target_status=TurnInputQueueStatus.COMPLETED,
+        )
+
+    def compensate_steering(
+        self,
+        *,
+        queue_ids: Iterable[str],
+        target_trace_id: str,
+    ) -> list[TurnInputQueueEntry]:
+        return self._transition_steering_batch(
+            queue_ids=queue_ids,
+            target_trace_id=target_trace_id,
+            allowed_statuses={
+                TurnInputQueueStatus.RESERVED,
+                TurnInputQueueStatus.COMPLETED,
+            },
+            target_status=TurnInputQueueStatus.QUEUED,
+        )
 
     def mark_running(self, *, queue_id: str, trace_id: str) -> TurnInputQueueEntry:
         normalized_trace_id = _require_non_empty(trace_id, "trace_id")
@@ -499,6 +581,64 @@ class TurnInputQueue:
             "Turn input queue entry was not found.",
             {"queue_id": queue_id},
         )
+
+    def _transition_steering_batch(
+        self,
+        *,
+        queue_ids: Iterable[str],
+        target_trace_id: str,
+        allowed_statuses: set[TurnInputQueueStatus],
+        target_status: TurnInputQueueStatus,
+    ) -> list[TurnInputQueueEntry]:
+        requested_ids = [str(queue_id or "").strip() for queue_id in queue_ids]
+        requested_ids = [queue_id for queue_id in requested_ids if queue_id]
+        if not requested_ids:
+            return []
+        normalized_trace_id = _require_non_empty(target_trace_id, "target_trace_id")
+        requested = set(requested_ids)
+        with self._lock:
+            matches = [
+                (index, entry)
+                for index, entry in enumerate(self._entries)
+                if entry.queue_id in requested
+            ]
+            if len(matches) != len(requested):
+                raise TurnInputQueueError(
+                    "QUEUE_ENTRY_NOT_FOUND",
+                    "A steering queue entry was not found.",
+                    {"queue_ids": requested_ids},
+                )
+            for _index, entry in matches:
+                if (
+                    entry.intent != TurnInputIntent.STEER_CURRENT
+                    or entry.target_trace_id != normalized_trace_id
+                    or entry.status not in allowed_statuses
+                ):
+                    raise TurnInputQueueError(
+                        "QUEUE_CONFLICT",
+                        "The steering batch state changed before transition.",
+                        {"queue_id": entry.queue_id, "status": entry.status.value},
+                    )
+            now = _utc_now_iso()
+            updated_by_id: dict[str, TurnInputQueueEntry] = {}
+            for index, entry in matches:
+                updated = replace(
+                    entry,
+                    status=target_status,
+                    completed_at=(
+                        now if target_status == TurnInputQueueStatus.COMPLETED else None
+                    ),
+                    status_version=entry.status_version + 1,
+                )
+                self._entries[index] = updated
+                updated_by_id[updated.queue_id] = updated
+                event_type = (
+                    QUEUE_EVENT_COMPLETED
+                    if target_status == TurnInputQueueStatus.COMPLETED
+                    else QUEUE_EVENT_REQUEUED
+                )
+                self._emit(event_type, updated.event_payload())
+            return [updated_by_id[queue_id] for queue_id in requested_ids]
 
     def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
         if self._on_event is None:

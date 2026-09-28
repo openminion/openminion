@@ -36,6 +36,7 @@ _KNOWN_CANONICAL_EVENT_TYPES = {
     "turn_input.cancel_acknowledged",
     "turn_input.cancel_failed",
     "turn_input.steer_deferred",
+    "turn_input.steer_applied",
     "decision.made",
     "constraint.set",
     "task.created",

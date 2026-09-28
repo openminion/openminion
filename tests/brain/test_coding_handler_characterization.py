@@ -91,6 +91,31 @@ class TestCodingHandlerSurface:
     def test_coding_profile_runner_is_a_class(self) -> None:
         assert inspect.isclass(CodingProfileRunner)
 
+    def test_coding_context_forwards_turn_steering_to_shared_helper(self) -> None:
+        runner = SimpleNamespace(options=None, llm_api=None, session_api=None)
+        state = SimpleNamespace(session_id="s1", agent_id="a1", trace_id="trace-1")
+        ctx = SimpleNamespace(
+            state=state,
+            _services=SimpleNamespace(runner=runner),
+            command_executor=SimpleNamespace(),
+        )
+        messages = [Message(role="user", content="original")]
+        expected = [Message(role="user", content="steer")]
+
+        with patch.object(
+            context_adapter,
+            "apply_turn_steering",
+            return_value=expected,
+        ) as shared:
+            result = _CodingLoopContextAdapter(ctx).apply_turn_steering(messages)
+
+        assert result == expected
+        shared.assert_called_once_with(
+            runner=runner,
+            state=state,
+            messages=messages,
+        )
+
     @pytest.mark.parametrize("fn", [execute_coding_profile, prepare_coding_profile])
     def test_entry_points_callable_with_single_ctx_arg(self, fn) -> None:
         # Both `execute_coding_profile(ctx)` and `prepare_coding_profile(ctx)`

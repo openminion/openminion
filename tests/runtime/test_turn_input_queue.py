@@ -224,6 +224,70 @@ def test_steer_current_is_deferred_without_semantic_inference() -> None:
     assert entry.text == "actually please steer this turn"
 
 
+def test_supported_steering_batch_reserves_completes_and_compensates() -> None:
+    queue = _queue()
+    first = queue.enqueue(
+        session_id="s1",
+        agent_id="a1",
+        text="first steering input",
+        intent=TurnInputIntent.STEER_CURRENT,
+        steer_supported=True,
+        target_trace_id="trace-1",
+    )
+    second = queue.enqueue(
+        session_id="s1",
+        agent_id="a1",
+        text="second steering input",
+        intent=TurnInputIntent.STEER_CURRENT,
+        steer_supported=True,
+        target_trace_id="trace-1",
+    )
+
+    assert queue.reserve_next(session_id="s1", agent_id="a1") is None
+    assert (
+        queue.reserve_steering(
+            session_id="s1", agent_id="a1", target_trace_id="missing"
+        )
+        == []
+    )
+    assert (
+        queue.reserve_steering(session_id="s1", agent_id="a1", target_trace_id="other")
+        == []
+    )
+    assert all(
+        entry.status == TurnInputQueueStatus.QUEUED
+        for entry in queue.list_entries(session_id="s1")
+    )
+    reserved = queue.reserve_steering(
+        session_id="s1", agent_id="a1", target_trace_id="trace-1"
+    )
+    assert [entry.queue_id for entry in reserved] == [first.queue_id, second.queue_id]
+    completed = queue.complete_steering(
+        queue_ids=[entry.queue_id for entry in reserved],
+        target_trace_id="trace-1",
+    )
+    assert {entry.status for entry in completed} == {TurnInputQueueStatus.COMPLETED}
+    assert completed[0].steering_event_fact() == {
+        "queue_id": "q1",
+        "session_id": "s1",
+        "agent_id": "a1",
+        "target_trace_id": "trace-1",
+        "status": "completed",
+        "status_version": 3,
+        "text_preview": "first steering input",
+    }
+
+    compensated = queue.compensate_steering(
+        queue_ids=[entry.queue_id for entry in completed],
+        target_trace_id="trace-1",
+    )
+    assert {entry.status for entry in compensated} == {TurnInputQueueStatus.QUEUED}
+    retried = queue.reserve_steering(
+        session_id="s1", agent_id="a1", target_trace_id="trace-1"
+    )
+    assert [entry.queue_id for entry in retried] == ["q1", "q2"]
+
+
 def test_operational_events_are_emitted_without_text_payload() -> None:
     events: list[tuple[str, dict]] = []
     queue = TurnInputQueue(

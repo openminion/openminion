@@ -62,6 +62,7 @@ from openminion.modules.brain.schemas.closure import ClosureJudgment
 from openminion.modules.brain.tools.executor import CommandExecutionOutcome
 from openminion.modules.llm.schemas import LLMRequest, LLMResponse, ToolCall
 from openminion.modules.llm.transcript import validate_tool_transcript
+from openminion.services.runtime.turn_input import TurnInputIntent, TurnInputQueue
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.runtime.policy import Policy
 
@@ -504,7 +505,12 @@ def _ctx(
 ) -> ExecutionContext:
     services = services or _FakeServices()
     if services.runner is None:
-        services.runner = SimpleNamespace(tool_api=SimpleNamespace())
+        services.runner = SimpleNamespace(
+            tool_api=SimpleNamespace(),
+            turn_input_queue=None,
+        )
+    elif not hasattr(services.runner, "turn_input_queue"):
+        services.runner.turn_input_queue = None
     return ExecutionContext(
         state=state or _state(),
         decision=_decision(),
@@ -769,6 +775,86 @@ def test_coding_loop_single_tool_then_final_text() -> None:
         handler._loop_state.scratchpad["tool_schema_shortlisting.candidate_count"] == 19
     )
     assert handler._loop_state.scratchpad["tool_schema_shortlisting.active_count"] == 7
+
+
+def test_coding_loop_delivers_steering_after_seeded_tool_before_next_call() -> None:
+    state = _state().model_copy(update={"trace_id": "trace-steering"})
+    queue_ids = iter(("steer-1", "steer-2"))
+    queue = TurnInputQueue(id_factory=lambda: next(queue_ids))
+    for text in ("Inspect the parser too.", "Keep the patch minimal."):
+        queue.enqueue(
+            session_id=state.session_id,
+            agent_id=state.agent_id,
+            text=text,
+            intent=TurnInputIntent.STEER_CURRENT,
+            steer_supported=True,
+            target_trace_id=state.trace_id,
+        )
+    session_api = MagicMock()
+    services = _FakeServices(
+        runner=SimpleNamespace(
+            tool_api=SimpleNamespace(),
+            turn_input_queue=queue,
+            session_api=session_api,
+        )
+    )
+    llm_client = _FakeLLMClient(
+        responses=[
+            _read_only_plan_response(),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="done",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    ctx = _ctx(
+        llm_client,
+        _FakeCommandExecutor(),
+        state=state,
+        services=services,
+    )
+    ctx.decision._entry_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        tool_calls=[
+            ToolCall(
+                id="steer-read",
+                name="file.read",
+                arguments={"path": "src/auth.py"},
+            )
+        ],
+        finish_reason="tool_calls",
+    )
+
+    result = CodingMode().execute(ctx)
+
+    assert result.status == "done"
+    final_messages = llm_client.calls[1]["messages"]
+    assert [
+        message.content
+        for message in final_messages
+        if message.meta.get("turn_input_intent") == "steer_current"
+    ] == ["Inspect the parser too.", "Keep the patch minimal."]
+    tool_index = next(
+        index for index, message in enumerate(final_messages) if message.role == "tool"
+    )
+    steering_index = next(
+        index
+        for index, message in enumerate(final_messages)
+        if message.content == "Inspect the parser too."
+    )
+    assert tool_index < steering_index
+    assert {
+        entry.status.value for entry in queue.list_entries(session_id=state.session_id)
+    } == {"completed"}
+    session_api.emit_canonical_event.assert_called_once()
+    assert session_api.emit_canonical_event.call_args.args[1] == (
+        "turn_input.steer_applied"
+    )
 
 
 def test_coding_loop_consumes_entry_response_once_across_phases() -> None:

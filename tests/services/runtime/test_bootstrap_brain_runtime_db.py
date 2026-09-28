@@ -86,13 +86,14 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_and_artifact_ownership(
     _csc_install_default_agent(config, provider="echo")
     session_db_path = tmp_path / "state" / "brain" / "sessions.db"
     expected_runtime_db_path = tmp_path / "state" / "brain" / "brain.db"
+    turn_input_queue = object()
 
     service = SimpleNamespace(
         _config=config,
         mode=mode,
         db_path=str(session_db_path),
         _telemetryctl=None,
-        _runtime_handle=None,
+        _runtime_handle=SimpleNamespace(turn_input_queue=turn_input_queue),
         _logger=logging.getLogger("test.bootstrap.brain_runtime_db"),
         _retrieve_service=None,
         _action_policy_service=None,
@@ -296,6 +297,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_and_artifact_ownership(
     assert captured["goal_db_path"] != session_db_path
     assert tool_api_factory.call_args.kwargs["task_manager"] is shared_task_manager
     assert runner_factory.call_args.kwargs["task_manager"] is shared_task_manager
+    assert runner_factory.call_args.kwargs["turn_input_queue"] is turn_input_queue
     expected_artifactctl = shared_artifactctl if mode == "auto" else None
     assert artifact_factory.call_count == (1 if mode == "auto" else 0)
     assert context_factory.call_args.kwargs["artifactctl"] is expected_artifactctl

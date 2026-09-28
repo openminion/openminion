@@ -28,6 +28,17 @@ from tests.brain.runner_test_support import (
 
 
 class RunnerTests(unittest.TestCase):
+    def test_turn_input_queue_dependency_is_optional_and_explicit(self) -> None:
+        queue = object()
+
+        default_runner = BrainRunner(profile=_profile(), session_api=MagicMock())
+        bound_runner = BrainRunner(
+            profile=_profile(), session_api=MagicMock(), turn_input_queue=queue
+        )
+
+        self.assertIsNone(default_runner.turn_input_queue)
+        self.assertIs(bound_runner.turn_input_queue, queue)
+
     def test_plan_continuation_stamps_the_new_run_trace(self) -> None:
         runner = BrainRunner(profile=_profile(), session_api=MagicMock())
         state = WorkingState(

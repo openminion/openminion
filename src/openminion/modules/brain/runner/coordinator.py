@@ -100,6 +100,7 @@ class BrainRunner:
         task_manager: Any | None = None,
         cron_api: Any | None = None,
         goal_runtime: Any | None = None,
+        turn_input_queue: Any | None = None,
         trace_id: str | None = None,
         options: RunnerOptions | None = None,
         terminal_capture_writer: TerminalCaptureIntentWriter | None = None,
@@ -123,6 +124,7 @@ class BrainRunner:
         self.task_manager = task_manager
         self.cron_api = cron_api
         self.goal_runtime = goal_runtime
+        self.turn_input_queue = turn_input_queue
         self.terminal_capture_writer = terminal_capture_writer
         self._terminal_capture_enabled_for_turn = True
         self._lgmh_hydrated_sessions: set[str] = set()

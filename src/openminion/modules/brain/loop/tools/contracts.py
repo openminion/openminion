@@ -191,6 +191,8 @@ class AdaptiveToolLoopContext(Protocol):
     session_api: Any | None
     provider_retry_max_attempts: int
 
+    def apply_turn_steering(self, messages: list[Message]) -> list[Message]: ...
+
     def execute_command(
         self,
         *,

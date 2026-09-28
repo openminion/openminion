@@ -32,7 +32,7 @@ from openminion.modules.brain.loop.tools.iteration.helpers import (
     _execute_prepared_tool_dispatch_from_context,
     _finalize_tool_result_from_context,
 )
-from openminion.modules.llm.schemas import ToolCall
+from openminion.modules.llm.schemas import Message, ToolCall
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.brain.trailers import (
     EXPECTED_TRAILERS_METADATA_KEY,
@@ -40,7 +40,7 @@ from openminion.modules.brain.trailers import (
     TRAILER_LANE_SWSC,
 )
 
-from ..services import runner_from_context
+from ..services import apply_turn_steering, runner_from_context
 from ..providers.retry import build_provider_retry_policy
 
 
@@ -139,7 +139,8 @@ class _AdaptiveLoopContextAdapter:
         self.state = ctx.state
         self._ctx = ctx
         self._runner = runner_from_context(ctx) or SimpleNamespace(
-            options=SimpleNamespace(failure_strategy="halt")
+            options=SimpleNamespace(failure_strategy="halt"),
+            turn_input_queue=None,
         )
         self.session_api = getattr(self._runner, "session_api", None)
         self.provider_retry_max_attempts = build_provider_retry_policy(
@@ -155,6 +156,13 @@ class _AdaptiveLoopContextAdapter:
             )
         )
         self._intent_step_index = 0
+
+    def apply_turn_steering(self, messages: list[Message]) -> list[Message]:
+        return apply_turn_steering(
+            runner=self._runner,
+            state=self.state,
+            messages=messages,
+        )
 
     def execute_command(
         self,

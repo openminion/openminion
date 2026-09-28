@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from threading import Event
 from types import SimpleNamespace
@@ -49,9 +49,22 @@ class _Manager:
     def __init__(self) -> None:
         self.cancelled: list[str] = []
         self.handle = _Handle(trace_id="trace-1", session_id="s1", agent_id="a1")
+        self.active = True
 
     def get_turn_handle(self, trace_id: str):
         return self.handle if trace_id == self.handle.trace_id else None
+
+    def get_active_turn_handle(self, *, trace_id: str, session_id: str, agent_id: str):
+        if not self.active:
+            return None
+        handle = self.get_turn_handle(trace_id)
+        if (
+            handle is None
+            or handle.session_id != session_id
+            or handle.agent_id != agent_id
+        ):
+            return None
+        return handle
 
     def cancel_turn(self, trace_id: str) -> bool:
         self.cancelled.append(trace_id)
@@ -63,6 +76,7 @@ class _Handle:
     trace_id: str
     session_id: str
     agent_id: str
+    request_meta: dict = field(default_factory=dict)
 
     def result(self, timeout_s=None):  # noqa: ANN001
         del timeout_s
@@ -93,6 +107,17 @@ class _Runtime:
         )
         self.submitted: list[dict] = []
         self.closed = False
+        self.brain_bridge_active = False
+        self.resolved_override_model = None
+
+    def resolve_agent_service(self, agent_id: str, overrides=None):  # noqa: ANN001
+        del agent_id
+        self.resolved_override_model = getattr(overrides, "model", None)
+        return object()
+
+    def get_agent_runtime_info(self, agent_id: str, overrides=None):  # noqa: ANN001
+        del agent_id, overrides
+        return {"brain_bridge_active": self.brain_bridge_active}
 
     def submit_turn(self, *, payload: dict):
         self.submitted.append(dict(payload))
@@ -282,7 +307,12 @@ def test_steer_current_is_deferred_and_queued_for_next_turn() -> None:
         _ctx(runtime),
         method_name="POST",
         path="/v1/sessions/s1/turn-inputs",
-        body={"agent_id": "a1", "text": "steer", "intent": "steer_current"},
+        body={
+            "agent_id": "a1",
+            "text": "steer",
+            "intent": "steer_current",
+            "trace_id": "trace-1",
+        },
         query=None,
     )
 
@@ -294,6 +324,102 @@ def test_steer_current_is_deferred_and_queued_for_next_turn() -> None:
         "turn_input.steer_deferred",
         "turn_input.enqueued",
     ]
+
+
+def test_steer_current_requires_an_executing_trace() -> None:
+    runtime = _Runtime()
+
+    missing = handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/sessions/s1/turn-inputs",
+        body={"agent_id": "a1", "text": "steer", "intent": "steer_current"},
+        query=None,
+    )
+    assert missing is not None
+    assert missing.status == HTTPStatus.BAD_REQUEST
+
+    runtime.runtime_manager.active = False
+    queued = handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/sessions/s1/turn-inputs",
+        body={
+            "agent_id": "a1",
+            "text": "steer",
+            "intent": "steer_current",
+            "trace_id": "trace-1",
+        },
+        query=None,
+    )
+    assert queued is not None
+    assert queued.status == HTTPStatus.CONFLICT
+    assert queued.payload["error"]["code"] == "turn_not_active"
+
+
+def test_steer_current_stays_typed_for_active_brain_runtime() -> None:
+    runtime = _Runtime()
+    runtime.brain_bridge_active = True
+    runtime.runtime_manager.handle = _Handle(
+        trace_id="trace-1",
+        session_id="s1",
+        agent_id="a1",
+        request_meta={"override_model": "model-for-this-turn"},
+    )
+
+    result = handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/sessions/s1/turn-inputs",
+        body={
+            "agent_id": "a1",
+            "text": "use the new requirement",
+            "intent": "steer_current",
+            "trace_id": "trace-1",
+        },
+        query=None,
+    )
+
+    assert result is not None
+    assert result.status == HTTPStatus.ACCEPTED
+    assert result.payload["entry"]["intent"] == "steer_current"
+    assert result.payload["entry"]["status"] == "queued"
+    assert result.payload["entry"]["target_trace_id"] == "trace-1"
+    assert runtime.resolved_override_model == "model-for-this-turn"
+    assert [event.event_type for event in runtime.sessions.events] == [
+        "turn_input.enqueued"
+    ]
+
+
+def test_steer_current_rejects_turn_that_finishes_during_capability_check() -> None:
+    runtime = _Runtime()
+    runtime.brain_bridge_active = True
+    original = runtime.get_agent_runtime_info
+
+    def finish_turn_during_lookup(agent_id: str, overrides=None):  # noqa: ANN001
+        info = original(agent_id, overrides=overrides)
+        runtime.runtime_manager.active = False
+        return info
+
+    runtime.get_agent_runtime_info = finish_turn_during_lookup
+
+    result = handle_request(
+        _ctx(runtime),
+        method_name="POST",
+        path="/v1/sessions/s1/turn-inputs",
+        body={
+            "agent_id": "a1",
+            "text": "too late",
+            "intent": "steer_current",
+            "trace_id": "trace-1",
+        },
+        query=None,
+    )
+
+    assert result is not None
+    assert result.status == HTTPStatus.CONFLICT
+    assert result.payload["error"]["code"] == "turn_not_active"
+    assert runtime.turn_input_queue.list_entries(session_id="s1") == []
 
 
 def test_cancel_and_run_next_dispatches_head_and_reports_conflict() -> None:

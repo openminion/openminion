@@ -125,10 +125,12 @@ class TurnHandle:
         background: bool = False,
         agent_id: str = "",
         session_id: str = "",
+        request_meta: dict[str, Any] | None = None,
     ) -> None:
         self.trace_id = trace_id
         self.agent_id = agent_id
         self.session_id = session_id
+        self._request_meta = dict(request_meta or {})
         self._on_cancel = on_cancel
         self._background = background
         self._cancel_event = Event()
@@ -143,6 +145,10 @@ class TurnHandle:
     @property
     def cancel_event(self) -> Event:
         return self._cancel_event
+
+    @property
+    def request_meta(self) -> dict[str, Any]:
+        return dict(self._request_meta)
 
     def cancel(self) -> bool:
         self._cancel_event.set()
@@ -411,6 +417,35 @@ class AgentRuntimeManager:
         with self._lock:
             return self._traces.get(normalized)
 
+    def get_active_turn_handle(
+        self,
+        *,
+        trace_id: str,
+        session_id: str,
+        agent_id: str,
+    ) -> TurnHandle | None:
+        normalized_trace_id = str(trace_id or "").strip()
+        normalized_session_id = str(session_id or "").strip()
+        normalized_agent_id = str(agent_id or "").strip()
+        if (
+            not normalized_trace_id
+            or not normalized_session_id
+            or not normalized_agent_id
+        ):
+            return None
+        with self._lock:
+            handle = self._traces.get(normalized_trace_id)
+            instance = self._instances.get(normalized_agent_id)
+            if (
+                handle is None
+                or instance is None
+                or handle.session_id != normalized_session_id
+                or handle.agent_id != normalized_agent_id
+                or instance.active_trace_id != normalized_trace_id
+            ):
+                return None
+            return handle
+
     def current_phase_status(self, trace_id: str) -> dict[str, Any] | None:
         handle = self.get_turn_handle(trace_id)
         return handle.current_phase_status() if handle is not None else None
@@ -459,6 +494,7 @@ class AgentRuntimeManager:
             background=background,
             agent_id=request.agent_id,
             session_id=request.session_id,
+            request_meta=request.meta,
         )
         queued = _QueuedTurn(
             request=request, handle=handle, enqueued_at_mono=monotonic()
