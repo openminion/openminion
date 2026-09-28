@@ -100,6 +100,10 @@ one bounded authenticated SSH handshake and closes it; it does not persist a
 live connection. `command-run --stream` optionally writes redacted SSH output
 chunks to stderr while keeping the final job JSON on stdout. Focus and API
 callers continue to receive pending or final results rather than live chunks.
+Completed command tools include the exact linked evidence's typed facts and
+4,000-character stdout/stderr previews, but exclude its full failure text.
+Job inspection returns the same bounded projection after binding ownership to
+the current runtime session; model-supplied session text is not authority.
 Readiness separates local dependency availability, registered transport
 availability, and the explicit probe result. The compatibility
 `transport_ready` field means the dependency and transport are available; it

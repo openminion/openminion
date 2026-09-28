@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .contracts import OperationTarget
+from .contracts import EvidenceRecord, OperationTarget
 from .guidance import OPS_GUIDANCE_ID
 from .interfaces import ALL_OPS_TOOLS
 from .service import OpsService
@@ -107,9 +107,11 @@ def target_inspect(
 
 
 def job_inspect(service: OpsService, job_id: str) -> dict[str, Any]:
+    job = service.inspect_job(job_id)
+    evidence = service.inspect_evidence(job.evidence_id) if job.evidence_id else None
     return {
         "ok": True,
-        "data": job_view(service.inspect_job(job_id)),
+        "data": job_result_view(job, evidence),
     }
 
 
@@ -127,6 +129,39 @@ def job_view(job: Any) -> dict[str, Any]:
             "Inspect remote state, then use the existing mark-interrupted action "
             "only if this attempt is no longer running."
         )
+    return payload
+
+
+def evidence_view(evidence: EvidenceRecord) -> dict[str, Any]:
+    """Return bounded evidence facts suitable for a model-facing tool result."""
+    return {
+        "evidence_id": evidence.evidence_id,
+        "operation_id": evidence.operation_id,
+        "target_id": evidence.target_id,
+        "target_revision": evidence.target_revision,
+        "transport": evidence.transport,
+        "profile_id": evidence.profile_id,
+        "tool_id": evidence.tool_id,
+        "claim_status": evidence.claim_status,
+        "collected_at": evidence.collected_at,
+        "output_digest": evidence.output_digest,
+        "stdout_preview": evidence.stdout_preview,
+        "stderr_preview": evidence.stderr_preview,
+        "return_code": evidence.return_code,
+        "reason": evidence.reason,
+        "policy_outcome": evidence.policy_outcome,
+        "approval_id": evidence.approval_id,
+        "command_hash": evidence.command_hash,
+        "timed_out": evidence.timed_out,
+        "cancelled": evidence.cancelled,
+        "truncated": evidence.truncated,
+    }
+
+
+def job_result_view(job: Any, evidence: EvidenceRecord | None = None) -> dict[str, Any]:
+    payload = job_view(job)
+    if evidence is not None:
+        payload["evidence"] = evidence_view(evidence)
     return payload
 
 

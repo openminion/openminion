@@ -10,9 +10,16 @@ from openminion.modules.policy.runtime.service import PolicyCtl
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.runtime.credentials import resolve_credential_ref
 from openminion.tools.ops import cli
-from openminion.tools.ops.api import operator_state, target_inspect
+from openminion.tools.ops.api import (
+    evidence_view,
+    job_inspect,
+    job_result_view,
+    operator_state,
+    target_inspect,
+)
 from openminion.tools.ops.cli import app
 from openminion.tools.ops.contracts import (
+    EvidenceRecord,
     OperationRequest,
     OperationTarget,
     OpsConfig,
@@ -48,6 +55,79 @@ def test_operator_state_is_redacted_and_renderer_neutral() -> None:
     assert target["dependency_available"] is True
     assert target["transport_available"] is True
     assert target["transport_ready"] is True
+
+
+def test_model_evidence_view_excludes_full_failure_output() -> None:
+    evidence = EvidenceRecord(
+        evidence_id="evidence-1",
+        operation_id="operation-1",
+        target_id="local",
+        profile_id="command.run",
+        claim_status="failed",
+        collected_at="2026-09-28T00:00:00Z",
+        output_digest="digest",
+        stderr_preview="x" * 4000,
+        return_code=1,
+        failure="x" * 5000,
+    )
+
+    projected = evidence_view(evidence)
+
+    assert len(projected["stderr_preview"]) == 4000
+    assert "failure" not in projected
+
+
+@pytest.mark.parametrize(
+    ("timed_out", "cancelled", "truncated", "claim_status"),
+    [
+        (True, False, False, "partial"),
+        (False, True, False, "unknown"),
+        (False, False, True, "observed"),
+    ],
+)
+def test_model_evidence_view_preserves_typed_terminal_facts(
+    timed_out: bool,
+    cancelled: bool,
+    truncated: bool,
+    claim_status: str,
+) -> None:
+    evidence = EvidenceRecord(
+        evidence_id="evidence-terminal",
+        operation_id="operation-terminal",
+        target_id="local",
+        profile_id="command.run",
+        claim_status=claim_status,
+        collected_at="2026-09-28T00:00:00Z",
+        output_digest="digest",
+        stdout_preview="",
+        stderr_preview="failed",
+        return_code=1,
+        timed_out=timed_out,
+        cancelled=cancelled,
+        truncated=truncated,
+    )
+
+    projected = evidence_view(evidence)
+
+    assert projected["timed_out"] is timed_out
+    assert projected["cancelled"] is cancelled
+    assert projected["truncated"] is truncated
+    assert projected["claim_status"] == claim_status
+
+
+def test_job_result_view_preserves_no_evidence_shape() -> None:
+    service = local_ops_service()
+    job = service.jobs.submit(
+        OperationRequest(
+            operation_id="no-evidence",
+            target_id="local",
+            profile_id="host.snapshot",
+            session_id="session-1",
+        ),
+        target_revision=1,
+    )
+
+    assert "evidence" not in job_result_view(job)
 
 
 def test_cli_status_matches_shared_api_envelope(monkeypatch) -> None:
@@ -214,6 +294,44 @@ def test_operator_projection_survives_store_reopen(tmp_path) -> None:
     restored = next(job for job in state["jobs"] if job["job_id"] == running.job_id)
     assert restored["reconciliation_required"] is True
     assert "mark-interrupted" in restored["reconciliation_hint"]
+
+
+def test_job_inspect_projects_linked_evidence_after_store_reopen(tmp_path) -> None:
+    config = {"targets": [{"target_id": "staging", "kind": "local"}]}
+    policy_path = tmp_path / "policy.db"
+    service = configured_ops_service(
+        config,
+        data_root=tmp_path,
+        action_policy=PolicyCtl.with_sqlite(
+            policy_path, config=PolicyConfig(mode="enforce")
+        ),
+    )
+    plan = service.plan_command(
+        target_id="staging", argv=("printf", "ready"), session_id="session-1"
+    )
+    with pytest.raises(ToolRuntimeError) as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id=plan.session_id,
+        )
+    service.action_policy.resolve_confirmation(
+        str(pending.value.details["approval_id"]), "allow_once"
+    )
+    job = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        session_id=plan.session_id,
+    )
+    service.close()
+
+    reopened = configured_ops_service(config, data_root=tmp_path)
+    projected = job_inspect(reopened, job.job_id)["data"]
+    reopened.close()
+
+    assert projected["evidence"]["evidence_id"] == job.evidence_id
+    assert projected["evidence"]["stdout_preview"] == "ready"
+    assert "failure" not in projected["evidence"]
 
 
 def test_target_inspect_probe_is_explicit_and_ssh_only(monkeypatch) -> None:

@@ -429,17 +429,22 @@ def initialize_project(
 
 def resume_project_task(
     manager: TaskManager,
-    store: AutonomyRunStore,
     run: AutonomyRun,
-) -> None:
+) -> AutonomyRunError | None:
     if not run.task_id:
-        raise RuntimeError("autonomy run is missing its durable task id")
+        return AutonomyRunError(
+            code="PROJECT_TASK_MISSING",
+            message="Autonomy run is missing its durable task id.",
+        )
     task = manager.get_task(run.task_id)
     if task is None:
-        initialize_project(manager, store, run, launch_approved=True)
-        return
+        return AutonomyRunError(
+            code="PROJECT_TASK_MISSING",
+            message="Durable project task is missing from the configured task store.",
+        )
     if task.state == TaskLifecycleState.PAUSED:
         manager.transition_task(task_id=run.task_id, to_state=TaskLifecycleState.ACTIVE)
+    return None
 
 
 def resume_project_run(
@@ -472,7 +477,18 @@ def resume_project_run(
         phase=AutonomyRunPhase.EXECUTE,
         operator_summary="Autonomy run resumed.",
     )
-    resume_project_task(manager, store, running)
+    task_error = resume_project_task(manager, running)
+    if task_error is not None:
+        return store.transition(
+            run.run_id,
+            status=AutonomyRunStatus.BLOCKED,
+            phase=AutonomyRunPhase.CLOSED,
+            operator_summary=(
+                "Autonomy run blocked because durable project state is unavailable."
+            ),
+            next_action_hint="Restore the original task database or start a new run.",
+            error=task_error,
+        )
     return store.require(run.run_id)
 
 
