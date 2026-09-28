@@ -61,6 +61,9 @@ class _LoopContext:
     statuses: list[dict[str, Any]] = field(default_factory=list)
     _index: int = 0
 
+    def apply_turn_steering(self, messages: list[Any]) -> list[Any]:
+        return []
+
     def execute_command(self, *, command, include_reflect: bool = False):
         del include_reflect
         outcome = self.outcomes[self._index]
