@@ -865,9 +865,71 @@ def test_autonomy_resume_blocked_run_completes_with_replay(tmp_path: Path) -> No
     )
 
     run = json.loads(resume_output)["run"]
+    manager = TaskManager.for_lifecycle_db(db_path=tmp_path / "data/task/task.db")
+    checkpoint = load_latest_project_checkpoint(manager, task_id=run["task_id"])
+    manager.close()
     assert code == 0
     assert run["status"] == "completed"
     assert run["operator_summary"] == "resumed successfully"
+    assert checkpoint is not None
+    resume_packet = checkpoint.payload["repository_lifecycle"][
+        checkpoint.project_run.resume_packet_ref
+    ]
+    assert resume_packet["task_plan_required"] is True
+
+
+def test_autonomy_resume_blocks_when_durable_task_is_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "preserve the original project task",
+            "--max-iterations",
+            "0",
+            "--json",
+        ]
+    )
+    original = json.loads(output)["run"]
+    replacement_db = tmp_path / "replacement-task.db"
+
+    def reject_provider_call(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("provider must not run without the durable project task")
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.run_project_turn",
+        reject_provider_call,
+    )
+    code, resume_output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "resume",
+            original["run_id"],
+            "--max-iterations",
+            "1",
+            "--task-db",
+            str(replacement_db),
+            "--verification-waiver",
+            "local missing-task fixture",
+            "--json",
+        ]
+    )
+
+    resumed = json.loads(resume_output)["run"]
+    replacement = TaskManager.for_lifecycle_db(db_path=replacement_db)
+    try:
+        assert code == 0
+        assert resumed["status"] == "blocked"
+        assert resumed["checkpoint_id"] == original["checkpoint_id"]
+        assert resumed["last_error"]["code"] == "PROJECT_TASK_MISSING"
+        assert replacement.get_task(original["task_id"]) is None
+    finally:
+        replacement.close()
 
 
 def test_autonomy_resume_preserves_cycle_summaries(tmp_path: Path) -> None:

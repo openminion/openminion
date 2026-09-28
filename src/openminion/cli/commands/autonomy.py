@@ -153,8 +153,12 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         expected_checks=tuple(getattr(args, "expected_check", ()) or ()),
     )
     run = request.run
+    manager = project_task_manager(args)
+    paused_state = TaskLifecycleState.PAUSED
     if run.continuation_policy.max_iterations < 1:
-        store.create(run)
+        running = launch_project(request, store=store, manager=manager)
+        assert running.task_id is not None
+        manager.transition_task(task_id=running.task_id, to_state=paused_state)
         error = AutonomyRunError(
             code="BUDGET_EXHAUSTED",
             message="max_iterations must be at least 1 to execute a run",
@@ -174,14 +178,15 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
             validation_summary="Blocked before execution by continuation policy.",
             final_operator_summary="Autonomy run blocked before execution.",
         )
-
     verifier_error = verifier_preflight_error(
         run,
         workspace=repository,
         waiver=waiver,
     )
     if verifier_error is not None:
-        store.create(run)
+        running = launch_project(request, store=store, manager=manager)
+        assert running.task_id is not None
+        manager.transition_task(task_id=running.task_id, to_state=paused_state)
         blocked = store.transition(
             run.run_id,
             status=AutonomyRunStatus.BLOCKED,
@@ -198,7 +203,6 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
             final_operator_summary="Autonomy run blocked by verifier preflight.",
         )
 
-    manager = project_task_manager(args)
     running = launch_project(request, store=store, manager=manager)
     if bool(getattr(args, "unattended", False)):
         scheduled = schedule_unattended_project(args, store, manager, running)
@@ -223,15 +227,19 @@ def _resume(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         waiver=waiver,
     )
     if running.status == AutonomyRunStatus.BLOCKED:
+        summary = (
+            running.last_error.message
+            if running.last_error is not None
+            else "Autonomy run blocked before provider execution."
+        )
         return _write_terminal_output(
             args,
             store,
             running,
-            validation_summary="Blocked before provider execution by verifier preflight.",
-            final_operator_summary="Autonomy run blocked by verifier preflight.",
+            validation_summary=summary,
+            final_operator_summary=running.operator_summary or summary,
             cycle_summaries=project_checkpoints.project_cycle_summaries(
-                manager,
-                task_id=run.task_id or "",
+                manager, task_id=run.task_id or ""
             ),
         )
     if bool(getattr(args, "unattended", False)):
