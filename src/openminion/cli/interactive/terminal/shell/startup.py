@@ -95,11 +95,11 @@ def push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
             expand=False,
         )
     )
-    italic_muted = token_rich_style(StyleToken.MUTED, italic=True)
+    guidance = token_rich_style(StyleToken.SYSTEM)
     console.print(
         Text(
             "Tip: / for commands · @ to mention a file · keep typing while a turn runs",
-            style=italic_muted,
+            style=guidance,
         )
     )
     if project_context is not None and not bool(
@@ -109,7 +109,7 @@ def push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
             Text(
                 f"loaded project context from {project_context.display_name}; "
                 "OpenMinion-native filename: OPENMINION.md",
-                style=italic_muted,
+                style=guidance,
             )
         )
     console.print()

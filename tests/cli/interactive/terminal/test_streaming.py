@@ -61,6 +61,22 @@ def test_complete_shows_muted_whole_second_response_time() -> None:
     assert "3.4s" not in output
 
 
+def test_response_time_uses_readable_theme_color_without_italic() -> None:
+    from openminion.cli.presentation.styles import set_color_mode
+    from openminion.cli.theme import DARK
+
+    set_color_mode("always")
+    try:
+        console, _ = _make_console()
+        row = TerminalTurnHandle(console)._response_time_row(3.4)
+        assert row is not None
+        assert DARK.text_secondary in str(row.style)
+        assert "dim" not in str(row.style)
+        assert "italic" not in str(row.style)
+    finally:
+        set_color_mode(None)
+
+
 def test_complete_can_hide_response_time() -> None:
     console, buffer = _make_console()
     handle = TerminalTurnHandle(console, show_response_time=False).start()

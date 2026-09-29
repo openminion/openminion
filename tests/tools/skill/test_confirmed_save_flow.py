@@ -205,8 +205,10 @@ def test_model_tool_description_states_save_and_pending_contract() -> None:
     assert "at most one" in definition.description
     assert "substantial reusable work" in definition.description
     assert "requires user approval" in definition.description
+    assert "both required arguments: name and markdown" in definition.description
     assert "pending until separate operator admission" in definition.description
     assert "not immediately selectable" in definition.description
+    assert "report operator_admission_command exactly" in definition.description
 
 
 @pytest.mark.parametrize("scope", ["global", "project", "user"])
@@ -254,6 +256,12 @@ def test_model_skill_ingest_returns_pending_canonical_lifecycle(tmp_path: Path) 
     assert result["ok"] is True
     assert result["admission_state"] == "pending"
     assert result["active_version_hash"] is None
+    assert result["operator_admission_command"] == (
+        "openminion skill admit --skill-id confirmed-save "
+        f"--version-hash {result['version_hash']} "
+        "--expected-active-version-hash none --target-status verified "
+        '--reason "Reviewed and approved staged skill"'
+    )
     assert package.scope == "agent"
     assert package.agent_id == "agent-a"
     assert any(name == "skill.ingested" for name, _payload in events)
@@ -286,6 +294,7 @@ def test_duplicate_returns_current_canonical_lifecycle(tmp_path: Path) -> None:
     assert admitted_duplicate["version_hash"] == first["version_hash"]
     assert admitted_duplicate["admission_state"] == "admitted"
     assert admitted_duplicate["active_version_hash"] == first["version_hash"]
+    assert admitted_duplicate["operator_admission_command"] is None
 
 
 def test_duplicate_admitted_noncurrent_reports_active_version(tmp_path: Path) -> None:
@@ -302,6 +311,13 @@ def test_duplicate_admitted_noncurrent_reports_active_version(tmp_path: Path) ->
             expected_active_version_hash=None,
         )
         second = _h_skill_ingest({"name": "Confirmed Save", "markdown": changed}, ctx)
+        assert second["operator_admission_command"] == (
+            "openminion skill admit --skill-id confirmed-save "
+            f"--version-hash {second['version_hash']} "
+            f"--expected-active-version-hash {first['version_hash']} "
+            "--target-status verified "
+            '--reason "Reviewed and approved staged skill"'
+        )
         _activate(
             skill,
             skill_id=second["skill_id"],
@@ -317,6 +333,7 @@ def test_duplicate_admitted_noncurrent_reports_active_version(tmp_path: Path) ->
     assert old_duplicate["version_hash"] == first["version_hash"]
     assert old_duplicate["admission_state"] == "admitted"
     assert old_duplicate["active_version_hash"] == second["version_hash"]
+    assert old_duplicate["operator_admission_command"] is None
 
 
 def test_pending_source_is_exact_and_not_selectable_across_restart(

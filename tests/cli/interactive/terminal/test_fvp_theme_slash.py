@@ -201,6 +201,11 @@ def test_composer_and_shared_messages_follow_live_theme_switch() -> None:
         light_rules = dict(composer._session.style._style_rules)
 
         assert DARK.surface_panel_bg in dark_rules["bottom-toolbar"]
+        assert DARK.text_secondary in dark_rules["bottom-toolbar"]
+        assert DARK.surface_app_bg in dark_rules["placeholder"]
+        assert DARK.text_secondary in dark_rules["placeholder"]
+        assert "noreverse" in dark_rules["placeholder"]
+        assert "italic" not in dark_rules["placeholder"]
         assert LIGHT.surface_panel_bg in light_rules["bottom-toolbar"]
         assert LIGHT.text_accent in str(render_user_text("hello").style)
         assert LIGHT.text_muted in str(render_system_text("notice").style)

@@ -262,7 +262,10 @@ class TerminalTurnHandle:
                 parts.append(usage)
         if not parts:
             return None
-        return Text(" · ".join(parts), style="dim italic")
+        return Text(
+            " · ".join(parts),
+            style=token_rich_style(StyleToken.SYSTEM),
+        )
 
     def _render_final_body(self, *, elapsed_seconds: float | None = None) -> Any | None:
         buffer = self._buffer or ""
@@ -364,7 +367,10 @@ class TerminalTurnHandle:
             status_label=self._status_label,
             spinner_frame=self._spinner.current_frame(now),
         )
-        queue_hint_row = Text("Type to queue for the next turn", style="dim italic")
+        queue_hint_row = Text(
+            "Type to queue for the next turn",
+            style=token_rich_style(StyleToken.SYSTEM),
+        )
         rows = []
         if running_block is not None:
             rows.append(running_block)

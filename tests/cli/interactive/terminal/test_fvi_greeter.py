@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from rich.console import Console
 
@@ -154,6 +155,21 @@ def test_greeter_contains_inline_shortcut_hint() -> None:
     assert "/ for commands" in out
     assert "@ to mention a file" in out
     assert "keep typing while a turn runs" in out
+
+
+def test_greeter_hint_uses_readable_color_without_italic() -> None:
+    from openminion.cli.presentation.styles import set_color_mode
+    from openminion.cli.theme import DARK
+
+    set_color_mode("always")
+    try:
+        console = MagicMock()
+        _push_greeter(console, runtime=_StubRuntime(), working_dir="/tmp")
+        hint = console.print.call_args_list[2].args[0]
+        assert DARK.text_secondary in str(hint.style)
+        assert "italic" not in str(hint.style)
+    finally:
+        set_color_mode(None)
 
 
 def test_greeter_hint_does_not_contain_keybinding_reminders() -> None:

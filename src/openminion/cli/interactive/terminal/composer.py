@@ -69,13 +69,14 @@ def _focus_prompt_style() -> Style:
     from openminion.cli.theme import DARK, lookup_theme
 
     theme = lookup_theme(get_active_theme_name()) or DARK
-    toolbar = f"noreverse bg:{theme.surface_panel_bg} {theme.text_muted}"
+    toolbar = f"noreverse bg:{theme.surface_panel_bg} {theme.text_secondary}"
+    placeholder = f"noreverse bg:{theme.surface_app_bg} {theme.text_secondary}"
     return Style.from_dict(
         {
             "bottom-toolbar": toolbar,
             "bottom-toolbar.text": toolbar,
             "busy-indicator": active_theme_color(StyleToken.SPINNER),
-            "placeholder": f"italic {theme.text_muted}",
+            "placeholder": placeholder,
         }
     )
 
