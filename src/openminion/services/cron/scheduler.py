@@ -4,6 +4,7 @@ from time import monotonic
 from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 from uuid import uuid4
 
+from openminion.modules.task.scheduling.constants import ALLOWED_PAYLOAD_KINDS
 from openminion.modules.task.scheduling.interfaces import (
     CRON_INTERFACE_VERSION,
     CronStoreProtocol,
@@ -295,7 +296,7 @@ class CronScheduler:
             kind = str(payload.get("kind", "")).strip()
             if kind == "systemEvent":
                 result = self._normalize_result(self._execute_system_event(job, run))
-            elif kind == "agentTurn":
+            elif kind in ALLOWED_PAYLOAD_KINDS:
                 result = self._normalize_result(self._execute_agent_turn(job, run))
                 if not (result.isolated_session_id or "").strip():
                     result = CronExecutionResult(

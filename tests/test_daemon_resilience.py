@@ -138,6 +138,59 @@ def test_probe_daemon_endpoint_reports_mismatch_for_wrong_config(
     assert daemon_is_reachable(endpoint) is False
 
 
+def test_daemon_start_forwards_explicit_storage_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = DaemonEndpoint(
+        config_path=str(tmp_path / "config.json"),
+        host="127.0.0.1",
+        port=9999,
+        home_root=str(tmp_path / "home"),
+        data_root=str(tmp_path / "data"),
+    )
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        pid = 4321
+
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    def fake_popen(command, **kwargs):  # noqa: ANN001
+        captured["command"] = command
+        captured.update(kwargs)
+        return FakeProcess()
+
+    monkeypatch.setattr(daemon_cmd, "load_config", lambda _path: SimpleNamespace())
+    monkeypatch.setattr(
+        daemon_mod,
+        "resolve_daemon_pid_file",
+        lambda _config: tmp_path / "daemon.pid",
+    )
+    monkeypatch.setattr(
+        daemon_mod,
+        "resolve_daemon_log_file",
+        lambda _config: tmp_path / "daemon.log",
+    )
+    monkeypatch.setattr(daemon_mod, "read_pid", lambda _path: None)
+    monkeypatch.setattr(daemon_cmd.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        daemon_cmd,
+        "probe_daemon_endpoint",
+        lambda _endpoint, timeout_s=1.5: ("ok", {}),
+    )
+
+    result = daemon_cmd._start_daemon(endpoint)
+
+    assert result["ok"] is True
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["OPENMINION_HOME"] == str(tmp_path / "home")
+    assert env["OPENMINION_DATA_ROOT"] == str(tmp_path / "data")
+
+
 def test_daemon_stream_request_parses_status_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
