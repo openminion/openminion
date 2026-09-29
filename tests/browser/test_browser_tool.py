@@ -375,6 +375,66 @@ def test_browser_tool_capability_gating() -> None:
     assert result.data.get("error", {}).get("code") == "capability_not_supported"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"op": "tab.upload", "tab_id": "t1", "files": ["input/report.pdf"]},
+        {
+            "op": "tab.upload",
+            "tab_id": "t1",
+            "files": ["input/report.pdf"],
+            "target": {},
+        },
+        {
+            "op": "tab.upload",
+            "tab_id": "t1",
+            "target": {"selector": "#upload"},
+        },
+        {
+            "op": "tab.upload",
+            "tab_id": "t1",
+            "files": ["input/report.pdf", "   "],
+            "target": {"selector": "#upload"},
+        },
+    ],
+)
+def test_browser_upload_validates_inputs_before_confirmation(payload) -> None:
+    reg = BrowserProviderRegistry()
+    reg.register(_Provider())
+    tool = BrowserTool(
+        router=BrowserRouter(reg, config=BrowserRoutingConfig(default_provider="mock"))
+    )
+
+    result = tool.execute(
+        payload,
+        ToolExecutionContext(channel="console", target="test", confirm=True),
+    )
+
+    assert result.ok is False
+    assert result.data["error_code"] == "INVALID_ARGUMENT"
+
+
+def test_browser_upload_checks_capability_before_confirmation() -> None:
+    reg = BrowserProviderRegistry()
+    reg.register(_Provider(capabilities=BrowserCapabilities(file_upload=False)))
+    tool = BrowserTool(
+        router=BrowserRouter(reg, config=BrowserRoutingConfig(default_provider="mock"))
+    )
+
+    result = tool.execute(
+        {
+            "op": "tab.upload",
+            "tab_id": "t1",
+            "files": ["input/report.pdf"],
+            "target": {"selector": "#upload"},
+        },
+        ToolContext(),
+    )
+
+    assert result.ok is False
+    assert result.data["error_code"] == "capability_not_supported"
+
+
 def test_browser_upload_requires_confirmation() -> None:
     provider = _Provider()
     reg = BrowserProviderRegistry()
@@ -407,6 +467,23 @@ def test_browser_upload_requires_confirmation() -> None:
 
     assert confirmed.ok is True
     assert provider.tab_upload_calls[0][0:2] == ("t1", ["input/report.pdf"])
+
+
+def test_browser_screenshot_without_output_path_retains_inline_image() -> None:
+    reg = BrowserProviderRegistry()
+    reg.register(_Provider())
+    tool = BrowserTool(
+        router=BrowserRouter(reg, config=BrowserRoutingConfig(default_provider="mock"))
+    )
+
+    result = tool.execute(
+        {"op": "tab.screenshot", "tab_id": "t1"},
+        ToolContext(),
+    )
+
+    assert result.ok is True
+    assert result.data["artifact"]["mime"] == "image/png"
+    assert result.data["artifact"]["content_base64"] == "YWJj"
 
 
 def test_browser_tool_affinity_routing() -> None:

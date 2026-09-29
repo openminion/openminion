@@ -1,6 +1,5 @@
 import asyncio
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from openminion.cli.status.tool_calls import format_tool_args_preview
@@ -14,9 +13,13 @@ def format_terminal_approval_prompt(tool_name: str, args: dict[str, Any]) -> str
         sidecar = str(args.get("sidecar", "") or "local service").strip()
         return f"Approval required: start local {sidecar} service and continue"
     if name == "browser" and args.get("op") == "tab.upload":
-        files = [Path(str(item)).name for item in args.get("files", []) if str(item)]
+        files = [
+            str(item).strip() for item in args.get("files", []) if str(item).strip()
+        ]
         label = ", ".join(files) or "selected files"
-        return f"Approval required: upload {label} to the current browser tab"
+        tab_id = str(args.get("tab_id", "") or "").strip()
+        destination = f"browser tab {tab_id}" if tab_id else "the current browser tab"
+        return f"Approval required: upload {label} to {destination}"
     full_command = (
         name.lower().startswith(("exec.", "git.")) or name == "ops.command.run"
     )

@@ -934,10 +934,16 @@ def test_terminal_approval_prompt_explains_managed_sidecar_start() -> None:
 def test_terminal_approval_prompt_explains_browser_upload() -> None:
     prompt = format_terminal_approval_prompt(
         "browser",
-        {"op": "tab.upload", "files": ["reports/final.pdf"]},
+        {
+            "op": "tab.upload",
+            "tab_id": "tab-7",
+            "files": ["reports/final.pdf"],
+        },
     )
 
-    assert prompt == "Approval required: upload final.pdf to the current browser tab"
+    assert prompt == (
+        "Approval required: upload reports/final.pdf to browser tab tab-7"
+    )
 
 
 @pytest.mark.asyncio

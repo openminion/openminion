@@ -95,18 +95,32 @@ def action_result_to_tool_message(
     artifact = action_result.outputs.get("artifact")
     if tool_name == "browser" and isinstance(artifact, dict):
         path = str(artifact.get("path", "") or "").strip()
+        data_base64 = str(artifact.get("content_base64", "") or "").strip()
         mime = str(artifact.get("mime", "") or "").strip().lower()
         mime = mime or str(mimetypes.guess_type(path)[0] or "").lower()
-        if artifact.get("kind") == "screenshot" and path and mime.startswith("image/"):
-            content_parts = [
-                TextContentPart(text=body),
+        if not mime and artifact.get("kind") == "screenshot":
+            mime = "image/png"
+        if (
+            artifact.get("kind") == "screenshot"
+            and mime.startswith("image/")
+            and (path or data_base64)
+        ):
+            image = (
                 ImageContentPart(
                     source="path",
                     path=path,
                     mime_type=mime,
                     refs=[path],
-                ),
-            ]
+                )
+                if path
+                else ImageContentPart(
+                    source="base64",
+                    data_base64=data_base64,
+                    mime_type=mime,
+                )
+            )
+            content_parts = [TextContentPart(text=body), image]
+            meta["auto_vision_artifact"] = True
     return Message(
         role="tool",
         content=body,

@@ -271,17 +271,36 @@ def _image_part_bytes(part: ImageContentPart) -> tuple[str, str]:
     )
 
 
+def _content_parts_for_provider(
+    message: Message, *, enable_vision_input: bool
+) -> list[TextContentPart | ImageContentPart]:
+    if message.meta.get("auto_vision_artifact") and not enable_vision_input:
+        return []
+    return list(message.content_parts)
+
+
 def _openai_like_content(
     message: Message,
     *,
     enable_vision_input: bool,
     supports_vision_input: bool,
 ) -> str | list[dict[str, Any]]:
-    if not message.content_parts:
+    if message.role == "tool" and (
+        not message.content_parts or message.meta.get("auto_vision_artifact")
+    ):
+        return str(message.content or "").strip()
+    content_parts = _content_parts_for_provider(
+        message, enable_vision_input=enable_vision_input
+    )
+    if message.role == "tool":
+        content_parts = [
+            item for item in content_parts if isinstance(item, TextContentPart)
+        ]
+    if not content_parts:
         return str(message.content or "").strip()
 
     parts: list[dict[str, Any]] = []
-    for item in message.content_parts:
+    for item in content_parts:
         if isinstance(item, TextContentPart):
             text = str(item.text or "").strip()
             if text:
@@ -357,7 +376,7 @@ def _append_openai_like_message(
     supports_vision_input: bool,
     tool_name_overrides: Mapping[str, str] | None,
     preserve_tool_call_raw_arguments: bool,
-) -> None:
+) -> list[ImageContentPart]:
     content = _openai_like_content(
         msg,
         enable_vision_input=enable_vision_input,
@@ -393,12 +412,12 @@ def _append_openai_like_message(
                 ],
             }
         )
-        return
+        return []
     if isinstance(content, str) and not content:
-        return
+        return []
     if role != "tool":
         messages.append({"role": role, "content": content})
-        return
+        return []
     _append_openai_like_tool_message(
         messages,
         content=content,
@@ -406,6 +425,13 @@ def _append_openai_like_message(
         meta=dict(getattr(msg, "meta", {}) or {}),
         tool_name_overrides=tool_name_overrides,
     )
+    return [
+        item
+        for item in _content_parts_for_provider(
+            msg, enable_vision_input=enable_vision_input
+        )
+        if isinstance(item, ImageContentPart)
+    ]
 
 
 def _append_openai_like_tool_message(
@@ -525,15 +551,33 @@ def _messages_openai_like(
         schema_only=schema_only,
         tool_name_overrides=tool_name_overrides,
     )
+    pending_tool_images: list[TextContentPart | ImageContentPart] = []
     for msg in request.messages:
-        _append_openai_like_message(
-            messages,
-            msg=msg,
+        if msg.role != "tool" and pending_tool_images:
+            image_content = _openai_like_content(
+                Message(role="user", content_parts=pending_tool_images),
+                enable_vision_input=enable_vision_input,
+                supports_vision_input=supports_vision_input,
+            )
+            messages.append({"role": "user", "content": image_content})
+            pending_tool_images = []
+        pending_tool_images.extend(
+            _append_openai_like_message(
+                messages,
+                msg=msg,
+                enable_vision_input=enable_vision_input,
+                supports_vision_input=supports_vision_input,
+                tool_name_overrides=tool_name_overrides,
+                preserve_tool_call_raw_arguments=preserve_tool_call_raw_arguments,
+            )
+        )
+    if pending_tool_images:
+        image_content = _openai_like_content(
+            Message(role="user", content_parts=pending_tool_images),
             enable_vision_input=enable_vision_input,
             supports_vision_input=supports_vision_input,
-            tool_name_overrides=tool_name_overrides,
-            preserve_tool_call_raw_arguments=preserve_tool_call_raw_arguments,
         )
+        messages.append({"role": "user", "content": image_content})
 
     if fallback_instruction:
         _insert_openai_like_fallback_instruction(

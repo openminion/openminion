@@ -27,7 +27,7 @@ def resource_selectors(provider: Any, args: Mapping[str, Any]) -> ResourceSelect
 
     reads: list[str] = []
     op = str(args.get("op", "")).strip()
-    if op in {"upload", "tab.upload"}:
+    if op == "tab.upload":
         files = args.get("files")
         if isinstance(files, str) and files.strip():
             reads.append(files.strip())

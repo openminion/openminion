@@ -110,9 +110,9 @@ class _FakePage:
         self.events.append(("inner_text", selector, timeout))
         return "hello world"
 
-    def screenshot(self, full_page: bool = True) -> bytes:
-        self.events.append(("screenshot", full_page))
-        return b"png"
+    def screenshot(self, full_page: bool = True, **kwargs) -> bytes:
+        self.events.append(("screenshot", full_page, kwargs))
+        return b"jpeg" if kwargs.get("type") == "jpeg" else b"png"
 
     def pdf(self) -> bytes:
         self.events.append(("pdf",))
@@ -537,6 +537,16 @@ def test_provider_supports_canonical_browser_protocol_signatures(
         ctx, tab_id=tab_id, options=OutputOptions(path="shots/example.png")
     )
     assert shot["artifact"]["kind"] == "screenshot"
+    assert shot["artifact"]["mime"] == "image/png"
+
+    jpeg = provider.tab_screenshot(
+        ctx,
+        tab_id=tab_id,
+        options=OutputOptions(path="shots/example.jpg", quality=85),
+    )
+    assert jpeg["artifact"]["path"] == "shots/example.jpg"
+    assert jpeg["artifact"]["mime"] == "image/jpeg"
+    assert (tmp_path / "shots/example.jpg").read_bytes() == b"jpeg"
 
     action = provider.tab_action(
         ctx,

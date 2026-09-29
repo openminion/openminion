@@ -141,9 +141,14 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
     page_url = page.resolve().as_uri()
 
     def _scenario() -> dict[str, object]:
+        context = _ToolContext(extras={"workspace_root": str(tmp_path)})
+        confirmed_context = _ToolContext(
+            runtime=type("_Confirmed", (), {"confirm": True})(),
+            extras=context.extras,
+        )
         started = tool.execute(
-            {"op": "instance.start", "instance_spec": {"mode": "headless"}},
-            _ToolContext(),
+            {"op": "instance.start", "instance": {"mode": "headless"}},
+            context,
         )
         assert started.ok is True, started.error
         assert started.data.get("provider") == "playwright"
@@ -151,7 +156,7 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
         # 2. tab.new navigates to the local page.
         new_tab = tool.execute(
             {"op": "tab.new", "url": page_url},
-            _ToolContext(),
+            context,
         )
         assert new_tab.ok is True, new_tab.error
         assert new_tab.data["provider"] == "playwright"
@@ -163,9 +168,9 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
             {
                 "op": "tab.text",
                 "tab_id": tab_id,
-                "options": {"mode": "visible_text", "max_chars": 200},
+                "text": {"mode": "visible_text", "max_chars": 200},
             },
-            _ToolContext(),
+            context,
         )
         assert text_result.ok is True, text_result.error
         content = text_result.data["text"]["content"]
@@ -182,7 +187,7 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
                     "target": {"role": {"role": "button", "name": "Continue"}},
                 },
             },
-            _ToolContext(),
+            context,
         )
         assert action.ok is True, action.error
 
@@ -190,9 +195,9 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
             {
                 "op": "tab.text",
                 "tab_id": tab_id,
-                "options": {"mode": "visible_text", "max_chars": 200},
+                "text": {"mode": "visible_text", "max_chars": 200},
             },
-            _ToolContext(),
+            context,
         )
         assert changed.ok is True, changed.error
         assert "browser action complete" in changed.data["text"]["content"]
@@ -204,7 +209,7 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
                 "files": [upload_file.name],
                 "target": {"selector": "#file"},
             },
-            _ToolContext(runtime=type("_Confirmed", (), {"confirm": True})()),
+            confirmed_context,
         )
         assert uploaded.ok is True, uploaded.error
         assert uploaded.data["data"]["uploaded"] == [upload_file.name]
@@ -214,16 +219,16 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
             {
                 "op": "tab.screenshot",
                 "tab_id": tab_id,
-                "options": {"path": "artifacts/bpge-07-shot.png"},
+                "output": {"path": "artifacts/bpge-07-shot.png"},
             },
-            _ToolContext(),
+            context,
         )
         assert shot.ok is True, shot.error
         artifact = shot.data["artifact"]
         assert artifact["kind"] == "screenshot"
         stopped = tool.execute(
             {"op": "instance.stop"},
-            _ToolContext(),
+            context,
         )
         assert stopped.ok is True, stopped.error
         return {"artifact_path": artifact["path"]}
@@ -245,7 +250,5 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
     ), (
         f"artifact path {artifact_path!s} escapes the configured workspace/artifacts tree"
     )
-    # Provider returns the path string for the screenshot artifact; the
-    # file should exist on disk so callers can read it.
-    if artifact_path.is_absolute() and artifact_path.exists():
-        assert artifact_path.stat().st_size > 0
+    assert artifact_path.is_file()
+    assert artifact_path.stat().st_size > 0

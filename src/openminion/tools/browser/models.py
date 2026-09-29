@@ -178,6 +178,20 @@ class BrowserCallArgs(BaseModel):
     def _validate_op(self) -> "BrowserCallArgs":
         if self.op not in SUPPORTED_OPS:
             raise ValueError(f"unsupported browser op '{self.op}'")
+        if self.op == BrowserOp.TAB_UPLOAD.value:
+            if not self.files:
+                raise ValueError("files are required for tab.upload")
+            if any(not str(path).strip() for path in self.files):
+                raise ValueError("upload file paths must not be empty")
+            if self.target is None:
+                raise ValueError("target is required for tab.upload")
+            target_values = (
+                self.target.ref,
+                self.target.selector,
+                self.target.role.role if self.target.role else None,
+            )
+            if not any(str(value or "").strip() for value in target_values):
+                raise ValueError("target must identify an upload control")
         return self
 
 

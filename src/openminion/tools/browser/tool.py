@@ -165,7 +165,10 @@ BROWSER_TOOL_INPUT_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": {"type": "object"},
         },
-        "files": {"type": "array", "items": {"type": "string"}},
+        "files": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+        },
         "target": {
             "type": "object",
             "properties": {
@@ -198,6 +201,27 @@ BROWSER_TOOL_INPUT_SCHEMA: dict[str, Any] = {
         "options": {"type": "object"},
     },
     "required": ["op"],
+    "allOf": [
+        {
+            "if": {
+                "properties": {"op": {"const": BrowserOp.TAB_UPLOAD.value}},
+                "required": ["op"],
+            },
+            "then": {
+                "required": ["files", "target"],
+                "properties": {
+                    "files": {"minItems": 1},
+                    "target": {
+                        "anyOf": [
+                            {"required": ["ref"]},
+                            {"required": ["selector"]},
+                            {"required": ["role"]},
+                        ]
+                    },
+                },
+            },
+        }
+    ],
     "additionalProperties": False,
 }
 
@@ -358,7 +382,6 @@ class BrowserTool(Tool):
         provider_id = ""
         try:
             call = BrowserCallArgs.model_validate(args)
-            self._ensure_upload_confirmed(call=call, ctx=ctx)
             provider, provider_ctx, call = self._select_provider_for_call(
                 call=call, ctx=ctx
             )
@@ -371,6 +394,7 @@ class BrowserTool(Tool):
                 ctx=ctx,
             )
             self._enforce_capabilities(provider=provider, call=call)
+            self._ensure_upload_confirmed(call=call, ctx=ctx)
             payload = self._dispatch(
                 provider=provider, provider_ctx=provider_ctx, call=call
             )
@@ -593,6 +617,7 @@ class BrowserTool(Tool):
                 mime=str(artifact.get("mime"))
                 if artifact.get("mime") is not None
                 else None,
+                content_base64=artifact.get("content_base64"),
             )
 
         if isinstance(payload.get("content"), (bytes, bytearray)):

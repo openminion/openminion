@@ -495,8 +495,6 @@ class BrowserDispatch:
             call=call,
             error_message="tab_id is required for tab.upload",
         )
-        if not call.files:
-            raise self._error("INVALID_ARGUMENT", "files are required for tab.upload")
         return to_payload(
             provider.tab_upload(
                 provider_ctx,

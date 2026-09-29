@@ -15,10 +15,11 @@ Owner: `openminion-tools`
 
 1. Direct CLI and Focus browser commands register the built-in PinchTab and
    Playwright providers before routing a request.
-2. `tab.upload` accepts `files` plus an optional `target` and requires operator
+2. `tab.upload` accepts `files` plus a required `target` and requires operator
    confirmation before the provider receives the call.
 3. Successful `tab.screenshot` results include the captured image in the next
-   model message as well as the normal artifact metadata.
+   model message when vision input is enabled, while always retaining the normal
+   artifact metadata.
 
 ## Provider selection priority order
 
