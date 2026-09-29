@@ -67,6 +67,8 @@ class DaytonaRunner:
             command[0] = "python3"
         remote_root = str(workspace.metadata.get("root_dir") or "")
         remote_cwd = remote_root if remote_root else real_cwd
+        execution_error: DaytonaClientError | None = None
+        resource_limit_result: ExecResult | None = None
         try:
             result = self._client.execute_command(
                 workspace_id=workspace.workspace_id,
@@ -85,18 +87,30 @@ class DaytonaRunner:
             )
         except DaytonaClientError as exc:
             if exc.code == SANDBOX_RESOURCE_LIMIT:
-                return ExecResult(
+                resource_limit_result = ExecResult(
                     returncode=-1,
                     stdout="",
                     stderr=exc.message,
                     timed_out=True,
                 )
+                return resource_limit_result
+            execution_error = exc
             raise
         finally:
             try:
                 self._client.destroy_workspace(workspace.workspace_id)
-            except DaytonaClientError:
-                pass
+            except DaytonaClientError as cleanup_error:
+                if execution_error is None:
+                    if resource_limit_result is not None:
+                        resource_limit_result.stderr += (
+                            f"; workspace cleanup failed: {cleanup_error}"
+                        )
+                    else:
+                        raise
+                else:
+                    execution_error.message += (
+                        f"; workspace cleanup failed: {cleanup_error}"
+                    )
 
     def fs_write(self, spec: FsWriteSpec, sandbox: ExecutionSandboxSpec) -> FsResult:
         raise DaytonaClientError(

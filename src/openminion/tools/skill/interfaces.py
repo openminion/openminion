@@ -14,6 +14,8 @@ class SkillIngestResult(TypedDict, total=False):
     safe: bool
     issues: list
     safety_enforced: bool
+    admission_state: str
+    active_version_hash: str | None
 
 
 class SkillInspectIssue(TypedDict, total=False):

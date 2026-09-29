@@ -142,6 +142,72 @@ def test_daytona_runner_exec_happy_path(tmp_path) -> None:
     assert client.destroyed == ["ws-1"]
 
 
+def test_daytona_runner_surfaces_cleanup_failure(tmp_path, monkeypatch) -> None:
+    client = _FakeDaytonaClient()
+    runner = DaytonaRunner(client=client)
+
+    def fail_cleanup(workspace_id: str) -> None:
+        raise DaytonaClientError(
+            code="SANDBOX_UNAVAILABLE", message=f"cleanup failed: {workspace_id}"
+        )
+
+    monkeypatch.setattr(client, "destroy_workspace", fail_cleanup)
+
+    with pytest.raises(DaytonaClientError, match="cleanup failed"):
+        runner.run_exec(ExecSpec(cmd=["echo", "hello"]), _sandbox(tmp_path))
+
+
+def test_daytona_runner_preserves_execution_failure_when_cleanup_also_fails(
+    tmp_path, monkeypatch
+) -> None:
+    client = _FakeDaytonaClient()
+    runner = DaytonaRunner(client=client)
+
+    def fail_execution(**_kwargs: Any) -> DaytonaCommandResult:
+        raise DaytonaClientError(code="SANDBOX_UNAVAILABLE", message="execution failed")
+
+    def fail_cleanup(workspace_id: str) -> None:
+        raise DaytonaClientError(
+            code="SANDBOX_UNAVAILABLE", message=f"cleanup failed: {workspace_id}"
+        )
+
+    monkeypatch.setattr(client, "execute_command", fail_execution)
+    monkeypatch.setattr(client, "destroy_workspace", fail_cleanup)
+
+    with pytest.raises(DaytonaClientError, match="execution failed") as raised:
+        runner.run_exec(ExecSpec(cmd=["echo", "hello"]), _sandbox(tmp_path))
+
+    assert str(raised.value) == (
+        "SANDBOX_UNAVAILABLE: execution failed; workspace cleanup failed: "
+        "SANDBOX_UNAVAILABLE: cleanup failed: ws-1"
+    )
+
+
+def test_daytona_runner_preserves_resource_limit_when_cleanup_also_fails(
+    tmp_path, monkeypatch
+) -> None:
+    client = _FakeDaytonaClient()
+    runner = DaytonaRunner(client=client)
+
+    def fail_cleanup(workspace_id: str) -> None:
+        raise DaytonaClientError(
+            code="SANDBOX_UNAVAILABLE", message=f"cleanup failed: {workspace_id}"
+        )
+
+    monkeypatch.setattr(client, "destroy_workspace", fail_cleanup)
+
+    result = runner.run_exec(
+        ExecSpec(cmd=["echo", "hello"]),
+        _sandbox(tmp_path, timeout_s=0.1),
+    )
+
+    assert result.timed_out is True
+    assert result.stderr == (
+        "timeout exceeded; workspace cleanup failed: "
+        "SANDBOX_UNAVAILABLE: cleanup failed: ws-1"
+    )
+
+
 def test_daytona_runner_maps_python_and_workspace_to_remote(tmp_path) -> None:
     client = _FakeDaytonaClient(remote_root="/home/daytona")
     runner = DaytonaRunner(client=client)
@@ -211,10 +277,59 @@ def test_daytona_runner_executes_self_contained_tool_tests_remotely(
         unit_tests_source="from tool_impl import add\n\ndef test_add():\n    assert add(2, 3) == 5\n",
         entry_function="add",
         sandbox_runner=DaytonaRunner(client=client),
+        dependencies=["json"],
     )
 
     assert (result.ran, result.passed, result.failed) == (1, 1, 0)
     assert (remote_root / "tool_impl.py").exists()
+    assert client.destroyed == ["ws-1"]
+
+
+def test_daytona_runner_reports_unavailable_declared_dependency(
+    tmp_path, monkeypatch
+) -> None:
+    remote_root = tmp_path / "remote"
+    remote_root.mkdir()
+    client = _FakeDaytonaClient(remote_root=str(remote_root))
+
+    def execute_command(**kwargs: Any) -> DaytonaCommandResult:
+        process = subprocess.run(
+            kwargs["command"],
+            cwd=kwargs["cwd"],
+            env={
+                **os.environ,
+                "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ['PATH']}",
+                **kwargs["env"],
+            },
+            capture_output=True,
+            text=True,
+            timeout=kwargs["timeout_s"],
+            check=False,
+        )
+        return DaytonaCommandResult(
+            workspace_id=kwargs["workspace_id"],
+            returncode=process.returncode,
+            stdout=process.stdout,
+            stderr=process.stderr,
+        )
+
+    monkeypatch.setattr(client, "execute_command", execute_command)
+    result = run_tool_tests(
+        source_code="def add(a, b):\n    return a + b\n",
+        unit_tests_source="def test_add():\n    assert True\n",
+        entry_function="add",
+        sandbox_runner=DaytonaRunner(client=client),
+        dependencies=["openminion_dependency_that_does_not_exist"],
+    )
+
+    assert result.ran == 1
+    assert result.errors == [
+        {
+            "test": "pytest",
+            "message": "declared dependencies unavailable in sandbox image: "
+            "openminion_dependency_that_does_not_exist",
+        }
+    ]
     assert client.destroyed == ["ws-1"]
 
 

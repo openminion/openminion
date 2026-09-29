@@ -6,11 +6,14 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from openminion.modules.memory.models import MemoryRecord
 from openminion.modules.memory.storage.base import SearchQueryOptions
 from openminion.modules.memory.storage.postgres.store import PostgresMemoryStore
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
+from openminion.modules.memory.service import MemoryService
 from tests.storage.postgres_test_utils import schema_url
 
 pytestmark = pytest.mark.postgres
@@ -132,3 +135,37 @@ def test_search_quality_sets_match_between_sqlite_and_postgres(
     postgres_ids = {item.id for item in postgres_hits}
     assert sqlite_ids == postgres_ids
     assert required_ids.issubset(sqlite_ids)
+
+
+def test_postgres_lexical_score_contributes_to_semantic_order(postgres_store) -> None:
+    lexical_hits = postgres_store.search(
+        SearchQueryOptions(
+            query="aurora rollback",
+            scopes=["session:s1"],
+            limit=4,
+        )
+    )
+    assert lexical_hits
+    assert all(0.0 <= float(item.meta["bm25_score"]) <= 1.0 for item in lexical_hits)
+    assert all(
+        item.meta["bm25_score"] == item.meta["tsrank_score"] for item in lexical_hits
+    )
+
+    vector = Mock()
+    vector.search.return_value = [
+        ("r1", 0.1, {}),
+        ("r4", 0.9, {}),
+    ]
+    service = MemoryService(
+        store=postgres_store,
+        vector_adapter=vector,
+        ranking_config=SimpleNamespace(semantic_bm25_weight=0.7),
+    )
+
+    results = service.search_semantic(
+        query="aurora rollback",
+        scopes=["session:s1"],
+        limit=4,
+    )
+
+    assert results[0].id == "r1"

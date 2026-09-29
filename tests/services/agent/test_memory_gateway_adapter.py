@@ -109,6 +109,39 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         self.assertEqual(result.todos_completed, 0)
         self.assertTrue(result.patch_id)
 
+    def test_record_turn_does_not_read_back_committed_record(self) -> None:
+        adapter = _make_adapter()
+        adapter._service.get = Mock(side_effect=RuntimeError("read unavailable"))  # type: ignore[method-assign]  # noqa: SLF001
+
+        result = adapter.record_turn(
+            session_id="s1",
+            run_id="r1",
+            request_id="req1",
+            channel="test",
+            target="user",
+            user_message="fact: committed without readback",
+            assistant_message="",
+        )
+
+        self.assertEqual(result.facts_added, 1)
+        adapter._service.get.assert_not_called()  # type: ignore[attr-defined]  # noqa: SLF001
+
+    def test_build_context_remains_fail_soft_for_direct_callers(self) -> None:
+        adapter = _make_adapter()
+        adapter.build_context_with_metadata = Mock(  # type: ignore[method-assign]
+            return_value=(
+                "",
+                {
+                    "memory_context_status": "degraded",
+                    "memory_context_reason": "memory_context_build_failed",
+                },
+            )
+        )
+
+        self.assertEqual(
+            adapter.build_context(session_id="s1", user_message="hello"), ""
+        )
+
     def test_record_turn_extracts_fact_prefix(self) -> None:
         adapter = _make_adapter()
         result = adapter.record_turn(
@@ -788,7 +821,11 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
             "strategy": "auto",
             "filters": {
                 "types": ["skill", "doc", "artifact"],
-                "scope_keys": [],
+                "scope_keys": [
+                    "session:s-query",
+                    "agent:query-agent",
+                    "global:legacy",
+                ],
                 "tags": [],
                 "risk_constraints": {},
             },
@@ -817,7 +854,11 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
             "session:s-no-project",
             "agent:query-agent",
         ]
-        assert second_call_filters["scope_keys"] == []
+        assert second_call_filters["scope_keys"] == [
+            "session:s-no-project",
+            "agent:query-agent",
+            "global:legacy",
+        ]
 
     def test_query_bridge_scope_keys_include_project_context_when_present(self) -> None:
         store = InMemoryMemoryStore()
@@ -842,7 +883,12 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
             "agent:query-agent",
             "project:proj-42",
         ]
-        assert second_call_filters["scope_keys"] == []
+        assert second_call_filters["scope_keys"] == [
+            "session:s-project",
+            "agent:query-agent",
+            "project:proj-42",
+            "global:legacy",
+        ]
 
     def test_query_bridge_deduplication(self) -> None:
         store = InMemoryMemoryStore()

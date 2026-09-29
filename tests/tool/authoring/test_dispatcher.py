@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 
+from openminion.base.runtime.runners import LocalRunner
 from openminion.modules.tool.authoring.schemas import AuthoredToolRow
 
 from ._helpers import FakeExecResult, RecordingSandboxRunner, build_service
 
 
-def _tool_row(tool_name: str) -> AuthoredToolRow:
+def _tool_row(tool_name: str, *, dependencies_json: str = "[]") -> AuthoredToolRow:
     return AuthoredToolRow(
         tool_name=tool_name,
         local_name="adder",
@@ -18,7 +19,7 @@ def _tool_row(tool_name: str) -> AuthoredToolRow:
         args_schema_json='{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"}},"required":["x","y"]}',
         returns_schema_json='{"type":"integer"}',
         description="Add two integers",
-        dependencies_json="[]",
+        dependencies_json=dependencies_json,
         tier="experimental",
         min_scope="POWER_USER",
         policy_grant_id="grant-1",
@@ -87,6 +88,47 @@ def test_service_invoke_reports_time_limit(tmp_path) -> None:
         result = service.invoke("authored.adder@v1", {"x": 1, "y": 2})
         assert result["ok"] is False
         assert result["error"]["code"] == "AUTHORED_TOOL_LIMIT_EXCEEDED"
+    finally:
+        service.close()
+
+
+def test_service_invoke_passes_declared_dependencies_to_remote_bootstrap(
+    tmp_path,
+) -> None:
+    runner = RecordingSandboxRunner(
+        FakeExecResult(stdout='{"ok": true, "content": "3", "data": {"result": 3}}')
+    )
+    service = build_service(tmp_path, sandbox_runner=runner)
+    try:
+        service._store.insert_authored_tool(  # noqa: SLF001
+            _tool_row("authored.adder@v1", dependencies_json='["json"]')
+        )
+
+        result = service.invoke("authored.adder@v1", {"x": 1, "y": 2})
+
+        assert result["ok"] is True
+        spec, _ = runner.calls[0]
+        assert spec.cmd[-1] == '["json"]'
+    finally:
+        service.close()
+
+
+def test_service_invoke_reports_unavailable_declared_dependency(tmp_path) -> None:
+    service = build_service(tmp_path, sandbox_runner=LocalRunner())
+    dependency = "openminion_dependency_that_does_not_exist"
+    try:
+        service._store.insert_authored_tool(  # noqa: SLF001
+            _tool_row("authored.adder@v1", dependencies_json=json.dumps([dependency]))
+        )
+
+        result = service.invoke("authored.adder@v1", {"x": 1, "y": 2})
+
+        assert result["ok"] is False
+        assert result["error"]["code"] == "AUTHORED_TOOL_FAILED"
+        assert (
+            f"declared dependencies unavailable in sandbox image: {dependency}"
+            in result["error"]["message"]
+        )
     finally:
         service.close()
 

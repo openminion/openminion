@@ -1,8 +1,20 @@
 import hashlib
+import json
 
 
-def compute_version_hash(*, source_code: str, unit_tests_source: str) -> str:
+def compute_version_hash(
+    *,
+    source_code: str,
+    unit_tests_source: str,
+    dependencies: list[str] | None = None,
+) -> str:
     payload = f"{source_code}\n---\n{unit_tests_source}".encode("utf-8")
+    if dependencies:
+        payload += b"\n---dependencies---\n" + json.dumps(
+            dependencies,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 

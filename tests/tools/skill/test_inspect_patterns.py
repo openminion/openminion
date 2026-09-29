@@ -8,10 +8,15 @@ from openminion.tools.skill.plugin import _h_skill_ingest, _h_skill_inspect
 
 def _ctx() -> SimpleNamespace:
     return SimpleNamespace(
+        agent_id="agent-a",
         skill_api=SimpleNamespace(
             ingest_text=lambda **kwargs: ("skill-demo", "vhash-demo", []),
+            get_skill_version_state=lambda **kwargs: {
+                "admission_state": "pending",
+                "active_version_hash": None,
+            },
             render_snippet=lambda **kwargs: ("snippet", "snippet-hash"),
-        )
+        ),
     )
 
 

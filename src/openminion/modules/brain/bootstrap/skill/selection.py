@@ -101,6 +101,19 @@ def _select_skills_with_retrieval(
     ingest_skill = getattr(retrieve_api, "ingest_skill", None)
     if callable(ingest_skill):
         for entry in catalog:
+            entry_scope = str(entry.get("scope", "") or "").strip().lower()
+            entry_agent_id = str(entry.get("agent_id", "") or "").strip()
+            scope_key = (
+                "global:legacy"
+                if entry_scope == "global"
+                else (
+                    f"agent:{entry_agent_id}"
+                    if entry_scope == "agent" and entry_agent_id == state.agent_id
+                    else None
+                )
+            )
+            if scope_key is None:
+                continue
             try:
                 ingest_skill(
                     skill_id=str(entry.get("id", "") or "").strip(),
@@ -109,7 +122,9 @@ def _select_skills_with_retrieval(
                     meta={
                         "text": _catalog_retrieval_text(entry),
                         "title": _catalog_retrieval_title(entry),
-                        "scope": "agent",
+                        "scope": entry_scope,
+                        "scope_key": scope_key,
+                        "agent_id": entry_agent_id or None,
                         "tags": ["skill", "catalog"],
                         "unit_kind": "chunk",
                     },
@@ -130,7 +145,11 @@ def _select_skills_with_retrieval(
                 capacity=capacity,
             ),
             strategy="auto",
-            filters={"types": ["skill"], "tags": ["skill"]},
+            filters={
+                "types": ["skill"],
+                "tags": ["skill"],
+                "scope_keys": [f"agent:{state.agent_id}", "global:legacy"],
+            },
         )
     except Exception:
         return None

@@ -98,6 +98,8 @@ def _catalog(*skill_ids: str) -> list[dict[str, str]]:
             "version_hash": skill_id[0] * 64,
             "tags": [skill_id.split("-", 1)[0]],
             "tools": [f"tool.{skill_id.split('-', 1)[0]}"],
+            "scope": "agent",
+            "agent_id": "agent-1",
         }
         for skill_id in skill_ids
     ]
@@ -276,6 +278,8 @@ def test_load_catalog_preserves_existing_selection_metadata() -> None:
             "version_hash": "n" * 64,
             "tags": ["news", "slack"],
             "tools": ["web.search", "slack.send"],
+            "scope": "agent",
+            "agent_id": "agent-1",
         }
     ]
 
@@ -293,6 +297,8 @@ def test_load_catalog_preserves_existing_selection_metadata() -> None:
             "tags": ["news", "slack"],
             "tools": ["web.search", "slack.send"],
             "reference_hints": [],
+            "scope": "agent",
+            "agent_id": "agent-1",
         }
     ]
 
@@ -582,11 +588,18 @@ def test_resolve_skill_pipeline_uses_retrieval_before_llm_confirm(monkeypatch) -
     assert result.selection_mode == "retrieval-select"
     assert [ref.skill_id for ref in result.selected_refs] == ["gamma"]
     assert len(retrieve_api.ingested) == 3
+    assert all(
+        item["meta"]["scope_key"] == "agent:agent-1" for item in retrieve_api.ingested
+    )
     assert retrieve_api.ingested[2]["meta"]["title"] == "Gamma"
     assert "id=gamma" in retrieve_api.ingested[2]["meta"]["text"]
     assert "aliases=Gamma" in retrieve_api.ingested[2]["meta"]["text"]
     assert len(retrieve_api.calls) == 1
     assert retrieve_api.calls[0]["purpose"] == "plan"
+    assert retrieve_api.calls[0]["filters"]["scope_keys"] == [
+        "agent:agent-1",
+        "global:legacy",
+    ]
     shortlisted = [
         event for event in logger.events if event["type"] == "skill.shortlisted"
     ]
@@ -666,6 +679,35 @@ def test_retrieval_ingest_text_humanizes_slug_style_skill_ids(monkeypatch) -> No
     assert mcp_meta["title"] == "Mcp Builder"
     assert "id=mcp_builder" in mcp_meta["text"]
     assert "aliases=Mcp Builder" in mcp_meta["text"]
+
+
+def test_retrieval_ingest_preserves_global_and_agent_scope(monkeypatch) -> None:
+    monkeypatch.setattr(skill_pipeline, "_direct_capacity", lambda catalog: 1)
+    catalog = _catalog("global-helper", "agent-helper", "third-helper")
+    catalog[0]["scope"] = "global"
+    catalog[0]["agent_id"] = None
+    retrieve_api = _RetrieveAPI([{"ref_id": f"skill:agent-helper@{'a' * 64}"}])
+    runner = _runner(
+        catalog=catalog,
+        llm=_LLM({"skill_ids": ["agent-helper"], "intent": "choose a helper"}),
+        retrieve_api=retrieve_api,
+    )
+
+    resolve_skill_pipeline(
+        runner,
+        intent="help with a general workflow",
+        purpose="plan",
+        state=_state(mode=SKILL_SELECTION_AUTO),
+        logger=_Logger(),
+    )
+
+    assert {
+        item["skill_id"]: item["meta"]["scope_key"] for item in retrieve_api.ingested
+    } == {
+        "global-helper": "global:legacy",
+        "agent-helper": "agent:agent-1",
+        "third-helper": "agent:agent-1",
+    }
 
 
 def test_retrieval_shortlist_limit_scales_with_catalog_size() -> None:

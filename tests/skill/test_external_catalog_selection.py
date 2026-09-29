@@ -79,6 +79,8 @@ def test_linear_bundle_ingest_enriches_descriptor_fields(tmp_path: Path) -> None
         summary = package.to_catalog_summary()
         assert summary["name"] == "Linear"
         assert summary["one_liner"] == "Manage Linear issues in Codex"
+        assert summary["scope"] == package.scope
+        assert summary["agent_id"] == package.agent_id
 
         roundtrip = SkillPackage.from_dict(package.to_dict())
         assert roundtrip.display_name == "Linear"

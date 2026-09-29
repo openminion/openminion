@@ -53,13 +53,20 @@ def test_skill_list_unavailable_error() -> None:
 
 def test_skill_get_success_from_to_dict_object() -> None:
     api = SimpleNamespace(
-        get_skill=lambda skill_id, version_hash=None: _Pkg(skill_id, "v1")
+        get_skill=lambda skill_id, version_hash=None: _Pkg(skill_id, "v1"),
+        render_snippet=lambda **kwargs: (
+            "# Procedure\n1. Inspect the target.",
+            "snippet-v1",
+        ),
     )
     ctx = SimpleNamespace(skill_api=api)
     result = _h_skill_get({"skill_id": "deploy"}, ctx)
     assert result["ok"] is True
+    assert result["snippet"] == "# Procedure\n1. Inspect the target."
+    assert result["snippet_hash"] == "snippet-v1"
     assert result["skill"]["skill_id"] == "deploy"
     assert result["skill"]["version_hash"] == "v1"
+    assert list(result)[:3] == ["ok", "snippet", "snippet_hash"]
 
 
 def test_skill_get_not_found_error() -> None:
@@ -84,6 +91,16 @@ def test_skill_get_contract_exposes_progressive_resource_retrieval() -> None:
     assert "version_hash" in model_tool.description
     assert "references/guide.md" in schema["resource_path"]["description"]
     assert "reuse it" in schema["version_hash"]["description"]
+
+
+def test_skill_ingest_contract_limits_default_save_to_one() -> None:
+    manifest = REGISTRAR.get_manifest(SimpleNamespace())
+    model_tool = next(
+        item for item in manifest.model_tools if item.model_tool_id == "skill.ingest"
+    )
+
+    assert "at most one" in model_tool.description
+    assert "substantial reusable work" in model_tool.description
 
 
 def test_skill_get_reads_requested_resource_with_pinned_version() -> None:
@@ -170,9 +187,13 @@ def test_skill_ingest_render_snippet_failure_logs_structured_warning(caplog) -> 
 
     api = SimpleNamespace(
         ingest_text=_ingest_text,
+        get_skill_version_state=lambda **kwargs: {
+            "admission_state": "pending",
+            "active_version_hash": None,
+        },
         render_snippet=_render_snippet_boom,
     )
-    ctx = SimpleNamespace(skill_api=api)
+    ctx = SimpleNamespace(skill_api=api, agent_id="agent-a")
     minimal_markdown = "# Skill\nDoes a thing safely.\n"
 
     with caplog.at_level("WARNING", logger=_skill_plugin.__name__):

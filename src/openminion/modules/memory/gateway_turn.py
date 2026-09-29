@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
-from openminion.modules.memory.errors import MemctlError
+from openminion.modules.memory.errors import MemctlError, StoreReadError
 
 
 MemoryEventEmitter = Callable[..., None]
@@ -18,6 +18,56 @@ MEMORY_CAPSULE_REFRESH_FAILED_CODE = "MEMORY_CAPSULE_REFRESH_FAILED"
 MEMORY_CAPSULE_REFRESH_FAILED_REASON = "memory_capsule_refresh_failed"
 MEMORY_FOLLOWUP_FAILED_CODE = "MEMORY_FOLLOWUP_FAILED"
 MEMORY_FOLLOWUP_FAILED_REASON = "memory_followup_failed"
+
+
+def recall_observation_payload(meta: Mapping[str, Any]) -> dict[str, str]:
+    """Select content-free recall facts for a durable build event."""
+
+    details = {
+        "envelope_truncated": str(
+            meta.get("memory_envelope_truncated", "false") or "false"
+        ).lower(),
+        "envelope_reasons": str(
+            meta.get("memory_envelope_truncation_reasons", "") or ""
+        ),
+        "envelope_limit_chars": str(meta.get("memory_envelope_limit_chars", "") or ""),
+        "status": str(
+            meta.get("memory_context_status")
+            or meta.get("memory_retrieval_status")
+            or "healthy"
+        ).lower(),
+        "reason_code": str(
+            meta.get("memory_context_reason")
+            or meta.get("memory_retrieval_reason")
+            or "built"
+        ),
+    }
+    for key in (
+        "memory_context_record_count",
+        "memory_envelope_included_items",
+        "memory_envelope_omitted_items",
+        "memory_recall_mode",
+        "memory_recall_status",
+        "memory_recall_reason",
+        "memory_recall_threshold_drops",
+        "memory_recall_capabilities",
+    ):
+        if key in meta:
+            details[key] = str(meta[key])
+    return details
+
+
+def build_cacheable_context(agent_memory: Any, *, session_id: str) -> str:
+    build_with_meta = getattr(agent_memory, "build_context_with_metadata", None)
+    if not callable(build_with_meta):
+        return str(agent_memory.build_context(session_id=session_id, user_message=""))
+    content, meta = build_with_meta(session_id=session_id, user_message="")
+    if meta.get("memory_context_status") == "degraded":
+        raise StoreReadError(
+            "Memory context construction failed.",
+            details={"reason_code": meta["memory_context_reason"]},
+        )
+    return str(content)
 
 
 def memory_error_facts(
@@ -264,6 +314,8 @@ def record_memory_failure(
         fallback_reason=MEMORY_WRITE_FAILED_REASON,
     )
     outbound_metadata["memory_enabled"] = "false"
+    outbound_metadata["memory_capture_state"] = "failed_terminal"
+    outbound_metadata["memory_capture_reason"] = error_facts["reason_code"]
     outbound_metadata["memory_write_error_code"] = error_facts["error_code"]
     outbound_metadata["memory_write_reason_code"] = error_facts["reason_code"]
     logger.warning(

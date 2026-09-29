@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from types import SimpleNamespace
 
 from tests.services.gateway._gateway_service_support import (
     GatewayServiceTestCase,
@@ -18,12 +19,22 @@ from tests.services.gateway._gateway_service_support import (
 )
 
 from openminion.modules.memory.service import MemoryService
+from openminion.modules.memory.errors import PromotionDeniedError
 from openminion.modules.storage.runtime.session_store.turn_leases import (
     RuntimeSessionTurnFenceError,
 )
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
-from openminion.services.gateway.memory import MemoryFollowupQueue, record_memory_turn
+from openminion.services.gateway.memory import (
+    MemoryFollowupQueue,
+    _refresh_capsule_after_write,
+    record_memory_turn,
+)
+from openminion.services.gateway.context import (
+    _build_cached_memory_context,
+)
+from openminion.modules.memory.gateway_turn import recall_observation_payload
+from openminion.cli.interactive.runtime.controls import RuntimeControlsMixin
 
 
 def _make_v2_memory(
@@ -41,6 +52,189 @@ def _make_v2_memory(
 
 
 class GatewayServiceMemoryTests(GatewayServiceTestCase):
+    def test_degraded_capsule_is_not_cached_and_next_build_recovers(self) -> None:
+        class _Memory:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def build_context_with_metadata(self, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return "", {
+                        "memory_context_status": "degraded",
+                        "memory_context_reason": "memory_context_build_failed",
+                    }
+                return "recovered", {
+                    "memory_context_status": "healthy",
+                    "memory_context_reason": "built",
+                    "memory_context_record_count": "1",
+                }
+
+        memory = _Memory()
+        cache: dict[str, str] = {}
+
+        failed = _build_cached_memory_context(
+            memory,
+            session_id="session-1",
+            user_message="ignored",
+            memory_strategy="frozen_session",
+            memory_capsule_cache=cache,
+        )
+        recovered = _build_cached_memory_context(
+            memory,
+            session_id="session-1",
+            user_message="ignored",
+            memory_strategy="frozen_session",
+            memory_capsule_cache=cache,
+        )
+        cached = _build_cached_memory_context(
+            memory,
+            session_id="session-1",
+            user_message="ignored",
+            memory_strategy="frozen_session",
+            memory_capsule_cache=cache,
+        )
+
+        self.assertEqual(failed[1]["memory_context_status"], "degraded")
+        self.assertEqual(recovered[0], "recovered")
+        self.assertFalse(recovered[2])
+        self.assertEqual(cached[0], "recovered")
+        self.assertTrue(cached[2])
+        self.assertEqual(cached[1]["memory_context_reason"], "cache_hit")
+        self.assertEqual(memory.calls, 2)
+
+    def test_persisted_recall_health_recovers_after_gateway_rebuild(self) -> None:
+        adapter = _make_v2_memory(Path(self._tmp.name), suffix="-recall-recovery")
+        gateway, _sink = self._build_gateway(
+            provider=_CaptureProvider(),
+            logger_name="openminion.tests.gateway.recall_recovery",
+            agent_logger_name="openminion.tests.gateway.agent.recall_recovery",
+            agent_memory=adapter,
+        )
+        session_id = "memory-recall-recovery"
+        outcomes = (
+            (
+                "",
+                {
+                    "memory_context_status": "degraded",
+                    "memory_context_reason": "memory_context_build_failed",
+                },
+            ),
+            (
+                "recovered context",
+                {
+                    "memory_context_status": "healthy",
+                    "memory_context_reason": "built",
+                    "memory_context_record_count": "1",
+                },
+            ),
+        )
+
+        class _Controls(RuntimeControlsMixin):
+            is_bound = True
+            _rt = SimpleNamespace(sessions=self.sessions)
+
+            def list_memory_records(self):
+                return []
+
+            def list_memory_candidates(self):
+                return []
+
+            def _memory_query_provider(self):
+                return adapter
+
+        controls = _Controls()
+        controls.session_id = session_id
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENMINION_MEMORY_CAPSULE_STRATEGY": "frozen_session"},
+                clear=False,
+            ),
+            patch.object(
+                adapter,
+                "build_context_with_metadata",
+                side_effect=outcomes,
+            ) as build_context,
+        ):
+            asyncio.run(
+                gateway.run_once(
+                    channel="console",
+                    target="local-user",
+                    message="first",
+                    session_id=session_id,
+                )
+            )
+            self.assertIn("recall      degraded", controls.memory_report())
+            asyncio.run(
+                gateway.run_once(
+                    channel="console",
+                    target="local-user",
+                    message="second",
+                    session_id=session_id,
+                )
+            )
+
+        statuses = [
+            event.payload.get("status")
+            for event in self.sessions.list_events(session_id=session_id, limit=100)
+            if event.event_type == "memory.context.built"
+        ]
+        self.assertEqual(statuses, ["degraded", "healthy"])
+        self.assertEqual(build_context.call_count, 2)
+        self.assertIn("recall      healthy", controls.memory_report())
+
+    def test_degraded_refresh_on_write_preserves_prior_capsule(self) -> None:
+        adapter = _make_v2_memory(Path(self._tmp.name), suffix="-refresh-degraded")
+        session_id = "memory-refresh-degraded"
+        cache = {session_id: "prior context"}
+        metadata: dict[str, str] = {}
+        events: list[dict[str, object]] = []
+        with patch.object(
+            adapter,
+            "build_context_with_metadata",
+            return_value=(
+                "",
+                {
+                    "memory_context_status": "degraded",
+                    "memory_context_reason": "memory_context_build_failed",
+                },
+            ),
+        ):
+            _refresh_capsule_after_write(
+                agent_memory=adapter,
+                logger=logging.getLogger("openminion.tests.gateway.refresh_degraded"),
+                agent_id="main",
+                memory_capsule_cache=cache,
+                session_id=session_id,
+                run_id="run-1",
+                request_id="request-1",
+                conversation_id="",
+                thread_id="",
+                attach_id="",
+                emit_memory_event=lambda **event: events.append(event),
+                outbound_metadata=metadata,
+            )
+
+        self.assertEqual(cache[session_id], "prior context")
+        self.assertEqual(metadata["memory_capsule_refreshed"], "false")
+        self.assertEqual(events[0]["event_type"], "memory.capsule.refresh_failed")
+
+    def test_memory_event_details_are_content_free(self) -> None:
+        details = recall_observation_payload(
+            {
+                "memory_context_status": "healthy",
+                "memory_context_reason": "built",
+                "memory_context_record_count": "3",
+                "private_text": "project secret",
+            }
+        )
+
+        self.assertEqual(details["status"], "healthy")
+        self.assertEqual(details["reason_code"], "built")
+        self.assertEqual(details["memory_context_record_count"], "3")
+        self.assertNotIn("project secret", str(details))
+
     def test_gateway_flushes_memory_followups_off_event_loop(self) -> None:
         gateway, _sink = self._build_gateway(
             provider=_CaptureProvider(),
@@ -958,6 +1152,126 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         )
         self.assertIn(
             "simulated memory write failure", write_failed[0].payload.get("error", "")
+        )
+
+    def test_gateway_reports_each_primary_memory_operation_failure(self) -> None:
+        cases = (
+            ("record", "fact: write should fail", "write_record"),
+            (
+                "promotion",
+                "remember: my work email is alpha@example.com",
+                "stage_candidate",
+            ),
+            (
+                "promotion-review",
+                "remember: my work email is alpha@example.com",
+                "candidate_update",
+            ),
+            (
+                "promotion-commit",
+                "remember: my work email is alpha@example.com",
+                "promote_candidate",
+            ),
+            ("todo", "done: finish report", "delete_record"),
+        )
+        for label, message, failing_method in cases:
+            with self.subTest(operation=label):
+                adapter = _make_v2_memory(Path(self._tmp.name), suffix=f"-{label}")
+                session_id = f"memory-primary-failure-{label}"
+                if label == "todo":
+                    adapter.record_turn(
+                        session_id=session_id,
+                        run_id="seed-run",
+                        request_id="seed-request",
+                        channel="console",
+                        target="local-user",
+                        user_message="todo: finish report",
+                        assistant_message="ok",
+                    )
+                gateway, _sink = self._build_gateway(
+                    provider=_CaptureProvider(),
+                    logger_name=f"openminion.tests.gateway.{label}",
+                    agent_logger_name=f"openminion.tests.gateway.agent.{label}",
+                    agent_memory=adapter,
+                )
+
+                with patch.object(
+                    adapter._service,  # noqa: SLF001
+                    failing_method,
+                    side_effect=RuntimeError(f"{label} storage failure"),
+                ):
+                    response = asyncio.run(
+                        gateway.run_once(
+                            channel="console",
+                            target="local-user",
+                            message=message,
+                            session_id=session_id,
+                        )
+                    )
+
+                self.assertEqual(
+                    response.metadata.get("memory_capture_state"),
+                    "failed_terminal",
+                    response.metadata,
+                )
+                self.assertEqual(
+                    response.metadata.get("memory_capture_reason"),
+                    "memory_primary_write_failed",
+                )
+                self.assertEqual(
+                    response.metadata.get("memory_write_error_code"),
+                    "STORE_WRITE_FAILED",
+                )
+                events = self.sessions.list_events(session_id=session_id, limit=200)
+                self.assertEqual(
+                    len(
+                        [
+                            event
+                            for event in events
+                            if event.event_type == "memory.write.failed"
+                        ]
+                    ),
+                    1,
+                )
+                self.assertFalse(
+                    any(
+                        event.event_type == "memory.write.completed" for event in events
+                    )
+                )
+
+    def test_gateway_preserves_typed_primary_memory_failure(self) -> None:
+        adapter = _make_v2_memory(Path(self._tmp.name), suffix="-typed-failure")
+        gateway, _sink = self._build_gateway(
+            provider=_CaptureProvider(),
+            logger_name="openminion.tests.gateway.typed_memory_failure",
+            agent_logger_name="openminion.tests.gateway.agent.typed_memory_failure",
+            agent_memory=adapter,
+        )
+        error = PromotionDeniedError(
+            "review denied",
+            details={"reason_code": "memory_candidate_review_denied"},
+        )
+        with patch.object(
+            adapter._service,  # noqa: SLF001
+            "candidate_update",
+            side_effect=error,
+        ):
+            response = asyncio.run(
+                gateway.run_once(
+                    channel="console",
+                    target="local-user",
+                    message="remember: my work email is alpha@example.com",
+                    session_id="memory-typed-primary-failure",
+                )
+            )
+
+        self.assertEqual(
+            response.metadata.get("memory_write_error_code"),
+            "PROMOTION_DENIED",
+        )
+        self.assertEqual(
+            response.metadata.get("memory_capture_reason"),
+            "memory_candidate_review_denied",
         )
 
     def test_gateway_emits_memory_policy_snapshot_event_from_agent_metadata(

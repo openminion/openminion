@@ -211,6 +211,16 @@ def test_default_conversational_retrieval_does_not_expand_query() -> None:
     assert conversational_calls[0]["query"] == "task"
     assert conversational_calls[0]["strategy"] == "contextual"
     assert [item.get("meta", {}).get("unit_id") for item in conversational] == ["u1"]
+    knowledge_call = next(
+        call
+        for call in retrieve_ctl.calls
+        if "doc" in (call.get("filters") or {}).get("types", [])
+    )
+    assert knowledge_call["filters"]["scope_keys"] == [
+        "session:s",
+        "agent:a",
+        "global:legacy",
+    ]
 
 
 def test_empty_retrieval_traces_lane_and_result_reasons() -> None:

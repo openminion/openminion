@@ -224,7 +224,14 @@ class RetrievalPipeline:
         from openminion.modules.retrieve.schemas import RetrievalFilters
 
         knowledge_filters = RetrievalFilters(
-            scope_keys=[],
+            scope_keys=[
+                *self._build_retrieve_scope_keys(
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    project_id=project_id,
+                ),
+                "global:legacy",
+            ],
             types=["skill", "doc", "artifact"],
             time_window_hours=None,
         )

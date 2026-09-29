@@ -63,6 +63,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest.add_argument(
         "--scope", default="project", choices=["session", "agent", "global", "project"]
     )
+    ingest.add_argument("--scope-key", default="")
     ingest.add_argument("--tags", default="")
     ingest.add_argument("--title", default="")
     ingest.add_argument("--corpus-id", default="")
@@ -187,6 +188,7 @@ def _run_service_command(
             source_ref=args.source_ref,
             text=args.text,
             scope=args.scope,
+            scope_key=args.scope_key or None,
             tags=tags,
             title=args.title,
             corpus_id=args.corpus_id or None,

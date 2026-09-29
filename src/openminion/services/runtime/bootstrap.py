@@ -129,7 +129,6 @@ def build_daytona_runner(
             "OPENMINION_DAYTONA_CONNECT_TIMEOUT_S",
             "OPENMINION_DAYTONA_COMMAND_TIMEOUT_S",
             "OPENMINION_DAYTONA_MAX_OUTPUT_BYTES",
-            "OPENMINION_DAYTONA_VERIFY_TLS",
         ):
             value = str(config_manager.env.get(key, "") or "").strip()
             if value:

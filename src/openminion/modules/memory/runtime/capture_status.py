@@ -13,7 +13,13 @@ CaptureDisposition = Literal[
     "rejected",
     "failed_terminal",
 ]
-RecallHealth = Literal["healthy", "disabled", "unsupported", "degraded"]
+RecallHealth = Literal[
+    "healthy",
+    "disabled",
+    "unsupported",
+    "degraded",
+    "unobserved",
+]
 
 _CAPTURE_TERMINAL_DISPOSITIONS = frozenset(
     {"processed", "succeeded_no_output", "rejected", "failed_terminal"}
@@ -277,22 +283,33 @@ def _project_recall_events(
     *,
     mode: str,
     capabilities: tuple[str, ...],
-) -> tuple[str, tuple[str, ...], int, int, dict[str, int], bool, bool]:
+) -> tuple[
+    str,
+    tuple[str, ...],
+    int,
+    int,
+    dict[str, int],
+    str | None,
+    str | None,
+]:
     selected_memory = 0
     selected_knowledge = 0
     omissions: dict[str, int] = {}
-    memory_degraded = False
-    knowledge_degraded = False
+    context_status: str | None = None
+    retrieval_status: str | None = None
+    knowledge_status: str | None = None
     for event in events:
         event_type = _event_type(event)
         payload = _payload(event)
         if event_type == "memory.context.failed":
-            memory_degraded = True
+            context_status = "degraded"
+        if event_type == "memory.context.built":
+            context_status = str(payload.get("status", "healthy") or "healthy").lower()
         if event_type in {"memory.retrieval.built", "memory.recall.status"}:
             for reason in ("relevance", "duplicate", "budget"):
                 omissions.pop(f"memory:{reason}", None)
             status = str(payload.get("status", "") or "").strip().lower()
-            memory_degraded = status == "degraded"
+            retrieval_status = status or "healthy"
             mode = str(payload.get("memory_recall_mode", mode) or mode).strip().lower()
             capabilities = _normalized_capabilities(
                 payload.get("memory_recall_capabilities", capabilities)
@@ -316,7 +333,11 @@ def _project_recall_events(
             "knowledge_graph.query.failed",
         }:
             omissions.pop("knowledge:relevance", None)
-            knowledge_degraded = event_type != "knowledge_graph.query.completed"
+            knowledge_status = (
+                "healthy"
+                if event_type == "knowledge_graph.query.completed"
+                else "degraded"
+            )
             selected_knowledge = _non_negative_int(payload, "knowledge_graph_results")
             _add_omission(
                 omissions,
@@ -333,8 +354,14 @@ def _project_recall_events(
         selected_memory,
         selected_knowledge,
         merged,
-        memory_degraded,
-        knowledge_degraded,
+        (
+            "degraded"
+            if "degraded" in {context_status, retrieval_status}
+            else "healthy"
+            if context_status is not None or retrieval_status is not None
+            else None
+        ),
+        knowledge_status,
     )
 
 
@@ -356,8 +383,8 @@ def summarize_recall_processing(
         selected_memory,
         selected_knowledge,
         omissions,
-        memory_degraded,
-        knowledge_degraded,
+        memory_status,
+        knowledge_status,
     ) = _project_recall_events(
         events,
         mode=normalized_mode,
@@ -368,8 +395,10 @@ def summarize_recall_processing(
         health = "disabled"
     elif not supported:
         health = "unsupported"
-    elif memory_degraded or knowledge_degraded:
+    elif "degraded" in {memory_status, knowledge_status}:
         health = "degraded"
+    elif memory_status is None and knowledge_status is None:
+        health = "unobserved"
     else:
         health = "healthy"
     return RecallProcessingSummary(
@@ -382,7 +411,7 @@ def summarize_recall_processing(
         capabilities=normalized_capabilities,
         score_domain=(
             "unavailable"
-            if health in {"disabled", "unsupported"}
+            if health in {"disabled", "unsupported", "unobserved"}
             else _score_domain(
                 mode=normalized_mode,
                 capabilities=normalized_capabilities,

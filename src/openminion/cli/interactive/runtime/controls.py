@@ -481,10 +481,13 @@ class RuntimeControlsMixin:
         if self.is_bound:
             for event_prefix in ("turn.outcome", "memory.", "knowledge_graph.query."):
                 events.extend(
-                    self._rt.sessions.list_events(
-                        session_id=self.session_id,
-                        limit=1000,
-                        event_type_prefix=event_prefix,
+                    reversed(
+                        self._rt.sessions.list_events(
+                            session_id=self.session_id,
+                            limit=1000,
+                            newest_first=True,
+                            event_type_prefix=event_prefix,
+                        )
                     )
                 )
         capture = summarize_capture_processing(project_capture_processing(events))

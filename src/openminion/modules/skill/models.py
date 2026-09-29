@@ -344,6 +344,8 @@ class SkillPackage:
             "tags": list(self.tags),
             "tools": list(self.tools),
             "reference_hints": list(self.reference_hints),
+            "scope": self.scope,
+            "agent_id": self.agent_id,
         }
 
     def compact_summary_text(self) -> str:

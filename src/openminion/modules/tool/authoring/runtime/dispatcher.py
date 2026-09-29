@@ -82,6 +82,7 @@ def _run_authored_tool(
                 base64.b64encode(row.source_code.encode("utf-8")).decode("ascii"),
                 row.local_name,
                 json.dumps(args, ensure_ascii=True),
+                row.dependencies_json,
             ],
             cwd=str(workspace),
             env={
@@ -119,10 +120,15 @@ def _run_authored_tool(
 
 _REMOTE_TOOL_BOOTSTRAP = """
 import base64
+import importlib.util
 import json
 import sys
 
 source = base64.b64decode(sys.argv[1]).decode("utf-8")
+dependencies = json.loads(sys.argv[4])
+missing = [name for name in dependencies if importlib.util.find_spec(name) is None]
+if missing:
+    raise ImportError(f"declared dependencies unavailable in sandbox image: {', '.join(missing)}")
 namespace = {}
 exec(compile(source, "tool_impl.py", "exec"), namespace)
 function = namespace.get(sys.argv[2])

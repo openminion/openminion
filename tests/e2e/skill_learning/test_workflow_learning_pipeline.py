@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
+import subprocess
+import sys
 import pytest
 
 
@@ -188,11 +192,72 @@ def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
                 authority=authority,
             )
             assert admitted["active_version_hash"] == addition.version_hash
+
+            package = skill.get_skill(addition.added_skill_id, addition.version_hash)
+            updated_markdown = f"""---
+id: {addition.added_skill_id}
+name: {package.name}
+description: Updated learned workflow candidate
+---
+
+# Summary
+
+Updated learned workflow candidate.
+
+# Procedure
+
+1. Run the updated learned workflow.
+
+# Verification
+
+- Confirm the focused checks pass.
+"""
+            updated_skill_id, updated_version_hash, _ = skill.ingest_text(
+                package.name,
+                updated_markdown,
+                authority=authority,
+            )
+            assert updated_skill_id == addition.added_skill_id
+            skill.admit_skill_version(
+                skill_id=updated_skill_id,
+                version_hash=updated_version_hash,
+                expected_active_version_hash=addition.version_hash,
+                target_status="verified",
+                reason="exercise learned workflow replacement",
+                authority=authority,
+            )
+            rolled_back = skill.rollback_skill_version(
+                skill_id=updated_skill_id,
+                to_version_hash=addition.version_hash,
+                expected_active_version_hash=updated_version_hash,
+                reason="restore proved learned workflow",
+                authority=authority,
+            )
+            assert rolled_back["active_version_hash"] == addition.version_hash
         finally:
             skill.close()
 
         skill = Skill(config)
         try:
+            child = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    _REOPEN_AND_USE_SKILL,
+                    json.dumps(config),
+                    addition.added_skill_id,
+                    addition.version_hash,
+                    package.name,
+                ],
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            child_result = json.loads(child.stdout)
+            assert child_result["skill_id"] == addition.added_skill_id
+            assert child_result["version_hash"] == addition.version_hash
+
             runner = MagicMock()
             runner.skill_api = skill
             runner.profile = SimpleNamespace(
@@ -269,3 +334,37 @@ def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
         assert applied["applied_addition"]["added_skill_id"] == addition.added_skill_id
     finally:
         store.close()
+
+
+_REOPEN_AND_USE_SKILL = """
+import json
+import sys
+
+from openminion.modules.skill.runtime.skill import Skill
+
+config = json.loads(sys.argv[1])
+skill_id = sys.argv[2]
+version_hash = sys.argv[3]
+skill_name = sys.argv[4]
+skill = Skill(config)
+try:
+    match = skill.match(f"use {skill_name} skill", None, "agent-1", k=1)[0]
+    assert match.skill_id == skill_id
+    assert match.version_hash == version_hash
+    run_id = skill.log_run(
+        session_id="separate-process-session",
+        agent_id="agent-1",
+        skill_id=match.skill_id,
+        version_hash=match.version_hash,
+        used_for="plan",
+        outcome="success",
+        evidence_refs=["separate-process-reuse"],
+    )
+    print(json.dumps({
+        "run_id": run_id,
+        "skill_id": match.skill_id,
+        "version_hash": match.version_hash,
+    }, sort_keys=True))
+finally:
+    skill.close()
+""".strip()

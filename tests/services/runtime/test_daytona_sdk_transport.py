@@ -128,3 +128,28 @@ def test_sdk_transport_requires_api_key() -> None:
         transport.open(
             DaytonaConfig(endpoint="https://daytona.example/api"), api_key=""
         )
+
+
+def test_sdk_transport_retains_workspace_when_cleanup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_sdk(monkeypatch)
+    transport = DaytonaSdkTransport()
+    transport.open(
+        DaytonaConfig(endpoint="https://daytona.example/api"), api_key="secret"
+    )
+    transport.create_workspace(name="test", image="python:3.11")
+    sandbox = _Daytona.instances[-1].sandbox
+
+    def fail_delete(*, wait: bool) -> None:
+        raise RuntimeError(f"cleanup failed wait={wait}")
+
+    monkeypatch.setattr(sandbox, "delete", fail_delete)
+
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        transport.destroy_workspace("sandbox-1")
+
+    assert transport._workspaces["sandbox-1"] is sandbox  # noqa: SLF001
+    with pytest.raises(DaytonaTransportError, match="sandbox-1"):
+        transport.close()
+    assert transport._workspaces["sandbox-1"] is sandbox  # noqa: SLF001

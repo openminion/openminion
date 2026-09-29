@@ -14,6 +14,7 @@ from openminion.modules.memory.gateway_turn import (
     MEMORY_FOLLOWUP_FAILED_CODE,
     MEMORY_FOLLOWUP_FAILED_REASON,
     apply_assured_capture_result as _apply_assured_capture_result,
+    build_cacheable_context as _build_cacheable_context,
     derive_memory_patch_id as _maybe_derive_patch_id,
     emit_memory_write_rejected as _emit_memory_write_rejected,
     memory_error_facts,
@@ -142,9 +143,8 @@ def _refresh_capsule_after_write(
 ) -> None:
     prior_capsule = memory_capsule_cache.get(session_id, "")
     try:
-        refreshed_capsule = agent_memory.build_context(
-            session_id=session_id,
-            user_message="",
+        refreshed_capsule = _build_cacheable_context(
+            agent_memory, session_id=session_id
         )
         memory_capsule_cache[session_id] = refreshed_capsule
         outbound_metadata["memory_capsule_refreshed"] = "true"

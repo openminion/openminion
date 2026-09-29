@@ -14,7 +14,12 @@ from ._helpers import (
 )
 
 
-def _base_args(source_code: str, tests: str) -> dict[str, object]:
+def _base_args(
+    source_code: str,
+    tests: str,
+    *,
+    dependencies: list[str] | None = None,
+) -> dict[str, object]:
     return {
         "name": "adder",
         "description": "Add two integers",
@@ -27,12 +32,12 @@ def _base_args(source_code: str, tests: str) -> dict[str, object]:
         },
         "returns_schema": {"type": "integer"},
         "requirements": [],
-        "dependencies": [],
+        "dependencies": dependencies or [],
         "proposed_scope_tier": "POWER_USER",
     }
 
 
-def _inspectable_service(tmp_path):
+def _inspectable_service(tmp_path, *, allowed_dependencies: set[str] | None = None):
     registry = ToolRegistry()
     policy_ctl = FakePolicyCtl()
     runner = RecordingSandboxRunner(
@@ -43,6 +48,7 @@ def _inspectable_service(tmp_path):
         registry=registry,
         policy_ctl=policy_ctl,
         sandbox_runner=runner,
+        allowed_dependencies=allowed_dependencies,
     )
     return service, registry, policy_ctl
 
@@ -125,6 +131,69 @@ def test_register_draft_same_hash_is_idempotent(tmp_path) -> None:
         assert first["idempotent"] is False
         assert second["idempotent"] is True
         assert second["tool_name"] == first["tool_name"]
+    finally:
+        service.close()
+
+
+def test_register_draft_dependency_change_creates_new_version(tmp_path) -> None:
+    service, registry, _ = _inspectable_service(tmp_path, allowed_dependencies={"json"})
+    source = "def adder(x, y):\n    return x + y\n"
+    tests = "def test_add():\n    assert True\n"
+    try:
+        first_draft = service.author_draft(_base_args(source, tests))
+        service.inspect_draft({"draft_id": first_draft["draft_id"], "run_tests": True})
+        first = service.register_draft(
+            {"draft_id": first_draft["draft_id"]}, agent_id="agent-1"
+        )
+
+        second_draft = service.author_draft(
+            _base_args(source, tests, dependencies=["json"])
+        )
+        service.inspect_draft({"draft_id": second_draft["draft_id"], "run_tests": True})
+        second = service.register_draft(
+            {"draft_id": second_draft["draft_id"]}, agent_id="agent-1"
+        )
+
+        assert first["version_hash"] != second["version_hash"]
+        assert second["tool_name"] == "authored.adder@v2"
+        assert second["idempotent"] is False
+        assert "authored.adder@v2" in registry.list()
+    finally:
+        service.close()
+
+
+def test_dependency_manifest_is_canonical_before_versioning(tmp_path) -> None:
+    service, _, _ = _inspectable_service(
+        tmp_path, allowed_dependencies={"json", "math"}
+    )
+    source = "def adder(x, y):\n    return x + y\n"
+    tests = "def test_add():\n    assert True\n"
+    try:
+        first_draft = service.author_draft(
+            _base_args(
+                source,
+                tests,
+                dependencies=[" math ", "json", "math"],
+            )
+        )
+        stored = service.get_draft(str(first_draft["draft_id"]))
+        assert stored is not None
+        assert json.loads(stored.dependencies_json) == ["json", "math"]
+        service.inspect_draft({"draft_id": first_draft["draft_id"], "run_tests": True})
+        first = service.register_draft(
+            {"draft_id": first_draft["draft_id"]}, agent_id="agent-1"
+        )
+
+        second_draft = service.author_draft(
+            _base_args(source, tests, dependencies=["json", "math"])
+        )
+        service.inspect_draft({"draft_id": second_draft["draft_id"], "run_tests": True})
+        second = service.register_draft(
+            {"draft_id": second_draft["draft_id"]}, agent_id="agent-1"
+        )
+
+        assert second["idempotent"] is True
+        assert second["version_hash"] == first["version_hash"]
     finally:
         service.close()
 

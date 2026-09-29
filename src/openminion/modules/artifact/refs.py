@@ -6,6 +6,13 @@ from openminion.modules.artifact.models import parse_ref_or_sha
 
 def normalize_artifact_ref_target(value: Any) -> str | None:
     """Return a valid artifact ref target or ``None`` for non-artifact evidence."""
+    mime = (
+        value.get("mime")
+        if isinstance(value, Mapping)
+        else getattr(value, "mime", None)
+    )
+    if str(mime or "").strip() == "application/x-openminion-capture":
+        return None
     candidates: list[Any] = []
     if isinstance(value, (str, bytes)):
         candidates.append(value.decode() if isinstance(value, bytes) else value)

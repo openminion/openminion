@@ -21,7 +21,6 @@ class DaytonaConfig:
     connect_timeout_s: float = 5.0
     command_timeout_s: float = 30.0
     max_output_bytes: int = 1_048_576
-    verify_tls: bool = True
 
     def __post_init__(self) -> None:
         if not self.endpoint.strip():
@@ -57,8 +56,6 @@ class DaytonaConfig:
         max_output_bytes = int(
             source.get("OPENMINION_DAYTONA_MAX_OUTPUT_BYTES", "").strip() or 1_048_576
         )
-        verify_tls_raw = source.get("OPENMINION_DAYTONA_VERIFY_TLS", "").strip()
-        verify_tls = verify_tls_raw.lower() not in {"0", "false", "no", "off"}
         return cls(
             endpoint=endpoint,
             api_key=source.get("OPENMINION_DAYTONA_API_KEY", "").strip(),
@@ -73,7 +70,6 @@ class DaytonaConfig:
             connect_timeout_s=connect_timeout,
             command_timeout_s=command_timeout,
             max_output_bytes=max_output_bytes,
-            verify_tls=verify_tls,
         )
 
 

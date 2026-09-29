@@ -169,7 +169,7 @@ class ArtifactCtl:
             retrieve_ctl=retrieve_ctl,
             artifact_ref=ref,
             artifact_text=_extract_ingest_text_from_bytes(sample),
-            meta=meta,
+            artifact_meta=artifact_meta,
             fallback_title=label or src.name,
         )
         return ref
@@ -597,7 +597,7 @@ class ArtifactCtl:
             retrieve_ctl=retrieve_ctl,
             artifact_ref=ref,
             artifact_text=_extract_ingest_text_from_bytes(data),
-            meta=meta,
+            artifact_meta=artifact_meta,
             fallback_title=label or original_name,
         )
         return ref
@@ -608,22 +608,18 @@ class ArtifactCtl:
         retrieve_ctl: Any | None,
         artifact_ref: ArtifactRef,
         artifact_text: str,
-        meta: dict[str, Any] | None,
+        artifact_meta: ArtifactMeta,
         fallback_title: str | None,
     ) -> None:
         if retrieve_ctl is None:
             return
 
-        payload_meta = meta or {}
+        payload_meta = artifact_meta.meta_json or {}
         scope = str(payload_meta.get("scope") or "project")
         title = str(payload_meta.get("title") or fallback_title or artifact_ref.ref)
         raw_tags = payload_meta.get("tags")
-        tags: list[str] = []
-        if isinstance(raw_tags, list):
-            for value in raw_tags:
-                text = str(value).strip()
-                if text:
-                    tags.append(text)
+        tag_values = raw_tags if isinstance(raw_tags, list) else []
+        tags = [text for value in tag_values if (text := str(value).strip())]
         if "artifact" not in tags:
             tags.insert(0, "artifact")
 
@@ -633,6 +629,10 @@ class ArtifactCtl:
             "artifact_ref": artifact_ref.ref,
             "text": artifact_text,
             "scope": scope,
+            "scope_key": payload_meta.get("scope_key"),
+            "session_id": artifact_meta.session_id or payload_meta.get("session_id"),
+            "agent_id": artifact_meta.agent_id or payload_meta.get("agent_id"),
+            "project_id": payload_meta.get("project_id"),
             "title": title,
             "tags": tags,
         }

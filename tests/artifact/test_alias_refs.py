@@ -99,6 +99,21 @@ def test_normalize_artifact_ref_targets_dedupes_mixed_shapes() -> None:
     assert targets == [sha]
 
 
+def test_normalize_artifact_ref_targets_skips_capture_provenance() -> None:
+    assert (
+        normalize_artifact_ref_targets(
+            [
+                {
+                    "ref": "capture-1",
+                    "sha256": "a" * 64,
+                    "mime": "application/x-openminion-capture",
+                }
+            ]
+        )
+        == []
+    )
+
+
 def test_remove_reference_edges_accepts_mixed_target_shapes(tmp_path) -> None:
     with artifact_ctl(tmp_path) as ctl:
         ref = ctl.ingest_bytes(b"keep", original_name="keep.txt")

@@ -42,6 +42,7 @@ def test_rcb_dual_query_integration(tmp_path: Path) -> None:
     adapter = MemoryServiceGatewayAdapter(
         memory_service,
         agent_id="rcb-qry-agent",
+        project_id="rcb-qry-project",
         retrieve_ctl=retrieve_ctl,
     )
 
@@ -51,6 +52,7 @@ def test_rcb_dual_query_integration(tmp_path: Path) -> None:
             source_ref="doc://rcb-qry/project-stack",
             text="The project uses Python 3.12 with FastAPI for the service layer.",
             scope="project",
+            scope_key="project:rcb-qry-project",
             tags=["project", "stack"],
             title="Project technology stack",
             unit_kind="chunk",
