@@ -92,13 +92,17 @@ def test_live_minimax_runner_forwards_official_focus_profile(tmp_path: Path) -> 
     }
 
 
-def _write_junit(path: Path, outcomes: tuple[str, ...] = ("pass", "pass")) -> None:
+def _write_junit(
+    path: Path, outcomes: tuple[str, ...] = ("pass", "pass", "pass")
+) -> None:
     from xml.etree.ElementTree import Element, SubElement, ElementTree
 
     root = Element("testsuites")
     suite = SubElement(root, "testsuite")
     for index, outcome in enumerate(outcomes):
-        node = run_cli_focus_e2e.BASELINE_CASES[index % 2]
+        node = run_cli_focus_e2e.BASELINE_CASES[
+            index % len(run_cli_focus_e2e.BASELINE_CASES)
+        ]
         source, name = node.split("::", 1)
         case = SubElement(
             suite, "testcase", classname=source[:-3].replace("/", "."), name=name
@@ -111,12 +115,13 @@ def _write_junit(path: Path, outcomes: tuple[str, ...] = ("pass", "pass")) -> No
 @pytest.mark.parametrize(
     ("outcomes", "complete", "passed", "executed"),
     [
-        (("pass", "pass"), True, 2, 2),
+        (("pass", "pass", "pass"), True, 3, 3),
         (("pass",), False, 1, 1),
-        (("pass", "pass", "pass"), False, 3, 3),
-        (("skipped", "skipped"), True, 0, 0),
-        (("failure", "pass"), True, 1, 2),
-        (("error", "pass"), True, 1, 1),
+        (("pass", "pass"), False, 2, 2),
+        (("pass", "pass", "pass", "pass"), False, 4, 4),
+        (("skipped", "skipped", "skipped"), True, 0, 0),
+        (("failure", "pass", "pass"), True, 2, 3),
+        (("error", "pass", "pass"), True, 2, 2),
     ],
 )
 def test_junit_case_accounting(
@@ -141,20 +146,20 @@ def test_missing_malformed_and_empty_report_cannot_certify(
     result = run_cli_focus_e2e._case_accounting(path, run_cli_focus_e2e.BASELINE_CASES)
     assert result["complete"] is False
     assert result["passed"] == 0
-    assert result["missing_cases"] == list(run_cli_focus_e2e.BASELINE_CASES)
+    assert set(result["missing_cases"]) == set(run_cli_focus_e2e.BASELINE_CASES)
 
 
 @pytest.mark.parametrize(
     ("outcomes", "code", "expected", "disposition"),
     [
-        (("pass", "pass"), 0, 0, "pass"),
+        (("pass", "pass", "pass"), 0, 0, "pass"),
         (("pass",), 0, 1, "failed"),
-        (("skipped", "skipped"), 0, 1, "failed"),
-        (("pass", "pass", "pass"), 0, 1, "failed"),
-        (("failure", "pass"), 1, 1, "failed"),
+        (("skipped", "skipped", "skipped"), 0, 1, "failed"),
+        (("pass", "pass", "pass", "pass"), 0, 1, "failed"),
+        (("failure", "pass", "pass"), 1, 1, "failed"),
         (None, 0, 1, "inconclusive"),
         (None, 124, 124, "inconclusive"),
-        (("pass", "pass"), 130, 130, "inconclusive"),
+        (("pass", "pass", "pass"), 130, 130, "inconclusive"),
     ],
 )
 def test_baseline_summary_requires_executed_exact_cases(
@@ -194,7 +199,7 @@ def test_baseline_summary_requires_executed_exact_cases(
     summary = json.loads(summary_path.read_text())
     assert summary["terminal_disposition"] == disposition
     assert summary["usage"] is None
-    assert summary["case_accounting"]["expected"] == 2
+    assert summary["case_accounting"]["expected"] == 3
     assert len(summary["candidate_commit"]) == 40
     assert len(summary["corpus_digest"]) == 64
     assert summary["environment"]["dependencies"]["pytest"]

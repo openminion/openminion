@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from openminion.modules.memory.models import MemoryCandidate, MemoryRecord
 from openminion.modules.memory.runtime.consolidation.extract import (
+    collect_memory_consolidation_candidates,
     extract_consolidation_payload,
 )
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
@@ -24,6 +25,43 @@ class _NoLLMMemoryAPI:
     def client(self) -> object:
         self.llm_access_count += 1
         raise AssertionError("Phase 1 extraction must not access any LLM client")
+
+
+def test_consolidation_collection_rotates_deferred_candidate() -> None:
+    store = InMemoryMemoryStore()
+    for candidate_id, observed_at in (
+        ("candidate-a", "2026-09-29T00:00:00+00:00"),
+        ("candidate-b", "2026-09-29T00:01:00+00:00"),
+    ):
+        store.candidate_put(
+            MemoryCandidate(
+                candidate_id=candidate_id,
+                session_id="session-1",
+                proposed_scope="agent:test-agent",
+                type="fact",
+                content={"text": candidate_id},
+                created_at=observed_at,
+                updated_at=observed_at,
+            )
+        )
+
+    first = collect_memory_consolidation_candidates(
+        store,
+        proposed_scope="agent:test-agent",
+        limit=1,
+    )
+    assert [item["candidate_id"] for item in first] == ["candidate-a"]
+
+    store.candidate_update(
+        "candidate-a",
+        {"updated_at": "2026-09-29T00:02:00+00:00"},
+    )
+    second = collect_memory_consolidation_candidates(
+        store,
+        proposed_scope="agent:test-agent",
+        limit=1,
+    )
+    assert [item["candidate_id"] for item in second] == ["candidate-b"]
 
 
 def test_extract_consolidation_payload_respects_default_recent_rollout_limit() -> None:

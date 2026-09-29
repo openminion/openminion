@@ -143,6 +143,35 @@ def test_diagnose_retrieval_reports_counts_and_no_result_reason(tmp_path: Path) 
         service.close()
 
 
+def test_status_reports_ambiguous_legacy_rows_and_reingest_action(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    try:
+        clean = service.status()
+        assert clean["legacy_scope"] == {
+            "ambiguous_row_count": 0,
+            "remediation": None,
+        }
+
+        service.ingest_source(
+            source_type="skill",
+            source_ref="skill://legacy",
+            text="Legacy skill content",
+            scope="agent",
+            scope_key="agent:legacy",
+            title="Legacy skill",
+        )
+
+        status = service.status()
+        assert status["legacy_scope"]["ambiguous_row_count"] == 1
+        assert "skill re-ingest-all --agent-id" in str(
+            status["legacy_scope"]["remediation"]
+        )
+    finally:
+        service.close()
+
+
 def test_tag_filter_matches_exact_json_value_case_insensitively(tmp_path: Path) -> None:
     service = _service(tmp_path)
     try:

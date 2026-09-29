@@ -9,7 +9,7 @@ from ...constants import (
     MEMORY_CANDIDATE_STATUS_REJECTED,
 )
 from ...models import MemoryCandidate, MemoryRecord, MemoryType
-from ..base import CandidateListOptions
+from ..base import CandidateListOptions, RecordOrder
 from .candidate_records import (
     _find_target_key_collision,
     _load_record,
@@ -136,7 +136,14 @@ def candidate_list(store: Any, options: CandidateListOptions) -> list[MemoryCand
     if options.status:
         query.append("AND status = :status")
         params["status"] = options.status
-    query.append("ORDER BY created_at ASC")
+    if options.order_by is None:
+        query.append("ORDER BY created_at ASC, candidate_id ASC")
+    else:
+        direction = "ASC" if options.order_by == RecordOrder.UPDATED_AT_ASC else "DESC"
+        query.append(
+            f"ORDER BY COALESCE(updated_at, created_at, '') {direction},"
+            " candidate_id ASC"
+        )
     if options.limit is not None:
         query.append("LIMIT :limit")
         params["limit"] = int(options.limit)

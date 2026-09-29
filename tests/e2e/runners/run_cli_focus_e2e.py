@@ -31,6 +31,7 @@ _BASELINE_ENV = "OPENMINION_CLI_FOCUS_E2E_BASELINE"
 BASELINE_CASES = (
     "tests/e2e/cli/focus/test_live_basic.py::test_live_focus_basic_turn[exact_reply]",
     "tests/e2e/cli/focus/test_live_tools.py::test_live_focus_tool_scenarios[time_tool]",
+    "tests/e2e/cli/focus/test_live_memory_continuity.py::test_live_focus_memory_survives_distinct_session",
 )
 
 
@@ -246,7 +247,7 @@ def _runner_timeout_seconds(env: dict[str, str], suite: Suite) -> int | None:
         if parsed > 0:
             return parsed
     if suite.paths == BASELINE_CASES:
-        return 480
+        return 1500
     if suite.complex:
         return 4200
     if suite.live:

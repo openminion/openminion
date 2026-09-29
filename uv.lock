@@ -3197,7 +3197,7 @@ requires-dist = [
     { name = "scrapling", marker = "extra == 'fetch-scrapling-fetchers'", specifier = ">=0.2.0" },
     { name = "sentence-transformers", marker = "extra == 'semantic'", specifier = ">=3,<6" },
     { name = "slack-sdk", marker = "extra == 'slack'", specifier = ">=3.27,<4" },
-    { name = "sophiagraph", specifier = ">=0.0.10" },
+    { name = "sophiagraph", specifier = ">=0.0.12" },
     { name = "sqlalchemy", marker = "extra == 'postgres'", specifier = ">=2.0,<3" },
     { name = "tqdm", marker = "extra == 'progress'", specifier = ">=4.65" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=5,<7" },
@@ -4939,14 +4939,14 @@ wheels = [
 
 [[package]]
 name = "sophiagraph"
-version = "0.0.10"
+version = "0.0.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "graphfakos" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f9/0b/86b86b097bd09e068217aa8e3e0896df5214e984180a0d59d08e9c3238ed/sophiagraph-0.0.10.tar.gz", hash = "sha256:7e20561581f093d3f93c33d9f338e216d8f27192aa58c9dbfad8b0a73243f67d", size = 562329, upload-time = "2026-09-01T21:02:03.128Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3a/6c/9be2c87463023a6d0b5099f0008147a7ac70bc9fc739804c892f00c23701/sophiagraph-0.0.12.tar.gz", hash = "sha256:28a86ba19f72eed600b5f3efc67698662816b30344b7d2b803af54371885714a", size = 564977, upload-time = "2026-09-29T11:48:47.067Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/12/e8/0512acadf4bd1ea91c44bd36c1b6230840740898d655084e345c09de40ad/sophiagraph-0.0.10-py3-none-any.whl", hash = "sha256:6f0ce15f926a993e13a6faebeb07ae71432ced0e4a37b8070050e8cf7958b80c", size = 468496, upload-time = "2026-09-01T21:02:01.122Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/b9/4e84a6b463a4b155f80919bec3bf40f439808f9833f30fb757770abda8a2/sophiagraph-0.0.12-py3-none-any.whl", hash = "sha256:ff6c2c51dd67dd31ee92091619fb6cb944361f280ec1d6aca085b06a86f29a64", size = 468579, upload-time = "2026-09-29T11:48:45.066Z" },
 ]
 
 [[package]]

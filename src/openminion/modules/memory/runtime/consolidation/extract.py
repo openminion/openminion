@@ -15,6 +15,7 @@ from openminion.modules.memory.runtime.consolidation.backend_access import (
 from openminion.modules.memory.storage.base import (
     CandidateListOptions,
     ListQueryOptions,
+    RecordOrder,
 )
 from openminion.modules.memory.config import (
     MEMORY_CONSOLIDATION_CONTENT_PREVIEW_MAX_CHARS,
@@ -281,6 +282,7 @@ def collect_memory_consolidation_candidates(
                     proposed_scope=str(proposed_scope or "").strip() or None,
                     status="proposed",
                     limit=max(1, int(limit)),
+                    order_by=RecordOrder.UPDATED_AT_ASC,
                 )
             )
         )

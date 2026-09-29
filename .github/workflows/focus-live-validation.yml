@@ -15,7 +15,7 @@ jobs:
   baseline:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 30
     environment: focus-live-validation
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -39,7 +39,7 @@ jobs:
             echo "OPENMINION_CLI_FOCUS_E2E_SUMMARY_OUTPUT=$RUNNER_TEMP/focus-evidence/summary.json"
             echo "OPENMINION_CLI_FOCUS_E2E_CONFIG=$GITHUB_WORKSPACE/tests/e2e/fixtures/focus/minimax-baseline.json"
             echo "OPENMINION_CLI_FOCUS_E2E_AGENT=minimax-m2-7"
-            echo "OPENMINION_CLI_FOCUS_E2E_RUNNER_TIMEOUT_SECONDS=480"
+            echo "OPENMINION_CLI_FOCUS_E2E_RUNNER_TIMEOUT_SECONDS=1500"
           } >> "$GITHUB_ENV"
       - name: Run restricted MiniMax Focus baseline
         env:

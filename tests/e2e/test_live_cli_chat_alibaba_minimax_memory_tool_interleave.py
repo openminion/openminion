@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from tests.helpers.live_cli_chat_alibaba import (
     RAW_TOOL_MARKUP_RE,
+    extract_assistant_messages,
     framework_root,
     parse_tool_results,
     run_cli_session,
@@ -21,6 +23,7 @@ _OFFICIAL_CONFIG = resolve_live_config_path(
     framework_root(),
 )
 _OFFICIAL_AGENT_IDS = ("minimax-m2-5", "minimax-m2-7")
+_CONTINUITY_AGENT_ID = "minimax-m2-7"
 
 
 def _executed_tool_names(tool_results: list[dict]) -> set[str]:
@@ -132,4 +135,61 @@ def test_live_cli_chat_minimax_official_memory_tool_interleave(agent_id: str) ->
         f"debug_payloads={json.dumps(debug_payloads, indent=2)}\n"
         f"recall_turn={json.dumps(recall_turn, indent=2, sort_keys=True)}\n"
         f"transcript={transcript_path}"
+    )
+
+
+@pytest.mark.e2e
+@pytest.mark.timeout(2100)
+def test_live_cli_chat_minimax_ten_session_memory_continuity(tmp_path: Path) -> None:
+    token = "MLQC-CONTINUITY-9F2C"
+    shared_data_root = tmp_path / "shared-data"
+
+    teach = run_cli_session(
+        session_id_prefix="live-cli-memory-continuity-teach",
+        user_input=(
+            "Use memory.write to store this in persistent agent memory with "
+            'record_type="fact" and key="fact:continuity_code". Omit scope so the '
+            f"active agent scope is used. The exact continuity code is {token}. "
+            "After the tool succeeds, reply with exactly: stored\n"
+        ),
+        agent_id=_CONTINUITY_AGENT_ID,
+        config_path=_OFFICIAL_CONFIG,
+        data_root_override=shared_data_root,
+    )
+    teach_messages = extract_assistant_messages(
+        transcript=teach.transcript,
+        session_id=teach.session_id,
+        agent_id=_CONTINUITY_AGENT_ID,
+    )
+    assert teach_messages and teach_messages[-1].strip().splitlines()[-1] == "stored", (
+        f"ten-session teach mismatch: {teach_messages!r}\n"
+        f"transcript={teach.transcript_path}"
+    )
+    for index in range(2, 10):
+        run_cli_session(
+            session_id_prefix=f"live-cli-memory-continuity-{index}",
+            user_input=f"Reply with exactly: continuity filler {index}.\n",
+            agent_id=_CONTINUITY_AGENT_ID,
+            config_path=_OFFICIAL_CONFIG,
+            data_root_override=shared_data_root,
+        )
+
+    recall = run_cli_session(
+        session_id_prefix="live-cli-memory-continuity-recall",
+        user_input=(
+            "What is the exact continuity code I asked you to remember? "
+            "Reply with only the code.\n"
+        ),
+        agent_id=_CONTINUITY_AGENT_ID,
+        config_path=_OFFICIAL_CONFIG,
+        data_root_override=shared_data_root,
+    )
+    messages = extract_assistant_messages(
+        transcript=recall.transcript,
+        session_id=recall.session_id,
+        agent_id=_CONTINUITY_AGENT_ID,
+    )
+    assert messages and messages[-1].strip() == token, (
+        f"ten-session recall mismatch: {messages!r}\n"
+        f"transcript={recall.transcript_path}"
     )

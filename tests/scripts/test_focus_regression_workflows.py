@@ -54,7 +54,7 @@ def test_live_workflow_bootstraps_manual_only_on_trusted_default_branch() -> Non
         == "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
     )
     assert job["environment"] == "focus-live-validation"
-    assert job["timeout-minutes"] == "12"
+    assert job["timeout-minutes"] == "30"
     checkout = job["steps"][0]
     assert checkout["with"]["ref"] == "${{ github.sha }}"
     assert checkout["with"]["persist-credentials"] == "false"

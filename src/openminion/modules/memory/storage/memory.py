@@ -25,6 +25,7 @@ from openminion.modules.memory.models import (
 from openminion.modules.memory.storage.base import (
     CandidateListOptions,
     ListQueryOptions,
+    RecordOrder,
     SearchQueryOptions,
     record_matches_namespaces,
     register_feedback_command,
@@ -423,12 +424,19 @@ class InMemoryRecordStore:
             )
             and (options.status is None or str(item.status) == str(options.status))
         ]
-        rows.sort(
-            key=lambda item: (
-                str(item.created_at or ""),
-                item.candidate_id,
+        if options.order_by is None:
+            rows.sort(
+                key=lambda item: (
+                    str(item.created_at or ""),
+                    item.candidate_id,
+                )
             )
-        )
+        else:
+            rows.sort(key=lambda item: item.candidate_id)
+            rows.sort(
+                key=lambda item: str(item.updated_at or item.created_at or ""),
+                reverse=options.order_by == RecordOrder.UPDATED_AT_DESC,
+            )
         return _apply_limit(rows, options.limit)
 
     def candidate_update(

@@ -32,6 +32,7 @@ from openminion.modules.memory.runtime.consolidation.merge import (
 from openminion.modules.memory.storage.base import (
     CandidateListOptions,
     ListQueryOptions,
+    RecordOrder,
 )
 from openminion.modules.memory.storage.postgres.store import PostgresMemoryStore
 from openminion.modules.memory.storage.postgres import (
@@ -72,7 +73,12 @@ def _record(
     )
 
 
-def _candidate(candidate_id: str, *, status: str = "proposed") -> MemoryCandidate:
+def _candidate(
+    candidate_id: str,
+    *,
+    status: str = "proposed",
+    observed_at: str | None = None,
+) -> MemoryCandidate:
     return MemoryCandidate(
         candidate_id=candidate_id,
         session_id="s1",
@@ -80,6 +86,8 @@ def _candidate(candidate_id: str, *, status: str = "proposed") -> MemoryCandidat
         type="fact",
         content={"text": f"candidate-{candidate_id}"},
         status=status,
+        created_at=observed_at,
+        updated_at=observed_at,
     )
 
 
@@ -177,6 +185,31 @@ def test_candidate_and_promotion_conformance_round_trip(store) -> None:
     assert [item.candidate_id for item in listed] == ["c1"]
     promoted = store.promote_candidate("c1", "agent:main")
     assert promoted.scope == "agent:main"
+
+
+def test_candidate_oldest_updated_order_rotates_deferred_work(store) -> None:
+    for candidate_id, observed_at in (
+        ("candidate-a", "2026-09-29T00:00:00+00:00"),
+        ("candidate-b", "2026-09-29T00:01:00+00:00"),
+    ):
+        store.candidate_put(_candidate(candidate_id, observed_at=observed_at))
+
+    options = CandidateListOptions(
+        status="proposed",
+        limit=1,
+        order_by=RecordOrder.UPDATED_AT_ASC,
+    )
+    assert [item.candidate_id for item in store.candidate_list(options)] == [
+        "candidate-a"
+    ]
+
+    store.candidate_update(
+        "candidate-a",
+        {"updated_at": "2026-09-29T00:02:00+00:00"},
+    )
+    assert [item.candidate_id for item in store.candidate_list(options)] == [
+        "candidate-b"
+    ]
 
 
 def test_checked_consolidation_supersession_conformance(store) -> None:

@@ -652,6 +652,7 @@ class RemoteMemoryStore:
                 "proposed_scope": options.proposed_scope,
                 "status": options.status,
                 "limit": options.limit,
+                "order_by": options.order_by.value if options.order_by else None,
             },
         )
         return self._parse_many(payload, "candidates", self._parse_candidate)

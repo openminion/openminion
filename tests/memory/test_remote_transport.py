@@ -11,6 +11,7 @@ from openminion.modules.memory.runtime.remote_transport import (
 )
 from openminion.modules.memory.storage.base import (
     CandidateListOptions,
+    RecordOrder,
     SearchQueryOptions,
 )
 
@@ -195,7 +196,11 @@ def test_remote_memory_store_candidate_payload_includes_scope_and_meta() -> None
     store = RemoteMemoryStore(transport)
 
     candidates = store.candidate_list(
-        CandidateListOptions(proposed_scope="agent:test", status="proposed")
+        CandidateListOptions(
+            proposed_scope="agent:test",
+            status="proposed",
+            order_by=RecordOrder.UPDATED_AT_ASC,
+        )
     )
     assert len(candidates) == 1
     assert candidates[0].meta["retrieval_hit_count"] == 2
@@ -216,6 +221,7 @@ def test_remote_memory_store_candidate_payload_includes_scope_and_meta() -> None
         if item["operation"] == "candidate_list"
     )
     assert candidate_list_payload["proposed_scope"] == "agent:test"
+    assert candidate_list_payload["order_by"] == "updated_at_asc"
 
 
 def test_remote_memory_store_apply_outcome_feedback_round_trips_count() -> None:
