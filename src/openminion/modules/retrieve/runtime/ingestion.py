@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from ..errors import RetrieveCtlError
@@ -10,6 +10,7 @@ from ..schemas import (
     GroupLongUnitsResult,
     IngestResult,
     RaptorBuildResult,
+    ScopeType,
 )
 from .unitization import estimate_tokens
 
@@ -33,6 +34,73 @@ def _optional_payload_str(payload: dict[str, Any], key: str) -> str | None:
     return None if value is None else (str(value).strip() or None)
 
 
+def _payload_scope_key(payload: dict[str, Any], scope: str) -> str | None:
+    scope_name, separator, scope_identity = scope.partition(":")
+    normalized_scope = scope_name.strip().lower()
+    identity_key = {
+        "session": "session_id",
+        "agent": "agent_id",
+        "project": "project_id",
+    }.get(normalized_scope)
+    payload_identity = (
+        _optional_payload_str(payload, identity_key) if identity_key else None
+    )
+    if (
+        scope_identity.strip()
+        and payload_identity
+        and scope_identity.strip() != payload_identity
+    ):
+        raise RetrieveCtlError(
+            "INVALID_ARGUMENT",
+            "typed scope identities must agree",
+        )
+    expected_identity = (
+        scope_identity.strip()
+        if separator and scope_identity.strip()
+        else payload_identity
+    )
+    explicit = _optional_payload_str(payload, "scope_key")
+    if explicit:
+        key_scope, key_separator, key_identity = explicit.partition(":")
+        if expected_identity and (
+            not key_separator
+            or key_scope.strip().lower() != normalized_scope
+            or key_identity.strip() != expected_identity
+        ):
+            raise RetrieveCtlError(
+                "INVALID_ARGUMENT",
+                "scope_key identity must match the typed scope identity",
+            )
+        if key_separator and key_identity.strip():
+            return f"{key_scope.strip().lower()}:{key_identity.strip()}"
+        return explicit
+    if expected_identity:
+        return f"{normalized_scope}:{expected_identity}"
+    if normalized_scope == "global":
+        return "global:legacy"
+    return None
+
+
+def _scope_pair(
+    service: Any, scope: str, scope_key: str | None
+) -> tuple[ScopeType, str]:
+    scope_name, _, identity = str(scope or "").strip().partition(":")
+    normalized_scope = cast(ScopeType, service._normalize_scope(scope_name))
+    key = str(scope_key or f"{normalized_scope}:{identity.strip() or 'legacy'}").strip()
+    key_scope, separator, key_identity = key.partition(":")
+    if (
+        not separator
+        or not key_identity.strip()
+        or key_scope.lower() != normalized_scope
+        or (identity.strip() and key_identity.strip() != identity.strip())
+    ):
+        raise RetrieveCtlError(
+            "INVALID_ARGUMENT",
+            "scope_key must contain the normalized scope and matching identity",
+        )
+    return normalized_scope, f"{normalized_scope}:{key_identity.strip()}"
+
+
 def _payload_ingest_kwargs(
     payload: dict[str, Any],
     *,
@@ -45,7 +113,7 @@ def _payload_ingest_kwargs(
     scope = _optional_payload_str(payload, "scope") or default_scope
     return {
         "scope": scope,
-        "scope_key": _optional_payload_str(payload, "scope_key"),
+        "scope_key": _payload_scope_key(payload, scope),
         "tags": [str(tag) for tag in tags] + list(extra_tags),
         "title": _optional_payload_str(payload, "title") or default_title,
         "corpus_id": _optional_payload_str(payload, "corpus_id"),
@@ -171,8 +239,7 @@ def ingest_source(
         raise RetrieveCtlError("INVALID_ARGUMENT", "ingest text cannot be empty")
 
     normalized_source_type = service._normalize_source_type(source_type)
-    normalized_scope = service._normalize_scope(scope)
-    normalized_scope_key = str(scope_key or f"{normalized_scope}:legacy").strip()
+    normalized_scope, normalized_scope_key = _scope_pair(service, scope, scope_key)
     normalized_unit_kind = service._normalize_unit_kind(unit_kind or "chunk")
     normalized_tags = sorted(
         {str(tag).strip() for tag in (tags or []) if str(tag).strip()}

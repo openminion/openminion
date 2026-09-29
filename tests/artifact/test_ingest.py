@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -9,6 +10,25 @@ from openminion.modules.artifact.control import _determine_mime
 from openminion.modules.artifact.errors import ArtifactCtlError
 
 from .utils import artifact_ctl, read_fixture_bytes
+
+
+def test_ingest_event_preserves_typed_scope_identity(tmp_path: Path) -> None:
+    retrieve_ctl = Mock()
+    with artifact_ctl(tmp_path) as ctl:
+        ctl.ingest_bytes(
+            b"scoped artifact",
+            original_name="scope.txt",
+            session_id="session-1",
+            agent_id="agent-1",
+            meta={"scope": "project", "project_id": "project-1"},
+            retrieve_ctl=retrieve_ctl,
+        )
+
+    event_type, payload = retrieve_ctl.ingest_event.call_args.args
+    assert event_type == "artifact.created"
+    assert payload["session_id"] == "session-1"
+    assert payload["agent_id"] == "agent-1"
+    assert payload["project_id"] == "project-1"
 
 
 def test_ingest_file_deduplicates_and_preserves_metadata(tmp_path: Path) -> None:

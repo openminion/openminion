@@ -139,6 +139,7 @@ def test_retrieval_context_and_retrieve_hits_carry_score_breakdown(
         source_ref="doc://deploy/rule",
         text="Rollback verification and smoke tests are required before deployment.",
         scope="project",
+        scope_key="project:rank-project",
         tags=["deploy", "ops"],
         title="Deploy guide",
     )

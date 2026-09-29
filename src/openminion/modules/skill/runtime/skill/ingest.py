@@ -815,6 +815,16 @@ class SkillIngestMixin:
                 "source_ref": source_ref,
                 "source_url": source_url,
                 "scope": scope,
+                "scope_key": (
+                    "global:legacy"
+                    if package.scope == "global"
+                    else (
+                        f"agent:{package.agent_id}"
+                        if package.scope == "agent" and package.agent_id
+                        else None
+                    )
+                ),
+                "agent_id": package.agent_id,
                 "title": package.display_name or package.name,
                 "tags": list(package.tags),
                 "trust": str(package.bundle_metadata.get("trust") or ""),

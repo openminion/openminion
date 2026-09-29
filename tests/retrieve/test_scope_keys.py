@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from openminion.modules.retrieve.errors import RetrieveCtlError
 from openminion.modules.retrieve.runtime.retrieve import RetrieveCtl
 from openminion.modules.retrieve.schemas import RetrievalFilters
 
@@ -68,6 +69,135 @@ def test_ingest_defaults_missing_scope_key_to_normalized_legacy_scope(
 
         assert row["scope"] == "agent"
         assert row["scope_key"] == "agent:legacy"
+    finally:
+        service.close()
+
+
+def test_ingest_preserves_colon_qualified_scope_key(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    try:
+        service.ingest_source(
+            source_type="doc",
+            source_ref="doc://qualified",
+            text="qualified project document",
+            scope="project:alpha",
+        )
+        row = service.store.execute(
+            "SELECT scope, scope_key FROM retrievectl_docs WHERE source_ref = ?",
+            ("doc://qualified",),
+        ).fetchone()
+
+        assert row["scope"] == "project"
+        assert row["scope_key"] == "project:alpha"
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize(
+    ("scope", "scope_key"),
+    [
+        ("agent", "global:legacy"),
+        ("project:alpha", "project:beta"),
+    ],
+)
+def test_ingest_rejects_conflicting_scope_key(
+    tmp_path: Path, scope: str, scope_key: str
+) -> None:
+    service = _service(tmp_path)
+    try:
+        with pytest.raises(
+            RetrieveCtlError, match="normalized scope and matching identity"
+        ):
+            service.ingest_source(
+                source_type="doc",
+                source_ref="doc://conflicting-scope",
+                text="must not become globally visible",
+                scope=scope,
+                scope_key=scope_key,
+            )
+    finally:
+        service.close()
+
+
+def test_event_ingest_normalizes_qualified_scope_prefix(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    try:
+        service.ingest_event(
+            "mem.promoted",
+            {
+                "mem_id": "memory-uppercase-scope",
+                "text": "Scoped fact",
+                "scope": "Agent:alpha",
+            },
+        )
+        row = service.store.execute(
+            "SELECT scope, scope_key FROM retrievectl_docs WHERE source_ref = ?",
+            ("mem:memory-uppercase-scope",),
+        ).fetchone()
+
+        assert row["scope"] == "agent"
+        assert row["scope_key"] == "agent:alpha"
+    finally:
+        service.close()
+
+
+def test_event_ingest_derives_scope_key_from_typed_identity(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    try:
+        service.ingest_event(
+            "artifact.created",
+            {
+                "artifact_ref": "artifact://sha256/abc",
+                "text": "typed project artifact",
+                "scope": "project",
+                "project_id": "alpha",
+            },
+        )
+        row = service.store.execute(
+            "SELECT scope_key FROM retrievectl_docs WHERE source_ref = ?",
+            ("artifact://sha256/abc",),
+        ).fetchone()
+
+        assert row["scope_key"] == "project:alpha"
+    finally:
+        service.close()
+
+
+def test_event_ingest_rejects_scope_key_conflicting_with_typed_identity(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    try:
+        with pytest.raises(RetrieveCtlError, match="typed scope identity"):
+            service.ingest_event(
+                "artifact.created",
+                {
+                    "artifact_ref": "artifact://sha256/conflicting",
+                    "text": "must not cross agent boundaries",
+                    "scope": "agent",
+                    "agent_id": "alpha",
+                    "scope_key": "agent:beta",
+                },
+            )
+    finally:
+        service.close()
+
+
+def test_event_ingest_rejects_qualified_scope_conflicting_with_typed_identity(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    try:
+        with pytest.raises(RetrieveCtlError, match="typed scope identities"):
+            service.ingest_event(
+                "artifact.created",
+                {
+                    "artifact_ref": "artifact://sha256/qualified-conflict",
+                    "text": "must not cross agent boundaries",
+                    "scope": "agent:alpha",
+                    "agent_id": "beta",
+                },
+            )
     finally:
         service.close()
 

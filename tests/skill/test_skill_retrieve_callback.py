@@ -379,6 +379,10 @@ def test_skill_retrieve_matches_hyphenated_skill_ids(tmp_path: Path) -> None:
         assert rows
         assert any(str(item.get("ref_type", "")) == "skill" for item in rows)
         assert "Claude API" in str(rows[0].get("text_snippet", ""))
+        scope_rows = retrieve_ctl.store.execute(
+            "SELECT DISTINCT scope_key FROM retrievectl_docs WHERE source_type = 'skill'"
+        ).fetchall()
+        assert {str(row["scope_key"]) for row in scope_rows} == {"agent:agent.demo"}
         fts_row = retrieve_ctl.store.execute(
             """
             SELECT title, fts_text
@@ -455,6 +459,17 @@ def test_skill_reingest_all_backfills_retrieve(tmp_path: Path) -> None:
                 scope="global",
                 agent_id=None,
             )
+            ingest_text_and_admit(
+                skill_ctl,
+                name="Agent Search Three",
+                markdown=(
+                    "---\nname: Agent Search Three\nid: agent_search_three\nstatus: verified\n"
+                    "tools: [web.search]\nrisk: low\n---\n\n"
+                    "## Summary\nSearch for one agent.\n"
+                ),
+                scope="agent",
+                agent_id="agent.demo",
+            )
         finally:
             skill_ctl.close()
 
@@ -479,6 +494,23 @@ def test_skill_reingest_all_backfills_retrieve(tmp_path: Path) -> None:
         ).fetchone()
         assert after_row is not None
         assert int(after_row["count"]) == 2
+
+        agent_args = Namespace(
+            config=skill_cfg,
+            retrieve_ctl=retrieve_ctl,
+            app=None,
+            agent_id="agent.demo",
+        )
+        agent_code, agent_payload = _run_reingest_all(agent_args)
+        assert agent_code == 0
+        assert agent_payload.get("ok") is True
+        scope_rows = retrieve_ctl.store.execute(
+            "SELECT scope_key FROM retrievectl_docs WHERE source_type = 'skill'"
+        ).fetchall()
+        assert {str(row["scope_key"]) for row in scope_rows} == {
+            "global:legacy",
+            "agent:agent.demo",
+        }
 
         rows = retrieve_ctl.retrieve(
             query="parse web pages",

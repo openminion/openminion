@@ -67,6 +67,8 @@ def _catalog(*skill_ids: str) -> list[dict[str, str]]:
             "version_hash": skill_id[0] * 64,
             "tags": [skill_id.split("-", 1)[0]],
             "tools": [f"tool.{skill_id.split('-', 1)[0]}"],
+            "scope": "agent",
+            "agent_id": "agent-1",
         }
         for skill_id in skill_ids
     ]

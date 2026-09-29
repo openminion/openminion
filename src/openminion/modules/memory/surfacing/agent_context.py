@@ -33,6 +33,22 @@ from openminion.modules.prompting.context_blocks import DYNAMIC_MEMORY_BLOCK_HEA
 _logger = logging.getLogger(__name__)
 
 
+def _degraded_precision_selection(
+    meta: dict[str, str], precision: Any
+) -> MemoryRetrievalEvidenceSelection:
+    reason = precision.reason or precision.status
+    meta.update(
+        memory_recall_status=precision.status,
+        memory_recall_reason=precision.reason,
+        memory_retrieval_status="degraded",
+        memory_retrieval_reason=reason,
+    )
+    omission = MemoryEvidenceOmission("precision-recall", (), reason)
+    return MemoryRetrievalEvidenceSelection(
+        omissions=(omission,), metadata=tuple(meta.items())
+    )
+
+
 class ContextBuildersMixin:
     _pipeline: Any
     _precision_options: Any
@@ -347,11 +363,14 @@ class ContextBuildersMixin:
     def _memory_hits_from_records(self, records: list[Any]) -> list[dict[str, Any]]:
         memory_hits: list[dict[str, Any]] = []
         for rec in records:
-            title = getattr(rec, "title", None) or ""
+            title = str(getattr(rec, "title", None) or "").strip()
             content_val = getattr(rec, "content", None) or ""
             if isinstance(content_val, dict):
-                content_val = str(content_val.get("text", str(content_val)))
-            text = str(title or str(content_val)[:120]).strip()
+                content_val = content_val.get(
+                    "text", content_val.get("summary_text", str(content_val))
+                )
+            content = str(content_val).strip()
+            text = content or title
             if not text:
                 continue
             record_meta = dict(getattr(rec, "meta", {}) or {})
@@ -371,6 +390,8 @@ class ContextBuildersMixin:
                     "meta": {
                         **record_meta,
                         "record_id": str(getattr(rec, "id", "") or ""),
+                        "record_key": str(getattr(rec, "key", "") or ""),
+                        "record_title": title,
                         "record_type": str(getattr(rec, "type", "") or ""),
                         "record_source": str(getattr(rec, "source", "") or ""),
                         "record_tier": str(getattr(rec, "tier", "") or ""),
@@ -379,7 +400,11 @@ class ContextBuildersMixin:
                         ),
                         "record_tags": list(getattr(rec, "tags", []) or []),
                         "record_valid_to": str(getattr(rec, "valid_to", "") or ""),
-                        "record_content": str(content_val),
+                        "record_evidence_refs": [
+                            str(getattr(ref, "ref", "") or "")
+                            for ref in getattr(rec, "evidence_refs", ()) or ()
+                            if str(getattr(ref, "ref", "") or "")
+                        ],
                     },
                     "source_group": "memory",
                 }
@@ -630,6 +655,8 @@ class ContextBuildersMixin:
     ) -> tuple[str, dict[str, str]]:
         limit = self._capsule_max_chars
         meta = build_empty_meta("capsule", limit)
+        meta["memory_context_status"] = "healthy"
+        meta["memory_context_reason"] = "built"
 
         try:
             self._maybe_run_session_lifecycle(session_id=session_id)
@@ -676,6 +703,13 @@ class ContextBuildersMixin:
                 )
                 else "false"
             )
+            meta["memory_context_record_count"] = str(
+                len(recent_summaries)
+                + len(agent_records)
+                + len(agent_summary_records)
+                + len(current_session_summary_records)
+                + len(session_records)
+            )
             self._touch_records(
                 recent_summaries
                 + agent_records
@@ -705,6 +739,8 @@ class ContextBuildersMixin:
                 session_id,
                 exc,
             )
+            meta["memory_context_status"] = "degraded"
+            meta["memory_context_reason"] = "memory_context_build_failed"
             return "", meta
 
     def build_retrieval_context(
@@ -797,6 +833,7 @@ class ContextBuildersMixin:
     ) -> MemoryRetrievalEvidenceSelection:
         limit = max(128, max_chars or self._retrieval_max_chars)
         meta = build_empty_meta("retrieval", limit)
+        meta.update(memory_retrieval_status="healthy", memory_retrieval_reason="built")
         if not user_message.strip():
             return MemoryRetrievalEvidenceSelection(metadata=tuple(meta.items()))
 
@@ -808,23 +845,12 @@ class ContextBuildersMixin:
                 query=user_message,
                 scopes=retrieval_scopes,
             )
-            options = self._precision_options
             if (
-                options.mode == "sophiagraph"
+                self._precision_options.mode == "sophiagraph"
                 and precision is not None
                 and precision.status != "ok"
             ):
-                meta["memory_recall_status"] = precision.status
-                meta["memory_recall_reason"] = precision.reason
-                omission = MemoryEvidenceOmission(
-                    item_id="precision-recall",
-                    provenance_ids=(),
-                    reason=precision.reason or precision.status,
-                )
-                return MemoryRetrievalEvidenceSelection(
-                    omissions=(omission,),
-                    metadata=tuple(meta.items()),
-                )
+                return _degraded_precision_selection(meta, precision)
 
             retrieve_hits, merged_hits = self._select_retrieval_evidence_hits(
                 memory_hits=memory_hits,
@@ -887,6 +913,8 @@ class ContextBuildersMixin:
                 session_id,
                 exc,
             )
+            meta["memory_retrieval_status"] = "degraded"
+            meta["memory_retrieval_reason"] = "memory_retrieval_failed"
             return MemoryRetrievalEvidenceSelection(metadata=tuple(meta.items()))
 
     def build_retrieval_context_with_metadata(

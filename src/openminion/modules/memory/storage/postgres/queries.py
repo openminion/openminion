@@ -157,19 +157,25 @@ def search(store: Any, options: SearchQueryOptions) -> list[MemoryRecord]:
     raw_scores = [float(row.get("score") or 0.0) for row in scored_rows]
     min_score = min(raw_scores)
     score_span = max(raw_scores) - min_score
-    return [
-        replace(
-            store._create_record_from_row(row),
-            meta={
-                **dict(store._create_record_from_row(row).meta or {}),
-                "tsrank_raw_score": float(row.get("score") or 0.0),
-                "tsrank_score": 1.0
-                if score_span <= 0
-                else (float(row.get("score") or 0.0) - min_score) / score_span,
-            },
+    records: list[MemoryRecord] = []
+    for row in scored_rows:
+        raw_score = float(row.get("score") or 0.0)
+        normalized_score = (
+            1.0 if score_span <= 0 else (raw_score - min_score) / score_span
         )
-        for row in scored_rows
-    ]
+        record = store._create_record_from_row(row)
+        records.append(
+            replace(
+                record,
+                meta={
+                    **dict(record.meta or {}),
+                    "bm25_score": normalized_score,
+                    "tsrank_raw_score": raw_score,
+                    "tsrank_score": normalized_score,
+                },
+            )
+        )
+    return records
 
 
 def retrieve_by_entities(

@@ -286,7 +286,7 @@ def test_tmac03_direct_write_never_produces_supersession_from_prose_negation() -
         (str(event), dict(payload or {}))
     )
 
-    ok = adapter._write_record_safe(  # noqa: SLF001
+    ok = adapter._write_record(  # noqa: SLF001
         scope=_AGENT_SCOPE,
         record_type="user_preference",
         title="Light mode",

@@ -475,6 +475,17 @@ def _reingest_skill_row(
         )
         payload = {
             "scope": str(getattr(package, "scope", "global") or "global"),
+            "scope_key": (
+                "global:legacy"
+                if str(getattr(package, "scope", "global") or "global") == "global"
+                else (
+                    f"agent:{package.agent_id}"
+                    if str(getattr(package, "scope", "")) == "agent"
+                    and getattr(package, "agent_id", None)
+                    else None
+                )
+            ),
+            "agent_id": getattr(package, "agent_id", None),
             "title": str(getattr(package, "name", package.skill_id)),
             "tags": list(getattr(package, "tags", []) or []),
             "text": _build_retrieve_text_from_skill(package),
@@ -539,7 +550,8 @@ def _run_skill_reingest_all(args, app: Any | None = None) -> int:
     try:
         ctl = Skill(args.config)
         try:
-            rows = ctl.list_skills({})
+            agent_id = getattr(args, "agent_id", None)
+            rows = ctl.list_skills({"agent_id": agent_id} if agent_id else {})
             failures: list[dict[str, str]] = []
             reingested = 0
             for row in rows:
@@ -931,6 +943,7 @@ def _register_skill_reingest_all_subcommand(skill_subcommands) -> None:
         "re-ingest-all",
         help="Backfill RetrieveCtl units from already-ingested skills",
     )
+    parser.add_argument("--agent-id", default=None, help="Agent ID to re-ingest")
     _add_skill_config_arg(parser)
     parser.set_defaults(handler=_run_skill_reingest_all, needs_app=False)
 

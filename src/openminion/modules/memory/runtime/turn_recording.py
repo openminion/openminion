@@ -1,6 +1,8 @@
 import sqlite3
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
+from openminion.base.time import utc_now_iso
+from openminion.modules.memory.errors import MemctlError, StoreWriteError
 from openminion.modules.memory.models import MemoryPatchResult, MemoryRecord
 from openminion.modules.memory.runtime.retention import (
     RuntimeMemoryRetentionPolicy,
@@ -14,8 +16,17 @@ from openminion.modules.memory.runtime.extraction.records import (
 )
 
 
+def _raise_primary_write_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, MemctlError):
+        raise exc
+    raise StoreWriteError(
+        "Memory primary write failed.",
+        details={"reason_code": "memory_primary_write_failed"},
+    ) from exc
+
+
 class TurnRecordingMixin:
-    def _promote_candidate_safe(
+    def _promote_candidate(
         self,
         *,
         scope: str,
@@ -27,7 +38,7 @@ class TurnRecordingMixin:
         meta: dict[str, Any] | None,
         trace_event: str,
         trace_payload: dict[str, Any],
-    ) -> MemoryRecord | None:
+    ) -> MemoryRecord:
         try:
             candidate_id = self._service.stage_candidate(
                 scope=scope,
@@ -50,15 +61,9 @@ class TurnRecordingMixin:
             self._trace(trace_event, trace_payload)
             return cast(MemoryRecord, record)
         except Exception as exc:
-            self._logger.warning(
-                "memory.record_turn: failed to promote candidate scope=%s type=%s error=%s",
-                scope,
-                record_type,
-                exc,
-            )
-            return None
+            _raise_primary_write_error(exc)
 
-    def _write_record_safe(
+    def _write_record(
         self,
         *,
         scope: str,
@@ -70,7 +75,7 @@ class TurnRecordingMixin:
         confidence: float | None = None,
         trace_event: str,
         trace_payload: dict[str, Any],
-    ) -> MemoryRecord | None:
+    ) -> MemoryRecord:
         del entities
         try:
             record_id = self._service.write_record(
@@ -81,16 +86,21 @@ class TurnRecordingMixin:
                 tags=tags,
                 confidence=confidence,
             )
-            self._trace(trace_event, trace_payload)
-            return cast(MemoryRecord, self._service.get(str(record_id)))
         except Exception as exc:
-            self._logger.warning(
-                "memory.record_turn: failed to write record scope=%s type=%s error=%s",
-                scope,
-                record_type,
-                exc,
-            )
-            return None
+            _raise_primary_write_error(exc)
+        self._trace(trace_event, trace_payload)
+        now = utc_now_iso()
+        return MemoryRecord(
+            id=str(record_id),
+            scope=scope,
+            type=record_type,
+            title=title,
+            content=content,
+            tags=tags,
+            confidence=confidence if confidence is not None else 0.5,
+            created_at=now,
+            updated_at=now,
+        )
 
     def _ingest_retrieve_safe(
         self,
@@ -126,7 +136,7 @@ class TurnRecordingMixin:
         session_scope = f"session:{session_id}"
         facts_added = 0
         for fact_text in facts:
-            if self._write_record_safe(
+            self._write_record(
                 scope=session_scope,
                 record_type="fact",
                 title=fact_text[:120],
@@ -139,8 +149,8 @@ class TurnRecordingMixin:
                     "preview": fact_text[:60],
                     "session_id": session_id,
                 },
-            ):
-                facts_added += 1
+            )
+            facts_added += 1
         return facts_added
 
     def _record_explicit_durable_facts(
@@ -153,7 +163,7 @@ class TurnRecordingMixin:
             projection = explicit_durable_fact_projection_from_content(fact_text)
             if projection is not None:
                 scope = self._scope_for_durable_record(projection.record_type)
-                record = self._promote_candidate_safe(
+                record = self._promote_candidate(
                     scope=scope,
                     record_type=projection.record_type,
                     title=projection.title,
@@ -174,19 +184,18 @@ class TurnRecordingMixin:
                         "session_id": session_id,
                     },
                 )
-                if record:
-                    self._ingest_retrieve_safe(
-                        record=record,
-                        trace_event="memory.ingest_memory.called",
-                        trace_payload={
-                            "scope": scope,
-                            "preview": projection.content[:60],
-                        },
-                    )
+                self._ingest_retrieve_safe(
+                    record=record,
+                    trace_event="memory.ingest_memory.called",
+                    trace_payload={
+                        "scope": scope,
+                        "preview": projection.content[:60],
+                    },
+                )
                 continue
             durable_type = explicit_memory_type_from_content(fact_text)
             scope = self._scope_for_durable_record(durable_type)
-            record = self._write_record_safe(
+            record = self._write_record(
                 scope=scope,
                 record_type=durable_type,
                 title=fact_text[:120],
@@ -201,18 +210,17 @@ class TurnRecordingMixin:
                     "session_id": session_id,
                 },
             )
-            if record:
-                self._ingest_retrieve_safe(
-                    record=record,
-                    trace_event="memory.ingest_memory.called",
-                    trace_payload={"scope": scope, "preview": fact_text[:60]},
-                )
+            self._ingest_retrieve_safe(
+                record=record,
+                trace_event="memory.ingest_memory.called",
+                trace_payload={"scope": scope, "preview": fact_text[:60]},
+            )
 
     def _record_session_todos(self, *, todos_add: list[str], session_id: str) -> int:
         session_scope = f"session:{session_id}"
         todos_added = 0
         for todo_text in todos_add:
-            if self._write_record_safe(
+            self._write_record(
                 scope=session_scope,
                 record_type="task",
                 title=todo_text[:120],
@@ -225,8 +233,8 @@ class TurnRecordingMixin:
                     "preview": todo_text[:60],
                     "session_id": session_id,
                 },
-            ):
-                todos_added += 1
+            )
+            todos_added += 1
         return todos_added
 
     def _complete_session_todos(self, *, todos_done: list[str], session_id: str) -> int:
@@ -247,15 +255,14 @@ class TurnRecordingMixin:
                     rec_title = str(getattr(rec, "title", "") or "").lower()
                     rec_content = str(getattr(rec, "content", "") or "").lower()
                     if done_text_lower in rec_title or done_text_lower in rec_content:
-                        self._service._store.delete(rec.id)
+                        self._service.delete_record(
+                            rec.id,
+                            reason="turn_todo_completed",
+                        )
                         completed += 1
                         break
             except Exception as exc:
-                self._logger.warning(
-                    "memory.record_turn: failed to mark done session_id=%s error=%s",
-                    session_id,
-                    exc,
-                )
+                _raise_primary_write_error(exc)
         return completed
 
     def _enforce_runtime_retention(self, *, session_id: str) -> None:

@@ -31,6 +31,7 @@ from openminion.modules.context.pack.evidence import (
     map_memory_evidence as _map_memory_evidence,
     pack_evidence_context as _pack_evidence_context,
 )
+from openminion.modules.memory.gateway_turn import recall_observation_payload
 from openminion.modules.memory.surfacing.evidence import (
     MemoryRetrievalEvidenceSelection,
 )
@@ -248,7 +249,13 @@ def _build_cached_memory_context(
                 session_id=session_id,
                 user_message="",
             )
-            memory_capsule_cache[session_id] = cached
+            if memory_context_meta.get("memory_context_status") != "degraded":
+                memory_capsule_cache[session_id] = cached
+        else:
+            memory_context_meta = {
+                "memory_context_status": "healthy",
+                "memory_context_reason": "cache_hit",
+            }
         return cached, memory_context_meta, capsule_cache_hit
     memory_context, memory_context_meta = _build_memory_capsule_payload(
         agent_memory,
@@ -256,18 +263,6 @@ def _build_cached_memory_context(
         user_message=user_message,
     )
     return memory_context, memory_context_meta, capsule_cache_hit
-
-
-def _memory_envelope_details(meta: dict[str, str]) -> dict[str, str]:
-    return {
-        "envelope_truncated": str(
-            meta.get("memory_envelope_truncated", "false") or "false"
-        ).lower(),
-        "envelope_reasons": str(
-            meta.get("memory_envelope_truncation_reasons", "") or ""
-        ),
-        "envelope_limit_chars": str(meta.get("memory_envelope_limit_chars", "") or ""),
-    }
 
 
 def _emit_memory_build_events(
@@ -300,7 +295,7 @@ def _emit_memory_build_events(
             "cache_hit": str(capsule_cache_hit).lower(),
             "capsule_chars": str(len(memory_context)),
             "capsule_fingerprint": _text_fingerprint(memory_context),
-            **_memory_envelope_details(memory_context_meta),
+            **recall_observation_payload(memory_context_meta),
         },
     )
     if not memory_dynamic_retrieval_enabled:
@@ -318,7 +313,7 @@ def _emit_memory_build_events(
             "enabled": str(memory_dynamic_retrieval_enabled).lower(),
             "retrieval_chars": str(len(memory_retrieval_context)),
             "retrieval_fingerprint": _text_fingerprint(memory_retrieval_context),
-            **_memory_envelope_details(memory_retrieval_meta),
+            **recall_observation_payload(memory_retrieval_meta),
         },
     )
 
@@ -748,6 +743,8 @@ def _record_memory_context_failure(
         },
     )
     turn_context.memory_context_meta = {
+        "memory_context_status": "degraded",
+        "memory_context_reason": error_facts["reason_code"],
         "memory_context_error_code": error_facts["error_code"],
         "memory_context_reason_code": error_facts["reason_code"],
     }

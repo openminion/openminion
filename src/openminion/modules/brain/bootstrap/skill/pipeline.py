@@ -655,6 +655,8 @@ def _load_catalog(*, skill_api: Any, agent_id: str) -> list[dict[str, Any]]:
                 "tags": _normalized_text_list(item.get("tags")),
                 "tools": _normalized_text_list(item.get("tools")),
                 "reference_hints": _normalized_text_list(item.get("reference_hints")),
+                "scope": str(item.get("scope", "") or "").strip(),
+                "agent_id": str(item.get("agent_id", "") or "").strip() or None,
             }
         )
     return catalog

@@ -223,7 +223,7 @@ def test_recall_status_distinguishes_disabled_unsupported_and_degraded() -> None
     recovered = summarize_recall_processing(
         [
             {"event_type": "memory.context.failed", "payload": {}},
-            {"event_type": "memory.retrieval.built", "payload": {}},
+            {"event_type": "memory.context.built", "payload": {}},
         ],
         enabled=True,
         mode="shadow",
@@ -234,6 +234,25 @@ def test_recall_status_distinguishes_disabled_unsupported_and_degraded() -> None
     assert unsupported.health == "unsupported"
     assert degraded.health == "degraded"
     assert recovered.health == "healthy"
+
+
+def test_recall_status_requires_observation_and_recovers_per_lane() -> None:
+    unobserved = summarize_recall_processing(
+        [], enabled=True, mode="legacy", supported=True
+    )
+    separate_lane_failure = summarize_recall_processing(
+        [
+            {"event_type": "memory.context.failed", "payload": {}},
+            {"event_type": "memory.retrieval.built", "payload": {}},
+        ],
+        enabled=True,
+        mode="legacy",
+        supported=True,
+    )
+
+    assert unobserved.health == "unobserved"
+    assert unobserved.score_domain == "unavailable"
+    assert separate_lane_failure.health == "degraded"
 
 
 def test_capture_and_recall_status_events_are_registered() -> None:
@@ -265,14 +284,20 @@ def test_runtime_memory_report_uses_content_free_capture_and_recall_status() -> 
     ]
 
     class _Sessions:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
         def list_events(self, **kwargs):
+            self.calls.append(kwargs)
             prefix = kwargs["event_type_prefix"]
             return [event for event in events if event["event_type"].startswith(prefix)]
+
+    sessions = _Sessions()
 
     class _Controls(RuntimeControlsMixin):
         is_bound = True
         session_id = "session-1"
-        _rt = SimpleNamespace(sessions=_Sessions())
+        _rt = SimpleNamespace(sessions=sessions)
 
         def list_memory_records(self):
             return []
@@ -304,6 +329,7 @@ def test_runtime_memory_report_uses_content_free_capture_and_recall_status() -> 
     assert "omissions   budget 1" in body
     assert "private transcript" not in body
     assert "private query" not in body
+    assert all(call["newest_first"] is True for call in sessions.calls)
 
 
 def test_disabled_memory_emits_terminal_content_free_rejection() -> None:
