@@ -13,6 +13,7 @@ from openminion.modules.tool.base import (
     ToolExecutionResult,
 )
 from openminion.modules.tool.family.events import emit_family_event
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.runtime.context import RuntimeContext
 from openminion.tools.config import resolve_tool_env
 
@@ -20,6 +21,7 @@ from .models import (
     ArtifactRef,
     BrowserCallArgs,
     BrowserError,
+    BrowserOp,
     BrowserResult,
     InstanceInfo,
     SUPPORTED_OPS,
@@ -163,6 +165,25 @@ BROWSER_TOOL_INPUT_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": {"type": "object"},
         },
+        "files": {"type": "array", "items": {"type": "string"}},
+        "target": {
+            "type": "object",
+            "properties": {
+                "ref": {"type": "string"},
+                "selector": {"type": "string"},
+                "role": {
+                    "type": "object",
+                    "properties": {
+                        "role": {"type": "string"},
+                        "name": {"type": "string"},
+                        "exact": {"type": "boolean"},
+                    },
+                    "required": ["role"],
+                    "additionalProperties": False,
+                },
+            },
+            "additionalProperties": False,
+        },
         "output": {
             "type": "object",
             "properties": {
@@ -299,6 +320,10 @@ class BrowserTool(Tool):
         error_message = ""
         if isinstance(error_payload, Mapping):
             normalized_data.setdefault("error", dict(error_payload))
+            normalized_data.setdefault("error_code", str(error_payload.get("code", "")))
+            details = error_payload.get("details")
+            if isinstance(details, Mapping):
+                normalized_data.setdefault("details", dict(details))
             error_message = str(
                 error_payload.get("message") or error_payload.get("code") or ""
             )
@@ -332,9 +357,10 @@ class BrowserTool(Tool):
         call: BrowserCallArgs | None = None
         provider_id = ""
         try:
+            call = BrowserCallArgs.model_validate(args)
+            self._ensure_upload_confirmed(call=call, ctx=ctx)
             provider, provider_ctx, call = self._select_provider_for_call(
-                args=args,
-                ctx=ctx,
+                call=call, ctx=ctx
             )
             provider_id = provider.provider_id
             self._emit_event(
@@ -392,16 +418,17 @@ class BrowserTool(Tool):
                 },
             }
         except KeyError as exc:
+            message = str(exc.args[0]) if exc.args else "browser resource not found"
             self._emit_event(
                 "failed",
                 provider_id=provider_id,
                 call=call,
-                payload={"error": str(exc)},
+                payload={"error": message},
                 ctx=ctx,
             )
             return {
                 "ok": False,
-                "error": {"code": "NOT_FOUND", "message": str(exc), "details": {}},
+                "error": {"code": "NOT_FOUND", "message": message, "details": {}},
             }
         except Exception as exc:  # pragma: no cover - protective catch
             self._emit_event(
@@ -420,13 +447,26 @@ class BrowserTool(Tool):
                 },
             }
 
+    @staticmethod
+    def _ensure_upload_confirmed(
+        *, call: BrowserCallArgs, ctx: _BrowserExecutionContext
+    ) -> None:
+        if call.op != BrowserOp.TAB_UPLOAD.value or bool(
+            getattr(ctx.runtime, "confirm", False)
+        ):
+            return
+        raise BrowserToolError(
+            TOOL_ERROR_CONFIRM_REQUIRED,
+            "Uploading files requires operator confirmation.",
+            {"requires_confirm": True, "op": call.op, "files": list(call.files)},
+        )
+
     def _select_provider_for_call(
         self,
         *,
-        args: dict[str, Any],
+        call: BrowserCallArgs,
         ctx: _BrowserExecutionContext,
     ) -> tuple[BrowserProvider, BrowserProviderContext, BrowserCallArgs]:
-        call = BrowserCallArgs.model_validate(args)
         routing_provider_id, routing_instance_id, routing_tab_id = (
             self._routing_state_identifiers(call=call, ctx=ctx)
         )
@@ -497,7 +537,6 @@ class BrowserTool(Tool):
             capabilities=provider.capabilities,
             data={"op": call.op},
         )
-
         if isinstance(instance := payload.get("instance"), Mapping):
             out.instance = InstanceInfo(
                 id=str(instance.get("id", "")),
@@ -512,12 +551,10 @@ class BrowserTool(Tool):
             out.instance = InstanceInfo(id=str(payload["instance_id"]))
         if isinstance(payload.get("instances"), list):
             out.instances = extract_instances(payload)
-
         if isinstance(tab := payload.get("tab"), Mapping):
             out.tab = self._tab_info(tab)
         elif isinstance(payload.get("tab_id"), str):
             out.tab = self._tab_info(payload)
-
         tabs = payload.get("tabs")
         if isinstance(tabs, list):
             out.tabs = [self._tab_info(row) for row in tabs if isinstance(row, Mapping)]
@@ -582,6 +619,8 @@ class BrowserTool(Tool):
             out.data["raw"] = dict(payload["raw"])
         if isinstance(payload.get("resolution"), Mapping):
             out.data["resolution"] = dict(payload["resolution"])
+        if isinstance(payload.get("uploaded"), list):
+            out.data["uploaded"] = [str(item) for item in payload["uploaded"]]
 
         return out
 
@@ -614,6 +653,11 @@ def _ensure_discovered_providers() -> None:
     global _DISCOVERED_PROVIDER_ENTRYPOINTS
     if _DISCOVERED_PROVIDER_ENTRYPOINTS:
         return
+    from .providers.pinchtab.plugin import register as register_pinchtab
+    from .providers.playwright.plugin import register as register_playwright
+
+    register_pinchtab()
+    register_playwright()
     try:
         _PROVIDER_REGISTRY.load_entry_points()
     except Exception as exc:  # noqa: BLE001

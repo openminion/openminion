@@ -335,6 +335,29 @@ jobs:
           python -m openminion --config "$config" doctor --json
           python -m openminion --config "$config" agent --message "hello"
 
+  browser-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Bootstrap browser test environment
+        run: |
+          python -m venv .venv
+          .venv/bin/python3.11 -m pip install --upgrade pip setuptools wheel
+          .venv/bin/python3.11 -m pip install -e ".[dev]"
+          .venv/bin/python3.11 -m playwright install --with-deps chromium
+      - name: Run required canonical Chromium flow
+        env:
+          OPENMINION_REQUIRE_CHROMIUM: "1"
+        run: >-
+          .venv/bin/python3.11 -m pytest -q
+          tests/browser-playwright/test_e2e_playwright_canonical.py
+
   focus-e2e:
     runs-on: ubuntu-latest
     steps:

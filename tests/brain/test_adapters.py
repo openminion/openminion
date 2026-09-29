@@ -3931,6 +3931,56 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
         self.assertEqual(calls[0]["OPENMINION_PINCHTAB_ALLOW_EXTERNAL"], "1")
         self.assertEqual(calls[1]["PINCHTAB_AUTOSTART"], "1")
 
+    def test_runtime_tool_replay_receives_operator_confirmation(self) -> None:
+        from openminion.modules.brain.adapters.tool import ToolAdapter
+        from openminion.modules.tool.base import Tool, ToolExecutionResult
+
+        confirmations: list[bool] = []
+
+        class _ConfirmingTool(Tool):
+            name = "browser"
+            description = "browser"
+
+            def execute(self, arguments, context):
+                del arguments
+                confirmations.append(context.confirm)
+                if not context.confirm:
+                    return ToolExecutionResult(
+                        tool_name=self.name,
+                        ok=False,
+                        content="",
+                        error="approval required",
+                        data={
+                            "error_code": "CONFIRM_REQUIRED",
+                            "details": {"approval_id": "browser-upload"},
+                        },
+                    )
+                return ToolExecutionResult(
+                    tool_name=self.name,
+                    ok=True,
+                    content="upload complete",
+                    verified=True,
+                )
+
+        class _RuntimeRegistry:
+            def __init__(self) -> None:
+                self._tools = {"browser": _ConfirmingTool()}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = ToolAdapter(
+                workspace_root=Path(tmp),
+                runtime_registry=_RuntimeRegistry(),
+            )
+            adapter.set_approval_callback(lambda *_args: True)
+            result = adapter.execute(
+                command={"tool_name": "browser", "args": {"op": "tab.upload"}},
+                session_id="s1",
+                trace_id="t1",
+            )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(confirmations, [False, True])
+
     def test_os_adapter_runtime_registry_tools_receive_workspace_metadata(
         self,
     ) -> None:

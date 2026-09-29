@@ -10,6 +10,7 @@ from openminion.base.config.env import (
     resolve_environment_config_with_explicit_env,
 )
 from openminion.modules.tool.runtime.resource_selectors import ResourceSelectors
+from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.tools.browser import (
@@ -19,6 +20,7 @@ from openminion.tools.browser import (
     BrowserRoutingConfig,
 )
 from openminion.tools.browser.models import (
+    ActionTarget,
     BrowserAction,
     InstanceSpec,
     NavigateOptions,
@@ -50,6 +52,7 @@ class _Provider:
             snapshot_refs=True,
             selector_actions=True,
             batch_actions=True,
+            file_upload=True,
             pdf_export=True,
             tab_locking=True,
         )
@@ -64,6 +67,9 @@ class _Provider:
     tab_forward_calls: list[str] = field(default_factory=list)
     tab_wait_calls: list[tuple[str, int | None]] = field(default_factory=list)
     tab_action_calls: list[tuple[str, str]] = field(default_factory=list)
+    tab_upload_calls: list[tuple[str, list[str], ActionTarget | None]] = field(
+        default_factory=list
+    )
     tabs_payload: list[dict] = field(
         default_factory=lambda: [
             {"id": "t1", "url": "https://example.com", "title": "Example"}
@@ -166,6 +172,17 @@ class _Provider:
     def tab_screenshot(self, ctx, tab_id: str, options: OutputOptions | None = None):
         del ctx, tab_id, options
         return {"kind": "screenshot", "content": b"abc"}
+
+    def tab_upload(
+        self,
+        ctx,
+        tab_id: str,
+        files: list[str],
+        target: ActionTarget | None = None,
+    ):
+        del ctx
+        self.tab_upload_calls.append((tab_id, list(files), target))
+        return {"tab": {"id": tab_id, "url": "", "title": ""}, "uploaded": files}
 
     def tab_pdf(self, ctx, tab_id: str, options: OutputOptions | None = None):
         del ctx, tab_id, options
@@ -356,6 +373,40 @@ def test_browser_tool_capability_gating() -> None:
     assert result.ok is False
     assert result.error
     assert result.data.get("error", {}).get("code") == "capability_not_supported"
+
+
+def test_browser_upload_requires_confirmation() -> None:
+    provider = _Provider()
+    reg = BrowserProviderRegistry()
+    reg.register(provider)
+    tool = BrowserTool(
+        router=BrowserRouter(reg, config=BrowserRoutingConfig(default_provider="mock"))
+    )
+    payload = {
+        "op": "tab.upload",
+        "tab_id": "t1",
+        "files": ["input/report.pdf"],
+        "target": {"selector": "#upload"},
+    }
+
+    blocked = tool.execute(payload, ToolContext())
+
+    assert blocked.ok is False
+    assert blocked.data["error_code"] == "CONFIRM_REQUIRED"
+    assert provider.tab_upload_calls == []
+
+    confirmed = tool.execute(
+        payload,
+        ToolExecutionContext(
+            channel="console",
+            target="test",
+            session_id="browser-upload",
+            confirm=True,
+        ),
+    )
+
+    assert confirmed.ok is True
+    assert provider.tab_upload_calls[0][0:2] == ("t1", ["input/report.pdf"])
 
 
 def test_browser_tool_affinity_routing() -> None:

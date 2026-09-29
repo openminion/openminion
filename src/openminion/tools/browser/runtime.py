@@ -35,6 +35,7 @@ from .session_state import SessionBrowserState
 
 _OP_CAPABILITIES: dict[str, tuple[str, ...]] = {
     BrowserOp.TAB_ACTIONS.value: ("batch_actions",),
+    BrowserOp.TAB_UPLOAD.value: ("file_upload",),
     BrowserOp.TAB_PDF.value: ("pdf_export",),
     BrowserOp.TAB_LOCK.value: ("tab_locking",),
     BrowserOp.TAB_UNLOCK.value: ("tab_locking",),
@@ -49,6 +50,7 @@ _OPS_REQUIRE_TAB = {
     BrowserOp.TAB_ACTION.value,
     BrowserOp.TAB_ACTIONS.value,
     BrowserOp.TAB_SCREENSHOT.value,
+    BrowserOp.TAB_UPLOAD.value,
     BrowserOp.TAB_PDF.value,
     BrowserOp.TAB_LOCK.value,
     BrowserOp.TAB_UNLOCK.value,
@@ -672,7 +674,7 @@ def _runtime_context_from_execution_context(
         workspace=workspace,
         run_root=run_root,
         scope="UI_AUTOMATION",
-        confirm=False,
+        confirm=bool(context.confirm),
         env=resolve_tool_env(env=runtime_env),
     )
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,10 @@ _BPGE_HTML = """<!doctype html>
 <html><head><title>BPGE Smoke</title></head>
 <body><h1 id="hdr">BPGE-07 smoke heading</h1>
 <p id="body">deterministic local content for canonical browser e2e</p>
+<button onclick="document.getElementById('body').textContent='browser action complete'">
+  Continue
+</button>
+<input id="file" type="file">
 </body></html>
 """
 
@@ -70,6 +75,8 @@ def _chromium_available() -> bool:
 @pytest.fixture(scope="module")
 def _chromium_ready() -> bool:
     if not _chromium_available():
+        if os.getenv("OPENMINION_REQUIRE_CHROMIUM") == "1":
+            pytest.fail("chromium browser binary is required for this test run")
         pytest.skip("chromium browser binary not available in this environment")
     return True
 
@@ -129,6 +136,8 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
 
     page = tmp_path / "bpge-smoke.html"
     page.write_text(_BPGE_HTML, encoding="utf-8")
+    upload_file = tmp_path / "upload.txt"
+    upload_file.write_text("browser upload", encoding="utf-8")
     page_url = page.resolve().as_uri()
 
     def _scenario() -> dict[str, object]:
@@ -164,6 +173,42 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
         assert len(content) <= 500  # bounded summary, not unbounded page dump
         assert "BPGE-07 smoke heading" in content
 
+        action = tool.execute(
+            {
+                "op": "tab.action",
+                "tab_id": tab_id,
+                "action": {
+                    "kind": "click",
+                    "target": {"role": {"role": "button", "name": "Continue"}},
+                },
+            },
+            _ToolContext(),
+        )
+        assert action.ok is True, action.error
+
+        changed = tool.execute(
+            {
+                "op": "tab.text",
+                "tab_id": tab_id,
+                "options": {"mode": "visible_text", "max_chars": 200},
+            },
+            _ToolContext(),
+        )
+        assert changed.ok is True, changed.error
+        assert "browser action complete" in changed.data["text"]["content"]
+
+        uploaded = tool.execute(
+            {
+                "op": "tab.upload",
+                "tab_id": tab_id,
+                "files": [upload_file.name],
+                "target": {"selector": "#file"},
+            },
+            _ToolContext(runtime=type("_Confirmed", (), {"confirm": True})()),
+        )
+        assert uploaded.ok is True, uploaded.error
+        assert uploaded.data["data"]["uploaded"] == [upload_file.name]
+
         # 4. tab.screenshot writes an artifact under the workspace.
         shot = tool.execute(
             {
@@ -176,6 +221,11 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
         assert shot.ok is True, shot.error
         artifact = shot.data["artifact"]
         assert artifact["kind"] == "screenshot"
+        stopped = tool.execute(
+            {"op": "instance.stop"},
+            _ToolContext(),
+        )
+        assert stopped.ok is True, stopped.error
         return {"artifact_path": artifact["path"]}
 
     result = _run_in_worker_thread(_scenario)

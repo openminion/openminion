@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 from typing import Any
 
 from openminion.modules.brain.constants import (
@@ -12,7 +13,7 @@ from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.context.input_boundaries import (
     emit_boundary_event as _pidf_emit_boundary_event,
 )
-from openminion.modules.llm.schemas import Message
+from openminion.modules.llm.schemas import ImageContentPart, Message, TextContentPart
 
 
 def _truncate_tool_message_text(
@@ -90,9 +91,26 @@ def action_result_to_tool_message(
         "failed": "error",
         "retry": "error",
     }[action_result.status]
+    content_parts: list[TextContentPart | ImageContentPart] = []
+    artifact = action_result.outputs.get("artifact")
+    if tool_name == "browser" and isinstance(artifact, dict):
+        path = str(artifact.get("path", "") or "").strip()
+        mime = str(artifact.get("mime", "") or "").strip().lower()
+        mime = mime or str(mimetypes.guess_type(path)[0] or "").lower()
+        if artifact.get("kind") == "screenshot" and path and mime.startswith("image/"):
+            content_parts = [
+                TextContentPart(text=body),
+                ImageContentPart(
+                    source="path",
+                    path=path,
+                    mime_type=mime,
+                    refs=[path],
+                ),
+            ]
     return Message(
         role="tool",
         content=body,
+        content_parts=content_parts,
         tool_call_id=tool_call_id,
         tool_status=status,
         tool_output=_compact_tool_message_value(action_result.outputs)

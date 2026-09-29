@@ -30,6 +30,7 @@ class BrowserOp(str, Enum):
     TAB_ACTION = "tab.action"
     TAB_ACTIONS = "tab.actions"
     TAB_SCREENSHOT = "tab.screenshot"
+    TAB_UPLOAD = "tab.upload"
     TAB_PDF = "tab.pdf"
     TAB_LOCK = "tab.lock"
     TAB_UNLOCK = "tab.unlock"
@@ -53,6 +54,7 @@ class BrowserCapabilities(BaseModel):
     persistent_profiles: bool = False
     headed_mode: bool = False
     downloads: bool = False
+    file_upload: bool = False
     screenshot: bool = False
     text: bool = False
     selectors: bool = False
@@ -154,6 +156,8 @@ class BrowserCallArgs(BaseModel):
     navigation: NavigateOptions | None = None
     action: BrowserAction | None = None
     actions: list[BrowserAction] = Field(default_factory=list)
+    files: list[str] = Field(default_factory=list)
+    target: ActionTarget | None = None
     output: OutputOptions | None = None
     owner: str | None = None
     ttl_s: int | None = None

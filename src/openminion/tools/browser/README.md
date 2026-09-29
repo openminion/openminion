@@ -11,6 +11,15 @@ Owner: `openminion-tools`
 4. New browser providers should land as `browser/providers/<provider>/` and
    register through `browser.register_provider(...)`.
 
+## Operator-visible behavior
+
+1. Direct CLI and Focus browser commands register the built-in PinchTab and
+   Playwright providers before routing a request.
+2. `tab.upload` accepts `files` plus an optional `target` and requires operator
+   confirmation before the provider receives the call.
+3. Successful `tab.screenshot` results include the captured image in the next
+   model message as well as the normal artifact metadata.
+
 ## Provider selection priority order
 
 `BrowserRouter.select_provider(...)` resolves the provider id in this exact

@@ -446,6 +446,36 @@ def test_action_result_to_tool_message_success() -> None:
     assert msg.tool_call_id == "tc-1"
 
 
+def test_browser_screenshot_tool_message_includes_image_content(tmp_path) -> None:
+    screenshot = tmp_path / "browser.png"
+    screenshot.write_bytes(b"png")
+    result = ActionResult(
+        command_id=new_uuid(),
+        status="success",
+        summary="screenshot captured",
+        outputs={
+            "artifact": {
+                "kind": "screenshot",
+                "path": str(screenshot),
+            }
+        },
+    )
+
+    msg = action_result_to_tool_message(
+        tool_call_id="browser-call-1",
+        tool_name="browser",
+        action_result=result,
+    )
+
+    assert [part.type for part in msg.content_parts] == ["text", "image"]
+    image = msg.content_parts[1]
+    assert image.type == "image"
+    assert image.source == "path"
+    assert image.path == str(screenshot)
+    assert image.mime_type == "image/png"
+    assert image.refs == [str(screenshot)]
+
+
 def test_action_result_to_tool_message_error() -> None:
     result = ActionResult(
         command_id=new_uuid(),

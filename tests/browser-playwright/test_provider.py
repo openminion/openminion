@@ -7,6 +7,7 @@ import pytest
 
 from openminion.tools.browser import BrowserProviderContext
 from openminion.tools.browser.models import (
+    ActionTarget,
     BrowserAction,
     InstanceSpec,
     NavigateOptions,
@@ -246,8 +247,11 @@ def test_lifecycle_snapshot_action_and_artifacts(tmp_path: Path) -> None:
 
     upload_file = tmp_path / "upload.txt"
     upload_file.write_text("ok", encoding="utf-8")
-    uploaded = provider.upload(
-        tab_id=tab_id, files=[str(upload_file)], selector="#file"
+    uploaded = provider.tab_upload(
+        None,
+        tab_id=tab_id,
+        files=[str(upload_file)],
+        target=ActionTarget(selector="#file"),
     )
     assert uploaded["uploaded"] == ["upload.txt"]
 
@@ -319,7 +323,7 @@ def test_resource_selectors_include_domain_paths_and_upload_reads(
         {
             "op": "tab.upload",
             "url": "https://example.com/login",
-            "options": {"files": ["input/a.txt", "input/b.txt"]},
+            "files": ["input/a.txt", "input/b.txt"],
             "output": {"path": "artifacts/shot.png"},
         }
     )
