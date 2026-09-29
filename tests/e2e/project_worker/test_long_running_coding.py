@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -41,7 +42,18 @@ def _run_cli(args: list[str]) -> dict[str, object]:
     return json.loads(output.getvalue())
 
 
-def _task_plan_metadata(plan_id: str, turn: int) -> dict[str, str]:
+def _failed_verifier_ref(payload: dict[str, object]) -> str:
+    match = re.search(r"bind verifier_refs to: ([^,.\s]+)", str(payload["message"]))
+    assert match is not None
+    return match.group(1)
+
+
+def _task_plan_metadata(
+    plan_id: str,
+    turn: int,
+    *,
+    verifier_ref: str | None = None,
+) -> dict[str, str]:
     if turn == 1:
         return {
             "task_plan": json.dumps(
@@ -54,13 +66,14 @@ def _task_plan_metadata(plan_id: str, turn: int) -> dict[str, str]:
                 }
             )
         }
+    assert verifier_ref is not None
     return {
         "task_plan.revision": json.dumps(
             {
                 "plan_id": plan_id,
                 "revision_id": f"{plan_id}-1",
                 "criterion_ids": ["verification:coding"],
-                "verifier_refs": ["verification:cycle-1:failed"],
+                "verifier_refs": [verifier_ref],
                 "revised_steps": [
                     {
                         "step_id": "repair",
@@ -90,6 +103,30 @@ def test_coding_project_replans_repairs_and_resumes_from_committed_checkpoint(
         "def test_empty():\n    assert total([]) == 0\n",
         encoding="utf-8",
     )
+    subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+    subprocess.run(["git", "add", "."], cwd=workspace, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=openminion@example.invalid",
+            "-c",
+            "user.name=OpenMinion Fixture",
+            "commit",
+            "-q",
+            "-m",
+            "seed fixture",
+        ],
+        cwd=workspace,
+        check=True,
+    )
+    initial_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     turns = 0
 
     def run_turn(*, config_path, payload):  # noqa: ANN001, ARG001
@@ -128,7 +165,7 @@ def test_coding_project_replans_repairs_and_resumes_from_committed_checkpoint(
                         "plan_id": "repair-total",
                         "revision_id": "repair-total-1",
                         "criterion_ids": ["verification:test-totals"],
-                        "verifier_refs": ["verification:cycle-1:failed"],
+                        "verifier_refs": [_failed_verifier_ref(payload)],
                         "revised_steps": [
                             {
                                 "step_id": "repair",
@@ -215,6 +252,10 @@ def test_coding_project_replans_repairs_and_resumes_from_committed_checkpoint(
     assert checkpoint.payload["task_plan_revision"]["revision_id"] == ("repair-total-1")
     assert checkpoint.payload["plan_revision_count"] == 1
     assert proof["tests_run"][0]["status"] == "passed"
+    assert proof["artifact_refs"] == ["file:totals.py"]
+    assert proof["workspace_ref"] == (
+        f"local:{workspace.resolve()}#commit={initial_commit};dirty=dirty"
+    )
     assert turns == 2
 
 
@@ -319,7 +360,11 @@ def test_oacc_coding_repair_uses_frozen_typed_turns(
                 "artifact_refs": turn["evidence_refs"],
                 "evidence_kinds": turn["evidence_kinds"],
                 "effect_refs": turn["effect_refs"],
-                **_task_plan_metadata("oacc-coding-repair", turns),
+                **_task_plan_metadata(
+                    "oacc-coding-repair",
+                    turns,
+                    verifier_ref=(_failed_verifier_ref(payload) if turns > 1 else None),
+                ),
             },
         }
 
@@ -379,7 +424,11 @@ def test_oacc_coding_resume_preserves_checkpoint_artifacts(
                 "artifact_refs": turn["evidence_refs"],
                 "evidence_kinds": turn["evidence_kinds"],
                 "effect_refs": turn["effect_refs"],
-                **_task_plan_metadata("oacc-context-resume", turns),
+                **_task_plan_metadata(
+                    "oacc-context-resume",
+                    turns,
+                    verifier_ref=(_failed_verifier_ref(payload) if turns > 1 else None),
+                ),
             },
         }
 

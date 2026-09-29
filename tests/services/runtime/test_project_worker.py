@@ -438,6 +438,7 @@ def test_project_worker_replans_once_then_commits_verified_completion(
     assert result.run.status == AutonomyRunStatus.COMPLETED
     assert result.project_run.committed_cycle_count == 2
     assert len(turns) == 2
+    assert "Do not call the approved verification commands" in turns[0].prompt
     assert "Prior verifier refs:" in turns[1].prompt
     assert "Prior verifier outcome:\nverification failed" in turns[1].prompt
     assert "Prior verifier outcome:\nverification passed" not in turns[1].prompt
@@ -450,6 +451,93 @@ def test_project_worker_replans_once_then_commits_verified_completion(
     assert "cycle_summaries:\n  1: worked\n  2: worked" in render_project_report(report)
     proof = json.loads(Path(result.run.proof_packet_ref or "").read_text())
     assert proof["cycle_summaries"] == ["worked", "worked"]
+
+
+def test_project_worker_recovers_terminal_checkpoint_after_proof_write_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store, manager, run = _project(tmp_path)
+    calls = {"turn": 0, "verify": 0}
+
+    def turn(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        calls["turn"] += 1
+        return ProjectTurnResult(
+            summary="finished",
+            artifact_refs=("file:result.txt",),
+            evidence_refs=("file:result.txt",),
+            evidence_kinds=("artifact",),
+        )
+
+    def verify() -> tuple[_TestEvidence, ...]:
+        calls["verify"] += 1
+        return (_evidence(_TestEvidenceStatus.PASSED),)
+
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=turn,
+        verify=verify,
+    )
+    write_proof_packet = store.write_proof_packet
+
+    def fail_proof(_packet) -> None:  # noqa: ANN001
+        raise OSError("proof store unavailable")
+
+    monkeypatch.setattr(store, "write_proof_packet", fail_proof)
+    with pytest.raises(OSError, match="proof store unavailable"):
+        worker.run_cycle(run.run_id)
+
+    persisted = store.require(run.run_id)
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+    assert persisted.status == AutonomyRunStatus.RUNNING
+    assert persisted.proof_packet_ref is None
+    assert manager.get_task("task-1").state == TaskLifecycleState.ACTIVE
+    assert checkpoint is not None
+    assert checkpoint.project_run.status == AutonomyRunStatus.COMPLETED
+
+    monkeypatch.setattr(store, "write_proof_packet", write_proof_packet)
+    recovered = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: pytest.fail("terminal recovery reran the turn"),
+        verify=lambda: pytest.fail("terminal recovery reran verification"),
+    ).run_cycle(run.run_id)
+
+    assert recovered.reconciled_only is True
+    assert recovered.run.status == AutonomyRunStatus.COMPLETED
+    assert recovered.run.proof_packet_ref is not None
+    assert recovered.project_run.artifact_refs == ("file:result.txt",)
+    assert manager.get_task("task-1").state == TaskLifecycleState.DONE
+    assert calls == {"turn": 1, "verify": 1}
+
+
+def test_project_worker_persists_interrupted_cycle_as_blocked(tmp_path) -> None:
+    store, manager, run = _project(tmp_path)
+
+    def interrupted_turn(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        raise RuntimeError("provider stopped")
+
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=interrupted_turn,
+        verify=lambda: pytest.fail("interrupted turn ran verification"),
+    )
+
+    with pytest.raises(RuntimeError, match="provider stopped"):
+        worker.run_cycle(run.run_id)
+
+    persisted = store.require(run.run_id)
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+    assert persisted.status == AutonomyRunStatus.BLOCKED
+    assert persisted.phase == AutonomyRunPhase.RECOVER
+    assert persisted.last_error is not None
+    assert persisted.last_error.code == "project_cycle_interrupted"
+    assert manager.get_task("task-1").state == TaskLifecycleState.PAUSED
+    assert checkpoint is not None
+    assert checkpoint.project_run.status == AutonomyRunStatus.BLOCKED
+    assert checkpoint.payload["decision_reason"] == "project_cycle_interrupted"
 
 
 def test_project_cycle_preserves_effect_state_across_restart(tmp_path) -> None:
@@ -1161,12 +1249,14 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
         owner_id="worker-1",
     ).run_cycle(run.run_id)
     assert first.decision == ProjectCycleDecision.CONTINUE
+    failed_verifier_ref = first.project_run.verifier_refs[-1]
+    assert failed_verifier_ref.endswith(":failed")
 
     revision = TaskPlanRevision(
         plan_id="plan-1",
         revision_id="revision-1",
         criterion_ids=["criterion-tests"],
-        verifier_refs=("verify:failed-1",),
+        verifier_refs=(failed_verifier_ref,),
         revised_steps=[{"step_id": "build", "description": "Repair it"}],
     )
     result = ProjectWorker(
@@ -1203,9 +1293,8 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     assert "first action must use the existing plan loop-control tool" in prompts[0]
     assert "Search before inspecting project files." in prompts[0]
     assert "continue_plan_autonomously=false" in prompts[0]
-    assert "your very next tool call must use plan action=revise" in prompts[0]
-    assert "verifier_refs containing that failed tool-call ref" in prompts[0]
-    assert "Do not edit, rerun verification, or complete steps first" in prompts[0]
+    assert "Do not call the approved verification commands" in prompts[0]
+    assert "configured verifier runs them after the turn" in prompts[0]
     assert "Workspace root:" in prompts[0]
     assert "Do not infer another workspace" in prompts[0]
     assert "Record step_completed as each plan step finishes" in prompts[0]
@@ -1328,6 +1417,39 @@ def test_project_worker_rejects_invalid_first_plan_revision(
         )
 
 
+def test_project_worker_rejects_revision_for_unrelated_failed_verifier(
+    tmp_path,
+) -> None:
+    _store, manager, _run = _project(tmp_path)
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+    assert checkpoint is not None
+    checkpoint.project_run = checkpoint.project_run.model_copy(
+        update={"verifier_refs": ("verification:cycle-1:1:failed",)}
+    )
+    checkpoint.payload.update(
+        {
+            "task_plan": TaskPlan(
+                plan_id="plan-1",
+                objective="Ship",
+                steps=[{"step_id": "build", "description": "Build"}],
+            ).model_dump(mode="json"),
+            "plan_revision_required": True,
+        }
+    )
+    revision = TaskPlanRevision(
+        plan_id="plan-1",
+        revision_id="revision-1",
+        verifier_refs=["verification:other-cycle:1:failed"],
+        revised_steps=[{"step_id": "build", "description": "Repair"}],
+    )
+
+    with pytest.raises(ValueError, match="must match failed checkpoint verifiers"):
+        plan_checkpoint_payload(
+            checkpoint,
+            ProjectTurnResult(summary="unbound revision", task_plan_revision=revision),
+        )
+
+
 @pytest.mark.parametrize(
     ("revision_id", "predecessor_revision_id"),
     (("revision-1", "revision-1"), ("revision-2", "stale")),
@@ -1427,7 +1549,9 @@ def test_project_worker_blocks_after_one_failed_replan(tmp_path) -> None:
     assert manager.get_task("task-1").state == TaskLifecycleState.PAUSED
 
 
-def test_project_worker_keeps_resumed_run_active_during_next_turn(tmp_path) -> None:
+def test_project_worker_records_interruption_after_resumed_turn_starts(
+    tmp_path,
+) -> None:
     store, manager, run = _project(tmp_path, max_iterations=1)
     first = ProjectWorker(
         task_manager=manager,
@@ -1472,7 +1596,10 @@ def test_project_worker_keeps_resumed_run_active_during_next_turn(tmp_path) -> N
     with pytest.raises(RuntimeError, match="provider interrupted"):
         worker.run(resumed.run_id, max_cycles=1)
 
-    assert store.require(resumed.run_id).status == AutonomyRunStatus.RUNNING
+    interrupted = store.require(resumed.run_id)
+    assert interrupted.status == AutonomyRunStatus.BLOCKED
+    assert interrupted.last_error is not None
+    assert interrupted.last_error.code == "project_cycle_interrupted"
 
 
 def test_project_error_dominates_passing_verifier(tmp_path) -> None:

@@ -61,6 +61,7 @@ class ProjectTurnResult:
     gateway_run_id: str = ""
     condition: AutonomyLoopConditionKind = AutonomyLoopConditionKind.PRODUCTIVE
     evidence_refs: tuple[str, ...] = ()
+    artifact_refs: tuple[str, ...] = ()
     evidence_kinds: tuple[str, ...] = ()
     effect_refs: tuple[str, ...] = ()
     tool_call_count: int = 0
@@ -91,12 +92,9 @@ def project_cycle_prompt(
         f"Current milestone: {milestone}",
         f"Committed cycles: {project_run.committed_cycle_count}",
         "Work on the smallest useful next step. Inspect current state before editing.",
-        "If an approved verification command called through a tool fails during "
-        "this turn, your very next tool call must use plan action=revise for the "
-        "same plan_id, a new revision_id, and verifier_refs containing that failed "
-        "tool-call ref. Do not edit, rerun verification, or complete steps first.",
-        "The configured verifier runs the approved verification commands after the "
-        "turn. Record step_completed as each plan step finishes. When every plan "
+        "Do not call the approved verification commands through a tool. The "
+        "configured verifier runs them after the turn and records their evidence.",
+        "Record step_completed as each plan step finishes. When every plan "
         "step is complete, call plan action=complete once and end the turn. Do not "
         "redeclare a completed plan unless a prior verifier failure below explicitly "
         "requires reactivation.",
@@ -455,7 +453,8 @@ def project_turn_result_from_response(
             call_id := str(item.get("call_id") or item.get("command_id") or "").strip()
         )
     )
-    evidence_refs = project_metadata_refs(metadata, "evidence_refs", "artifact_refs")
+    artifact_refs = project_metadata_refs(metadata, "artifact_refs")
+    evidence_refs = project_metadata_refs(metadata, "evidence_refs")
     evidence_kinds = project_metadata_refs(metadata, "evidence_kinds")
     task_plan_revisions = _project_checkpoint_revisions(metadata)
     return ProjectTurnResult(
@@ -466,7 +465,10 @@ def project_turn_result_from_response(
             if error is not None and not metadata.get("project_condition")
             else project_condition_from_metadata(metadata)
         ),
-        evidence_refs=tuple(dict.fromkeys((*evidence_refs, *tool_result_refs))),
+        evidence_refs=tuple(
+            dict.fromkeys((*evidence_refs, *artifact_refs, *tool_result_refs))
+        ),
+        artifact_refs=artifact_refs,
         evidence_kinds=tuple(
             dict.fromkeys(
                 (*evidence_kinds, *(("tool_result",) if tool_result_refs else ()))

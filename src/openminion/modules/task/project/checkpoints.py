@@ -604,6 +604,16 @@ def updated_checkpoint_task_plan(
             not reference.strip() for reference in incoming.verifier_refs
         ):
             raise ValueError("plan revision requires verifier_refs")
+        if checkpoint.payload.get("plan_revision_required") is True:
+            failed_verifier_refs = {
+                reference
+                for reference in checkpoint.project_run.verifier_refs
+                if reference.endswith(":failed")
+            }
+            if not set(incoming.verifier_refs).issubset(failed_verifier_refs):
+                raise ValueError(
+                    "plan revision verifier_refs must match failed checkpoint verifiers"
+                )
         if incoming.criterion_ids and incoming.criterion_ids != plan.criterion_ids:
             raise ValueError("plan revision cannot change criterion_ids")
         if revision is None and incoming.predecessor_revision_id:

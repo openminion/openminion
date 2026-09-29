@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -23,20 +24,28 @@ _OACC_SOURCE = json.loads(
 pytestmark = pytest.mark.e2e
 
 
+def _failed_verifier_ref(payload: dict[str, object]) -> str:
+    match = re.search(r"bind verifier_refs to: ([^,.\s]+)", str(payload["message"]))
+    assert match is not None
+    return match.group(1)
+
+
 def _plan_metadata(
     plan_id: str,
     *,
     revision: bool = False,
     complete: bool = False,
+    verifier_ref: str | None = None,
 ) -> dict[str, str]:
     if revision:
+        assert verifier_ref is not None
         metadata = {
             "task_plan.revision": json.dumps(
                 {
                     "plan_id": plan_id,
                     "revision_id": f"{plan_id}-1",
                     "criterion_ids": ["verification:artifact"],
-                    "verifier_refs": ["verification:cycle-1:failed"],
+                    "verifier_refs": [verifier_ref],
                     "revised_steps": [
                         {
                             "step_id": "deliver",
@@ -205,6 +214,7 @@ def test_oacc_research_to_code_requires_both_artifacts(
                     "research-to-code",
                     revision=turns > 1,
                     complete=turns > 1,
+                    verifier_ref=(_failed_verifier_ref(payload) if turns > 1 else None),
                 ),
             },
         }
@@ -324,6 +334,7 @@ def test_non_git_research_project_resumes_two_milestones(
                     "research-delivery",
                     revision=True,
                     complete=True,
+                    verifier_ref=_failed_verifier_ref(payload),
                 ),
             }
             revision = json.loads(metadata["task_plan.revision"])
