@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 _TOOL_DEFINITIONS = (
     (
         MODEL_SKILL_INGEST,
-        "Prepare at most one complete Markdown skill after substantial reusable work. Saving requires user approval, remains pending until separate operator admission, and is not immediately selectable. Returns exact version and lifecycle facts.",
+        "Prepare at most one complete Markdown skill after substantial reusable work. Call with both required arguments: name and markdown containing the complete SKILL.md. Saving requires user approval, remains pending until separate operator admission, and is not immediately selectable. When pending, report operator_admission_command exactly with the version and lifecycle facts.",
         RUNTIME_SKILL_INGEST,
     ),
     (
@@ -45,7 +45,7 @@ _TOOL_DEFINITIONS = (
     ),
     (
         MODEL_SKILL_GET,
-        "Get one stored skill by ID and optional version hash. When the skill lists a bundled reference, asset, or script, call this tool again with resource_path and the same version_hash to read that resource before using it.",
+        "Get one stored skill. Call with the required skill_id and optional version_hash. When the skill lists a bundled reference, asset, or script, call this tool again with resource_path and the same version_hash to read that resource before using it.",
         RUNTIME_SKILL_GET,
     ),
     (

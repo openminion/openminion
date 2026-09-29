@@ -135,6 +135,15 @@ def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             "Skill ingest did not create a canonical staged version.",
         )
 
+    admission_command = None
+    if lifecycle["admission_state"] == "pending":
+        admission_command = (
+            "openminion skill admit "
+            f"--skill-id {skill_id} --version-hash {version_hash} "
+            f"--expected-active-version-hash {lifecycle['active_version_hash'] or 'none'} "
+            '--target-status verified --reason "Reviewed and approved staged skill"'
+        )
+
     snippet = ""
     snippet_hash = ""
     try:
@@ -157,6 +166,7 @@ def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         "ok": True,
         "skill_id": skill_id,
         "version_hash": version_hash,
+        "operator_admission_command": admission_command,
         "snippet": snippet,
         "snippet_hash": snippet_hash,
         "warnings": warnings,

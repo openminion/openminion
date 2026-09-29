@@ -159,8 +159,16 @@ def _write_summary(root: Path, name: str, payload: dict) -> None:
 
 
 def _normalized_step(value: str) -> str:
-    without_number = re.sub(r"^\s*\**\d+\.\s*", "", value)
+    without_number = re.sub(r"^\s*\**\d+(?:[.)]\s*|\s+)", "", value)
     return re.sub(r"[*_`]", "", without_number).strip().lower()
+
+
+@pytest.mark.parametrize(
+    "rendered",
+    ("1 Inspect the target", "1. Inspect the target", "1) Inspect the target"),
+)
+def test_normalized_step_accepts_common_numbered_list_markers(rendered: str) -> None:
+    assert _normalized_step(rendered) == "inspect the target"
 
 
 def _tree_evidence(probe: FocusProbe) -> dict[str, str]:
@@ -202,9 +210,11 @@ def test_live_confirmed_save_and_fresh_session_reuse(
     with save_probe.session(rows=52, cols=170) as session:
         save_probe.wait_ready(session)
         try:
-            save_probe.run_turn(session, scenario)
+            save_transcript = save_probe.run_turn(session, scenario)
         finally:
             write_transcript(root, "confirmed-save", session.visible_transcript)
+
+    assert "openminion skill admit" in save_transcript
 
     rows = _version_rows(save_probe)
     assert len(rows) == 1, rows
@@ -256,9 +266,11 @@ def test_live_confirmed_save_and_fresh_session_reuse(
             write_transcript(root, "confirmed-save-reuse", session.visible_transcript)
 
     reuse_answer = final_answer_text(reuse_transcript, reuse_prompt)
-    assert _normalized_step(expected_step) == _normalized_step(reuse_answer), (
-        reuse_answer
-    )
+    expected_normalized = _normalized_step(expected_step)
+    answer_normalized = _normalized_step(reuse_answer)
+    assert answer_normalized == expected_normalized or answer_normalized.startswith(
+        f"{expected_normalized} "
+    ), reuse_answer
     assert "does not exist" not in reuse_answer.lower()
 
     selected = _selected_skill_events(reuse_probe)

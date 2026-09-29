@@ -269,6 +269,34 @@ def test_config_identity_excludes_credentials_but_records_effective_model(
     assert "private-secret" not in json.dumps(first)
 
 
+def test_config_identity_detects_runtime_env_credential(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    config = {
+        "agents": {"minimax-m2-7": {"provider": "openai", "model": "MiniMax-M2.7"}},
+        "default_agent": "minimax-m2-7",
+        "providers": {
+            "openai": {
+                "api_key_env": "MINIMAX_API_KEY",
+                "model": "MiniMax-M2.7",
+                "base_url": "https://api.minimax.io/v1",
+                "provider_identity": {"service_vendor": "minimax"},
+            }
+        },
+        "runtime": {"env": {"MINIMAX_API_KEY": "private-runtime-secret-one"}},
+    }
+    path.write_text(json.dumps(config))
+    env = {run_cli_focus_e2e._CONFIG_ENV: str(path)}
+
+    first = run_cli_focus_e2e._config_identity(env)
+    config["runtime"]["env"]["MINIMAX_API_KEY"] = "private-runtime-secret-two"
+    path.write_text(json.dumps(config))
+    second = run_cli_focus_e2e._config_identity(env)
+
+    assert first["credentials_available"] is True
+    assert first["config_digest"] == second["config_digest"]
+    assert "private-runtime-secret" not in json.dumps(first)
+
+
 def test_safe_junit_excludes_all_private_assertion_content(tmp_path: Path) -> None:
     from xml.etree.ElementTree import ElementTree, Element, SubElement
 

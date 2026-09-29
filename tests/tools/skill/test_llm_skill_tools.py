@@ -87,6 +87,8 @@ def test_skill_get_contract_exposes_progressive_resource_retrieval() -> None:
     )
     schema = SkillGetArgs.model_json_schema()["properties"]
 
+    assert "required skill_id" in model_tool.description
+    assert schema["skill_id"]["description"].startswith("Required")
     assert "resource_path" in model_tool.description
     assert "version_hash" in model_tool.description
     assert "references/guide.md" in schema["resource_path"]["description"]
