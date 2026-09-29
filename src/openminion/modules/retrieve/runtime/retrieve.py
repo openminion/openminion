@@ -159,6 +159,14 @@ class RetrieveCtl:
     def status(self) -> dict[str, Any]:
         sqlite_path = self.config.storage.sqlite_path
         blob_root = self.config.storage.blob_root
+        legacy_row = self.store.fetchone(
+            """
+            SELECT COUNT(*) AS count
+            FROM retrievectl_docs
+            WHERE scope_key IN ('agent:legacy', 'project:legacy', 'session:legacy')
+            """
+        )
+        ambiguous_legacy_rows = int(legacy_row["count"] if legacy_row else 0)
         return {
             "ok": True,
             "storage": {
@@ -169,6 +177,15 @@ class RetrieveCtl:
                 "wal_mode": bool(self.config.storage.wal_mode),
             },
             "semantic_strategy": "unavailable",
+            "legacy_scope": {
+                "ambiguous_row_count": ambiguous_legacy_rows,
+                "remediation": (
+                    "For legacy skill rows, run `openminion skill re-ingest-all "
+                    "--agent-id <agent-id>`; other ambiguous rows remain excluded."
+                    if ambiguous_legacy_rows
+                    else None
+                ),
+            },
         }
 
     def retrieve(

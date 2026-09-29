@@ -1062,6 +1062,11 @@
           "annotation": "list['MemoryNamespace'] | None",
           "default_kind": "value",
           "name": "namespaces"
+        },
+        {
+          "annotation": "RecordOrder | None",
+          "default_kind": "value",
+          "name": "order_by"
         }
       ],
       "kind": "dataclass"

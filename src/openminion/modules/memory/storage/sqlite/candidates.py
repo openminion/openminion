@@ -5,7 +5,7 @@ import json
 from dataclasses import replace
 from typing import Any
 
-from ..base import CandidateListOptions
+from ..base import CandidateListOptions, RecordOrder
 from ...constants import (
     MEMORY_CANDIDATE_STATUS_PROMOTED,
     MEMORY_CANDIDATE_STATUS_REJECTED,
@@ -134,7 +134,14 @@ def candidate_list(store: Any, options: CandidateListOptions) -> list[MemoryCand
         query += " AND status = ?"
         params.append(options.status)
 
-    query += " ORDER BY created_at ASC"
+    if options.order_by is None:
+        query += " ORDER BY created_at ASC, candidate_id ASC"
+    else:
+        direction = "ASC" if options.order_by == RecordOrder.UPDATED_AT_ASC else "DESC"
+        query += (
+            f" ORDER BY COALESCE(updated_at, created_at, '') {direction},"
+            " candidate_id ASC"
+        )
 
     if options.limit is not None:
         query += " LIMIT ?"

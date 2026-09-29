@@ -37,6 +37,7 @@ def test_runner_timeout_uses_override() -> None:
 def test_runner_timeout_defaults_for_live_and_complex_suites() -> None:
     runner = _load_runner()
 
+    assert runner._runner_timeout_seconds({}, runner.SUITES["baseline-live"]) == 1500
     assert runner._runner_timeout_seconds({}, runner.SUITES["tools"]) == 1500
     assert runner._runner_timeout_seconds({}, runner.SUITES["complex"]) == 4200
     assert runner._runner_timeout_seconds({}, runner.SUITES["local"]) is None
@@ -146,10 +147,10 @@ def test_live_main_runs_with_an_existing_config(monkeypatch, tmp_path: Path) -> 
     assert captured["env"]["OPENMINION_LIVE_CLI_FOCUS_E2E"] == "1"
 
 
-def test_baseline_has_only_two_frozen_nodes() -> None:
+def test_baseline_has_three_frozen_nodes() -> None:
     runner = _load_runner()
     assert runner.SUITES["baseline-live"].paths == runner.BASELINE_CASES
-    assert len(runner.BASELINE_CASES) == 2
+    assert len(runner.BASELINE_CASES) == 3
     assert runner.SUITES["baseline-live"].live
 
 

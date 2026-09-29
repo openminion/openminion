@@ -387,7 +387,7 @@ jobs:
           cache: pip
       - name: Install OpenMinion with PostgreSQL support
         run: python -m pip install -e ".[dev,postgres]"
-      - name: Prove PostgreSQL lexical score reaches semantic blending
-        run: >-
-          python -m pytest -q -m postgres
-          tests/memory/test_memory_search_quality.py::test_postgres_lexical_score_contributes_to_semantic_order
+      - name: Run PostgreSQL memory conformance
+        run: |
+          python -m pytest -q -m postgres tests/memory/test_memory_postgres_conformance.py
+          python -m pytest -q -m postgres tests/memory/test_memory_search_quality.py::test_postgres_lexical_score_contributes_to_semantic_order
