@@ -106,6 +106,11 @@ def test_build_daytona_runner_uses_runtime_env_config() -> None:
     assert runner._client.config.endpoint == "https://daytona.example"  # noqa: SLF001
 
 
+def test_build_daytona_runner_returns_none_without_endpoint(monkeypatch) -> None:
+    monkeypatch.delenv("OPENMINION_DAYTONA_ENDPOINT", raising=False)
+    assert build_daytona_runner(config=OpenMinionConfig()) is None
+
+
 def test_api_runtime_carries_daytona_runner_when_endpoint_configured() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         config_path = _write_echo_config(Path(tmp))

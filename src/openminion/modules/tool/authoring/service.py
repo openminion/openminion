@@ -101,13 +101,16 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
         session_id: str | None = None,
     ) -> dict[str, Any]:
         parsed = ToolAuthorArgs.model_validate(args)
+        dependencies = sorted(
+            {item.strip() for item in parsed.dependencies if item.strip()}
+        )
         try:
             lint = structural_lint(
                 local_name=parsed.name,
                 source_code=parsed.source_code,
                 unit_tests_source=parsed.unit_tests_source,
                 args_schema=parsed.args_schema,
-                dependencies=parsed.dependencies,
+                dependencies=dependencies,
                 allowed_dependencies=self._allowed_dependencies,
             )
         except StructuralLintError as exc:
@@ -123,7 +126,7 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             args_schema_json=_json(parsed.args_schema),
             returns_schema_json=_json(parsed.returns_schema),
             requirements_json=_json(parsed.requirements),
-            dependencies_json=_json(parsed.dependencies),
+            dependencies_json=_json(dependencies),
             proposed_scope_tier=parsed.proposed_scope_tier,
             status=TOOL_AUTHORING_STATUS_DRAFTED,
             inspect_result_json=None,
@@ -166,9 +169,7 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
         draft_row = self._store.get_draft(parsed.draft_id) if parsed.draft_id else None
         if parsed.draft_id and draft_row is None:
             return _error("DRAFT_NOT_FOUND", parsed.draft_id)
-        if draft_row is not None and (
-            parsed.source_code is not None or parsed.unit_tests_source is not None
-        ):
+        if draft_row and (parsed.source_code or parsed.unit_tests_source):
             return _error(
                 "INSPECTION_SOURCE_MISMATCH",
                 "draft inspection does not accept source overrides",
@@ -177,6 +178,8 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
         unit_tests_source = parsed.unit_tests_source or (
             draft_row.unit_tests_source if draft_row else ""
         )
+        dependency_json = draft_row.dependencies_json if draft_row else "[]"
+        dependencies = _parse_json_array(dependency_json)
         local_name = draft_row.local_name if draft_row else "adhoc_tool"
         risk_level, static_findings = inspect_source(
             source_code,
@@ -190,6 +193,7 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
                 unit_tests_source=unit_tests_source,
                 entry_function=local_name,
                 sandbox_runner=self._sandbox_runner,
+                dependencies=dependencies,
             )
             test_results = {
                 "ran": run.ran,
@@ -207,7 +211,6 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
                 "errors": [{"test": "pytest", "message": "sandbox_runner_unavailable"}],
             }
             risk_level = "high"
-
         recommend_register = _recommend_register(
             risk_level=risk_level,
             test_results=test_results,
@@ -219,6 +222,7 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
         version_hash = compute_version_hash(
             source_code=source_code,
             unit_tests_source=unit_tests_source,
+            dependencies=dependencies,
         )
         payload = {
             "ok": True,
@@ -268,6 +272,7 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
         version_hash = compute_version_hash(
             source_code=draft.source_code,
             unit_tests_source=draft.unit_tests_source,
+            dependencies=_parse_json_array(draft.dependencies_json),
         )
         existing = self._store.get_authored_tool_by_name_hash(
             draft.local_name, version_hash

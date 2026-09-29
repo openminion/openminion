@@ -70,3 +70,20 @@ def test_run_tool_tests_reports_timeout() -> None:
 
     assert result.timed_out is True
     assert result.errors[0]["message"] == "AUTHORED_TOOL_LIMIT_EXCEEDED"
+
+
+def test_run_tool_tests_passes_declared_dependencies_to_remote_bootstrap() -> None:
+    runner = RecordingSandboxRunner(
+        FakeExecResult(returncode=0, stdout="1 passed in 0.01s\n")
+    )
+
+    run_tool_tests(
+        source_code="def encode(value):\n    return value\n",
+        unit_tests_source="def test_encode():\n    assert True\n",
+        entry_function="encode",
+        sandbox_runner=runner,
+        dependencies=["json"],
+    )
+
+    spec, _ = runner.calls[0]
+    assert spec.cmd[-1] == "WyJqc29uIl0="

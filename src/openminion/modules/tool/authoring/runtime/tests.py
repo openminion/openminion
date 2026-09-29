@@ -1,6 +1,7 @@
 """Held-out pytest runner for authored tools."""
 
 import base64
+import json
 import re
 import sys
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from ..config import (
 from ..constants import AUTHORED_TOOL_ERROR_COLLECTION, AUTHORED_TOOL_ERROR_LIMIT
 
 _COUNTS_RE = re.compile(r"(?P<count>\d+)\s+(?P<label>passed|failed|error|errors)")
+_DEPENDENCY_ERROR_PREFIX = "OPENMINION_DEPENDENCY_UNAVAILABLE:"
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,7 @@ def run_tool_tests(
     unit_tests_source: str,
     entry_function: str,
     sandbox_runner: Any,
+    dependencies: list[str] | None = None,
     python_executable: str | None = None,
 ) -> ToolTestRunResult:
     python_bin = python_executable or sys.executable
@@ -60,6 +63,7 @@ def run_tool_tests(
                 _PYTEST_BOOTSTRAP,
                 _b64(source_code),
                 _b64(unit_tests_source),
+                _b64(json.dumps(dependencies or [], ensure_ascii=True)),
             ],
             cwd=str(workspace),
             env={
@@ -85,6 +89,17 @@ def _parse_result(result: Any) -> ToolTestRunResult:
     stderr = str(getattr(result, "stderr", "") or "")
     returncode = int(getattr(result, "returncode", 0) or 0)
     combined = "\n".join(part for part in (stdout, stderr) if part)
+    dependency_error_line = next(
+        (
+            line.strip()
+            for line in combined.splitlines()
+            if line.strip().startswith(_DEPENDENCY_ERROR_PREFIX)
+        ),
+        "",
+    )
+    dependency_error = dependency_error_line.removeprefix(
+        _DEPENDENCY_ERROR_PREFIX
+    ).strip()
     counts = {"passed": 0, "failed": 0, "errors": 0}
     for match in _COUNTS_RE.finditer(combined):
         label = match.group("label")
@@ -95,7 +110,12 @@ def _parse_result(result: Any) -> ToolTestRunResult:
             counts["failed"] = count
         else:
             counts["errors"] = max(counts["errors"], count)
-    if (
+    if dependency_error:
+        counts["errors"] = max(counts["errors"], 1)
+        error_message = (
+            f"declared dependencies unavailable in sandbox image: {dependency_error}"
+        )
+    elif (
         "ERROR collecting" in combined
         or "ImportError" in combined
         or "SyntaxError" in combined
@@ -131,11 +151,18 @@ def _b64(value: str) -> str:
 
 _PYTEST_BOOTSTRAP = """
 import base64
+import importlib.util
+import json
 import sys
 from pathlib import Path
 import pytest
 
 work = Path.cwd()
+dependencies = json.loads(base64.b64decode(sys.argv[3]).decode("utf-8"))
+missing = [name for name in dependencies if importlib.util.find_spec(name) is None]
+if missing:
+    print(f"OPENMINION_DEPENDENCY_UNAVAILABLE:{', '.join(missing)}", file=sys.stderr)
+    raise SystemExit(4)
 tool_path = work / "tool_impl.py"
 tests_path = work / "test_tool_impl.py"
 tool_path.write_text(base64.b64decode(sys.argv[1]).decode("utf-8"), encoding="utf-8")

@@ -33,8 +33,13 @@ class DaytonaSdkTransport:
         self._config = config
 
     def close(self) -> None:
+        if self._workspaces:
+            workspace_ids = ", ".join(sorted(self._workspaces))
+            raise DaytonaTransportError(
+                code="UNAVAILABLE",
+                message=f"Daytona workspaces remain unresolved: {workspace_ids}",
+            )
         self._sdk = None
-        self._workspaces.clear()
 
     def create_workspace(
         self,
@@ -67,8 +72,9 @@ class DaytonaSdkTransport:
         }
 
     def destroy_workspace(self, workspace_id: str) -> None:
-        sandbox = self._workspaces.pop(workspace_id)
+        sandbox = self._workspaces[workspace_id]
         sandbox.delete(wait=True)
+        self._workspaces.pop(workspace_id)
 
     def execute_command(
         self,

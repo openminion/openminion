@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import base64
 import json
 
 from ._helpers import FakeExecResult, RecordingSandboxRunner, build_service
 
 
-def _draft_args(source_code: str, tests: str) -> dict[str, object]:
+def _draft_args(
+    source_code: str, tests: str, *, dependencies: list[str] | None = None
+) -> dict[str, object]:
     return {
         "name": "adder",
         "description": "Add two integers",
@@ -18,7 +21,7 @@ def _draft_args(source_code: str, tests: str) -> dict[str, object]:
         },
         "returns_schema": {"type": "integer"},
         "requirements": [],
-        "dependencies": [],
+        "dependencies": dependencies or [],
         "proposed_scope_tier": "POWER_USER",
     }
 
@@ -54,6 +57,35 @@ def test_inspect_draft_clean_path(tmp_path) -> None:
         assert details["recommend_register"] is True
         assert details["recommend_reason"] == "all checks passed"
         assert "source_code" not in details
+    finally:
+        service.close()
+
+
+def test_inspect_draft_passes_persisted_dependencies_to_remote_tests(tmp_path) -> None:
+    runner = RecordingSandboxRunner(
+        FakeExecResult(returncode=0, stdout="1 passed in 0.01s\n")
+    )
+    service = build_service(
+        tmp_path,
+        sandbox_runner=runner,
+        allowed_dependencies={"json"},
+    )
+    try:
+        draft = service.author_draft(
+            _draft_args(
+                "import json\n\ndef adder(x, y):\n    return json.loads(str(x + y))\n",
+                "def test_add():\n    assert True\n",
+                dependencies=["json"],
+            )
+        )
+
+        result = service.inspect_draft(
+            {"draft_id": draft["draft_id"], "run_tests": True}
+        )
+
+        assert result["ok"] is True
+        spec, _ = runner.calls[0]
+        assert json.loads(base64.b64decode(spec.cmd[-1])) == ["json"]
     finally:
         service.close()
 
