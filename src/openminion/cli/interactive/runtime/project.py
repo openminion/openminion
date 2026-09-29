@@ -207,6 +207,9 @@ class RuntimeProjectMixin:
 
         handoff = ProjectHandoff.model_validate_json(metadata["project_handoff"])
         boundary = Path(self.working_dir)
+        permission_profile_id = self.permission_mode
+        if permission_profile_id not in {"readonly", "bypass"}:
+            permission_profile_id = "local-safe"
         request = build_project_launch_request(
             goal=handoff.goal,
             session_id=self.session_id,
@@ -216,7 +219,7 @@ class RuntimeProjectMixin:
             require_git_repository=False,
             config_ref=str(self._rt.config_path),
             turn_target="focus",
-            permission_profile_id=self.permission_mode,
+            permission_profile_id=permission_profile_id,
             verification_commands=handoff.verification_commands,
             success_criteria=handoff.success_criteria,
             source_request=source_request,

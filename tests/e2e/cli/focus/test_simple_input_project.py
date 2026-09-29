@@ -183,7 +183,8 @@ def test_focus_plain_request_approval_verifier_repair_review_restart_and_control
         == ["feature.VALUE equals 2"]
     )
     assert objective["source_request"] == "Please fix this project"
-    assert approvals[0][1]["permission_profile_id"] == runtime.permission_mode
+    assert approvals[0][1]["permission_profile_id"] == "local-safe"
+    assert run.permission_profile_id == "local-safe"
     assert len(cron.jobs) == 1
     assert "nothing was launched" in asyncio.run(
         runtime.approve_project_handoff(metadata, approve)
