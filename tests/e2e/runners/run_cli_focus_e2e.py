@@ -297,6 +297,7 @@ def _config_identity(env: dict[str, str]) -> dict[str, object]:
         relevant["profile"] = asdict(profile)
         safe_config, _ = redact_mapping(relevant)
         provider_identity = provider.provider_identity or {}
+        runtime_env = effective.runtime.env or {}
         return {
             "status": "resolved",
             "provider": profile.provider,
@@ -305,7 +306,9 @@ def _config_identity(env: dict[str, str]) -> dict[str, object]:
             "model": provider.model,
             "endpoint_authority": urlparse(provider.base_url).hostname,
             "credentials_available": bool(
-                provider.api_key or env.get(provider.api_key_env, "").strip()
+                provider.api_key
+                or env.get(provider.api_key_env, "").strip()
+                or str(runtime_env.get(provider.api_key_env, "")).strip()
             ),
             "config_digest": _digest(safe_config),
             "output_token_limit": getattr(provider, "max_tokens", None),
