@@ -166,6 +166,13 @@ class SkillContract(Protocol):
         verification_evidence: SkillVerificationEvidence | None = ...,
     ) -> dict[str, Any]: ...
 
+    def get_skill_version_state(
+        self,
+        *,
+        skill_id: str,
+        version_hash: str,
+    ) -> dict[str, str | None] | None: ...
+
     def rollback_skill_version(
         self,
         *,

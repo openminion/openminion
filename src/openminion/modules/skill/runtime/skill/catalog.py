@@ -46,6 +46,25 @@ class SkillCatalogMixin:
     _persist_package: Any
     _resolve_status_filter: Any
 
+    def get_skill_version_state(
+        self,
+        *,
+        skill_id: str,
+        version_hash: str,
+    ) -> dict[str, str | None] | None:
+        admission = self.store.get_skill_admission(
+            skill_id=skill_id,
+            version_hash=version_hash,
+        )
+        if admission is None:
+            return None
+        return {
+            "admission_state": str(admission["state"]),
+            "active_version_hash": self.store.get_active_skill_version_hash(
+                skill_id=skill_id
+            ),
+        }
+
     def catalog_summaries(
         self,
         agent_id: str,

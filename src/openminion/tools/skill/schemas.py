@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -16,10 +18,9 @@ class SkillIngestArgs(BaseModel):
         max_length=500_000,
         description="Skill definition in Markdown format",
     )
-    scope: str = Field(
+    scope: Literal["agent"] = Field(
         default="agent",
-        max_length=64,
-        description="Skill scope: 'agent' (default) or 'user'",
+        description="Model-authored skills are saved for the current agent.",
     )
     max_snippet_tokens: int = Field(
         default=500,

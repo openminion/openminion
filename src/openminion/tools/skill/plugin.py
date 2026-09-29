@@ -90,6 +90,12 @@ def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         parsed_args = SkillIngestArgs.model_validate(args)
     except ValidationError as exc:
         return _invalid_args_error(exc)
+    agent_id = str(getattr(ctx, "agent_id", "") or "").strip()
+    if not agent_id:
+        return _error(
+            "INVALID_RUNTIME_CONTEXT",
+            "skill.ingest requires the current agent identity.",
+        )
 
     markdown = parsed_args.markdown
     risk_level, issues = scan(markdown)
@@ -111,12 +117,23 @@ def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             name=parsed_args.name,
             markdown=markdown,
             scope=parsed_args.scope,
+            agent_id=agent_id,
             authority=SkillIngestAuthority.runtime(
                 surface="model.skill.ingest", source_kind="local"
             ),
         )
     except Exception as exc:
         return _error(str(getattr(exc, "code", "INGEST_FAILED")), str(exc))
+
+    lifecycle = skill.get_skill_version_state(
+        skill_id=skill_id,
+        version_hash=version_hash,
+    )
+    if lifecycle is None:
+        return _error(
+            "INGEST_NOT_DURABLE",
+            "Skill ingest did not create a canonical staged version.",
+        )
 
     snippet = ""
     snippet_hash = ""
@@ -147,6 +164,7 @@ def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         "safe": safe,
         "issues": issues,
         "safety_enforced": True,
+        **lifecycle,
     }
 
 
@@ -230,11 +248,19 @@ def _h_skill_get(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
                 ),
             }
         package = skill.get_skill(skill_id=skill_id, version_hash=version_hash)
+        snippet, snippet_hash = skill.render_snippet(
+            skill_id=skill_id,
+            version_hash=package.version_hash,
+            purpose="act",
+            max_tokens=500,
+        )
     except Exception as exc:
         return _error(str(getattr(exc, "code", "SKILL_GET_FAILED")), str(exc))
 
     return {
         "ok": True,
+        "snippet": snippet,
+        "snippet_hash": snippet_hash,
         "skill": package.to_dict(),
     }
 

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 _TOOL_DEFINITIONS = (
     (
         MODEL_SKILL_INGEST,
-        "Ingest a skill definition (Markdown) and store it for reuse. Returns skill_id, version_hash, and a rendered snippet for immediate use.",
+        "Prepare at most one complete Markdown skill after substantial reusable work. Saving requires user approval, remains pending until separate operator admission, and is not immediately selectable. Returns exact version and lifecycle facts.",
         RUNTIME_SKILL_INGEST,
     ),
     (

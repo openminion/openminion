@@ -779,16 +779,32 @@ class SkillIngestMixin:
             skill_id=package.skill_id,
             content_fingerprint=fingerprint,
         )
+        version_hash = (
+            str(existing["version_hash"])
+            if existing is not None
+            else package.version_hash
+        )
+        if existing is None:
+            warning_msgs.extend(
+                self._persist_package(
+                    package=package,
+                    index_keywords=index_keywords,
+                    admission_authority_class=authority.authority_class,
+                )
+            )
+        admission = self.store.get_skill_admission(
+            skill_id=package.skill_id,
+            version_hash=version_hash,
+        )
+        if admission is None:
+            raise SkillError(
+                "INGEST_NOT_DURABLE",
+                "Skill ingest did not create a canonical staged version.",
+                {"skill_id": package.skill_id, "version_hash": version_hash},
+            )
         if existing is not None:
             warning_msgs.append("admission.duplicate_content")
-            return package.skill_id, str(existing["version_hash"]), warning_msgs
-        warning_msgs.extend(
-            self._persist_package(
-                package=package,
-                index_keywords=index_keywords,
-                admission_authority_class=authority.authority_class,
-            )
-        )
+            return package.skill_id, version_hash, warning_msgs
         warning_msgs.append("admission.pending")
 
         self._emit_event(
@@ -802,7 +818,7 @@ class SkillIngestMixin:
                 "title": package.display_name or package.name,
                 "tags": list(package.tags),
                 "trust": str(package.bundle_metadata.get("trust") or ""),
-                "admission_state": "pending",
+                "admission_state": str(admission["state"]),
                 "authority_class": authority.authority_class,
                 "text": markdown,
             },

@@ -10,7 +10,7 @@ from ..constants import (
     TOOL_EXEC_SECURITY_DENY,
     TOOL_REDACTION_MODE_NORMAL,
 )
-from ..contracts.model_ids import MODEL_AGENT_GET, MODEL_AGENT_LIST
+from ..contracts.model_ids import MODEL_AGENT_GET, MODEL_AGENT_LIST, MODEL_SKILL_INGEST
 from .command_patterns import COMMAND_ALLOW_PATTERNS, DISCOVERY_KNOWN_TOOLS
 
 
@@ -150,7 +150,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         "deny_keys_regex": [".*KEY.*", ".*TOKEN.*", ".*SECRET.*"],
     },
     "confirm": {
-        "required_tools": ["proc.kill"],
+        "required_tools": ["proc.kill", MODEL_SKILL_INGEST],
         "required_when": [
             {"tool": "file.copy", "args_match": {"overwrite": True}},
             {"tool": "file.move", "args_match": {"overwrite": True}},
