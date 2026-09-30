@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
+from openminion.cli.commands.autonomy_project import resume_project_run
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     PROJECT_CODING_ALLOWED_TOOLS,
     PROJECT_RELEASE_ADDITIONAL_TOOLS,
@@ -27,6 +30,7 @@ from openminion.modules.task.project import (
     AutonomyLoopConditionKind,
     ProjectControlAction,
     apply_project_control,
+    project_cycle_prompt,
     project_condition_from_metadata,
     project_operator_guidance,
 )
@@ -648,6 +652,168 @@ def test_project_worker_recovers_terminal_checkpoint_after_proof_write_failure(
     assert calls == {"turn": 1, "verify": 1}
 
 
+def test_project_worker_recovers_after_proof_write_before_final_run_save(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store, manager, run = _project(tmp_path)
+    calls = {"turn": 0, "verify": 0}
+
+    def turn(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        calls["turn"] += 1
+        return ProjectTurnResult(summary="finished")
+
+    def verify() -> tuple[_TestEvidence, ...]:
+        calls["verify"] += 1
+        return (_evidence(_TestEvidenceStatus.PASSED),)
+
+    save = store.save
+    failed = False
+
+    def fail_final_save(candidate) -> None:  # noqa: ANN001
+        nonlocal failed
+        if (
+            not failed
+            and candidate.status == AutonomyRunStatus.COMPLETED
+            and candidate.proof_packet_ref
+        ):
+            failed = True
+            raise OSError("final run save unavailable")
+        save(candidate)
+
+    monkeypatch.setattr(store, "save", fail_final_save)
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=turn,
+        verify=verify,
+    )
+    with pytest.raises(OSError, match="final run save unavailable"):
+        worker.run_cycle(run.run_id)
+
+    persisted = store.require(run.run_id)
+    assert persisted.status == AutonomyRunStatus.RUNNING
+    assert persisted.proof_packet_ref is not None
+
+    monkeypatch.setattr(store, "save", save)
+    recovered = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: pytest.fail("terminal recovery reran the turn"),
+        verify=lambda: pytest.fail("terminal recovery reran verification"),
+    ).run_cycle(run.run_id)
+
+    assert recovered.reconciled_only is True
+    assert recovered.run.status == AutonomyRunStatus.COMPLETED
+    assert calls == {"turn": 1, "verify": 1}
+
+
+def test_project_worker_blocks_once_when_recovery_proof_write_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store, manager, run = _project(tmp_path)
+    proof_attempts = 0
+
+    def fail_proof(_packet) -> None:  # noqa: ANN001
+        nonlocal proof_attempts
+        proof_attempts += 1
+        raise OSError("proof store unavailable")
+
+    write_proof_packet = store.write_proof_packet
+    verification = _evidence(_TestEvidenceStatus.PASSED)
+    monkeypatch.setattr(store, "write_proof_packet", fail_proof)
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: ProjectTurnResult(summary="finished"),
+        verify=lambda: (verification,),
+    )
+    with pytest.raises(OSError, match="proof store unavailable"):
+        worker.run_cycle(run.run_id)
+
+    save = store.save
+    interrupted = False
+
+    def fail_blocked_save(candidate) -> None:  # noqa: ANN001
+        nonlocal interrupted
+        if not interrupted and candidate.status == AutonomyRunStatus.BLOCKED:
+            interrupted = True
+            raise OSError("blocked run save unavailable")
+        save(candidate)
+
+    monkeypatch.setattr(store, "save", fail_blocked_save)
+    with pytest.raises(OSError, match="blocked run save unavailable"):
+        ProjectWorker(
+            task_manager=manager,
+            autonomy_store=store,
+            turn=lambda _request: pytest.fail("terminal recovery reran the turn"),
+            verify=lambda: pytest.fail("terminal recovery reran verification"),
+        ).run_cycle(run.run_id)
+    assert store.require(run.run_id).status == AutonomyRunStatus.RUNNING
+    assert proof_attempts == 2
+
+    monkeypatch.setattr(store, "save", save)
+    blocked = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: pytest.fail("terminal recovery reran the turn"),
+        verify=lambda: pytest.fail("terminal recovery reran verification"),
+    ).run_cycle(run.run_id)
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+
+    assert blocked.reconciled_only is True
+    assert blocked.run.status == AutonomyRunStatus.BLOCKED
+    assert checkpoint is not None
+    assert checkpoint.payload["proof_recovery_failed"] is True
+    assert checkpoint.payload["decision_reason"] == "terminal_proof_recovery_failed"
+    assert checkpoint.project_run.status == AutonomyRunStatus.COMPLETED
+    assert blocked.verification == (verification,)
+    assert proof_attempts == 2
+
+    repeated = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: pytest.fail("blocked recovery reran the turn"),
+        verify=lambda: pytest.fail("blocked recovery reran verification"),
+    ).run_cycle(run.run_id)
+
+    assert repeated.reconciled_only is True
+    assert repeated.run.status == AutonomyRunStatus.BLOCKED
+    assert proof_attempts == 2
+
+    monkeypatch.setattr(store, "write_proof_packet", write_proof_packet)
+    resumable = repeated.run.model_copy(
+        update={
+            "execution_selectors": repeated.run.execution_selectors.model_copy(
+                update={"verification_commands": (sys.executable,)}
+            )
+        }
+    )
+    store.save(resumable)
+    resumed = resume_project_run(
+        manager,
+        store,
+        resumable,
+        workspace=tmp_path,
+        waiver=None,
+    )
+    assert resumed.status == AutonomyRunStatus.RUNNING
+    recovered = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: pytest.fail("proof recovery reran the turn"),
+        verify=lambda: pytest.fail("proof recovery reran verification"),
+    ).run_cycle(run.run_id)
+
+    assert recovered.reconciled_only is True
+    assert recovered.run.status == AutonomyRunStatus.COMPLETED
+    assert recovered.run.proof_packet_ref is not None
+    assert recovered.verification == (verification,)
+    assert manager.get_task("task-1").state == TaskLifecycleState.DONE
+    assert proof_attempts == 2
+
+
 def test_project_worker_persists_interrupted_cycle_as_blocked(tmp_path) -> None:
     store, manager, run = _project(tmp_path)
 
@@ -674,6 +840,81 @@ def test_project_worker_persists_interrupted_cycle_as_blocked(tmp_path) -> None:
     assert checkpoint is not None
     assert checkpoint.project_run.status == AutonomyRunStatus.BLOCKED
     assert checkpoint.payload["decision_reason"] == "project_cycle_interrupted"
+
+
+def test_project_worker_reconciles_interruption_checkpoint_before_run_save(
+    tmp_path, monkeypatch
+) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "seed.txt"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-qm",
+            "seed",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    store, manager, run = _project(tmp_path)
+    save = store.save
+    failed = False
+
+    def fail_blocked_save(candidate) -> None:  # noqa: ANN001
+        nonlocal failed
+        if not failed and candidate.status == AutonomyRunStatus.BLOCKED:
+            failed = True
+            raise OSError("run store unavailable")
+        save(candidate)
+
+    def interrupted_turn(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        (tmp_path / "work.txt").write_text("changed\n", encoding="utf-8")
+        raise RuntimeError("provider stopped")
+
+    monkeypatch.setattr(store, "save", fail_blocked_save)
+    with pytest.raises(OSError, match="run store unavailable"):
+        ProjectWorker(
+            task_manager=manager,
+            autonomy_store=store,
+            turn=interrupted_turn,
+            verify=lambda: pytest.fail("interrupted turn ran verification"),
+        ).run_cycle(run.run_id)
+
+    stale = store.require(run.run_id)
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+    assert checkpoint is not None
+    assert stale.status == AutonomyRunStatus.RUNNING
+    assert stale.checkpoint_id != checkpoint.checkpoint_id
+    assert checkpoint.project_run.workspace_ref.endswith(";dirty=dirty")
+    lifecycle = checkpoint.payload[project_checkpoints.REPOSITORY_LIFECYCLE_PAYLOAD_KEY]
+    resume = lifecycle[checkpoint.project_run.resume_packet_ref]
+    objective = lifecycle[checkpoint.project_run.objective_ledger_ref]
+    revision = checkpoint.project_run.workspace_ref.split("#commit=", 1)[1].split(
+        ";", 1
+    )[0]
+    assert resume["execution_repository"] == checkpoint.project_run.workspace_ref
+    assert resume["current_revisions"]["execution_repository"] == revision
+    assert objective["source_revisions"]["execution_repository"] == revision
+
+    monkeypatch.setattr(store, "save", save)
+    recovered = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: pytest.fail("reconciliation reran the turn"),
+        verify=lambda: pytest.fail("reconciliation reran verification"),
+    ).run_cycle(run.run_id)
+
+    assert recovered.reconciled_only is True
+    assert recovered.run.status == AutonomyRunStatus.BLOCKED
+    assert recovered.run.checkpoint_id == checkpoint.checkpoint_id
+    assert recovered.run.workspace_ref == checkpoint.project_run.workspace_ref
+    assert manager.get_task("task-1").state == TaskLifecycleState.PAUSED
 
 
 def test_project_cycle_preserves_effect_state_across_restart(tmp_path) -> None:
@@ -1395,7 +1636,14 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
         verifier_refs=(failed_verifier_ref,),
         revised_steps=[{"step_id": "build", "description": "Repair it"}],
     )
-    result = ProjectWorker(
+    verification_calls = 0
+
+    def verify_revision() -> tuple[_TestEvidence, ...]:
+        nonlocal verification_calls
+        verification_calls += 1
+        return (_evidence(_TestEvidenceStatus.PASSED),)
+
+    revision_result = ProjectWorker(
         task_manager=manager,
         autonomy_store=store,
         turn=lambda request: (
@@ -1407,12 +1655,45 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
                 task_plan_revision=revision,
             )
         ),
-        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+        verify=verify_revision,
         owner_id="worker-2",
+    ).run_cycle(run.run_id)
+    assert revision_result.decision == ProjectCycleDecision.CONTINUE
+    assert verification_calls == 0
+
+    repaired_plan = TaskPlan(
+        plan_id="plan-1",
+        objective="Ship the fixture",
+        criterion_ids=["criterion-tests"],
+        steps=[
+            {
+                "step_id": "build",
+                "description": "Repair it",
+                "status": "completed",
+            }
+        ],
+        status="completed",
+    )
+    result = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: (
+            prompts.append(request.prompt)
+            or requests.append(request)
+            or ProjectTurnResult(
+                summary="repair executed",
+                evidence_refs=("artifact:repair",),
+                task_plan=repaired_plan,
+                task_plan_completed=TaskPlanTerminalSignal(plan_id="plan-1"),
+            )
+        ),
+        verify=verify_revision,
+        owner_id="worker-3",
     ).run_cycle(run.run_id)
     checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
 
     assert result.decision == ProjectCycleDecision.STOP
+    assert verification_calls == 1
     assert checkpoint is not None
     assert checkpoint.payload["replan_count"] == 0
     assert checkpoint.payload["plan_revision_count"] == 1
@@ -1444,8 +1725,12 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     assert "verification:prun_" in prompts[1]
     assert "Prior verifier outcome:\nverification failed" in prompts[1]
     assert "revision-only turn" in prompts[1]
+    assert '"plan_id": "plan-1"' in prompts[1]
+    assert '"step_id": "build"' in prompts[1]
+    assert "file and tool restrictions as hard constraints" in prompts[1]
     assert requests[0].allowed_tools != ("plan",)
     assert requests[1].allowed_tools == ("plan",)
+    assert requests[2].allowed_tools != ("plan",)
     assert (
         build_project_report_from_task(
             manager,
@@ -1493,6 +1778,25 @@ def test_project_worker_does_not_close_before_required_plan_revision(tmp_path) -
     assert result.run.status != AutonomyRunStatus.COMPLETED
     assert checkpoint is not None
     assert checkpoint.payload["plan_revision_required"] is True
+
+
+def test_git_project_prompt_requests_typed_repository_status(tmp_path) -> None:
+    _store, manager, run = _project(tmp_path)
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+    assert checkpoint is not None
+    selectors = run.execution_selectors.model_copy(
+        update={"required_evidence_kinds": ("verification", "repository_status")}
+    )
+
+    prompt = project_cycle_prompt(
+        run.model_copy(update={"execution_selectors": selectors}),
+        checkpoint,
+        "Finish the fixture",
+    )
+
+    assert "After all repository-changing tool calls" in prompt
+    assert "immediately before plan completion" in prompt
+    assert "required repository evidence" in prompt
 
 
 @pytest.mark.parametrize(
@@ -1584,6 +1888,42 @@ def test_project_worker_rejects_revision_for_unrelated_failed_verifier(
             checkpoint,
             ProjectTurnResult(summary="unbound revision", task_plan_revision=revision),
         )
+
+
+def test_revision_only_turn_rejects_batched_step_completion(tmp_path) -> None:
+    _store, manager, _run = _project(tmp_path)
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+    assert checkpoint is not None
+    checkpoint.project_run = checkpoint.project_run.model_copy(
+        update={"verifier_refs": ("verification:cycle-1:1:failed",)}
+    )
+    checkpoint.payload.update(
+        {
+            "task_plan": TaskPlan(
+                plan_id="plan-1",
+                objective="Ship",
+                steps=[{"step_id": "build", "description": "Repair"}],
+            ).model_dump(mode="json"),
+            "plan_revision_required": True,
+        }
+    )
+    turn = ProjectTurnResult(
+        summary="revised and completed",
+        task_plan_revision=TaskPlanRevision(
+            plan_id="plan-1",
+            revision_id="revision-1",
+            verifier_refs=["verification:cycle-1:1:failed"],
+            revised_steps=[{"step_id": "build", "description": "Repair"}],
+        ),
+        task_plan_step_completed=TaskPlanStepCompleted(
+            plan_id="plan-1",
+            step_id="build",
+        ),
+        task_plan_completed=TaskPlanTerminalSignal(plan_id="plan-1"),
+    )
+
+    with pytest.raises(ValueError, match="revision-only turn"):
+        plan_checkpoint_payload(checkpoint, turn)
 
 
 @pytest.mark.parametrize(

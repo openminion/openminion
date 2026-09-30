@@ -21,12 +21,19 @@ from ..contracts import (
     AdaptiveToolLoopState,
     RawToolResult,
 )
+from ..budget import _effective_cap
 from ..budget_control import _general_profile_name
 from ..direct_tool import _direct_tool_turn_active
 from ..evidence import (
     _count_substantive_non_control_tool_results,
     _loop_tool_result_payloads,
 )
+from ..messages import action_result_to_tool_message
+from ..plan import _failed_result
+from ..plan_control import PLAN_TOOL_NAME, handle_plan_tool_call
+from ..transcript import persist_blocked_tool_calls
+from ..events import IterationToolCallRecord
+from ..status import emit_adaptive_status
 
 if TYPE_CHECKING:
     from typing import Callable
@@ -52,6 +59,81 @@ _MUTATING_FILE_TOOLS = frozenset(
     }
 )
 _SYNTHESIS_TOOL_PREFIXES = ("web.", "browser.", "research.")
+
+
+def _is_plan_tool_call(tool_call: Any) -> bool:
+    return str(getattr(tool_call, "name", "") or "").strip() == PLAN_TOOL_NAME
+
+
+def _execute_plan_action(
+    loop_ctx: AdaptiveToolLoopContext,
+    loop_state: AdaptiveToolLoopState,
+    arguments: dict[str, Any],
+) -> ActionResult:
+    if (
+        loop_state.task_plan_completed is not None
+        and str(arguments.get("action", "") or "").strip() == "declare"
+    ):
+        return _failed_result(
+            code="PLAN_ALREADY_COMPLETED",
+            summary="The task plan is already complete for this turn.",
+        )
+    return handle_plan_tool_call(loop_ctx=loop_ctx, arguments=arguments)
+
+
+def _finish_terminal_plan_revision(
+    loop_ctx: AdaptiveToolLoopContext,
+    loop_state: AdaptiveToolLoopState,
+    tool_calls: list[Any],
+) -> None:
+    results = persist_blocked_tool_calls(
+        loop_ctx,
+        loop_state=loop_state,
+        turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+        tool_calls=tool_calls,
+        code="PROJECT_PLAN_REVISION_TERMINAL",
+        message="The accepted project plan revision ended this turn.",
+    )
+    loop_state.messages.extend(
+        action_result_to_tool_message(call.id, call.name, result)
+        for call, result in zip(tool_calls, results, strict=True)
+    )
+
+
+def _record_plan_tool_execution(
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    records: list[IterationToolCallRecord],
+    action_result: ActionResult,
+    action: str,
+    public_mode_tag: str,
+    set_turn_progress: Any,
+) -> None:
+    records.append(
+        IterationToolCallRecord(
+            tool_name=PLAN_TOOL_NAME,
+            duration_ms=0,
+            status=str(getattr(action_result, "status", "") or ""),
+            cache_hit=False,
+            parallel=False,
+        )
+    )
+    set_turn_progress(
+        loop_state,
+        llm_call_count=loop_state.llm_calls,
+        llm_call_limit=_effective_cap(profile, loop_state),
+        progress_phase="tool",
+        tool_name=PLAN_TOOL_NAME,
+    )
+    emit_adaptive_status(
+        loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        detail_text=f"{public_mode_tag} tool {PLAN_TOOL_NAME}",
+        mode_state="tool_call",
+        extra={"tool_name": PLAN_TOOL_NAME, "plan_action": action},
+    )
 
 
 def _requires_typed_finalization_contract(

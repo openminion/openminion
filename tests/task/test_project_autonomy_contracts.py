@@ -11,6 +11,8 @@ from openminion.modules.task import (
     TaskLifecycleState,
     build_autonomy_run,
     build_project_run_projection,
+    TestEvidence as _TestEvidence,
+    TestEvidenceStatus as _TestEvidenceStatus,
 )
 from openminion.modules.task.project import (
     AutonomyLoopConditionKind,
@@ -28,6 +30,7 @@ from openminion.modules.task.project import (
     build_project_operator_inbox_item,
     classify_autonomy_loop_condition,
     evaluate_project_effect_replay,
+    evaluate_project_turn_verification,
     evaluate_project_verification_closure,
 )
 from openminion.modules.task.project.turn import (
@@ -96,6 +99,7 @@ def test_project_turn_metadata_carries_the_exact_selected_tool_scope() -> None:
         prompt="continue",
         allowed_tools=("git.status", "github.fetch_checks"),
         project_tool_calls_remaining=0,
+        plan_revision_required=True,
     )
 
     metadata = project_turn_inbound_metadata(request)
@@ -104,7 +108,8 @@ def test_project_turn_metadata_carries_the_exact_selected_tool_scope() -> None:
     assert metadata["turn_tool_allowlist"] == "git.status,github.fetch_checks"
     assert metadata["turn_tool_allowlist_supplied"] == "true"
     assert metadata["project_tool_calls_remaining"] == "0"
-    assert "project_tool_calls_remaining" not in project_turn_inbound_metadata(
+    assert metadata["project_plan_revision_required"] == "true"
+    default_metadata = project_turn_inbound_metadata(
         ProjectTurnRequest(
             run_id="run-2",
             project_run_id="project-2",
@@ -116,6 +121,8 @@ def test_project_turn_metadata_carries_the_exact_selected_tool_scope() -> None:
             prompt="continue",
         )
     )
+    assert "project_tool_calls_remaining" not in default_metadata
+    assert default_metadata["project_plan_revision_required"] == "false"
 
 
 @pytest.mark.parametrize(
@@ -347,6 +354,74 @@ def test_project_turn_valid_explicit_condition_precedes_typed_error() -> None:
     )
 
     assert result.condition == AutonomyLoopConditionKind.WAITING
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "ok", "expected"),
+    (
+        ("git.status", True, True),
+        ("git.status", False, False),
+        ("file.read", True, False),
+    ),
+)
+def test_project_turn_classifies_successful_repository_status(
+    tool_name: str,
+    ok: bool,
+    expected: bool,
+) -> None:
+    result = project_turn_result_from_response(
+        response={
+            "summary": "inspected",
+            "metadata": {
+                "tool_results": json.dumps(
+                    [{"tool_name": tool_name, "ok": ok, "call_id": "call-1"}]
+                )
+            },
+        }
+    )
+
+    assert ("repository_status" in result.evidence_kinds) is expected
+
+
+@pytest.mark.parametrize(
+    ("command", "status", "expected"),
+    (
+        (("git", "status"), _TestEvidenceStatus.PASSED, True),
+        ("git status", _TestEvidenceStatus.PASSED, True),
+        (("git", "status"), _TestEvidenceStatus.FAILED, False),
+        (("python", "verify.py"), _TestEvidenceStatus.PASSED, False),
+    ),
+)
+def test_exact_git_status_verifier_provides_repository_status(
+    command: tuple[str, ...] | str,
+    status: _TestEvidenceStatus,
+    expected: bool,
+) -> None:
+    run = build_autonomy_run(
+        goal_text="ship",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref="local:/workspace#commit=abc;dirty=clean",
+        max_iterations=1,
+        verification_commands=("git status",),
+        required_evidence_kinds=("verification", "repository_status"),
+    )
+    evidence = _TestEvidence(
+        command=command,
+        cwd_ref="/workspace",
+        started_at_ms=1,
+        ended_at_ms=2,
+        exit_code=0 if status == _TestEvidenceStatus.PASSED else 1,
+        status=status,
+        summary="checked",
+    )
+    closure = evaluate_project_turn_verification(
+        run,
+        project_turn_result_from_response(response={"summary": "done"}),
+        (evidence,),
+    )
+
+    assert (closure.status == ProjectDomainVerificationStatus.VERIFIED) is expected
 
 
 @pytest.mark.parametrize(

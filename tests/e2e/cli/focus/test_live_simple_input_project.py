@@ -34,6 +34,11 @@ from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus.harness.assertions import assert_expected_markers
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
 from tests.e2e.cli.focus.harness.scenarios import FocusScenario
+from tests.e2e.runners.run_simple_input_long_coding_e2e import (
+    FROZEN_LIVE_AGENT_ID,
+    _SOURCE_REVISION_ENV,
+    _clean_source_revision,
+)
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(1800)]
 
@@ -173,11 +178,11 @@ def _fixture(root: Path, scenario_id: str) -> tuple[Path, dict[str, object]]:
 
 
 def _source_revision() -> str:
-    return subprocess.check_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=Path(__file__).resolve().parents[4],
-        text=True,
-    ).strip()
+    root = Path(__file__).resolve().parents[4]
+    revision = _clean_source_revision(root)
+    expected = str(os.environ.get(_SOURCE_REVISION_ENV, "")).strip()
+    assert not expected or revision == expected
+    return revision
 
 
 def _project_owners(probe: FocusProbe) -> tuple[AutonomyRunStore, TaskManager]:
@@ -312,9 +317,39 @@ def _assert_required_completed_tools(
 
 
 def _approval_action_classes(transcript: str) -> list[str]:
-    return sorted(
-        set(re.findall(r"Approval required:\s*([A-Za-z0-9_.-]+)\(", transcript))
-    )
+    return [item["action"] for item in _approval_events(transcript)]
+
+
+def _approval_events(transcript: str) -> list[dict[str, object]]:
+    return [
+        {"sequence": index, "action": match.group(1), "decision": "session"}
+        for index, match in enumerate(
+            re.finditer(r"Approval required:\s*([A-Za-z0-9_.-]+)\(", transcript),
+            start=1,
+        )
+    ]
+
+
+def _unplanned_intervention_count(
+    events: list[dict[str, object]], planned_actions: tuple[str, ...]
+) -> int:
+    remaining = list(planned_actions)
+    count = 0
+    for event in events:
+        action = str(event["action"])
+        if action in remaining:
+            remaining.remove(action)
+        else:
+            count += 1
+    return count
+
+
+def _accepted_intervention_count(
+    events: list[dict[str, object]], planned_actions: tuple[str, ...]
+) -> int:
+    count = _unplanned_intervention_count(events, planned_actions)
+    assert count == 0, f"unexpected approval events: {events}"
+    return count
 
 
 def _assert_completed_child_lifecycle(
@@ -349,9 +384,10 @@ def _scenario_evidence(
     elapsed_ms: int,
     after_event_id: int,
     verification_result: dict[str, object],
-    approval_classes: list[str],
+    approval_events: list[dict[str, object]],
     *,
     process_boundary: dict[str, object] | None = None,
+    visible_status: dict[str, str] | None = None,
 ) -> dict[str, object]:
     store, manager = _project_owners(probe)
     try:
@@ -386,12 +422,13 @@ def _scenario_evidence(
             "tool_calls": run.continuation_policy.max_tool_calls,
         },
         "approvals": {
-            "source": "focus_transcript",
+            "source": "focus_harness",
             "ceiling": 8,
-            "observed_action_classes": approval_classes,
-            "decision": "session",
+            "events": approval_events,
+            "observed_action_classes": [event["action"] for event in approval_events],
         },
         "process_boundary": process_boundary,
+        "visible_status": visible_status or {},
         "identities": {
             "run_id": run.run_id,
             "task_id": run.task_id,
@@ -415,7 +452,9 @@ def _scenario_evidence(
             "observed": tokens,
             "project_and_child_total": None,
         },
-        "unplanned_interventions": 0,
+        "unplanned_interventions": _accepted_intervention_count(
+            approval_events, ("project.start", "sidecar.consent")
+        ),
         "disposition": "pass",
     }
 
@@ -441,9 +480,16 @@ def _run_live_scenario(
         == 0
     )
     process_boundary = None
+    visible_status: dict[str, str] = {}
+    transcript_parts: list[str] = []
+    approval_events: list[dict[str, object]] = []
     try:
         first_event_id = _telemetry_cursor(probe)
-        with probe.session(rows=52, cols=180) as session:
+        with probe.session(
+            rows=52,
+            cols=180,
+            on_transcript_update=lambda text: write_transcript(root, scenario_id, text),
+        ) as session:
             probe.wait_ready(session)
             transcript = probe.run_turn(
                 session,
@@ -456,13 +502,15 @@ def _run_live_scenario(
                     approval_reply="session",
                     timeout=1200,
                 ),
+                approval_events=approval_events,
             )
+            transcript_parts.append(transcript)
             write_transcript(root, scenario_id, transcript)
             assert_expected_markers(
                 transcript, LIVE_SCENARIOS[scenario_id], ("Project queued:",)
             )
-            approval_classes = _approval_action_classes(transcript)
-            assert approval_classes == ["project.start"]
+            assert _approval_action_classes(transcript) == ["project.start"]
+            assert any(event["action"] == "project.start" for event in approval_events)
             run_match = _RUN_ID_RE.search(transcript)
             assert run_match is not None, "typed project handoff did not queue a run"
             run_id = run_match.group(1)
@@ -475,6 +523,19 @@ def _run_live_scenario(
                         and checkpoint.project_run.verification_state
                         == ProjectVerificationState.FAILED
                     ),
+                )
+                failure_status = probe.run_slash_turn(
+                    session,
+                    f"/project show {run_id}",
+                    marker=r"verification_state: failed",
+                    timeout=120,
+                )
+                visible_status["after_failure"] = failure_status
+                transcript_parts.append(failure_status)
+                write_transcript(
+                    root,
+                    scenario_id,
+                    "\n\n--- status ---\n".join(transcript_parts),
                 )
                 pause = probe.run_slash_turn(
                     session,
@@ -523,6 +584,19 @@ def _run_live_scenario(
                     data_root=probe.data_root,
                 )
                 assert daemon_before["pid"] != daemon_after["pid"]
+                restart_status = probe.run_slash_turn(
+                    session,
+                    f"/project show {run_id}",
+                    marker=r"verification_state: failed",
+                    timeout=120,
+                )
+                visible_status["after_restart"] = restart_status
+                transcript_parts.append(restart_status)
+                write_transcript(
+                    root,
+                    scenario_id,
+                    "\n\n--- status ---\n".join(transcript_parts),
+                )
                 resume = probe.run_slash_turn(
                     session,
                     f"/project resume {run_id}",
@@ -530,6 +604,12 @@ def _run_live_scenario(
                     timeout=120,
                 )
                 assert run_id in resume
+                transcript_parts.append(resume)
+                write_transcript(
+                    root,
+                    scenario_id,
+                    "\n\n--- status ---\n".join(transcript_parts),
+                )
                 process_boundary = {
                     "stop_point": "after persisted cycle 1 verifier failure",
                     "cycles_before_restart": 1,
@@ -581,6 +661,19 @@ def _run_live_scenario(
         assert all(line[:2] in {" M", "M ", "MM"} for line in status_lines)
         changed_paths = sorted(line[3:] for line in status_lines)
         assert changed_paths == fixture_evidence["expected_changed_paths"]
+        with probe.session(rows=52, cols=180) as session:
+            probe.wait_ready(session)
+            completed_status = probe.run_slash_turn(
+                session,
+                f"/project show {run_id}",
+                marker=r"outcome: completed-verified",
+                timeout=120,
+            )
+        visible_status["after_completion"] = completed_status
+        transcript_parts.append(completed_status)
+        write_transcript(
+            root, scenario_id, "\n\n--- status ---\n".join(transcript_parts)
+        )
         evidence = _scenario_evidence(
             probe,
             workspace,
@@ -595,11 +688,12 @@ def _run_live_scenario(
                 "stdout": verification.stdout,
                 "stderr": verification.stderr,
             },
-            approval_classes,
+            approval_events,
             process_boundary=process_boundary,
+            visible_status=visible_status,
         )
         assert evidence["source_revision"] == source_revision
-        assert evidence["profile"] == "minimax-m2-7"
+        assert evidence["profile"] == FROZEN_LIVE_AGENT_ID
         assert evidence["model"] == "MiniMax-M2.7"
         assert evidence["configured_act_profile"] == "coding"
         assert evidence["tokens"]["observed"] > 0
@@ -690,7 +784,7 @@ def _run_live_scenario(
             } == {
                 "minimax-m2-7-highspeed",
                 "minimax-m2-5-highspeed",
-                "minimax-m2-7",
+                FROZEN_LIVE_AGENT_ID,
             }
         evidence_path.write_text(
             json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"

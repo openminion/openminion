@@ -25,6 +25,7 @@ from tests.e2e.cli.focus.harness.assertions import (
 )
 from tests.e2e.cli.focus.harness.probe import (
     FocusProbe,
+    _record_approval_event,
     active_approval_visible,
     active_turn_busy,
     approval_prompt_needs_reply,
@@ -486,6 +487,50 @@ def test_focus_session_id_uses_stable_sha256_digest(tmp_path: Path) -> None:
     digest = session_id.rsplit("-", maxsplit=1)[-1]
     assert len(digest) == 32
     assert all(character in "0123456789abcdef" for character in digest)
+
+
+def test_approval_events_record_submission_order_and_decisions() -> None:
+    events: list[dict[str, object]] = []
+
+    _record_approval_event(
+        events,
+        kind="inline",
+        screen_text="Approval required: file.write(path='slug.py')",
+        reply="session",
+    )
+    _record_approval_event(
+        events,
+        kind="sidecar",
+        screen_text="Allow auto-start for PinchTab? [y/N]:",
+        reply="no",
+    )
+    _record_approval_event(
+        events,
+        kind="policy",
+        screen_text="Policy confirmation required",
+        reply="yes",
+    )
+
+    assert events == [
+        {
+            "sequence": 1,
+            "kind": "inline",
+            "action": "file.write",
+            "decision": "session",
+        },
+        {
+            "sequence": 2,
+            "kind": "sidecar",
+            "action": "sidecar.consent",
+            "decision": "deny",
+        },
+        {
+            "sequence": 3,
+            "kind": "policy",
+            "action": "policy.approval",
+            "decision": "yes",
+        },
+    ]
 
 
 def test_run_turn_ignores_repeated_old_completion_after_inline_approval(

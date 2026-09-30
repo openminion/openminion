@@ -10,14 +10,22 @@ import pytest
 from tests.e2e.cli.focus.test_live_simple_input_project import (
     LIVE_SCENARIOS,
     _approval_action_classes,
+    _approval_events,
+    _accepted_intervention_count,
     _assert_completed_child_lifecycle,
     _assert_required_completed_tools,
     _fixture,
     _project_owners,
+    _unplanned_intervention_count,
 )
 from tests.e2e.runners.run_simple_input_long_coding_e2e import (
+    FROZEN_LIVE_AGENT_ID,
     _ARTIFACT_ENV,
+    _LIVE_TARGETS,
     _artifact_root,
+    _clean_source_revision,
+    _live_agent_id,
+    _mnte_evidence,
     _scenario_evidence,
 )
 
@@ -28,6 +36,28 @@ def test_live_corpus_has_the_three_spec_scenarios() -> None:
         "research-then-code",
         "delegated-read-only-review",
     )
+
+
+def test_live_runner_executes_silc_and_mnte_in_one_process() -> None:
+    assert _LIVE_TARGETS == (
+        "tests/e2e/cli/focus/test_live_simple_input_project.py",
+        "tests/e2e/cli/focus/test_live_model_neutral_tool_exposure.py",
+    )
+
+
+def test_live_summary_reads_mnte_evidence_from_shared_root(tmp_path) -> None:
+    evidence_path = tmp_path / "focus" / "mnte-focus-live-evidence.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text(
+        json.dumps({"scenario_id": "mnte-core", "disposition": "pass"}),
+        encoding="utf-8",
+    )
+
+    assert _mnte_evidence(tmp_path, live_result=0)[0] == {
+        "scenario_id": "mnte-core",
+        "path": "focus/mnte-focus-live-evidence.json",
+        "disposition": "pass",
+    }
     assert "first project cycle" in LIVE_SCENARIOS["plain-multifile-repair"]
     assert "web.search" in LIVE_SCENARIOS["research-then-code"]
     assert "web.fetch" in LIVE_SCENARIOS["research-then-code"]
@@ -72,6 +102,38 @@ def test_configured_artifact_root_is_absolute(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 
     assert _artifact_root({_ARTIFACT_ENV: "artifacts"}) == tmp_path / "artifacts"
+
+
+def test_live_agent_contract_requires_frozen_coding_profile() -> None:
+    config = {
+        "default_agent": FROZEN_LIVE_AGENT_ID,
+        "agents": {
+            FROZEN_LIVE_AGENT_ID: {"default_act_profile": "coding"},
+        },
+    }
+
+    assert _live_agent_id(config) == FROZEN_LIVE_AGENT_ID
+    config["agents"][FROZEN_LIVE_AGENT_ID]["default_act_profile"] = "auto"
+    with pytest.raises(ValueError, match="coding act profile"):
+        _live_agent_id(config)
+
+
+def test_clean_source_revision_rejects_dirty_checkout(tmp_path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    (tmp_path / "tracked.txt").write_text("clean\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "seed"], cwd=tmp_path, check=True)
+
+    assert _clean_source_revision(tmp_path)
+    (tmp_path / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="clean source checkout"):
+        _clean_source_revision(tmp_path)
 
 
 def test_live_project_reader_uses_focus_generated_root(tmp_path) -> None:
@@ -194,5 +256,13 @@ def test_approval_classes_are_derived_from_visible_focus_prompts() -> None:
         "Approval required: project.start(goal=fixture)\n"
     )
 
-    assert _approval_action_classes(transcript) == ["project.start"]
+    assert _approval_action_classes(transcript) == ["project.start", "project.start"]
+    events = _approval_events(transcript)
+    assert events == [
+        {"sequence": 1, "action": "project.start", "decision": "session"},
+        {"sequence": 2, "action": "project.start", "decision": "session"},
+    ]
+    assert _unplanned_intervention_count(events, ("project.start",)) == 1
+    with pytest.raises(AssertionError, match="unexpected approval events"):
+        _accepted_intervention_count(events, ("project.start",))
     assert _approval_action_classes("Project queued: run-1") == []

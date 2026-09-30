@@ -1,3 +1,5 @@
+import hashlib
+from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
@@ -19,10 +21,23 @@ from openminion.modules.tool.runtime.environment import (
     storage_path_from_context,
 )
 from openminion.modules.brain.execution.worktree_children import (
+    ChildWorktreeLease,
     accept_child_worktree_artifact,
+    allocate_delegated_worktree,
+    finalize_delegated_worktree,
     load_child_worktree_record,
     reject_child_worktree_artifact,
     save_child_worktree_record,
+)
+from openminion.modules.task import (
+    TestEvidence,
+    TestEvidenceStatus,
+    load_latest_project_checkpoint,
+)
+from openminion.modules.task.project import project_workspace
+from openminion.modules.task.project.policy import repository_project_launch_approved
+from openminion.modules.task.project.verification import (
+    run_project_verification_commands,
 )
 from openminion.modules.telemetry.events.catalog import (
     AGENT_HANDOFF_COMPLETED,
@@ -130,6 +145,13 @@ class TaskDelegateArgs(BaseModel):
         default="",
         description="Repository instructions the reviewer must apply.",
     )
+    code_bearing: bool = Field(
+        default=False,
+        description=(
+            "Set true for synchronous repository edits that must run in an isolated "
+            "child worktree and return a durable child_artifact for review."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_action_fields(self) -> "TaskDelegateArgs":
@@ -157,6 +179,8 @@ class TaskDelegateArgs(BaseModel):
                 raise ValueError(
                     "agent_id and instruction are required for sync/async delegation"
                 )
+            if self.code_bearing and normalized_mode != "sync":
+                raise ValueError("code-bearing delegation requires sync mode")
         elif normalized_mode == "review":
             if (
                 not self.agent_id.strip()
@@ -453,6 +477,8 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
     elif validated.mode == "cancel":
         result = seam.cancel(task_id=validated.task_id)
     else:
+        if validated.code_bearing:
+            return _handle_code_bearing_delegate(validated, ctx, seam)
         delegate_kwargs = {
             "agent_id": validated.agent_id,
             "instruction": validated.instruction,
@@ -490,6 +516,197 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
             "task_id": result.task_id,
         },
     )
+
+
+def _handle_code_bearing_delegate(
+    args: TaskDelegateArgs,
+    ctx: RuntimeContext,
+    seam: Any,
+) -> dict[str, Any]:
+    artifactctl, repository, verification_commands, verification_timeout = (
+        _code_bearing_project_inputs(ctx)
+    )
+    subtask_id = f"delegate-{uuid4().hex[:12]}"
+    lease = allocate_delegated_worktree(
+        workspace_root=str(repository),
+        subtask_id=subtask_id,
+    )
+    result, evidence = _delegate_and_verify_code(
+        args,
+        ctx,
+        seam,
+        lease,
+        verification_commands,
+        verification_timeout,
+    )
+    passed = bool(evidence) and all(
+        item.status == TestEvidenceStatus.PASSED for item in evidence
+    )
+    verifier_refs = [
+        "child-verifier:"
+        + hashlib.sha256(item.model_dump_json().encode("utf-8")).hexdigest()
+        for item in evidence
+    ]
+    session_id = str(
+        getattr(ctx, "session_id", None)
+        or getattr(ctx, "telemetry_session_id", None)
+        or ""
+    ).strip()
+    trace_id = str(
+        getattr(ctx, "telemetry_turn_id", None) or result.trace_id or subtask_id
+    ).strip()
+    child_record = finalize_delegated_worktree(
+        lease=lease,
+        artifactctl=artifactctl,
+        session_id=session_id,
+        trace_id=trace_id,
+        agent_id=args.agent_id,
+        status="completed" if passed else "verification_failed",
+        validation={
+            "passed": passed,
+            "verifier_refs": verifier_refs,
+            "evidence": [item.model_dump(mode="json") for item in evidence],
+        },
+    )
+    child_artifact = {
+        "record_alias": child_record.get("record_alias", ""),
+        "target_digest": child_record.get("target_digest", ""),
+        "integration_status": child_record.get("integration_status", ""),
+    }
+    if not passed:
+        raise ToolRuntimeError(
+            "EXEC_ERROR",
+            "Code-bearing delegated work did not pass its verifier.",
+            {
+                "reason_code": "child_verification_failed",
+                "child_artifact": child_artifact,
+            },
+        )
+    if child_record.get("integration_status") != "pending_parent_review":
+        raise ToolRuntimeError(
+            "EXEC_ERROR",
+            "Code-bearing delegated work did not produce a reviewable artifact.",
+            {
+                "reason_code": "child_artifact_unavailable",
+                "child_artifact": child_artifact,
+            },
+        )
+    return {
+        "ok": True,
+        "agent_id": args.agent_id,
+        "mode": "sync",
+        "status": "success",
+        "content": result.content,
+        "child_artifact": child_artifact,
+        "outputs": {**dict(result.outputs or {}), "child_artifact": child_artifact},
+        "trace_id": result.trace_id,
+        "task_id": result.task_id,
+    }
+
+
+def _code_bearing_project_inputs(
+    ctx: RuntimeContext,
+) -> tuple[Any, Path, tuple[str, ...], int]:
+    artifactctl = getattr(ctx, "artifactctl", None)
+    if artifactctl is None:
+        raise ToolRuntimeError(
+            "DEPENDENCY_MISSING",
+            "Code-bearing delegation requires ArtifactCtl.",
+            {"reason_code": "artifactctl_unavailable"},
+        )
+    task_manager = getattr(ctx, "task_manager", None)
+    project_task_id = str(getattr(ctx, "project_task_id", "") or "").strip()
+    if task_manager is None or not project_task_id:
+        raise ToolRuntimeError(
+            "DEPENDENCY_MISSING",
+            "Code-bearing delegation requires an approved project.",
+            {"reason_code": "project_context_unavailable"},
+        )
+    checkpoint = load_latest_project_checkpoint(
+        task_manager,
+        task_id=project_task_id,
+    )
+    if checkpoint is None:
+        raise ToolRuntimeError(
+            "DEPENDENCY_MISSING",
+            "Code-bearing delegation requires an approved project checkpoint.",
+            {"reason_code": "project_checkpoint_unavailable"},
+        )
+    if not repository_project_launch_approved(checkpoint):
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            "Code-bearing delegation requires an approved project.",
+            {"reason_code": "project_launch_unapproved"},
+        )
+    repository = project_workspace(checkpoint.project_run.workspace_ref)
+    if not (repository / ".git").exists():
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            "Code-bearing delegation requires an approved Git project.",
+            {"reason_code": "project_repository_unavailable"},
+        )
+    verification_commands = (
+        checkpoint.project_run.execution_selectors.verification_commands
+    )
+    if not verification_commands:
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            "Code-bearing delegation requires approved project verification.",
+            {"reason_code": "project_verifier_unavailable"},
+        )
+    return (
+        artifactctl,
+        repository,
+        verification_commands,
+        checkpoint.project_run.execution_selectors.verification_timeout_seconds,
+    )
+
+
+def _delegate_and_verify_code(
+    args: TaskDelegateArgs,
+    ctx: RuntimeContext,
+    seam: Any,
+    lease: ChildWorktreeLease,
+    verification_commands: tuple[str, ...],
+    verification_timeout_seconds: int,
+) -> tuple[Any, tuple[TestEvidence, ...]]:
+    instruction = (
+        f"{args.instruction}\n\n"
+        "Work only in the provided isolated checkout. Make the requested edits and "
+        "return when they are complete. The runtime owns verification and artifact "
+        "creation; do not claim or fabricate a child artifact."
+    )
+    completed = False
+    try:
+        result = seam.delegate(
+            agent_id=args.agent_id,
+            instruction=instruction,
+            timeout_seconds=args.timeout_seconds,
+            permission_mode=str(getattr(ctx, "permission_mode", "ask") or "ask"),
+            workspace_root=str(lease.worktree),
+            cwd=str(lease.worktree),
+        )
+        if not result.ok:
+            raise ToolRuntimeError(
+                _task_delegate_error_code(result.error_code, status=result.status),
+                result.error_message or "Delegation failed.",
+                {
+                    "reason_code": "task_delegate_failed",
+                    "agent_id": args.agent_id,
+                    "delegate_error_code": result.error_code,
+                    "trace_id": result.trace_id,
+                },
+            )
+        evidence = run_project_verification_commands(
+            verification_commands,
+            workspace=lease.worktree,
+            timeout_seconds=verification_timeout_seconds,
+        )
+        completed = True
+        return result, evidence
+    finally:
+        if not completed:
+            lease.isolator.release()
 
 
 def _handle_child_artifact_disposition(

@@ -29,6 +29,7 @@ from openminion.modules.task import (
     TaskLifecycleState,
     TaskManager,
     TestEvidence,
+    build_local_workspace_ref,
     load_latest_project_checkpoint,
 )
 from openminion.modules.task.autonomy import now_ms
@@ -53,6 +54,7 @@ from openminion.modules.task.project import (
     write_project_terminal_proof,
 )
 from openminion.modules.task.project.budget import evaluate_continuation_budget
+from openminion.modules.task.project.budget import project_cycle_claim_ttl_seconds
 from openminion.modules.task.project import (
     checkpoints as project_cp,
     effects as project_effects,
@@ -73,13 +75,6 @@ class ProjectWorkerResult:
     verification: tuple[TestEvidence, ...]
     reconciled_only: bool = False
     check_events: tuple[dict[str, object], ...] = ()
-
-
-def project_cycle_claim_ttl_seconds(run: AutonomyRun) -> int:
-    selectors = run.execution_selectors
-    verifier_timeout = int(selectors.verification_timeout_seconds)
-    verifier_window = verifier_timeout * len(selectors.verification_commands)
-    return int(selectors.turn_timeout_seconds) + verifier_window
 
 
 def build_cron_project_worker(
@@ -513,14 +508,14 @@ class ProjectWorker:
             cycle_summaries=project_cp.project_cycle_summaries(
                 self._task_manager, task_id=run.task_id or ""
             ),
-            workspace=project_workspace(run.workspace_ref),
+            workspace=project_workspace(checkpoint.project_run.workspace_ref),
         )
         if recovered is None:
             return None
-        terminal_run, decision, verification = recovered
+        terminal_run, terminal_checkpoint, decision, verification = recovered
         return ProjectWorkerResult(
             run=terminal_run,
-            project_run=checkpoint.project_run,
+            project_run=terminal_checkpoint.project_run,
             decision=decision,
             verification=verification,
             reconciled_only=True,
@@ -628,7 +623,8 @@ class ProjectWorker:
                 release_approved=release_grant,
             )
             allowed_tools = tuple(sorted(requestable_tools | {TOOL_REQUEST_TOOL_NAME}))
-        if checkpoint.payload.get("plan_revision_required") is True:
+        revision_required = checkpoint.payload.get("plan_revision_required") is True
+        if revision_required:
             allowed_tools = (PLAN_TOOL_NAME,)
         request = ProjectTurnRequest(
             run_id=run.run_id,
@@ -649,10 +645,11 @@ class ProjectWorker:
             ),
             allowed_tools=allowed_tools,
             project_tool_calls_remaining=project_tool_calls_remaining,
+            plan_revision_required=revision_required,
         )
         self._log_cycle("project.cycle.started", run, project_run, cycle_id=cycle_id)
         turn_result = self._turn(request)
-        verification = self._verify()
+        verification = () if revision_required else self._verify()
         closure = evaluate_project_turn_verification(run, turn_result, verification)
         raw_replan_count = checkpoint.payload.get("replan_count", 0)
         previous_replans = raw_replan_count if isinstance(raw_replan_count, int) else 0
@@ -727,6 +724,9 @@ class ProjectWorker:
         )
         return project_run.model_copy(
             update={
+                "workspace_ref": build_local_workspace_ref(
+                    project_workspace(run.workspace_ref)
+                ),
                 "status": evaluation.status,
                 "phase": evaluation.phase,
                 "updated_at_ms": max(
@@ -785,6 +785,7 @@ class ProjectWorker:
         updated_run = run.model_copy(
             update={
                 "checkpoint_id": committed.checkpoint_id,
+                "workspace_ref": project_run.workspace_ref,
                 "status": evaluation.status,
                 "phase": evaluation.phase,
                 "operator_summary": operator_summary,
@@ -814,7 +815,7 @@ class ProjectWorker:
                 cycle_summaries=project_cp.project_cycle_summaries(
                     self._task_manager, task_id=run.task_id or ""
                 ),
-                workspace=project_workspace(run.workspace_ref),
+                workspace=project_workspace(project_run.workspace_ref),
             )
         self._autonomy_store.save(updated_run)
         project_progress.transition_project_task(

@@ -15,6 +15,11 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+from tests.e2e.runners.run_simple_input_long_coding_e2e import (  # noqa: E402
+    _SOURCE_REVISION_ENV,
+    _clean_source_revision,
+    _live_agent_id,
+)
 
 isolate_runtime_roots(prefix="openminion-mnte-")
 
@@ -114,7 +119,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"live MNTE E2E requires {_CONFIG_ENV}", file=sys.stderr)
             return 2
         config = json.loads(config_path.read_text(encoding="utf-8"))
-        env.setdefault("OPENMINION_CLI_FOCUS_E2E_AGENT", str(config["default_agent"]))
+        try:
+            agent_id = _live_agent_id(config)
+            source_revision = _clean_source_revision()
+        except (RuntimeError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        env["OPENMINION_CLI_FOCUS_E2E_AGENT"] = agent_id
+        env[_SOURCE_REVISION_ENV] = source_revision
         env["OPENMINION_LIVE_CLI_FOCUS_E2E"] = "1"
         env["OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E"] = "1"
         results["live"] = _run(_LIVE_TARGETS, env=env)

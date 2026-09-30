@@ -52,7 +52,12 @@ from openminion.modules.brain.loop.strategies.coding.contracts import (
     PROJECT_CODING_ALLOWED_TOOLS,
     PROJECT_RELEASE_ALLOWED_TOOLS,
 )
-from openminion.modules.brain.schemas import ActionResult, BudgetCounters, ToolCommand
+from openminion.modules.brain.schemas import (
+    ActionResult,
+    BudgetCounters,
+    ToolCommand,
+    WorkingState,
+)
 from openminion.modules.llm.schemas import LLMResponse, Message, ToolCall, ToolSpec
 
 
@@ -200,6 +205,380 @@ class TestCodingProfileRunnerMethods:
         assert runner._loop_state.task_plan_revision is None
         assert runner._loop_state.task_plan_completed is None
         assert runner._loop_state.messages[-1].content == "Continue repair"
+
+    def test_required_project_revision_uses_checkpoint_plan_without_planner(
+        self,
+    ) -> None:
+        checkpoint_plan = {
+            "plan_id": "plan-1",
+            "objective": "Repair the fixture",
+            "criterion_ids": ["criterion-tests"],
+            "status": "completed",
+            "steps": [
+                {
+                    "step_id": "build",
+                    "description": "Repair the fixture",
+                    "status": "completed",
+                }
+            ],
+        }
+        checkpoint = SimpleNamespace(payload={"task_plan": checkpoint_plan})
+        stale = CodingProfileRunner()
+        stale._coding_plan = CodingPlan.fallback("stale internal plan")
+        stale._loop_state.messages.append(Message(role="assistant", content="stale"))
+        state = WorkingState(
+            session_id="session-1",
+            agent_id="agent-1",
+            resume_task_id_hint="task-1",
+            task_backed_task_id="task-1",
+            task_backed_resume_state=stale.snapshot_state(),
+            project_plan_revision_required=True,
+            pending_confirmation_command=ToolCommand(
+                title="Stale write",
+                tool_name="file.write",
+                args={"path": "stale.txt", "content": "stale"},
+            ),
+            budgets_remaining=BudgetCounters(
+                ticks=10,
+                tool_calls=5,
+                a2a_calls=0,
+                tokens=5000,
+                time_ms=120000,
+            ),
+        )
+        runtime_runner = SimpleNamespace(
+            task_manager=object(),
+            session_api=SimpleNamespace(get_active_task_plan=lambda _session: None),
+            options=None,
+            tool_api=None,
+        )
+        ctx = SimpleNamespace(
+            state=state,
+            user_input="Revise the failed checkpoint plan",
+            decision=SimpleNamespace(_seeded_commands=[]),
+            _services=SimpleNamespace(runner=runtime_runner),
+        )
+        runner = CodingProfileRunner()
+
+        with (
+            patch.object(
+                handler,
+                "load_latest_project_checkpoint",
+                return_value=checkpoint,
+            ),
+            patch.object(
+                runner,
+                "_initialize_plan",
+                side_effect=AssertionError("revision called the coding planner"),
+            ),
+        ):
+            prepared = runner._prepare_execution_state(
+                ctx,
+                runtime=SimpleNamespace(),
+                model="fake-model",
+                allowed_tools=frozenset(),
+            )
+
+        assert isinstance(prepared, tuple)
+        assert prepared[1] is False
+        assert runner._coding_plan is None
+        assert runner._loop_state.task_plan == checkpoint_plan
+        assert [message.content for message in runner._loop_state.messages] == [
+            "Revise the failed checkpoint plan"
+        ]
+        assert runner._loop_state.scratchpad["project.plan_revision_required"] is True
+        assert state.pending_confirmation_command is None
+        assert state.task_backed_resume_state == {}
+
+    def test_checkpoint_without_plan_ignores_stale_session_plan(self) -> None:
+        state = WorkingState(
+            session_id="session-1",
+            agent_id="agent-1",
+            resume_task_id_hint="task-1",
+            task_backed_task_id="task-1",
+            budgets_remaining=BudgetCounters(
+                ticks=10,
+                tool_calls=5,
+                a2a_calls=0,
+                tokens=5000,
+                time_ms=120000,
+            ),
+        )
+        ctx = SimpleNamespace(
+            state=state,
+            user_input="Start the new project",
+            decision=SimpleNamespace(_seeded_commands=[]),
+            emit_status=lambda **_kwargs: None,
+            _services=SimpleNamespace(
+                runner=SimpleNamespace(
+                    task_manager=object(),
+                    session_api=SimpleNamespace(
+                        get_active_task_plan=lambda _session: {
+                            "plan_id": "stale-session-plan"
+                        }
+                    ),
+                )
+            ),
+        )
+
+        with patch.object(
+            handler,
+            "load_latest_project_checkpoint",
+            return_value=SimpleNamespace(payload={}),
+        ):
+            plan, approved = handler._canonical_project_plan(ctx)
+            runner = CodingProfileRunner()
+            with patch.object(
+                runner,
+                "_initialize_plan",
+                return_value=CodingPlan.fallback("Start the new project"),
+            ) as initialize:
+                prepared = runner._prepare_execution_state(
+                    ctx,
+                    runtime=SimpleNamespace(),
+                    model="fake-model",
+                    allowed_tools=frozenset(),
+                )
+
+        assert plan is None
+        assert approved is False
+        assert isinstance(prepared, tuple)
+        initialize.assert_called_once()
+        assert runner._loop_state.task_plan is None
+
+    def test_active_project_plan_does_not_override_exact_resume(self) -> None:
+        checkpoint = SimpleNamespace(
+            payload={
+                "task_plan": {
+                    "plan_id": "plan-1",
+                    "objective": "Continue the project",
+                    "steps": [{"step_id": "build", "description": "Build it"}],
+                }
+            }
+        )
+        stale = CodingProfileRunner()
+        stale._coding_plan = CodingPlan.fallback("prepared plan")
+        stale._loop_state.messages.append(
+            Message(role="assistant", content="prepared context")
+        )
+        state = WorkingState(
+            session_id="session-1",
+            agent_id="agent-1",
+            resume_task_id_hint="task-1",
+            task_backed_task_id="task-1",
+            task_backed_resume_state=stale.snapshot_state(),
+            budgets_remaining=BudgetCounters(
+                ticks=10,
+                tool_calls=5,
+                a2a_calls=0,
+                tokens=5000,
+                time_ms=120000,
+            ),
+        )
+        ctx = SimpleNamespace(
+            state=state,
+            user_input="Continue",
+            decision=SimpleNamespace(_seeded_commands=[]),
+            emit_status=lambda **_kwargs: None,
+            _services=SimpleNamespace(
+                runner=SimpleNamespace(
+                    task_manager=object(),
+                    session_api=SimpleNamespace(
+                        get_active_task_plan=lambda _session: None
+                    ),
+                    options=None,
+                    tool_api=None,
+                )
+            ),
+        )
+        runner = CodingProfileRunner()
+        runner._resume_prepared = True
+
+        with (
+            patch.object(
+                handler,
+                "load_latest_project_checkpoint",
+                return_value=checkpoint,
+            ),
+            patch.object(
+                handler,
+                "repository_project_launch_approved",
+                return_value=True,
+            ),
+            patch.object(
+                runner,
+                "_initialize_plan",
+                side_effect=AssertionError("resume called the coding planner"),
+            ),
+        ):
+            prepared = runner._prepare_execution_state(
+                ctx,
+                runtime=SimpleNamespace(),
+                model="fake-model",
+                allowed_tools=frozenset(),
+            )
+
+        assert isinstance(prepared, tuple)
+        assert prepared[1] is True
+        assert runner._coding_plan is not None
+        assert runner._coding_plan.goal == "prepared plan"
+        assert runner._loop_state.messages[0].content == "prepared context"
+
+    def test_active_project_plan_replaces_polluted_unprepared_state(self) -> None:
+        checkpoint_plan = {
+            "plan_id": "plan-1",
+            "objective": "Continue the project",
+            "steps": [{"step_id": "build", "description": "Build it"}],
+        }
+        checkpoint = SimpleNamespace(payload={"task_plan": checkpoint_plan})
+        stale = CodingProfileRunner()
+        stale._coding_plan = CodingPlan.fallback("stale internal plan")
+        stale._loop_state.messages.append(Message(role="assistant", content="stale"))
+        state = WorkingState(
+            session_id="session-1",
+            agent_id="agent-1",
+            resume_task_id_hint="task-1",
+            task_backed_task_id="task-1",
+            task_backed_resume_state=stale.snapshot_state(),
+            budgets_remaining=BudgetCounters(
+                ticks=10,
+                tool_calls=5,
+                a2a_calls=0,
+                tokens=5000,
+                time_ms=120000,
+            ),
+        )
+        ctx = SimpleNamespace(
+            state=state,
+            user_input="Continue the canonical project plan",
+            decision=SimpleNamespace(_seeded_commands=[]),
+            _services=SimpleNamespace(
+                runner=SimpleNamespace(
+                    task_manager=object(),
+                    session_api=SimpleNamespace(
+                        get_active_task_plan=lambda _session: None
+                    ),
+                    options=None,
+                    tool_api=None,
+                )
+            ),
+        )
+        runner = CodingProfileRunner()
+
+        with (
+            patch.object(
+                handler,
+                "load_latest_project_checkpoint",
+                return_value=checkpoint,
+            ),
+            patch.object(
+                handler,
+                "repository_project_launch_approved",
+                return_value=True,
+            ),
+            patch.object(
+                runner,
+                "_initialize_plan",
+                side_effect=AssertionError("project plan called the coding planner"),
+            ),
+        ):
+            prepared = runner._prepare_execution_state(
+                ctx,
+                runtime=SimpleNamespace(),
+                model="fake-model",
+                allowed_tools=frozenset(),
+            )
+
+        assert isinstance(prepared, tuple)
+        assert prepared[1] is False
+        assert runner._coding_plan is None
+        assert runner._loop_state.task_plan == checkpoint_plan
+        assert [message.content for message in runner._loop_state.messages] == [
+            "Continue the canonical project plan"
+        ]
+
+    def test_active_project_plan_preserves_pending_confirmation_resume(self) -> None:
+        checkpoint = SimpleNamespace(
+            payload={
+                "task_plan": {
+                    "plan_id": "plan-1",
+                    "objective": "Continue the project",
+                    "steps": [{"step_id": "build", "description": "Build it"}],
+                }
+            }
+        )
+        stale = CodingProfileRunner()
+        stale._coding_plan = CodingPlan.fallback("confirmation plan")
+        state = WorkingState(
+            session_id="session-1",
+            agent_id="agent-1",
+            resume_task_id_hint="task-1",
+            task_backed_task_id="task-1",
+            task_backed_resume_state=stale.snapshot_state(),
+            pending_confirmation_command=ToolCommand(
+                title="Approved write",
+                tool_name="file.write",
+                args={"path": "result.txt", "content": "done"},
+            ),
+            budgets_remaining=BudgetCounters(
+                ticks=10,
+                tool_calls=5,
+                a2a_calls=0,
+                tokens=5000,
+                time_ms=120000,
+            ),
+        )
+        ctx = SimpleNamespace(
+            state=state,
+            user_input="yes",
+            decision=SimpleNamespace(_seeded_commands=[]),
+            _services=SimpleNamespace(
+                runner=SimpleNamespace(
+                    task_manager=object(),
+                    session_api=SimpleNamespace(
+                        get_active_task_plan=lambda _session: None
+                    ),
+                    options=None,
+                    tool_api=None,
+                )
+            ),
+        )
+        runner = CodingProfileRunner()
+        confirmation_result = SimpleNamespace(status="waiting_user")
+
+        with (
+            patch.object(
+                handler,
+                "load_latest_project_checkpoint",
+                return_value=checkpoint,
+            ),
+            patch.object(
+                handler,
+                "repository_project_launch_approved",
+                return_value=True,
+            ),
+            patch.object(
+                runner,
+                "_consume_pending_confirmation_reply",
+                return_value=confirmation_result,
+            ),
+            patch.object(
+                runner,
+                "_initialize_plan",
+                side_effect=AssertionError("confirmation called the coding planner"),
+            ),
+        ):
+            prepared = runner._prepare_execution_state(
+                ctx,
+                runtime=SimpleNamespace(),
+                model="fake-model",
+                allowed_tools=frozenset(),
+            )
+
+        assert prepared is confirmation_result
+        assert state.pending_confirmation_command is not None
+        assert runner._coding_plan is not None
+        assert runner._coding_plan.goal == "confirmation plan"
 
 
 class TestCodingHandlerPureHelperBehavior:
@@ -2109,6 +2488,61 @@ class TestCodingVerificationReserve:
             "implement",
             "verify",
         ]
+
+    def test_required_project_revision_finishes_without_closure_reentry(self) -> None:
+        runner = CodingProfileRunner()
+        runner._loop_state.scratchpad = {"project.plan_revision_required": True}
+        runner._loop_state.task_plan_revision = {
+            "plan_id": "plan-1",
+            "revision_id": "revision-2",
+        }
+        closure_calls: list[dict] = []
+        state = WorkingState(
+            session_id="session-1",
+            agent_id="agent-1",
+            budgets_remaining=BudgetCounters(
+                ticks=10,
+                tool_calls=5,
+                a2a_calls=0,
+                tokens=5000,
+                time_ms=120000,
+            ),
+        )
+        ctx = SimpleNamespace(
+            state=state,
+            emit_status=lambda **_kwargs: None,
+            evaluate_turn_closure=lambda **kwargs: closure_calls.append(kwargs),
+            apply_closure_judgment=lambda **_kwargs: "continue",
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_FINAL_TEXT,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"plan"}),
+            final_text="Revised the project plan.",
+        )
+
+        with patch.object(runner, "_finalize_checkpoint"):
+            result = runner._handle_iteration_outcome(
+                ctx,
+                outcome=outcome,
+                allowed_tools=outcome.allowed_tools,
+            )
+
+        assert result is not None
+        assert result.status == "done"
+        assert result.action_result is not None
+        assert result.action_result.outputs["task_plan.revision"] == {
+            "plan_id": "plan-1",
+            "revision_id": "revision-2",
+        }
+        assert closure_calls == []
 
     def test_initial_implement_phase_stages_file_writer_for_explicit_file_task(
         self,

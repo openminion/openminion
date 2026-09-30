@@ -39,6 +39,15 @@ from tests.e2e.cli.focus.harness.scenarios import (
     assert_scenario_contract,
 )
 from tests.helpers.live_cli_chat_alibaba import parse_tool_results
+from tests.e2e.cli.focus.test_live_simple_input_project import (
+    _accepted_intervention_count,
+    _unplanned_intervention_count,
+)
+from tests.e2e.runners.run_simple_input_long_coding_e2e import (
+    FROZEN_LIVE_AGENT_ID,
+    _SOURCE_REVISION_ENV,
+    _clean_source_revision,
+)
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(1500)]
 
@@ -48,11 +57,10 @@ _PYPA_GUIDE_URL = (
 
 
 def _source_revision() -> str:
-    return subprocess.check_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=Path(__file__).resolve().parents[4],
-        text=True,
-    ).strip()
+    revision = _clean_source_revision(Path(__file__).resolve().parents[4])
+    expected = str(os.environ.get(_SOURCE_REVISION_ENV, "")).strip()
+    assert not expected or revision == expected
+    return revision
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -296,6 +304,7 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
     )
     evidence_path = root / "mnte-focus-live-evidence.json"
     telemetry_path = probe.data_root / "telemetry" / "telemetry.db"
+    approval_events: list[dict[str, object]] = []
 
     def write_failure_evidence() -> None:
         if evidence_path.exists():
@@ -313,7 +322,10 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
                 "model": model,
                 "provider_failure_categories": failure_categories,
                 "disposition": _failure_disposition(failure_categories),
-                "unplanned_interventions": 0,
+                "approval_events": approval_events,
+                "unplanned_interventions": _unplanned_intervention_count(
+                    approval_events, ("file.write", "exec.run", "sidecar.consent")
+                ),
             },
         )
 
@@ -327,7 +339,11 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
                 "SELECT COALESCE(MAX(id), 0) FROM events"
             ).fetchone()[0]
         try:
-            transcript = probe.run_turn(session, scenario)
+            transcript = probe.run_turn(
+                session,
+                scenario,
+                approval_events=approval_events,
+            )
         finally:
             transcript = session.transcript
             write_transcript(root, scenario.scenario_id, transcript)
@@ -443,7 +459,10 @@ def test_live_focus_core_edit_and_test_uses_bounded_tools(
             **core_evidence,
             "verification": "pass",
             "disposition": "pass",
-            "unplanned_interventions": 0,
+            "approval_events": approval_events,
+            "unplanned_interventions": _accepted_intervention_count(
+                approval_events, ("file.write", "exec.run", "sidecar.consent")
+            ),
         },
     )
 
@@ -528,6 +547,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
     config_path = Path(os.environ["OPENMINION_CLI_FOCUS_E2E_CONFIG"]).expanduser()
     config = json.loads(config_path.read_text(encoding="utf-8"))
     assert config["default_agent"] == minimax_agent_id
+    assert minimax_agent_id == FROZEN_LIVE_AGENT_ID
     provider, model, configured_act_profile = _agent_identity(
         config_path, minimax_agent_id
     )
@@ -536,6 +556,7 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
     artifact_id = f"mnte-project-{int(time.time())}-{uuid.uuid4().hex[:8]}"
     evidence_path = root / "mnte-project-live-evidence.json"
     telemetry_path = root / "data" / artifact_id / "telemetry" / "telemetry.db"
+    approval_events: list[dict[str, object]] = []
 
     def write_failure_evidence() -> None:
         if evidence_path.exists():
@@ -554,7 +575,10 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
                 "model": model,
                 "provider_failure_categories": failure_categories,
                 "disposition": _failure_disposition(failure_categories),
-                "unplanned_interventions": 0,
+                "approval_events": approval_events,
+                "unplanned_interventions": _unplanned_intervention_count(
+                    approval_events, ()
+                ),
             },
         )
 
@@ -918,7 +942,10 @@ def test_live_minimax_approved_project_research_code_git_and_denial(
             "verification": "pass" if verification.returncode == 0 else "fail",
             "chain_success": all(pass_flags),
             "disposition": overall_disposition,
-            "unplanned_interventions": 0,
+            "approval_events": approval_events,
+            "unplanned_interventions": _accepted_intervention_count(
+                approval_events, ()
+            ),
         },
     )
 

@@ -133,6 +133,11 @@ def build_project_launch_request(
         raise ValueError("expected check names must be non-empty and unique")
     if require_git_repository:
         _validate_project_repository(boundary=boundary, repository=repo)
+    required_evidence_kinds: tuple[str, ...] = (
+        ("waiver",) if verification_waiver_reason else ("verification",)
+    )
+    if verification_domain == "coding" and require_git_repository:
+        required_evidence_kinds = (*required_evidence_kinds, "repository_status")
     run = build_autonomy_run(
         goal_text=goal,
         goal_id=goal_id,
@@ -150,9 +155,7 @@ def build_project_launch_request(
         turn_timeout_seconds=turn_timeout_seconds,
         verification_timeout_seconds=verification_timeout_seconds,
         verification_waiver_reason=verification_waiver_reason,
-        required_evidence_kinds=("waiver",)
-        if verification_waiver_reason
-        else ("verification",),
+        required_evidence_kinds=required_evidence_kinds,
     )
     run = run.model_copy(
         update={
@@ -214,17 +217,20 @@ def parse_focus_project_launch(
     if parsed.max_iterations < 1:
         raise ValueError("--max-iterations must be at least 1")
     repository_path = Path(repository) if repository else workspace_boundary
+    resolved_repository = (
+        repository_path
+        if repository_path.is_absolute()
+        else workspace_boundary / repository_path
+    )
     return build_project_launch_request(
         goal=goal,
         session_id=session_id,
         agent_id=agent_id,
         workspace_boundary=workspace_boundary,
-        repository=(
-            repository_path
-            if repository_path.is_absolute()
-            else workspace_boundary / repository_path
+        repository=resolved_repository,
+        require_git_repository=(
+            bool(repository) or (resolved_repository / ".git").exists()
         ),
-        require_git_repository=bool(repository),
         max_iterations=parsed.max_iterations,
         max_wall_clock_ms=parsed.max_wall_clock_ms,
         max_tool_calls=parsed.max_tool_calls,
@@ -510,12 +516,38 @@ def resume_project_run(
         )
         store.save(blocked)
         return blocked
+    checkpoint = project_checkpoints.load_latest_project_checkpoint(
+        manager, task_id=run.task_id or ""
+    )
+    resumed_checkpoint = None
+    if checkpoint is not None and checkpoint.payload.get("proof_recovery_failed"):
+        payload = dict(checkpoint.payload)
+        payload.pop("proof_recovery_failed", None)
+        payload.pop("error", None)
+        payload["decision_reason"] = "terminal_proof_recovery_resumed"
+        resumed_checkpoint = save_project_run_checkpoint(
+            manager,
+            checkpoint.project_run.model_copy(update={"updated_at_ms": now_ms()}),
+            checkpoint_id=(
+                f"{checkpoint.project_run.project_run_id}:proof-recovery-resumed:"
+                f"{now_ms()}"
+            ),
+            payload=payload,
+        )
     running = store.transition(
         run.run_id,
         status=AutonomyRunStatus.RUNNING,
         phase=AutonomyRunPhase.EXECUTE,
         operator_summary="Autonomy run resumed.",
     )
+    if resumed_checkpoint is not None:
+        running = running.model_copy(
+            update={
+                "checkpoint_id": resumed_checkpoint.checkpoint_id,
+                "workspace_ref": resumed_checkpoint.project_run.workspace_ref,
+            }
+        )
+        store.save(running)
     task_error = resume_project_task(manager, running)
     if task_error is not None:
         return store.transition(
@@ -557,11 +589,42 @@ def apply_resume_overrides(
     domain = str(getattr(args, "verification_domain", None) or "").strip()
     if domain:
         selector_updates["verification_domain"] = domain
+    effective_domain = domain or run.execution_selectors.verification_domain
+    preserved_evidence_kinds = tuple(
+        kind
+        for kind in run.execution_selectors.required_evidence_kinds
+        if kind not in {"verification", "waiver"}
+        and not (kind == "repository_status" and effective_domain != "coding")
+    )
+    workspace = workspace_path_from_ref(run.workspace_ref)
+    if (
+        domain == "coding"
+        and workspace is not None
+        and (workspace / ".git").exists()
+        and "repository_status" not in preserved_evidence_kinds
+    ):
+        preserved_evidence_kinds = (*preserved_evidence_kinds, "repository_status")
     if waiver is not None:
         selector_updates["verification_waiver_reason"] = waiver.reason
-        selector_updates["required_evidence_kinds"] = ("waiver",)
+        selector_updates["required_evidence_kinds"] = (
+            "waiver",
+            *preserved_evidence_kinds,
+        )
     elif commands:
-        selector_updates["required_evidence_kinds"] = ("verification",)
+        selector_updates["verification_waiver_reason"] = None
+        selector_updates["required_evidence_kinds"] = (
+            "verification",
+            *preserved_evidence_kinds,
+        )
+    elif domain:
+        selector_updates["required_evidence_kinds"] = (
+            (
+                "waiver"
+                if run.execution_selectors.verification_waiver_reason
+                else "verification"
+            ),
+            *preserved_evidence_kinds,
+        )
 
     policy = run.continuation_policy
     policy_updates: dict[str, int] = {}
