@@ -17,7 +17,6 @@ cli/commands/identity.py	openminion.modules.identity.runtime.bundle_importer
 cli/commands/identity.py	openminion.modules.identity.runtime.lockfile
 cli/commands/identity.py	openminion.modules.identity.runtime.md_generator
 cli/commands/identity.py	openminion.modules.identity.runtime.service
-cli/commands/identity.py	openminion.modules.identity.storage.store
 cli/commands/status/action_policy.py	openminion.modules.policy.runtime.action_policy
 cli/commands/status/action_policy.py	openminion.modules.session.storage.sqlite_store
 cli/commands/status/action_policy.py	openminion.modules.storage.runtime.sqlite
