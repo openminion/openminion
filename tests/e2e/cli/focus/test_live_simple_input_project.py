@@ -205,6 +205,18 @@ def _wait_for_run(probe: FocusProbe, run_id: str, predicate, *, timeout: int = 9
             checkpoint = load_latest_project_checkpoint(manager, task_id=run.task_id)
             if checkpoint is not None and predicate(run, checkpoint):
                 return run, checkpoint
+            if run.status in {
+                AutonomyRunStatus.WAITING_FOR_INPUT,
+                AutonomyRunStatus.WAITING_FOR_APPROVAL,
+                AutonomyRunStatus.BLOCKED,
+                AutonomyRunStatus.FAILED,
+                AutonomyRunStatus.COMPLETED,
+                AutonomyRunStatus.CANCELLED,
+            }:
+                raise AssertionError(
+                    f"project {run_id} stopped at {run.status.value}: "
+                    f"{run.operator_summary}"
+                )
             time.sleep(0.1)
     finally:
         manager.close()

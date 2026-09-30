@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.e2e.cli.focus import test_live_simple_input_project as live_project
 from tests.e2e.cli.focus.test_live_simple_input_project import (
     LIVE_SCENARIOS,
     _accepted_intervention_count,
@@ -257,3 +258,34 @@ def test_intervention_count_uses_submitted_approval_events() -> None:
     assert _unplanned_intervention_count(events, ("project.start",)) == 1
     with pytest.raises(AssertionError, match="unexpected approval events"):
         _accepted_intervention_count(events, ("project.start",))
+
+
+def test_live_wait_fails_immediately_for_terminal_operator_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = SimpleNamespace(
+        task_id="task-1",
+        status=live_project.AutonomyRunStatus.WAITING_FOR_INPUT,
+        operator_summary="budget exhausted before a final answer",
+    )
+    manager = SimpleNamespace(close=lambda: None)
+    monkeypatch.setattr(
+        live_project,
+        "_project_owners",
+        lambda probe: (SimpleNamespace(require=lambda run_id: run), manager),
+    )
+    monkeypatch.setattr(
+        live_project,
+        "load_latest_project_checkpoint",
+        lambda manager, task_id: None,
+    )
+
+    with pytest.raises(
+        AssertionError,
+        match="waiting_for_input: budget exhausted before a final answer",
+    ):
+        live_project._wait_for_run(
+            SimpleNamespace(),
+            "run-1",
+            lambda current_run, checkpoint: False,
+        )
