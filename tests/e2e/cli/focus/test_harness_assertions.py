@@ -26,6 +26,7 @@ from tests.e2e.cli.focus.harness.assertions import (
     turn_output_text,
 )
 from tests.e2e.cli.focus.harness.probe import (
+    _COMPOSER_READY_RE,
     FocusProbe,
     _record_approval_event,
     active_approval_visible,
@@ -84,6 +85,13 @@ def test_isolated_live_config_keeps_runtime_env_out_of_artifacts(
     assert os.environ["FOCUS_PRIVATE_KEY"] == "private-value"
     assert os.environ["FOCUS_EXISTING_KEY"] == "operator-value"
     assert "private-value" not in isolated.read_text(encoding="utf-8")
+
+
+def test_composer_ready_marker_requires_an_enabled_prompt() -> None:
+    assert _COMPOSER_READY_RE.search("\n❯ Ask anything")
+    assert _COMPOSER_READY_RE.search("\n↳ Reply, or / for commands")
+    assert _COMPOSER_READY_RE.search("Ask anything") is None
+    assert _COMPOSER_READY_RE.search("\n… Ask anything") is None
 
 
 @pytest.mark.parametrize(
@@ -1396,3 +1404,22 @@ def test_pty_session_owns_default_terminal_type(
         transcript = session.wait_for_after(expected, offset=0, timeout=5)
 
     assert expected in transcript
+
+
+@pytest.mark.skipif(os.name != "posix", reason="PTY process groups require POSIX")
+def test_pty_session_reaps_a_force_killed_child(tmp_path: Path) -> None:
+    command = (
+        sys.executable,
+        "-c",
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "print('ready', flush=True); time.sleep(30)",
+    )
+    session = PtySession(argv=command, cwd=tmp_path)
+    session.start()
+    process_id = session.process_id
+    session.wait_for_after("ready", offset=0, timeout=5)
+
+    session.terminate()
+
+    with pytest.raises(ChildProcessError):
+        os.waitpid(process_id, os.WNOHANG)

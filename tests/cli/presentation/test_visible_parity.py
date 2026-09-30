@@ -99,6 +99,8 @@ def test_render_context_report_explains_empty_usage() -> None:
 
     assert "none observed in this terminal yet" in body
     assert "use /tokens for saved session totals" in body
+    assert "grid" not in body
+    assert "budget   8000 tokens (runtime_cap)" in body
     assert "turn —" not in body
 
 

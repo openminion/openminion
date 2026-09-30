@@ -61,12 +61,14 @@ def render_context_review(runtime: Any, args: str) -> str:
             options["artifacts_dir"] = value
 
     payload = runtime.context_trace_payload(session_id=options["session_id"])
-    return render_memory_context_review(
-        build_memory_context_review(
-            payload,
-            canary_path=options["canary"],
-            calibration_path=options["calibration"],
-            artifacts_dir=options["artifacts_dir"],
+    return str(
+        render_memory_context_review(
+            build_memory_context_review(
+                payload,
+                canary_path=options["canary"],
+                calibration_path=options["calibration"],
+                artifacts_dir=options["artifacts_dir"],
+            )
         )
     )
 

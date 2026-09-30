@@ -264,7 +264,7 @@ def test_prompt_safe_mode_keeps_elapsed_status_out_of_prompt_output() -> None:
     handle.set_terminal_writer(lambda render: render())
     handle.start()
     try:
-        assert handle._refresh_thread is not None
+        assert handle._refresh_thread is None
         handle._spinner = Spinner(time.monotonic() - 2.1)
         handle.set_status_label("Analyzing request...")
 
@@ -314,6 +314,8 @@ def test_terminal_mode_does_not_enable_raw_inline_status_renderer() -> None:
     handle = TerminalTurnHandle(console).start()
     try:
         assert handle._inline_status_mode is False
+        assert handle._refresh_thread is not None
+        assert handle._refresh_thread.is_alive()
         handle.set_status_label("Working...")
     finally:
         handle.complete(final_text="ready")

@@ -79,13 +79,18 @@ class PtySession:
 
     @property
     def screen_text(self) -> str:
-        self._read_available(timeout=0.05)
-        return self._last_screen
+        return self.read_screen()
 
     @property
     def visible_transcript(self) -> str:
         self._read_available(timeout=0.05)
         return self._screen_history
+
+    @property
+    def process_id(self) -> int:
+        if self._process is None:
+            raise RuntimeError("PTY session is not running")
+        return self._process.pid
 
     def start(self) -> None:
         if os.name != "posix":
@@ -126,6 +131,15 @@ class PtySession:
         self.send(text)
         time.sleep(0.05)
         self.send("\r")
+
+    def read_screen(self, *, timeout: float = 0.05) -> str:
+        self._read_available(timeout=timeout)
+        return self._last_screen
+
+    def wait(self, *, timeout: float | None = None) -> int:
+        if self._process is None:
+            raise RuntimeError("PTY session is not running")
+        return self._process.wait(timeout=timeout)
 
     def resize(self, *, rows: int, cols: int) -> None:
         if self._master_fd is None or self._process is None:
@@ -208,7 +222,11 @@ class PtySession:
                 except Exception:
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
-                    except Exception:
+                    except OSError:
+                        pass
+                    try:
+                        process.wait(timeout=3)
+                    except (ChildProcessError, subprocess.TimeoutExpired):
                         pass
         if master_fd is not None:
             self._read_available(timeout=0.05)
