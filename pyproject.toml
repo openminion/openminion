@@ -94,6 +94,7 @@ dev = [
   # Package-integration tests exercise optional sibling package surfaces while
   # remaining skippable in a minimal runtime installation.
   "graphfakos>=0.0.8",
+  "pragmagraph>=0.0.8",
   "pre-commit>=4,<5",
   "playwright>=1.45,<2",
   # Exercise the optional animation extra in the standard test suite.

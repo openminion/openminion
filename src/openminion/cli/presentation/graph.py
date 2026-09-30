@@ -5,7 +5,7 @@ import shlex
 
 def render_graph_command(args: str) -> str:
     try:
-        tokens = shlex.split(str(args or ""))
+        tokens = shlex.split(args)
     except ValueError as exc:
         return f"Graph viewer: {exc}"
     if not tokens:
@@ -79,12 +79,7 @@ def render_graph_command(args: str) -> str:
             rest[0],
             *rest[1:],
         )
-    return (
-        "Graph: use /graph, /graph status, /graph query <source> <text>, "
-        "/graph neighborhood <source> <entity>, /graph refresh <source>, "
-        "/graph current, "
-        "/graph dry-run, /graph html [path], or /graph third <provider>."
-    )
+    return _usage()
 
 
 def _command(*parts: str) -> str:

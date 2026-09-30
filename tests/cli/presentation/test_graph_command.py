@@ -64,3 +64,7 @@ def test_graph_command_builds_query_neighborhood_and_refresh_commands() -> None:
     assert render_graph_command("refresh vault_graph") == (
         "Graph viewer command:\n  openminion graph refresh --provider vault_graph"
     )
+
+
+def test_graph_command_unknown_input_reuses_help() -> None:
+    assert render_graph_command("unknown") == render_graph_command("help")

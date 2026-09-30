@@ -223,9 +223,11 @@ def _graph_diagnostics(graphfakos: Any, graph: Any, request: Any) -> dict[str, o
     empty_state = _empty_state(graph, stats)
     if empty_state:
         diagnostics["empty_state"] = empty_state
-    manifest = _workspace_manifest_diagnostics(graphfakos, graph, request)
-    if manifest:
-        diagnostics["viewer_manifest"] = manifest
+    diagnostics["viewer_manifest"] = _workspace_manifest_diagnostics(
+        graphfakos,
+        graph,
+        request,
+    )
     return diagnostics
 
 
@@ -234,10 +236,7 @@ def _workspace_manifest_diagnostics(
     graph: Any,
     request: Any,
 ) -> dict[str, object]:
-    manifest_builder = getattr(graphfakos, "workspace_manifest_for_graph", None)
-    if not callable(manifest_builder):
-        return {}
-    payload = manifest_builder(graph, request).to_dict()
+    payload = graphfakos.workspace_manifest_for_graph(graph, request).to_dict()
     return {
         "schema_version": payload.get("schema_version", ""),
         "graph_id": payload.get("graph_id", ""),
@@ -327,7 +326,7 @@ def _viewer_provider(
 
 
 def _layer_from_brain(brain: str) -> str:
-    value = str(brain or "").strip().lower()
+    value = brain.strip().lower()
     if value in {"second", "second_brain", "memory"}:
         return LAYER_SECOND_BRAIN
     if value in {"third", "third_brain", "provider"}:
@@ -451,8 +450,8 @@ def _second_brain_status_reason(*, db_exists: bool, sample_records: int) -> str:
 
 def _scope_values(request: GraphViewerRequest) -> tuple[str, ...]:
     scopes = []
-    session_id = str(request.session_id or "").strip()
-    agent_id = str(request.agent_id or "").strip()
+    session_id = request.session_id.strip()
+    agent_id = request.agent_id.strip()
     if session_id:
         scopes.append(f"session:{session_id}")
     if agent_id:

@@ -34,6 +34,7 @@ RUNTIME_METADATA_PATH = re.compile(
 )
 
 _GRAPHFAKOS_MIN_VERSION = ".".join(("0", "0", "8"))
+_PRAGMAGRAPH_MIN_VERSION = ".".join(("0", "0", "8"))
 
 SHARED_VERSION_OWNER_FILES = (
     Path("src/openminion/modules/controlplane/channels/telegram/__init__.py"),
@@ -108,6 +109,7 @@ def test_dev_extra_keeps_browser_viewer_smoke_dependencies() -> None:
     dev_extra = pyproject["project"]["optional-dependencies"]["dev"]
 
     assert f"graphfakos>={_GRAPHFAKOS_MIN_VERSION}" in dev_extra
+    assert f"pragmagraph>={_PRAGMAGRAPH_MIN_VERSION}" in dev_extra
     assert "playwright>=1.45,<2" in dev_extra
 
 
