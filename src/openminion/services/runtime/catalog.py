@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from importlib.metadata import entry_points
+from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
 from typing import Any
 from collections.abc import Sequence
@@ -84,9 +84,7 @@ class ExtensionCatalog:
 
         plugins.extend(_manifest_plugin_records(discovered, enabled_plugins))
         enabled_provider_name = _resolve_enabled_provider_name(config)
-        installed_entry_points = entry_points()
         provider_records = _entry_point_records(
-            installed_entry_points,
             group="llmctl.providers",
             kind="provider",
             enabled_name=enabled_provider_name,
@@ -98,14 +96,12 @@ class ExtensionCatalog:
         ):
             provider_records.extend(
                 _entry_point_records(
-                    installed_entry_points,
                     group=group,
                     kind="tool_provider",
                     enabled_name=None,
                 )
             )
         tool_records = _entry_point_records(
-            installed_entry_points,
             group="openminion.modules.tool.runtime.plugins",
             kind="tool_plugin",
             enabled_name=None,
@@ -190,18 +186,13 @@ def _resolve_enabled_provider_name(config: OpenMinionConfig) -> str:
 
 
 def _entry_point_records(
-    entries: Any,
     *,
     group: str,
     kind: str,
     enabled_name: str | None,
 ) -> list[ExtensionRecord]:
     records: list[ExtensionRecord] = []
-    group_entries = sorted(
-        entries.select(group=group),
-        key=lambda entry: entry.name,
-    )
-    for ep in group_entries:
+    for ep in _entry_points(group):
         name = ep.name
         enabled = bool(enabled_name and name.lower() == enabled_name.lower())
         records.append(
@@ -216,6 +207,11 @@ def _entry_point_records(
             )
         )
     return records
+
+
+def _entry_points(group: str) -> list[EntryPoint]:
+    eps = entry_points(group=group)
+    return sorted(eps, key=lambda ep: ep.name)
 
 
 def _channel_records(config: OpenMinionConfig) -> list[ExtensionRecord]:

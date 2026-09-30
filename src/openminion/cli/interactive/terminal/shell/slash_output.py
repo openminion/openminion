@@ -16,6 +16,10 @@ from openminion.cli.status.models import (
     build_memory_context_review,
     render_memory_context_review,
 )
+from openminion.cli.presentation.telemetry import (
+    render_telemetry_slash,
+    render_trace_slash,
+)
 from openminion.cli.presentation.tokens import render_tokens_slash
 from ..overlays import TerminalOverlayPresenter
 from ..status_line import TerminalStatusLine
@@ -131,17 +135,12 @@ def handle_debug_output_slash(
             )
         )
         return True
-    if cmd not in {"/telemetry", "/trace"}:
-        return False
-    from openminion.cli.presentation.telemetry import (
-        render_telemetry_slash,
-        render_trace_slash,
-    )
-
     if cmd == "/telemetry":
         renderer = render_telemetry_slash
     elif cmd == "/trace":
         renderer = render_trace_slash
+    else:
+        return False
     parts = text.split(maxsplit=1)
     console.print(renderer(parts[1] if len(parts) > 1 else "", runtime=runtime))
     return True
