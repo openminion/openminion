@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar, cast
 
+from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 from openminion.base.errors import ErrorInfo, error_info_from_mapping
 from openminion.base.redaction import redact_sensitive_text
 from openminion.modules.controlplane.constants import (
@@ -75,12 +76,76 @@ class ProjectTurnResult:
     error: ErrorInfo | None = None
 
 
+def _project_verification_guidance(
+    checkpoint: ProjectCheckpoint,
+    active_plan: object,
+) -> list[str]:
+    payload = checkpoint.payload
+    verification = payload.get("verification")
+    if not verification:
+        return []
+    evidence = cast(list[dict[str, object]], verification)
+    failed = [
+        item for item in evidence if item["status"] == TestEvidenceStatus.FAILED.value
+    ]
+    history = payload.get("verification_history")
+    history_evidence = (
+        cast(list[dict[str, object]], history)
+        if isinstance(history, list)
+        else evidence
+    )
+    revision_required = bool(failed) or payload.get("plan_revision_required") is True
+    outcomes = (
+        [
+            item
+            for item in history_evidence
+            if item["status"] == TestEvidenceStatus.FAILED.value
+        ][-4:]
+        if revision_required
+        else evidence[-1:]
+    )
+    lines = [
+        "Prior verifier outcome:",
+        "\n\n".join(dict.fromkeys(str(item["summary"]) for item in outcomes)),
+    ]
+    if not revision_required or not isinstance(active_plan, Mapping):
+        return lines
+    plan_id = str(active_plan.get("plan_id") or "").strip()
+    verifier_refs = ", ".join(checkpoint.project_run.verifier_refs[-5:])
+    prior_revision = payload.get("task_plan_revision")
+    predecessor_id = (
+        str(prior_revision.get("revision_id") or "").strip()
+        if isinstance(prior_revision, Mapping)
+        else ""
+    )
+    predecessor_guidance = (
+        f"Set predecessor_revision_id={predecessor_id}."
+        if predecessor_id
+        else "Omit predecessor_revision_id because this is the first revision."
+    )
+    lines.extend(
+        (
+            "External verification failed after the prior turn. First redeclare "
+            "the same plan_id with its remaining or repair steps and "
+            "continue_plan_autonomously=false so it is active in this turn.",
+            "Then use the existing plan loop-control "
+            f"tool with action=revise for plan_id={plan_id}. Use a new "
+            "revision_id, set continue_plan_autonomously=false, and bind "
+            f"verifier_refs to: {verifier_refs}. {predecessor_guidance} End "
+            "the turn after the revision succeeds; do not complete plan steps "
+            "in this revision-only turn.",
+        )
+    )
+    return lines
+
+
 def project_cycle_prompt(
     run: AutonomyRun,
     checkpoint: ProjectCheckpoint,
     milestone: str,
     *,
     repository_check_observation: Mapping[str, object] | None = None,
+    operator_guidance: Mapping[str, object] | None = None,
 ) -> str:
     project_run, checkpoint_payload = checkpoint.project_run, checkpoint.payload
     lines = [
@@ -111,63 +176,59 @@ def project_cycle_prompt(
             "continue_plan_autonomously=false, then continue with its first step."
         )
     lines.extend(_project_reference_guidance("verifier", project_run.verifier_refs))
-    if verification := checkpoint_payload.get("verification"):
-        evidence = cast(list[dict[str, object]], verification)
-        failed = [
-            item
-            for item in evidence
-            if item["status"] == TestEvidenceStatus.FAILED.value
-        ]
-        history = checkpoint_payload.get("verification_history")
-        history_evidence = (
-            cast(list[dict[str, object]], history)
-            if isinstance(history, list)
-            else evidence
-        )
-        revision_required = bool(failed) or (
-            checkpoint_payload.get("plan_revision_required") is True
-        )
-        outcomes = (
-            [
-                item
-                for item in history_evidence
-                if item["status"] == TestEvidenceStatus.FAILED.value
-            ][-4:]
-            if revision_required
-            else evidence[-1:]
-        )
-        summaries = list(dict.fromkeys(str(item["summary"]) for item in outcomes))
-        lines.extend(("Prior verifier outcome:", "\n\n".join(summaries)))
-        if revision_required and isinstance(active_plan, Mapping):
-            plan_id = str(active_plan.get("plan_id") or "").strip()
-            verifier_refs = ", ".join(project_run.verifier_refs[-5:])
-            prior_revision = checkpoint_payload.get("task_plan_revision")
-            predecessor_id = (
-                str(prior_revision.get("revision_id") or "").strip()
-                if isinstance(prior_revision, Mapping)
-                else ""
-            )
-            predecessor_guidance = (
-                f"Set predecessor_revision_id={predecessor_id}."
-                if predecessor_id
-                else "Omit predecessor_revision_id because this is the first revision."
-            )
-            lines.append(
-                "External verification failed after the prior turn. First redeclare "
-                "the same plan_id with its remaining or repair steps and "
-                "continue_plan_autonomously=false so it is active in this turn."
-            )
-            lines.append(
-                "Then use the existing plan loop-control "
-                f"tool with action=revise for plan_id={plan_id}. Use a new "
-                "revision_id, set continue_plan_autonomously=false, and bind "
-                f"verifier_refs to: {verifier_refs}. {predecessor_guidance} End "
-                "the turn after the revision succeeds; do not complete plan steps "
-                "in this revision-only turn."
-            )
+    lines.extend(_project_verification_guidance(checkpoint, active_plan))
     lines.extend(_project_reference_guidance("progress", project_run.progress_refs))
     lines.extend(_repository_check_guidance(repository_check_observation))
+    if operator_guidance:
+        lines.extend(
+            (
+                "New operator guidance for this cycle:",
+                json.dumps(operator_guidance, sort_keys=True),
+            )
+        )
     return "\n".join(lines)
+
+
+def project_operator_guidance(
+    metadata: Mapping[str, object],
+    *,
+    consumed_revision: int,
+) -> tuple[dict[str, object], int]:
+    guidance: dict[str, object] = {}
+    included_revision = consumed_revision
+    priority_revision = int(str(metadata.get("priority_revision") or 0))
+    if priority_revision > consumed_revision:
+        guidance["priority"] = str(metadata.get("priority") or "")
+        included_revision = priority_revision
+    operator_answers = metadata.get("operator_answers")
+    answers = (
+        [
+            dict(item)
+            for item in operator_answers
+            if isinstance(item, Mapping)
+            and int(item.get("revision") or 0) > consumed_revision
+        ]
+        if isinstance(operator_answers, list)
+        else []
+    )
+    if answers:
+        guidance["answers"] = answers
+        included_revision = max(
+            included_revision,
+            *(int(item["revision"]) for item in answers),
+        )
+    return guidance, included_revision
+
+
+def project_checkpoint_guidance(
+    metadata: Mapping[str, object], checkpoint: ProjectCheckpoint
+) -> tuple[dict[str, object], int]:
+    return project_operator_guidance(
+        metadata,
+        consumed_revision=int(
+            str(checkpoint.payload.get("operator_guidance_consumed_revision") or 0)
+        ),
+    )
 
 
 def _approved_objective_guidance(objective: Mapping[str, object]) -> list[str]:
@@ -237,6 +298,7 @@ def project_cycle_checkpoint_payload(
     decision_reason: str,
     replan_count: int,
     waiting_for_checks: bool,
+    operator_guidance_consumed_revision: int,
 ) -> dict[str, object]:
     previous_verification = checkpoint.payload.get("verification_history")
     if not isinstance(previous_verification, list):
@@ -271,6 +333,7 @@ def project_cycle_checkpoint_payload(
         "decision_reason": decision_reason,
         **({"detail_code": "waiting_for_checks"} if waiting_for_checks else {}),
         "replan_count": replan_count,
+        "operator_guidance_consumed_revision": operator_guidance_consumed_revision,
         **plan_payload,
         **repository_payload,
         **({"error": turn.error.to_dict()} if turn.error else {}),
@@ -357,19 +420,28 @@ def project_condition_from_metadata(
     explicit = str(metadata.get("project_condition") or "").strip()
     if explicit:
         return AutonomyLoopConditionKind(explicit)
+    error_code = str(metadata.get("error_code") or "").strip()
+    if error_code:
+        return _project_error_code_condition(error_code)
+    termination = (
+        str(metadata.get("tool_loop_termination_reason") or "").strip().lower()
+    )
+    if termination == "cancelled":
+        return AutonomyLoopConditionKind.CANCELLED
+    if termination in {"budget_exhausted", "budget_exhausted_with_partial_result"}:
+        return AutonomyLoopConditionKind.BUDGET_EXHAUSTED
+    if termination in {"timeout", "time_budget_exceeded"}:
+        return AutonomyLoopConditionKind.DEADLINE_EXHAUSTED
     brain_status = str(metadata.get("brain_status") or "").strip().lower()
+    finalization = _project_finalization_status(metadata)
+    if finalization == "blocked":
+        if brain_status == "waiting_user":
+            return AutonomyLoopConditionKind.WAITING
+        return AutonomyLoopConditionKind.TERMINAL_INABILITY
+    if finalization == "incomplete":
+        return AutonomyLoopConditionKind.STRATEGY_FAILURE
     if brain_status == "waiting_user":
-        termination = (
-            str(metadata.get("tool_loop_termination_reason") or "").strip().lower()
-        )
-        error_code = str(metadata.get("error_code") or "").strip().lower()
-        if termination == "budget_exhausted" or (
-            error_code == "act_adaptive_budget_exhausted"
-        ):
-            return AutonomyLoopConditionKind.PRODUCTIVE
         return AutonomyLoopConditionKind.WAITING
-    if str(metadata.get("finish_reason") or "").strip().lower() == "error":
-        return AutonomyLoopConditionKind.RETRYABLE_FAILURE
     return AutonomyLoopConditionKind.PRODUCTIVE
 
 
@@ -445,14 +517,6 @@ def project_turn_result_from_response(
         else None
     )
     tool_results = _project_tool_results(metadata)
-    tool_result_refs = tuple(
-        f"tool-call:{call_id}"
-        for item in tool_results
-        if bool(item.get("ok"))
-        and (
-            call_id := str(item.get("call_id") or item.get("command_id") or "").strip()
-        )
-    )
     artifact_refs = project_metadata_refs(metadata, "artifact_refs")
     evidence_refs = project_metadata_refs(metadata, "evidence_refs")
     evidence_kinds = project_metadata_refs(metadata, "evidence_kinds")
@@ -460,20 +524,10 @@ def project_turn_result_from_response(
     return ProjectTurnResult(
         summary=summary,
         gateway_run_id=str(metadata.get("run_id") or "").strip(),
-        condition=(
-            _project_error_condition(error)
-            if error is not None and not metadata.get("project_condition")
-            else project_condition_from_metadata(metadata)
-        ),
-        evidence_refs=tuple(
-            dict.fromkeys((*evidence_refs, *artifact_refs, *tool_result_refs))
-        ),
+        condition=_project_condition(metadata=metadata, error=error),
+        evidence_refs=tuple(dict.fromkeys((*evidence_refs, *artifact_refs))),
         artifact_refs=artifact_refs,
-        evidence_kinds=tuple(
-            dict.fromkeys(
-                (*evidence_kinds, *(("tool_result",) if tool_result_refs else ()))
-            )
-        ),
+        evidence_kinds=evidence_kinds,
         effect_refs=project_metadata_refs(metadata, "effect_refs"),
         tool_call_count=_project_tool_call_count(metadata, tool_results),
         task_plan=_project_metadata_model(metadata, "task_plan", TaskPlan),
@@ -574,9 +628,61 @@ def _project_metadata_model(
 
 
 def _project_error_condition(error: ErrorInfo) -> AutonomyLoopConditionKind:
-    if error.code == "cancelled":
+    return _project_error_code_condition(error.code)
+
+
+def _project_condition(
+    *,
+    metadata: Mapping[str, object],
+    error: ErrorInfo | None,
+) -> AutonomyLoopConditionKind:
+    explicit = str(metadata.get("project_condition") or "").strip()
+    if explicit:
+        return AutonomyLoopConditionKind(explicit)
+    if error is not None:
+        return _project_error_condition(error)
+    return project_condition_from_metadata(metadata)
+
+
+def _project_error_code_condition(code: str) -> AutonomyLoopConditionKind:
+    normalized = str(code or "").strip()
+    if normalized == "cancelled":
         return AutonomyLoopConditionKind.CANCELLED
+    if normalized in {
+        "POLICY_DENIED",
+        "PERMISSION_DENIED_READONLY",
+        "REQUEST_OUTCOME_EFFECT_BLOCKED",
+        "tool_exposure_denied",
+    }:
+        return AutonomyLoopConditionKind.DENIED
+    if normalized in {
+        "TOOL_API_UNAVAILABLE",
+        "TOOL_REQUEST_UNAVAILABLE",
+        "PLAN_WORKFLOW_CATALOG_UNAVAILABLE",
+        "PLAN_WORKFLOW_NOT_FOUND",
+        "PINCHTAB_MISSING",
+        "SIDECAR_AUTOSTART_DENIED",
+    }:
+        return AutonomyLoopConditionKind.MISSING_CAPABILITY
+    if normalized in {"BUDGET_EXCEEDED", "ACT_ADAPTIVE_BUDGET_EXHAUSTED"}:
+        return AutonomyLoopConditionKind.BUDGET_EXHAUSTED
+    if normalized == "TIMEOUT":
+        return AutonomyLoopConditionKind.DEADLINE_EXHAUSTED
     return AutonomyLoopConditionKind.RETRYABLE_FAILURE
+
+
+def _project_finalization_status(metadata: Mapping[str, object]) -> str:
+    value = metadata.get("adaptive.finalization_status") or metadata.get(
+        STATE_KEY_FINALIZATION_STATUS
+    )
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return ""
+    if not isinstance(value, Mapping):
+        return ""
+    return str(value.get("status") or "").strip().lower()
 
 
 def project_workspace(workspace_ref: str | None) -> Path:
@@ -612,6 +718,7 @@ __all__ = [
     "ProjectTurnRequest",
     "ProjectTurnResult",
     "project_cycle_prompt",
+    "project_operator_guidance",
     "project_condition_from_metadata",
     "project_error_from_payload",
     "project_metadata_refs",

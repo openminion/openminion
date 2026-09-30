@@ -12,6 +12,8 @@ from openminion.modules.context.prefix import PrefixCacheAdapter
 from openminion.modules.llm.prompt_cache import (
     build_prompt_cache_observation_payload,
 )
+from openminion.modules.llm.client_call import usage_payload_from_response_usage
+from openminion.modules.llm.providers.bridge import _bridge_usage_payload
 from openminion.modules.llm.providers.anthropic.payloads import _usage_from_anthropic
 from openminion.modules.llm.providers.message_payloads import (
     _usage_from_openai_like,
@@ -98,6 +100,40 @@ def test_usage_from_openai_like_extracts_cached_tokens_from_details():
     assert usage.input_tokens == 100
     assert usage.output_tokens == 20
     assert usage.total_source == "provider"
+
+
+def test_usage_from_openai_like_extracts_reasoning_from_chat_and_responses() -> None:
+    chat = _usage_from_openai_like(
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "completion_tokens_details": {"reasoning_tokens": 3},
+        }
+    )
+    responses = _usage_from_openai_like(
+        {
+            "input_tokens": 20,
+            "output_tokens": 8,
+            "output_tokens_details": {"reasoning_tokens": 6},
+        }
+    )
+
+    assert chat.reasoning_tokens == 3
+    assert chat.total_tokens == 15
+    assert responses.reasoning_tokens == 6
+    assert responses.total_tokens == 28
+
+
+def test_reasoning_tokens_survive_client_and_bridge_usage_boundaries() -> None:
+    usage = UsageInfo(
+        input_tokens=20,
+        output_tokens=8,
+        total_tokens=28,
+        reasoning_tokens=6,
+    )
+
+    assert usage_payload_from_response_usage(usage)["reasoning_tokens"] == 6
+    assert _bridge_usage_payload(usage)["reasoning_tokens"] == 6
 
 
 def test_usage_from_openai_like_handles_malformed_details_gracefully():

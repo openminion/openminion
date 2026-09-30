@@ -11,6 +11,7 @@ from .payloads import (
     apply_managed_meta as _apply_managed_meta,
     parse_forced_tools,
     parse_inbound_metadata,
+    reject_reserved_subagent_fields,
     resolve_capability_category,
     resolve_deliver,
 )
@@ -26,7 +27,9 @@ def runtime_turn_request_from_payload(
     runtime: "RuntimeFacade",
     payload: dict[str, Any],
     request_id: str | None = None,
+    trusted_subagent_context: Any | None = None,
 ) -> RuntimeTurnRequest:
+    reject_reserved_subagent_fields(payload, error_factory=TurnRequestError)
     message = str(payload.get("message", "")).strip()
     if not message:
         raise TurnRequestError("`message` is required and must be a non-empty string.")
@@ -72,6 +75,7 @@ def runtime_turn_request_from_payload(
             explicit_category=payload.get("capability_category"),
         ),
         run_profile_overrides=run_profile_overrides,
+        trusted_subagent_context=trusted_subagent_context,
     )
 
 
@@ -117,6 +121,7 @@ def runtime_turn_request_from_manager_request(
     request: TurnRequest,
 ) -> RuntimeTurnRequest:
     meta = dict(request.meta or {})
+    reject_reserved_subagent_fields(meta, error_factory=TurnRequestError)
     run_profile_overrides = _parse_run_profile_overrides(meta)
     effective_run_profile_overrides = combine_run_profile_overrides(
         getattr(runtime, "run_profile_overrides", None),

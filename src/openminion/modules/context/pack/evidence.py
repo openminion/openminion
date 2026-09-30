@@ -54,12 +54,14 @@ def pack_evidence_items(
     )
     packed: list[ContextEvidenceItem] = []
     omissions = list(source_omissions)
-    seen_provenance: set[str] = set()
+    seen_provenance: set[tuple[str, str]] = set()
     source_tokens = {"memory": 0, "knowledge": 0}
     packed_sources: set[str] = set()
     total_tokens = 0
     for item in ordered:
-        provenance = set(item.provenance_ids)
+        provenance = {
+            (item.source_kind, provenance_id) for provenance_id in item.provenance_ids
+        }
         if provenance and provenance & seen_provenance:
             omissions.append(
                 ContextEvidenceOmission(

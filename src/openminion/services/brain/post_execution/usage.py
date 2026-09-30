@@ -55,7 +55,7 @@ def collect_llm_usage_summary_from_events(
             continue
         if normalized_trace:
             event_trace = str(event.get("trace_id", "")).strip()
-            if event_trace and event_trace != normalized_trace:
+            if event_trace != normalized_trace:
                 continue
         payload = event.get("payload", {})
         if not isinstance(payload, dict):

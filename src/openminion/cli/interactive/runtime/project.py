@@ -13,10 +13,14 @@ if TYPE_CHECKING:
 
 
 def _select_project_run(
-    store: Any, tokens: list[str], session_id: str, agent_id: str
+    store: Any,
+    *,
+    action: str,
+    run_id: str | None,
+    session_id: str,
+    agent_id: str,
 ) -> Any:
-    action = tokens[1]
-    if len(tokens) == 2:
+    if not run_id:
         if action != "status":
             raise ValueError("An exact RUN_ID is required.")
         runs = [
@@ -31,10 +35,59 @@ def _select_project_run(
             )
         run = runs[0]
     else:
-        run = store.require(tokens[2])
+        run = store.require(run_id)
     if run.session_id != session_id or run.execution_selectors.agent_id != agent_id:
         raise ValueError("Project belongs to another session or agent.")
     return run
+
+
+def _parse_project_control(line: str) -> argparse.Namespace:
+    tokens = shlex.split(line)
+    if tokens and tokens[0] == "/project":
+        tokens = tokens[1:]
+    action = tokens.pop(0) if tokens else ""
+    actions = {
+        "status",
+        "show",
+        "report",
+        "pause",
+        "resume",
+        "cancel",
+        "answer",
+        "reprioritize",
+        "extend-budget",
+    }
+    if action not in actions:
+        raise ValueError("unknown /project control action")
+    parser = argparse.ArgumentParser(
+        prog=f"/project {action}", add_help=False, exit_on_error=False
+    )
+    parser.add_argument("run_id", nargs="?")
+    if action == "answer":
+        parser.add_argument("--input-request-id", default="")
+        parser.add_argument("--answer", default="")
+    elif action == "reprioritize":
+        parser.add_argument("--priority", default="")
+    elif action == "extend-budget":
+        parser.add_argument("--extra-iterations", type=int, default=0)
+        parser.add_argument("--extra-wall-clock-ms", type=int, default=0)
+        parser.add_argument("--extra-tool-calls", type=int, default=0)
+    try:
+        parsed, unknown = parser.parse_known_args(tokens)
+    except (argparse.ArgumentError, ValueError) as exc:
+        raise ValueError(str(exc)) from exc
+    if unknown:
+        raise ValueError(f"unexpected /project arguments: {' '.join(unknown)}")
+    if action != "status" and not parsed.run_id:
+        raise ValueError("An exact RUN_ID is required.")
+    if action == "answer" and (
+        not parsed.input_request_id.strip() or not parsed.answer.strip()
+    ):
+        raise ValueError("answer requires --input-request-id and --answer")
+    if action == "reprioritize" and not parsed.priority.strip():
+        raise ValueError("reprioritize requires --priority")
+    parsed.action = action
+    return parsed
 
 
 def _project_control_args(runtime: Any) -> argparse.Namespace:
@@ -46,6 +99,38 @@ def _project_control_args(runtime: Any) -> argparse.Namespace:
         data_root=runtime.data_root,
         task_db=str(runtime.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH),
     )
+
+
+def _apply_guidance_control(manager: Any, run: Any, parsed: argparse.Namespace) -> None:
+    from openminion.modules.task.project import (
+        ProjectControlAction,
+        apply_project_control,
+    )
+
+    if parsed.action == "answer":
+        apply_project_control(
+            manager,
+            task_id=run.task_id,
+            action=ProjectControlAction.ANSWER_INPUT,
+            input_request_id=parsed.input_request_id,
+            answer=parsed.answer,
+        )
+    elif parsed.action == "reprioritize":
+        apply_project_control(
+            manager,
+            task_id=run.task_id,
+            action=ProjectControlAction.REPRIORITIZE,
+            priority=parsed.priority,
+        )
+    elif parsed.action == "extend-budget":
+        apply_project_control(
+            manager,
+            task_id=run.task_id,
+            action=ProjectControlAction.EXTEND_BUDGET,
+            extra_iterations=parsed.extra_iterations,
+            extra_wall_clock_ms=parsed.extra_wall_clock_ms,
+            extra_tool_calls=parsed.extra_tool_calls,
+        )
 
 
 class RuntimeProjectMixin:
@@ -96,20 +181,16 @@ class RuntimeProjectMixin:
 
         if not self.is_bound:
             raise RuntimeError("No active session for /project.")
-        tokens = shlex.split(line)
-        if len(tokens) not in {2, 3} or tokens[1] not in {
-            "status",
-            "show",
-            "pause",
-            "resume",
-            "cancel",
-        }:
-            raise ValueError(
-                "usage: /project status [RUN_ID] | show/pause/resume/cancel RUN_ID"
-            )
-        action = tokens[1]
+        parsed = _parse_project_control(line)
+        action = parsed.action
         store = AutonomyRunStore(root=resolve_autonomy_state_root(self._rt.home_root))
-        run = _select_project_run(store, tokens, self.session_id, self.agent_id)
+        run = _select_project_run(
+            store,
+            action=action,
+            run_id=parsed.run_id,
+            session_id=self.session_id,
+            agent_id=self.agent_id,
+        )
         args = _project_control_args(self._rt)
         manager = project_task_manager(args)
         try:
@@ -155,6 +236,8 @@ class RuntimeProjectMixin:
                         phase=AutonomyRunPhase.CLOSED,
                         operator_summary="Project cancelled by operator.",
                     )
+            else:
+                _apply_guidance_control(manager, run, parsed)
             report = build_project_report_from_task(manager, task_id=run.task_id)
             report = report.model_copy(
                 update={

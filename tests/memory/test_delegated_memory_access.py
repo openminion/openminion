@@ -12,6 +12,7 @@ import pytest
 from openminion.api.handoff import SubagentRunContext, subagent
 from openminion.modules.memory.adapters import (
     DelegatedContextBudgetError,
+    build_delegated_memory_context,
     DelegatedMemoryProposal,
     OpenMinionDelegationMemoryGrantResolver,
     authorize_and_enforce_delegated_context,
@@ -36,7 +37,7 @@ from sophiagraph.access import (
     MemoryAccessOperation,
     MemoryAccessRequest,
 )
-from sophiagraph.models import MemoryNamespace
+from sophiagraph.models import MemoryNamespace, MemoryRecord
 from sophiagraph.storage import SophiaGraphMemoryStore, SophiaGraphSqliteStore
 
 
@@ -69,7 +70,11 @@ def _run_context(**overrides) -> SubagentRunContext:
     return SubagentRunContext(**values)
 
 
-def _target(namespace: MemoryNamespace) -> dict:
+def _target(
+    namespace: MemoryNamespace,
+    *,
+    max_context_tokens: int = 8,
+) -> dict:
     return {
         "resource": "sophiagraph",
         "delegated_memory": {
@@ -85,7 +90,7 @@ def _target(namespace: MemoryNamespace) -> dict:
             "operations": ["read"],
             "record_types": ["fact"],
             "max_results": 3,
-            "max_context_tokens": 8,
+            "max_context_tokens": max_context_tokens,
             "max_depth": 1,
             "can_reshare": False,
         },
@@ -96,6 +101,7 @@ def _policy_with_grant(
     tmp_path: Path,
     *,
     namespace: MemoryNamespace | None = None,
+    max_context_tokens: int = 8,
 ) -> tuple[PolicyCtl, str]:
     policy = PolicyCtl.with_sqlite(
         tmp_path / "policy.db", config=PolicyConfig(mode="enforce")
@@ -106,7 +112,10 @@ def _policy_with_grant(
             subject_id="child",
             tool="memory",
             method="delegated_read",
-            target_json=_target(namespace or _namespace()),
+            target_json=_target(
+                namespace or _namespace(),
+                max_context_tokens=max_context_tokens,
+            ),
             duration_type="until",
             expires_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
         )
@@ -482,5 +491,145 @@ def test_cross_process_revocation_is_seen_on_next_resolution(tmp_path: Path) -> 
             )
             is None
         )
+    finally:
+        policy.close()
+
+
+def test_delegated_context_selects_current_authorized_records_and_sanitizes_metric(
+    tmp_path: Path,
+) -> None:
+    policy, grant_id = _policy_with_grant(tmp_path)
+    store = SophiaGraphMemoryStore()
+    now = datetime.now(UTC).isoformat()
+    store.put_record(
+        MemoryRecord(
+            id="r",
+            scope="agent:child",
+            type="fact",
+            content="x",
+            created_at=now,
+            updated_at=now,
+            namespace=_namespace(),
+        )
+    )
+
+    class _Telemetry:
+        def __init__(self) -> None:
+            self.events = []
+
+        def record_event_sync(self, event) -> None:
+            self.events.append(event)
+
+    telemetry = _Telemetry()
+    try:
+        result = build_delegated_memory_context(
+            policy=policy,
+            store=store,
+            inbound_metadata=_run_context(
+                memory_grant_id=grant_id
+            ).as_inbound_metadata(),
+            query="x",
+            telemetry_service=telemetry,
+            session_id="session",
+            turn_id="turn",
+        )
+
+        assert result.selected_count == 1
+        assert "[r] x" in result.text
+        selection = telemetry.events[-1].data
+        assert selection["operation"] == "delegated_access.selection"
+        assert selection["selected_count"] == 1
+        assert "[r] x" not in repr(selection)
+    finally:
+        policy.close()
+
+
+def test_delegated_context_budget_includes_header(tmp_path: Path) -> None:
+    policy, grant_id = _policy_with_grant(tmp_path, max_context_tokens=1)
+    store = SophiaGraphMemoryStore()
+    now = datetime.now(UTC).isoformat()
+    store.put_record(
+        MemoryRecord(
+            id="r",
+            scope="agent:child",
+            type="fact",
+            content="x",
+            created_at=now,
+            updated_at=now,
+            namespace=_namespace(),
+        )
+    )
+    try:
+        result = build_delegated_memory_context(
+            policy=policy,
+            store=store,
+            inbound_metadata=_run_context(
+                memory_grant_id=grant_id
+            ).as_inbound_metadata(),
+            query="x",
+            telemetry_service=None,
+            session_id="session",
+            turn_id="turn",
+        )
+        assert result.text == ""
+        assert result.selected_count == 0
+        assert result.omitted_count == 1
+        assert result.reason == "context_budget_exhausted"
+    finally:
+        policy.close()
+
+
+def test_delegated_context_rejects_expired_grant(tmp_path: Path) -> None:
+    policy = PolicyCtl.with_sqlite(
+        tmp_path / "policy.db", config=PolicyConfig(mode="enforce")
+    )
+    grant_id = policy.create_grant(
+        PolicyGrantInput(
+            effect="allow",
+            subject_id="child",
+            tool="memory",
+            method="delegated_read",
+            target_json=_target(_namespace()),
+            duration_type="until",
+            expires_at=(datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+        )
+    )
+    try:
+        result = build_delegated_memory_context(
+            policy=policy,
+            store=SophiaGraphMemoryStore(),
+            inbound_metadata=_run_context(
+                memory_grant_id=grant_id
+            ).as_inbound_metadata(),
+            query="x",
+            telemetry_service=None,
+            session_id="session",
+            turn_id="turn",
+        )
+        assert result.text == ""
+        assert result.reason == "grant_unresolved"
+    finally:
+        policy.close()
+
+
+def test_delegated_context_has_no_ambient_fallback_when_unavailable(
+    tmp_path: Path,
+) -> None:
+    policy, grant_id = _policy_with_grant(tmp_path)
+    try:
+        result = build_delegated_memory_context(
+            policy=policy,
+            store=None,
+            inbound_metadata=_run_context(
+                memory_grant_id=grant_id
+            ).as_inbound_metadata(),
+            query="marker",
+            telemetry_service=None,
+            session_id="session",
+            turn_id="turn",
+        )
+        assert result.text == ""
+        assert result.selected_count == 0
+        assert result.reason == "delegated_memory_unavailable"
     finally:
         policy.close()

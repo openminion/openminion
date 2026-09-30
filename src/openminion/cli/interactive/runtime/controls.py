@@ -73,6 +73,8 @@ class RuntimeControlsMixin:
 
         def token_usage_report(self, *, recent: int | None = None) -> str: ...
 
+        def token_cost_report(self) -> str: ...
+
     def close_current_session(self) -> str:
         if not self.is_bound:
             raise ValueError("no active session")

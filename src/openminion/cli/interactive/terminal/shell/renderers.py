@@ -385,19 +385,18 @@ def _switch_theme_variant(variant: str, *, console: Console) -> None:
 
 
 def _render_cost_snapshot(*, runtime: Any, console: Console) -> None:
-    """Render a one-line snapshot of current token usage."""
-    snapshot_getter = getattr(runtime, "token_usage_snapshot", None)
-    if not callable(snapshot_getter):
+    """Render durable cost facts for the active session."""
+    report_getter = getattr(runtime, "token_cost_report", None)
+    if not callable(report_getter):
         console.print(
             Text(
-                "(/cost: runtime does not expose token_usage_snapshot)",
+                "(/cost: runtime does not expose token_cost_report)",
                 style=token_rich_style(StyleToken.MUTED),
             )
         )
         return
     try:
-        snapshot = snapshot_getter()
-        summary = format_token_usage_summary(snapshot)
+        summary = str(report_getter()).strip()
     except Exception as exc:
         console.print(
             Text(
@@ -414,10 +413,4 @@ def _render_cost_snapshot(*, runtime: Any, console: Console) -> None:
             )
         )
         return
-    cost_usd = getattr(snapshot, "cost_usd", None)
-    cost_summary = (
-        f"; estimated cost ${float(cost_usd):.4f}"
-        if isinstance(cost_usd, (int, float))
-        else "; cost unavailable"
-    )
-    console.print(Text(f"cost: {summary}{cost_summary}", style="bold"))
+    console.print(Text(summary, style="bold"))

@@ -70,6 +70,13 @@ def _validated_event_name(type: str | None, event_type: str | None) -> str:
     return name
 
 
+def _usage_token_count(usage: dict[str, Any], canonical: str, legacy: str) -> int:
+    value = usage.get(canonical)
+    if value is None:
+        value = usage.get(legacy, 0)
+    return max(0, int(value or 0))
+
+
 def _stable_tool_event_id(
     *, session_id: str, turn_scope_id: str, call_id: str, phase: str
 ) -> str:
@@ -447,14 +454,16 @@ class SessionEventWriter:
         if not isinstance(usage, dict):
             return
         try:
-            prompt_tokens = max(0, int(usage.get("prompt_tokens", 0) or 0))
-            completion_tokens = max(0, int(usage.get("completion_tokens", 0) or 0))
+            input_tokens = _usage_token_count(usage, "input_tokens", "prompt_tokens")
+            output_tokens = _usage_token_count(
+                usage, "output_tokens", "completion_tokens"
+            )
         except (TypeError, ValueError):
             return
         self._add_run_usage_delta(
             run_id,
-            input_tokens=prompt_tokens,
-            output_tokens=completion_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
 
     def _write_session_event_tx(

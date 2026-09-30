@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any, Mapping
 
 from openminion.modules.memory.adapters.contracts import (
@@ -10,13 +11,23 @@ from openminion.modules.memory.adapters.contracts import (
     DelegatedRunContextView,
 )
 from sophiagraph.access import (
+    AccessConstraint,
+    AuthorizedSophiaGraphGateway,
     DelegationMemoryGrant,
+    DelegatedMemoryAccessDeniedError,
     MemoryAccessContext,
     MemoryAccessOperation,
+    MemoryAccessRequest,
     intersect_memory_namespaces,
 )
 from sophiagraph.contracts.errors import InvalidArgumentError
 from sophiagraph.models import MemoryNamespace
+from sophiagraph.query import SearchQueryOptions
+
+from openminion.modules.memory.observability.delegated_access import (
+    DelegatedMemoryTelemetryBridge,
+)
+from openminion.modules.prompting.context_blocks import DELEGATED_MEMORY_BLOCK_HEADER
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +42,33 @@ class DelegatedContextBudgetError(ValueError):
     """Typed failure for malformed delegated context budgets."""
 
     code = "DELEGATED_MEMORY_CONTEXT_BUDGET_INVALID"
+
+
+@dataclass(frozen=True, slots=True)
+class DelegatedMemoryContextResult:
+    text: str
+    selected_count: int
+    omitted_count: int
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class _RenderedRecord:
+    id: str
+    text: str
+    token_estimate: int
+
+
+@dataclass(frozen=True, slots=True)
+class _MetadataRunContext:
+    parent_agent_id: str
+    child_agent_id: str
+    parent_run_id: str
+    child_run_id: str
+    trace_parent_id: str
+    memory_posture: str
+    memory_grant_id: str | None
+    cancelled: bool = False
 
 
 class OpenMinionDelegationMemoryGrantResolver:
@@ -136,6 +174,238 @@ def authorize_and_enforce_delegated_context(
     )
 
 
+def build_delegated_memory_context(
+    *,
+    policy: Any,
+    store: Any | None,
+    inbound_metadata: Mapping[str, str],
+    query: str,
+    telemetry_service: Any | None,
+    session_id: str,
+    turn_id: str,
+) -> DelegatedMemoryContextResult:
+    """Resolve and render one trusted child read without ambient fallback."""
+
+    run_context = _run_context_from_metadata(inbound_metadata)
+    bridge = DelegatedMemoryTelemetryBridge(
+        telemetry_service=telemetry_service,
+        session_id=session_id,
+        turn_id=turn_id,
+    )
+    if store is None or policy is None:
+        return _selection_result(bridge, reason="delegated_memory_unavailable")
+    resolved = _resolve_delegated_access(
+        policy=policy,
+        store=store,
+        run_context=run_context,
+        bridge=bridge,
+    )
+    if resolved is None:
+        return _selection_result(bridge, reason="grant_unresolved")
+    gateway, context, request, namespaces, max_results, max_context_tokens = resolved
+    try:
+        records = gateway.search_records(
+            SearchQueryOptions(
+                query=query,
+                scopes=_namespace_scopes(namespaces),
+                types=list(request.record_types),
+                include_invalidated=False,
+                limit=max_results,
+                namespaces=list(namespaces),
+            ),
+            context=context,
+            request=request,
+        )
+    except DelegatedMemoryAccessDeniedError as exc:
+        return _selection_result(bridge, reason=str(exc.decision.reason))
+    rendered = tuple(_render_record(record) for record in records)
+    record_budget = max_context_tokens - max(1, len(DELEGATED_MEMORY_BLOCK_HEADER) // 4)
+    if rendered and record_budget <= 0:
+        return _selection_result(
+            bridge,
+            omitted_count=len(rendered),
+            reason="context_budget_exhausted",
+        )
+    bounded = enforce_delegated_context_budget(
+        rendered,
+        max_context_tokens=max(1, record_budget),
+    )
+    selected = tuple(bounded.segments)
+    text = ""
+    if selected:
+        text = "\n".join(
+            [DELEGATED_MEMORY_BLOCK_HEADER, *(item.text for item in selected)]
+        )
+    return _selection_result(
+        bridge,
+        text=text,
+        selected_count=len(selected),
+        omitted_count=len(bounded.omitted_segment_ids),
+        reason="selected" if selected else "no_match",
+    )
+
+
+def _resolve_delegated_access(
+    *,
+    policy: Any,
+    store: Any,
+    run_context: _MetadataRunContext,
+    bridge: DelegatedMemoryTelemetryBridge,
+) -> (
+    tuple[
+        AuthorizedSophiaGraphGateway,
+        MemoryAccessContext,
+        MemoryAccessRequest,
+        tuple[MemoryNamespace, ...],
+        int,
+        int,
+    ]
+    | None
+):
+    grant = next(
+        (
+            item
+            for item in policy.list_grants(
+                subject_id=run_context.child_agent_id,
+                effect="allow",
+                tool="memory",
+                method="delegated_read",
+                active_only=True,
+            )
+            if item.grant_id == run_context.memory_grant_id
+        ),
+        None,
+    )
+    if grant is None:
+        return None
+    delegated = grant.target_json.get("delegated_memory")
+    if not isinstance(delegated, Mapping):
+        return None
+    namespaces = tuple(
+        MemoryNamespace.from_dict(dict(item))
+        for item in delegated.get("namespaces", ())
+    )
+    workspace_ids = tuple(str(item) for item in delegated.get("workspace_ids", ()))
+    record_types = tuple(str(item) for item in delegated.get("record_types", ()))
+    max_results = int(delegated.get("max_results", 0))
+    max_context_tokens = int(delegated.get("max_context_tokens", 0))
+    request = MemoryAccessRequest(
+        operation="read",
+        grant_id=run_context.memory_grant_id,
+        namespaces=namespaces,
+        workspace_ids=workspace_ids,
+        record_types=record_types,
+        max_results=max_results,
+        max_context_tokens=max_context_tokens,
+    )
+    context = MemoryAccessContext(
+        principal_id=run_context.child_agent_id,
+        audience="sophiagraph",
+        subject_agent_id=run_context.child_agent_id,
+        parent_run_id=run_context.parent_run_id,
+        child_run_id=run_context.child_run_id,
+        trace_parent_id=run_context.trace_parent_id,
+        constraints=(
+            AccessConstraint(
+                mode="allowlist",
+                namespaces=namespaces,
+                workspace_ids=workspace_ids,
+                operations=("read",),
+                record_types=record_types,
+                max_results=max_results,
+                max_context_tokens=max_context_tokens,
+            ),
+        ),
+        delegated=True,
+        host_max_results=max_results,
+        host_max_context_tokens=max_context_tokens,
+    )
+    resolver = OpenMinionDelegationMemoryGrantResolver(
+        policy,
+        run_context,
+        memory_scope_namespaces=namespaces,
+    )
+    gateway = AuthorizedSophiaGraphGateway(
+        store,
+        resolver=resolver,
+        telemetry_recorder=bridge,
+    )
+    return (
+        gateway,
+        context,
+        request,
+        namespaces,
+        max_results,
+        max_context_tokens,
+    )
+
+
+def _run_context_from_metadata(
+    inbound_metadata: Mapping[str, str],
+) -> _MetadataRunContext:
+    return _MetadataRunContext(
+        parent_agent_id=inbound_metadata["subagent_parent_agent_id"],
+        child_agent_id=inbound_metadata["subagent_child_agent_id"],
+        parent_run_id=inbound_metadata["subagent_parent_run_id"],
+        child_run_id=inbound_metadata["subagent_child_run_id"],
+        trace_parent_id=inbound_metadata["subagent_trace_parent_id"],
+        memory_posture=inbound_metadata["subagent_memory_posture"],
+        memory_grant_id=inbound_metadata.get("subagent_memory_grant_id") or None,
+        cancelled=inbound_metadata.get("subagent_cancelled") == "true",
+    )
+
+
+def _render_record(record: Any) -> _RenderedRecord:
+    content = record.content
+    if isinstance(content, str):
+        body = content.strip()
+    else:
+        body = json.dumps(content, ensure_ascii=True, sort_keys=True)
+    text = f"- [{record.id}] {body}"
+    return _RenderedRecord(
+        id=str(record.id),
+        text=text,
+        token_estimate=max(1, len(text) // 4),
+    )
+
+
+def _namespace_scopes(namespaces: tuple[MemoryNamespace, ...]) -> list[str]:
+    scopes: list[str] = []
+    for namespace in namespaces:
+        for kind, value in (
+            ("session", namespace.session_id),
+            ("agent", namespace.agent_id),
+            ("project", namespace.project_id),
+            ("global", namespace.graph_id),
+        ):
+            if value:
+                scope = f"{kind}:{value}"
+                if scope not in scopes:
+                    scopes.append(scope)
+    return scopes
+
+
+def _selection_result(
+    bridge: DelegatedMemoryTelemetryBridge,
+    *,
+    text: str = "",
+    selected_count: int = 0,
+    omitted_count: int = 0,
+    reason: str,
+) -> DelegatedMemoryContextResult:
+    bridge.record_selection(
+        selected_count=selected_count,
+        omitted_count=omitted_count,
+        reason=reason,
+    )
+    return DelegatedMemoryContextResult(
+        text=text,
+        selected_count=selected_count,
+        omitted_count=omitted_count,
+        reason=reason,
+    )
+
+
 def _project_grant(
     grant: Any,
     run_context: DelegatedRunContextView,
@@ -211,7 +481,9 @@ def _project_grant(
 __all__ = [
     "DelegatedContextBudgetResult",
     "DelegatedContextBudgetError",
+    "DelegatedMemoryContextResult",
     "OpenMinionDelegationMemoryGrantResolver",
+    "build_delegated_memory_context",
     "enforce_delegated_context_budget",
     "authorize_and_enforce_delegated_context",
 ]

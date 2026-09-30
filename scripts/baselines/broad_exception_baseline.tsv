@@ -325,10 +325,10 @@ src/openminion/services/brain/client.py	1	0	current broad-handler baseline; ratc
 src/openminion/services/brain/factory/retrieve.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/factory/rlm.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/metadata.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/brain/post_execution/context.py	13	6	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/services/brain/post_execution/context.py	12	5	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/post_execution/followup.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/post_execution/mixin.py	2	1	AOBS/TCPL brain-bridge failure telemetry boundary; ratchet by narrowing in post-execution cleanup
-src/openminion/services/brain/post_execution/reset.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/services/brain/post_execution/reset.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/post_execution/usage.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/service.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/context/adapter.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

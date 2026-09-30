@@ -1,7 +1,7 @@
 # mypy: ignore-errors
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .lifecycle_models import TaskLifecycleRecord
@@ -60,4 +60,15 @@ class TaskManagerProgressMixin:
         return self._lifecycle_repository.update_metadata(
             task_id=task_id,
             metadata=metadata,
+        )
+
+    def mutate_task_metadata(
+        self,
+        *,
+        task_id: str,
+        mutate: Callable[[dict[str, Any]], Mapping[str, Any]],
+    ) -> TaskLifecycleRecord:
+        return self._lifecycle_repository.mutate_metadata(
+            task_id=task_id,
+            mutate=mutate,
         )

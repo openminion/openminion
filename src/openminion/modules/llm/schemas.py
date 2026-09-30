@@ -116,6 +116,7 @@ class UsageInfo(BaseModel):
     total_source: Optional[TotalTokensSource] = None
     cached_tokens: Optional[int] = None
     cache_creation_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None
 
 
 class ResponseError(BaseModel):

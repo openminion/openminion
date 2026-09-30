@@ -766,12 +766,14 @@ class SQLiteSessionStore(SessionStore):
         after_seq: int | None = None,
         types: list[str] | None = None,
         limit: int | None = None,
+        newest_first: bool = False,
     ) -> list[dict[str, Any]]:
         return self._event_store.get_events(
             session_id,
             after_seq=after_seq,
             types=types,
             limit=limit,
+            newest_first=newest_first,
         )
 
     def get_event_by_id(self, event_id: str) -> dict[str, Any] | None:

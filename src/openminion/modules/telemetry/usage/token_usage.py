@@ -22,6 +22,7 @@ from .coverage import (
     CACHE_WRITE_TOKEN_KEYS,
     INPUT_TOKEN_KEYS,
     OUTPUT_TOKEN_KEYS,
+    REASONING_TOKEN_KEYS,
     TOTAL_TOKEN_KEYS,
     TokenUsageCoverage,
     explicit_total_source,
@@ -33,6 +34,7 @@ from .types import coerce_non_negative_int
 SURFACE_LLM_TOTAL = "llm_total"
 SURFACE_LLM_PROMPT = "llm_prompt"
 SURFACE_LLM_OUTPUT = "llm_output"
+SURFACE_LLM_REASONING = "llm_reasoning"
 SURFACE_LLM_CACHE_READ = "llm_cache_read"
 SURFACE_LLM_CACHE_WRITE = "llm_cache_write"
 SURFACE_LLM_CACHE_DIAGNOSTIC = "llm_cache_diagnostic"
@@ -44,6 +46,7 @@ TOKEN_USAGE_SURFACES = frozenset(
         SURFACE_LLM_TOTAL,
         SURFACE_LLM_PROMPT,
         SURFACE_LLM_OUTPUT,
+        SURFACE_LLM_REASONING,
         SURFACE_LLM_CACHE_READ,
         SURFACE_LLM_CACHE_WRITE,
         SURFACE_LLM_CACHE_DIAGNOSTIC,
@@ -58,6 +61,7 @@ _TOKEN_FIELD_NAMES = (
     "total_tokens",
     "input_tokens",
     "output_tokens",
+    "reasoning_tokens",
     "cache_read_tokens",
     "cache_write_tokens",
     "estimated_tokens",
@@ -68,7 +72,9 @@ _RECORD_TEXT_FIELD_NAMES = (
     "session_id",
     "run_id",
     "turn_id",
+    "trace_id",
     "llm_call_id",
+    "purpose",
     "prompt_context_id",
     "provider",
     "model",
@@ -213,7 +219,9 @@ class TokenUsageRecord:
     session_id: str
     run_id: str = ""
     turn_id: str = ""
+    trace_id: str = ""
     llm_call_id: str = ""
+    purpose: str = ""
     prompt_context_id: str = ""
     provider: str = ""
     model: str = ""
@@ -227,6 +235,7 @@ class TokenUsageRecord:
     total_source: TokenTotalSource = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    reasoning_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     estimated_tokens: int = 0
@@ -288,6 +297,7 @@ class TokenUsageRecord:
                 self.input_tokens,
                 self.total_tokens,
                 self.output_tokens,
+                self.reasoning_tokens,
                 self.cache_read_tokens,
                 self.cache_write_tokens,
                 self.estimated_tokens,
@@ -301,7 +311,9 @@ class TokenUsageRecord:
             "session_id": self.session_id,
             "run_id": self.run_id,
             "turn_id": self.turn_id,
+            "trace_id": self.trace_id,
             "llm_call_id": self.llm_call_id,
+            "purpose": self.purpose,
             "prompt_context_id": self.prompt_context_id,
             "provider": self.provider,
             "model": self.model,
@@ -315,6 +327,7 @@ class TokenUsageRecord:
             "total_source": self.total_source,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
             "cache_read_tokens": self.cache_read_tokens,
             "cache_write_tokens": self.cache_write_tokens,
             "estimated_tokens": self.estimated_tokens,
@@ -390,6 +403,14 @@ class TokenUsageSummary:
     @property
     def total_output_tokens(self) -> int:
         return sum(record.output_tokens for record in self.records)
+
+    @property
+    def total_reasoning_tokens(self) -> int:
+        return sum(
+            record.reasoning_tokens
+            for record in self.records
+            if record.surface == SURFACE_LLM_REASONING
+        )
 
     @property
     def total_cache_read_tokens(self) -> int:
@@ -489,6 +510,7 @@ class TokenUsageSummary:
                 "derived_tokens": self.total_derived_tokens,
                 "input_tokens": self.total_input_tokens,
                 "output_tokens": self.total_output_tokens,
+                "reasoning_tokens": self.total_reasoning_tokens,
                 "cache_read_tokens": self.total_cache_read_tokens,
                 "cache_write_tokens": self.total_cache_write_tokens,
                 "estimated_tokens": self.total_estimated_tokens,
@@ -538,6 +560,7 @@ def _records_from_llm_event(
     base = _base_record(event, payload, session_id=session_id)
     input_tokens = _first_token_int(usage, INPUT_TOKEN_KEYS)
     output_tokens = _first_token_int(usage, OUTPUT_TOKEN_KEYS)
+    reasoning_tokens = _first_token_int(usage, REASONING_TOKEN_KEYS)
     observed_total = observed_token_value(usage, TOTAL_TOKEN_KEYS)
     total_source = explicit_total_source(usage)
     total_tokens = observed_total.value
@@ -565,6 +588,11 @@ def _records_from_llm_event(
             base,
             surface=SURFACE_LLM_OUTPUT,
             output_tokens=output_tokens,
+        ),
+        _record_with_tokens(
+            base,
+            surface=SURFACE_LLM_REASONING,
+            reasoning_tokens=reasoning_tokens,
         ),
         _record_with_tokens(
             base,
@@ -657,7 +685,9 @@ def _base_record(
         session_id=session_id,
         run_id=_text(payload, "run_id"),
         turn_id=_text(payload, "turn_id"),
+        trace_id=_event_text(event, "trace_id"),
         llm_call_id=_text(payload, "llm_call_id"),
+        purpose=_text(payload, "purpose"),
         prompt_context_id=_text(payload, "prompt_context_id"),
         provider=_text(payload, "provider"),
         model=_text(payload, "model"),
@@ -680,6 +710,7 @@ def _record_with_tokens(
     total_source: TokenTotalSource = "",
     input_tokens: int = 0,
     output_tokens: int = 0,
+    reasoning_tokens: int = 0,
     cache_read_tokens: int = 0,
     cache_write_tokens: int = 0,
     estimated_tokens: int = 0,
@@ -698,6 +729,7 @@ def _record_with_tokens(
         total_source=total_source,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        reasoning_tokens=reasoning_tokens,
         cache_read_tokens=cache_read_tokens,
         cache_write_tokens=cache_write_tokens,
         estimated_tokens=estimated_tokens,
@@ -739,6 +771,7 @@ def _record_total(record: TokenUsageRecord) -> int:
         record.total_tokens
         + record.input_tokens
         + record.output_tokens
+        + record.reasoning_tokens
         + record.cache_read_tokens
         + record.cache_write_tokens
         + record.estimated_tokens

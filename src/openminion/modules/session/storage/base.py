@@ -121,6 +121,7 @@ class SessionStore(ABC):
         after_seq: int | None = None,
         types: list[str] | None = None,
         limit: int | None = None,
+        newest_first: bool = False,
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod

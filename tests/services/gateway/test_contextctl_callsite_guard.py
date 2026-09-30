@@ -214,6 +214,75 @@ def test_guard_failure_builds_legacy_context_once():
     assert any("legacy memory" in message.body for message in turn_context.history)
 
 
+def test_subagent_without_grant_preserves_existing_child_memory_behavior() -> None:
+    class _Memory:
+        calls = 0
+
+        def build_context_with_metadata(self, **kwargs):
+            del kwargs
+            self.calls += 1
+            return "ambient parent memory", {}
+
+    memory = _Memory()
+    turn_context = build_turn_context(
+        history=[],
+        agent_id="agent",
+        agent_memory=memory,
+        logger=_logger(),
+        emit_memory_event=lambda **kwargs: None,
+        session_id="session",
+        run_id="run",
+        request_id="request",
+        channel="console",
+        target="target",
+        user_message="hello",
+        conversation_id="conversation",
+        thread_id="thread",
+        attach_id="attach",
+        memory_capsule_strategy="always",
+        memory_capsule_cache={},
+        memory_dynamic_retrieval_enabled=True,
+        inbound_metadata={
+            "subagent_context_id": "child-context",
+            "subagent_memory_posture": "none",
+        },
+    )
+
+    assert memory.calls == 1
+    assert any("ambient parent memory" in item.body for item in turn_context.history)
+
+
+def test_delegated_memory_descendant_cannot_regain_ambient_memory() -> None:
+    memory = MagicMock()
+    turn_context = build_turn_context(
+        history=[],
+        agent_id="agent",
+        agent_memory=memory,
+        logger=_logger(),
+        emit_memory_event=lambda **kwargs: None,
+        session_id="session",
+        run_id="run",
+        request_id="request",
+        channel="console",
+        target="target",
+        user_message="hello",
+        conversation_id="conversation",
+        thread_id="thread",
+        attach_id="attach",
+        memory_capsule_strategy="always",
+        memory_capsule_cache={},
+        memory_dynamic_retrieval_enabled=True,
+        inbound_metadata={
+            "subagent_context_id": "child-context",
+            "subagent_memory_posture": "none",
+            "subagent_delegated_memory_ancestor": "true",
+        },
+    )
+
+    memory.build_context_with_metadata.assert_not_called()
+    assert turn_context.memory_retrieval_context == ""
+
+
 def test_guard_failure_credits_legacy_sqlite_selection_once(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "fallback-memory.db")
     service = MemoryService(store=store)

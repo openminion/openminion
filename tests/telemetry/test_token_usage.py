@@ -64,6 +64,7 @@ def test_provider_total_is_emitted_once_and_cache_diagnostic_is_non_additive() -
     )
     assert summary.total_provider_tokens == 21
     assert summary.total_cache_read_tokens == 3
+    assert summary.total_reasoning_tokens == 0
     assert diagnostic[0].surface == "llm_cache_diagnostic"
 
 
@@ -121,6 +122,34 @@ def test_explicit_derived_total_stays_out_of_provider_aggregate() -> None:
         "llm_cache_read": 3,
         "llm_cache_write": 4,
     }
+
+
+def test_reasoning_tokens_are_preserved_as_output_detail_without_double_counting() -> (
+    None
+):
+    event = {
+        "event_type": "llm.call.completed",
+        "trace_id": "trace-1",
+        "payload": {
+            "purpose": "review",
+            "usage": {
+                "input_tokens": 8,
+                "output_tokens": 5,
+                "reasoning_tokens": 3,
+                "total_tokens": 13,
+            },
+        },
+    }
+
+    records = records_from_session_event(event, session_id="session-1")
+    summary = TokenUsageSummary(session_id="session-1", records=records)
+
+    assert summary.total_provider_tokens == 13
+    assert summary.total_output_tokens == 5
+    assert summary.total_reasoning_tokens == 3
+    assert summary.totals_by_surface["llm_reasoning"] == 3
+    assert {record.trace_id for record in records} == {"trace-1"}
+    assert {record.purpose for record in records} == {"review"}
 
 
 def test_explicit_derived_total_does_not_count_as_provider_coverage() -> None:
@@ -353,7 +382,8 @@ def test_bounded_read_reports_incomplete_without_projecting_sentinel(
         assert summary.source_event_count == 2
         assert summary.first_source_event is not None
         assert summary.last_source_event is not None
-        assert summary.last_source_event.sequence == 3
+        assert summary.first_source_event.sequence == 3
+        assert summary.last_source_event.sequence == 4
     finally:
         store.close()
 
@@ -445,7 +475,9 @@ def test_json_export_matches_shared_v1_fixture() -> None:
     base = {
         "session_id": "session-fixture",
         "run_id": "run-fixture",
+        "trace_id": "trace-fixture",
         "llm_call_id": "call-fixture",
+        "purpose": "review",
         "provider": "openai",
         "model": "gpt-fixture",
         "source_event_type": source.event_type,
@@ -465,6 +497,7 @@ def test_json_export_matches_shared_v1_fixture() -> None:
             ),
             TokenUsageRecord(**base, surface="llm_prompt", input_tokens=10),
             TokenUsageRecord(**base, surface="llm_output", output_tokens=5),
+            TokenUsageRecord(**base, surface="llm_reasoning", reasoning_tokens=3),
         ),
         source_event_count=1,
         events_scanned=1,
@@ -476,9 +509,11 @@ def test_json_export_matches_shared_v1_fixture() -> None:
             provider_identified_llm_call_events=1,
             model_identified_llm_call_events=1,
             run_id_present_events=1,
+            trace_id_present_events=1,
             llm_call_id_present_events=1,
             input_tokens=TokenUsageDimensionCoverage(reported=1),
             output_tokens=TokenUsageDimensionCoverage(reported=1),
+            reasoning_tokens=TokenUsageDimensionCoverage(reported=1),
             total_tokens=TokenUsageDimensionCoverage(reported=1),
             cache_read_tokens=TokenUsageDimensionCoverage(missing=1),
             cache_write_tokens=TokenUsageDimensionCoverage(missing=1),

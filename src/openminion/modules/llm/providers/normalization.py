@@ -336,6 +336,7 @@ def _normalize_usage(raw_usage: Any) -> dict[str, Any]:
             "cache_creation_tokens",
             "cache_creation_input_tokens",
         ),
+        "reasoning_tokens": ("reasoning_tokens",),
     }
     for key, aliases in usage_keys.items():
         value = _extract_usage_value(raw_usage, aliases)
@@ -343,6 +344,16 @@ def _normalize_usage(raw_usage: Any) -> dict[str, Any]:
             continue
         if isinstance(value, (int, float)):
             usage[key] = max(0, int(value))
+
+    if "reasoning_tokens" not in usage:
+        details = _extract_usage_value(
+            raw_usage,
+            ("output_tokens_details", "completion_tokens_details"),
+        )
+        if isinstance(details, dict):
+            value = details.get("reasoning_tokens")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                usage["reasoning_tokens"] = max(0, int(value))
 
     total_source = _normalize_total_source(raw_usage)
     if "total_tokens" in usage:

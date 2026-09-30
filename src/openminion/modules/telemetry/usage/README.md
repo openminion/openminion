@@ -36,6 +36,16 @@ Provider-reported and configured-rate estimated cost are kept separate as
 `llm_total` record. Missing cost remains unavailable; the projection does not
 guess pricing from model names or maintain a separate price table.
 
+Provider-reported reasoning tokens are preserved as the `llm_reasoning`
+surface and `totals.reasoning_tokens`. They are an output detail and are never
+added to provider or derived totals. Optional record-level `trace_id` and
+`purpose` fields copy typed source facts so external consumers can join calls
+and distinguish auxiliary work without inspecting content or inferring intent.
+
+Bounded reports select the newest matching event window and then restore
+chronological projection order. An incomplete report therefore contains the
+current tail of the session rather than its oldest events.
+
 OpenMinion callers should import the supported Python surface from
 `openminion.modules.telemetry.usage`. A future external optimization package
 should consume the `openminion.token_usage.v1` envelope or the shared fixture,
