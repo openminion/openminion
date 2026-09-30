@@ -164,23 +164,24 @@ def _drive_task(
     fulfill: Callable[[str, dict[str, Any]], dict[str, Any] | None],
     deadline: float,
 ) -> dict[str, Any]:
-    task_id = str(task.get("taskId", "") or "").strip()
-    if not task_id:
+    raw_task_id = task.get("taskId")
+    if not isinstance(raw_task_id, str) or not raw_task_id.strip():
         raise MCPModernFlowError(
-            "MCP task result omitted taskId.",
+            "MCP task result omitted a valid taskId.",
             reason_code="mcp_task_id_missing",
         )
+    task_id = raw_task_id.strip()
     current = dict(task)
     answered: set[str] = set()
     while True:
         _validate_task_fields(current)
-        current_task_id = str(current.get("taskId", "") or "").strip()
+        current_task_id = current["taskId"].strip()
         if current_task_id != task_id:
             raise MCPModernFlowError(
                 f"MCP task response changed taskId from {task_id!r} to {current_task_id!r}.",
                 reason_code="mcp_task_id_mismatch",
             )
-        status = str(current.get("status", "") or "").strip().lower()
+        status = current.get("status")
         if status not in _MCP_TASK_STATUSES:
             raise MCPModernFlowError(
                 f"MCP task {task_id!r} returned invalid status {status!r}.",
@@ -256,6 +257,12 @@ def _nonnegative_int(payload: dict[str, Any], key: str, reason_code: str) -> int
 
 
 def _validate_task_fields(task: dict[str, Any]) -> None:
+    task_id = task.get("taskId")
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise MCPModernFlowError(
+            "MCP task result omitted a valid taskId.",
+            reason_code="mcp_task_id_missing",
+        )
     for key in ("createdAt", "lastUpdatedAt"):
         if not isinstance(task.get(key), str) or not task[key].strip():
             raise MCPModernFlowError(

@@ -985,6 +985,14 @@ def test_modern_task_cancel_requires_complete_result(monkeypatch) -> None:
             },
             "mcp_task_poll_interval_invalid",
         ),
+        (
+            {"resultType": "task", **_task("COMPLETED")},
+            "mcp_task_status_invalid",
+        ),
+        (
+            {"resultType": "task", **_task("working"), "taskId": 123},
+            "mcp_task_id_missing",
+        ),
     ],
 )
 def test_modern_task_rejects_invalid_state(
