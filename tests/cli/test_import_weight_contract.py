@@ -93,15 +93,18 @@ def test_root_help_avoids_runtime_and_renderer_imports() -> None:
 def test_terminal_import_defers_command_only_owners() -> None:
     imported = _terminal_imports()
 
-    assert not {
-        "openminion.cli.interactive.tool_exposure",
-        "openminion.cli.interactive.terminal.shell.delegation",
-        "openminion.cli.interactive.terminal.shell.model_setup",
-        "openminion.cli.interactive.terminal.shell.project",
-        "openminion.cli.presentation.browser",
-        "openminion.cli.presentation.graph",
-        "openminion.cli.presentation.telemetry",
-    } & imported
+    assert (
+        not {
+            "openminion.cli.interactive.tool_exposure",
+            "openminion.cli.interactive.terminal.shell.delegation",
+            "openminion.cli.interactive.terminal.shell.model_setup",
+            "openminion.cli.interactive.terminal.shell.project",
+            "openminion.cli.presentation.browser",
+            "openminion.cli.presentation.graph",
+            "openminion.cli.presentation.telemetry",
+        }
+        & imported
+    )
 
 
 def test_performance_runner_owns_both_import_surface_scenarios(

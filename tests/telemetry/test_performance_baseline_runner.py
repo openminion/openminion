@@ -419,9 +419,10 @@ def test_prompt_ready_comparison_normalizes_paths_and_process_posture() -> None:
     )
 
     cold_comparison = module._comparison_identity(cold_a)
-    assert cold_comparison["command_shape"] == module._comparison_identity(cold_b)[
-        "command_shape"
-    ]
+    assert (
+        cold_comparison["command_shape"]
+        == module._comparison_identity(cold_b)["command_shape"]
+    )
     assert cold_comparison["process_posture"] == "cold"
     assert module._comparison_identity(warm)["process_posture"] == "warm"
 
@@ -592,9 +593,12 @@ def test_path_shape_normalizes_repository_descendants(tmp_path: Path) -> None:
         profile=False,
     )
 
-    assert module._path_shape(
-        str(workspace_root / "openminion" / "scripts" / "smoke"), options
-    ) == "<SUT_REPO>/scripts/smoke"
+    assert (
+        module._path_shape(
+            str(workspace_root / "openminion" / "scripts" / "smoke"), options
+        )
+        == "<SUT_REPO>/scripts/smoke"
+    )
 
 
 def test_dirty_fingerprint_includes_nested_untracked_file_bytes(

@@ -629,6 +629,7 @@ def _handle_visible_parity_slash(
         )
     elif cmd == "/graph":
         from openminion.cli.presentation.graph import render_graph_command
+
         console.print(Text(render_graph_command(arg), style=_system_style()))
     elif cmd == "/skills":
         console.print(
@@ -639,6 +640,7 @@ def _handle_visible_parity_slash(
         )
     elif cmd == "/browser":
         from openminion.cli.presentation.browser import render_browser_command
+
         console.print(
             Text(
                 render_browser_command(arg, working_dir=working_dir),
@@ -676,6 +678,7 @@ def _handle_visible_parity_slash(
         )
     elif cmd == "/goal":
         from .project import run_slash_goal
+
         run_slash_goal(
             text,
             runtime=runtime,
@@ -776,10 +779,12 @@ async def _handle_slash(
         return False
     if cmd == "/delegate":
         from .delegation import run_slash_delegate
+
         await run_slash_delegate(text, runtime, console, approval_callback, transcript)
         return False
     if cmd == "/project":
         from .project import run_slash_project
+
         await run_slash_project(
             text,
             runtime=runtime,

@@ -5094,7 +5094,9 @@ def _threshold_result(
         for field in ("imported_module_count", "openminion_module_count"):
             baseline_value = (baseline_scenario.get(field) or {}).get("median")
             current_value = (current.get(field) or {}).get("median")
-            if not isinstance(baseline_value, int) or not isinstance(current_value, int):
+            if not isinstance(baseline_value, int) or not isinstance(
+                current_value, int
+            ):
                 return {
                     "mode": threshold_mode,
                     "status": "not_applicable",
