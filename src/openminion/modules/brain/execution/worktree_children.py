@@ -93,6 +93,18 @@ def _status_paths(worktree: Path) -> list[str]:
     return sorted(dict.fromkeys(paths))
 
 
+def _committed_paths(lease: ChildWorktreeLease) -> list[str]:
+    result = _git(
+        lease.worktree,
+        "diff",
+        "--name-only",
+        lease.base_revision,
+        "HEAD",
+        "--",
+    )
+    return sorted(dict.fromkeys(result.stdout.splitlines()))
+
+
 def _diff_text(worktree: Path) -> str:
     result = _git(worktree, "diff", "--")
     return result.stdout if result.returncode == 0 else ""
@@ -189,123 +201,116 @@ def _artifactctl_from_context(ctx: ExecutionContext) -> tuple[Any | None, bool]:
 
 
 def _stage_child_commit(lease: ChildWorktreeLease) -> str | None:
-    _git(lease.worktree, "add", "-A", "--")
-    if not _status_paths(lease.worktree):
-        return None
-    result = _git(
-        lease.worktree,
-        "-c",
-        "user.email=openminion-child@example.invalid",
-        "-c",
-        "user.name=OpenMinion Child",
-        "commit",
-        "-m",
-        f"openminion child handoff {lease.subtask_id}",
-    )
-    if result.returncode != 0:
-        return None
+    if _status_paths(lease.worktree):
+        _git(lease.worktree, "add", "-A", "--")
+        result = _git(
+            lease.worktree,
+            "-c",
+            "user.email=openminion-child@example.invalid",
+            "-c",
+            "user.name=OpenMinion Child",
+            "commit",
+            "-m",
+            f"openminion child handoff {lease.subtask_id}",
+        )
+        if result.returncode != 0:
+            return None
     head = _git(lease.worktree, "rev-parse", "HEAD")
-    return head.stdout.strip() if head.returncode == 0 else None
+    child_revision = head.stdout.strip() if head.returncode == 0 else ""
+    return child_revision if child_revision != lease.base_revision else None
 
 
-def _create_child_artifacts(
-    ctx: ExecutionContext,
+def _create_delegated_artifacts(
     *,
+    artifactctl: Any | None,
     lease: ChildWorktreeLease,
     touched_paths: list[str],
     status: str,
     validation: dict[str, Any],
+    session_id: str,
+    trace_id: str,
+    agent_id: str,
 ) -> tuple[dict[str, Any], str]:
-    artifactctl, should_close = _artifactctl_from_context(ctx)
     if artifactctl is None:
         return {"status": "artifact_unavailable"}, _diff_text(lease.worktree)
-    owner_id = f"{ctx.state.session_id}:{ctx.state.trace_id}:{lease.subtask_id}"
-    try:
-        with tempfile.TemporaryDirectory(prefix="openminion-child-handoff-") as tmp:
-            scratch = Path(tmp)
-            child_revision = _stage_child_commit(lease)
-            if not child_revision:
-                return {"status": "no_commit"}, _diff_text(lease.worktree)
-            diff = _revision_diff(lease.worktree, lease.base_revision, child_revision)
-            if not diff:
-                return {"status": "diff_failed"}, ""
-            target_digest = _sha256_text(diff)
-            if validation.get("passed") is True:
-                validation["target_digest"] = target_digest
-            bundle_path = scratch / "child.bundle"
-            bundle = _git(
-                lease.worktree,
-                "bundle",
-                "create",
-                str(bundle_path),
-                "HEAD",
-                f"^{lease.base_revision}",
-            )
-            if bundle.returncode != 0:
-                return (
-                    {
-                        "status": "bundle_failed",
-                        "stderr": bundle.stderr.strip()[:500],
-                    },
-                    diff,
-                )
-            bundle_sha = _sha256_path(bundle_path)
-            manifest = {
-                "schema_version": 1,
-                "owner_type": "a2a",
-                "owner_id": owner_id,
-                "subtask_id": lease.subtask_id,
-                "base_revision": lease.base_revision,
-                "child_revision": child_revision,
-                "touched_paths": touched_paths,
-                "status": status,
-                "validation": validation,
-                "bundle_sha256": bundle_sha,
-                "target_digest": target_digest,
-            }
-            manifest_path = scratch / "manifest.json"
-            manifest_path.write_text(
-                json.dumps(manifest, ensure_ascii=True, sort_keys=True),
-                encoding="utf-8",
-            )
-            bundle_ref = artifactctl.ingest_file(
-                bundle_path,
-                mime="application/vnd.git.bundle",
-                label=f"maer-child-bundle:{lease.subtask_id}",
-                meta=manifest,
-                session_id=ctx.state.session_id,
-                trace_id=ctx.state.trace_id,
-                agent_id=ctx.state.agent_id,
-            )
-            manifest_ref = artifactctl.ingest_file(
-                manifest_path,
-                mime="application/json",
-                label=f"maer-child-manifest:{lease.subtask_id}",
-                meta={"bundle_ref": bundle_ref.ref, **manifest},
-                session_id=ctx.state.session_id,
-                trace_id=ctx.state.trace_id,
-                agent_id=ctx.state.agent_id,
-            )
-            artifactctl.ref_add("a2a", owner_id, bundle_ref.ref)
-            artifactctl.ref_add("a2a", owner_id, manifest_ref.ref)
+    owner_id = f"{session_id}:{trace_id}:{lease.subtask_id}"
+    with tempfile.TemporaryDirectory(prefix="openminion-child-handoff-") as tmp:
+        scratch = Path(tmp)
+        child_revision = _stage_child_commit(lease)
+        if not child_revision:
+            return {"status": "no_commit"}, _diff_text(lease.worktree)
+        diff = _revision_diff(lease.worktree, lease.base_revision, child_revision)
+        if not diff:
+            return {"status": "diff_failed"}, ""
+        target_digest = _sha256_text(diff)
+        if validation.get("passed") is True:
+            validation["target_digest"] = target_digest
+        bundle_path = scratch / "child.bundle"
+        bundle = _git(
+            lease.worktree,
+            "bundle",
+            "create",
+            str(bundle_path),
+            "HEAD",
+            f"^{lease.base_revision}",
+        )
+        if bundle.returncode != 0:
             return (
-                {
-                    "status": "stored",
-                    "owner_type": "a2a",
-                    "owner_id": owner_id,
-                    "bundle_ref": bundle_ref.ref,
-                    "manifest_ref": manifest_ref.ref,
-                    "bundle_sha256": bundle_sha,
-                    "child_revision": child_revision,
-                    "target_digest": target_digest,
-                },
+                {"status": "bundle_failed", "stderr": bundle.stderr.strip()[:500]},
                 diff,
             )
-    finally:
-        if should_close:
-            close = getattr(artifactctl, "close", None)
-            if callable(close):
-                close()
+        bundle_sha = _sha256_path(bundle_path)
+        manifest = {
+            "schema_version": 1,
+            "owner_type": "a2a",
+            "owner_id": owner_id,
+            "subtask_id": lease.subtask_id,
+            "base_revision": lease.base_revision,
+            "child_revision": child_revision,
+            "touched_paths": touched_paths,
+            "status": status,
+            "validation": validation,
+            "bundle_sha256": bundle_sha,
+            "target_digest": target_digest,
+        }
+        manifest_path = scratch / "manifest.json"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=True, sort_keys=True),
+            encoding="utf-8",
+        )
+        bundle_ref = artifactctl.ingest_file(
+            bundle_path,
+            mime="application/vnd.git.bundle",
+            label=f"maer-child-bundle:{lease.subtask_id}",
+            meta=manifest,
+            session_id=session_id,
+            trace_id=trace_id,
+            agent_id=agent_id,
+        )
+        manifest_ref = artifactctl.ingest_file(
+            manifest_path,
+            mime="application/json",
+            label=f"maer-child-manifest:{lease.subtask_id}",
+            meta={"bundle_ref": bundle_ref.ref, **manifest},
+            session_id=session_id,
+            trace_id=trace_id,
+            agent_id=agent_id,
+        )
+        artifactctl.ref_add("a2a", owner_id, bundle_ref.ref)
+        artifactctl.ref_add("a2a", owner_id, manifest_ref.ref)
+        return (
+            {
+                "status": "stored",
+                "owner_type": "a2a",
+                "owner_id": owner_id,
+                "bundle_ref": bundle_ref.ref,
+                "manifest_ref": manifest_ref.ref,
+                "bundle_sha256": bundle_sha,
+                "child_revision": child_revision,
+                "target_digest": target_digest,
+            },
+            diff,
+        )
 
 
 def _record_conflicts(bucket: dict[str, Any]) -> None:
@@ -335,21 +340,35 @@ def allocate_child_worktree(
             "code-bearing orchestrate subtask requires inputs.workspace_root"
         )
     revision = str(inputs.get("base_revision") or "HEAD").strip() or "HEAD"
+    lease = allocate_delegated_worktree(
+        workspace_root=workspace_root,
+        subtask_id=subtask.subtask_id,
+        revision=revision,
+    )
+    _module_bucket(child_state)[_CHILD_STATE_KEY] = {
+        "workspace": str(lease.worktree),
+        "base_revision": lease.base_revision,
+        "subtask_id": subtask.subtask_id,
+    }
+    return lease
+
+
+def allocate_delegated_worktree(
+    *,
+    workspace_root: str,
+    subtask_id: str,
+    revision: str = "HEAD",
+) -> ChildWorktreeLease:
     isolator = WorktreeIsolator(parent_root=Path(workspace_root), revision=revision)
     worktree = isolator.allocate(1)[0]
     base_result = _git(Path(workspace_root), "rev-parse", revision)
     base_revision = (
         base_result.stdout.strip() if base_result.returncode == 0 else revision
     )
-    _module_bucket(child_state)[_CHILD_STATE_KEY] = {
-        "workspace": str(worktree),
-        "base_revision": base_revision,
-        "subtask_id": subtask.subtask_id,
-    }
     return ChildWorktreeLease(
         isolator=isolator,
         worktree=worktree,
-        subtask_id=subtask.subtask_id,
+        subtask_id=subtask_id,
         base_revision=base_revision,
     )
 
@@ -418,22 +437,57 @@ def finalize_child_worktree(
 ) -> dict[str, Any] | None:
     if lease is None:
         return None
-    touched_paths = _status_paths(lease.worktree)
+    artifactctl, should_close = _artifactctl_from_context(ctx)
+    try:
+        child_record = finalize_delegated_worktree(
+            lease=lease,
+            artifactctl=artifactctl,
+            session_id=ctx.state.session_id,
+            trace_id=ctx.state.trace_id,
+            agent_id=ctx.state.agent_id,
+            status=status,
+            validation=validation,
+        )
+    finally:
+        if should_close and artifactctl is not None:
+            close = getattr(artifactctl, "close", None)
+            if callable(close):
+                close()
+    bucket = _module_bucket(ctx.state)
+    bucket["children"].append(child_record)
+    _record_conflicts(bucket)
+    return child_record
+
+
+def finalize_delegated_worktree(
+    *,
+    lease: ChildWorktreeLease,
+    artifactctl: Any | None,
+    session_id: str,
+    trace_id: str,
+    agent_id: str,
+    status: str,
+    validation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    touched_paths = sorted({*_status_paths(lease.worktree), *_committed_paths(lease)})
     validation_payload = dict(validation or {})
     if touched_paths:
-        artifact_record, diff = _create_child_artifacts(
-            ctx,
+        artifact_record, diff = _create_delegated_artifacts(
+            artifactctl=artifactctl,
             lease=lease,
             touched_paths=touched_paths,
             status=status,
             validation=validation_payload,
+            session_id=session_id,
+            trace_id=trace_id,
+            agent_id=agent_id,
         )
     else:
         artifact_record, diff = {"status": "not_applicable"}, ""
     child_record: dict[str, Any] = {
-        "session_id": ctx.state.session_id,
-        "trace_id": ctx.state.trace_id,
-        "agent_id": ctx.state.agent_id,
+        "session_id": session_id,
+        "trace_id": trace_id,
+        "agent_id": agent_id,
         "subtask_id": lease.subtask_id,
         "base_revision": lease.base_revision,
         "repository": str(lease.isolator.parent_root),
@@ -455,17 +509,8 @@ def finalize_child_worktree(
     if not touched_paths or artifact_record.get("status") == "stored":
         lease.isolator.release()
     child_record["cleaned_up"] = not lease.worktree.exists()
-    if artifact_record.get("status") == "stored":
-        artifactctl, should_close = _artifactctl_from_context(ctx)
-        if artifactctl is not None:
-            try:
-                save_child_worktree_record(artifactctl, child_record)
-            finally:
-                if should_close:
-                    artifactctl.close()
-    bucket = _module_bucket(ctx.state)
-    bucket["children"].append(child_record)
-    _record_conflicts(bucket)
+    if artifact_record.get("status") == "stored" and artifactctl is not None:
+        save_child_worktree_record(artifactctl, child_record)
     return child_record
 
 
@@ -578,9 +623,11 @@ __all__ = [
     "ChildWorktreeLease",
     "accept_child_worktree_artifact",
     "allocate_child_worktree",
+    "allocate_delegated_worktree",
     "bind_runner_tool_workspace",
     "child_verifier_evidence",
     "finalize_child_worktree",
+    "finalize_delegated_worktree",
     "load_child_worktree_record",
     "reject_child_worktree_artifact",
     "save_child_worktree_record",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from collections.abc import Mapping
@@ -112,6 +113,17 @@ def _passing_verification(repository: Path) -> tuple[_TestEvidence, ...]:
             failed=0,
             status=_TestEvidenceStatus.PASSED,
             summary="repository verifier passed",
+        ),
+        _TestEvidence(
+            command=("git", "status"),
+            cwd_ref=str(repository),
+            started_at_ms=timestamp,
+            ended_at_ms=timestamp,
+            exit_code=0,
+            passed=1,
+            failed=0,
+            status=_TestEvidenceStatus.PASSED,
+            summary="repository status captured",
         ),
     )
 
@@ -692,6 +704,53 @@ def test_repository_lifecycle_survives_review_push_ci_and_reopen(
 
 
 @pytest.mark.skipif(_GIT is None, reason="git binary is required")
+def test_project_cycle_refreshes_current_repository_truth(tmp_path: Path) -> None:
+    boundary, repository, _remote = _repository_fixture(tmp_path)
+    store = AutonomyRunStore(root=tmp_path / "autonomy-refresh")
+    manager = TaskManager.for_lifecycle_db(db_path=tmp_path / "refresh.db")
+    request = build_project_launch_request(
+        goal="Change the fixture",
+        session_id="session",
+        agent_id="agent",
+        workspace_boundary=boundary,
+        repository=repository,
+        require_git_repository=True,
+        verification_commands=("verify",),
+        task_plan_required=False,
+    )
+    run = launch_project(request, store=store, manager=manager)
+    initial_revision = _git(repository, "rev-parse", "HEAD")
+
+    def turn(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        (repository / "feature.py").write_text("VALUE = 2\n", encoding="utf-8")
+        return ProjectTurnResult(
+            summary="continuing autonomous implementation",
+            evidence_refs=("tool-call:status",),
+            evidence_kinds=("repository_status",),
+        )
+
+    result = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=turn,
+        verify=lambda: _passing_verification(repository),
+    ).run_cycle(run.run_id)
+    checkpoint = load_latest_project_checkpoint(manager, task_id=run.task_id or "")
+    assert checkpoint is not None
+    lifecycle = checkpoint.payload["repository_lifecycle"]
+    objective = lifecycle[checkpoint.project_run.objective_ledger_ref]
+    resume = lifecycle[checkpoint.project_run.resume_packet_ref]
+    proof = json.loads(Path(result.run.proof_packet_ref or "").read_text())
+
+    assert result.run.workspace_ref.endswith(f"commit={initial_revision};dirty=dirty")
+    assert checkpoint.project_run.workspace_ref == result.run.workspace_ref
+    assert resume["execution_repository"] == result.run.workspace_ref
+    assert resume["current_revisions"]["execution_repository"] == initial_revision
+    assert objective["source_revisions"]["execution_repository"] == initial_revision
+    assert proof["workspace_ref"] == result.run.workspace_ref
+
+
+@pytest.mark.skipif(_GIT is None, reason="git binary is required")
 def test_repository_launch_and_merge_keep_explicit_boundaries(tmp_path: Path) -> None:
     boundary, repository, _remote = _repository_fixture(tmp_path)
     non_repository_launch = parse_focus_project_launch(
@@ -744,6 +803,10 @@ def test_repository_launch_and_merge_keep_explicit_boundaries(tmp_path: Path) ->
     )
     run = launch_project(launch, store=store, manager=manager)
     assert run.task_id is not None
+    assert run.execution_selectors.required_evidence_kinds == (
+        "waiver",
+        "repository_status",
+    )
 
     class MergeProvider:
         provider_id = DEFAULT_GITHUB_PROVIDER_ID

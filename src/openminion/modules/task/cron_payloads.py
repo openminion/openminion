@@ -28,6 +28,10 @@ WatchActionExecutor = Callable[
 ]
 
 
+def turn_wait_timeout(base_timeout_s: float, payload: Mapping[str, Any]) -> float:
+    return float(base_timeout_s) + max(0, float(payload.get("timeout_seconds") or 0))
+
+
 def build_cron_turn_result(
     *,
     result: Any,

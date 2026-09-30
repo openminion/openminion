@@ -293,13 +293,16 @@ class RuntimeProjectMixin:
         permission_profile_id = self.permission_mode
         if permission_profile_id not in {"readonly", "bypass"}:
             permission_profile_id = "local-safe"
+        repository = resolve_project_repository(boundary, handoff.repository or "")
         request = build_project_launch_request(
             goal=handoff.goal,
             session_id=self.session_id,
             agent_id=self.agent_id,
             workspace_boundary=boundary,
-            repository=resolve_project_repository(boundary, handoff.repository or ""),
-            require_git_repository=False,
+            repository=repository,
+            require_git_repository=(
+                bool(handoff.repository) or (repository / ".git").exists()
+            ),
             config_ref=str(self._rt.config_path),
             turn_target="focus",
             permission_profile_id=permission_profile_id,

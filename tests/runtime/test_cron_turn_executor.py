@@ -16,10 +16,16 @@ from openminion.tools.ops.service import OpsService, local_ops_service
 
 
 class _FakeHandle:
-    def __init__(self, responses: list[object | Exception]) -> None:
+    def __init__(
+        self,
+        responses: list[object | Exception],
+        result_timeouts: list[float],
+    ) -> None:
         self._responses = responses
+        self._result_timeouts = result_timeouts
 
-    def result(self, timeout_s: float = 0) -> object:  # noqa: ARG002
+    def result(self, timeout_s: float = 0) -> object:
+        self._result_timeouts.append(timeout_s)
         value = self._responses.pop(0)
         if isinstance(value, Exception):
             raise value
@@ -30,10 +36,11 @@ class _FakeRuntimeManager:
     def __init__(self, responses: list[object | Exception]) -> None:
         self._responses = responses
         self.submitted: list[object] = []
+        self.result_timeouts: list[float] = []
 
     def submit_turn(self, request):  # noqa: ANN001
         self.submitted.append(request)
-        return _FakeHandle(self._responses)
+        return _FakeHandle(self._responses, self.result_timeouts)
 
 
 class _FakeCronStore:
@@ -385,7 +392,7 @@ def test_cron_turn_executor_forwards_memory_consolidation_metadata() -> None:
 
 def test_cron_turn_executor_retries_until_success() -> None:
     runtime, runtime_manager = _runtime(
-        [TimeoutError("slow"), SimpleNamespace(final_text="second try")],
+        [RuntimeError("transient"), SimpleNamespace(final_text="second try")],
         registered_agents=["agent-main"],
     )
     executor = CronTurnExecutor(
@@ -410,7 +417,7 @@ def test_cron_turn_executor_retries_until_success() -> None:
 
 def test_cron_turn_executor_returns_error_after_final_failure() -> None:
     runtime, runtime_manager = _runtime(
-        [TimeoutError("slow"), RuntimeError("boom")],
+        [RuntimeError("transient"), RuntimeError("boom")],
         registered_agents=["agent-main"],
     )
     executor = CronTurnExecutor(
@@ -436,7 +443,7 @@ def test_cron_turn_executor_returns_error_after_final_failure() -> None:
 
 def test_cron_turn_executor_preserves_final_timeout() -> None:
     runtime, runtime_manager = _runtime(
-        [TimeoutError("slow"), TimeoutError("still slow")],
+        [TimeoutError("slow")],
         registered_agents=["agent-main"],
     )
     executor = CronTurnExecutor(
@@ -447,7 +454,7 @@ def test_cron_turn_executor_preserves_final_timeout() -> None:
         max_attempts=2,
     )
 
-    with pytest.raises(TimeoutError, match="still slow"):
+    with pytest.raises(TimeoutError, match="slow"):
         executor.execute(
             {
                 "job_id": "job-timeout",
@@ -456,7 +463,84 @@ def test_cron_turn_executor_preserves_final_timeout() -> None:
             {"run_id": "run-timeout", "due_at": "2026-03-20T00:00:00Z"},
         )
 
-    assert len(runtime_manager.submitted) == 2
+    assert len(runtime_manager.submitted) == 1
+
+
+@pytest.mark.parametrize("request_timeout", (300, 1800))
+def test_cron_turn_executor_waits_for_request_timeout_plus_allowance(
+    request_timeout: int,
+) -> None:
+    runtime, runtime_manager = _runtime(
+        [SimpleNamespace(final_text="completed")],
+        registered_agents=["agent-main"],
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=_FakeCronStore(),
+        request_builder=_request_builder,
+        timeout_s=90.0,
+        max_attempts=2,
+    )
+
+    result = executor.execute(
+        {
+            "job_id": "job-long-turn",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "run a long project turn",
+                "timeout_seconds": request_timeout,
+            },
+        },
+        {"run_id": "run-long-turn", "due_at": "2026-03-20T00:00:00Z"},
+    )
+
+    assert result["summary"] == "completed"
+    assert runtime_manager.result_timeouts == [request_timeout + 90.0]
+
+
+def test_idle_tick_waits_for_request_timeout_plus_allowance() -> None:
+    runtime, runtime_manager = _runtime([SimpleNamespace(final_text="completed")])
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=_FakeCronStore(),
+        request_builder=_request_builder,
+        timeout_s=90.0,
+        max_attempts=2,
+    )
+
+    result = executor._submit_idle_tick_turn(
+        manager=runtime_manager,
+        request_payload={"timeout_seconds": 300, "session_id": "session-1"},
+        agent_id="agent-main",
+        cron_job_id="job-idle",
+        session_id="session-1",
+    )
+
+    assert result["summary"] == "completed"
+    assert runtime_manager.result_timeouts == [390.0]
+
+
+def test_idle_tick_timeout_is_not_resubmitted() -> None:
+    runtime, runtime_manager = _runtime([TimeoutError("slow")])
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=_FakeCronStore(),
+        request_builder=_request_builder,
+        timeout_s=90.0,
+        max_attempts=2,
+    )
+
+    with pytest.raises(TimeoutError, match="slow"):
+        executor._submit_idle_tick_turn(
+            manager=runtime_manager,
+            request_payload={"timeout_seconds": 300, "session_id": "session-1"},
+            agent_id="agent-main",
+            cron_job_id="job-idle",
+            session_id="session-1",
+        )
+
+    assert len(runtime_manager.submitted) == 1
+    assert runtime_manager.result_timeouts == [390.0]
 
 
 def test_cron_turn_executor_handles_system_cleanup_event() -> None:

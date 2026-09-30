@@ -163,6 +163,20 @@ def evaluate_project_turn_verification(
         verification_refs = ()
     if passed and "verification" not in evidence_kinds:
         evidence_kinds = (*evidence_kinds, "verification")
+    if (
+        any(
+            item.status == TestEvidenceStatus.PASSED
+            and (
+                tuple(shlex.split(item.command))
+                if isinstance(item.command, str)
+                else tuple(item.command)
+            )
+            == ("git", "status")
+            for item in verification
+        )
+        and "repository_status" not in evidence_kinds
+    ):
+        evidence_kinds = (*evidence_kinds, "repository_status")
     verification_refs += tuple(
         f"command:{index}:{item.status.value}"
         for index, item in enumerate(verification, start=1)

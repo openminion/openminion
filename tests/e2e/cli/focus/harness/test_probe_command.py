@@ -13,13 +13,16 @@ from tests.e2e.cli.focus.harness.probe import FocusProbe
 pytestmark = pytest.mark.e2e
 
 
-def test_live_config_uses_private_file_and_separate_daemon_port(tmp_path: Path) -> None:
+def test_live_config_uses_private_file_and_separate_daemon_port(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = tmp_path / "source.json"
     source.write_text(json.dumps({"runtime": {"log_level": "INFO"}}), encoding="utf-8")
     run_root = tmp_path / "run"
     run_root.mkdir()
 
-    isolated = _isolated_live_config(source, run_root)
+    isolated = _isolated_live_config(source, run_root, monkeypatch=monkeypatch)
 
     assert json.loads(source.read_text(encoding="utf-8")) == {
         "runtime": {"log_level": "INFO"}

@@ -36,11 +36,14 @@ from openminion.modules.brain.execution.workflow import (
     WorkflowPlan,
     WorkflowStep,
 )
+from openminion.modules.brain.runner.tick.context import (
+    _clear_pending_confirmation_metadata,
+)
 from openminion.modules.brain.runtime.budget.strategy import (
     resolve_coding_budget_settings,
 )
 from openminion.modules.llm.schemas import Message
-from openminion.modules.task import load_latest_project_checkpoint
+from openminion.modules.task import ProjectCheckpoint, load_latest_project_checkpoint
 from openminion.modules.task.project.policy import (
     repository_project_launch_approved,
     repository_release_tools_approved,
@@ -135,14 +138,7 @@ def _context_workspace_hint(ctx: ExecutionContext) -> str:
 
 
 def _coding_allowed_tools(ctx: ExecutionContext) -> frozenset[str]:
-    runner, _profile = _runner_and_profile_from_context(ctx)
-    task_id = str(getattr(ctx.state, "resume_task_id_hint", "") or "").strip()
-    task_manager = getattr(runner, "task_manager", None) if runner is not None else None
-    checkpoint = (
-        load_latest_project_checkpoint(task_manager, task_id=task_id)
-        if task_id and task_manager is not None
-        else None
-    )
+    checkpoint = _project_checkpoint(ctx)
     return select_coding_allowed_tools(
         project_launch_approved=(
             checkpoint is not None and repository_project_launch_approved(checkpoint)
@@ -151,6 +147,28 @@ def _coding_allowed_tools(ctx: ExecutionContext) -> frozenset[str]:
             checkpoint is not None and repository_release_tools_approved(checkpoint)
         ),
     )
+
+
+def _project_checkpoint(ctx: ExecutionContext) -> ProjectCheckpoint | None:
+    runner, _profile = _runner_and_profile_from_context(ctx)
+    task_id = str(getattr(ctx.state, "resume_task_id_hint", "") or "").strip()
+    task_manager = getattr(runner, "task_manager", None) if runner is not None else None
+    return (
+        load_latest_project_checkpoint(task_manager, task_id=task_id)
+        if task_id and task_manager is not None
+        else None
+    )
+
+
+def _canonical_project_plan(
+    ctx: ExecutionContext,
+) -> tuple[dict[str, Any] | None, bool]:
+    checkpoint = _project_checkpoint(ctx)
+    if checkpoint is None:
+        return None, False
+    raw_plan = checkpoint.payload.get("task_plan")
+    plan = dict(raw_plan) if isinstance(raw_plan, dict) else None
+    return plan, bool(plan and repository_project_launch_approved(checkpoint))
 
 
 class CodingProfileRunner(
@@ -499,6 +517,22 @@ class CodingProfileRunner(
         }
         if not resume_state:
             resume_state = self._coding_module_state_payload(ctx)
+        revision_only = bool(
+            getattr(ctx.state, "project_plan_revision_required", False)
+        )
+        canonical_task_plan, approved_project_plan = _canonical_project_plan(ctx)
+        fresh_project_plan = revision_only or (
+            approved_project_plan
+            and not self._resume_prepared
+            and ctx.state.pending_confirmation_command is None
+        )
+        if revision_only:
+            ctx.state.pending_confirmation_command = None
+            _clear_pending_confirmation_metadata(ctx.state)
+        if fresh_project_plan:
+            resume_state = {}
+            self._clear_coding_module_state(ctx)
+            self._coding_plan = None
         if resume_state:
             if self._resume_prepared:
                 self.restore_state(dict(resume_state))
@@ -523,22 +557,27 @@ class CodingProfileRunner(
                 return self._invalid_plan_result(ctx)
             self._sync_coding_context(ctx)
         else:
-            self._loop_state = CodingLoopState()
+            self._loop_state = CodingLoopState(
+                task_plan=canonical_task_plan if fresh_project_plan else None
+            )
             self._last_verifier_candidate_payload = None
             if ctx.user_input:
                 self._loop_state.messages.append(
                     Message(role="user", content=ctx.user_input)
                 )
-            initialized = self._initialize_plan(
-                ctx,
-                runtime=runtime,
-                model=model,
-            )
-            if isinstance(initialized, ExecutionResult):
-                return initialized
-            self._coding_plan = initialized
-            self._sync_coding_context(ctx)
-            self._sync_coding_module_state(ctx)
+            if canonical_task_plan is None:
+                initialized = self._initialize_plan(
+                    ctx,
+                    runtime=runtime,
+                    model=model,
+                )
+                if isinstance(initialized, ExecutionResult):
+                    return initialized
+                self._coding_plan = initialized
+                self._sync_coding_context(ctx)
+                self._sync_coding_module_state(ctx)
+        if revision_only:
+            self._loop_state.scratchpad["project.plan_revision_required"] = True
         seeded_replay_result = self._consume_seeded_confirmation_replay(ctx)
         if seeded_replay_result is not None:
             return seeded_replay_result
@@ -560,7 +599,13 @@ class CodingProfileRunner(
             self._loop_state.scratchpad["coding.last_verifier_candidate"] = dict(
                 self._last_verifier_candidate_payload
             )
-        self._sync_coding_module_state(ctx)
+        if (
+            self._loop_state.scratchpad.get("project.plan_revision_required") is True
+            and self._loop_state.task_plan_revision is not None
+        ):
+            self._clear_coding_module_state(ctx)
+        else:
+            self._sync_coding_module_state(ctx)
 
         if (
             outcome.termination_reason != CODING_TERM_FINAL_TEXT

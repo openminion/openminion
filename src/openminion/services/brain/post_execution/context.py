@@ -243,6 +243,10 @@ def _inject_resume_task_hints(
         state_inline = runner._load_or_init_state(session_id).model_dump(mode="json")
     if task_id:
         state_inline["resume_task_id_hint"] = task_id
+    revision_required = _metadata_bool(
+        inbound_metadata, "project_plan_revision_required"
+    )
+    state_inline["project_plan_revision_required"] = revision_required
     if cron_job_id:
         state_inline["resume_cron_job_id_hint"] = cron_job_id
     if has_watch_context:

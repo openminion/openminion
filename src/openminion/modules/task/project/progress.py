@@ -16,6 +16,7 @@ from openminion.modules.task.autonomy import (
     AutonomyRunStatus,
     AutonomyRunStore,
     TestEvidence,
+    build_local_workspace_ref,
     now_ms,
 )
 from openminion.modules.task.runtime.lifecycle import TaskLifecycleState, TaskManager
@@ -79,6 +80,7 @@ def terminal_checkpoint_projection(
     if (
         project_run.status == AutonomyRunStatus.BLOCKED
         and run.status == AutonomyRunStatus.RUNNING
+        and run.checkpoint_id == checkpoint.checkpoint_id
     ):
         return None
     if project_run.status not in {
@@ -101,6 +103,7 @@ def terminal_checkpoint_projection(
     projected = run.model_copy(
         update={
             "checkpoint_id": checkpoint.checkpoint_id,
+            "workspace_ref": project_run.workspace_ref,
             "status": project_run.status,
             "phase": project_run.phase,
             "updated_at_ms": project_run.updated_at_ms,
@@ -123,20 +126,63 @@ def recover_terminal_checkpoint(
     checkpoint: ProjectCheckpoint,
     cycle_summaries: tuple[str, ...],
     workspace: Path,
-) -> tuple[AutonomyRun, ProjectCycleDecision, tuple[TestEvidence, ...]] | None:
+) -> (
+    tuple[
+        AutonomyRun,
+        ProjectCheckpoint,
+        ProjectCycleDecision,
+        tuple[TestEvidence, ...],
+    ]
+    | None
+):
     projection = terminal_checkpoint_projection(run, checkpoint)
     if projection is None:
         return None
     terminal_run, decision, verification = projection
-    if not terminal_run.proof_packet_ref:
-        terminal_run = write_project_terminal_proof(
-            autonomy_store,
-            terminal_run,
-            checkpoint.project_run,
-            verification=verification,
-            cycle_summaries=cycle_summaries,
-            workspace=workspace,
+    if checkpoint.payload.get("proof_recovery_failed"):
+        blocked = run.model_copy(
+            update={
+                "checkpoint_id": checkpoint.checkpoint_id,
+                "workspace_ref": checkpoint.project_run.workspace_ref,
+                "status": AutonomyRunStatus.BLOCKED,
+                "phase": AutonomyRunPhase.CLOSED,
+                "operator_summary": "Terminal proof recovery is blocked.",
+                "next_action_hint": "Restore proof storage, then resume the project.",
+                "updated_at_ms": checkpoint.project_run.updated_at_ms,
+            }
         )
+        autonomy_store.save(blocked)
+        transition_project_task(
+            task_manager,
+            checkpoint.project_run.task_id,
+            decision=ProjectCycleDecision.BLOCKED,
+            status=AutonomyRunStatus.BLOCKED,
+        )
+        return blocked, checkpoint, ProjectCycleDecision.BLOCKED, verification
+    if not terminal_run.proof_packet_ref:
+        try:
+            terminal_run = write_project_terminal_proof(
+                autonomy_store,
+                terminal_run,
+                checkpoint.project_run,
+                verification=verification,
+                cycle_summaries=cycle_summaries,
+                workspace=workspace,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            blocked, blocked_checkpoint = block_terminal_proof_recovery(
+                task_manager=task_manager,
+                autonomy_store=autonomy_store,
+                run=run,
+                checkpoint=checkpoint,
+                error=exc,
+            )
+            return (
+                blocked,
+                blocked_checkpoint,
+                ProjectCycleDecision.BLOCKED,
+                verification,
+            )
     autonomy_store.save(terminal_run)
     transition_project_task(
         task_manager,
@@ -144,7 +190,62 @@ def recover_terminal_checkpoint(
         decision=decision,
         status=checkpoint.project_run.status,
     )
-    return terminal_run, decision, verification
+    return terminal_run, checkpoint, decision, verification
+
+
+def block_terminal_proof_recovery(
+    *,
+    task_manager: TaskManager,
+    autonomy_store: AutonomyRunStore,
+    run: AutonomyRun,
+    checkpoint: ProjectCheckpoint,
+    error: Exception,
+) -> tuple[AutonomyRun, ProjectCheckpoint]:
+    timestamp = now_ms()
+    info = error_info_from_exception(
+        error,
+        default_code="terminal_proof_recovery_failed",
+        default_message="Terminal proof recovery failed.",
+        namespace="task.project",
+    )
+    project_run = checkpoint.project_run.model_copy(
+        update={
+            "updated_at_ms": timestamp,
+            "task_state": TaskLifecycleState.PAUSED,
+            "next_wake_job_id": None,
+        }
+    )
+    blocked_checkpoint = project_checkpoints.save_project_run_checkpoint(
+        task_manager,
+        project_run,
+        checkpoint_id=f"{project_run.project_run_id}:proof-recovery-blocked:{timestamp}",
+        payload={
+            **checkpoint.payload,
+            "decision_reason": "terminal_proof_recovery_failed",
+            "proof_recovery_failed": True,
+            "error": info.to_dict(),
+        },
+    )
+    blocked = run.model_copy(
+        update={
+            "checkpoint_id": blocked_checkpoint.checkpoint_id,
+            "workspace_ref": project_run.workspace_ref,
+            "status": AutonomyRunStatus.BLOCKED,
+            "phase": AutonomyRunPhase.CLOSED,
+            "operator_summary": info.message,
+            "next_action_hint": "Restore proof storage, then resume the project.",
+            "last_error": AutonomyRunError(code=info.code, message=info.message),
+            "updated_at_ms": timestamp,
+        }
+    )
+    autonomy_store.save(blocked)
+    transition_project_task(
+        task_manager,
+        project_run.task_id,
+        decision=ProjectCycleDecision.BLOCKED,
+        status=AutonomyRunStatus.BLOCKED,
+    )
+    return blocked, blocked_checkpoint
 
 
 def checkpoint_decision(payload: Mapping[str, object]) -> ProjectCycleDecision:
@@ -161,6 +262,8 @@ def record_project_cycle_interruption(
     error: Exception,
     triggering_cron_job_id: str | None,
 ) -> None:
+    from .turn import ProjectTurnResult, project_workspace
+
     timestamp = now_ms()
     error_info = error_info_from_exception(
         error,
@@ -172,8 +275,12 @@ def record_project_cycle_interruption(
     checkpoint_id = (
         f"{checkpoint.project_run.project_run_id}:interrupted:{uuid4().hex[:12]}"
     )
+    workspace_ref = build_local_workspace_ref(
+        project_workspace(checkpoint.project_run.workspace_ref)
+    )
     interrupted_project = checkpoint.project_run.model_copy(
         update={
+            "workspace_ref": workspace_ref,
             "status": AutonomyRunStatus.BLOCKED,
             "phase": AutonomyRunPhase.RECOVER,
             "updated_at_ms": timestamp,
@@ -183,6 +290,13 @@ def record_project_cycle_interruption(
             "next_wake_job_id": None,
         }
     )
+    repository_payload = project_checkpoints.advance_repository_lifecycle_payload(
+        checkpoint,
+        interrupted_project,
+        turn=ProjectTurnResult(summary=failure.message),
+        verification_count=0,
+        next_action=ProjectCycleDecision.BLOCKED.value,
+    )
     committed = project_checkpoints.commit_project_run_checkpoint(
         task_manager,
         interrupted_project,
@@ -191,6 +305,7 @@ def record_project_cycle_interruption(
         triggering_cron_job_id=triggering_cron_job_id,
         payload={
             **checkpoint.payload,
+            **repository_payload,
             "decision": ProjectCycleDecision.BLOCKED.value,
             "decision_reason": failure.code,
             "error": failure.model_dump(mode="json"),
@@ -200,6 +315,7 @@ def record_project_cycle_interruption(
         run.model_copy(
             update={
                 "checkpoint_id": committed.checkpoint_id,
+                "workspace_ref": workspace_ref,
                 "status": AutonomyRunStatus.BLOCKED,
                 "phase": AutonomyRunPhase.RECOVER,
                 "operator_summary": failure.message,
@@ -253,10 +369,14 @@ def reconcile_run_projection(
         and run.status == project_run.status
     ):
         return run
-    resumed = run.status == AutonomyRunStatus.RUNNING
+    resumed = (
+        run.status == AutonomyRunStatus.RUNNING
+        and run.checkpoint_id == project_run.last_checkpoint_id
+    )
     reconciled = run.model_copy(
         update={
             "checkpoint_id": project_run.last_checkpoint_id,
+            "workspace_ref": project_run.workspace_ref,
             "status": run.status if resumed else project_run.status,
             "phase": run.phase if resumed else project_run.phase,
             "updated_at_ms": project_run.updated_at_ms,

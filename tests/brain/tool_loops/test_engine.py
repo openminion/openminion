@@ -304,6 +304,19 @@ class _FakeSessionAPI:
         del session_id
         return dict(self.active_plan) if isinstance(self.active_plan, dict) else None
 
+    def list_events(
+        self,
+        session_id: str,
+        *,
+        event_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return [
+            {"type": item["event_type"], "payload": item["payload"]}
+            for item in self.events
+            if item["session_id"] == session_id
+            and (event_type is None or item["event_type"] == event_type)
+        ]
+
     def emit_canonical_event(
         self,
         session_id: str,
@@ -2955,6 +2968,89 @@ def test_autonomous_plan_signal_ends_current_loop_turn() -> None:
         for event in session_api.events
         if event["event_type"].startswith("task_plan.")
     ] == ["task_plan.declared"]
+
+
+def test_required_project_revision_ends_turn_and_blocks_sibling_tools() -> None:
+    active_plan = {
+        "plan_id": "plan-1",
+        "objective": "Repair the fixture",
+        "criterion_ids": ["criterion-tests"],
+        "status": "completed",
+        "steps": [
+            {
+                "step_id": "build",
+                "description": "Repair the fixture",
+                "status": "completed",
+            }
+        ],
+    }
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="revise",
+                        name=PLAN_TOOL_NAME,
+                        arguments={
+                            "action": "revise",
+                            "plan_id": "plan-1",
+                            "revision_id": "revision-1",
+                            "criterion_ids": ["criterion-tests"],
+                            "verifier_refs": ["verification:cycle-1:failed"],
+                            "revised_steps": [
+                                {
+                                    "step_id": "build",
+                                    "description": "Repair the fixture",
+                                    "status": "pending",
+                                }
+                            ],
+                        },
+                    ),
+                    ToolCall(
+                        id="read-after-revise",
+                        name="file.read",
+                        arguments={"path": "result.txt"},
+                    ),
+                ],
+                finish_reason="tool_calls",
+            )
+        ]
+    )
+    session_api = _FakeSessionAPI(active_plan=active_plan)
+    state = _state(tool_calls=2, llm_calls_max=5).model_copy(
+        update={"resume_task_id_hint": "task-1"}
+    )
+    loop_ctx = _LoopContext(state=state, session_api=session_api)
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"file.read"}),
+            max_iterations=4,
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="revise the failed plan")],
+        initial_state=AdaptiveToolLoopState(
+            task_plan=active_plan,
+            scratchpad={"project.plan_revision_required": True},
+        ),
+        tool_specs=_tool_specs("file.read"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.state.task_plan_revision["revision_id"] == "revision-1"
+    assert len(runtime.calls) == 1
+    assert loop_ctx.commands == []
+    blocked = [
+        event
+        for event in session_api.events
+        if event["event_type"] == "tool.call.blocked"
+    ]
+    assert blocked[-1]["payload"]["call_id"] == "read-after-revise"
 
 
 def test_autonomous_plan_final_step_continues_to_final_answer() -> None:

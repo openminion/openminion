@@ -27,6 +27,7 @@ from openminion.modules.task.plan import (
     TaskPlanStepCompleted,
     TaskPlanTerminalSignal,
 )
+from openminion.modules.tool.contracts.model_ids import MODEL_GIT_STATUS
 
 from .progress import AutonomyLoopConditionKind
 from .models import ProjectCheckpoint, ProjectCycleDecision
@@ -54,6 +55,7 @@ class ProjectTurnRequest:
     prompt: str
     allowed_tools: tuple[str, ...] = ()
     project_tool_calls_remaining: int | None = None
+    plan_revision_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -126,7 +128,8 @@ def _project_verification_guidance(
     lines.extend(
         (
             "External verification failed after the prior turn. First redeclare "
-            "the same plan_id with its remaining or repair steps and "
+            "the same plan_id and exact criterion_ids with its remaining or repair "
+            "steps and "
             "continue_plan_autonomously=false so it is active in this turn.",
             "Then use the existing plan loop-control "
             f"tool with action=revise for plan_id={plan_id}. Use a new "
@@ -165,16 +168,12 @@ def project_cycle_prompt(
         "requires reactivation.",
         "The configured verifier, not final text, owns project completion.",
     ]
+    lines.extend(_repository_status_guidance(run))
     active_plan = checkpoint_payload.get("task_plan")
     objective = _approved_project_objective(checkpoint)
     lines.extend(_approved_source_request_guidance(objective))
     lines.extend(_approved_objective_guidance(objective))
-    if not isinstance(active_plan, Mapping):
-        lines.append(
-            "Your first action must use the existing plan loop-control tool "
-            "to declare a durable task plan with "
-            "continue_plan_autonomously=false, then continue with its first step."
-        )
+    lines.extend(_active_plan_guidance(active_plan))
     lines.extend(_project_reference_guidance("verifier", project_run.verifier_refs))
     lines.extend(_project_verification_guidance(checkpoint, active_plan))
     lines.extend(_project_reference_guidance("progress", project_run.progress_refs))
@@ -231,6 +230,38 @@ def project_checkpoint_guidance(
     )
 
 
+def _active_plan_guidance(active_plan: object) -> list[str]:
+    if not isinstance(active_plan, Mapping):
+        return [
+            "Your first action must use the existing plan loop-control tool "
+            "to declare a durable task plan with continue_plan_autonomously=false, "
+            "then continue with its first step."
+        ]
+    identity = {
+        "plan_id": active_plan.get("plan_id"),
+        "criterion_ids": active_plan.get("criterion_ids", []),
+        "steps": [
+            {"step_id": step.get("step_id"), "status": step.get("status")}
+            for step in cast(list[Mapping[str, object]], active_plan.get("steps", []))
+        ],
+    }
+    return [
+        "Canonical active task plan identifiers (preserve these exact values): "
+        + json.dumps(identity, sort_keys=True)
+    ]
+
+
+def _repository_status_guidance(run: AutonomyRun) -> list[str]:
+    if "repository_status" not in run.execution_selectors.required_evidence_kinds:
+        return []
+    return [
+        "After all repository-changing tool calls, and immediately before plan "
+        "completion, request and call git.status once for the approved workspace.",
+        "The successful git.status result is required repository evidence; do not "
+        "infer it from another command or from final text.",
+    ]
+
+
 def _approved_objective_guidance(objective: Mapping[str, object]) -> list[str]:
     criteria = objective.get("success_criteria")
     if not criteria:
@@ -269,6 +300,8 @@ def _approved_source_request_guidance(objective: Mapping[str, object]) -> list[s
         "Original approved request (the project handoff is already approved; "
         "preserve its post-approval requirements):",
         source_request,
+        "Treat its file and tool restrictions as hard constraints. Do not include "
+        "prohibited files or commands in the plan or in tool calls.",
     ]
 
 
@@ -456,6 +489,7 @@ def project_turn_inbound_metadata(
         "conversation_id": request.project_run_id,
         "linked_task_id": request.task_id,
         "resume": "true",
+        "project_plan_revision_required": str(request.plan_revision_required).lower(),
     }
     if request.allowed_tools:
         metadata.update(
@@ -520,6 +554,10 @@ def project_turn_result_from_response(
     artifact_refs = project_metadata_refs(metadata, "artifact_refs")
     evidence_refs = project_metadata_refs(metadata, "evidence_refs")
     evidence_kinds = project_metadata_refs(metadata, "evidence_kinds")
+    repository_status_recorded = any(
+        item.get("tool_name") == MODEL_GIT_STATUS and bool(item.get("ok"))
+        for item in tool_results
+    )
     task_plan_revisions = _project_checkpoint_revisions(metadata)
     return ProjectTurnResult(
         summary=summary,
@@ -527,7 +565,14 @@ def project_turn_result_from_response(
         condition=_project_condition(metadata=metadata, error=error),
         evidence_refs=tuple(dict.fromkeys((*evidence_refs, *artifact_refs))),
         artifact_refs=artifact_refs,
-        evidence_kinds=evidence_kinds,
+        evidence_kinds=tuple(
+            dict.fromkeys(
+                (
+                    *evidence_kinds,
+                    *(("repository_status",) if repository_status_recorded else ()),
+                )
+            )
+        ),
         effect_refs=project_metadata_refs(metadata, "effect_refs"),
         tool_call_count=_project_tool_call_count(metadata, tool_results),
         task_plan=_project_metadata_model(metadata, "task_plan", TaskPlan),
