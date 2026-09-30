@@ -487,6 +487,12 @@ def _path_shape(path_value: str, options: RunOptions) -> str:
         return "<SUT_SRC>"
     if path == repo_root:
         return "<SUT_REPO>"
+    try:
+        repo_relative = path.relative_to(repo_root)
+    except ValueError:
+        pass
+    else:
+        return f"<SUT_REPO>/{repo_relative}"
     python_prefix = Path(sys.prefix).absolute()
     try:
         return f"<PYTHON_PREFIX>/{path.relative_to(python_prefix)}"

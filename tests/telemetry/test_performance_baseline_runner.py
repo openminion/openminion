@@ -579,6 +579,24 @@ def test_comparison_accepts_empty_inherited_pythonpath_shape() -> None:
     )
 
 
+def test_path_shape_normalizes_repository_descendants(tmp_path: Path) -> None:
+    module = _load_module()
+    workspace_root = tmp_path / "workspace"
+    options = module.RunOptions(
+        workspace_root=workspace_root,
+        output_root=tmp_path / "output",
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+    )
+
+    assert module._path_shape(
+        str(workspace_root / "openminion" / "scripts" / "smoke"), options
+    ) == "<SUT_REPO>/scripts/smoke"
+
+
 def test_dirty_fingerprint_includes_nested_untracked_file_bytes(
     tmp_path: Path,
 ) -> None:
