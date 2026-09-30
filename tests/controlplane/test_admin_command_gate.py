@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 
 from openminion.modules.controlplane.commands.registry import CommandRegistry
+from openminion.modules.controlplane.commands.module import (
+    AuthRequirement,
+    CommandSchema,
+    CommandSpec,
+)
 from openminion.modules.controlplane.contracts.models import (
+    CommandResult,
     ParsedCommand,
     ResolvedContext,
 )
@@ -67,3 +73,38 @@ def test_non_admin_command_skips_admin_gate() -> None:
     result = registry.execute(command, _ctx("user:regular"))
 
     assert result.ok is True
+
+
+def test_registered_admin_requirement_is_enforced_without_hardcoded_name() -> None:
+    store = InMemoryControlPlaneStore()
+    auth = AuthEvaluator(admin_user_keys=["user:admin"])
+    registry = CommandRegistry(store=store, auth=auth)
+
+    def handler(_command: ParsedCommand, _ctx: ResolvedContext) -> CommandResult:
+        return CommandResult(ok=True, text="ok")
+
+    registry.register_command_spec(
+        CommandSpec(
+            name="identity.upsert",
+            schema=CommandSchema(
+                name="identity.upsert",
+                description="test",
+                usage="/identity.upsert",
+            ),
+            handler=handler,
+            auth_requirement=AuthRequirement.ADMIN,
+            module_name="identity",
+        )
+    )
+    command = ParsedCommand(
+        canonical="identity.upsert",
+        original_text="/identity.upsert",
+        args=[],
+    )
+
+    denied = registry.execute(command, _ctx("user:regular"))
+    allowed = registry.execute(command, _ctx("user:admin"))
+
+    assert denied.ok is False
+    assert denied.error["code"] == "PERMISSION_DENIED"
+    assert allowed.ok is True

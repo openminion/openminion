@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -134,8 +135,14 @@ class AgentProfile(BaseModel):
     @field_validator("agent_id")
     @classmethod
     def _agent_id_cache_key_safe(cls, value: str) -> str:
-        if "|" in value:
-            raise ValueError("agent_id must not contain '|'")
+        if (
+            value in {".", ".."}
+            or "|" in value
+            or Path(value).name != value
+            or "/" in value
+            or "\\" in value
+        ):
+            raise ValueError("agent_id must be one safe path segment")
         return value
 
     @field_validator("inherits", "llm_policy_ref")

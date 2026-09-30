@@ -5,6 +5,7 @@ from pathlib import Path
 
 try:
     from openminion.base.version import OPENMINION_VERSION
+    from openminion.base.config.runtime.identity import resolve_identity_db_from_env
     from openminion.modules.identity.config import (
         IdentityCtlConfig,
         load_config as load_identity_config,
@@ -58,24 +59,15 @@ def _deep_update(target: dict, update: dict) -> None:
 
 
 def _load_identity_ctl_config() -> IdentityCtlConfig:
-    try:
-        return load_identity_config()
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("identity controlplane config load failed reason=%s", exc)
-        return IdentityCtlConfig()
+    return load_identity_config()
 
 
 def command_module() -> "IdentityCommandModule":
-    from openminion.base.generated_paths import resolve_generated_state_path
-    from openminion.modules.identity.constants import DEFAULT_IDENTITY_DB_FILENAME
-
-    db_path = str(
-        resolve_generated_state_path(DEFAULT_IDENTITY_DB_FILENAME, module="identity")
-    )
+    identity_cfg = _load_identity_ctl_config()
+    db_path = str(identity_cfg.storage.db_path or resolve_identity_db_from_env())
     Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
     store = SQLiteIdentityStore(sqlite_path=db_path)
     identity_ctl = IdentityCtl(store=store)
-    identity_cfg = _load_identity_ctl_config()
 
     return IdentityCommandModule(identity_ctl, identity_cfg=identity_cfg)
 
@@ -126,6 +118,7 @@ class IdentityCommandModule(CommandModule):
                 self.handle_upsert,
                 required_args=["agent_id"],
                 optional_args=["json_data"],
+                auth_requirement=AuthRequirement.ADMIN,
             ),
             self._command_spec(
                 "identity.delete",
@@ -133,6 +126,7 @@ class IdentityCommandModule(CommandModule):
                 "/identity.delete <agent_id>",
                 self.handle_delete,
                 required_args=["agent_id"],
+                auth_requirement=AuthRequirement.ADMIN,
             ),
             self._command_spec(
                 "identity.render",
@@ -147,6 +141,7 @@ class IdentityCommandModule(CommandModule):
                 "/identity.set.tone <agent_id> <tone>",
                 self.handle_set_tone,
                 required_args=["agent_id", "tone"],
+                auth_requirement=AuthRequirement.ADMIN,
             ),
             self._command_spec(
                 "identity.set.verbosity",
@@ -154,6 +149,7 @@ class IdentityCommandModule(CommandModule):
                 "/identity.set.verbosity <agent_id> <verbosity>",
                 self.handle_set_verbosity,
                 required_args=["agent_id", "verbosity"],
+                auth_requirement=AuthRequirement.ADMIN,
             ),
             self._command_spec(
                 "identity.set.mission",
@@ -161,19 +157,7 @@ class IdentityCommandModule(CommandModule):
                 "/identity.set.mission <agent_id> <mission_text>",
                 self.handle_set_mission,
                 required_args=["agent_id", "mission_text"],
-            ),
-            self._command_spec(
-                "identity.create",
-                "Create identity profile interactively using wizard",
-                "/identity.create",
-                self.handle_create_interactive,
-            ),
-            self._command_spec(
-                "identity.edit",
-                "Edit identity profile interactively using wizard",
-                "/identity.edit <agent_id>",
-                self.handle_edit_interactive,
-                required_args=["agent_id"],
+                auth_requirement=AuthRequirement.ADMIN,
             ),
         ]
 
@@ -186,6 +170,7 @@ class IdentityCommandModule(CommandModule):
         *,
         required_args: list[str] | None = None,
         optional_args: list[str] | None = None,
+        auth_requirement: AuthRequirement = AuthRequirement.USER,
     ) -> CommandSpec:
         return CommandSpec(
             name=name,
@@ -197,7 +182,7 @@ class IdentityCommandModule(CommandModule):
                 optional_args=optional_args or [],
             ),
             handler=handler,
-            auth_requirement=AuthRequirement.USER,
+            auth_requirement=auth_requirement,
             module_name=self.name,
             version=self.version,
         )
@@ -230,11 +215,23 @@ class IdentityCommandModule(CommandModule):
             profile = self._get_profile_or_not_found(agent_id)
             if isinstance(profile, CommandResult):
                 return profile
-            updated_profile = profile.model_copy(
-                update={
-                    "profile_revision": profile.profile_revision + 1,
-                    **build_update(profile),
-                }
+            source = str((profile.meta or {}).get("source", "")).strip().lower()
+            if source in {"yaml", "bundle"}:
+                return CommandResult(
+                    ok=False,
+                    text=(
+                        f"Profile for {agent_id} is {source}-managed and cannot be "
+                        "edited through the control plane."
+                    ),
+                    error={"code": "IDENTITY_SOURCE_MANAGED", "source": source},
+                )
+            updated_profile = AgentProfile.model_validate(
+                profile.model_copy(
+                    update={
+                        "profile_revision": profile.profile_revision + 1,
+                        **build_update(profile),
+                    }
+                ).model_dump(mode="python")
             )
             self._identity_ctl.upsert_profile(updated_profile)
             return CommandResult(
@@ -356,6 +353,16 @@ class IdentityCommandModule(CommandModule):
             update_obj = json.loads(json_str)
             profile = self._identity_ctl.get_profile(agent_id)
             if profile:
+                source = str((profile.meta or {}).get("source", "")).strip().lower()
+                if source in {"yaml", "bundle"}:
+                    return CommandResult(
+                        ok=False,
+                        text=(
+                            f"Profile for {agent_id} is {source}-managed and cannot be "
+                            "edited through the control plane."
+                        ),
+                        error={"code": "IDENTITY_SOURCE_MANAGED", "source": source},
+                    )
                 profile_dict = profile.dict()
                 _deep_update(profile_dict, update_obj)
                 updated_profile = AgentProfile.model_validate(profile_dict)
@@ -365,6 +372,8 @@ class IdentityCommandModule(CommandModule):
                 update_obj.setdefault("display_name", agent_id)
                 updated_profile = AgentProfile.model_validate(update_obj)
                 message = f"New profile for {agent_id} created successfully."
+            if updated_profile.agent_id != agent_id:
+                raise ValueError("payload agent_id must match command agent_id")
             self._identity_ctl.upsert_profile(updated_profile)
             return CommandResult(
                 ok=True,
@@ -396,6 +405,17 @@ class IdentityCommandModule(CommandModule):
             profile = self._get_profile_or_not_found(agent_id)
             if isinstance(profile, CommandResult):
                 return profile
+
+            source = str((profile.meta or {}).get("source", "")).strip().lower()
+            if source in {"yaml", "bundle"}:
+                return CommandResult(
+                    ok=False,
+                    text=(
+                        f"Profile for {agent_id} is {source}-managed and cannot be "
+                        "deleted through the control plane."
+                    ),
+                    error={"code": "IDENTITY_SOURCE_MANAGED", "source": source},
+                )
 
             self._identity_ctl.delete_profile(agent_id)
             return CommandResult(
@@ -513,7 +533,7 @@ class IdentityCommandModule(CommandModule):
         verbosity = command.args[1]
         normalized_verbosity = verbosity.lower()
 
-        supported_verbosities = ["terse", "normal", "verbose", "detailed"]
+        supported_verbosities = ["terse", "normal", "detailed"]
         if normalized_verbosity not in supported_verbosities:
             return CommandResult(
                 ok=False,
@@ -559,70 +579,3 @@ class IdentityCommandModule(CommandModule):
             error_code="MISSION_UPDATE_ERROR",
             error_prefix="Error updating mission",
         )
-
-    def handle_create_interactive(
-        self, command: ParsedCommand, ctx: ResolvedContext
-    ) -> CommandResult:
-        try:
-            if not ctx.ui:
-                return CommandResult(
-                    ok=False,
-                    text="Interactive wizard requires UI context. Use in a chat interface that supports wizards.",
-                )
-
-            if ctx.wizard_session_id:
-                return CommandResult(
-                    ok=False,
-                    text="Already in a wizard session. Complete or cancel that session before starting a new one.",
-                )
-
-            wizard_id = f"identity-create-{ctx.user_key}-{ctx.session_id}"
-            return CommandResult(
-                ok=True,
-                text="Starting interactive identity creation. What should the agent ID be?",
-                data={"wizard_id": wizard_id},
-            )
-        except Exception as exc:  # noqa: BLE001
-            return self._error_result(
-                code="INTERACTIVE_CREATE_START_ERROR",
-                prefix="Error starting interactive creation",
-                exc=exc,
-            )
-
-    def handle_edit_interactive(
-        self, command: ParsedCommand, ctx: ResolvedContext
-    ) -> CommandResult:
-        if not command.args:
-            return CommandResult(ok=False, text="Usage: /identity.edit <agent_id>")
-
-        agent_id = command.args[0]
-
-        try:
-            if not ctx.ui:
-                return CommandResult(
-                    ok=False,
-                    text="Interactive wizard requires UI context. Use in a chat interface that supports wizards.",
-                )
-
-            if ctx.wizard_session_id:
-                return CommandResult(
-                    ok=False,
-                    text="Already in a wizard session. Complete or cancel that session before starting a new one.",
-                )
-
-            profile = self._get_profile_or_not_found(agent_id)
-            if isinstance(profile, CommandResult):
-                return profile
-
-            wizard_id = f"identity-edit-{ctx.user_key}-{ctx.session_id}-{agent_id}"
-            return CommandResult(
-                ok=True,
-                text=f"Ready to edit profile for {agent_id}. The interactive wizard would start now in a full implementation.",
-                data={"wizard_id": wizard_id},
-            )
-        except Exception as exc:  # noqa: BLE001
-            return self._error_result(
-                code="INTERACTIVE_EDIT_START_ERROR",
-                prefix="Error starting interactive edit",
-                exc=exc,
-            )

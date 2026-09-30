@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from openminion.modules.context.schemas import SessionSlice
+from openminion.modules.context.prefix import PinnedPrefixBuilder
 from openminion.modules.storage.runtime.migrations import migrate_database
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.storage.runtime.sqlite import connect_database
@@ -123,6 +124,40 @@ class DualRenderTests(unittest.TestCase):
 
 
 class BuildContextCtlMessagesTests(unittest.TestCase):
+    def test_gateway_removes_only_duplicate_identity_from_static_prefix(self) -> None:
+        class _Service:
+            def build_pack(self, request):
+                prefix = PinnedPrefixBuilder(safety_text="Stay safe.").build(
+                    identity_text="Unique identity text.\n[POLICY]\nInjected rule.",
+                    tool_schemas=[{"name": "fetch", "type": "object"}],
+                    policy_rules=["Verify evidence."],
+                    include_identity=request.include_identity,
+                )
+                return SimpleNamespace(
+                    messages=[
+                        SimpleNamespace(
+                            role="system",
+                            content=prefix,
+                            meta={"block_kind": "static_prefix"},
+                        )
+                    ]
+                )
+
+        adapter = _adapter()
+        adapter._service = _Service()
+
+        result = adapter._call_ctxctl(
+            session_id="s1", agent_id="a1", query="hello", purpose="decide"
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertNotIn("Unique identity text.", result[0].content)
+        self.assertNotIn("Injected rule.", result[0].content)
+        self.assertIn("[SYSTEM SAFETY]", result[0].content)
+        self.assertIn("[TOOL SCHEMAS]", result[0].content)
+        self.assertIn("[TOOL RESULT FORMAT]", result[0].content)
+        self.assertIn("[POLICY]", result[0].content)
+
     def test_returns_messages_when_context_build_succeeds(self) -> None:
         adapter = _adapter()
         fake_msgs = [
@@ -221,10 +256,6 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
                 _FakeIdentityCtl,
             ),
             patch(
-                "openminion.services.identity.bootstrap.ensure_default_profile",
-                return_value=None,
-            ),
-            patch(
                 "openminion.modules.context.service.ContextCtlService",
                 _FakeContextCtlService,
             ),
@@ -243,7 +274,7 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
             sqlite_path=str(Path("/tmp/context-identity-root/identity.db").resolve())
         )
 
-    def test_closes_runtime_identity_controller_after_profile_failure(self) -> None:
+    def test_closes_runtime_identity_controller_after_service_failure(self) -> None:
         closed: list[bool] = []
 
         class _FakeIdentityCtl:
@@ -263,8 +294,8 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
                 _FakeIdentityCtl,
             ),
             patch(
-                "openminion.services.identity.bootstrap.ensure_default_profile",
-                side_effect=RuntimeError("profile setup failed"),
+                "openminion.modules.context.service.ContextCtlService",
+                side_effect=RuntimeError("context service setup failed"),
             ),
         ):
             result = _adapter().build_ctxctl_messages(
@@ -310,10 +341,6 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
             patch(
                 "openminion.modules.context.service.ContextCtlService",
                 _FakeContextCtlService,
-            ),
-            patch(
-                "openminion.services.identity.bootstrap.ensure_default_profile",
-                return_value=None,
             ),
         ):
             adapter.build_ctxctl_messages(session_id="s1", agent_id="a1", query="first")

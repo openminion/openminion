@@ -122,6 +122,29 @@ class _IdentityStoreMixin(IdentityStore):
             ),
         )
 
+    def restore_profile(self, profile: StoredProfile) -> None:
+        payload = json.dumps(
+            profile.profile.model_dump(mode="json"), sort_keys=True, ensure_ascii=True
+        )
+        self._record_store.execute_count(
+            """
+            INSERT INTO identity_profiles(agent_id, profile_json, profile_revision, profile_version, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(agent_id) DO UPDATE SET
+                profile_json=excluded.profile_json,
+                profile_revision=excluded.profile_revision,
+                profile_version=excluded.profile_version,
+                updated_at=excluded.updated_at
+            """,
+            (
+                profile.agent_id,
+                payload,
+                profile.profile_revision,
+                profile.profile_version,
+                profile.updated_at,
+            ),
+        )
+
     def update_profile_version(self, agent_id: str, profile_version: str) -> None:
         self._record_store.execute_count(
             """

@@ -61,6 +61,7 @@ from .slash_output import (
     copy_latest_message,
     handle_debug_output_slash,
     render_context_review,
+    render_identity_report,
 )
 
 _SLASH_COMMANDS = terminal_slash_commands()
@@ -315,7 +316,7 @@ def _handle_slash_agents(text: str, *, runtime: Any, console: Console) -> None:
         return
     try:
         agents = list(lister() or [])
-    except Exception as exc:
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
         console.print(Text(f"(/agents: {exc})", style=_error_style()))
         return
     rows = []
@@ -343,6 +344,37 @@ def _handle_slash_agents(text: str, *, runtime: Any, console: Console) -> None:
                 style=_system_style(),
             )
         )
+
+
+def _handle_slash_identity(text: str, *, runtime: Any, console: Console) -> None:
+    action = _slash_arg(text).strip().lower()
+    methods = {
+        "": "identity_snapshot",
+        "verify": "identity_verify",
+        "reload": "identity_reload",
+    }
+    method_name = methods.get(action)
+    if method_name is None:
+        console.print(Text("Usage: /identity [verify|reload]", style=_error_style()))
+        return
+    method = getattr(runtime, method_name, None)
+    if not callable(method):
+        console.print(
+            Text(
+                "(/identity: runtime does not expose identity state)",
+                style=_error_style(),
+            )
+        )
+        return
+    try:
+        payload = method()
+    except Exception as exc:
+        console.print(Text(f"(/identity: {exc})", style=_error_style()))
+        return
+    if not payload:
+        console.print(Text("(/identity: unavailable)", style=_muted_style(italic=True)))
+        return
+    console.print(Text(render_identity_report(payload), style=_system_style()))
 
 
 def _handle_slash_diff(
@@ -771,8 +803,9 @@ async def _handle_slash(
         cmd, text, runtime=runtime, console=console, cost_renderer=_render_cost_snapshot
     ):
         return False
-    if cmd == "/agents":
-        _handle_slash_agents(text, runtime=runtime, console=console)
+    if cmd in {"/agents", "/identity"}:
+        handler = _handle_slash_agents if cmd == "/agents" else _handle_slash_identity
+        handler(text, runtime=runtime, console=console)
         return False
     if cmd in _ROOM_SLASHES:
         await handle_room_slash(

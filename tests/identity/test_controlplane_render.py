@@ -8,7 +8,9 @@ from openminion.modules.controlplane.contracts.models import (
     ParsedCommand,
     ResolvedContext,
 )
+from openminion.modules.controlplane.commands.module import AuthRequirement
 from openminion.modules.identity.config import IdentityCtlConfig, PurposeBudget
+from openminion.modules.identity.controlplane import main as identity_controlplane
 from openminion.modules.identity.controlplane.main import IdentityCommandModule
 from openminion.modules.identity.models import (
     AgentProfile,
@@ -67,6 +69,18 @@ def _profile() -> AgentProfile:
         tool_posture=ToolPostureSpec(tool_use="allowed"),
         meta={"owner": "ops"},
     )
+
+
+def test_command_module_does_not_fall_back_when_identity_config_is_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_config() -> IdentityCtlConfig:
+        raise ValueError("invalid identity config")
+
+    monkeypatch.setattr(identity_controlplane, "load_identity_config", fail_config)
+
+    with pytest.raises(ValueError, match="invalid identity config"):
+        identity_controlplane.command_module()
 
 
 @pytest.mark.parametrize(
@@ -213,3 +227,63 @@ def test_identity_controlplane_set_mission_updates_role_without_rebuilding_profi
     assert updated.role.mission == "Keep users moving"
     assert updated.personality.tone == "professional"
     assert result.data["mission"] == "Keep users moving"
+
+
+def test_identity_controlplane_write_specs_require_admin_and_placeholders_are_absent() -> (
+    None
+):
+    module = IdentityCommandModule(mock.Mock(), identity_cfg=IdentityCtlConfig())
+    specs = {item.name: item for item in module.get_commands()}
+
+    for name in (
+        "identity.upsert",
+        "identity.delete",
+        "identity.set.tone",
+        "identity.set.verbosity",
+        "identity.set.mission",
+    ):
+        assert specs[name].auth_requirement is AuthRequirement.ADMIN
+    assert specs["identity.list"].auth_requirement is AuthRequirement.USER
+    assert specs["identity.show"].auth_requirement is AuthRequirement.USER
+    assert specs["identity.render"].auth_requirement is AuthRequirement.USER
+    assert "identity.create" not in specs
+    assert "identity.edit" not in specs
+
+
+def test_identity_controlplane_rejects_source_managed_direct_edits() -> None:
+    identity_ctl = mock.Mock()
+    identity_ctl.get_profile.return_value = _profile().model_copy(
+        update={"meta": {"source": "yaml"}}
+    )
+    module = IdentityCommandModule(identity_ctl, identity_cfg=IdentityCtlConfig())
+
+    result = module.handle_set_mission(
+        ParsedCommand(
+            canonical="identity.set.mission",
+            original_text="",
+            args=["ops", "Changed mission"],
+        ),
+        _ctx(),
+    )
+
+    assert result.ok is False
+    assert result.error["code"] == "IDENTITY_SOURCE_MANAGED"
+    identity_ctl.upsert_profile.assert_not_called()
+
+
+def test_identity_controlplane_rejects_invalid_verbosity_before_persistence() -> None:
+    identity_ctl = mock.Mock()
+    identity_ctl.get_profile.return_value = _profile()
+    module = IdentityCommandModule(identity_ctl, identity_cfg=IdentityCtlConfig())
+
+    result = module.handle_set_verbosity(
+        ParsedCommand(
+            canonical="identity.set.verbosity",
+            original_text="",
+            args=["ops", "verbose"],
+        ),
+        _ctx(),
+    )
+
+    assert result.ok is False
+    identity_ctl.upsert_profile.assert_not_called()
