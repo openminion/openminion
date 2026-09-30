@@ -1643,7 +1643,7 @@ async def test_openminion_runtime_tracks_turn_and_session_token_usage() -> None:
     first = tui_rt.token_usage_snapshot()
     assert first.turn_total_tokens == 1500
     assert first.session_total_tokens == 1500
-    assert first.context_used_tokens == 1500
+    assert first.context_used_tokens is None
     assert first.context_limit_tokens == 200000
     assert first.turn_elapsed_seconds is not None
 
@@ -1651,7 +1651,7 @@ async def test_openminion_runtime_tracks_turn_and_session_token_usage() -> None:
     second = tui_rt.token_usage_snapshot()
     assert second.turn_total_tokens == 1500
     assert second.session_total_tokens == 3000
-    assert second.context_used_tokens == 3000
+    assert second.context_used_tokens is None
 
     gateway.metadata = {}
     _ = [chunk async for chunk in tui_rt.send_message("no usage")]
@@ -1744,6 +1744,25 @@ def test_openminion_runtime_renders_durable_token_usage() -> None:
 
     assert "10 total" in report
     assert "$0.001 provider" in report
+
+
+def test_openminion_runtime_renders_durable_cost_report() -> None:
+    rt = _FakeRuntime()
+    tui_rt = OpenMinionRuntime(rt)
+    rt.context_trace_store.add_event(
+        tui_rt.session_id,
+        "llm.call.completed",
+        {
+            "usage": {"input_tokens": 8, "output_tokens": 2, "total_tokens": 10},
+            "cost_usd": 0.001,
+            "cost_source": "provider",
+        },
+    )
+
+    report = tui_rt.token_cost_report()
+
+    assert "Amount: $0.001 provider" in report
+    assert "Usage: 10 tokens" in report
 
 
 def test_openminion_focus_runtime_reads_conversation_token_usage() -> None:

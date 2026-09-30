@@ -86,6 +86,7 @@ def usage_payload_from_response_usage(raw_usage: Any) -> dict[str, Any]:
                 "cache_read_input_tokens",
                 "cache_creation_tokens",
                 "cache_creation_input_tokens",
+                "reasoning_tokens",
             )
         }
 
@@ -99,6 +100,7 @@ def usage_payload_from_response_usage(raw_usage: Any) -> dict[str, Any]:
             "cache_creation_tokens",
             ("cache_creation_tokens", "cache_creation_input_tokens"),
         ),
+        ("reasoning_tokens", ("reasoning_tokens",)),
     )
     for output_key, candidate_keys in key_pairs:
         for key in candidate_keys:
@@ -108,6 +110,14 @@ def usage_payload_from_response_usage(raw_usage: Any) -> dict[str, Any]:
             if isinstance(value, (int, float)):
                 usage[output_key] = max(0, int(value))
                 break
+    if "reasoning_tokens" not in usage:
+        details = source.get("output_tokens_details") or source.get(
+            "completion_tokens_details"
+        )
+        if isinstance(details, dict):
+            value = details.get("reasoning_tokens")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                usage["reasoning_tokens"] = max(0, int(value))
     total_source = _normalized_total_source(source)
     if "total_tokens" in usage:
         usage["total_source"] = total_source or "provider"
@@ -469,14 +479,7 @@ def token_usage_values(
     completion_tokens = usage_payload.get("completion_tokens")
     total_tokens = usage_payload.get("total_tokens")
     if total_tokens is None:
-        total_tokens = (
-            sum(
-                int(value)
-                for value in usage_payload.values()
-                if isinstance(value, (int, float))
-            )
-            or 0
-        )
+        total_tokens = int(prompt_tokens or 0) + int(completion_tokens or 0)
     input_tokens = int(prompt_tokens) if isinstance(prompt_tokens, (int, float)) else 0
     output_tokens = (
         int(completion_tokens) if isinstance(completion_tokens, (int, float)) else 0
@@ -539,6 +542,7 @@ def llm_response_kwargs(
             total_source=str(usage_payload.get("total_source") or "") or None,
             cached_tokens=cached_tokens,
             cache_creation_tokens=usage_payload.get("cache_creation_tokens"),
+            reasoning_tokens=usage_payload.get("reasoning_tokens"),
         ),
         "latency_ms": 0,
         "finish_reason": str(resp.finish_reason or ""),

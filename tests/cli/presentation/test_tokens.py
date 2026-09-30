@@ -1,4 +1,5 @@
 from openminion.cli.presentation.tokens import (
+    format_interactive_cost_summary,
     format_interactive_token_history,
     format_interactive_token_summary,
 )
@@ -10,6 +11,8 @@ from openminion.modules.telemetry.usage import (
 )
 from openminion.modules.telemetry.usage.token_usage import (
     SURFACE_CONTEXT_PACK,
+    SURFACE_LLM_OUTPUT,
+    SURFACE_LLM_PROMPT,
     SURFACE_LLM_TOTAL,
 )
 
@@ -111,6 +114,36 @@ def test_interactive_token_summary_preserves_small_nonzero_cost() -> None:
     assert "Cost: $0.000001 provider" in output
 
 
+def test_interactive_cost_summary_labels_provider_and_estimated_cost() -> None:
+    summary = TokenUsageSummary(
+        "session-1",
+        records=(
+            TokenUsageRecord(
+                session_id="session-1",
+                surface=SURFACE_LLM_TOTAL,
+                total_source="provider",
+                total_tokens=10,
+                cost_usd=0.002,
+                cost_source="provider",
+            ),
+            TokenUsageRecord(
+                session_id="session-1",
+                surface=SURFACE_LLM_TOTAL,
+                total_source="derived",
+                total_tokens=5,
+                cost_usd=0.001,
+                cost_source="estimated",
+            ),
+        ),
+        coverage=TokenUsageCoverage(observed_llm_call_events=2),
+    )
+
+    output = format_interactive_cost_summary(summary)
+
+    assert "Amount: $0.002 provider · $0.001 estimated" in output
+    assert "Usage: 15 tokens · 2 observed" in output
+
+
 def test_interactive_token_history_uses_readable_rows_and_deltas() -> None:
     output = format_interactive_token_history(
         (
@@ -168,7 +201,17 @@ def test_interactive_token_history_groups_calls_by_observed_day() -> None:
                 surface=SURFACE_LLM_TOTAL,
                 total_source="provider",
                 total_tokens=300,
+                observed_at="2026-09-08T23:30:00+00:00",
+            ),
+            TokenUsageRecord(
+                session_id="session-across-days",
+                surface=SURFACE_LLM_PROMPT,
                 input_tokens=200,
+                observed_at="2026-09-08T23:30:00+00:00",
+            ),
+            TokenUsageRecord(
+                session_id="session-across-days",
+                surface=SURFACE_LLM_OUTPUT,
                 output_tokens=100,
                 observed_at="2026-09-08T23:30:00+00:00",
             ),
@@ -177,7 +220,17 @@ def test_interactive_token_history_groups_calls_by_observed_day() -> None:
                 surface=SURFACE_LLM_TOTAL,
                 total_source="provider",
                 total_tokens=400,
+                observed_at="2026-09-09T00:30:00+00:00",
+            ),
+            TokenUsageRecord(
+                session_id="session-across-days",
+                surface=SURFACE_LLM_PROMPT,
                 input_tokens=300,
+                observed_at="2026-09-09T00:30:00+00:00",
+            ),
+            TokenUsageRecord(
+                session_id="session-across-days",
+                surface=SURFACE_LLM_OUTPUT,
                 output_tokens=100,
                 observed_at="2026-09-09T00:30:00+00:00",
             ),

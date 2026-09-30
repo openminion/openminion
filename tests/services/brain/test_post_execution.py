@@ -740,6 +740,17 @@ def test_build_turn_response_metadata_falls_back_to_llm_event_usage() -> None:
     runner.session_api.append_event(
         "sess-usage",
         "llm.call.completed",
+        {"usage": {"input_tokens": 999, "output_tokens": 999}},
+    )
+    runner.session_api.append_event(
+        "sess-usage",
+        "llm.call.completed",
+        {"usage": {"input_tokens": 888, "output_tokens": 888}},
+        trace_id="trace-other",
+    )
+    runner.session_api.append_event(
+        "sess-usage",
+        "llm.call.completed",
         {
             "purpose": "entry",
             "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},

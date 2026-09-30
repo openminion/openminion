@@ -177,6 +177,7 @@ class EventStore:
         after_seq: int | None = None,
         types: list[str] | None = None,
         limit: int | None = None,
+        newest_first: bool = False,
     ) -> list[dict[str, Any]]:
         clauses = ["session_id = ?"]
         params: list[Any] = [session_id]
@@ -194,7 +195,7 @@ class EventStore:
                    importance, redaction
             FROM session_events
             WHERE {" AND ".join(clauses)}
-            ORDER BY seq ASC
+            ORDER BY seq {"DESC" if newest_first else "ASC"}
         """
         if limit is not None:
             query += " LIMIT ?"

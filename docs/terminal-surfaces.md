@@ -143,9 +143,12 @@ canonical CLI, bounded resource commands, and typed APIs:
 ## Token Usage Visibility
 
 Interactive sessions show a compact live token line when the active runtime has
-usage facts. Inside the interactive CLI, `/cost` shows the current session,
-last turn, context-window, and available provider or configured-rate cost
-estimate. It says cost is unavailable when neither source can supply one.
+usage facts. Inside the interactive CLI, `/cost` shows durable current-session
+token/call context and separately labels available provider or configured-rate
+estimated cost. It says cost is unavailable when neither source can supply one.
+The live context indicator shows occupancy only when the runtime has an actual
+context measurement; a known limit without measured occupancy is labeled
+`unknown / <limit>` rather than derived from cumulative session usage.
 `/tokens` renders a compact durable token report for the active session.
 `/tokens recent` shows the newest 10 sessions for the active agent, and
 `/tokens recent <count>` accepts 1 through 20. Its daily rows group metered
@@ -180,8 +183,8 @@ openminion status tokens --session-id <session-id> --json
 Without `--session-id`, `status tokens` inspects the newest session in the
 configured data root. With `--run-id` and no session id, it resolves the owning
 session from the run record. Text output is the human insight view: provider
-and derived totals, provider-reported and explicitly estimated cost, cache
-dimensions, context estimates, context buckets, metered and unmetered
+and derived totals, provider-reported and explicitly estimated cost, cache and
+reasoning dimensions, context estimates, context buckets, metered and unmetered
 completed/failed call coverage,
 coverage/correlation warnings, outcome signals for run-scoped reports, advisory
 recommendations, and next-step hints. Use `--recent <count>` for a read-only
@@ -201,8 +204,8 @@ which providers report native totals and which paths still rely on derived
 totals.
 They also include compact efficiency and session-trend rows: non-overlapping
 LLM tokens, context estimates, LLM-token change from the prior session,
-provider-vs-derived share, context share, cache
-read/write ratio, separated cost totals, and the highest-signal warning codes
+provider-vs-derived share, context share, cache read/write ratio, reasoning
+detail, separated cost totals, and the highest-signal warning codes
 per recent session.
 `--json` emits the raw `openminion.token_usage.v1` envelope for one session or
 run, and a rollup envelope containing those raw session envelopes when
