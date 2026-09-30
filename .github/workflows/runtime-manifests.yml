@@ -17,6 +17,26 @@ on:
         description: Opaque binary metadata revision identity
         required: false
         type: string
+      certify_source_version:
+        description: Existing production runtime version to certify for Desktop
+        required: false
+        type: string
+      source_release_id:
+        description: Existing null-bound source record identity
+        required: false
+        type: string
+      certification_release_id:
+        description: New immutable source certification revision identity
+        required: false
+        type: string
+      desktop_evidence_commit:
+        description: Full openminion/desktop main commit containing qualification evidence
+        required: false
+        type: string
+      desktop_evidence_id:
+        description: Qualification evidence identity under the fixed Desktop evidence path
+        required: false
+        type: string
 
 # One writer for both feeds on the same metadata branch. Failed/canceled requests
 # are visibly incomplete and require a rerun; this is not a durable queue.
@@ -29,6 +49,40 @@ permissions:
   actions: read
 
 jobs:
+  validate-dispatch:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require one complete publication request or an empty verification request
+        env:
+          BINARY_TAG: ${{ inputs.binary_release_tag }}
+          BINARY_ID: ${{ inputs.binary_release_id }}
+          SOURCE_VERSION: ${{ inputs.certify_source_version }}
+          SOURCE_ID: ${{ inputs.source_release_id }}
+          CERTIFICATION_ID: ${{ inputs.certification_release_id }}
+          EVIDENCE_COMMIT: ${{ inputs.desktop_evidence_commit }}
+          EVIDENCE_ID: ${{ inputs.desktop_evidence_id }}
+        run: |
+          python - <<'PY'
+          import os
+
+          binary = [os.environ["BINARY_TAG"], os.environ["BINARY_ID"]]
+          certification = [
+              os.environ["SOURCE_VERSION"],
+              os.environ["SOURCE_ID"],
+              os.environ["CERTIFICATION_ID"],
+              os.environ["EVIDENCE_COMMIT"],
+              os.environ["EVIDENCE_ID"],
+          ]
+          if any(binary) and not all(binary):
+              raise SystemExit("binary publication inputs must be complete")
+          if any(certification) and not all(certification):
+              raise SystemExit("source certification inputs must be complete")
+          if any(binary) and any(certification):
+              raise SystemExit("choose binary publication or source certification")
+          PY
+
   source:
     if: >-
       github.event_name == 'workflow_run' &&
@@ -110,6 +164,7 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       inputs.binary_release_tag != '' &&
       inputs.binary_release_id != ''
+    needs: validate-dispatch
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: runtime-publication
@@ -135,10 +190,59 @@ jobs:
             --binary-release-id "${{ inputs.binary_release_id }}" \
             --workspace "$RUNNER_TEMP/runtime-manifest-publication"
 
+  source-certification:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.certify_source_version != '' &&
+      inputs.source_release_id != '' &&
+      inputs.certification_release_id != '' &&
+      inputs.desktop_evidence_commit != '' &&
+      inputs.desktop_evidence_id != '' &&
+      inputs.binary_release_tag == '' &&
+      inputs.binary_release_id == ''
+    needs: validate-dispatch
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: runtime-publication
+    permissions:
+      contents: write
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - run: python -m pip install 'packaging==26.0'
+      - name: Verify exact Desktop qualification and prepare source certification PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh auth setup-git
+          published_at="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)"
+          python -m scripts.ci.publish_runtime_manifest \
+            --certify-source-version "${{ inputs.certify_source_version }}" \
+            --source-release-id "${{ inputs.source_release_id }}" \
+            --certification-release-id "${{ inputs.certification_release_id }}" \
+            --desktop-evidence-commit "${{ inputs.desktop_evidence_commit }}" \
+            --desktop-evidence-id "${{ inputs.desktop_evidence_id }}" \
+            --published-at "$published_at" \
+            --repository . \
+            --workspace "$RUNNER_TEMP/runtime-manifest-publication"
+
   verify-main:
     if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && inputs.binary_release_tag == '')
+      always() &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' &&
+        needs.validate-dispatch.result == 'success' &&
+        inputs.binary_release_tag == '' &&
+        inputs.certify_source_version == ''))
+    needs: validate-dispatch
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -153,3 +257,10 @@ jobs:
       - run: python -m pip install 'packaging==26.0'
       - name: Verify anonymous main feeds and reachable record commits
         run: python -m scripts.ci.publish_runtime_manifest --verify-main --workspace .
+      - name: Report exact public release milestones
+        if: success()
+        run: >-
+          python -m scripts.ci.runtime_release_status
+          --repository .
+          --latest
+          --github-summary "$GITHUB_STEP_SUMMARY"

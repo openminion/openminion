@@ -1,7 +1,7 @@
 # OpenMinion Releasing
 
 Status: active
-Last updated: 2026-09-21
+Last updated: 2026-09-30
 
 Purpose: give maintainers a compact package-local release smoke checklist for
 the public `openminion` package surface on the active alpha line defined by
@@ -31,12 +31,34 @@ Existing release records are not rewritten. Binary promotion uses the same
 protected metadata-PR boundary but has an independent manual request and trust
 gate.
 
+Use these completion labels exactly:
+
+1. **package published**: production PyPI and GitHub source release succeeded,
+2. **source manifest published**: the null-bound production-wheel record is on
+   protected main and passes anonymous readback,
+3. **Desktop source update certified**: a later immutable same-wheel record has
+   reviewed compatibility bounds and commit-pinned Desktop qualification,
+4. **binary runtime published**: signed/native-qualified binary assets and their
+   record are public, and
+5. **full public E2E passed**: the shipped Desktop completed public discovery,
+   Prepare update, old-runtime reply, restart activation, same-chat reply and
+   owned-daemon shutdown against the public feed.
+
+The first two labels never imply the last three. Runtime metadata verification
+cannot report full public E2E because that result requires a separate packaged
+application run.
+
 Qualify the publication environment and public feeds before the first use;
 local files and passing tests are not deployment evidence. Verify without publishing:
 
 ```bash
 .venv/bin/python3.11 -m scripts.ci.publish_runtime_manifest --help
-.venv/bin/python3.11 -m pytest -q tests/scripts/test_release_manifest.py tests/scripts/test_publish_runtime_manifest.py
+.venv/bin/python3.11 -m pytest -q \
+  tests/scripts/test_release_manifest.py \
+  tests/scripts/test_publish_runtime_manifest.py \
+  tests/scripts/test_runtime_release_status.py
+.venv/bin/python3.11 -m scripts.ci.runtime_release_status \
+  --repository . --latest
 ```
 
 ### Runtime metadata checklist
@@ -93,6 +115,44 @@ local files and passing tests are not deployment evidence. Verify without publis
    observer publishes nothing. If it failed only because another metadata PR
    was open, rerun that observer after the merge. Do not rerun the producer,
    republish PyPI, or regenerate an immutable record to recover sequencing.
+
+### Desktop source certification checklist
+
+Run this only after the source manifest is public. Do not mutate or remove the
+original null-bound record.
+
+1. Assign the Desktop a real three-part release version. `0.0.0` is a
+   development identity and is rejected as certification evidence.
+2. Qualify the exact packaged Desktop and official production wheel on every
+   supported target: `darwin-arm64`, `linux-x64`, and `win32-x64`. Evidence must
+   include package and `app.asar` digests, exact Desktop/runtime revisions,
+   compatibility bounds, verification IDs and all required lifecycle checks.
+3. Land the canonical evidence at
+   `openminion/desktop@<full-main-commit>:releases/runtime-certification/v1/qualification/<runtime-version>/<evidence-id>.json`.
+   The evidence commit must be reachable from Desktop `main`.
+4. Manually dispatch **Runtime manifests** with all five source-certification
+   inputs: existing runtime version, existing null-bound source release ID, new
+   certification release ID, full Desktop evidence commit and evidence ID.
+   Partial or mixed binary/certification requests fail before publication.
+5. Approve the protected `runtime-publication` deployment. The publisher
+   re-verifies the official PyPI wheel, exact existing source record, Desktop
+   main ancestry, evidence bytes, target coverage and bounds before opening a
+   metadata-only PR.
+6. Review and merge that PR with a merge commit. Confirm `verify-main` and the
+   exact status report succeed, then back-merge main into dev.
+7. Run the shipped Desktop against the public feed. Only that later packaged
+   run can establish **full public E2E passed**; certification publication alone
+   establishes only **Desktop source update certified**.
+
+Audit one exact version without changing public state:
+
+```bash
+.venv/bin/python3.11 -m scripts.ci.runtime_release_status \
+  --repository . --version X.Y.Z --require desktop-source
+```
+
+The status report always leaves `full_public_e2e` false because repository
+metadata cannot substitute for the packaged public acceptance run.
 
 ### Binary runtime publication checklist
 

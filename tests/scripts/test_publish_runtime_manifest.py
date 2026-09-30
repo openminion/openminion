@@ -14,8 +14,10 @@ from scripts.ci.publish_runtime_manifest import (
     add_reference,
     encoded,
     publish,
+    source_certification_record,
     write_immutable,
 )
+from scripts.ci.release_manifest import QUALIFICATION_CHECKS
 from scripts.ci.publish_runtime_manifest import verify_producer, verify_producer_wheel
 
 
@@ -39,6 +41,108 @@ def test_binary_publication_is_a_protected_manual_release_request():
     assert (
         "official_binary_record"
         in Path("scripts/ci/publish_runtime_manifest.py").read_text()
+    )
+
+
+def test_source_certification_is_protected_and_rejects_partial_dispatches():
+    workflow = (
+        Path(__file__).resolve().parents[2] / ".github/workflows/runtime-manifests.yml"
+    ).read_text()
+    for marker in (
+        "certify_source_version:",
+        "source_release_id:",
+        "certification_release_id:",
+        "desktop_evidence_commit:",
+        "desktop_evidence_id:",
+        "source-certification:",
+        "environment: runtime-publication",
+        "source certification inputs must be complete",
+    ):
+        assert marker in workflow
+
+
+def test_source_certification_reverifies_official_wheel_and_desktop_main_evidence(
+    tmp_path,
+):
+    source = {
+        "schema_version": 1,
+        "product": "openminion",
+        "distribution": "pypi",
+        "channel": "stable",
+        "promotion_status": "promoted",
+        "runtime_version": "1.0.0",
+        "release_id": "source.1",
+        "published_at": "2026-09-30T00:00:00Z",
+        "source_commit": "a" * 40,
+        "release_notes_url": "https://github.com/openminion/openminion/releases/tag/v1.0.0",
+        "desktop_compatibility": None,
+        "pypi": {
+            "package": "openminion",
+            "version": "1.0.0",
+            "requires_python": ">=3.11",
+            "url": "https://files.pythonhosted.org/packages/openminion-1.0.0-py3-none-any.whl",
+            "filename": "openminion-1.0.0-py3-none-any.whl",
+            "sha256": "b" * 64,
+            "size_bytes": 123,
+        },
+    }
+    evidence = {
+        "schema_version": 1,
+        "kind": "openminion-source-runtime-qualification",
+        "runtime": {
+            "version": "1.0.0",
+            "source_release_id": "source.1",
+            "wheel_sha256": "b" * 64,
+            "wheel_size_bytes": 123,
+        },
+        "desktop": {"version": "1.2.3", "source_commit": "c" * 40},
+        "compatibility": {
+            "min_version": "1.2.0",
+            "max_version_exclusive": "1.3.0",
+        },
+        "targets": [
+            {
+                "platform": platform,
+                "arch": arch,
+                "package_sha256": "d" * 64,
+                "app_asar_sha256": "e" * 64,
+                "verification_id": f"{platform}-{arch}-1",
+                "result": "passed",
+                "checks": sorted(QUALIFICATION_CHECKS),
+            }
+            for platform, arch in (
+                ("darwin", "arm64"),
+                ("linux", "x64"),
+                ("win32", "x64"),
+            )
+        ],
+        "completed_at": "2026-09-30T12:00:00Z",
+    }
+    with (
+        patch.object(publisher, "load_source_record", return_value=(source, "f" * 40)),
+        patch.object(
+            publisher,
+            "official_record",
+            return_value={**source, "release_id": "cert.1"},
+        ),
+        patch.object(publisher, "github_api", return_value="ahead") as api,
+        patch.object(
+            publisher, "read_public_bytes", return_value=json.dumps(evidence).encode()
+        ),
+    ):
+        result = source_certification_record(
+            tmp_path,
+            "1.0.0",
+            "source.1",
+            "cert.1",
+            "f" * 40,
+            "desktop-1.2.3",
+            "2026-09-30T12:30:00Z",
+        )
+    assert result["desktop_compatibility"]["min_version"] == "1.2.0"
+    assert result["pypi"] == source["pypi"]
+    api.assert_called_once_with(
+        "openminion/desktop", f"compare/{'f' * 40}...main", "--jq", ".status"
     )
 
 

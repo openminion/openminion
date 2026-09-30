@@ -18,6 +18,145 @@ from zipfile import ZipFile
 from packaging.version import Version
 
 
+DESKTOP_REPOSITORY = "openminion/desktop"
+DESKTOP_EVIDENCE_BASE = "releases/runtime-certification/v1"
+DESKTOP_TARGETS = {"darwin-arm64", "linux-x64", "win32-x64"}
+QUALIFICATION_CHECKS = {
+    "old_runtime_reply",
+    "owned_daemon_shutdown",
+    "packaged_startup",
+    "prepare_update",
+    "runtime_integrity",
+    "same_chat_reply",
+    "startup_activation",
+}
+
+
+def _stable_three_part_version(value: str, name: str) -> Version:
+    if not re.fullmatch(r"\d+\.\d+\.\d+", value):
+        raise ValueError(f"{name} must be a three-part stable version")
+    parsed = Version(value)
+    if str(parsed) != value or parsed.is_prerelease or parsed.is_devrelease:
+        raise ValueError(f"{name} must be a three-part stable version")
+    return parsed
+
+
+def evidence_path(kind: str, version: str, evidence_id: str) -> str:
+    if kind not in {"qualification", "acceptance"}:
+        raise ValueError("invalid certification evidence kind")
+    _stable_three_part_version(version, "runtime version")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", evidence_id):
+        raise ValueError("invalid evidence_id")
+    return f"{DESKTOP_EVIDENCE_BASE}/{kind}/{version}/{evidence_id}.json"
+
+
+def validate_qualification_evidence(evidence: dict, source: dict) -> dict:
+    """Validate exact packaged-Desktop qualification for one source wheel."""
+    if (
+        evidence.get("schema_version"),
+        evidence.get("kind"),
+    ) != (1, "openminion-source-runtime-qualification"):
+        raise ValueError("invalid source qualification evidence identity")
+    runtime = evidence.get("runtime")
+    desktop = evidence.get("desktop")
+    compatibility = evidence.get("compatibility")
+    targets = evidence.get("targets")
+    if not all(isinstance(item, dict) for item in (runtime, desktop, compatibility)):
+        raise ValueError("source qualification evidence is incomplete")
+    wheel = source["pypi"]
+    if runtime != {
+        "version": source["runtime_version"],
+        "source_release_id": source["release_id"],
+        "wheel_sha256": wheel["sha256"],
+        "wheel_size_bytes": wheel["size_bytes"],
+    }:
+        raise ValueError("qualification evidence does not match the source wheel")
+    desktop_version = _stable_three_part_version(
+        desktop.get("version", ""), "desktop version"
+    )
+    if desktop_version == Version("0.0.0"):
+        raise ValueError("development Desktop version cannot certify a release")
+    if not re.fullmatch(r"[a-f0-9]{40}", desktop.get("source_commit", "")):
+        raise ValueError("desktop source commit must be a full SHA")
+    minimum = _stable_three_part_version(
+        compatibility.get("min_version", ""), "minimum Desktop version"
+    )
+    maximum = _stable_three_part_version(
+        compatibility.get("max_version_exclusive", ""),
+        "maximum Desktop version",
+    )
+    if not minimum <= desktop_version < maximum:
+        raise ValueError("qualified Desktop version is outside its claimed bounds")
+    if not isinstance(targets, list) or len(targets) != len(DESKTOP_TARGETS):
+        raise ValueError("qualification requires every supported Desktop target")
+    actual_targets = set()
+    for target in targets:
+        if not isinstance(target, dict):
+            raise ValueError("invalid target qualification evidence")
+        identity = f"{target.get('platform')}-{target.get('arch')}"
+        actual_targets.add(identity)
+        checks = target.get("checks")
+        if (
+            not re.fullmatch(r"[a-f0-9]{64}", target.get("package_sha256", ""))
+            or not re.fullmatch(r"[a-f0-9]{64}", target.get("app_asar_sha256", ""))
+            or not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
+                target.get("verification_id", ""),
+            )
+            or target.get("result") != "passed"
+            or not isinstance(checks, list)
+            or len(checks) != len(QUALIFICATION_CHECKS)
+            or set(checks) != QUALIFICATION_CHECKS
+        ):
+            raise ValueError("invalid target qualification evidence")
+    if actual_targets != DESKTOP_TARGETS:
+        raise ValueError("qualification target set is incomplete or duplicated")
+    completed_at = evidence.get("completed_at", "")
+    if not isinstance(completed_at, str) or not completed_at.endswith("Z"):
+        raise ValueError("qualification completion must be a UTC timestamp")
+    datetime.fromisoformat(completed_at)
+    return {
+        "min_version": str(minimum),
+        "max_version_exclusive": str(maximum),
+    }
+
+
+def certified_source_record(
+    source: dict,
+    release_id: str,
+    evidence: dict,
+    evidence_commit: str,
+    evidence_id: str,
+    evidence_bytes: bytes,
+) -> dict:
+    """Create a new immutable compatibility revision for an existing source wheel."""
+    if (
+        source.get("distribution") != "pypi"
+        or source.get("desktop_compatibility") is not None
+    ):
+        raise ValueError("source certification requires an uncertified PyPI record")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", release_id):
+        raise ValueError("invalid certification release_id")
+    if release_id == source.get("release_id"):
+        raise ValueError("certification must use a new immutable release_id")
+    if not re.fullmatch(r"[a-f0-9]{40}", evidence_commit):
+        raise ValueError("evidence commit must be a full SHA")
+    compatibility = validate_qualification_evidence(evidence, source)
+    path = evidence_path("qualification", source["runtime_version"], evidence_id)
+    return {
+        **source,
+        "release_id": release_id,
+        "published_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "desktop_compatibility": compatibility,
+        "certification": {
+            "repository": DESKTOP_REPOSITORY,
+            "commit": evidence_commit,
+            "path": path,
+            "sha256": hashlib.sha256(evidence_bytes).hexdigest(),
+        },
+    }
+
+
 def source_record(
     version: str, source_commit: str, release_id: str, metadata: dict
 ) -> dict:
