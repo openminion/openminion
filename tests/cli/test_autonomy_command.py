@@ -23,6 +23,7 @@ from openminion.modules.task import (
     record_project_cycle,
     ProjectCycleDecision,
 )
+from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.task.project import AutonomyLoopConditionKind
 from openminion.modules.task.plan import TaskPlan, TaskPlanStep
 from openminion.modules.llm.providers.contracts import ProviderError
@@ -130,6 +131,58 @@ def test_autonomy_parser_registers_list_show_start_resume_cancel() -> None:
     assert callable(list_args.handler)
 
 
+def test_autonomy_parser_rejects_unconfigured_project_domains() -> None:
+    parser = build_parser()
+
+    for domain in ("operations", "cross_application"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(
+                [
+                    "autonomy",
+                    "start",
+                    "--goal",
+                    "ship",
+                    "--verification-domain",
+                    domain,
+                ]
+            )
+
+
+def test_direct_start_persists_goal_and_success_criteria(tmp_path: Path) -> None:
+    goal = "Ship the exact requested behavior"
+    code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            goal,
+            "--success-criterion",
+            "focused tests pass",
+            "--replay-response",
+            "completed",
+            "--verification-waiver",
+            "deterministic local replay",
+            "--json",
+        ]
+    )
+
+    run = json.loads(output)["run"]
+    manager = TaskManager.for_lifecycle_db(
+        db_path=tmp_path / "data" / DEFAULT_INTEGRATED_SQLITE_SUBPATH
+    )
+    checkpoint = load_latest_project_checkpoint(manager, task_id=run["task_id"])
+    objective = checkpoint.payload["repository_lifecycle"][
+        checkpoint.project_run.objective_ledger_ref
+    ]
+    manager.close()
+
+    assert code == 0
+    assert objective["source_request"] == goal
+    assert objective["success_criteria"] == ["focused tests pass"]
+    assert len(objective["criterion_ids"]) == 1
+
+
 def test_summary_only_replay_does_not_fake_task_plan_completion(tmp_path: Path) -> None:
     code, output = _run_cli(
         [
@@ -215,8 +268,8 @@ def test_project_turn_uses_canonical_successful_tool_results_as_progress(
         ),
     )
 
-    assert result.evidence_refs == ("tool-call:write-1",)
-    assert result.evidence_kinds == ("tool_result",)
+    assert result.evidence_refs == ()
+    assert result.evidence_kinds == ()
     assert result.tool_call_count == 2
     assert result.gateway_run_id == "gateway-run-1"
     assert result.task_plan is not None
@@ -411,8 +464,8 @@ def test_autonomy_project_operator_controls_use_task_lifecycle_db(
     assert budget["cycle_count"] == 1
     assert report["project_run"]["task_id"] == "task-1"
     assert report["outcome"] == "in_progress"
-    assert report["metrics"]["operator_intervention_count"] == 3
-    assert report["metrics"]["proof_packet_completeness_percent"] == 100.0
+    assert report["metrics"]["operator_intervention_count"] is None
+    assert report["metrics"]["proof_packet_completeness_percent"] is None
 
 
 def test_autonomy_start_replay_writes_terminal_proof(tmp_path: Path) -> None:

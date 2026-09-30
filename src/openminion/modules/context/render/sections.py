@@ -1,5 +1,5 @@
 import json
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
 
 from ..constants import (
     ARTIFACT_PREVIEW_MAX_BULLETS,
@@ -34,6 +34,34 @@ def _append_json_context_line(
     lines.append(
         f"{label}: " + json.dumps(value, ensure_ascii=True, sort_keys=sort_keys)
     )
+
+
+def render_compacted_session_context(
+    *,
+    rendered_pinned_context: str,
+    rolling_summary: str,
+    archive_refs: Sequence[Mapping[str, object]],
+) -> str:
+    pinned = rendered_pinned_context.strip()
+    summary = rolling_summary.strip()
+    if not pinned and not summary and not archive_refs:
+        return ""
+    sections = ["Session context (compacted). Use this as continuity reference."]
+    if pinned:
+        sections.append("Pinned context:\n" + pinned)
+    if summary:
+        sections.append("Rolling summary:\n" + summary)
+    ref_lines = [
+        f"- {path} (rowid={ref.get('first_rowid') or 0}-"
+        f"{ref.get('last_rowid') or 0}, messages={ref.get('message_count') or 0})"
+        for ref in archive_refs
+        if (path := str(ref.get("path") or "").strip())
+    ]
+    if ref_lines:
+        sections.append(
+            "Compaction archive refs (full transcript chunks):\n" + "\n".join(ref_lines)
+        )
+    return "\n\n".join(sections).strip()
 
 
 def render_fact_table(

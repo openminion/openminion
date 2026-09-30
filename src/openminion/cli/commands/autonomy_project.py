@@ -75,10 +75,13 @@ def focus_project_help() -> str:
             "usage: /project start --goal TEXT [--repository PATH] --verify-command COMMAND",
             "       [--verification-domain coding|research] [--max-iterations N]",
             "       [--max-wall-clock-ms N] [--max-tool-calls N]",
-            "       [--expected-check NAME] [--release-tools]",
+            "       [--expected-check NAME] [--success-criterion TEXT] [--release-tools]",
             "Repository is optional for non-Git work. Verification is required.",
-            "usage: /project status [RUN_ID] | show RUN_ID",
-            "       /project pause RUN_ID | resume RUN_ID | cancel RUN_ID",
+            "usage: /project status [RUN_ID] | show/report RUN_ID",
+            "       /project pause/resume/cancel RUN_ID",
+            "       /project answer RUN_ID --input-request-id ID --answer TEXT",
+            "       /project reprioritize RUN_ID --priority TEXT",
+            "       /project extend-budget RUN_ID [--extra-iterations N]",
             "Pause takes effect at the checkpoint boundary; it does not roll back work.",
         )
     )
@@ -187,10 +190,11 @@ def parse_focus_project_launch(
     parser.add_argument("--max-tool-calls", type=int, default=None)
     parser.add_argument("--verify-command", action="append", default=[])
     parser.add_argument("--expected-check", action="append", default=[])
+    parser.add_argument("--success-criterion", action="append", default=[])
     parser.add_argument("--release-tools", action="store_true")
     parser.add_argument(
         "--verification-domain",
-        choices=("coding", "research", "operations", "cross_application"),
+        choices=("coding", "research"),
         default="coding",
     )
     try:
@@ -209,10 +213,6 @@ def parse_focus_project_launch(
         raise ValueError("usage: /project start --goal TEXT [--repository PATH]")
     if parsed.max_iterations < 1:
         raise ValueError("--max-iterations must be at least 1")
-    if parsed.verification_domain not in {"coding", "research"}:
-        raise ValueError(
-            f"Focus project domain is not configured: {parsed.verification_domain}"
-        )
     repository_path = Path(repository) if repository else workspace_boundary
     return build_project_launch_request(
         goal=goal,
@@ -235,6 +235,8 @@ def parse_focus_project_launch(
         task_plan_required=True,
         expected_checks=tuple(parsed.expected_check),
         release_tools=bool(parsed.release_tools),
+        success_criteria=tuple(parsed.success_criterion),
+        source_request=goal,
     )
 
 

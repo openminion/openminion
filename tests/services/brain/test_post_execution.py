@@ -18,6 +18,9 @@ from openminion.modules.llm.providers.base import ProviderError, ProviderRespons
 from openminion.modules.llm.schemas import UsageInfo
 from openminion.services.agent.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
 from openminion.services.brain.post_execution import BrainBridgeTurnMixin
+from openminion.services.brain.post_execution.context import (
+    _recalled_memory_count_from_runner,
+)
 from openminion.modules.brain.loop.services import turn_tool_allowlist
 from openminion.services.brain.post_execution.postprocess import (
     _tool_result_response_text,
@@ -27,6 +30,21 @@ from tests._csc_fixtures import _csc_install_default_agent
 
 class DummyBridge(BrainBridgeTurnMixin):
     pass
+
+
+def test_runtime_grounding_propagates_working_state_read_failure() -> None:
+    def fail(_session_id: str, *, agent_id: str | None = None) -> None:
+        del agent_id
+        raise RuntimeError("state unavailable")
+
+    with pytest.raises(RuntimeError, match="state unavailable"):
+        _recalled_memory_count_from_runner(
+            runner=SimpleNamespace(
+                session_api=SimpleNamespace(get_latest_working_state=fail),
+                profile=SimpleNamespace(agent_id="test-agent"),
+            ),
+            session_id="session-1",
+        )
 
 
 def test_turn_tool_allowlist_uses_restrictive_identity_posture() -> None:
@@ -150,6 +168,14 @@ class _DummyRunner:
                 max_elapsed_ms=45000,
             ),
         )
+
+
+def _runner_with_session_api(session_api: object) -> SimpleNamespace:
+    return SimpleNamespace(
+        context_api=_DummyContextAdapter(),
+        session_api=session_api,
+        profile=SimpleNamespace(agent_id="test-agent"),
+    )
 
 
 class _DummyIdentityClient:
@@ -894,7 +920,8 @@ def test_prepare_turn_applies_runtime_system_prompt_override_with_gateway_system
     bridge = DummyBridge()
     runner = SimpleNamespace(
         context_api=_DummyContextAdapter(),
-        session_api=SimpleNamespace(),
+        session_api=_DummySessionAPI({}),
+        profile=SimpleNamespace(agent_id="test-agent"),
     )
 
     bridge._runtime_system_prompt = lambda *, user_message: "BASE SYSTEM"  # type: ignore[method-assign]
@@ -969,7 +996,8 @@ def test_prepare_turn_injects_runtime_memory_context_for_in_process_bridge() -> 
     bridge = DummyBridge()
     runner = SimpleNamespace(
         context_api=_DummyContextAdapter(),
-        session_api=SimpleNamespace(),
+        session_api=_DummySessionAPI({}),
+        profile=SimpleNamespace(agent_id="test-agent"),
         memory_api=_DummyMemoryApi(
             "Agent canonical memory (cross-session):\n\n"
             "Relevant facts:\n"
@@ -1025,7 +1053,8 @@ def test_prepare_turn_adds_descriptive_prior_context_grounding_when_flagged() ->
     bridge = DummyBridge()
     runner = SimpleNamespace(
         context_api=_DummyContextAdapter(),
-        session_api=SimpleNamespace(),
+        session_api=_DummySessionAPI({}),
+        profile=SimpleNamespace(agent_id="test-agent"),
         memory_api=_DummyMemoryApi(
             "## Continuing from recent sessions\n\nMost relevant prior session:\n"
             "  Topic: China itinerary\n",
@@ -1075,7 +1104,8 @@ def test_prepare_turn_injects_identity_system_prompt_when_available() -> None:
     bridge = DummyBridge()
     runner = SimpleNamespace(
         context_api=_DummyContextAdapter(),
-        session_api=SimpleNamespace(),
+        session_api=_DummySessionAPI({}),
+        profile=SimpleNamespace(agent_id="test-agent"),
     )
 
     bridge._runtime_system_prompt = lambda *, user_message: "BASE SYSTEM"
@@ -1392,6 +1422,7 @@ def test_prepare_turn_appends_prior_turn_context_block_when_prior_assistant_exis
     runner = SimpleNamespace(
         context_api=_DummyContextAdapter(),
         session_api=_DummySessionAPI({}),
+        profile=SimpleNamespace(agent_id="test-agent"),
     )
     runner.session_api.turns.append(
         {
@@ -1459,6 +1490,7 @@ def test_prepare_turn_appends_prior_tool_failure_context() -> None:
     runner = SimpleNamespace(
         context_api=_DummyContextAdapter(),
         session_api=_DummySessionAPI({}),
+        profile=SimpleNamespace(agent_id="test-agent"),
     )
     runner.session_api.append_turn(
         session_id="brain-session-prior",
@@ -1598,6 +1630,7 @@ def test_prepare_turn_prior_turn_contract_holds_for_followup_phrase_family() -> 
     runner = SimpleNamespace(
         context_api=_DummyContextAdapter(),
         session_api=_DummySessionAPI({}),
+        profile=SimpleNamespace(agent_id="test-agent"),
     )
     runner.session_api.turns.extend(
         [
@@ -1678,6 +1711,7 @@ def test_prepare_turn_appends_true_cwd_and_recent_artifact_facts() -> None:
     runner = SimpleNamespace(
         context_api=_DummyContextAdapter(),
         session_api=_DummySessionAPI({}),
+        profile=SimpleNamespace(agent_id="test-agent"),
     )
 
     bridge._runtime_system_prompt = lambda *, user_message: "BASE SYSTEM"
@@ -2840,7 +2874,7 @@ def test_postprocess_turn_uses_aggregated_tool_results_from_action_outputs() -> 
     bridge._identity_metadata = dict
     runner = SimpleNamespace(session_api=_DummySessionAPI({}))
     step_out = SimpleNamespace(
-        message="I'll fetch that for you.",
+        message="Done.",
         status="done",
         action_result=SimpleNamespace(
             status="success",
@@ -2893,10 +2927,65 @@ def test_postprocess_turn_uses_aggregated_tool_results_from_action_outputs() -> 
     )
 
     assert response.metadata["finish_reason"] == "stop"
+    assert response.text.endswith("Done.")
+    assert "2026-04-09T00:00:00Z" not in response.text
     assert response.metadata["tool_execution_count"] == "2"
     assert response.metadata["tool_loop_termination_reason"] == "model_final"
     assert '"tool_name": "time"' in response.metadata["tool_results"]
     assert '"tool_name": "file.read"' in response.metadata["tool_results"]
+
+
+def test_postprocess_turn_rejects_empty_aggregated_model_continuation() -> None:
+    bridge = DummyBridge()
+    bridge._config = OpenMinionConfig()
+    _csc_install_default_agent(bridge._config)
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    bridge._telemetryctl = _DummyTelemetry()
+    bridge._identity_metadata = dict
+    runner = SimpleNamespace(session_api=_DummySessionAPI({}))
+    step_out = SimpleNamespace(
+        message="",
+        status="done",
+        action_result=SimpleNamespace(
+            status="success",
+            summary="final answer",
+            command_id="cmd-final",
+            outputs={
+                "tool_results": [
+                    {
+                        "tool_name": "time",
+                        "ok": True,
+                        "content": "2026-09-30T12:00:00Z",
+                        "call_id": "cmd-time",
+                        "source": "native",
+                    }
+                ]
+            },
+        ),
+        working_state=SimpleNamespace(
+            plan=SimpleNamespace(steps=[]),
+            llm_calls_used=1,
+            active_mode_name="act",
+            unresolved_clarify_items=[],
+        ),
+    )
+
+    with pytest.raises(ProviderError) as exc_info:
+        asyncio.run(
+            bridge._postprocess_turn(
+                runner=runner,
+                step_out=step_out,
+                message=Message(channel="console", target="user", body="time?"),
+                history=[],
+                session_id="s-empty-tool-batch",
+                request_id="trace-empty-tool-batch",
+                turn_id="turn-empty-tool-batch",
+                turn_start_time=0.0,
+            )
+        )
+
+    assert exc_info.value.code == "EMPTY_PROVIDER_RESPONSE"
+    assert exc_info.value.message == "empty aggregated model continuation"
 
 
 def test_postprocess_turn_preserves_no_tool_termination_reason() -> None:

@@ -299,6 +299,56 @@ def test_project_turn_preserves_ordered_revision_chain() -> None:
     assert result.task_plan_revision == result.task_plan_revisions[-1]
 
 
+@pytest.mark.parametrize("with_error", (False, True))
+def test_project_turn_rejects_invalid_explicit_condition(with_error) -> None:
+    response = {
+        "summary": "invalid",
+        "metadata": {
+            "project_condition": "not-a-condition",
+            "error_code": "POLICY_DENIED",
+        },
+    }
+    if with_error:
+        response["error"] = True
+
+    with pytest.raises(ValueError, match="not-a-condition"):
+        project_turn_result_from_response(response=response)
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    (
+        ("POLICY_DENIED", AutonomyLoopConditionKind.DENIED),
+        ("TIMEOUT", AutonomyLoopConditionKind.DEADLINE_EXHAUSTED),
+        ("policy_denied", AutonomyLoopConditionKind.RETRYABLE_FAILURE),
+        ("timeout", AutonomyLoopConditionKind.RETRYABLE_FAILURE),
+    ),
+)
+def test_project_turn_maps_typed_error_codes_exactly(code, expected) -> None:
+    result = project_turn_result_from_response(
+        response={
+            "error": True,
+            "summary": "failed",
+            "metadata": {"error_code": code},
+        }
+    )
+
+    assert result.condition == expected
+
+
+def test_project_turn_valid_explicit_condition_precedes_typed_error() -> None:
+    result = project_turn_result_from_response(
+        response={
+            "error": True,
+            "summary": "denied",
+            "code": "POLICY_DENIED",
+            "metadata": {"project_condition": "waiting"},
+        }
+    )
+
+    assert result.condition == AutonomyLoopConditionKind.WAITING
+
+
 @pytest.mark.parametrize(
     ("details", "expected"),
     (

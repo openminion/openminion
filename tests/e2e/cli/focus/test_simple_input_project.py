@@ -549,6 +549,24 @@ def test_empty_verification_blocks_before_task_or_wake(tmp_path, monkeypatch) ->
         manager.close()
 
 
+def test_focus_direct_project_preserves_goal_and_success_criteria(tmp_path) -> None:
+    runtime, _, _ = _project_runtime(tmp_path)
+    request = runtime.prepare_project_command(
+        f"/project start --goal 'ship the fixture' "
+        f"--verify-command '{sys.executable} -c pass' "
+        "--success-criterion 'the fixture passes'"
+    )
+
+    assert request.source_request == "ship the fixture"
+    assert request.success_criteria == ("the fixture passes",)
+    assert request.run.execution_selectors.verification_domain == "coding"
+    with pytest.raises(ValueError, match="invalid choice"):
+        runtime.prepare_project_command(
+            "/project start --goal fixture --verify-command pass "
+            "--verification-domain operations"
+        )
+
+
 @pytest.mark.parametrize("boundary", ["session", "agent"])
 def test_project_controls_reject_foreign_owner(tmp_path, monkeypatch, boundary) -> None:
     runtime, _, _ = _project_runtime(tmp_path)
@@ -593,6 +611,20 @@ def test_project_controls_select_exact_run_cancel_and_report_current_state(
         runtime.execute_project_control("/project show missing")
     with pytest.raises(ValueError, match="exact RUN_ID"):
         runtime.execute_project_control("/project cancel")
+    active_run_id = requests[1].run.run_id
+    runtime.execute_project_control(
+        f"/project reprioritize {active_run_id} --priority 'finish verification first'"
+    )
+    runtime.execute_project_control(
+        f"/project answer {active_run_id} --input-request-id input-1 "
+        "--answer 'use the local fixture'"
+    )
+    controlled = runtime.execute_project_control(
+        f"/project extend-budget {active_run_id} --extra-iterations 2"
+    )[1]
+    reported = runtime.execute_project_control(f"/project report {active_run_id}")[1]
+    assert "project_run_id:" in controlled
+    assert "project_run_id:" in reported
     cancelled = runtime.execute_project_control(
         f"/project cancel {requests[0].run.run_id}"
     )[1]
@@ -623,5 +655,16 @@ def test_project_controls_select_exact_run_cancel_and_report_current_state(
             manager.get_task(store.require(requests[1].run.run_id).task_id).state
             == TaskLifecycleState.ACTIVE
         )
+        controlled_task = manager.get_task(requests[1].run.task_id)
+        assert controlled_task is not None
+        assert controlled_task.metadata["priority"] == "finish verification first"
+        assert controlled_task.metadata["operator_answers"][0]["answer"] == (
+            "use the local fixture"
+        )
+        assert controlled_task.metadata["budget_extensions"] == {
+            "extra_iterations": 2,
+            "extra_tool_calls": 0,
+            "extra_wall_clock_ms": 0,
+        }
     finally:
         manager.close()

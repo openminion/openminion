@@ -177,6 +177,30 @@ def _run_reset(
     return runner.session_api.written
 
 
+def test_reset_propagates_working_state_read_failure() -> None:
+    runner = _DummyRunner(_state_with_pending())
+
+    def _raise(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("state read failed")
+
+    runner.session_api.get_latest_working_state = _raise  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="state read failed"):
+        _run_reset(runner=runner, user_input="continue")
+
+
+def test_reset_propagates_working_state_write_failure() -> None:
+    runner = _DummyRunner(_state_with_pending())
+
+    def _raise(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("state write failed")
+
+    runner.session_api.put_working_state = _raise  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="state write failed"):
+        _run_reset(runner=runner, user_input="continue")
+
+
 @pytest.mark.parametrize(
     ("metadata", "expected"),
     (
