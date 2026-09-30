@@ -4,6 +4,7 @@ import ast
 import asyncio
 import inspect
 import io
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -693,17 +694,37 @@ def test_context_review_renders_runtime_degradation() -> None:
 def test_overview_renders_operations_sections(monkeypatch, tmp_path: Path) -> None:
     from openminion.cli.status import overview
 
-    monkeypatch.setattr(
-        overview,
-        "build_operations_overview",
-        lambda _runtime, *, working_dir: {"working_dir": working_dir},
+    unavailable = overview.OverviewSection("unavailable", "test", None, None)
+    snapshot = overview.OperationsOverview(
+        runtime=unavailable,
+        work=overview.OverviewSection(
+            "available",
+            "task-surface",
+            datetime(2026, 9, 30, tzinfo=timezone.utc),
+            overview.WorkOverview(
+                count=1,
+                statuses=(("WAITING", 1),),
+                pending_action_count=1,
+                items=(
+                    overview.WorkItemOverview(
+                        "task-1",
+                        "Review purchase",
+                        "WAITING",
+                        "waiting",
+                        "approve",
+                        1,
+                    ),
+                ),
+            ),
+        ),
+        recent_tools=unavailable,
+        telemetry=unavailable,
+        host=unavailable,
     )
     monkeypatch.setattr(
         overview,
-        "render_operations_overview",
-        lambda snapshot: (
-            f"Runtime  [available]\nHost  [available]\n{snapshot['working_dir']}"
-        ),
+        "build_operations_overview",
+        lambda _runtime, *, working_dir: snapshot,
     )
     buf = io.StringIO()
     console = Console(file=buf, force_terminal=False, width=160)
@@ -721,9 +742,10 @@ def test_overview_renders_operations_sections(monkeypatch, tmp_path: Path) -> No
     )
 
     output = buf.getvalue()
-    assert "Runtime  [available]" in output
-    assert "Host  [available]" in output
-    assert str(tmp_path) in output
+    assert "Active work  [available]" in output
+    assert "task approvals=1" in output
+    assert "state=waiting · next=approve" in output
+    assert "inspect=/tasks task-1" in output
 
 
 def test_copy_uses_latest_copyable_message(monkeypatch, tmp_path: Path) -> None:

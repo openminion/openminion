@@ -19,6 +19,7 @@ from openminion.cli.status.overview import (
     build_operations_overview,
     render_operations_overview,
 )
+from openminion.modules.task import InMemoryTaskCtl, TaskCreateInput, TaskStatus
 
 
 class _TaskOwner:
@@ -40,7 +41,17 @@ class _TaskOwner:
         )
 
     def list_events(self) -> list[object]:
-        return []
+        return [
+            SimpleNamespace(
+                type="mission.paused",
+                task_id="task-1",
+                payload={
+                    "policy_request_id": "approval-1",
+                    "reason": "approval needed",
+                    "tool": "file.write",
+                },
+            )
+        ]
 
 
 class _Sessions:
@@ -134,7 +145,17 @@ def test_build_operations_overview_reuses_existing_read_owners(
     assert snapshot.work.data == WorkOverview(
         count=1,
         statuses=(("ACTIVE", 1),),
-        items=(WorkItemOverview("task-1", "Inspect release", "ACTIVE"),),
+        pending_action_count=1,
+        items=(
+            WorkItemOverview(
+                "task-1",
+                "Inspect release",
+                "ACTIVE",
+                "waiting",
+                "approve",
+                1,
+            ),
+        ),
     )
     assert snapshot.recent_tools.data == (
         ToolActivityOverview(
@@ -176,7 +197,7 @@ def test_render_operations_overview_labels_sources_and_states() -> None:
             "stale",
             "task-surface",
             observed_at,
-            WorkOverview(0, (), ()),
+            WorkOverview(0, (), 0, ()),
         ),
         recent_tools=unavailable,
         telemetry=OverviewSection(
@@ -200,3 +221,91 @@ def test_render_operations_overview_labels_sources_and_states() -> None:
     assert "Recent tools  [unavailable]" in rendered
     assert "NO_STORE: Store unavailable" in rendered
     assert "must not be rendered" not in rendered
+
+
+def test_render_operations_overview_shows_canonical_work_states() -> None:
+    observed_at = datetime(2026, 8, 16, 12, 30, tzinfo=timezone.utc)
+    work = WorkOverview(
+        count=5,
+        statuses=(
+            ("ACTIVE", 1),
+            ("CANCELED", 1),
+            ("DONE", 1),
+            ("FAILED", 1),
+            ("WAITING", 1),
+        ),
+        pending_action_count=1,
+        items=(
+            WorkItemOverview("active-1", "Working", "ACTIVE", "running", "continue", 0),
+            WorkItemOverview(
+                "waiting-1",
+                "Needs review",
+                "WAITING",
+                "waiting",
+                "approve",
+                1,
+                due_at="2026-08-17T09:00:00+00:00",
+                schedule_summary="cron:0 9 * * * tz=UTC",
+            ),
+            WorkItemOverview("done-1", "Finished", "DONE", "completed", "none", 0),
+            WorkItemOverview("failed-1", "Failed", "FAILED", "failed", "none", 0),
+            WorkItemOverview(
+                "cancelled-1",
+                "Cancelled",
+                "CANCELED",
+                "cancelled",
+                "none",
+                0,
+            ),
+        ),
+    )
+    unavailable = OverviewSection("unavailable", "test", None, None)
+    snapshot = OperationsOverview(
+        runtime=unavailable,
+        work=OverviewSection("available", "task-surface", observed_at, work),
+        recent_tools=unavailable,
+        telemetry=unavailable,
+        host=unavailable,
+    )
+
+    rendered = render_operations_overview(snapshot)
+
+    assert "task approvals=1" in rendered
+    assert "state=running · next=continue" in rendered
+    assert "state=waiting · next=approve · task approvals=1" in rendered
+    assert "schedule=cron:0 9 * * * tz=UTC" in rendered
+    assert "state=completed · next=none" in rendered
+    assert "state=failed · next=none" in rendered
+    assert "state=cancelled · next=none" in rendered
+    assert "inspect=/tasks waiting-1" in rendered
+
+
+def test_overview_renders_a_real_local_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    task_ctl = InMemoryTaskCtl()
+    task_ctl.create_task(TaskCreateInput(task_id="local-1", title="Plan errands"))
+    task_ctl.transition_task("local-1", TaskStatus.ACTIVE)
+    runtime = _runtime(tmp_path)
+    runtime.api_runtime.task_manager = task_ctl
+    monkeypatch.setattr(
+        "openminion.cli.presentation.telemetry.load_telemetry_report",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            error=None,
+            invocation=None,
+            diagnostics=[],
+        ),
+    )
+    monkeypatch.setattr(
+        "openminion.tools.host.collect_host_metrics",
+        lambda _workspace: ({"platform": {}, "memory": {}, "disk": []}, []),
+    )
+
+    rendered = render_operations_overview(
+        build_operations_overview(runtime, working_dir=tmp_path)
+    )
+
+    assert "ACTIVE     local-1  Plan errands" in rendered
+    assert "state=running · next=continue" in rendered
+    assert "inspect=/tasks local-1" in rendered
