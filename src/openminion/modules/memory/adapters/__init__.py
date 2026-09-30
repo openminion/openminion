@@ -4,8 +4,10 @@ from .contracts import ActivePolicyGrantResolver, DelegatedRunContextView
 from .delegated_access import (
     DelegatedContextBudgetError,
     DelegatedContextBudgetResult,
+    DelegatedMemoryContextResult,
     OpenMinionDelegationMemoryGrantResolver,
     authorize_and_enforce_delegated_context,
+    build_delegated_memory_context,
     enforce_delegated_context_budget,
 )
 from .events import (
@@ -29,12 +31,14 @@ __all__ = [
     "ActivePolicyGrantResolver",
     "DelegatedContextBudgetResult",
     "DelegatedContextBudgetError",
+    "DelegatedMemoryContextResult",
     "DelegatedMemoryProposal",
     "DelegatedMemorySessionEventType",
     "DelegatedRunContextView",
     "DelegatedTransportProjection",
     "OpenMinionDelegationMemoryGrantResolver",
     "authorize_and_enforce_delegated_context",
+    "build_delegated_memory_context",
     "enforce_delegated_context_budget",
     "emit_delegated_memory_session_event",
     "map_delegated_memory_transport",

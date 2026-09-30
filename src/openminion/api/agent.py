@@ -12,7 +12,11 @@ from pydantic import BaseModel, ValidationError
 from openminion.api.runtime import APIRuntime
 
 if TYPE_CHECKING:  # pragma: no cover
-    from openminion.api.handoff import Handoff, SubagentRunContext
+    from openminion.api.handoff import (
+        DelegatedMemoryReadRequest,
+        Handoff,
+        SubagentRunContext,
+    )
 
 InputT = TypeVar("InputT")
 OutputT = TypeVar("OutputT")
@@ -60,6 +64,7 @@ class Agent(Generic[InputT, OutputT]):
         handoffs: list["Handoff"] | None = None,
         name: str | None = None,
         subagent_context: "SubagentRunContext | None" = None,
+        delegated_memory_request: "DelegatedMemoryReadRequest | None" = None,
     ) -> None:
         self.instructions = instructions
         self.output_type = output_type
@@ -69,6 +74,7 @@ class Agent(Generic[InputT, OutputT]):
         self.handoffs: list["Handoff"] = list(handoffs) if handoffs else []
         self.name = name or "agent"
         self.subagent_context = subagent_context
+        self.delegated_memory_request = delegated_memory_request
         self._runtime: APIRuntime | None = runtime
         self._owns_runtime = runtime is None
 
@@ -110,11 +116,11 @@ class Agent(Generic[InputT, OutputT]):
             payload["allowed_tools"] = list(self.tools)
         if self.forced_tools:
             payload["forced_tools"] = list(self.forced_tools)
-        if self.subagent_context is not None:
-            payload["subagent_context"] = self.subagent_context.as_payload()
-            payload["inbound_metadata"] = self.subagent_context.as_inbound_metadata()
-            if self.subagent_context.timeout_seconds is not None:
-                payload["timeout_seconds"] = self.subagent_context.timeout_seconds
+        if (
+            self.subagent_context is not None
+            and self.subagent_context.timeout_seconds is not None
+        ):
+            payload["timeout_seconds"] = self.subagent_context.timeout_seconds
         return payload
 
     def _register_handoff_tools_for_run(self, runtime: APIRuntime) -> list[str]:
@@ -200,14 +206,34 @@ class Agent(Generic[InputT, OutputT]):
     ) -> AgentRunResult[Any]:
         runtime = self._ensure_runtime()
         payload = self._build_payload(self._serialize_input(message))
+        run_context = None
+        delegated_grant_id = None
+        if self.subagent_context is not None:
+            from openminion.api.handoff import materialize_subagent_run_context
+
+            run_context = materialize_subagent_run_context(
+                self.subagent_context,
+                self.delegated_memory_request,
+                action_policy=getattr(runtime, "action_policy", None),
+            )
+            self.subagent_context = run_context
+            delegated_grant_id = run_context.memory_grant_id
         registry = getattr(runtime, "tools", None)
         registration_lock = getattr(registry, "temporary_registration_lock", None)
         with registration_lock or nullcontext():
-            registered_handoffs = self._register_handoff_tools_for_run(runtime)
             try:
-                raw = runtime.run_turn(payload=payload, progress_callback=on_delta)
+                registered_handoffs = self._register_handoff_tools_for_run(runtime)
+                try:
+                    raw = runtime.run_turn(
+                        payload=payload,
+                        progress_callback=on_delta,
+                        trusted_subagent_context=run_context,
+                    )
+                finally:
+                    self._unregister_handoff_tools(runtime, registered_handoffs)
             finally:
-                self._unregister_handoff_tools(runtime, registered_handoffs)
+                if delegated_grant_id is not None:
+                    runtime.action_policy.revoke_grant(delegated_grant_id)
         reply_text = self._reply_text(raw)
         output = self._coerce_output(reply_text)
         raw_payload = dict(raw or {})

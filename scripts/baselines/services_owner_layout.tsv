@@ -33,7 +33,9 @@ scope	max_python_files	max_loc
 # current brain and agent tool-context assembly.
 # PSCC (2026-09-25) adds one terminal turn-input event projector and the
 # bounded queue, manager, and ingress facts required for public client parity.
-services	207	41150
+# LSMK (2026-09-30) adds the trusted subagent-context ingress boundary and the
+# single gateway call that selects grant-bound delegated memory.
+services	207	41202
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

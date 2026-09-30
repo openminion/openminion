@@ -39,6 +39,7 @@ def active_runtime_memory_assembly(
     agent_id: str,
     vector_adapter: Any | None = None,
     scheduler: RuntimeMemoryScheduler | None = None,
+    delegated_store: Any | None = None,
 ) -> RuntimeMemoryAssembly:
     return RuntimeMemoryAssembly(
         gateway=gateway,
@@ -46,6 +47,7 @@ def active_runtime_memory_assembly(
         memctl=MemctlAdapter(service, agent_id=agent_id, owns_backend=False),
         vector_adapter=vector_adapter,
         scheduler=scheduler,
+        delegated_store=delegated_store,
     )
 
 
@@ -300,6 +302,7 @@ def build_memory_v2_runtime_assembly(
         agent_id=agent_id,
         vector_adapter=vector_adapter,
         scheduler=scheduler,
+        delegated_store=backend if backend_config.provider == "sophiagraph" else None,
     )
 
 

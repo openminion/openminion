@@ -40,5 +40,31 @@ class DelegatedMemoryTelemetryBridge:
             )
         )
 
+    def record_selection(
+        self,
+        *,
+        selected_count: int,
+        omitted_count: int,
+        reason: str,
+    ) -> None:
+        recorder = getattr(self.telemetry_service, "record_event_sync", None)
+        if not callable(recorder):
+            return
+        recorder(
+            TelemetryEvent(
+                session_id=self.session_id,
+                turn_id=self.turn_id,
+                event_type="metric",
+                data={
+                    "module_id": "openminion-memory",
+                    "operation": "delegated_access.selection",
+                    "status": "ok" if selected_count else "omitted",
+                    "selected_count": selected_count,
+                    "omitted_count": omitted_count,
+                    "reason": reason,
+                },
+            )
+        )
+
 
 __all__ = ["DelegatedMemoryTelemetryBridge"]

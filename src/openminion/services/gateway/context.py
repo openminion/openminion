@@ -31,7 +31,10 @@ from openminion.modules.context.pack.evidence import (
     map_memory_evidence as _map_memory_evidence,
     pack_evidence_context as _pack_evidence_context,
 )
-from openminion.modules.memory.gateway_turn import recall_observation_payload
+from openminion.modules.memory.gateway_turn import (
+    populate_delegated_memory_context,
+    recall_observation_payload,
+)
 from openminion.modules.memory.surfacing.evidence import (
     MemoryRetrievalEvidenceSelection,
 )
@@ -359,30 +362,50 @@ def build_turn_context(
     memory_dynamic_retrieval_enabled: bool,
     knowledge_graphs: Any | None = None,
     contextctl_adapter: Any | None = None,
+    inbound_metadata: dict[str, str] | None = None,
+    agent: Any | None = None,
 ) -> TurnContext:
     turn_context = TurnContext(
         history=history,
         prior_transcript_available=history_has_prior_transcript(history),
         memory_strategy=memory_capsule_strategy,
     )
-    contextctl_selected = _select_and_populate_memory_context(
-        turn_context=turn_context,
-        agent_id=agent_id,
-        agent_memory=agent_memory,
-        logger=logger,
-        emit_memory_event=emit_memory_event,
-        session_id=session_id,
-        run_id=run_id,
-        request_id=request_id,
-        user_message=user_message,
-        conversation_id=conversation_id,
-        thread_id=thread_id,
-        attach_id=attach_id,
-        memory_capsule_strategy=memory_capsule_strategy,
-        memory_capsule_cache=memory_capsule_cache,
-        memory_dynamic_retrieval_enabled=memory_dynamic_retrieval_enabled,
-        contextctl_adapter=contextctl_adapter,
+    metadata = inbound_metadata or {}
+    uses_delegated_memory = (
+        metadata.get("subagent_memory_posture") == "read_only_bounded"
     )
+    has_delegated_ancestor = (
+        metadata.get("subagent_delegated_memory_ancestor") == "true"
+    )
+    contextctl_selected = False
+    if uses_delegated_memory:
+        populate_delegated_memory_context(
+            turn_context=turn_context,
+            metadata=metadata,
+            agent=agent,
+            query=user_message,
+            session_id=session_id,
+            turn_id=run_id,
+        )
+    elif not has_delegated_ancestor:
+        contextctl_selected = _select_and_populate_memory_context(
+            turn_context=turn_context,
+            agent_id=agent_id,
+            agent_memory=agent_memory,
+            logger=logger,
+            emit_memory_event=emit_memory_event,
+            session_id=session_id,
+            run_id=run_id,
+            request_id=request_id,
+            user_message=user_message,
+            conversation_id=conversation_id,
+            thread_id=thread_id,
+            attach_id=attach_id,
+            memory_capsule_strategy=memory_capsule_strategy,
+            memory_capsule_cache=memory_capsule_cache,
+            memory_dynamic_retrieval_enabled=memory_dynamic_retrieval_enabled,
+            contextctl_adapter=contextctl_adapter,
+        )
     _populate_knowledge_graph_context(
         turn_context=turn_context,
         knowledge_graphs=knowledge_graphs,
@@ -510,7 +533,7 @@ def _finalize_turn_context(
             session_id=session_id,
             memory_context=turn_context.memory_context,
         )
-    memory_evidence_enabled = (
+    memory_evidence_enabled = bool(turn_context.memory_retrieval_context) or (
         memory_evidence_enabled
         and memory_capsule_strategy != MEMORY_CAPSULE_STRATEGY_OFF
     )

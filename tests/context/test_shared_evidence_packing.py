@@ -43,7 +43,7 @@ def _item(
     )
 
 
-def test_pack_evidence_keeps_complete_memory_winner_and_owned_omissions() -> None:
+def test_pack_evidence_preserves_matching_provenance_across_sources() -> None:
     memory = _item("memory", "memory-1", "shared", "記憶 evidence", 0)
     duplicate = _item("knowledge", "graph-1", "shared", "graph duplicate", 0)
     over_budget = _item("knowledge", "graph-2", "graph-2", "x" * 200, 1)
@@ -60,17 +60,31 @@ def test_pack_evidence_keeps_complete_memory_winner_and_owned_omissions() -> Non
         budgets=_budgets(),
     )
 
-    assert packed.items == (memory,)
+    assert packed.items == (memory, duplicate)
     assert packed.render_source("memory") == "記憶 evidence"
-    assert packed.render_source("knowledge") == ""
+    assert packed.render_source("knowledge") == "graph duplicate"
     assert [(item.item_id, item.reason) for item in packed.omissions] == [
         ("graph-secret", "authorization"),
-        ("graph-1", "duplicate"),
         ("graph-2", "budget"),
     ]
     assert packed.estimated_tokens <= 80
     with pytest.raises(FrozenInstanceError):
         setattr(memory, "item_id", "changed")
+
+
+def test_pack_evidence_still_deduplicates_within_one_source() -> None:
+    first = _item("memory", "memory-1", "shared", "first", 0)
+    duplicate = _item("memory", "memory-2", "shared", "second", 1)
+
+    packed = ContextCtlService.pack_evidence_items(
+        items=(first, duplicate),
+        budgets=_budgets(),
+    )
+
+    assert packed.items == (first,)
+    assert [(item.item_id, item.reason) for item in packed.omissions] == [
+        ("memory-2", "duplicate"),
+    ]
 
 
 def test_pack_evidence_preserves_source_rank_without_cross_source_scores() -> None:

@@ -5,6 +5,9 @@ import json
 import logging
 from typing import Any, Callable, Mapping
 
+from openminion.modules.memory.adapters.delegated_access import (
+    build_delegated_memory_context,
+)
 from openminion.modules.memory.errors import MemctlError, StoreReadError
 
 
@@ -18,6 +21,38 @@ MEMORY_CAPSULE_REFRESH_FAILED_CODE = "MEMORY_CAPSULE_REFRESH_FAILED"
 MEMORY_CAPSULE_REFRESH_FAILED_REASON = "memory_capsule_refresh_failed"
 MEMORY_FOLLOWUP_FAILED_CODE = "MEMORY_FOLLOWUP_FAILED"
 MEMORY_FOLLOWUP_FAILED_REASON = "memory_followup_failed"
+
+
+def populate_delegated_memory_context(
+    *,
+    turn_context: Any,
+    metadata: Mapping[str, str],
+    agent: Any | None,
+    query: str,
+    session_id: str,
+    turn_id: str,
+) -> None:
+    """Populate one grant-bound child context without ambient memory fallback."""
+
+    if metadata.get("subagent_memory_posture") != "read_only_bounded":
+        return
+    memory_assembly = getattr(agent, "_runtime_memory_assembly", None)
+    telemetryctl = getattr(agent, "telemetry_contract", None)
+    delegated = build_delegated_memory_context(
+        policy=getattr(agent, "_action_policy_service", None),
+        store=getattr(memory_assembly, "delegated_store", None),
+        inbound_metadata=metadata,
+        query=query,
+        telemetry_service=getattr(telemetryctl, "_service", None),
+        session_id=session_id,
+        turn_id=turn_id,
+    )
+    turn_context.memory_retrieval_context = delegated.text
+    turn_context.memory_retrieval_meta = {
+        "delegated_memory_selected": str(delegated.selected_count),
+        "delegated_memory_omitted": str(delegated.omitted_count),
+        "delegated_memory_reason": delegated.reason,
+    }
 
 
 def recall_observation_payload(meta: Mapping[str, Any]) -> dict[str, str]:

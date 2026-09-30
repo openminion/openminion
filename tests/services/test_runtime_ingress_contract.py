@@ -211,6 +211,45 @@ def test_runtime_turn_request_from_payload_rejects_empty_message() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"message": "hi", "subagent_context": {}},
+        {"message": "hi", "subagent_memory_grant_id": "forged"},
+        {
+            "message": "hi",
+            "inbound_metadata": {"subagent_memory_grant_id": "forged"},
+        },
+    ),
+)
+def test_runtime_turn_request_rejects_public_subagent_authority(payload) -> None:
+    runtime = _RuntimeStub()
+
+    with pytest.raises(TurnRequestError, match="reserved subagent"):
+        runtime_turn_request_from_payload(runtime=runtime, payload=payload)
+
+
+def test_trusted_subagent_context_is_projected_after_public_parsing() -> None:
+    runtime = _RuntimeStub()
+    context = SimpleNamespace(
+        as_inbound_metadata=lambda: {
+            "subagent_context_id": "trusted",
+            "subagent_memory_posture": "none",
+        }
+    )
+    request = runtime_turn_request_from_payload(
+        runtime=runtime,
+        payload={"message": "hi"},
+        trusted_subagent_context=context,
+    )
+
+    execute_runtime_turn(runtime=runtime, request=request)
+
+    assert runtime.gateway.calls[0]["inbound_metadata"]["subagent_context_id"] == (
+        "trusted"
+    )
+
+
 def test_runtime_turn_request_rejects_unknown_profile_in_single_agent_mode() -> None:
     runtime = _RuntimeStub()
     with pytest.raises(UnknownProfileError):

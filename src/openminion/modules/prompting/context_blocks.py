@@ -7,6 +7,7 @@ PROJECT_CONTEXT_FILE_HEADER = "## Project Context File"
 THIRD_BRAIN_GRAPH_CONTEXT_HEADER = "## Third-brain graph context"
 CURRENT_SESSION_SUMMARY_HEADER = "## Current session summary"
 DYNAMIC_MEMORY_BLOCK_HEADER = "## Memory (dynamic retrieval)"
+DELEGATED_MEMORY_BLOCK_HEADER = "## Delegated memory (read-only)"
 PRIOR_SESSION_SUMMARY_HEADER = "## Continuing from recent sessions"
 
 
@@ -38,6 +39,7 @@ def build_project_context_block(*, inbound_metadata: dict[str, str]) -> str:
 __all__ = [
     "CURRENT_SESSION_SUMMARY_HEADER",
     "DYNAMIC_MEMORY_BLOCK_HEADER",
+    "DELEGATED_MEMORY_BLOCK_HEADER",
     "GROUNDING_BLOCK_HEADER",
     "PENDING_TURN_BLOCK_HEADER",
     "PRIOR_SESSION_SUMMARY_HEADER",

@@ -13,6 +13,7 @@ from .errors import (
     InvalidCapabilityError,
     InvalidLayerError,
     MultiActiveSecondBrainError,
+    UnsupportedCapabilityError,
 )
 from .models import _validate_layer, _validate_tags
 
@@ -307,12 +308,20 @@ def _retrieval_config_from_mapping(payload: Any) -> KnowledgeGraphRetrievalConfi
 
 def _refresh_config_from_mapping(payload: Any) -> KnowledgeGraphRefreshConfig:
     raw = _optional_mapping(payload, field_name="refresh")
-    return KnowledgeGraphRefreshConfig(
-        mode=str(raw.get("mode") or DEFAULT_REFRESH_MODE).strip()
-        or DEFAULT_REFRESH_MODE,
-        on_start=bool(raw.get("on_start", False)),
-        watch=bool(raw.get("watch", False)),
-    )
+    mode = str(raw.get("mode") or DEFAULT_REFRESH_MODE).strip() or DEFAULT_REFRESH_MODE
+    on_start = bool(raw.get("on_start", False))
+    watch = bool(raw.get("watch", False))
+    if mode != DEFAULT_REFRESH_MODE or on_start or watch:
+        raise UnsupportedCapabilityError(
+            "automatic knowledge refresh is not supported",
+            details={
+                "mode": mode,
+                "on_start": on_start,
+                "watch": watch,
+                "supported_mode": DEFAULT_REFRESH_MODE,
+            },
+        )
+    return KnowledgeGraphRefreshConfig(mode=mode, on_start=False, watch=False)
 
 
 def _require_mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:

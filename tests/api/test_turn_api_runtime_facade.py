@@ -146,4 +146,5 @@ def test_api_runtime_run_turn_preserves_top_level_readonly_mode() -> None:
         progress_callback=None,
         approval_callback=None,
         cancel_event=None,
+        trusted_subagent_context=None,
     )
