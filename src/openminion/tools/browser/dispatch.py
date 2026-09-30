@@ -67,6 +67,7 @@ class BrowserDispatch:
             BrowserOp.TAB_SNAPSHOT.value: self._handle_tab_snapshot,
             BrowserOp.TAB_TEXT.value: self._handle_tab_text,
             BrowserOp.TAB_SCREENSHOT.value: self._handle_tab_screenshot,
+            BrowserOp.TAB_UPLOAD.value: self._handle_tab_upload,
             BrowserOp.TAB_PDF.value: self._handle_tab_pdf,
             BrowserOp.TAB_ACTION.value: self._handle_tab_action,
             BrowserOp.TAB_ACTIONS.value: self._handle_tab_actions,
@@ -480,6 +481,27 @@ class BrowserDispatch:
         )
         return to_payload(
             provider.tab_screenshot(provider_ctx, tab_id, options=call.output)
+        )
+
+    def _handle_tab_upload(
+        self,
+        provider: BrowserProvider,
+        provider_ctx: BrowserProviderContext,
+        call: BrowserCallArgs,
+    ) -> dict[str, Any]:
+        tab_id = self._resolve_required_tab_id(
+            provider=provider,
+            provider_ctx=provider_ctx,
+            call=call,
+            error_message="tab_id is required for tab.upload",
+        )
+        return to_payload(
+            provider.tab_upload(
+                provider_ctx,
+                tab_id,
+                files=call.files,
+                target=call.target,
+            )
         )
 
     def _handle_tab_pdf(

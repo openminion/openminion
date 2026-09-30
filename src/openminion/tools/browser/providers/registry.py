@@ -9,6 +9,7 @@ from openminion.modules.tool.runtime import RuntimeContext
 from openminion.tools.config import resolve_provider_register_hook as _resolve_hook
 
 from ..models import (
+    ActionTarget,
     BrowserAction,
     BrowserCapabilities,
     BrowserResult,
@@ -123,6 +124,14 @@ class BrowserProvider(Protocol):
         options: OutputOptions | None = None,
     ) -> Mapping[str, Any]: ...
 
+    def tab_upload(
+        self,
+        ctx: BrowserProviderContext,
+        tab_id: str,
+        files: list[str],
+        target: ActionTarget | None = None,
+    ) -> Mapping[str, Any]: ...
+
     def tab_pdf(
         self,
         ctx: BrowserProviderContext,
@@ -184,6 +193,11 @@ class BrowserProviderRegistry:
 
     def get(self, provider_id: str) -> BrowserProvider:
         key = str(provider_id).strip()
+        if key not in self._providers:
+            available = ", ".join(self.list_provider_ids()) or "none"
+            raise KeyError(
+                f"browser provider '{key}' is not registered; available: {available}"
+            )
         return self._providers[key]
 
     def items(self) -> list[tuple[str, BrowserProvider]]:

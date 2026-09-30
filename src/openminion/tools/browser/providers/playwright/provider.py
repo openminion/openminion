@@ -10,6 +10,7 @@ from openminion.tools.browser.constants import (
     BROWSER_SNAPSHOT_MODE_A11Y,
 )
 from openminion.tools.browser.models import (
+    ActionTarget,
     BrowserAction,
     InstanceSpec,
     NavigateOptions,
@@ -85,10 +86,13 @@ class PlaywrightProvider:
 
         self.capabilities = BrowserCapabilities(
             snapshot_refs=False,
+            selector_actions=True,
+            batch_actions=True,
             tab_locking=True,
             pdf_export=self.config.browser_is_chromium,
             screenshot=True,
             text=True,
+            file_upload=True,
             selectors=True,
             role_selectors=True,
             trace=True,
@@ -515,22 +519,23 @@ class PlaywrightProvider:
         del ctx, owner
         return self.unlock(tab_id=tab_id)
 
-    def upload(
+    def tab_upload(
         self,
-        *,
+        ctx: BrowserProviderContext | None,
         tab_id: str,
         files: list[str],
-        selector: str | None = None,
-        role: Mapping[str, Any] | None = None,
-        node_id: str | None = None,
+        target: ActionTarget | None = None,
     ) -> dict[str, Any]:
+        del ctx
         return _output_ops.upload(
             self,
             tab_id=tab_id,
             files=files,
-            selector=selector,
-            role=role,
-            node_id=node_id,
+            selector=target.selector if target else None,
+            role=target.role.model_dump(exclude_none=True)
+            if target and target.role
+            else None,
+            node_id=target.ref if target else None,
         )
 
     # Internal compatibility wrappers -------------------------------------------------

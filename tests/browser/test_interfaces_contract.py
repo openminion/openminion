@@ -8,3 +8,4 @@ def test_browser_contract_includes_instance_lifecycle_ops() -> None:
     assert BrowserOp.INSTANCE_LIST.value in SUPPORTED_OPS
     assert BrowserOp.INSTANCE_STOP.value in SUPPORTED_OPS
     assert BrowserOp.INSTANCE_KILL.value in SUPPORTED_OPS
+    assert BrowserOp.TAB_UPLOAD.value in SUPPORTED_OPS

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 from openminion.cli.presentation import browser as browser_ui
@@ -71,3 +76,47 @@ def test_browser_stop_reuses_sidecar_manager(monkeypatch) -> None:
 
     assert "pinchtab sidecar stop requested stopped=True" in body
     assert stop_calls == [("pinchtab", True)]
+
+
+def test_browser_cli_bootstraps_builtin_providers_and_reports_failures(
+    tmp_path,
+) -> None:
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(Path(__file__).resolve().parents[3] / "src"),
+    }
+    status = subprocess.run(
+        [sys.executable, "-m", "openminion", "browser", "status", "--json"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert status.returncode == 0, status.stderr
+    assert json.loads(status.stdout)["providers"] == ["pinchtab", "playwright"]
+
+    failed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "openminion",
+            "browser",
+            "navigate",
+            "data:text/html,<h1>test</h1>",
+            "--provider",
+            "missing",
+            "--json",
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert failed.returncode == 1
+    failure = json.loads(failed.stdout)
+    assert failure["ok"] is False
+    assert "available: pinchtab, playwright" in failure["error"]

@@ -992,4 +992,5 @@ class ToolAdapter:
             session_id=session_id,
             metadata=metadata,
             memory_service=self.memory_service,
+            confirm=bool(replay_confirmation_metadata),
         )

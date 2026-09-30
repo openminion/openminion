@@ -931,6 +931,21 @@ def test_terminal_approval_prompt_explains_managed_sidecar_start() -> None:
     assert prompt == "Approval required: start local pinchtab service and continue"
 
 
+def test_terminal_approval_prompt_explains_browser_upload() -> None:
+    prompt = format_terminal_approval_prompt(
+        "browser",
+        {
+            "op": "tab.upload",
+            "tab_id": "tab-7",
+            "files": ["reports/final.pdf"],
+        },
+    )
+
+    assert prompt == (
+        "Approval required: upload reports/final.pdf to browser tab tab-7"
+    )
+
+
 @pytest.mark.asyncio
 async def test_terminal_slash_approval_resumes_after_command(
     monkeypatch: pytest.MonkeyPatch,
@@ -1030,3 +1045,25 @@ async def test_terminal_approval_grant_is_tool_scoped_and_session_local() -> Non
         is False
     )
     assert len(prompts) == 3
+
+
+@pytest.mark.asyncio
+async def test_browser_approval_grant_is_operation_scoped() -> None:
+    prompts: list[str] = []
+
+    class _Overlay:
+        async def present_approval_async(self, prompt: str, **_kwargs: object) -> str:
+            prompts.append(prompt)
+            return "always"
+
+    grants: set[str] = set()
+    callback = build_terminal_approval_callback(
+        overlay=_Overlay(),
+        session_grants=grants,
+    )
+    upload = {"op": "tab.upload", "files": ["one.txt"]}
+
+    assert await callback("browser", upload, "call-1") is True
+    assert await callback("browser", upload, "call-2") is True
+    assert grants == {"browser:tab.upload"}
+    assert len(prompts) == 1

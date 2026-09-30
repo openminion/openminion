@@ -12,6 +12,14 @@ def format_terminal_approval_prompt(tool_name: str, args: dict[str, Any]) -> str
     if name.startswith("sidecar.") and name.endswith(".autostart"):
         sidecar = str(args.get("sidecar", "") or "local service").strip()
         return f"Approval required: start local {sidecar} service and continue"
+    if name == "browser" and args.get("op") == "tab.upload":
+        files = [
+            str(item).strip() for item in args.get("files", []) if str(item).strip()
+        ]
+        label = ", ".join(files) or "selected files"
+        tab_id = str(args.get("tab_id", "") or "").strip()
+        destination = f"browser tab {tab_id}" if tab_id else "the current browser tab"
+        return f"Approval required: upload {label} to {destination}"
     full_command = (
         name.lower().startswith(("exec.", "git.")) or name == "ops.command.run"
     )
@@ -40,11 +48,16 @@ def build_terminal_approval_callback(
     ) -> bool:
         del call_id
         normalized = str(tool_name or "").strip()
+        grant_key = normalized
+        if normalized == "browser":
+            op = str(args.get("op", "") or "").strip()
+            if op:
+                grant_key = f"{normalized}:{op}"
         allow_session_grant = normalized != "ops.command.run"
-        if normalized and allow_session_grant and normalized in session_grants:
+        if grant_key and allow_session_grant and grant_key in session_grants:
             return True
         async with approval_lock:
-            if normalized and allow_session_grant and normalized in session_grants:
+            if grant_key and allow_session_grant and grant_key in session_grants:
                 return True
             prompt = format_terminal_approval_prompt(normalized, dict(args or {}))
             if callable(pause_prompt):
@@ -54,13 +67,13 @@ def build_terminal_approval_callback(
                     return await overlay.present_confirm_async(prompt)
                 decision = await overlay.present_approval_async(
                     prompt,
-                    always_label=(f"Always allow {normalized} for this shell session"),
+                    always_label=(f"Always allow {grant_key} for this shell session"),
                 )
             finally:
                 if callable(resume_prompt):
                     resume_prompt()
-            if decision == "always" and normalized:
-                session_grants.add(normalized)
+            if decision == "always" and grant_key:
+                session_grants.add(grant_key)
                 return True
             return decision == "allow"
 

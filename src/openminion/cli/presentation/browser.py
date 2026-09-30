@@ -55,8 +55,14 @@ def browser_command_payload(
     return _error_payload("usage: /browser [status|tabs|navigate|stop]")
 
 
-def render_browser_command(args: str, *, working_dir: str | None = None) -> str:
-    payload = browser_command_payload(args, working_dir=working_dir)
+def render_browser_command(
+    args: str,
+    *,
+    working_dir: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> str:
+    if payload is None:
+        payload = browser_command_payload(args, working_dir=working_dir)
     if not payload.get("ok"):
         return f"Browser: error: {payload.get('error', 'unknown error')}"
     action = str(payload.get("action") or "").strip()

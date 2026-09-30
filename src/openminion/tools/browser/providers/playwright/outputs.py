@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 from collections.abc import Mapping
 
@@ -7,12 +8,26 @@ from .coercion import tab_metadata
 
 
 def screenshot(
-    provider: Any, *, tab_id: str, output_path: str | None = None
+    provider: Any,
+    *,
+    tab_id: str,
+    output_path: str | None = None,
+    output_format: str = "png",
+    quality: int | None = None,
 ) -> dict[str, Any]:
     tab = provider._tabs.get(tab_id)
+    image_type = "jpeg" if output_format == "jpg" else "png"
+    screenshot_options: dict[str, Any] = {"full_page": True, "type": image_type}
+    if image_type == "jpeg" and quality is not None:
+        screenshot_options["quality"] = quality
     with provider._locks.action_lock(provider._lock_key(tab_id)):
-        blob = tab.page.screenshot(full_page=True)
-    artifact = provider._artifact_writer.write_screenshot(blob, output_path=output_path)
+        blob = tab.page.screenshot(**screenshot_options)
+    artifact = provider._artifact_writer.write_screenshot(
+        blob,
+        output_path=output_path,
+        extension=".jpg" if image_type == "jpeg" else ".png",
+        mime="image/jpeg" if image_type == "jpeg" else "image/png",
+    )
     return {"artifact": artifact}
 
 
@@ -23,7 +38,20 @@ def tab_screenshot(
     options: OutputOptions | Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     output = output_options(options)
-    return screenshot(provider, tab_id=tab_id, output_path=output.path)
+    output_format = output.format or (
+        "jpg"
+        if Path(str(output.path or "")).suffix.lower() in {".jpg", ".jpeg"}
+        else "png"
+    )
+    if output_format not in {"png", "jpg"}:
+        raise ValueError("tab.screenshot format must be png or jpg")
+    return screenshot(
+        provider,
+        tab_id=tab_id,
+        output_path=output.path,
+        output_format=output_format,
+        quality=output.quality,
+    )
 
 
 def pdf(

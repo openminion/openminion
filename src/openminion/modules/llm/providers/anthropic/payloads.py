@@ -6,6 +6,7 @@ from ...errors import LLMCtlError
 from ...schemas import ImageContentPart, LLMRequest, Message, TextContentPart, UsageInfo
 from ..message_payloads import (
     _build_thinking_block,
+    _content_parts_for_provider,
     _dedupe_thinking_blocks,
     _extract_message_text,
     _image_part_bytes,
@@ -77,11 +78,14 @@ def _anthropic_image_content(
 def _anthropic_content(
     message: Message, *, enable_vision_input: bool, supports_vision_input: bool
 ) -> str | list[dict[str, Any]]:
-    if not message.content_parts:
+    content_parts = _content_parts_for_provider(
+        message, enable_vision_input=enable_vision_input
+    )
+    if not content_parts:
         return message.content.strip()
 
     parts: list[dict[str, Any]] = []
-    for item in message.content_parts:
+    for item in content_parts:
         if isinstance(item, TextContentPart):
             text = item.text.strip()
             if text:
