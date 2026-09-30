@@ -17,7 +17,11 @@ from openminion.cli.interactive.mcp_status import (
 )
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.tools.mcp.manager import MCPFleetManager, MCPServerSession
+from openminion.tools.mcp.manager import (
+    MCPFleetManager,
+    MCPProtocolError,
+    MCPServerSession,
+)
 
 
 FIXTURE_SERVER_PATH = (
@@ -36,6 +40,7 @@ def _runtime_config(
             MCPServerConfig(
                 name="Fixture",
                 transport="stdio",
+                trusted=True,
                 command=[sys.executable, str(FIXTURE_SERVER_PATH)],
                 env=env,
                 request_timeout_seconds=5.0,
@@ -50,17 +55,6 @@ def _close_bootstrap(bootstrap) -> None:
     manager = getattr(bootstrap, "mcp_manager", None)
     if manager is not None:
         manager.close()
-
-
-def _wait_for_stderr_tail(bootstrap) -> str:
-    session = bootstrap.mcp_manager._sessions["fixture"]  # noqa: SLF001
-    deadline = time.monotonic() + session.server_config.startup_timeout_seconds
-    while time.monotonic() < deadline:
-        tail = session._transport.stderr_tail()  # noqa: SLF001
-        if tail:
-            return tail
-        time.sleep(0.001)
-    raise AssertionError("fixture stderr was not captured before timeout")
 
 
 def test_stderr_buffer_config_bounds_are_enforced() -> None:
@@ -92,11 +86,13 @@ def test_stderr_buffer_config_bounds_are_enforced() -> None:
         )
 
 
-def test_mcp_server_enabled_requires_an_explicit_boolean() -> None:
+def test_mcp_server_policy_flags_require_explicit_booleans() -> None:
     disabled = MCPServerConfig(name="Disabled", command=["echo"], enabled=False)
     assert disabled.enabled is False
     with pytest.raises(ConfigError, match="enabled must be a boolean"):
         MCPServerConfig(name="String", command=["echo"], enabled="false")
+    with pytest.raises(ConfigError, match="trusted must be a boolean"):
+        MCPServerConfig(name="String", command=["echo"], trusted="false")
 
 
 def test_stderr_tail_is_attached_to_tool_runtime_error_details() -> None:
@@ -105,7 +101,6 @@ def test_stderr_tail_is_attached_to_tool_runtime_error_details() -> None:
         strict=True,
     )
     try:
-        assert "stderr boom" in _wait_for_stderr_tail(bootstrap)
         tool = bootstrap.registry.list()["mcp.fixture.stderr_error_tool"]
         with pytest.raises(ToolRuntimeError) as excinfo:
             tool.handler({}, None)
@@ -123,7 +118,6 @@ def test_ring_buffer_truncates_large_stderr_output() -> None:
         strict=True,
     )
     try:
-        _wait_for_stderr_tail(bootstrap)
         tool = bootstrap.registry.list()["mcp.fixture.stderr_error_tool"]
         with pytest.raises(ToolRuntimeError) as excinfo:
             tool.handler({}, None)
@@ -228,6 +222,7 @@ def test_mcp_logging_set_level_notifications_report_and_tui_rendering() -> None:
     )
     transport = _LoggingTransport()
     session._transport = transport  # noqa: SLF001
+    session._initialized = True  # noqa: SLF001
 
     session.set_log_level("DEBUG")
     session._handle_server_notification(  # noqa: SLF001
@@ -264,3 +259,12 @@ def test_mcp_logging_set_level_notifications_report_and_tui_rendering() -> None:
         ]
     )
     assert "recent log: warning: careful now" in rendered
+
+
+def test_modern_logging_level_rejects_invalid_level() -> None:
+    session = MCPServerSession(
+        MCPServerConfig(name="Fixture", command=[sys.executable, "-m", "fixture"])
+    )
+    with pytest.raises(MCPProtocolError) as excinfo:
+        session.set_log_level("verbose")
+    assert excinfo.value.reason_code == "mcp_logging_level_invalid"

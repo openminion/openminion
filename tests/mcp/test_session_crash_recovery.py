@@ -12,6 +12,7 @@ from openminion.tools.mcp.manager import (
     MCPServerSession,
 )
 from openminion.tools.mcp.transport import MCPProtocolError, MCPServerUnavailableError
+from openminion.tools.mcp.results import MCPCallError
 
 
 FIXTURE_SERVER_PATH = (
@@ -25,6 +26,7 @@ def _runtime_config() -> RuntimeConfig:
             MCPServerConfig(
                 name="Fixture",
                 transport="stdio",
+                trusted=True,
                 command=[sys.executable, str(FIXTURE_SERVER_PATH)],
                 request_timeout_seconds=5.0,
                 startup_timeout_seconds=5.0,
@@ -94,7 +96,7 @@ def test_fourth_crash_inside_window_raises_unrecoverable_error() -> None:
         manager.close()
 
 
-def test_initialize_crash_raises_without_retry_loop(
+def test_stdio_discovery_crash_does_not_retry_legacy_handshake(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _runtime_config()
@@ -120,6 +122,33 @@ def test_initialize_crash_raises_without_retry_loop(
     assert call_count["request"] == 1
     assert session._restart_total == 0
     assert len(session._restart_history) == 0
+
+
+def test_interrupted_tool_call_is_not_replayed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _runtime_config()
+    session = MCPServerSession(config.mcp_servers[0])
+    received = {"count": 0}
+
+    def _fail_after_receipt(**kwargs):
+        del kwargs
+        received["count"] += 1
+        raise MCPServerUnavailableError(
+            "connection lost after receipt",
+            reason_code="mcp_server_unavailable",
+        )
+
+    session._initialized = True  # noqa: SLF001
+    monkeypatch.setattr(session._transport, "is_running", lambda: True)
+    monkeypatch.setattr(session._transport, "request", _fail_after_receipt)
+
+    with pytest.raises(MCPCallError) as excinfo:
+        session.call_tool(remote_name="side-effect", arguments={"value": 1})
+
+    assert excinfo.value.reason_code == "mcp_outcome_uncertain"
+    assert received["count"] == 1
+    assert session.restart_total == 0
 
 
 def test_successful_call_clears_stale_server_failure() -> None:

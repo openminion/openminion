@@ -106,6 +106,8 @@ SUITES: dict[str, Suite] = {
     ),
     "core": Suite(("tests/e2e/cli/focus/test_live_basic.py",), live=True),
     "tools": Suite(("tests/e2e/cli/focus/test_live_tools.py",), live=True),
+    "mcp": Suite(("tests/e2e/cli/focus/test_mcp.py",)),
+    "mcp-live": Suite(("tests/e2e/cli/focus/test_live_mcp.py",), live=True),
     "approval": Suite(
         (
             "tests/cli/interactive/terminal/test_overlays.py",

@@ -38,6 +38,7 @@ class _CallbackHTTPHandler(BaseHTTPRequestHandler):
 
         if payload.get("id") == "sampling-1" and "result" in payload and not method:
             owner.callback_payloads.append(payload)
+            owner.callback_received.set()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -166,13 +167,23 @@ class _CallbackHTTPHandler(BaseHTTPRequestHandler):
                     "isError": False,
                 },
             }
-            for message in (nested, terminal):
+            for message in (nested,):
                 self.wfile.write(b"event: message\n")
                 self.wfile.write(
                     f"data: {json.dumps(message, separators=(',', ':'))}\n\n".encode(
                         "utf-8"
                     )
                 )
+            self.wfile.flush()
+            if not owner.callback_received.wait(timeout=2):
+                self.wfile.write(b"event: end\n\n")
+                return
+            self.wfile.write(b"event: message\n")
+            self.wfile.write(
+                f"data: {json.dumps(terminal, separators=(',', ':'))}\n\n".encode(
+                    "utf-8"
+                )
+            )
             self.wfile.write(b"event: end\n\n")
             return
 
@@ -188,6 +199,7 @@ def _callback_server():
     server = ThreadingHTTPServer(("127.0.0.1", 0), _CallbackHTTPHandler)
     server.requests = []  # type: ignore[attr-defined]
     server.callback_payloads = []  # type: ignore[attr-defined]
+    server.callback_received = threading.Event()  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:

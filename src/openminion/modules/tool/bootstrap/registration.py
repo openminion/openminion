@@ -369,7 +369,11 @@ def _register_tool_entry(
     strict_required: bool,
     context_strict: bool = False,
 ) -> _ToolBootstrapRecord:
-    prepared_state = _prepare_tool_register_state(entry=entry, config=config)
+    prepared_state = _prepare_tool_register_state(
+        entry=entry,
+        config=config,
+        strict=context_strict,
+    )
     ctx = ToolRegisterContext(
         module_id=entry.label.lower().replace(" ", "_"),
         config=config,

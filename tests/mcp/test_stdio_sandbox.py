@@ -14,7 +14,9 @@ from openminion.cli.interactive.mcp_status import (
     MCPServerStatusRow,
     render_mcp_status_report,
 )
-from openminion.tools.mcp.transport import MCPServerUnavailableError, StdioMCPTransport
+from openminion.tools.mcp.transport import StdioMCPTransport
+from openminion.tools.mcp.transport import MCPServerUnavailableError
+from openminion.tools.mcp.auth import InMemoryMCPTokenStore
 
 
 def _server(**kwargs) -> MCPServerConfig:
@@ -25,10 +27,8 @@ def _server(**kwargs) -> MCPServerConfig:
     )
 
 
-def test_stdio_sandbox_blocks_untrusted_server_when_trust_required() -> None:
-    transport = StdioMCPTransport(
-        _server(stdio_sandbox=MCPStdioSandboxConfig(require_trust=True))
-    )
+def test_stdio_sandbox_blocks_untrusted_server_by_default() -> None:
+    transport = StdioMCPTransport(_server())
 
     with pytest.raises(MCPServerUnavailableError) as excinfo:
         transport.start()
@@ -101,6 +101,27 @@ def test_mcp_env_secret_refs_resolve_without_stdout_secret_storage() -> None:
     )
 
     assert env == {"API_TOKEN": "resolved-token", "SAFE_FLAG": "1"}
+
+
+def test_stdio_transport_resolves_env_secret_refs_from_token_store() -> None:
+    transport = StdioMCPTransport(
+        _server(env_secret_refs={"API_TOKEN": "secret://mcp/api-token"}),
+        token_store=InMemoryMCPTokenStore({"secret://mcp/api-token": "resolved-token"}),
+    )
+
+    assert transport._build_stdio_env()["API_TOKEN"] == "resolved-token"  # noqa: SLF001
+
+
+def test_stdio_transport_rejects_missing_env_secret_ref() -> None:
+    transport = StdioMCPTransport(
+        _server(env_secret_refs={"API_TOKEN": "secret://mcp/missing"}),
+        token_store=InMemoryMCPTokenStore({}),
+    )
+
+    with pytest.raises(MCPServerUnavailableError) as excinfo:
+        transport._build_stdio_env()  # noqa: SLF001
+
+    assert excinfo.value.reason_code == "mcp_stdio_secret_missing"
 
 
 def test_mcp_env_interpolation_is_blocked_before_stdio_start() -> None:

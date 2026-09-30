@@ -16,6 +16,7 @@ from openminion.base.config import (
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.modules.storage.record_store import RecordStore
 from .storage.store import PostgresSecretStore, SQLiteSecretStore
+from .storage.base import SecretStore
 
 
 class SecretService:
@@ -27,6 +28,7 @@ class SecretService:
         record_store: RecordStore | None = None,
     ) -> None:
         self._closed = False
+        self._store: SecretStore
         env_config = resolve_environment_config(env=env)
         if master_key is None:
             master_key = env_config.get(OPENMINION_SECRET_KEY_ENV, "")
@@ -121,6 +123,14 @@ class SecretService:
 
     def get_secret_sync(self, key: str, *, namespace: str = "default") -> str:
         encrypted = self._store.fetch_value(key=key, namespace=namespace)
+        if encrypted is None:
+            raise SecretNotFoundError(
+                f"Secret '{key}' not found in namespace '{namespace}'"
+            )
+        return self._decrypt(encrypted)
+
+    def consume_secret_sync(self, key: str, *, namespace: str = "default") -> str:
+        encrypted = self._store.consume_value(key=key, namespace=namespace)
         if encrypted is None:
             raise SecretNotFoundError(
                 f"Secret '{key}' not found in namespace '{namespace}'"
