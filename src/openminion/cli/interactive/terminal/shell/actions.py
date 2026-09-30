@@ -594,12 +594,7 @@ def _handle_visible_parity_slash(
 ) -> None:
     arg = _slash_arg(text)
     if cmd == "/context":
-        console.print(
-            Text(
-                render_context_report(runtime),
-                style=_system_style(),
-            )
-        )
+        console.print(Text(render_context_report(runtime), style=_system_style()))
     elif cmd == "/context-review":
         console.print(
             Text(
@@ -826,18 +821,12 @@ async def _handle_slash(
         return False
     if cmd == "/readonly":
         _handle_slash_readonly(
-            text,
-            runtime=runtime,
-            console=console,
-            status_line=status_line,
+            text, runtime=runtime, console=console, status_line=status_line
         )
         return False
     if cmd == "/permissions":
         _handle_slash_permissions(
-            text,
-            runtime=runtime,
-            console=console,
-            status_line=status_line,
+            text, runtime=runtime, console=console, status_line=status_line
         )
         return False
     if cmd == "/compact":
