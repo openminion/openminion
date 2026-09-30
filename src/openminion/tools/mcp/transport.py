@@ -1,104 +1,55 @@
-"""MCP client transport."""
+"""MCP transport public surface and stdio implementation."""
 
 import json
 import os
+from pathlib import Path
 import selectors
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Callable
-from urllib import error as urllib_error
-from urllib import request as urllib_request
+from typing import Any
 
 from openminion.base.config.base import ConfigError
 from openminion.base.config.env.subprocess import build_subprocess_env
-from openminion.base.config.mcp import MCPServerConfig
-from openminion.base.config.mcp import resolve_mcp_server_env
+from openminion.base.config.mcp import MCPServerConfig, resolve_mcp_server_env
 
-from .auth import MCPTokenStore, discover_oauth_metadata, refresh_oauth_access_token
-from .contracts import MCP_MODERN_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION
-from .transport_protocol import build_server_request_response
-from .transport_protocol import dispatch_server_notification
-from .transport_protocol import extract_result_message
-from .transport_protocol import mcp_name_header
-from .transport_protocol import parse_sse_messages
-from .transport_protocol import parse_www_authenticate
-from .transport_protocol import protocol_version_from_payload
-
-
-class MCPTransportError(RuntimeError):
-    """Base transport error for MCP lifecycle failures."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        reason_code: str = "",
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.reason_code = str(reason_code or "").strip()
-        self.details = dict(details or {})
-
-
-class MCPServerUnavailableError(MCPTransportError):
-    """Raised when the MCP server process or endpoint is unavailable."""
-
-
-class MCPTimeoutError(MCPTransportError):
-    """Raised when the MCP server does not reply before the deadline."""
-
-
-class MCPProtocolError(MCPTransportError):
-    """Raised when the MCP server returns malformed protocol data."""
-
-
-class MCPAuthorizationError(MCPProtocolError):
-    """Raised when remote MCP authorization fails."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        status_code: int = 401,
-        www_authenticate: str = "",
-        reason_code: str = "mcp_authorization_error",
-    ) -> None:
-        super().__init__(message, reason_code=reason_code)
-        self.status_code = int(status_code)
-        self.www_authenticate = str(www_authenticate or "").strip()
-        self.auth_challenge = parse_www_authenticate(self.www_authenticate)
-
-
-class MCPRemoteTransportError(MCPTransportError):
-    """Raised when remote MCP transport fails structurally."""
-
-
-@dataclass
-class StreamableHTTPSessionState:
-    session_id: str = ""
-
-    def request_headers(self) -> dict[str, str]:
-        if not self.session_id:
-            return {}
-        return {"Mcp-Session-Id": self.session_id}
-
-    def capture(self, headers: Any) -> None:
-        session_id = str(headers.get("Mcp-Session-Id", "") or "").strip()
-        if session_id:
-            self.session_id = session_id
-
-    def clear(self) -> None:
-        self.session_id = ""
+from .auth import MCPTokenStore, read_token_ref
+from .contracts import MCP_MODERN_PROTOCOL_VERSION
+from .errors import (
+    MCPProtocolError,
+    MCPRemoteTransportError,
+    MCPServerUnavailableError,
+    MCPTimeoutError,
+    MCPTransportError,
+)
+from .schemas import MCPHeaderBinding
+from .http_transport import (
+    MCPAuthorizationError,
+    StreamableHTTPSessionState,
+    StreamableHTTPMCPTransport,
+    parse_www_authenticate,
+    probe_oauth_challenge,
+)
+from .transport_protocol import (
+    build_server_request_response,
+    dispatch_server_notification,
+    extract_result_message,
+    MCPSubscriptionValidator,
+    protocol_version_from_payload,
+)
 
 
 class StdioMCPTransport:
     """Minimal synchronous JSON-RPC-over-stdio transport for MCP."""
 
-    def __init__(self, server: MCPServerConfig) -> None:
+    def __init__(
+        self,
+        server: MCPServerConfig,
+        *,
+        token_store: MCPTokenStore | None = None,
+    ) -> None:
         self._server = server
+        self._token_store = token_store
         self._process: subprocess.Popen[bytes] | None = None
         self._selector = selectors.DefaultSelector()
         self._read_buffer = bytearray()
@@ -107,6 +58,10 @@ class StdioMCPTransport:
         self._stderr_thread: threading.Thread | None = None
         self._stderr_stop = threading.Event()
         self._write_lock = threading.Lock()
+        self._read_lock = threading.Lock()
+        self._response_condition = threading.Condition()
+        self._pending_responses: dict[Any, dict[str, Any]] = {}
+        self._active_request_ids: set[Any] = set()
         self._next_request_id = 1
 
     @property
@@ -161,8 +116,7 @@ class StdioMCPTransport:
         self._stderr_thread.start()
 
     def _enforce_stdio_trust(self) -> None:
-        sandbox = self._server.stdio_sandbox
-        if sandbox.require_trust and not self._server.trusted:
+        if not self._server.trusted:
             raise MCPServerUnavailableError(
                 f"MCP stdio server '{self.server_name}' requires explicit trust.",
                 reason_code="mcp_stdio_untrusted",
@@ -194,7 +148,10 @@ class StdioMCPTransport:
         inherit_allowlist = set(self._server.stdio_sandbox.inherit_env_allowlist)
         env: dict[str, str] = build_subprocess_env(inherit_parent=inherit_allowlist)
         try:
-            configured_env = resolve_mcp_server_env(self._server)
+            configured_env = resolve_mcp_server_env(
+                self._server,
+                secret_resolver=self._read_required_secret,
+            )
         except ConfigError as exc:
             raise MCPServerUnavailableError(
                 f"MCP stdio server '{self.server_name}' has invalid env config: {exc}",
@@ -208,6 +165,16 @@ class StdioMCPTransport:
         env.update(configured_env)
         return env
 
+    def _read_required_secret(self, ref: str) -> str:
+        value = read_token_ref(self._token_store, ref)
+        if value:
+            return value
+        raise MCPServerUnavailableError(
+            f"MCP stdio server '{self.server_name}' secret reference {ref!r} is unavailable.",
+            reason_code="mcp_stdio_secret_missing",
+            details={"mcp_server": self.server_name, "secret_ref": ref},
+        )
+
     def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         payload: dict[str, Any] = {
             "jsonrpc": "2.0",
@@ -215,7 +182,16 @@ class StdioMCPTransport:
         }
         if params is not None:
             payload["params"] = params
-        self._write_message(payload)
+        with self._write_lock:
+            self._write_message(payload)
+
+    def set_tool_header_bindings(
+        self, tool_name: str, bindings: tuple[MCPHeaderBinding, ...]
+    ) -> None:
+        del tool_name, bindings
+
+    def cancel_request(self, request_id: int) -> None:
+        del request_id
 
     def request(
         self,
@@ -229,6 +205,8 @@ class StdioMCPTransport:
             self.start()
             request_id = self._next_request_id
             self._next_request_id += 1
+            with self._response_condition:
+                self._active_request_ids.add(request_id)
             payload: dict[str, Any] = {
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -236,25 +214,84 @@ class StdioMCPTransport:
             }
             if params is not None:
                 payload["params"] = params
-            self._write_message(payload)
-            deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+            try:
+                self._write_message(payload)
+            except MCPServerUnavailableError:
+                with self._response_condition:
+                    self._active_request_ids.discard(request_id)
+                raise
+        modern = protocol_version_from_payload(payload) == MCP_MODERN_PROTOCOL_VERSION
+        subscription = (
+            MCPSubscriptionValidator(
+                server_name=self.server_name,
+                request_id=request_id,
+                notifications=dict((params or {}).get("notifications", {}) or {}),
+            )
+            if method == "subscriptions/listen"
+            else None
+        )
+        deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+        try:
             while True:
-                message = self._read_message(deadline=deadline)
+                message = self._take_pending_response(request_id)
+                if message is None:
+                    with self._read_lock:
+                        message = self._take_pending_response(request_id)
+                        if message is None:
+                            message = self._read_message(deadline=deadline)
                 if "method" in message:
+                    if subscription is not None:
+                        if subscription.accept(message):
+                            self._handle_server_message(
+                                message=message,
+                                server_request_handler=server_request_handler,
+                                modern=modern,
+                            )
+                        continue
                     self._handle_server_message(
                         message=message,
                         server_request_handler=server_request_handler,
+                        modern=modern,
                     )
                     continue
-                if "id" not in message or message.get("id") != request_id:
+                if message.get("id") != request_id:
+                    self._park_response(message, deadline=deadline)
                     continue
+                if subscription is not None:
+                    return subscription.finish(message)
                 return extract_result_message(message=message, method=method)
+        finally:
+            with self._response_condition:
+                self._active_request_ids.discard(request_id)
+                self._pending_responses.pop(request_id, None)
+                self._response_condition.notify_all()
+
+    def _take_pending_response(self, request_id: Any) -> dict[str, Any] | None:
+        with self._response_condition:
+            message = self._pending_responses.pop(request_id, None)
+            if message is not None:
+                self._response_condition.notify_all()
+            return message
+
+    def _park_response(self, message: dict[str, Any], *, deadline: float) -> None:
+        response_id = message.get("id")
+        with self._response_condition:
+            if response_id not in self._active_request_ids:
+                return
+            self._pending_responses[response_id] = message
+            self._response_condition.notify_all()
+            while response_id in self._pending_responses:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return
+                self._response_condition.wait(timeout=remaining)
 
     def _handle_server_message(
         self,
         *,
         message: dict[str, Any],
         server_request_handler: Any | None,
+        modern: bool,
     ) -> None:
         method = str(message.get("method", "") or "").strip()
         if not method:
@@ -273,13 +310,19 @@ class StdioMCPTransport:
                 params=dict(params),
             )
             return
+        if modern:
+            raise MCPProtocolError(
+                f"MCP server '{self.server_name}' sent a server request on a modern stdio stream.",
+                reason_code="mcp_modern_stdio_server_request",
+            )
         response_payload = build_server_request_response(
             handler=server_request_handler,
             method=method,
             params=dict(params),
             request_id=request_id,
         )
-        self._write_message(response_payload)
+        with self._write_lock:
+            self._write_message(response_payload)
 
     def close(self) -> None:
         process = self._process
@@ -300,6 +343,10 @@ class StdioMCPTransport:
             self._stderr_thread = None
             self._process = None
             self._read_buffer.clear()
+            with self._response_condition:
+                self._pending_responses.clear()
+                self._active_request_ids.clear()
+                self._response_condition.notify_all()
 
     def _write_message(self, payload: dict[str, Any]) -> None:
         process = self._process
@@ -498,483 +545,6 @@ class StdioMCPTransport:
                     del self._stderr_buffer[: len(self._stderr_buffer) - buffer_limit]
 
 
-class StreamableHTTPMCPTransport:
-    """Synchronous JSON-over-HTTP MCP transport."""
-
-    def __init__(
-        self,
-        server: MCPServerConfig,
-        *,
-        token_store: MCPTokenStore | None = None,
-        auth_change_handler: Callable[[], None] | None = None,
-    ) -> None:
-        self._server = server
-        self._next_request_id = 1
-        self._session = StreamableHTTPSessionState()
-        self._token_store = token_store
-        self._auth_change_handler = auth_change_handler
-        self._oauth_access_token = str(server.authorization.access_token or "").strip()
-        self._state_lock = threading.RLock()
-
-    @property
-    def server_name(self) -> str:
-        return self._server.name
-
-    def is_running(self) -> bool:
-        return True
-
-    def stderr_tail(self, *, limit: int = 4096) -> str:
-        del limit
-        return ""
-
-    @property
-    def session_state(self) -> StreamableHTTPSessionState:
-        return self._session
-
-    @property
-    def authorization_identity(self) -> str:
-        authorization = self._server.authorization
-        return str(
-            authorization.access_token_ref
-            or authorization.client_id
-            or authorization.mode
-        )
-
-    def start(self) -> None:
-        if not self._server.url:
-            raise MCPRemoteTransportError(
-                f"MCP server '{self.server_name}' has no remote URL configured.",
-                reason_code="mcp_remote_url_missing",
-            )
-
-    def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
-        payload: dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "method": str(method or "").strip(),
-        }
-        if params is not None:
-            payload["params"] = params
-        self._post_json(
-            payload=payload,
-            method_name=str(method or "").strip(),
-            params=params or {},
-            expect_notification_ack=True,
-            server_request_handler=None,
-        )
-
-    def request(
-        self,
-        *,
-        method: str,
-        params: dict[str, Any] | None = None,
-        timeout_seconds: float,
-        server_request_handler: Any | None = None,
-    ) -> dict[str, Any]:
-        self.start()
-        with self._state_lock:
-            request_id = self._next_request_id
-            self._next_request_id += 1
-        payload: dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": str(method or "").strip(),
-        }
-        if params is not None:
-            payload["params"] = params
-        response = self._post_json(
-            payload=payload,
-            method_name=str(method or "").strip(),
-            params=params or {},
-            timeout_seconds=timeout_seconds,
-            expect_notification_ack=False,
-            server_request_handler=server_request_handler,
-            expected_request_id=request_id,
-        )
-        return extract_result_message(message=response, method=method)
-
-    def close(self) -> None:
-        with self._state_lock:
-            if not self._session.session_id or not self._server.url:
-                return
-            headers = self._base_headers(protocol_version=MCP_PROTOCOL_VERSION)
-            headers.update(self._session.request_headers())
-            auth_header = self._authorization_header()
-            if auth_header:
-                headers["Authorization"] = auth_header
-        request = urllib_request.Request(
-            url=self._server.url,
-            method="DELETE",
-            headers=headers,
-        )
-        try:
-            urllib_request.urlopen(
-                request,
-                timeout=float(self._server.request_timeout_seconds),
-            ).close()
-        except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError):
-            return
-        finally:
-            with self._state_lock:
-                self._session.clear()
-
-    def resume_event_stream(
-        self,
-        *,
-        timeout_seconds: float | None = None,
-        last_event_id: str = "",
-        server_request_handler: Any | None = None,
-    ) -> list[dict[str, Any]]:
-        self.start()
-        with self._state_lock:
-            headers = self._base_headers(protocol_version=MCP_PROTOCOL_VERSION)
-            headers["Accept"] = "text/event-stream"
-            headers.update(self._session.request_headers())
-            if last_event_id:
-                headers["Last-Event-ID"] = str(last_event_id)
-            auth_header = self._authorization_header()
-            if auth_header:
-                headers["Authorization"] = auth_header
-        request = urllib_request.Request(
-            url=self._server.url,
-            method="GET",
-            headers=headers,
-        )
-        try:
-            with urllib_request.urlopen(
-                request,
-                timeout=float(timeout_seconds or self._server.request_timeout_seconds),
-            ) as response:
-                with self._state_lock:
-                    self._session.capture(response.headers)
-                content_type = str(
-                    response.headers.get("Content-Type", "") or ""
-                ).strip()
-                raw = response.read()
-        except urllib_error.HTTPError as exc:
-            self._handle_http_error(exc=exc, method_name="resume")
-        except urllib_error.URLError as exc:
-            raise MCPServerUnavailableError(
-                f"MCP server '{self.server_name}' remote endpoint is unavailable.",
-                reason_code="mcp_server_unavailable",
-            ) from exc
-        except TimeoutError as exc:
-            raise MCPTimeoutError(
-                f"MCP server '{self.server_name}' did not reply before timeout.",
-                reason_code="mcp_timeout",
-            ) from exc
-        if not content_type.startswith("text/event-stream"):
-            raise MCPProtocolError(
-                f"MCP server '{self.server_name}' returned non-SSE resume stream.",
-                reason_code="mcp_http_resume_non_sse",
-            )
-        messages = parse_sse_messages(raw=raw, server_name=self.server_name)
-        for message in messages:
-            if "method" not in message:
-                continue
-            dispatch_server_notification(
-                handler=server_request_handler,
-                method=str(message.get("method", "") or "").strip(),
-                params=dict(message.get("params", {}) or {}),
-            )
-        return messages
-
-    def _post_json(
-        self,
-        *,
-        payload: dict[str, Any],
-        method_name: str,
-        params: dict[str, Any],
-        timeout_seconds: float | None = None,
-        expect_notification_ack: bool,
-        server_request_handler: Any | None,
-        expected_request_id: Any | None = None,
-    ) -> dict[str, Any]:
-        exchange = self._send_http_payload(
-            payload=payload,
-            method_name=method_name,
-            params=params,
-            timeout_seconds=timeout_seconds,
-            expect_notification_ack=expect_notification_ack,
-        )
-        if exchange is None:
-            return {}
-        raw, content_type = exchange
-        return self._decode_http_payload(
-            raw=raw,
-            content_type=content_type,
-            method_name=method_name,
-            timeout_seconds=timeout_seconds,
-            server_request_handler=server_request_handler,
-            expected_request_id=expected_request_id,
-        )
-
-    def _send_http_payload(
-        self,
-        *,
-        payload: dict[str, Any],
-        method_name: str,
-        params: dict[str, Any],
-        timeout_seconds: float | None,
-        expect_notification_ack: bool,
-    ) -> tuple[bytes, str] | None:
-        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode()
-        protocol_version = protocol_version_from_payload(payload)
-        headers = self._base_headers(protocol_version=protocol_version)
-        use_session = protocol_version != MCP_MODERN_PROTOCOL_VERSION
-        with self._state_lock:
-            if not use_session:
-                self._session.clear()
-        if method_name:
-            headers["Mcp-Method"] = method_name
-        mcp_name = mcp_name_header(method_name=method_name, params=params)
-        if mcp_name:
-            headers["Mcp-Name"] = mcp_name
-        raw: bytes = b""
-        content_type = ""
-        refreshed = False
-        while True:
-            with self._state_lock:
-                auth_header = self._authorization_header()
-                if auth_header:
-                    headers["Authorization"] = auth_header
-                else:
-                    headers.pop("Authorization", None)
-                if use_session:
-                    headers.update(self._session.request_headers())
-            request = urllib_request.Request(
-                url=self._server.url,
-                method="POST",
-                headers=headers,
-                data=body,
-            )
-            try:
-                with urllib_request.urlopen(
-                    request,
-                    timeout=float(
-                        timeout_seconds or self._server.request_timeout_seconds
-                    ),
-                ) as response:
-                    status_code = int(
-                        getattr(response, "status", response.getcode()) or 0
-                    )
-                    if expect_notification_ack:
-                        if status_code != 202:
-                            raise MCPRemoteTransportError(
-                                f"MCP server '{self.server_name}' returned HTTP {status_code} for notification {method_name!r}.",
-                                reason_code="mcp_notification_http_error",
-                            )
-                        return None
-                    content_type = str(
-                        response.headers.get("Content-Type", "") or ""
-                    ).strip()
-                    if use_session:
-                        with self._state_lock:
-                            self._session.capture(response.headers)
-                    raw = response.read()
-                    return raw, content_type
-            except urllib_error.HTTPError as exc:
-                if (
-                    not refreshed
-                    and int(getattr(exc, "code", 0) or 0) in {401, 403}
-                    and self._refresh_oauth_access_token()
-                ):
-                    if self._auth_change_handler is not None:
-                        self._auth_change_handler()
-                    refreshed = True
-                    continue
-                self._handle_http_error(exc=exc, method_name=method_name)
-            except urllib_error.URLError as exc:
-                raise MCPServerUnavailableError(
-                    f"MCP server '{self.server_name}' remote endpoint is unavailable.",
-                    reason_code="mcp_server_unavailable",
-                ) from exc
-            except TimeoutError as exc:
-                raise MCPTimeoutError(
-                    f"MCP server '{self.server_name}' did not reply before timeout.",
-                    reason_code="mcp_timeout",
-                ) from exc
-
-    def _decode_http_payload(
-        self,
-        *,
-        raw: bytes,
-        content_type: str,
-        method_name: str,
-        timeout_seconds: float | None,
-        server_request_handler: Any | None,
-        expected_request_id: Any | None,
-    ) -> dict[str, Any]:
-        return self._decode_post_response(
-            raw=raw,
-            content_type=content_type,
-            timeout_seconds=timeout_seconds,
-            server_request_handler=server_request_handler,
-            expected_request_id=expected_request_id,
-        )
-
-    def _decode_post_response(
-        self,
-        *,
-        raw: bytes,
-        content_type: str,
-        timeout_seconds: float | None,
-        server_request_handler: Any | None,
-        expected_request_id: Any | None,
-    ) -> dict[str, Any]:
-        if not raw and not content_type.startswith("text/event-stream"):
-            raise MCPProtocolError(
-                f"MCP server '{self.server_name}' returned an empty response body.",
-                reason_code="mcp_empty_response_body",
-            )
-        if content_type.startswith("text/event-stream"):
-            messages = parse_sse_messages(raw=raw, server_name=self.server_name)
-            final_message: dict[str, Any] | None = None
-            for message in messages:
-                if "method" in message:
-                    request_id = message.get("id")
-                    if request_id is None:
-                        dispatch_server_notification(
-                            handler=server_request_handler,
-                            method=str(message.get("method", "") or "").strip(),
-                            params=dict(message.get("params", {}) or {}),
-                        )
-                        continue
-                    callback_payload = build_server_request_response(
-                        handler=server_request_handler,
-                        method=str(message.get("method", "") or "").strip(),
-                        params=dict(message.get("params", {}) or {}),
-                        request_id=request_id,
-                    )
-                    self._post_json(
-                        payload=callback_payload,
-                        method_name="callback-response",
-                        params={},
-                        timeout_seconds=timeout_seconds,
-                        expect_notification_ack=False,
-                        server_request_handler=None,
-                        expected_request_id=request_id,
-                    )
-                    continue
-                if (
-                    expected_request_id is None
-                    or message.get("id") == expected_request_id
-                ):
-                    final_message = message
-                    break
-            if final_message is None:
-                raise MCPProtocolError(
-                    f"MCP server '{self.server_name}' did not return a terminal response message.",
-                    reason_code="mcp_sse_missing_terminal_response",
-                )
-            return final_message
-        try:
-            decoded = json.loads(raw.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise MCPProtocolError(
-                f"MCP server '{self.server_name}' returned invalid JSON.",
-                reason_code="mcp_invalid_json",
-            ) from exc
-        if not isinstance(decoded, dict):
-            raise MCPProtocolError(
-                f"MCP server '{self.server_name}' returned a non-object message.",
-                reason_code="mcp_non_object_message",
-            )
-        return decoded
-
-    def _base_headers(self, *, protocol_version: str) -> dict[str, str]:
-        return {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-            "MCP-Protocol-Version": protocol_version,
-        }
-
-    def _handle_http_error(
-        self,
-        *,
-        exc: urllib_error.HTTPError,
-        method_name: str,
-    ) -> None:
-        status_code = int(getattr(exc, "code", 0) or 0)
-        if status_code in {404, 410} and self._session.session_id:
-            self._session.clear()
-            raise MCPRemoteTransportError(
-                f"MCP server '{self.server_name}' rejected the current HTTP session.",
-                reason_code="mcp_http_session_invalid",
-                details={"status_code": status_code, "method": method_name},
-            ) from exc
-        if status_code in {401, 403}:
-            authenticate = str(
-                exc.headers.get("WWW-Authenticate", "") if exc.headers else ""
-            )
-            challenge = parse_www_authenticate(authenticate)
-            reason_code = (
-                "mcp_authorization_scope_insufficient"
-                if status_code == 403 and challenge.get("error") == "insufficient_scope"
-                else "mcp_authorization_error"
-            )
-            raise MCPAuthorizationError(
-                f"MCP server '{self.server_name}' authorization failed with HTTP {status_code}.",
-                status_code=status_code,
-                www_authenticate=authenticate,
-                reason_code=reason_code,
-            ) from exc
-        raise MCPRemoteTransportError(
-            f"MCP server '{self.server_name}' returned HTTP {status_code} for {method_name!r}.",
-            reason_code="mcp_http_error",
-            details={"status_code": status_code, "method": method_name},
-        ) from exc
-
-    def _authorization_header(self) -> str:
-        config = self._server.authorization
-        if config.mode == "bearer":
-            return f"Bearer {config.bearer_token}"
-        if config.mode == "oauth_pkce":
-            access_token = self._oauth_access_token or _read_token_ref(
-                self._token_store, config.access_token_ref
-            )
-            if access_token:
-                return f"Bearer {access_token}"
-        return ""
-
-    def _refresh_oauth_access_token(self) -> bool:
-        with self._state_lock:
-            config = self._server.authorization
-            if config.mode != "oauth_pkce":
-                return False
-            refresh_token = _read_token_ref(self._token_store, config.refresh_token_ref)
-            if not refresh_token:
-                return False
-            metadata = discover_oauth_metadata(
-                config, timeout_seconds=float(self._server.request_timeout_seconds)
-            )
-            token_state = refresh_oauth_access_token(
-                config=config,
-                metadata=metadata,
-                refresh_token=refresh_token,
-                resource=self._server.url,
-                timeout_seconds=float(self._server.request_timeout_seconds),
-            )
-            self._oauth_access_token = token_state.access_token
-            if self._token_store is not None and config.access_token_ref:
-                self._token_store.set(config.access_token_ref, token_state.access_token)
-            if (
-                self._token_store is not None
-                and config.refresh_token_ref
-                and token_state.refresh_token
-            ):
-                self._token_store.set(
-                    config.refresh_token_ref, token_state.refresh_token
-                )
-            return True
-
-
-def _read_token_ref(token_store: MCPTokenStore | None, ref: str) -> str:
-    ref = str(ref or "").strip()
-    if token_store is None or not ref:
-        return ""
-    return str(token_store.get(ref) or "").strip()
-
-
 __all__ = [
     "MCPAuthorizationError",
     "MCPProtocolError",
@@ -982,8 +552,9 @@ __all__ = [
     "MCPServerUnavailableError",
     "MCPTimeoutError",
     "MCPTransportError",
+    "StdioMCPTransport",
     "StreamableHTTPSessionState",
     "StreamableHTTPMCPTransport",
-    "StdioMCPTransport",
     "parse_www_authenticate",
+    "probe_oauth_challenge",
 ]

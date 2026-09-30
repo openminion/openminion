@@ -145,10 +145,12 @@ def openminion_config_from_dict(payload: dict[str, Any]) -> OpenMinionConfig:
     )
 
 
-def openminion_config_to_dict(config: OpenMinionConfig) -> dict[str, Any]:
+def openminion_config_to_dict(
+    config: OpenMinionConfig, *, persistence: bool = False
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         **_gateway_security_to_payload(config),
-        "runtime": _runtime_config_to_payload(config.runtime),
+        "runtime": _runtime_config_to_payload(config.runtime, persistence=persistence),
         **_storage_context_to_payload(config),
         "providers": _providers_config_to_payload(config.providers),
         "agents": {

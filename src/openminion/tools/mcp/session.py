@@ -1,5 +1,6 @@
 """Per-server MCP session lifecycle and normalization."""
 
+import logging
 import time
 from collections import deque
 from typing import Any
@@ -17,6 +18,8 @@ from .constants import (
     MCP_INITIALIZED_NOTIFICATION,
     MCP_LOGGING_MESSAGE_NOTIFICATION,
     MCP_LOGGING_SET_LEVEL_METHOD,
+    MCP_LOG_LEVELS,
+    MCP_MODERN_CACHEABLE_METHODS,
     MCP_PROMPTS_GET_METHOD,
     MCP_PROMPTS_LIST_METHOD,
     MCP_RESOURCES_LIST_METHOD,
@@ -36,6 +39,13 @@ from .constants import (
 from .contracts import (
     MCP_PROTOCOL_VERSION,
     MCP_SUPPORTED_PROTOCOL_VERSIONS,
+    MCP_UNSUPPORTED_PROTOCOL_VERSION_ERROR,
+)
+from .errors import (
+    MCPProtocolError,
+    MCPRemoteTransportError,
+    MCPServerUnavailableError,
+    MCPTimeoutError,
 )
 from .modern import (
     MCPModernFlowError,
@@ -44,13 +54,16 @@ from .modern import (
     resolve_modern_result,
     select_modern_version,
 )
-from .risk import resolve_mcp_tool_posture
 from .results import (
+    MCPCallError,
+    coerce_optional_int,
+    normalize_completion_result,
     normalize_prompt_result,
     normalize_resource_result,
     normalize_tool_result,
 )
 from .interfaces import MCPClientCapabilityState, MCPProgressListener, MCPTransport
+from .risk import resolve_mcp_tool_posture
 from .schemas import (
     MCPElicitationRequest,
     MCPCompletionResult,
@@ -62,14 +75,14 @@ from .schemas import (
     MCPResourceUpdate,
     MCPSamplingMessage,
     MCPSamplingRequest,
+    MCPUnsupportedSchemaError,
+    build_mcp_prompt_arguments_schema,
     build_mcp_resource_template_arguments_schema,
+    extract_mcp_header_bindings,
 )
-from .transport import (
-    MCPProtocolError,
-    MCPServerUnavailableError,
-    StreamableHTTPMCPTransport,
-    StdioMCPTransport,
-)
+from .transport import StdioMCPTransport, StreamableHTTPMCPTransport
+
+logger = logging.getLogger(__name__)
 
 
 class _SessionRequestRouter:
@@ -105,6 +118,9 @@ class MCPServerSession:
         self._initialized = False
         self._modern_protocol = False
         self._negotiated_protocol_version = MCP_PROTOCOL_VERSION
+        self._server_info: dict[str, Any] = {}
+        self._server_capabilities: dict[str, Any] = {}
+        self._server_instructions = ""
         self._client_capability_state = (
             client_capability_state or MCPClientCapabilityState()
         )
@@ -116,6 +132,7 @@ class MCPServerSession:
         self._output_schemas_by_tool: dict[str, dict[str, Any]] = {}
         self._log_messages: deque[MCPLogMessage] = deque(maxlen=50)
         self._resource_updates: deque[MCPResourceUpdate] = deque(maxlen=100)
+        self._log_level = ""
 
     @property
     def server_name(self) -> str:
@@ -133,59 +150,123 @@ class MCPServerSession:
     def negotiated_protocol_version(self) -> str:
         return self._negotiated_protocol_version
 
+    @property
+    def server_info(self) -> dict[str, Any]:
+        return dict(self._server_info)
+
+    @property
+    def server_capabilities(self) -> dict[str, Any]:
+        return dict(self._server_capabilities)
+
+    @property
+    def server_instructions(self) -> str:
+        return self._server_instructions
+
     def start(self) -> None:
         if self._initialized and self._transport.is_running():
             return
         self._transport.start()
         try:
-            try:
-                result = self._transport.request(
-                    method=MCP_INITIALIZE_METHOD,
-                    params={
-                        "protocolVersion": MCP_PROTOCOL_VERSION,
-                        "capabilities": self._client_capability_state.declared_capabilities(),
-                        "clientInfo": {
-                            "name": MCP_CLIENT_NAME,
-                            "version": MCP_CLIENT_VERSION,
-                        },
-                    },
-                    timeout_seconds=self._server.startup_timeout_seconds,
-                )
-                negotiated_version = self._validate_negotiated_protocol_version(result)
-                self._negotiated_protocol_version = negotiated_version
-                self._transport.notify(MCP_INITIALIZED_NOTIFICATION, {})
-            except MCPProtocolError as exc:
-                if exc.reason_code:
-                    raise
-                try:
-                    self._start_modern_protocol()
-                except MCPProtocolError as modern_exc:
-                    raise exc from modern_exc
+            if not self._try_start_modern_protocol():
+                self._start_legacy_protocol()
         except Exception:
             self._transport.close()
             self._initialized = False
             raise
         self._initialized = True
 
-    def _start_modern_protocol(self) -> None:
-        try:
-            result = self._transport.request(
-                method=MCP_SERVER_DISCOVER_METHOD,
-                params={
-                    "_meta": build_modern_client_meta(
-                        self._client_capability_state.declared_capabilities()
-                    )
-                },
-                timeout_seconds=self._server.startup_timeout_seconds,
-                server_request_handler=self._request_router,
+    def _try_start_modern_protocol(self) -> bool:
+        params = {
+            "_meta": build_modern_client_meta(
+                self._client_capability_state.declared_capabilities()
             )
-            self._negotiated_protocol_version = select_modern_version(result)
+        }
+        try:
+            identity = self._response_cache_identity()
+            result = self._response_cache.get(
+                method=MCP_SERVER_DISCOVER_METHOD,
+                params=params,
+                identity=identity,
+            )
+            cache_miss = result is None
+            if result is None:
+                result = self._transport.request(
+                    method=MCP_SERVER_DISCOVER_METHOD,
+                    params=params,
+                    timeout_seconds=self._server.startup_timeout_seconds,
+                    server_request_handler=self._request_router,
+                )
+            selected_version = select_modern_version(result)
+            if cache_miss:
+                self._response_cache.store(
+                    method=MCP_SERVER_DISCOVER_METHOD,
+                    params=params,
+                    result=result,
+                    identity=identity,
+                )
+            self._negotiated_protocol_version = selected_version
+            self._capture_server_metadata(result, modern=True)
+        except MCPProtocolError as exc:
+            code = exc.details.get("code")
+            if self._server.transport == "stdio" and code in {
+                -32601,
+                MCP_UNSUPPORTED_PROTOCOL_VERSION_ERROR,
+            }:
+                self._transport.close()
+                self._transport.start()
+                return False
+            raise
+        except MCPRemoteTransportError as exc:
+            if exc.reason_code == "mcp_http_legacy_candidate":
+                return False
+            raise
+        except (MCPServerUnavailableError, MCPTimeoutError):
+            raise
         except MCPModernFlowError as exc:
             raise MCPProtocolError(str(exc), reason_code=exc.reason_code) from exc
         self._modern_protocol = True
+        return True
+
+    def _start_legacy_protocol(self) -> None:
+        result = self._transport.request(
+            method=MCP_INITIALIZE_METHOD,
+            params={
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": self._client_capability_state.declared_capabilities(),
+                "clientInfo": {
+                    "name": MCP_CLIENT_NAME,
+                    "version": MCP_CLIENT_VERSION,
+                },
+            },
+            timeout_seconds=self._server.startup_timeout_seconds,
+        )
+        self._negotiated_protocol_version = self._validate_negotiated_protocol_version(
+            result
+        )
+        self._capture_server_metadata(result, modern=False)
+        self._transport.notify(MCP_INITIALIZED_NOTIFICATION, {})
+
+    def _capture_server_metadata(self, result: dict[str, Any], *, modern: bool) -> None:
+        if modern:
+            meta = result.get("_meta", {})
+            info = (
+                meta.get("io.modelcontextprotocol/serverInfo", {})
+                if isinstance(meta, dict)
+                else {}
+            )
+        else:
+            info = result.get("serverInfo", {})
+        self._server_info = dict(info) if isinstance(info, dict) else {}
+        capabilities = result.get("capabilities", {})
+        self._server_capabilities = (
+            dict(capabilities) if isinstance(capabilities, dict) else {}
+        )
+        self._server_instructions = str(result.get("instructions", "") or "").strip()
 
     def list_tools(self) -> list[MCPListedTool]:
         self.start()
+        if not self._supports_server_capability("tools"):
+            return []
         cursor: str | None = None
         discovered: list[MCPListedTool] = []
         while True:
@@ -209,6 +290,20 @@ class MCPServerSession:
                 input_schema = item.get("inputSchema", {}) or {}
                 if not isinstance(input_schema, dict):
                     input_schema = {}
+                if self._server.transport == "streamable_http":
+                    try:
+                        header_bindings = extract_mcp_header_bindings(input_schema)
+                    except MCPUnsupportedSchemaError as exc:
+                        logger.warning(
+                            "Skipping MCP tool %s from %s: %s",
+                            remote_name,
+                            self.server_name,
+                            exc,
+                        )
+                        continue
+                    self._transport.set_tool_header_bindings(
+                        remote_name, header_bindings
+                    )
                 output_schema = item.get("outputSchema", {}) or {}
                 if not isinstance(output_schema, dict):
                     output_schema = {}
@@ -247,6 +342,8 @@ class MCPServerSession:
 
     def list_prompts(self) -> list[MCPListedPrompt]:
         self.start()
+        if not self._supports_server_capability("prompts"):
+            return []
         cursor: str | None = None
         discovered: list[MCPListedPrompt] = []
         while True:
@@ -272,7 +369,7 @@ class MCPServerSession:
                         server_name=self.server_name,
                         remote_name=remote_name,
                         description=description,
-                        arguments_schema=_build_prompt_arguments_schema(
+                        arguments_schema=build_mcp_prompt_arguments_schema(
                             item.get("arguments", [])
                         ),
                         title=str(item.get("title", "") or "").strip(),
@@ -287,6 +384,8 @@ class MCPServerSession:
 
     def list_resources(self) -> list[MCPListedResource]:
         self.start()
+        if not self._supports_server_capability("resources"):
+            return []
         cursor: str | None = None
         discovered: list[MCPListedResource] = []
         while True:
@@ -325,6 +424,8 @@ class MCPServerSession:
 
     def list_resource_templates(self) -> list[MCPListedResourceTemplate]:
         self.start()
+        if not self._supports_server_capability("resources"):
+            return []
         cursor: str | None = None
         discovered: list[MCPListedResourceTemplate] = []
         while True:
@@ -334,8 +435,10 @@ class MCPServerSession:
                     method=MCP_RESOURCES_TEMPLATES_LIST_METHOD,
                     params=self._with_client_meta(params),
                 )
-            except MCPProtocolError:
-                return []
+            except MCPProtocolError as exc:
+                if exc.details.get("code") == -32601:
+                    return []
+                raise
             raw_templates = result.get("resourceTemplates", [])
             if not isinstance(raw_templates, list):
                 raise MCPProtocolError(
@@ -347,6 +450,18 @@ class MCPServerSession:
                 uri_template = str(item.get("uriTemplate", "") or "").strip()
                 if not uri_template:
                     continue
+                try:
+                    arguments_schema = build_mcp_resource_template_arguments_schema(
+                        uri_template
+                    )
+                except MCPUnsupportedSchemaError as exc:
+                    logger.warning(
+                        "Skipping MCP resource template %s from %s: %s",
+                        uri_template,
+                        self.server_name,
+                        exc,
+                    )
+                    continue
                 discovered.append(
                     MCPListedResourceTemplate(
                         server_name=self.server_name,
@@ -354,9 +469,7 @@ class MCPServerSession:
                         template_name=str(item.get("name", "") or "").strip(),
                         description=str(item.get("description", "") or "").strip(),
                         mime_type=str(item.get("mimeType", "") or "").strip(),
-                        arguments_schema=build_mcp_resource_template_arguments_schema(
-                            uri_template
-                        ),
+                        arguments_schema=arguments_schema,
                         title=str(item.get("title", "") or "").strip(),
                         icons=_coerce_icons(item.get("icons")),
                         metadata=_coerce_mapping(item.get("_meta")),
@@ -383,10 +496,20 @@ class MCPServerSession:
         }
         if progress_token:
             params["_meta"] = {"progressToken": progress_token.strip()}
-        result = self._request_with_recovery(
-            method=MCP_TOOLS_CALL_METHOD,
-            params=self._with_client_meta(params),
-        )
+        if self._initialized and not self._transport.is_running():
+            self._restart_transport()
+        try:
+            result = self._request_with_recovery(
+                method=MCP_TOOLS_CALL_METHOD,
+                params=self._with_client_meta(params),
+                retry_on_unavailable=False,
+            )
+        except MCPServerUnavailableError as exc:
+            raise MCPCallError(
+                f"MCP tool '{self.server_name}.{remote_name}' may have run before the connection was lost.",
+                reason_code="mcp_outcome_uncertain",
+                details={"mcp_server": self.server_name, "mcp_tool": remote_name},
+            ) from exc
         return normalize_tool_result(
             server_name=self.server_name,
             remote_name=remote_name,
@@ -436,6 +559,11 @@ class MCPServerSession:
     def subscribe_resource(self, *, resource_uri: str) -> None:
         if not self._initialized:
             self.start()
+        if self._modern_protocol:
+            raise MCPProtocolError(
+                "Modern MCP resource updates use subscriptions/listen.",
+                reason_code="mcp_legacy_resource_subscription_only",
+            )
         self._request_with_recovery(
             method=MCP_RESOURCES_SUBSCRIBE_METHOD,
             params=self._with_client_meta({"uri": resource_uri.strip()}),
@@ -444,6 +572,11 @@ class MCPServerSession:
     def unsubscribe_resource(self, *, resource_uri: str) -> None:
         if not self._initialized:
             self.start()
+        if self._modern_protocol:
+            raise MCPProtocolError(
+                "Modern MCP resource updates use subscriptions/listen.",
+                reason_code="mcp_legacy_resource_subscription_only",
+            )
         self._request_with_recovery(
             method=MCP_RESOURCES_UNSUBSCRIBE_METHOD,
             params=self._with_client_meta({"uri": resource_uri.strip()}),
@@ -460,14 +593,21 @@ class MCPServerSession:
     ) -> MCPCompletionResult:
         if not self._initialized:
             self.start()
+        ref_type = ref_type.strip()
+        if ref_type == "ref/prompt":
+            reference = {"type": ref_type, "name": ref_name.strip()}
+        elif ref_type == "ref/resource":
+            reference = {"type": ref_type, "uri": ref_name.strip()}
+        else:
+            raise MCPProtocolError(
+                f"Unsupported MCP completion reference type: {ref_type!r}.",
+                reason_code="mcp_completion_ref_invalid",
+            )
         result = self._request_with_recovery(
             method=MCP_COMPLETION_COMPLETE_METHOD,
             params=self._with_client_meta(
                 {
-                    "ref": {
-                        "type": ref_type.strip(),
-                        "name": ref_name.strip(),
-                    },
+                    "ref": reference,
                     "argument": {
                         "name": argument_name.strip(),
                         "value": argument_value,
@@ -478,9 +618,12 @@ class MCPServerSession:
                 }
             ),
         )
-        return _normalize_completion_result(result)
+        return normalize_completion_result(result)
 
     def cancel(self, request_id: int) -> None:
+        if self._modern_protocol and self._server.transport == "streamable_http":
+            self._transport.cancel_request(request_id)
+            return
         self._transport.notify(
             "notifications/cancelled",
             {
@@ -496,23 +639,30 @@ class MCPServerSession:
             params=self._with_client_meta({"taskId": task_id.strip()}),
         )
 
-    def listen(self, subscriptions: list[dict[str, Any]]) -> dict[str, Any]:
+    def listen(self, notifications: dict[str, Any]) -> dict[str, Any]:
         if not self._initialized:
             self.start()
+        if not self._modern_protocol:
+            raise MCPProtocolError(
+                "subscriptions/listen requires modern MCP.",
+                reason_code="mcp_modern_subscription_required",
+            )
         return self._request_with_recovery(
             method=MCP_SUBSCRIPTIONS_LISTEN_METHOD,
-            params=self._with_client_meta(
-                {"subscriptions": [dict(item) for item in subscriptions]}
-            ),
+            params=self._with_client_meta({"notifications": dict(notifications)}),
         )
 
     def set_log_level(self, level: str) -> None:
         normalized = level.strip().lower()
-        if not normalized:
+        if normalized not in MCP_LOG_LEVELS:
             raise MCPProtocolError(
-                f"MCP server '{self.server_name}' logging level is required.",
-                reason_code="mcp_logging_level_required",
+                f"MCP server '{self.server_name}' logging level is invalid.",
+                reason_code="mcp_logging_level_invalid",
             )
+        self.start()
+        if self._modern_protocol:
+            self._log_level = normalized
+            return
         self._request_with_recovery(
             method=MCP_LOGGING_SET_LEVEL_METHOD,
             params={"level": normalized},
@@ -537,6 +687,8 @@ class MCPServerSession:
         meta: dict[str, Any] = dict(payload.get("_meta", {}) or {})
         if self._modern_protocol:
             meta.update(build_modern_client_meta(client_capabilities))
+            if self._log_level:
+                meta["io.modelcontextprotocol/logLevel"] = self._log_level
             payload["_meta"] = meta
             return payload
         if client_capabilities:
@@ -554,31 +706,22 @@ class MCPServerSession:
         *,
         method: str,
         params: dict[str, Any],
+        retry_on_unavailable: bool = True,
     ) -> dict[str, Any]:
+        cacheable = self._modern_protocol and method in MCP_MODERN_CACHEABLE_METHODS
         cached = (
             self._response_cache.get(
                 method=method,
                 params=params,
                 identity=self._response_cache_identity(),
             )
-            if self._modern_protocol
+            if cacheable
             else None
         )
         if cached is not None:
             return cached
         if self._initialized and not self._transport.is_running():
-            result = self._restart_and_retry(method=method, params=params)
-            resolved = self._resolve_response(
-                method=method, params=params, result=result
-            )
-            if self._modern_protocol:
-                self._response_cache.store(
-                    method=method,
-                    params=params,
-                    result=resolved,
-                    identity=self._response_cache_identity(),
-                )
-            return resolved
+            self._restart_transport()
         try:
             result = self._transport.request(
                 method=method,
@@ -587,9 +730,17 @@ class MCPServerSession:
                 server_request_handler=self._request_router,
             )
         except MCPServerUnavailableError:
-            result = self._restart_and_retry(method=method, params=params)
+            if not retry_on_unavailable:
+                raise
+            self._restart_transport()
+            result = self._transport.request(
+                method=method,
+                params=params,
+                timeout_seconds=self._server.request_timeout_seconds,
+                server_request_handler=self._request_router,
+            )
         resolved = self._resolve_response(method=method, params=params, result=result)
-        if self._modern_protocol:
+        if cacheable:
             self._response_cache.store(
                 method=method,
                 params=params,
@@ -597,6 +748,9 @@ class MCPServerSession:
                 identity=self._response_cache_identity(),
             )
         return resolved
+
+    def _supports_server_capability(self, capability: str) -> bool:
+        return capability in self._server_capabilities
 
     def _response_cache_identity(self) -> str:
         return self._transport.authorization_identity
@@ -635,12 +789,7 @@ class MCPServerSession:
             server_request_handler=self._request_router,
         )
 
-    def _restart_and_retry(
-        self,
-        *,
-        method: str,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
+    def _restart_transport(self) -> None:
         if self._server.transport != "stdio":
             raise MCPServerUnavailableError(
                 f"MCP server '{self.server_name}' is unavailable.",
@@ -649,12 +798,6 @@ class MCPServerSession:
         self._record_restart_attempt()
         self.close(reset_initialized=True)
         self.start()
-        return self._transport.request(
-            method=method,
-            params=params,
-            timeout_seconds=self._server.request_timeout_seconds,
-            server_request_handler=self._request_router,
-        )
 
     def _record_restart_attempt(self) -> None:
         now = time.monotonic()
@@ -693,12 +836,12 @@ class MCPServerSession:
                 ]
             }
         if method == MCP_SAMPLING_CREATE_MESSAGE_METHOD:
-            handler = self._client_capability_state.sampling_handler
-            if handler is None:
+            sampling_handler = self._client_capability_state.sampling_handler
+            if sampling_handler is None:
                 raise MCPProtocolError(
                     f"MCP server '{self.server_name}' requested sampling without a declared sampling handler."
                 )
-            result = handler.sample(
+            sampling_result = sampling_handler.sample(
                 server_name=self.server_name,
                 request=MCPSamplingRequest(
                     messages=tuple(
@@ -709,7 +852,7 @@ class MCPServerSession:
                         for item in (params.get("messages", []) or [])
                         if isinstance(item, dict)
                     ),
-                    max_tokens=_coerce_optional_int(params.get("maxTokens")),
+                    max_tokens=coerce_optional_int(params.get("maxTokens")),
                     system_prompt=str(params.get("systemPrompt", "") or "").strip(),
                     model_preferences=dict(params.get("modelPreferences", {}) or {}),
                     metadata=dict(params.get("metadata", {}) or {}),
@@ -717,18 +860,18 @@ class MCPServerSession:
                 ),
             )
             return {
-                "role": result.role,
-                "content": result.content,
-                "model": result.model,
-                "stopReason": result.stop_reason,
+                "role": sampling_result.role,
+                "content": sampling_result.content,
+                "model": sampling_result.model,
+                "stopReason": sampling_result.stop_reason,
             }
         if method == MCP_ELICITATION_CREATE_METHOD:
-            handler = self._client_capability_state.elicitation_handler
-            if handler is None:
+            elicitation_handler = self._client_capability_state.elicitation_handler
+            if elicitation_handler is None:
                 raise MCPProtocolError(
                     f"MCP server '{self.server_name}' requested elicitation without a declared elicitation handler."
                 )
-            result = handler.elicit(
+            elicitation_result = elicitation_handler.elicit(
                 server_name=self.server_name,
                 request=MCPElicitationRequest(
                     mode=str(params.get("mode", "") or "").strip(),
@@ -739,9 +882,9 @@ class MCPServerSession:
                     raw_params=dict(params),
                 ),
             )
-            payload: dict[str, Any] = {"action": result.action}
-            if result.content is not None:
-                payload["content"] = dict(result.content)
+            payload: dict[str, Any] = {"action": elicitation_result.action}
+            if elicitation_result.content is not None:
+                payload["content"] = dict(elicitation_result.content)
             return payload
         if method == MCP_ELICITATION_COMPLETE_NOTIFICATION:
             return None
@@ -761,6 +904,7 @@ class MCPServerSession:
             "notifications/resources/list_changed",
             "notifications/prompts/list_changed",
         }:
+            self._response_cache.clear()
             primitive = normalized.split("/")[1]
             handler = self._capability_change_handler
             if callable(handler):
@@ -803,6 +947,7 @@ class MCPServerSession:
             )
             return
         if normalized == MCP_RESOURCES_UPDATED_NOTIFICATION:
+            self._response_cache.clear()
             uri = str(params.get("uri", "") or "").strip()
             if uri:
                 self._resource_updates.append(
@@ -816,33 +961,6 @@ class MCPServerSession:
             return
 
 
-def _build_prompt_arguments_schema(raw_arguments: Any) -> dict[str, Any]:
-    if not isinstance(raw_arguments, list):
-        return {"type": "object", "properties": {}, "additionalProperties": False}
-    properties: dict[str, Any] = {}
-    required: list[str] = []
-    for item in raw_arguments:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name", "") or "").strip()
-        if not name:
-            continue
-        properties[name] = {
-            "type": "string",
-            "description": str(item.get("description", "") or "").strip(),
-        }
-        if bool(item.get("required", False)):
-            required.append(name)
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": properties,
-        "additionalProperties": False,
-    }
-    if required:
-        schema["required"] = sorted(set(required))
-    return schema
-
-
 def _coerce_mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
@@ -851,26 +969,6 @@ def _coerce_icons(value: Any) -> tuple[dict[str, Any], ...]:
     if not isinstance(value, list):
         return ()
     return tuple(dict(item) for item in value if isinstance(item, dict))
-
-
-def _coerce_optional_int(value: Any) -> int | None:
-    if value is None or value == "":
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _normalize_completion_result(result: dict[str, Any]) -> MCPCompletionResult:
-    completion = result.get("completion", {})
-    if not isinstance(completion, dict):
-        completion = {}
-    raw_values = completion.get("values", [])
-    values = tuple(str(item) for item in raw_values if isinstance(item, str))
-    total = _coerce_optional_int(completion.get("total"))
-    has_more = bool(completion.get("hasMore", False))
-    return MCPCompletionResult(values=values, total=total, has_more=has_more)
 
 
 def _build_transport(
@@ -885,4 +983,4 @@ def _build_transport(
             token_store=token_store,
             auth_change_handler=auth_change_handler,
         )
-    return StdioMCPTransport(server)
+    return StdioMCPTransport(server, token_store=token_store)

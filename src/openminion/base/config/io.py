@@ -1,6 +1,7 @@
 """Config path resolution and JSON load/save helpers."""
 
 import json
+import os
 from pathlib import Path
 
 from openminion.base.config.base import (
@@ -29,8 +30,7 @@ def resolve_config_path(config_path: str | None, home_root: Path | None = None) 
             home_root = Path(env_home).expanduser()
 
     config_root = _resolve_config_root(home_root)
-    filename: str = DEFAULT_CONFIG_FILENAME
-    return (config_root / filename).resolve()
+    return (config_root / str(DEFAULT_CONFIG_FILENAME)).resolve()
 
 
 def _resolve_config_root(home_root: Path | None) -> Path:
@@ -76,14 +76,15 @@ def save_config(
 ) -> Path:
     path = resolve_config_path(config_path, home_root=home_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(config.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    content = (
+        json.dumps(config.to_dict(persistence=True), indent=2, sort_keys=True) + "\n"
     )
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        if hasattr(os, "fchmod"):
+            os.fchmod(stream.fileno(), 0o600)
+        stream.write(content)
     return path
 
 
-__all__ = [
-    "load_config",
-    "resolve_config_path",
-    "save_config",
-]
+__all__ = ["load_config", "resolve_config_path", "save_config"]

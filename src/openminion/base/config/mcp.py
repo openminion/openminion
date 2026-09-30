@@ -9,9 +9,7 @@ from urllib.parse import urlparse
 from openminion.base.config.base import ConfigError
 
 _MCP_INVALID_CHARS_RE = re.compile(r"[^a-z0-9]+")
-_VALID_MCP_TOOL_SCOPES = frozenset(
-    {"READ_ONLY", "WRITE_SAFE", "POWER_USER", "UI_AUTOMATION"}
-)
+_MCP_TOOL_SCOPES = frozenset(("READ_ONLY", "WRITE_SAFE", "POWER_USER", "UI_AUTOMATION"))
 _VALID_MCP_SAMPLING_MODES = frozenset({"disabled", "deny", "allow"})
 _VALID_MCP_APPROVAL_MODES = frozenset({"never", "always", "dangerous", "matching"})
 _MCP_NUMERIC_LIMITS = {
@@ -108,10 +106,6 @@ def _normalize_string_list(value: object) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
-def _contains_env_interpolation(value: str) -> bool:
-    return "${" in value or "$(" in value or "%{" in value
-
-
 def _normalize_pattern_list(value: object, *, field_path: str) -> list[str]:
     if value is None:
         return []
@@ -130,6 +124,7 @@ def _normalize_pattern_list(value: object, *, field_path: str) -> list[str]:
 class MCPAuthorizationConfig:
     mode: str = "none"
     bearer_token: str = ""
+    bearer_token_ref: str = ""
     client_id: str = ""
     client_secret_ref: str = ""
     authorization_server_metadata_url: str = ""
@@ -152,6 +147,7 @@ class MCPAuthorizationConfig:
             )
         self.mode = token
         self.bearer_token = str(self.bearer_token or "").strip()
+        self.bearer_token_ref = str(self.bearer_token_ref or "").strip()
         self.client_id = str(self.client_id or "").strip()
         self.client_secret_ref = str(self.client_secret_ref or "").strip()
         self.authorization_server_metadata_url = _normalize_mcp_url(
@@ -166,30 +162,18 @@ class MCPAuthorizationConfig:
         self.access_token = str(self.access_token or "").strip()
         self.access_token_ref = str(self.access_token_ref or "").strip()
         self.refresh_token_ref = str(self.refresh_token_ref or "").strip()
-        if self.mode == "bearer" and not self.bearer_token:
-            raise ConfigError(
-                "runtime.mcp_servers[].authorization.bearer_token is required "
-                "when authorization.mode='bearer'."
-            )
-        if self.mode == "oauth_pkce":
-            if not self.client_id:
-                raise ConfigError(
-                    "runtime.mcp_servers[].authorization.client_id is required "
-                    "when authorization.mode='oauth_pkce'."
-                )
-            has_metadata = bool(self.authorization_server_metadata_url)
-            has_endpoints = bool(self.authorization_endpoint and self.token_endpoint)
-            if not (has_metadata or has_endpoints):
-                raise ConfigError(
-                    "runtime.mcp_servers[].authorization oauth_pkce requires "
-                    "authorization_server_metadata_url or both authorization_endpoint "
-                    "and token_endpoint."
-                )
+        if self.mode == "bearer" and bool(self.bearer_token) == bool(
+            self.bearer_token_ref
+        ):
+            raise ConfigError("MCP bearer mode requires exactly one token source.")
+        if self.mode == "oauth_pkce" and not self.client_id:
+            raise ConfigError("MCP oauth_pkce mode requires client_id.")
 
     def redacted_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"mode": self.mode}
         if self.mode == "bearer":
             payload["bearer_token"] = "<redacted>" if self.bearer_token else ""
+            payload["bearer_token_ref"] = self.bearer_token_ref
             return payload
         if self.mode == "oauth_pkce":
             payload.update(
@@ -222,6 +206,7 @@ def _coerce_mcp_authorization_config(value: object) -> MCPAuthorizationConfig:
         return MCPAuthorizationConfig(
             mode=value.get("mode", "none"),
             bearer_token=value.get("bearer_token", ""),
+            bearer_token_ref=value.get("bearer_token_ref", ""),
             client_id=value.get("client_id", ""),
             client_secret_ref=value.get("client_secret_ref", ""),
             authorization_server_metadata_url=value.get(
@@ -254,7 +239,7 @@ class MCPToolRiskOverrideConfig:
                 "runtime.mcp_servers[].tool_risk_overrides[].pattern is required."
             )
         self.min_scope = str(self.min_scope or "").strip().upper()
-        if self.min_scope and self.min_scope not in _VALID_MCP_TOOL_SCOPES:
+        if self.min_scope and self.min_scope not in _MCP_TOOL_SCOPES:
             raise ConfigError(
                 "runtime.mcp_servers[].tool_risk_overrides[].min_scope must be one "
                 "of READ_ONLY, WRITE_SAFE, POWER_USER, or UI_AUTOMATION."
@@ -337,7 +322,7 @@ def _coerce_mcp_approval_config(value: object) -> MCPApprovalConfig:
 
 @dataclass
 class MCPStdioSandboxConfig:
-    require_trust: bool = False
+    require_trust: bool = True
     cwd_allowlist: list[str] = field(default_factory=list)
     env_allowlist: list[str] = field(default_factory=list)
     inherit_env_allowlist: list[str] = field(default_factory=list)
@@ -362,7 +347,7 @@ def _coerce_mcp_stdio_sandbox_config(value: object) -> MCPStdioSandboxConfig:
         return value
     if isinstance(value, Mapping):
         return MCPStdioSandboxConfig(
-            require_trust=value.get("require_trust", False),
+            require_trust=value.get("require_trust", True),
             cwd_allowlist=list(value.get("cwd_allowlist", []) or []),
             env_allowlist=list(value.get("env_allowlist", []) or []),
             inherit_env_allowlist=list(value.get("inherit_env_allowlist", []) or []),
@@ -427,7 +412,7 @@ def resolve_mcp_server_env(
 
     resolved = dict(server.env)
     for key, value in resolved.items():
-        if _contains_env_interpolation(value):
+        if "${" in value or "$(" in value or "%{" in value:
             raise ConfigError(
                 f"runtime.mcp_servers[{server.name!r}].env[{key!r}] contains "
                 "unsupported interpolation; use env_secret_refs for secrets."
@@ -573,6 +558,7 @@ def mcp_publish_config_to_dict(config: MCPPublishConfig | None) -> dict[str, Any
 class MCPServerConfig:
     name: str = ""
     enabled: bool = True
+    required: bool = False
     transport: str = "stdio"
     command: list[str] = field(default_factory=list)
     url: str = ""
@@ -597,6 +583,8 @@ class MCPServerConfig:
         self.name = normalize_mcp_server_name(self.name)
         if not isinstance(self.enabled, bool):
             raise ConfigError("runtime.mcp_servers[].enabled must be a boolean.")
+        if not isinstance(self.required, bool):
+            raise ConfigError("runtime.mcp_servers[].required must be a boolean.")
         self.transport = normalize_mcp_transport(self.transport)
         self.url = _normalize_mcp_url(self.url)
         self.authorization = _coerce_mcp_authorization_config(self.authorization)
@@ -621,7 +609,8 @@ class MCPServerConfig:
             self.tool_risk_overrides
         )
         self.approval = _coerce_mcp_approval_config(self.approval)
-        self.trusted = bool(self.trusted)
+        if not isinstance(self.trusted, bool):
+            raise ConfigError("runtime.mcp_servers[].trusted must be a boolean.")
         self.stdio_sandbox = _coerce_mcp_stdio_sandbox_config(self.stdio_sandbox)
         self.package_metadata = _coerce_mcp_package_metadata_config(
             self.package_metadata
@@ -670,6 +659,7 @@ def coerce_mcp_server_configs(value: object) -> list[MCPServerConfig]:
             server = MCPServerConfig(
                 name=item.get("name", ""),
                 enabled=item.get("enabled", True),
+                required=item.get("required", False),
                 transport=item.get("transport", "stdio"),
                 command=list(item.get("command", []) or []),
                 url=item.get("url", ""),

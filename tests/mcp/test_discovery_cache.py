@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from openminion.base.config import OpenMinionConfig
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.runtime import RuntimeConfig
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
@@ -17,15 +18,14 @@ FIXTURE_SERVER_PATH = (
 def _runtime_config(
     *,
     cache_ttl_seconds: float = 0.0,
-    deferred: bool = False,
 ) -> RuntimeConfig:
     return RuntimeConfig(
         mcp_discovery_cache_ttl_seconds=cache_ttl_seconds,
-        mcp_deferred_discovery_enabled=deferred,
         mcp_servers=[
             MCPServerConfig(
                 name="Fixture",
                 transport="stdio",
+                trusted=True,
                 command=[sys.executable, str(FIXTURE_SERVER_PATH)],
                 request_timeout_seconds=5.0,
                 startup_timeout_seconds=5.0,
@@ -75,18 +75,27 @@ def test_discovery_cache_can_be_invalidated_explicitly() -> None:
         manager.close()
 
 
-def test_deferred_bootstrap_keeps_manager_but_registers_no_initial_mcp_tools() -> None:
-    bootstrap = build_runtime_bootstrap(
-        config=_runtime_config(deferred=True),
-        strict=True,
-    )
+def test_legacy_deferred_flag_no_longer_suppresses_mcp_registration() -> None:
+    config = OpenMinionConfig.from_dict(
+        {
+            "runtime": {
+                "mcp_deferred_discovery_enabled": True,
+                "mcp_servers": [
+                    {
+                        "name": "Fixture",
+                        "transport": "stdio",
+                        "trusted": True,
+                        "command": [sys.executable, str(FIXTURE_SERVER_PATH)],
+                    }
+                ],
+            }
+        }
+    ).runtime
+    bootstrap = build_runtime_bootstrap(config=config, strict=True)
     try:
         assert bootstrap.mcp_manager is not None
-        assert bootstrap.mcp_manager.deferred_discovery_enabled is True
         runtime_names = set(bootstrap.registry.list().keys())
-        assert not any(name.startswith("mcp.fixture.") for name in runtime_names)
-
-        discovered = bootstrap.mcp_manager.discover_tools()
-        assert any(tool.remote_name == "echo-text" for tool in discovered)
+        assert "mcp.fixture.echo_text" in runtime_names
+        assert not hasattr(config, "mcp_deferred_discovery_enabled")
     finally:
         bootstrap.mcp_manager.close()
