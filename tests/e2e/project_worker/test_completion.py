@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -23,6 +24,12 @@ from openminion.tools.git import register
 
 pytestmark = pytest.mark.e2e
 _GIT = shutil.which("git")
+
+
+def _failed_verifier_ref(payload: dict[str, object]) -> str:
+    match = re.search(r"bind verifier_refs to: ([^,.\s]+)", str(payload["message"]))
+    assert match is not None
+    return match.group(1)
 
 
 def _run_cli(args: list[str]) -> dict[str, object]:
@@ -123,7 +130,7 @@ def test_project_recovers_verifies_and_proposes_delivery(tmp_path, monkeypatch) 
                         "plan_id": "repair-report",
                         "revision_id": "repair-report-1",
                         "criterion_ids": ["verification:report"],
-                        "verifier_refs": ["verification:cycle-1:failed"],
+                        "verifier_refs": [_failed_verifier_ref(payload)],
                         "revised_steps": [
                             {
                                 "step_id": "repair",

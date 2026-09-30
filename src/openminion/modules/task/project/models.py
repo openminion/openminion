@@ -106,6 +106,7 @@ class ProjectRun(_StrictProjectModel):
     committed_cycle_count: int = Field(default=0, ge=0)
     cycle_limit: int = Field(default=0, ge=0)
     progress_refs: tuple[str, ...] = ()
+    artifact_refs: tuple[str, ...] = ()
     effect_refs: tuple[str, ...] = ()
     verifier_refs: tuple[str, ...] = ()
     triggering_cron_job_id: str | None = None

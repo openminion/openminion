@@ -1057,7 +1057,7 @@ def test_autonomy_resume_preserves_provider_error_after_blocked_checkpoint(
 
     resumed = json.loads(resume_output)["run"]
     assert code == 0
-    assert resumed["status"] == "failed"
+    assert resumed["status"] == "blocked"
     assert resumed["last_error"] == {
         "code": "EMPTY_PROVIDER_RESPONSE",
         "detail": None,
@@ -1305,7 +1305,7 @@ def test_autonomy_interrupt_after_completion_preserves_terminal_state(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(
-        "openminion.cli.commands.autonomy._write_terminal_proof",
+        "openminion.cli.commands.autonomy.write_terminal_proof",
         interrupt_proof,
     )
     code, output = _run_cli(

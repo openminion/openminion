@@ -205,6 +205,37 @@ def test_scheduler_executes_agent_turn_and_calls_delivery() -> None:
     assert deliveries == [("announce", "cli:ops")]
 
 
+def test_scheduler_dispatches_project_cycle_to_runtime_executor() -> None:
+    store = FakeCronStore()
+    store.add_job(
+        job_id="project-wake",
+        payload={"kind": "projectCycle", "run_id": "run-1", "task_id": "task-1"},
+    )
+    store.seed_due("project-wake")
+    dispatched: list[str] = []
+
+    def _execute(job: dict, _run: dict) -> str:
+        dispatched.append(str(job["payload"]["kind"]))
+        return "project cycle completed"
+
+    scheduler = CronScheduler(
+        store=store,
+        daemon_id="daemon-project",
+        tick_seconds=0.05,
+        execute_agent_turn=_execute,
+    )
+    scheduler.start()
+    try:
+        assert store.finished.wait(timeout=3.0)
+    finally:
+        scheduler.shutdown(grace_s=1.0)
+
+    run = next(iter(store.runs.values()))
+    assert run["state"] == "finished"
+    assert run["summary"] == "project cycle completed"
+    assert dispatched == ["projectCycle"]
+
+
 def test_scheduler_reconciles_task_outcomes_on_tick_and_completion() -> None:
     store = FakeCronStore()
     store.add_job(

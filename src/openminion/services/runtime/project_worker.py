@@ -17,7 +17,6 @@ from openminion.modules.brain.loop.tools.shortlisting import TOOL_REQUEST_TOOL_N
 from openminion.modules.config import resolve_module_data_root, resolve_module_home_root
 from openminion.modules.task import (
     AutonomyRun,
-    AutonomyRunError,
     AutonomyRunPhase,
     AutonomyRunStatus,
     AutonomyRunStore,
@@ -39,7 +38,6 @@ from openminion.modules.task.project import (
     ProjectDomainVerificationStatus,
     ProjectTurnRequest,
     ProjectTurnResult,
-    build_project_terminal_proof,
     commit_project_run_checkpoint,
     evaluate_project_turn_verification,
     project_condition_from_metadata,
@@ -51,6 +49,7 @@ from openminion.modules.task.project import (
     project_turn_inbound_metadata,
     project_workspace,
     run_project_verification_commands,
+    write_project_terminal_proof,
 )
 from openminion.modules.task.project.budget import evaluate_continuation_budget
 from openminion.modules.task.project import (
@@ -211,7 +210,15 @@ class ProjectWorker:
         *,
         triggering_cron_job_id: str | None = None,
     ) -> ProjectWorkerResult:
-        run, checkpoint = self._load_cycle(run_id)
+        run, checkpoint, task = self._load_cycle(run_id)
+        terminal = self._terminal_checkpoint_result(run, checkpoint)
+        if terminal is not None:
+            return terminal
+        run = project_progress.reconcile_run_projection(
+            run,
+            checkpoint.project_run,
+            autonomy_store=self._autonomy_store,
+        )
         reconciled = self._reconciled_cron_cycle(
             run,
             checkpoint,
@@ -219,9 +226,6 @@ class ProjectWorker:
         )
         if reconciled is not None:
             return reconciled
-        task = self._task_manager.get_task(run.task_id or "")
-        if task is None:
-            raise KeyError(f"task not found: {run.task_id}")
         inactive = self._inactive_task_result(
             run,
             checkpoint,
@@ -231,7 +235,18 @@ class ProjectWorker:
         if inactive is not None:
             return inactive
         if run.execution_selectors.verification_domain not in {"coding", "research"}:
-            return self._domain_blocked(run, checkpoint.project_run)
+            blocked = project_progress.block_unconfigured_project_domain(
+                task_manager=self._task_manager,
+                autonomy_store=self._autonomy_store,
+                run=run,
+                project_run=checkpoint.project_run,
+            )
+            return ProjectWorkerResult(
+                run=blocked,
+                project_run=checkpoint.project_run,
+                decision=ProjectCycleDecision.BLOCKED,
+                verification=(),
+            )
         check_events: tuple[dict[str, object], ...] = ()
         checkpoint, check_event, waiting = project_progress.observe_repository_checks(
             run,
@@ -277,7 +292,31 @@ class ProjectWorker:
         )
         if not budget.allowed or depleted is not None:
             return self._budget_blocked(run, checkpoint.project_run)
-        cycle_number = checkpoint.project_run.committed_cycle_count + 1
+        return self._run_claimed_cycle_with_recovery(
+            run=run,
+            checkpoint=checkpoint,
+            observed_checkpoint=observed_checkpoint,
+            task=task,
+            cycle_number=checkpoint.project_run.committed_cycle_count + 1,
+            triggering_cron_job_id=triggering_cron_job_id,
+            check_events=check_events,
+            project_tool_calls_remaining=budget.remaining.get("tool_calls"),
+            cycle_limit=budget.limits["iterations"],
+        )
+
+    def _run_claimed_cycle_with_recovery(
+        self,
+        *,
+        run: AutonomyRun,
+        checkpoint: ProjectCheckpoint,
+        observed_checkpoint: ProjectCheckpoint | None,
+        task: TaskLifecycleRecord,
+        cycle_number: int,
+        triggering_cron_job_id: str | None,
+        check_events: tuple[dict[str, object], ...],
+        project_tool_calls_remaining: int | None,
+        cycle_limit: int,
+    ) -> ProjectWorkerResult:
         claim = self._task_manager.lifecycle_repository.acquire_project_cycle_claim(
             task_id=task.task_id,
             owner_id=self._owner_id,
@@ -294,9 +333,20 @@ class ProjectWorker:
                 cycle_number=cycle_number,
                 triggering_cron_job_id=triggering_cron_job_id,
                 check_events=check_events,
-                project_tool_calls_remaining=budget.remaining.get("tool_calls"),
-                cycle_limit=budget.limits["iterations"],
+                project_tool_calls_remaining=project_tool_calls_remaining,
+                cycle_limit=cycle_limit,
             )
+        except (OSError, RuntimeError, ValueError) as exc:
+            project_progress.record_project_cycle_interruption_if_current(
+                task_manager=self._task_manager,
+                autonomy_store=self._autonomy_store,
+                run=run,
+                checkpoint=checkpoint,
+                claim=claim,
+                error=exc,
+                triggering_cron_job_id=triggering_cron_job_id,
+            )
+            raise
         finally:
             self._task_manager.lifecycle_repository.release_project_cycle_claim(claim)
 
@@ -430,7 +480,9 @@ class ProjectWorker:
             check_events=(project_cp.repository_check_event(committed),),
         )
 
-    def _load_cycle(self, run_id: str) -> tuple[AutonomyRun, ProjectCheckpoint]:
+    def _load_cycle(
+        self, run_id: str
+    ) -> tuple[AutonomyRun, ProjectCheckpoint, TaskLifecycleRecord]:
         run = self._autonomy_store.require(run_id)
         if not run.task_id:
             raise ValueError("autonomy run is missing task_id")
@@ -440,7 +492,36 @@ class ProjectWorker:
         )
         if checkpoint is None:
             raise ValueError("project worker requires an initial checkpoint")
-        return self._reconcile_run_projection(run, checkpoint.project_run), checkpoint
+        task = self._task_manager.get_task(run.task_id)
+        if task is None:
+            raise KeyError(f"task not found: {run.task_id}")
+        return run, checkpoint, task
+
+    def _terminal_checkpoint_result(
+        self,
+        run: AutonomyRun,
+        checkpoint: ProjectCheckpoint,
+    ) -> ProjectWorkerResult | None:
+        recovered = project_progress.recover_terminal_checkpoint(
+            task_manager=self._task_manager,
+            autonomy_store=self._autonomy_store,
+            run=run,
+            checkpoint=checkpoint,
+            cycle_summaries=project_cp.project_cycle_summaries(
+                self._task_manager, task_id=run.task_id or ""
+            ),
+            workspace=project_workspace(run.workspace_ref),
+        )
+        if recovered is None:
+            return None
+        terminal_run, decision, verification = recovered
+        return ProjectWorkerResult(
+            run=terminal_run,
+            project_run=checkpoint.project_run,
+            decision=decision,
+            verification=verification,
+            reconciled_only=True,
+        )
 
     def _reconciled_cron_cycle(
         self,
@@ -466,7 +547,7 @@ class ProjectWorker:
         return ProjectWorkerResult(
             run=run,
             project_run=checkpoint.project_run,
-            decision=self._checkpoint_decision(checkpoint.payload),
+            decision=project_progress.checkpoint_decision(checkpoint.payload),
             verification=(),
             reconciled_only=True,
         )
@@ -662,6 +743,11 @@ class ProjectWorker:
                         (*project_run.progress_refs, *evaluation.turn.evidence_refs)
                     )
                 ),
+                "artifact_refs": tuple(
+                    dict.fromkeys(
+                        (*project_run.artifact_refs, *evaluation.turn.artifact_refs)
+                    )
+                ),
                 "effect_refs": tuple(
                     dict.fromkeys(
                         (*project_run.effect_refs, *evaluation.turn.effect_refs)
@@ -714,18 +800,24 @@ class ProjectWorker:
                 ),
             }
         )
+        if evaluation.decision != ProjectCycleDecision.CONTINUE:
+            updated_run = write_project_terminal_proof(
+                self._autonomy_store,
+                updated_run,
+                project_run,
+                verification=evaluation.verification,
+                cycle_summaries=project_cp.project_cycle_summaries(
+                    self._task_manager, task_id=run.task_id or ""
+                ),
+                workspace=project_workspace(run.workspace_ref),
+            )
         self._autonomy_store.save(updated_run)
-        self._transition_task(
+        project_progress.transition_project_task(
+            self._task_manager,
             project_run.task_id,
             decision=evaluation.decision,
             status=evaluation.status,
         )
-        if evaluation.decision != ProjectCycleDecision.CONTINUE:
-            self._write_terminal_proof(
-                updated_run,
-                verification=evaluation.verification,
-            )
-            updated_run = self._autonomy_store.require(updated_run.run_id)
         self._log_cycle(
             "project.cycle.finished",
             run,
@@ -762,45 +854,6 @@ class ProjectWorker:
             )
         )
 
-    def _reconcile_run_projection(
-        self,
-        run: AutonomyRun,
-        project_run: ProjectRun,
-    ) -> AutonomyRun:
-        checkpoint_matches = run.checkpoint_id == project_run.last_checkpoint_id
-        if checkpoint_matches and run.status == project_run.status:
-            return run
-        resumed = run.status == AutonomyRunStatus.RUNNING
-        reconciled = run.model_copy(
-            update={
-                "checkpoint_id": project_run.last_checkpoint_id,
-                "status": run.status if resumed else project_run.status,
-                "phase": run.phase if resumed else project_run.phase,
-                "updated_at_ms": project_run.updated_at_ms,
-            }
-        )
-        self._autonomy_store.save(reconciled)
-        return reconciled
-
-    def _write_terminal_proof(
-        self,
-        run: AutonomyRun,
-        *,
-        verification: tuple[TestEvidence, ...],
-    ) -> None:
-        packet = build_project_terminal_proof(
-            run,
-            verification=verification,
-            cycle_summaries=project_cp.project_cycle_summaries(
-                self._task_manager, task_id=run.task_id or ""
-            ),
-        )
-        self._autonomy_store.write_proof_packet(packet)
-
-    @staticmethod
-    def _checkpoint_decision(payload: dict[str, object]) -> ProjectCycleDecision:
-        return ProjectCycleDecision(str(payload.get("decision") or "blocked"))
-
     def _budget_blocked(
         self,
         run: AutonomyRun,
@@ -821,58 +874,6 @@ class ProjectWorker:
             decision=ProjectCycleDecision.BLOCKED,
             verification=(),
         )
-
-    def _domain_blocked(
-        self,
-        run: AutonomyRun,
-        project_run: ProjectRun,
-    ) -> ProjectWorkerResult:
-        domain = run.execution_selectors.verification_domain
-        blocked = run.model_copy(
-            update={
-                "status": AutonomyRunStatus.BLOCKED,
-                "phase": AutonomyRunPhase.CLOSED,
-                "operator_summary": "Project domain is not configured.",
-                "next_action_hint": "Start a coding or research project.",
-                "last_error": AutonomyRunError(
-                    code="project_domain_not_configured",
-                    message=f"Project domain is not configured: {domain}",
-                ),
-                "updated_at_ms": now_ms(),
-            }
-        )
-        self._autonomy_store.save(blocked)
-        if run.task_id:
-            self._task_manager.transition_task(
-                task_id=run.task_id,
-                to_state=TaskLifecycleState.PAUSED,
-            )
-        return ProjectWorkerResult(
-            run=blocked,
-            project_run=project_run,
-            decision=ProjectCycleDecision.BLOCKED,
-            verification=(),
-        )
-
-    def _transition_task(
-        self,
-        task_id: str,
-        *,
-        decision: ProjectCycleDecision,
-        status: AutonomyRunStatus,
-    ) -> None:
-        target = None
-        if status == AutonomyRunStatus.FAILED:
-            target = TaskLifecycleState.FAILED
-        elif decision == ProjectCycleDecision.STOP:
-            target = TaskLifecycleState.DONE
-        elif decision in {
-            ProjectCycleDecision.BLOCKED,
-            ProjectCycleDecision.NEEDS_INPUT,
-        }:
-            target = TaskLifecycleState.PAUSED
-        if target is not None:
-            self._task_manager.transition_task(task_id=task_id, to_state=target)
 
 
 __all__ = [

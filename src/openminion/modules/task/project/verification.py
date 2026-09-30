@@ -13,12 +13,16 @@ from openminion.base.redaction import redact_sensitive_text
 from openminion.modules.task.autonomy import (
     AutonomyProofPacket,
     AutonomyRun,
+    AutonomyRunStore,
     TestEvidence,
     TestEvidenceStatus,
     VerificationWaiver,
+    build_local_workspace_ref,
     build_terminal_proof_packet,
     now_ms,
 )
+
+from .models import ProjectRun
 
 if TYPE_CHECKING:
     from .turn import ProjectTurnResult
@@ -191,6 +195,7 @@ def build_project_terminal_proof(
     *,
     verification: tuple[TestEvidence, ...],
     cycle_summaries: tuple[str, ...],
+    artifact_refs: tuple[str, ...] = (),
 ) -> AutonomyProofPacket:
     waiver_reason = str(
         run.execution_selectors.verification_waiver_reason or ""
@@ -214,7 +219,33 @@ def build_project_terminal_proof(
         final_operator_summary=run.operator_summary or "Autonomy project closed.",
         cycle_summaries=cycle_summaries,
         tests_run=verification,
+        artifact_refs=artifact_refs,
         verification_waiver=waiver,
+    )
+
+
+def write_project_terminal_proof(
+    store: AutonomyRunStore,
+    run: AutonomyRun,
+    project_run: ProjectRun,
+    *,
+    verification: tuple[TestEvidence, ...],
+    cycle_summaries: tuple[str, ...],
+    workspace: Path,
+) -> AutonomyRun:
+    proof_run = run.model_copy(
+        update={"workspace_ref": build_local_workspace_ref(workspace)}
+    )
+    store.write_proof_packet(
+        build_project_terminal_proof(
+            proof_run,
+            verification=verification,
+            cycle_summaries=cycle_summaries,
+            artifact_refs=project_run.artifact_refs,
+        )
+    )
+    return run.model_copy(
+        update={"proof_packet_ref": store.require(run.run_id).proof_packet_ref}
     )
 
 
@@ -325,4 +356,5 @@ __all__ = [
     "evaluate_project_verification_closure",
     "run_project_verification_commands",
     "validate_project_verifier",
+    "write_project_terminal_proof",
 ]

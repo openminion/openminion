@@ -2,23 +2,36 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from openminion.base.errors import error_info_from_exception
 from openminion.modules.task.autonomy import (
     AutonomyRun,
+    AutonomyRunError,
     AutonomyRunPhase,
     AutonomyRunStatus,
     AutonomyRunStore,
+    TestEvidence,
     now_ms,
 )
 from openminion.modules.task.runtime.lifecycle import TaskLifecycleState, TaskManager
 
 from . import checkpoints as project_checkpoints
 from .constants import REPOSITORY_LIFECYCLE_PAYLOAD_KEY
-from .models import ProjectCheckpoint, ProjectCycleDecision, ProjectVerificationState
-from .verification import ProjectDomainVerificationStatus
+from .models import (
+    ProjectCheckpoint,
+    ProjectCycleDecision,
+    ProjectRun,
+    ProjectVerificationState,
+)
+from .verification import (
+    ProjectDomainVerificationStatus,
+    write_project_terminal_proof,
+)
 
 if TYPE_CHECKING:
     from .turn import ProjectTurnResult
@@ -56,6 +69,253 @@ class AutonomyLoopJudgment(BaseModel):
         if self.requires_operator and not self.next_resume_action:
             raise ValueError("operator-required judgment needs next_resume_action")
         return self
+
+
+def terminal_checkpoint_projection(
+    run: AutonomyRun,
+    checkpoint: ProjectCheckpoint,
+) -> tuple[AutonomyRun, ProjectCycleDecision, tuple[TestEvidence, ...]] | None:
+    project_run = checkpoint.project_run
+    if (
+        project_run.status == AutonomyRunStatus.BLOCKED
+        and run.status == AutonomyRunStatus.RUNNING
+    ):
+        return None
+    if project_run.status not in {
+        AutonomyRunStatus.BLOCKED,
+        AutonomyRunStatus.FAILED,
+        AutonomyRunStatus.COMPLETED,
+        AutonomyRunStatus.CANCELLED,
+    }:
+        return None
+    raw_verification = checkpoint.payload.get("verification")
+    verification = (
+        tuple(
+            TestEvidence.model_validate(item)
+            for item in raw_verification
+            if isinstance(item, Mapping)
+        )
+        if isinstance(raw_verification, list)
+        else ()
+    )
+    projected = run.model_copy(
+        update={
+            "checkpoint_id": checkpoint.checkpoint_id,
+            "status": project_run.status,
+            "phase": project_run.phase,
+            "updated_at_ms": project_run.updated_at_ms,
+            "completed_at_ms": (
+                project_run.updated_at_ms
+                if project_run.status == AutonomyRunStatus.COMPLETED
+                else run.completed_at_ms
+            ),
+        }
+    )
+    decision = checkpoint_decision(checkpoint.payload)
+    return projected, decision, verification
+
+
+def recover_terminal_checkpoint(
+    *,
+    task_manager: TaskManager,
+    autonomy_store: AutonomyRunStore,
+    run: AutonomyRun,
+    checkpoint: ProjectCheckpoint,
+    cycle_summaries: tuple[str, ...],
+    workspace: Path,
+) -> tuple[AutonomyRun, ProjectCycleDecision, tuple[TestEvidence, ...]] | None:
+    projection = terminal_checkpoint_projection(run, checkpoint)
+    if projection is None:
+        return None
+    terminal_run, decision, verification = projection
+    if not terminal_run.proof_packet_ref:
+        terminal_run = write_project_terminal_proof(
+            autonomy_store,
+            terminal_run,
+            checkpoint.project_run,
+            verification=verification,
+            cycle_summaries=cycle_summaries,
+            workspace=workspace,
+        )
+    autonomy_store.save(terminal_run)
+    transition_project_task(
+        task_manager,
+        checkpoint.project_run.task_id,
+        decision=decision,
+        status=checkpoint.project_run.status,
+    )
+    return terminal_run, decision, verification
+
+
+def checkpoint_decision(payload: Mapping[str, object]) -> ProjectCycleDecision:
+    return ProjectCycleDecision(str(payload.get("decision") or "blocked"))
+
+
+def record_project_cycle_interruption(
+    *,
+    task_manager: TaskManager,
+    autonomy_store: AutonomyRunStore,
+    run: AutonomyRun,
+    checkpoint: ProjectCheckpoint,
+    claim: object,
+    error: Exception,
+    triggering_cron_job_id: str | None,
+) -> None:
+    timestamp = now_ms()
+    error_info = error_info_from_exception(
+        error,
+        default_code="project_cycle_interrupted",
+        default_message="Project cycle was interrupted before a checkpoint was committed.",
+        namespace="task.project",
+    )
+    failure = AutonomyRunError(code=error_info.code, message=error_info.message)
+    checkpoint_id = (
+        f"{checkpoint.project_run.project_run_id}:interrupted:{uuid4().hex[:12]}"
+    )
+    interrupted_project = checkpoint.project_run.model_copy(
+        update={
+            "status": AutonomyRunStatus.BLOCKED,
+            "phase": AutonomyRunPhase.RECOVER,
+            "updated_at_ms": timestamp,
+            "blocked_reason": failure.message,
+            "verification_state": ProjectVerificationState.BLOCKED,
+            "task_state": TaskLifecycleState.PAUSED,
+            "next_wake_job_id": None,
+        }
+    )
+    committed = project_checkpoints.commit_project_run_checkpoint(
+        task_manager,
+        interrupted_project,
+        claim=claim,
+        checkpoint_id=checkpoint_id,
+        triggering_cron_job_id=triggering_cron_job_id,
+        payload={
+            **checkpoint.payload,
+            "decision": ProjectCycleDecision.BLOCKED.value,
+            "decision_reason": failure.code,
+            "error": failure.model_dump(mode="json"),
+        },
+    )
+    autonomy_store.save(
+        run.model_copy(
+            update={
+                "checkpoint_id": committed.checkpoint_id,
+                "status": AutonomyRunStatus.BLOCKED,
+                "phase": AutonomyRunPhase.RECOVER,
+                "operator_summary": failure.message,
+                "next_action_hint": "Resume the project to retry the interrupted cycle.",
+                "last_error": failure,
+                "updated_at_ms": timestamp,
+            }
+        )
+    )
+    task_manager.transition_task(
+        task_id=checkpoint.project_run.task_id,
+        to_state=TaskLifecycleState.PAUSED,
+    )
+
+
+def record_project_cycle_interruption_if_current(
+    *,
+    task_manager: TaskManager,
+    autonomy_store: AutonomyRunStore,
+    run: AutonomyRun,
+    checkpoint: ProjectCheckpoint,
+    claim: object,
+    error: Exception,
+    triggering_cron_job_id: str | None,
+) -> None:
+    latest = project_checkpoints.load_latest_project_checkpoint(
+        task_manager,
+        task_id=checkpoint.project_run.task_id,
+    )
+    if latest is None or latest.checkpoint_id != checkpoint.checkpoint_id:
+        return
+    record_project_cycle_interruption(
+        task_manager=task_manager,
+        autonomy_store=autonomy_store,
+        run=run,
+        checkpoint=checkpoint,
+        claim=claim,
+        error=error,
+        triggering_cron_job_id=triggering_cron_job_id,
+    )
+
+
+def reconcile_run_projection(
+    run: AutonomyRun,
+    project_run: ProjectRun,
+    *,
+    autonomy_store: AutonomyRunStore,
+) -> AutonomyRun:
+    if (
+        run.checkpoint_id == project_run.last_checkpoint_id
+        and run.status == project_run.status
+    ):
+        return run
+    resumed = run.status == AutonomyRunStatus.RUNNING
+    reconciled = run.model_copy(
+        update={
+            "checkpoint_id": project_run.last_checkpoint_id,
+            "status": run.status if resumed else project_run.status,
+            "phase": run.phase if resumed else project_run.phase,
+            "updated_at_ms": project_run.updated_at_ms,
+        }
+    )
+    autonomy_store.save(reconciled)
+    return reconciled
+
+
+def transition_project_task(
+    task_manager: TaskManager,
+    task_id: str,
+    *,
+    decision: ProjectCycleDecision,
+    status: AutonomyRunStatus,
+) -> None:
+    target = None
+    if status == AutonomyRunStatus.FAILED:
+        target = TaskLifecycleState.FAILED
+    elif status == AutonomyRunStatus.CANCELLED:
+        target = TaskLifecycleState.CANCELLED
+    elif decision == ProjectCycleDecision.STOP:
+        target = TaskLifecycleState.DONE
+    elif decision in {
+        ProjectCycleDecision.BLOCKED,
+        ProjectCycleDecision.NEEDS_INPUT,
+    }:
+        target = TaskLifecycleState.PAUSED
+    if target is not None:
+        task_manager.transition_task(task_id=task_id, to_state=target)
+
+
+def block_unconfigured_project_domain(
+    *,
+    task_manager: TaskManager,
+    autonomy_store: AutonomyRunStore,
+    run: AutonomyRun,
+    project_run: ProjectRun,
+) -> AutonomyRun:
+    domain = run.execution_selectors.verification_domain
+    blocked = run.model_copy(
+        update={
+            "status": AutonomyRunStatus.BLOCKED,
+            "phase": AutonomyRunPhase.CLOSED,
+            "operator_summary": "Project domain is not configured.",
+            "next_action_hint": "Start a coding or research project.",
+            "last_error": AutonomyRunError(
+                code="project_domain_not_configured",
+                message=f"Project domain is not configured: {domain}",
+            ),
+            "updated_at_ms": now_ms(),
+        }
+    )
+    autonomy_store.save(blocked)
+    task_manager.transition_task(
+        task_id=project_run.task_id,
+        to_state=TaskLifecycleState.PAUSED,
+    )
+    return blocked
 
 
 def repository_task_plan_progress(
@@ -563,9 +823,17 @@ __all__ = [
     "AutonomyLoopConditionKind",
     "AutonomyLoopJudgment",
     "begin_next_repository_check",
+    "block_unconfigured_project_domain",
+    "checkpoint_decision",
     "cycle_disposition",
     "classify_autonomy_loop_condition",
     "finish_repository_check",
     "observe_repository_checks",
+    "reconcile_run_projection",
+    "recover_terminal_checkpoint",
+    "record_project_cycle_interruption",
+    "record_project_cycle_interruption_if_current",
     "repository_check_data",
+    "terminal_checkpoint_projection",
+    "transition_project_task",
 ]

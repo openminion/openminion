@@ -17,6 +17,8 @@ class DaemonEndpoint:
     host: str
     port: int
     token: str = ""
+    home_root: str = ""
+    data_root: str = ""
 
     @property
     def base_url(self) -> str:
@@ -53,6 +55,12 @@ def resolve_daemon_endpoint(
         host=host,
         port=port,
         token=token,
+        home_root=(
+            str(Path(home_root).expanduser().resolve()) if home_root is not None else ""
+        ),
+        data_root=(
+            str(Path(data_root).expanduser().resolve()) if data_root is not None else ""
+        ),
     )
 
 

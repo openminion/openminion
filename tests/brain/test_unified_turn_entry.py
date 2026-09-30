@@ -276,6 +276,7 @@ def test_coding_tool_contract_targets_iterative_verified_software_work() -> None
     assert "tests" in spec.description
     assert "final verification" in spec.description
     assert "call this control first with project_handoff" in spec.description
+    assert "inspection waits until the proposal is approved" in spec.description
 
 
 def test_unified_entry_time_prompt_prefers_explicit_tool_sequence(

@@ -143,7 +143,8 @@ def coding_tool_spec() -> ToolSpec:
             "tests, command execution, and final verification before answering. "
             "When the user requests approval before project work, call this "
             "control first with project_handoff and sub_intents. It returns a "
-            "proposal without starting the coding loop or changing files."
+            "proposal without starting the coding loop or changing files; repository "
+            "inspection waits until the proposal is approved."
         ),
         input_schema={
             "type": "object",

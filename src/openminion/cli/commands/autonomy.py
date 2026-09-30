@@ -21,6 +21,7 @@ from openminion.cli.commands.autonomy_project import (
     schedule_unattended_project,
     verifier_preflight_error,
     workspace_path_from_ref,
+    write_terminal_proof,
 )
 from openminion.cli.commands.autonomy_inspect import (
     list_autonomy_runs,
@@ -44,7 +45,7 @@ from openminion.modules.task.autonomy import (
     TestEvidenceStatus,
     VerificationDomain,
     VerificationWaiver,
-    build_terminal_proof_packet,
+    build_local_workspace_ref,
     now_ms,
 )
 from openminion.modules.task.project import (
@@ -365,6 +366,15 @@ def _execute_project(
             verification=(),
         )
     except Exception as exc:
+        current = store.require(run.run_id)
+        checkpoint = load_latest_project_checkpoint(manager, task_id=str(run.task_id))
+        if current.status == AutonomyRunStatus.BLOCKED and checkpoint is not None:
+            return ProjectWorkerResult(
+                run=current,
+                project_run=checkpoint.project_run,
+                decision=ProjectCycleDecision.BLOCKED,
+                verification=(),
+            )
         error_info = error_info_from_exception(exc, default_code=type(exc).__name__)
         failed = store.transition(
             run.run_id,
@@ -377,7 +387,7 @@ def _execute_project(
                 message=error_info.message,
             ),
         )
-        _write_terminal_proof(
+        write_terminal_proof(
             store,
             failed,
             validation_summary="Project worker execution failed.",
@@ -459,9 +469,12 @@ def _finalize_project_result(
                 "summary": "autonomy project reached terminal verification",
             }
         )
-        _write_terminal_proof(
+        proof_run = run.model_copy(
+            update={"workspace_ref": build_local_workspace_ref(workspace)}
+        )
+        write_terminal_proof(
             store,
-            run,
+            proof_run,
             validation_summary=_validation_summary(result.verification, waiver=waiver),
             final_operator_summary=run.operator_summary or "Autonomy project closed.",
             cycle_summaries=project_checkpoints.project_cycle_summaries(
@@ -470,6 +483,7 @@ def _finalize_project_result(
             ),
             commands_run=(command,),
             tests_run=result.verification,
+            artifact_refs=result.project_run.artifact_refs,
             verification_waiver=waiver,
             delegation_results=delegation_results,
             delegation_aggregation=_delegation_aggregation(delegation_results),
@@ -498,7 +512,7 @@ def _write_terminal_output(
     final_operator_summary: str,
     cycle_summaries: tuple[str, ...] = (),
 ) -> int:
-    _write_terminal_proof(
+    write_terminal_proof(
         store,
         run,
         validation_summary=validation_summary,
@@ -506,35 +520,6 @@ def _write_terminal_output(
         cycle_summaries=cycle_summaries,
     )
     return _print_run(args, store.require(run.run_id))
-
-
-def _write_terminal_proof(
-    store: AutonomyRunStore,
-    run: AutonomyRun,
-    *,
-    validation_summary: str,
-    final_operator_summary: str,
-    cycle_summaries: tuple[str, ...] = (),
-    commands_run: tuple[CommandEvidence, ...] = (),
-    tests_run: tuple[TestEvidence, ...] = (),
-    verification_waiver: VerificationWaiver | None = None,
-    delegation_results: tuple[DelegatedRoleEvidence, ...] = (),
-    delegation_aggregation: dict[str, object] | None = None,
-    context_budget: ContextBudgetEvidence | None = None,
-) -> None:
-    packet = build_terminal_proof_packet(
-        run,
-        validation_summary=validation_summary,
-        final_operator_summary=final_operator_summary,
-        cycle_summaries=cycle_summaries,
-        commands_run=commands_run,
-        tests_run=tests_run,
-        verification_waiver=verification_waiver,
-        delegation_results=delegation_results,
-        delegation_aggregation=delegation_aggregation,
-        context_budget=context_budget,
-    )
-    store.write_proof_packet(packet)
 
 
 def _delegated_role_evidence(

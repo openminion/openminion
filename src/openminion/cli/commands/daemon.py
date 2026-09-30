@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -394,9 +395,15 @@ def _start_daemon(endpoint: DaemonEndpoint) -> dict[str, object]:
         str(pid_file),
     ]
 
+    env = os.environ.copy()
+    if endpoint.home_root:
+        env["OPENMINION_HOME"] = endpoint.home_root
+    if endpoint.data_root:
+        env["OPENMINION_DATA_ROOT"] = endpoint.data_root
     with log_file.open("a", encoding="utf-8") as stream:
         process = subprocess.Popen(  # noqa: S603
             command,
+            env=env,
             stdout=stream,
             stderr=subprocess.STDOUT,
             start_new_session=True,

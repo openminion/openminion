@@ -71,6 +71,7 @@ from .verification import (
     evaluate_project_verification_closure,
     run_project_verification_commands,
     validate_project_verifier,
+    write_project_terminal_proof,
 )
 from .turn import (
     ProjectTurnRequest,
@@ -134,6 +135,7 @@ __all__ = [
     "evaluate_project_verification_closure",
     "run_project_verification_commands",
     "validate_project_verifier",
+    "write_project_terminal_proof",
     "find_open_project_worker",
     "issue_project_permission_grant",
     "link_project_run_to_task",

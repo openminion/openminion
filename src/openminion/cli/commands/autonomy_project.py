@@ -25,10 +25,15 @@ from openminion.modules.task import (
     TaskManager,
 )
 from openminion.modules.task.autonomy import (
+    CommandEvidence,
+    ContextBudgetEvidence,
+    DelegatedRoleEvidence,
+    TestEvidence,
     VerificationWaiver,
     autonomy_permission_metadata,
     build_autonomy_run,
     build_local_workspace_ref,
+    build_terminal_proof_packet,
     now_ms,
 )
 from openminion.modules.task.autonomy import VerificationDomain
@@ -277,6 +282,38 @@ def workspace_path_from_ref(workspace_ref: str | None) -> Path | None:
         return None
     path_part = workspace_ref.removeprefix("local:").split("#", 1)[0]
     return Path(path_part).expanduser().resolve(strict=False)
+
+
+def write_terminal_proof(
+    store: AutonomyRunStore,
+    run: AutonomyRun,
+    *,
+    validation_summary: str,
+    final_operator_summary: str,
+    cycle_summaries: tuple[str, ...] = (),
+    commands_run: tuple[CommandEvidence, ...] = (),
+    tests_run: tuple[TestEvidence, ...] = (),
+    artifact_refs: tuple[str, ...] = (),
+    verification_waiver: VerificationWaiver | None = None,
+    delegation_results: tuple[DelegatedRoleEvidence, ...] = (),
+    delegation_aggregation: dict[str, object] | None = None,
+    context_budget: ContextBudgetEvidence | None = None,
+) -> None:
+    store.write_proof_packet(
+        build_terminal_proof_packet(
+            run,
+            validation_summary=validation_summary,
+            final_operator_summary=final_operator_summary,
+            cycle_summaries=cycle_summaries,
+            commands_run=commands_run,
+            tests_run=tests_run,
+            artifact_refs=artifact_refs,
+            verification_waiver=verification_waiver,
+            delegation_results=delegation_results,
+            delegation_aggregation=delegation_aggregation,
+            context_budget=context_budget,
+        )
+    )
 
 
 def run_project_turn(

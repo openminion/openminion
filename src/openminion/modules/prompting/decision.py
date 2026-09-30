@@ -7,8 +7,10 @@ DECIDE_STYLE_OVERRIDES: dict[str, str] = {
         "This is the unified entry call. Return one visible entry control or "
         "execution tool call. If the user asks for approval before project work, "
         "first call coding with project_handoff and sub_intents. Do not call plan, "
-        "tool.request, or an execution tool before that approval. Otherwise start "
-        "the work directly. Use respond(answer=..., freshness=...) for a direct "
+        "tool.request, or an execution tool before that approval. An explicit typed "
+        "or durable project handoff request needs no repository inspection before "
+        "this proposal. Otherwise start the work directly. Use "
+        "respond(answer=..., freshness=...) for a direct "
         "answer; include freshness in every entry control call."
     ),
     "entry_tool_rule": (
