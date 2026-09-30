@@ -238,10 +238,16 @@ def _build_state_store(cfg: RuntimeConfig) -> MemoryStateStore | SQLiteStateStor
 def _build_audit_store(cfg: RuntimeConfig) -> MemoryAuditStore | SQLiteAuditStore:
     audit_backend = cfg.storage.audit.backend.lower()
     if audit_backend in {"memory", "inmemory"}:
-        return MemoryAuditStore()
+        return MemoryAuditStore(
+            capture_payloads=cfg.storage.audit.capture_payloads,
+            retention_days=cfg.storage.audit.retention_days,
+        )
     if audit_backend in {"sqlite_rotated", "sqlite"}:
         return SQLiteAuditStore(
-            cfg.storage.audit.root, retention_days=cfg.storage.audit.retention_days
+            cfg.storage.audit.root,
+            capture_payloads=cfg.storage.audit.capture_payloads,
+            retention_days=cfg.storage.audit.retention_days,
+            archive_retention_days=cfg.storage.audit.archive_retention_days,
         )
     raise A2AError(
         ERROR_CODE_INVALID_CONFIG,

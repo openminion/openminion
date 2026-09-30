@@ -15,7 +15,10 @@ from openminion.modules.a2a.runtime import A2ARuntime
 from openminion.modules.a2a.storage import MemoryAuditStore, MemoryStateStore
 
 
-def _context(*, traceparent: str = "00-xyz-invalid") -> A2AObservabilityContext:
+def _context(
+    *,
+    traceparent: str = ("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+) -> A2AObservabilityContext:
     return A2AObservabilityContext(
         invocation_id=str(uuid.uuid4()),
         execution_id=str(uuid.uuid4()),
@@ -45,18 +48,42 @@ def test_context_round_trip_is_top_level_and_exact() -> None:
     assert Envelope.from_dict(payload).observability == request.observability
 
 
-def test_malformed_identifier_fails_but_malformed_traceparent_does_not() -> None:
+def test_malformed_identifier_fails() -> None:
     invalid = _context()
     object.__setattr__(invalid, "handoff_id", "not-a-uuid")
     with pytest.raises(EnvelopeValidationError):
         validate_envelope_contract(_request(invalid))
 
-    validate_envelope_contract(_request(_context(traceparent="malformed")))
-    assert is_valid_traceparent("malformed") is False
-    assert (
-        is_valid_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
-        is True
-    )
+
+@pytest.mark.parametrize(
+    "traceparent",
+    [
+        "",
+        "malformed",
+        " 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00F067AA0BA902B7-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e47+6-00f067aa0ba902b7-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e47_6-00f067aa0ba902b7-01",
+        "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-extra",
+    ],
+)
+def test_missing_or_malformed_traceparent_fails(traceparent: str) -> None:
+    with pytest.raises(
+        EnvelopeValidationError,
+        match="traceparent must be a valid W3C traceparent",
+    ):
+        validate_envelope_contract(_request(_context(traceparent=traceparent)))
+
+
+def test_version_zero_traceparent_is_accepted() -> None:
+    traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+    assert is_valid_traceparent(traceparent) is True
+    validate_envelope_contract(_request(_context(traceparent=traceparent)))
 
 
 def test_fresh_cached_and_audit_shapes_preserve_context() -> None:
@@ -74,5 +101,7 @@ def test_fresh_cached_and_audit_shapes_preserve_context() -> None:
 
     assert fresh.observability == request.observability
     assert cached.observability == request.observability
-    assert audit[0].envelope["observability"] == request.observability.to_dict()
+    expected = request.observability.to_dict()
+    expected.pop("tracestate")
+    assert audit[0].envelope == {"observability": expected}
     runtime.close()

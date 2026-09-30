@@ -1,9 +1,14 @@
+import copy
+from dataclasses import replace
 from datetime import datetime, timezone
+from typing import Any
 from typing import Protocol
 
 from openminion.modules.a2a.models import (
+    A2AObservabilityContext,
     AgentDescriptor,
     AuditRecord,
+    EnvelopeValidationError,
     IdempotencyRecord,
     JobRecord,
 )
@@ -17,6 +22,35 @@ def idempotency_slot_is_stale(updated_at: str, *, stale_after_sec: int) -> bool:
         return True
     age = datetime.now(timezone.utc) - stamped.astimezone(timezone.utc)
     return age.total_seconds() > max(1, stale_after_sec)
+
+
+def audit_record_for_storage(
+    record: AuditRecord, *, capture_payloads: bool
+) -> AuditRecord:
+    if capture_payloads:
+        return copy.deepcopy(record)
+    return replace(
+        record,
+        error_message=None,
+        envelope=_structural_observability(record.envelope),
+        data=None,
+    )
+
+
+def _structural_observability(
+    envelope: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    raw = envelope.get("observability") if isinstance(envelope, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    context = A2AObservabilityContext.from_dict(raw)
+    try:
+        context.validate()
+    except EnvelopeValidationError:
+        return None
+    payload = context.to_dict()
+    payload.pop("tracestate", None)
+    return {"observability": payload}
 
 
 class StateStore(Protocol):

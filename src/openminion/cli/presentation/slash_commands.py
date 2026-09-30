@@ -90,6 +90,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "Delegate work or inspect a delegated task",
         (
             "/delegate [sync|async] <agent> <instruction...>",
+            "/delegate list [limit]",
             "/delegate status|result|resume|cancel <task-id>",
             "/delegate review '<review-request-json>'",
             "/delegate accept|reject '<child-artifact-json>'",

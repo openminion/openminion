@@ -74,7 +74,8 @@ class TaskDelegateArgs(BaseModel):
         default="sync",
         description=(
             "Delegation lifecycle action. Use sync or async to start child work; "
-            "use status, resume, or cancel with task_id; use review, accept, or "
+            "use list for recent owned work; use status, result, or cancel with "
+            "task_id; resume is a deprecated unsupported spelling; use review, accept, or "
             "reject only after a child_artifact is returned. There is no create mode."
         ),
     )
@@ -92,7 +93,13 @@ class TaskDelegateArgs(BaseModel):
     )
     task_id: str = Field(
         default="",
-        description="A resumable async task/job handle for status, resume, or cancel.",
+        description="An async task/job handle for status, result, resume, or cancel.",
+    )
+    limit: int = Field(
+        default=20,
+        ge=1,
+        le=200,
+        description="Maximum recent owned delegations returned by list (1..200).",
     )
     timeout_seconds: int = Field(
         default=120,
@@ -130,7 +137,9 @@ class TaskDelegateArgs(BaseModel):
         allowed = {
             "sync",
             "async",
+            "list",
             "status",
+            "result",
             "resume",
             "cancel",
             "review",
@@ -139,8 +148,8 @@ class TaskDelegateArgs(BaseModel):
         }
         if normalized_mode not in allowed:
             raise ValueError(
-                "mode must be one of: sync, async, status, resume, cancel, review, "
-                "accept, reject"
+                "mode must be one of: sync, async, list, status, result, resume, "
+                "cancel, review, accept, reject"
             )
         self.mode = normalized_mode
         if normalized_mode in {"sync", "async"}:
@@ -162,8 +171,8 @@ class TaskDelegateArgs(BaseModel):
         elif normalized_mode in {"accept", "reject"}:
             if not self.child_artifact:
                 raise ValueError("child_artifact is required for accept/reject")
-        elif not self.task_id.strip():
-            raise ValueError("task_id is required for status/resume/cancel")
+        elif normalized_mode != "list" and not self.task_id.strip():
+            raise ValueError("task_id is required for status/result/resume/cancel")
         return self
 
 
@@ -397,7 +406,11 @@ def _bind_delegate_observability(ctx: RuntimeContext, seam: Any) -> None:
     bind = getattr(seam, "bind_observability", None)
     if callable(bind):
         bind(
-            session_id=str(getattr(ctx, "telemetry_session_id", "") or ""),
+            session_id=str(
+                getattr(ctx, "telemetry_session_id", "")
+                or getattr(ctx, "session_id", "")
+                or ""
+            ),
             turn_id=str(getattr(ctx, "telemetry_turn_id", "") or ""),
             invocation_id=str(context_metadata.get("invocation_id") or ""),
             execution_id=str(context_metadata.get("execution_id") or ""),
@@ -427,18 +440,19 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         )
 
     _validate_delegate_target(validated, ctx)
+    _bind_delegate_observability(ctx, seam)
 
     if validated.mode == "review":
-        _bind_delegate_observability(ctx, seam)
         return _handle_child_artifact_review(validated, ctx, seam)
-    if validated.mode == "status":
+    if validated.mode == "list":
+        result = seam.list_recent(limit=validated.limit)
+    elif validated.mode in {"status", "result"}:
         result = seam.status(task_id=validated.task_id)
     elif validated.mode == "resume":
         result = seam.resume(task_id=validated.task_id)
     elif validated.mode == "cancel":
         result = seam.cancel(task_id=validated.task_id)
     else:
-        _bind_delegate_observability(ctx, seam)
         delegate_kwargs = {
             "agent_id": validated.agent_id,
             "instruction": validated.instruction,

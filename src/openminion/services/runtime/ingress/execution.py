@@ -183,6 +183,7 @@ def _execute_routed_turns(
     return _aggregate_routed_results(
         routed_results=routed_results,
         routing_mode=routing_mode,
+        result_id=request_id_base,
     )
 
 
@@ -190,6 +191,7 @@ def _aggregate_routed_results(
     *,
     routed_results: list[tuple[str, Any]],
     routing_mode: str,
+    result_id: str,
 ) -> Any:
     if len(routed_results) == 1:
         return routed_results[0][1]
@@ -206,15 +208,15 @@ def _aggregate_routed_results(
     for agent_id, result in routed_results:
         body = str(result.body).strip()
         metadata = result.metadata
-        room_responses.append(
-            {
-                "agent_id": agent_id,
-                "body": body,
-                "persisted_outbound_message_id": str(
-                    metadata.get("persisted_outbound_message_id", "")
-                ).strip(),
-            }
-        )
+        room_response = {"agent_id": agent_id, "body": body}
+        child_values = {**metadata, "result_id": getattr(result, "id", "")}
+        for key in (
+            "result_id request_id invocation_id execution_id run_id trace_id status "
+            "error_code persisted_inbound_message_id persisted_outbound_message_id"
+        ).split():
+            if value := str(child_values.get(key) or "").strip():
+                room_response[key] = value
+        room_responses.append(room_response)
         if body:
             parts.append(f"[{agent_id}]\n{body}")
     aggregate_metadata["room_responses"] = room_responses
@@ -235,7 +237,7 @@ def _aggregate_routed_results(
         )
 
     return RuntimeTurnResult(
-        id=str(last_result.id).strip(),
+        id=result_id,
         channel=str(last_result.channel).strip(),
         target=str(last_result.target).strip(),
         body="\n\n".join(parts).strip(),

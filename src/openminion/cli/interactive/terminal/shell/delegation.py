@@ -61,6 +61,7 @@ def handle_slash_delegate(
         instruction=request.instruction,
         task_id=request.task_id,
         timeout_seconds=request.timeout_seconds,
+        limit=request.limit,
         child_artifact=request.child_artifact,
         workspace_root=request.workspace_root,
         review_criteria=request.review_criteria,

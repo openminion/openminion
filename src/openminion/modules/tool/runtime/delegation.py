@@ -99,6 +99,8 @@ class A2ADelegateApi(Protocol):
 
     def status(self, *, task_id: str) -> A2ADelegateResult: ...
 
+    def list_recent(self, *, limit: int = 20) -> A2ADelegateResult: ...
+
     def resume(self, *, task_id: str) -> A2ADelegateResult: ...
 
     def cancel(self, *, task_id: str) -> A2ADelegateResult: ...
@@ -146,7 +148,7 @@ def map_a2a_delegate_result(
             status="success",
             content=summary,
             target_agent_id=target,
-            trace_id=trace_id,
+            trace_id=str(payload.get("trace_id") or trace_id),
             task_id=task_id,
             outputs=normalized_outputs,
         )
@@ -161,10 +163,10 @@ def map_a2a_delegate_result(
             else (
                 "task.delegate was requested synchronously, but the target "
                 "returned an async job. Retry with mode='async' to receive a "
-                "resumable task handle."
+                "task handle that can be inspected or canceled."
             ),
             target_agent_id=target,
-            trace_id=trace_id,
+            trace_id=str(payload.get("trace_id") or trace_id),
             task_id=task_id,
             outputs=normalized_outputs,
         )
@@ -177,7 +179,7 @@ def map_a2a_delegate_result(
         error_code=str(error.get("code") or "A2A_DELEGATE_FAILED"),
         error_message=str(error.get("message") or summary or "A2A delegation failed."),
         target_agent_id=target,
-        trace_id=trace_id,
+        trace_id=str(payload.get("trace_id") or trace_id),
         task_id=task_id,
         outputs=normalized_outputs,
     )
@@ -201,7 +203,7 @@ def map_a2a_job_result(raw: Any, *, trace_id: str, task_id: str) -> A2ADelegateR
             ok=True,
             status=status or "running",
             content=summary,
-            trace_id=trace_id,
+            trace_id=str(payload.get("trace_id") or trace_id),
             task_id=str(payload.get("task_id") or task_id),
             outputs=lifecycle_outputs,
         )
@@ -212,7 +214,7 @@ def map_a2a_job_result(raw: Any, *, trace_id: str, task_id: str) -> A2ADelegateR
         content=summary,
         error_code=str(error.get("code") or "A2A_JOB_FAILED"),
         error_message=str(error.get("message") or summary or "A2A job failed."),
-        trace_id=trace_id,
+        trace_id=str(payload.get("trace_id") or trace_id),
         task_id=str(payload.get("task_id") or task_id),
         outputs=normalized_outputs,
     )
@@ -713,7 +715,7 @@ class A2aRuntimeDelegateAdapter:
             workspace_root=workspace_root,
             cwd=cwd,
         )
-        if handoff_payload:
+        if handoff_payload and not is_a2a_delegate_running_status(result.status):
             self._emit_handoff(
                 session_id,
                 turn_id,
@@ -727,7 +729,61 @@ class A2aRuntimeDelegateAdapter:
         return self._run_lifecycle("status", task_id, "poll_task")
 
     def resume(self, *, task_id: str) -> A2ADelegateResult:
-        return self.status(task_id=task_id)
+        return A2ADelegateResult(
+            ok=False,
+            status="failed",
+            error_code="A2A_DELEGATE_RESUME_UNSUPPORTED",
+            error_message=(
+                "Delegated A2A jobs cannot be resumed. Use status or result to "
+                "inspect the existing job."
+            ),
+            task_id=str(task_id or "").strip(),
+        )
+
+    def list_recent(self, *, limit: int = 20) -> A2ADelegateResult:
+        if (
+            not self._parent_agent_id
+            or not self._observability.get("session_id", "").strip()
+        ):
+            return A2ADelegateResult(
+                ok=False,
+                status="failed",
+                error_code="A2A_DELEGATE_LIST_SCOPE_REQUIRED",
+                error_message="Delegation listing requires a bound agent and session.",
+            )
+        caller = getattr(self._a2a_call, "list_tasks", None)
+        if not callable(caller):
+            owner = getattr(self._a2a_call, "__self__", None)
+            caller = getattr(owner, "list_tasks", None)
+        if not callable(caller):
+            return A2ADelegateResult(
+                ok=False,
+                status="failed",
+                error_code="A2A_DELEGATE_LIST_UNAVAILABLE",
+                error_message="The configured A2A seam does not expose delegation listing.",
+            )
+        requested_limit = max(1, min(int(limit), 200))
+        raw = caller(
+            session_id=self._delegation_session_id(),
+            limit=requested_limit,
+        )
+        payload = raw if isinstance(raw, dict) else {}
+        raw_error = payload.get("error")
+        error: dict[str, Any] = raw_error if isinstance(raw_error, dict) else {}
+        if payload.get("ok") is not True:
+            return A2ADelegateResult(
+                ok=False,
+                status="failed",
+                error_code=str(error.get("code") or "A2A_DELEGATE_LIST_FAILED"),
+                error_message=str(error.get("message") or "Delegation listing failed."),
+            )
+        jobs = list(payload.get("jobs") or [])
+        return A2ADelegateResult(
+            ok=True,
+            status="success",
+            content=f"{len(jobs)} recent delegation(s).",
+            outputs={"jobs": jobs, "count": len(jobs), "limit": requested_limit},
+        )
 
     def cancel(self, *, task_id: str) -> A2ADelegateResult:
         return self._run_lifecycle("cancel", task_id, "cancel_task")

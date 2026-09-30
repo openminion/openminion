@@ -399,6 +399,7 @@ def _ctx_with_seam(seam: Any) -> SimpleNamespace:
         env={},
         a2a_delegate_api=seam,
         workspace=Path("/workspace"),
+        session_id="session-from-context",
     )
 
 
@@ -516,12 +517,26 @@ def test_task_delegate_async_mode_returns_task_handle() -> None:
     }
 
 
-def test_task_delegate_status_resume_and_cancel_use_lifecycle_methods() -> None:
+def test_task_delegate_list_status_result_resume_and_cancel_use_lifecycle_methods() -> (
+    None
+):
     from openminion.modules.tool.runtime.delegation import A2ADelegateResult
 
     calls: list[tuple[str, str]] = []
+    bindings: list[dict[str, str]] = []
 
     class _Seam:
+        def bind_observability(self, **kwargs: str) -> None:
+            bindings.append(dict(kwargs))
+
+        def list_recent(self, *, limit):
+            calls.append(("list", str(limit)))
+            return A2ADelegateResult(
+                ok=True,
+                status="success",
+                outputs={"jobs": [], "count": 0, "limit": limit},
+            )
+
         def status(self, *, task_id):
             calls.append(("status", task_id))
             return A2ADelegateResult(ok=True, status="running", task_id=task_id)
@@ -536,6 +551,19 @@ def test_task_delegate_status_resume_and_cancel_use_lifecycle_methods() -> None:
 
     seam = _Seam()
 
+    assert (
+        _h_task_delegate(  # type: ignore[arg-type]
+            {"mode": "list", "limit": 10}, _ctx_with_seam(seam)
+        )["outputs"]["limit"]
+        == 10
+    )
+
+    assert (
+        _h_task_delegate(  # type: ignore[arg-type]
+            {"mode": "result", "task_id": "job-1"}, _ctx_with_seam(seam)
+        )["status"]
+        == "running"
+    )
     assert (
         _h_task_delegate(  # type: ignore[arg-type]
             {"mode": "status", "task_id": "job-1"}, _ctx_with_seam(seam)
@@ -555,10 +583,14 @@ def test_task_delegate_status_resume_and_cancel_use_lifecycle_methods() -> None:
         == "canceled"
     )
     assert calls == [
+        ("list", "10"),
+        ("status", "job-1"),
         ("status", "job-1"),
         ("resume", "job-1"),
         ("cancel", "job-1"),
     ]
+    assert len(bindings) == 5
+    assert {binding["session_id"] for binding in bindings} == {"session-from-context"}
 
 
 def test_task_delegate_reject_requires_durable_record_alias() -> None:

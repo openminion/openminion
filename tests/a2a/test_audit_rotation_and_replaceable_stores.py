@@ -23,7 +23,11 @@ def root(tmp_path: Path) -> Path:
 
 def test_sqlite_audit_rotation_archives_old_files(root: Path) -> None:
     audit_root = root / "audit"
-    store = SQLiteAuditStore(audit_root, retention_days=1)
+    store = SQLiteAuditStore(
+        audit_root,
+        retention_days=1,
+        archive_retention_days=30,
+    )
 
     old_ts = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
     old_record = AuditRecord(
@@ -116,3 +120,61 @@ def test_runtime_works_with_memory_stores(root: Path) -> None:
         assert last_state == "SUCCESS"
     finally:
         runtime.close()
+
+
+def test_memory_audit_store_drops_rows_outside_retention() -> None:
+    store = MemoryAuditStore(retention_days=1)
+    for age_days, msg_id in ((3, "old"), (0, "recent")):
+        store.append_audit(
+            AuditRecord(
+                ts=(datetime.now(timezone.utc) - timedelta(days=age_days)).isoformat(),
+                msg_id=msg_id,
+                trace_id=f"trace-{msg_id}",
+                from_agent="a",
+                to_agent="b",
+                to_capability=None,
+                type="call",
+                method="echo.ping",
+                status="SUCCESS",
+            )
+        )
+
+    assert [row.msg_id for row in store.query_audit()] == ["recent"]
+
+
+def test_audit_failure_warns_without_payload_and_does_not_fail_work(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FailingAuditStore:
+        def append_audit(self, _record: AuditRecord) -> None:
+            raise RuntimeError("secret-payload")
+
+        def query_audit(self, _filter_by=None):
+            return []
+
+        def close(self) -> None:
+            return None
+
+    runtime = A2ARuntime(
+        state_store=MemoryStateStore(),
+        audit_store=_FailingAuditStore(),  # type: ignore[arg-type]
+    )
+    runtime.register_agent("echo", ["echo."], lambda _envelope: {"ok": True})
+    envelope = Envelope.new(
+        from_agent="tester",
+        to_agent="echo",
+        to_capability=None,
+        type="call",
+        method="echo.ping",
+        params={"secret": "not logged"},
+        idempotency_key="audit-warning",
+    )
+    try:
+        response = runtime.call(envelope)
+    finally:
+        runtime.close()
+
+    assert response.params["ok"] is True
+    assert "A2A audit append failed" in caplog.text
+    assert "secret-payload" not in caplog.text
+    assert "not logged" not in caplog.text

@@ -32,8 +32,20 @@ class _Runtime:
     turns: list[dict[str, object]] = field(default_factory=list)
     config: object | None = None
 
-    def run_turn(self, *, payload: dict[str, object], request_id: str | None = None):
-        self.turns.append({"payload": dict(payload), "request_id": request_id})
+    def run_turn(
+        self,
+        *,
+        payload: dict[str, object],
+        request_id: str | None = None,
+        cancel_event: threading.Event | None = None,
+    ):
+        self.turns.append(
+            {
+                "payload": dict(payload),
+                "request_id": request_id,
+                "cancel_event": cancel_event,
+            }
+        )
         return {
             "ok": True,
             "turn": {
@@ -63,6 +75,18 @@ def _ctx(
 
 def _jsonrpc_body(method: str, params: dict) -> dict:
     return {"jsonrpc": "2.0", "id": "req-1", "method": method, "params": params}
+
+
+def _task_request(ctx: APIRouteContext, method: str, params: dict[str, object]) -> dict:
+    result = a2a.handle_request(
+        ctx,
+        method_name="POST",
+        path="/a2a/v1/jsonrpc",
+        body=_jsonrpc_body(method, params),
+        query=None,
+    )
+    assert result is not None
+    return result.payload["result"]["task"]
 
 
 def _wait_for_task(ctx: APIRouteContext, task_id: str) -> dict:
@@ -223,6 +247,7 @@ def test_jsonrpc_submit_status_and_cancel_use_cached_runtime(
             "tasks/send",
             {
                 "idempotencyKey": "idem-1",
+                "timeoutMs": 12_000,
                 "message": {
                     "role": "user",
                     "parts": [{"kind": "text", "text": "hello"}],
@@ -246,6 +271,8 @@ def test_jsonrpc_submit_status_and_cancel_use_cached_runtime(
     assert payload["message"] == "hello"
     assert payload["channel"] == "a2a"
     assert payload["target"] == "external.peer"
+    assert payload["timeout_seconds"] == 12.0
+    assert isinstance(runtime.turns[0]["cancel_event"], threading.Event)
     assert payload["inbound_metadata"]["a2a_external"] == "true"
     assert "agent_id" not in payload
     result_data = completed["messages"][0]["parts"][0]["data"]
@@ -269,6 +296,130 @@ def test_jsonrpc_submit_status_and_cancel_use_cached_runtime(
     assert canceled is not None
     assert canceled.status == HTTPStatus.OK
     assert canceled.payload["result"]["task"]["id"] == task_id
+
+
+def test_jsonrpc_cancel_before_start_performs_no_turn_work(monkeypatch) -> None:
+    monkeypatch.setenv(a2a.A2A_NETWORK_TOKEN_ENV, "secret")
+    runtime = _Runtime()
+    ctx = _ctx(runtime)
+    a2a_runtime = resolve_external_a2a_runtime(runtime)
+    transition_started = threading.Event()
+    allow_transition = threading.Event()
+    mark_running = a2a_runtime._mark_job_running
+
+    def delayed_mark_running(**kwargs: object) -> bool:
+        transition_started.set()
+        assert allow_transition.wait(timeout=5)
+        return mark_running(**kwargs)
+
+    monkeypatch.setattr(a2a_runtime, "_mark_job_running", delayed_mark_running)
+    submitted = _task_request(
+        ctx,
+        "tasks/send",
+        {"idempotencyKey": "idem-cancel-before", "message": {"text": "wait"}},
+    )
+    task_id = submitted["id"]
+    assert transition_started.wait(timeout=5)
+    future = a2a_runtime._futures[task_id]
+
+    canceled = _task_request(ctx, "tasks/cancel", {"id": task_id})
+    assert canceled["state"] == "canceled"
+    allow_transition.set()
+    future.result(timeout=5)
+    assert _wait_for_task(ctx, task_id)["state"] == "canceled"
+    assert runtime.turns == []
+
+
+def test_jsonrpc_cancel_while_running_reaches_turn_runtime(monkeypatch) -> None:
+    monkeypatch.setenv(a2a.A2A_NETWORK_TOKEN_ENV, "secret")
+    started = threading.Event()
+    cancellation_observed = threading.Event()
+
+    class CooperativeRuntime(_Runtime):
+        def run_turn(
+            self,
+            *,
+            payload: dict[str, object],
+            request_id: str | None = None,
+            cancel_event: threading.Event | None = None,
+        ):
+            assert cancel_event is not None
+            started.set()
+            assert cancel_event.wait(timeout=5)
+            cancellation_observed.set()
+            return super().run_turn(
+                payload=payload,
+                request_id=request_id,
+                cancel_event=cancel_event,
+            )
+
+    runtime = CooperativeRuntime()
+    ctx = _ctx(runtime)
+    submitted = _task_request(
+        ctx,
+        "tasks/send",
+        {"idempotencyKey": "idem-cancel-running", "message": {"text": "wait"}},
+    )
+    task_id = submitted["id"]
+    assert started.wait(timeout=5)
+    future = resolve_external_a2a_runtime(runtime)._futures[task_id]
+
+    canceled = _task_request(ctx, "tasks/cancel", {"id": task_id})
+    assert canceled["state"] == "canceled"
+    assert cancellation_observed.wait(timeout=5)
+    future.result(timeout=5)
+    assert _wait_for_task(ctx, task_id)["state"] == "canceled"
+
+
+def test_jsonrpc_accepted_cancel_is_not_overwritten_by_late_success(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(a2a.A2A_NETWORK_TOKEN_ENV, "secret")
+    started = threading.Event()
+    release = threading.Event()
+
+    class NonCooperativeRuntime(_Runtime):
+        def run_turn(
+            self,
+            *,
+            payload: dict[str, object],
+            request_id: str | None = None,
+            cancel_event: threading.Event | None = None,
+        ):
+            started.set()
+            assert release.wait(timeout=5)
+            return super().run_turn(
+                payload=payload,
+                request_id=request_id,
+                cancel_event=cancel_event,
+            )
+
+    runtime = NonCooperativeRuntime()
+    ctx = _ctx(runtime)
+    submitted = _task_request(
+        ctx,
+        "tasks/send",
+        {
+            "idempotencyKey": "idem-cancel-late-success",
+            "traceId": "trace-cancel-late-success",
+            "message": {"text": "wait"},
+        },
+    )
+    task_id = submitted["id"]
+    assert started.wait(timeout=5)
+    a2a_runtime = resolve_external_a2a_runtime(runtime)
+    future = a2a_runtime._futures[task_id]
+
+    canceled = _task_request(ctx, "tasks/cancel", {"id": task_id})
+    assert canceled["state"] == "canceled"
+    release.set()
+    future.result(timeout=5)
+    assert _wait_for_task(ctx, task_id)["state"] == "canceled"
+    statuses = [
+        row["status"] for row in a2a_runtime.query_trace("trace-cancel-late-success")
+    ]
+    assert "CANCELED" in statuses
+    assert "SUCCESS" not in statuses
 
 
 def test_jsonrpc_idempotency_replay_does_not_execute_twice(monkeypatch) -> None:
@@ -450,11 +601,19 @@ def test_external_a2a_runtime_close_drains_active_job(monkeypatch, tmp_path) -> 
 
     class BlockingRuntime(_Runtime):
         def run_turn(
-            self, *, payload: dict[str, object], request_id: str | None = None
+            self,
+            *,
+            payload: dict[str, object],
+            request_id: str | None = None,
+            cancel_event: threading.Event | None = None,
         ):
             started.set()
             assert release.wait(timeout=5)
-            return super().run_turn(payload=payload, request_id=request_id)
+            return super().run_turn(
+                payload=payload,
+                request_id=request_id,
+                cancel_event=cancel_event,
+            )
 
     runtime = BlockingRuntime(storage_path=tmp_path / "runtime.sqlite")
     ctx = _ctx(runtime)

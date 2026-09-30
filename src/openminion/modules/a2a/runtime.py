@@ -4,8 +4,9 @@ import concurrent.futures
 import json
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
+from openminion.base.logging import get_logger
 from openminion.modules.a2a.constants import (
     A2A_ACTIVE_JOB_STATES,
     A2A_AGENT_STATUS_ONLINE,
@@ -57,6 +58,9 @@ from openminion.modules.a2a.storage.base import AuditStore, StateStore
 from openminion.modules.a2a.interfaces import A2A_INTERFACE_VERSION
 
 
+_LOG = get_logger("a2a.runtime")
+
+
 class A2ARuntime:
     contract_version = A2A_INTERFACE_VERSION
 
@@ -104,6 +108,9 @@ class A2ARuntime:
 
     def list_agents(self) -> list[dict[str, Any]]:
         return [item.to_dict() for item in self.registry.list_agents()]
+
+    def list_jobs(self, filter_by: dict[str, Any] | None = None) -> list[JobRecord]:
+        return cast(list[JobRecord], self.state_store.list_jobs(filter_by))
 
     def call(self, envelope: Envelope) -> Envelope:
         if envelope.type != "call":
@@ -288,11 +295,6 @@ class A2ARuntime:
 
             cancel_event = self._cancel_events.get(task_id)
             future = self._futures.get(task_id)
-            if cancel_event is not None:
-                cancel_event.set()
-            if future is not None:
-                future.cancel()
-
             error = {"code": ERROR_CODE_CANCELED, "message": "Job canceled"}
             updated = self.state_store.update_job(
                 task_id,
@@ -306,6 +308,10 @@ class A2ARuntime:
             scope = updated.idempotency_scope or (
                 f"job.start:{updated.agent_id}:{updated.method}"
             )
+            if cancel_event is not None:
+                cancel_event.set()
+            if future is not None:
+                future.cancel()
             self.state_store.set_idempotency_result(
                 updated.idempotency_key,
                 scope,
@@ -834,8 +840,15 @@ class A2ARuntime:
     def _append_audit(self, record: AuditRecord) -> None:
         try:
             self.audit_store.append_audit(record)
-        except Exception:
-            return
+        except Exception as exc:  # noqa: BLE001 - audit is non-authoritative
+            _LOG.warning(
+                "A2A audit append failed type=%s status=%s task_id=%s trace_id=%s error_type=%s",
+                record.type,
+                record.status,
+                record.task_id or "",
+                record.trace_id,
+                type(exc).__name__,
+            )
 
     def _job_patch(self, **patch: Any) -> dict[str, Any]:
         stamped = iso_now()

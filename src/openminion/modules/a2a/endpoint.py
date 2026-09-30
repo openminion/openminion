@@ -57,12 +57,18 @@ def build_external_a2a_runtime(owner: object) -> A2ARuntime:
         ["tasks/", "echo.", "message."],
         lambda envelope: _default_external_agent_handler(owner, envelope),
         tags=["openminion", "external-a2a"],
+        job_handler=lambda envelope, cancel_event: _default_external_agent_handler(
+            owner, envelope, cancel_event=cancel_event
+        ),
     )
     return runtime
 
 
 def _default_external_agent_handler(
-    owner: object, envelope: Envelope
+    owner: object,
+    envelope: Envelope,
+    *,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     run_turn = getattr(owner, "run_turn", None)
     if not callable(run_turn):
@@ -78,6 +84,7 @@ def _default_external_agent_handler(
         "target": envelope.from_agent,
         "trace_id": envelope.trace_id,
         "idempotency_key": envelope.idempotency_key,
+        "timeout_seconds": envelope.timeout_ms / 1000,
         "inbound_metadata": _inbound_metadata(envelope=envelope, metadata=metadata),
     }
     agent_id = str(metadata.get("agent_id") or "").strip()
@@ -87,7 +94,11 @@ def _default_external_agent_handler(
         "agent": "openminion.local",
         "method": envelope.method,
         "trace_id": envelope.trace_id,
-        "turn": run_turn(payload=payload, request_id=envelope.trace_id),
+        "turn": run_turn(
+            payload=payload,
+            request_id=envelope.trace_id,
+            cancel_event=cancel_event,
+        ),
     }
 
 
@@ -155,6 +166,13 @@ def _state_db_path(storage_path: Path) -> str:
 
 def _build_durable_audit_store(owner: object, *, db_path: Path) -> object:
     config = getattr(owner, "config", None)
+    config_manager = getattr(owner, "config_manager", None)
+    a2a_config = None
+    if config_manager is not None:
+        get_config = getattr(config_manager, "get", None)
+        if callable(get_config):
+            a2a_config = get_config("a2a")
+    audit_config = getattr(getattr(a2a_config, "storage", None), "audit", None)
     storage = getattr(config, "storage", None)
     backend = (
         storage.record_backend()
@@ -175,6 +193,9 @@ def _build_durable_audit_store(owner: object, *, db_path: Path) -> object:
             record_backend_options=dict(options),
         ),
         audit_root=db_path.expanduser().resolve(strict=False).parent / "a2a-audit",
+        capture_payloads=bool(getattr(audit_config, "capture_payloads", False)),
+        retention_days=getattr(audit_config, "retention_days", 14),
+        archive_retention_days=getattr(audit_config, "archive_retention_days", 0),
     )
 
 

@@ -56,7 +56,6 @@ src/openminion/cli/status/surface.py	1	0	current broad-handler baseline; ratchet
 src/openminion/cli/transport/daemon_client.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/daemon.py	7	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/a2a/runtime.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/a2a/storage/__init__.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/a2a/storage/archive.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/artifact/control.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/adapters/a2a/runtime.py	9	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

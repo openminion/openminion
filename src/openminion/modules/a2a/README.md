@@ -54,6 +54,19 @@ and local HTTP tests cover the bounded endpoint. Public readiness claims should
 still say "authenticated local external A2A v1 preview"; third-party peer
 certification remains separate.
 
+A2A audit storage keeps structural correlation fields for 14 days by default.
+Set `a2a.storage.audit.capture_payloads=true` only when detailed task payloads
+are required: payload tracing can be large and may contain sensitive task
+content. `a2a.storage.audit.retention_days` controls the active window, while
+`a2a.storage.audit.archive_retention_days=0` disables compressed SQLite
+archives. OpenMinion accepts this existing module configuration at the top
+level of its config file; no duplicate runtime setting is required.
+
+Operators can inspect the current agent/session's newest delegations with
+`openminion agent delegate-list --limit 20` or `/delegate list 20`. The limit
+defaults to 20 and cannot exceed 200. This view contains structural task and
+trace fields only; it is not a transcript or result-payload cache.
+
 ## Dependencies
 
 - `modules/registry/` — agent descriptor / route resolution
