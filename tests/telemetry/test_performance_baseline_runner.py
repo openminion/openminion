@@ -116,6 +116,14 @@ def test_scenario_list_accepts_all_and_rejects_unknown() -> None:
         raise AssertionError("unknown scenario should fail")
 
 
+def test_warm_prompt_ready_scenario_always_has_a_warmup() -> None:
+    module = _load_module()
+
+    assert module._effective_warmup_runs("warm_focus_prompt_ready", 0) == 1
+    assert module._effective_warmup_runs("warm_focus_prompt_ready", 2) == 2
+    assert module._effective_warmup_runs("cold_focus_prompt_ready", 0) == 0
+
+
 def test_summarize_runs_records_metric_units_and_warn_only() -> None:
     module = _load_module()
     identity = module._measurement_identity(
@@ -211,6 +219,40 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
     assert local["measurement_identity"]["command"] == "local_status_fixture"
     assert local["warn_only"] is False
     assert summary["scenarios"]["provider_turn"]["warn_only"] is True
+
+
+def test_import_summary_aggregates_module_counts() -> None:
+    module = _load_module()
+    identity = _bound_identity(
+        module,
+        scenario_id="terminal_import_surface",
+        command="python -c import openminion.cli.interactive.terminal",
+        measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
+        fixture_revision="import-surface-v1",
+    )
+    runs = [
+        {
+            "scenario_id": "terminal_import_surface",
+            "ok": True,
+            "provider_variance_class": module.LOCAL_VARIANCE,
+            "measurement_identity": identity,
+            "comparison_identity": module._comparison_identity(identity),
+            "metrics": {
+                "wall_time_ms": wall_time,
+                "imported_module_count": imported,
+                "openminion_module_count": openminion,
+            },
+        }
+        for wall_time, imported, openminion in (
+            (100, 2600, 1600),
+            (110, 2500, 1500),
+        )
+    ]
+
+    scenario = module.summarize_runs(runs)["scenarios"]["terminal_import_surface"]
+
+    assert scenario["imported_module_count"]["median"] == 2550
+    assert scenario["openminion_module_count"]["median"] == 1550
 
 
 def test_run_with_metrics_records_exact_cpu_and_gc_deltas(monkeypatch) -> None:
@@ -312,7 +354,11 @@ def test_comparison_allows_source_and_workspace_identity_changes() -> None:
     current = {
         "count": 20,
         "ok_count": 20,
-        "wall_time_ms": {"p95": 100, "coefficient_of_variation": 0.0},
+        "wall_time_ms": {
+            "median": 100,
+            "p95": 100,
+            "coefficient_of_variation": 0.0,
+        },
         "measurement_identity": current_identity,
         "comparison_identity": module._comparison_identity(current_identity),
     }
@@ -322,7 +368,11 @@ def test_comparison_allows_source_and_workspace_identity_changes() -> None:
             "cold_focus_startup": {
                 "count": 20,
                 "ok_count": 20,
-                "wall_time_ms": {"p95": 100, "coefficient_of_variation": 0.0},
+                "wall_time_ms": {
+                    "median": 100,
+                    "p95": 100,
+                    "coefficient_of_variation": 0.0,
+                },
                 "measurement_identity": baseline_identity,
                 "comparison_identity": module._comparison_identity(baseline_identity),
             }
@@ -337,6 +387,138 @@ def test_comparison_allows_source_and_workspace_identity_changes() -> None:
     )
 
     assert result["status"] == "pass"
+
+
+def test_prompt_ready_comparison_normalizes_paths_and_process_posture() -> None:
+    module = _load_module()
+    cold_a = module._measurement_identity(
+        scenario_id="cold_focus_prompt_ready",
+        command=(
+            "python -m openminion --config /tmp/a/config.json --agent "
+            "performance-benchmark --session performance-cold --dir /tmp/a "
+            "--no-update-check --progress minimal --demo --no-context"
+        ),
+        measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
+        fixture_revision="focus-prompt-ready-v1",
+    )
+    cold_b = module._measurement_identity(
+        scenario_id="cold_focus_prompt_ready",
+        command=(
+            "python -m openminion --config /tmp/b/config.json --agent "
+            "performance-benchmark --session performance-cold --dir /tmp/b "
+            "--no-update-check --progress minimal --demo --no-context"
+        ),
+        measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
+        fixture_revision="focus-prompt-ready-v1",
+    )
+    warm = module._measurement_identity(
+        scenario_id="warm_focus_prompt_ready",
+        command="focus_pty:warm_focus_prompt_ready",
+        measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
+        fixture_revision="focus-prompt-ready-v1",
+    )
+
+    cold_comparison = module._comparison_identity(cold_a)
+    assert cold_comparison["command_shape"] == module._comparison_identity(cold_b)[
+        "command_shape"
+    ]
+    assert cold_comparison["process_posture"] == "cold"
+    assert module._comparison_identity(warm)["process_posture"] == "warm"
+
+
+@pytest.mark.parametrize("statistic", ("median", "p95"))
+def test_startup_comparison_passes_five_percent_and_fails_five_point_one(
+    statistic: str,
+) -> None:
+    module = _load_module()
+    identity = _bound_identity(
+        module,
+        scenario_id="cold_focus_startup",
+        command="python -m openminion --data-root /tmp/a --help",
+        measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
+        fixture_revision=module.STARTUP_FIXTURE_REVISION,
+    )
+    base_metric = {"median": 1000, "p95": 1000, "coefficient_of_variation": 0.0}
+    baseline = {
+        "artifact_schema_version": module.ARTIFACT_SCHEMA_VERSION,
+        "scenarios": {
+            "cold_focus_startup": {
+                "count": 20,
+                "ok_count": 20,
+                "wall_time_ms": base_metric,
+                "measurement_identity": identity,
+                "comparison_identity": module._comparison_identity(identity),
+            }
+        },
+    }
+
+    for value, expected in ((1050, "pass"), (1051, "fail")):
+        current_metric = dict(base_metric)
+        current_metric[statistic] = value
+        result = module._threshold_result(
+            current={
+                "count": 20,
+                "ok_count": 20,
+                "wall_time_ms": current_metric,
+                "measurement_identity": identity,
+                "comparison_identity": module._comparison_identity(identity),
+            },
+            baseline=baseline,
+            scenario_id="cold_focus_startup",
+            threshold_mode="hard",
+        )
+        assert result["status"] == expected
+        assert result["regression_ratio"] == 1.05
+
+
+@pytest.mark.parametrize(
+    ("imported", "openminion", "expected"),
+    ((2499, 1499, "pass"), (2500, 1499, "fail"), (2499, 1500, "fail")),
+)
+def test_terminal_import_comparison_requires_both_module_counts_to_decrease(
+    imported: int,
+    openminion: int,
+    expected: str,
+) -> None:
+    module = _load_module()
+    identity = _bound_identity(
+        module,
+        scenario_id="terminal_import_surface",
+        command="python -c import openminion.cli.interactive.terminal",
+        measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
+        fixture_revision="import-surface-v1",
+    )
+    base = {
+        "count": 20,
+        "ok_count": 20,
+        "wall_time_ms": {
+            "median": 1000,
+            "p95": 1000,
+            "coefficient_of_variation": 0.0,
+        },
+        "imported_module_count": {"median": 2500},
+        "openminion_module_count": {"median": 1500},
+        "measurement_identity": identity,
+        "comparison_identity": module._comparison_identity(identity),
+    }
+    baseline = {
+        "artifact_schema_version": module.ARTIFACT_SCHEMA_VERSION,
+        "scenarios": {"terminal_import_surface": base},
+    }
+    current = {
+        **base,
+        "imported_module_count": {"median": imported},
+        "openminion_module_count": {"median": openminion},
+    }
+
+    result = module._threshold_result(
+        current=current,
+        baseline=baseline,
+        scenario_id="terminal_import_surface",
+        threshold_mode="hard",
+    )
+
+    assert result["status"] == expected
 
 
 def test_comparison_rejects_semantic_and_environment_mismatches() -> None:
@@ -884,6 +1066,83 @@ def test_focus_startup_samples_the_subprocess(tmp_path: Path) -> None:
     assert run.metrics["availability_reasons"]["python_gc_collection_count"] == (
         "not_supported_for_subprocess"
     )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Focus prompt benchmark requires PTY")
+def test_focus_prompt_ready_measures_the_interactive_composer(tmp_path: Path) -> None:
+    module = _load_module()
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=15,
+        include_importtime=False,
+        profile=False,
+        threshold_mode="off",
+    )
+
+    summary = module.run_baseline(options, ["warm_focus_prompt_ready"])
+
+    scenario = summary["scenarios"]["warm_focus_prompt_ready"]
+    assert scenario["ok_count"] == 1
+    payload = json.loads(Path(scenario["sample_artifacts"][0]).read_text())
+    metrics = payload["metrics"]
+    assert metrics["phase"] == "prompt_ready"
+    assert metrics["prompt_ready_marker"] is True
+    assert metrics["clean_exit"] is True
+    assert metrics["phase_timings_ms"]["subprocess_exit_code"] == 0
+    assert metrics["measured_process_id"] != os.getpid()
+    assert metrics["current_rss_bytes"] > 0
+    assert metrics["wall_time_ns"] == metrics["phase_timings_ns"]["prompt_ready_ns"]
+    assert "--help" not in metrics["startup_command"]
+    assert payload["warmup_runs"] == 1
+    assert payload["measurement_identity"]["runtime_config"]["warmup_runs"] == 1
+    assert payload["comparison_identity"]["warmup_runs"] == 1
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["warmup_runs"] == 0
+    assert manifest["effective_warmup_runs_by_scenario"] == {
+        "warm_focus_prompt_ready": 1
+    }
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Focus prompt benchmark requires PTY")
+def test_focus_prompt_ready_runs_as_a_direct_script(tmp_path: Path) -> None:
+    openminion_root = _SCRIPT_PATH.parents[2]
+    workspace_root = openminion_root.parent
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(openminion_root / "src")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT_PATH),
+            "--scenarios",
+            "cold_focus_prompt_ready",
+            "--runs",
+            "1",
+            "--warmup-runs",
+            "0",
+            "--output-root",
+            str(tmp_path),
+            "--workspace-root",
+            str(workspace_root),
+            "--python",
+            sys.executable,
+            "--no-importtime",
+            "--threshold-mode",
+            "off",
+        ],
+        cwd=openminion_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    assert summary["scenarios"]["cold_focus_prompt_ready"]["ok_count"] == 1
 
 
 def test_startup_loop_uses_one_full_resource_inventory(
