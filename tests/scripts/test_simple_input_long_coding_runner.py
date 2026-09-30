@@ -9,8 +9,6 @@ import pytest
 
 from tests.e2e.cli.focus.test_live_simple_input_project import (
     LIVE_SCENARIOS,
-    _approval_action_classes,
-    _approval_events,
     _accepted_intervention_count,
     _assert_completed_child_lifecycle,
     _assert_required_completed_tools,
@@ -250,19 +248,12 @@ def test_child_oracle_rejects_unresolved_or_digestless_child() -> None:
         _assert_completed_child_lifecycle(failed_sync, parent_agent_id="parent")
 
 
-def test_approval_classes_are_derived_from_visible_focus_prompts() -> None:
-    transcript = (
-        "Approval required: project.start(goal=fixture)\n"
-        "Approval required: project.start(goal=fixture)\n"
-    )
-
-    assert _approval_action_classes(transcript) == ["project.start", "project.start"]
-    events = _approval_events(transcript)
-    assert events == [
+def test_intervention_count_uses_submitted_approval_events() -> None:
+    events = [
         {"sequence": 1, "action": "project.start", "decision": "session"},
         {"sequence": 2, "action": "project.start", "decision": "session"},
     ]
+
     assert _unplanned_intervention_count(events, ("project.start",)) == 1
     with pytest.raises(AssertionError, match="unexpected approval events"):
         _accepted_intervention_count(events, ("project.start",))
-    assert _approval_action_classes("Project queued: run-1") == []

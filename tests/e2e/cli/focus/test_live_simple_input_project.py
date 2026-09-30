@@ -316,20 +316,6 @@ def _assert_required_completed_tools(
     assert required <= completed
 
 
-def _approval_action_classes(transcript: str) -> list[str]:
-    return [item["action"] for item in _approval_events(transcript)]
-
-
-def _approval_events(transcript: str) -> list[dict[str, object]]:
-    return [
-        {"sequence": index, "action": match.group(1), "decision": "session"}
-        for index, match in enumerate(
-            re.finditer(r"Approval required:\s*([A-Za-z0-9_.-]+)\(", transcript),
-            start=1,
-        )
-    ]
-
-
 def _unplanned_intervention_count(
     events: list[dict[str, object]], planned_actions: tuple[str, ...]
 ) -> int:
@@ -509,8 +495,7 @@ def _run_live_scenario(
             assert_expected_markers(
                 transcript, LIVE_SCENARIOS[scenario_id], ("Project queued:",)
             )
-            assert _approval_action_classes(transcript) == ["project.start"]
-            assert any(event["action"] == "project.start" for event in approval_events)
+            assert [event["action"] for event in approval_events] == ["project.start"]
             run_match = _RUN_ID_RE.search(transcript)
             assert run_match is not None, "typed project handoff did not queue a run"
             run_id = run_match.group(1)

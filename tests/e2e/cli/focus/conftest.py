@@ -64,11 +64,20 @@ def minimax_config_path(
     return config_path
 
 
-def _isolated_live_config(config_path: Path, run_root: Path) -> Path:
+def _isolated_live_config(
+    config_path: Path,
+    run_root: Path,
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
     config = json.loads(config_path.read_text(encoding="utf-8"))
+    runtime = config.setdefault("runtime", {})
+    for name, value in runtime.pop("env", {}).items():
+        if name not in os.environ:
+            monkeypatch.setenv(name, str(value))
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
-        config.setdefault("runtime", {})["ipc_port"] = listener.getsockname()[1]
+        runtime["ipc_port"] = listener.getsockname()[1]
     isolated_path = run_root / "live-config.json"
     isolated_path.touch(mode=0o600)
     isolated_path.write_text(json.dumps(config), encoding="utf-8")
@@ -86,6 +95,7 @@ def focus_probe(
     framework_root: Path,
     minimax_config_path: Path,
     minimax_agent_id: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> FocusProbe:
     if not minimax_config_path.exists():
         pytest.skip(f"missing MiniMax focus config: {minimax_config_path}")
@@ -96,7 +106,11 @@ def focus_probe(
     if os.getenv("OPENMINION_LIVE_CLI_FOCUS_E2E") == "1":
         config_root = run_root / "configs" / node_name
         config_root.mkdir(parents=True, exist_ok=True)
-        minimax_config_path = _isolated_live_config(minimax_config_path, config_root)
+        minimax_config_path = _isolated_live_config(
+            minimax_config_path,
+            config_root,
+            monkeypatch=monkeypatch,
+        )
     data_root = (
         run_root
         / "data"
