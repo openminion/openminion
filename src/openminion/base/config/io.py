@@ -82,7 +82,8 @@ def save_config(
     )
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        os.fchmod(stream.fileno(), 0o600)
+        if hasattr(os, "fchmod"):
+            os.fchmod(stream.fileno(), 0o600)
         stream.write(content)
     return path
 

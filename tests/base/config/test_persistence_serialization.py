@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from pathlib import Path
+
+import pytest
 
 from openminion.base.config import OpenMinionConfig, load_config, save_config
 
@@ -103,3 +106,13 @@ def test_save_config_round_trip_preserves_mcp_secrets_and_unrelated_config(
         "enabled": True,
         "label": "preserved",
     }
+
+
+def test_save_config_skips_posix_permissions_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delattr(os, "fchmod")
+
+    path = save_config(_config_with_mcp_secrets(), str(tmp_path / "agents.json"))
+
+    assert path.exists()
