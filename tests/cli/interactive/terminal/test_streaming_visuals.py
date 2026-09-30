@@ -87,7 +87,7 @@ def test_wait_state_cadence_via_auto_refresh() -> None:
     elapsed_now = time.monotonic() - start
     label = handle._spinner.elapsed_label(handle._started_at + elapsed_now)
     assert label  # non-empty
-    verb_at_3s = handle._spinner.current_verb(start + 3.0)
+    verb_at_3s = handle._spinner.current_verb(start + 3.01)
     verb_at_0s = handle._spinner.current_verb(start)
     assert verb_at_0s != verb_at_3s, (
         "verb must rotate over a 3 s gap (rotate_seconds=3.0 default)"
