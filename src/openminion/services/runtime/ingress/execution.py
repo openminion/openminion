@@ -36,10 +36,13 @@ def execute_runtime_turn(
     approval_callback: Any | None = None,
     cancel_event: Any | None = None,
 ) -> RuntimeTurnResult:
+    inbound_metadata = dict(request.inbound_metadata or {})
+    if request.trusted_subagent_context is not None:
+        inbound_metadata.update(request.trusted_subagent_context.as_inbound_metadata())
     context = _build_turn_context(
         message=request.message,
         forced_tools=list(request.forced_tools),
-        inbound_metadata=dict(request.inbound_metadata or {}) or None,
+        inbound_metadata=inbound_metadata or None,
     )
     routed_agents, routing_mode = _routed_agents(runtime=runtime, request=request)
     if len(routed_agents) == 1:

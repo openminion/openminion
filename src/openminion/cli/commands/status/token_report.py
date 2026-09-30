@@ -48,6 +48,7 @@ def _record_tokens(record: TokenUsageRecord) -> int:
         record.total_tokens
         + record.input_tokens
         + record.output_tokens
+        + record.reasoning_tokens
         + record.cache_read_tokens
         + record.cache_write_tokens
         + record.estimated_tokens
@@ -559,6 +560,7 @@ def _session_trend_payload(
                 "context_estimated_tokens": context_tokens,
                 "cache_read_tokens": summary.total_cache_read_tokens,
                 "cache_write_tokens": summary.total_cache_write_tokens,
+                "reasoning_tokens": summary.total_reasoning_tokens,
                 "llm_tokens": (
                     summary.total_provider_tokens + summary.total_derived_tokens
                 ),
@@ -624,6 +626,10 @@ def _format_session_trends(summaries: tuple[TokenUsageSummary, ...]) -> list[str
                 f"{_format_token_count(trend['cache_read_tokens'])}/"
                 f"{_format_token_count(trend['cache_write_tokens'])}"
             )
+        if trend["reasoning_tokens"]:
+            segments.append(
+                f"reasoning:{_format_token_count(trend['reasoning_tokens'])}"
+            )
         if trend["advisory_codes"]:
             segments.append("warnings:" + ",".join(trend["advisory_codes"][:3]))
         parts.append(f"{trend['session_id']}=" + " ".join(segments))
@@ -645,6 +651,9 @@ def _rollup_totals_payload(
         ),
         "cache_write_tokens": sum(
             summary.total_cache_write_tokens for summary in summaries
+        ),
+        "reasoning_tokens": sum(
+            summary.total_reasoning_tokens for summary in summaries
         ),
     }
 
@@ -709,6 +718,7 @@ def _format_insights(summary: TokenUsageSummary) -> list[str]:
         f"context_estimated={_format_token_count(context_estimated)}",
         f"cache_read={_format_token_count(summary.total_cache_read_tokens)}",
         f"cache_write={_format_token_count(summary.total_cache_write_tokens)}",
+        f"reasoning={_format_token_count(summary.total_reasoning_tokens)}",
     ]
     lines.append("insights: " + " ".join(segment for segment in segments if segment))
     surface_totals = {
@@ -766,6 +776,7 @@ def format_token_rollup(
         f"context_estimated={_format_token_count(totals['context_estimated_tokens'])} "
         f"cache_read={_format_token_count(totals['cache_read_tokens'])} "
         f"cache_write={_format_token_count(totals['cache_write_tokens'])} "
+        f"reasoning={_format_token_count(totals['reasoning_tokens'])} "
         + format_cost_totals(
             costs["provider_cost_usd"],
             costs["estimated_cost_usd"],

@@ -1,13 +1,19 @@
 """Handoff records and transfer tools for developer-facing agents."""
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from math import ceil
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from openminion.modules.policy.constants import (
+    POLICY_DURATION_UNTIL,
+    POLICY_GRANT_EFFECT_ALLOW,
+)
+from openminion.modules.policy.models import PolicyGrantInput
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
 from openminion.tools.decorator import _build_args_model
+from sophiagraph.models import MemoryNamespace
 
 if TYPE_CHECKING:  # pragma: no cover
     from openminion.api.agent import Agent
@@ -26,6 +32,7 @@ class SubagentRunContext:
     tool_allowlist: tuple[str, ...] = ()
     memory_posture: str = "none"
     memory_grant_id: str | None = None
+    delegated_memory_ancestor: bool = False
     timeout_seconds: int | None = None
     typed_result_handback: bool = True
     parent_transcript_inherited: bool = False
@@ -70,6 +77,7 @@ class SubagentRunContext:
             "tool_allowlist": list(self.tool_allowlist),
             "memory_posture": self.memory_posture,
             "memory_grant_id": self.memory_grant_id,
+            "delegated_memory_ancestor": self.delegated_memory_ancestor,
             "timeout_seconds": self.timeout_seconds,
             "typed_result_handback": self.typed_result_handback,
             "parent_transcript_inherited": self.parent_transcript_inherited,
@@ -89,6 +97,9 @@ class SubagentRunContext:
             "subagent_tool_allowlist": ",".join(self.tool_allowlist),
             "subagent_memory_posture": self.memory_posture,
             "subagent_memory_grant_id": self.memory_grant_id or "",
+            "subagent_delegated_memory_ancestor": str(
+                self.delegated_memory_ancestor
+            ).lower(),
             "subagent_timeout_seconds": (
                 "" if self.timeout_seconds is None else str(self.timeout_seconds)
             ),
@@ -102,6 +113,27 @@ class SubagentRunContext:
             "subagent_implicit_memory_write": str(self.implicit_memory_write).lower(),
             "subagent_cancelled": str(self.cancelled).lower(),
         }
+
+
+@dataclass(frozen=True, slots=True)
+class DelegatedMemoryReadRequest:
+    """Explicit read-only memory scope requested by trusted developer code."""
+
+    namespaces: tuple[MemoryNamespace, ...]
+    record_types: tuple[str, ...]
+    workspace_ids: tuple[str, ...] = ()
+    max_results: int = 50
+    max_context_tokens: int = 4096
+
+    def __post_init__(self) -> None:
+        if not self.namespaces:
+            raise ValueError("delegated memory namespaces are required")
+        if not self.record_types:
+            raise ValueError("delegated memory record_types are required")
+        if self.max_results <= 0:
+            raise ValueError("max_results must be greater than zero")
+        if self.max_context_tokens <= 0:
+            raise ValueError("max_context_tokens must be greater than zero")
 
 
 @dataclass
@@ -187,6 +219,7 @@ def subagent(
     name: str | None = None,
     timeout_seconds: int | None = None,
     deadline_iso: str = "",
+    memory: DelegatedMemoryReadRequest | None = None,
     memory_posture: str = "none",
     memory_grant_id: str | None = None,
 ) -> "Agent[Any, Any]":
@@ -203,11 +236,20 @@ def subagent(
     from openminion.api.agent import Agent
 
     parent_context = parent.subagent_context
-    if (
-        parent_context is not None
-        and parent_context.memory_posture == "read_only_bounded"
-        and memory_posture != "none"
-    ):
+    has_delegated_ancestor = bool(
+        (
+            parent_context is not None
+            and (
+                parent_context.delegated_memory_ancestor
+                or parent_context.memory_posture != "none"
+            )
+        )
+        or getattr(parent, "delegated_memory_request", None) is not None
+    )
+    memory_requested = (
+        memory is not None or memory_posture != "none" or memory_grant_id is not None
+    )
+    if memory_requested and has_delegated_ancestor:
         raise ValueError("delegated memory grants cannot be re-shared in v1")
     if memory_posture != "none" or memory_grant_id:
         raise ValueError("developer subagent memory grants are not bound in v1")
@@ -226,6 +268,7 @@ def subagent(
         timeout_seconds=_bounded_timeout_seconds(timeout_seconds, deadline_iso),
         memory_posture=str(memory_posture or "none"),
         memory_grant_id=memory_grant_id,
+        delegated_memory_ancestor=has_delegated_ancestor,
     )
     return Agent(
         instructions=instructions,
@@ -235,6 +278,80 @@ def subagent(
         tools=tools,
         name=name,
         subagent_context=context,
+        delegated_memory_request=memory,
+    )
+
+
+def materialize_subagent_run_context(
+    template: SubagentRunContext,
+    request: DelegatedMemoryReadRequest | None,
+    *,
+    action_policy: Any,
+) -> SubagentRunContext:
+    """Create one fresh child-run context and optional authoritative grant."""
+
+    context_id = f"subagent-{uuid4().hex[:12]}"
+    child_run_id = f"{context_id}:{template.child_agent_id}"
+    grant_id: str | None = None
+    posture = "none"
+    if request is not None:
+        if action_policy is None:
+            raise RuntimeError("delegated memory requires the runtime policy service")
+        posture = "read_only_bounded"
+        expires_at = (
+            datetime.now(timezone.utc)
+            + timedelta(seconds=template.timeout_seconds or 900)
+        ).isoformat()
+        target = {
+            "resource": "sophiagraph",
+            "delegated_memory": {
+                "version": 1,
+                "audience": "sophiagraph",
+                "delegator_agent_id": template.parent_agent_id,
+                "subject_agent_id": template.child_agent_id,
+                "parent_run_id": template.parent_run_id,
+                "child_run_id": child_run_id,
+                "trace_parent_id": template.trace_parent_id,
+                "namespaces": [item.as_dict() for item in request.namespaces],
+                "workspace_ids": list(request.workspace_ids),
+                "operations": ["read"],
+                "record_types": list(request.record_types),
+                "max_results": request.max_results,
+                "max_context_tokens": request.max_context_tokens,
+                "parent_grant_id": None,
+                "current_depth": 1,
+                "max_depth": 1,
+                "can_reshare": False,
+            },
+        }
+        grant_id = action_policy.create_grant(
+            PolicyGrantInput(
+                effect=POLICY_GRANT_EFFECT_ALLOW,
+                subject_id=template.child_agent_id,
+                tool="memory",
+                method="delegated_read",
+                target_json=target,
+                duration_type=POLICY_DURATION_UNTIL,
+                expires_at=expires_at,
+                max_uses=1,
+                reason="developer_subagent_delegated_read",
+                created_trace_id=template.trace_parent_id,
+            )
+        )
+    return SubagentRunContext(
+        context_id=context_id,
+        parent_agent_id=template.parent_agent_id,
+        child_agent_id=template.child_agent_id,
+        parent_run_id=template.parent_run_id,
+        child_run_id=child_run_id,
+        trace_parent_id=template.trace_parent_id,
+        tool_allowlist=template.tool_allowlist,
+        memory_posture=posture,
+        memory_grant_id=grant_id,
+        delegated_memory_ancestor=(
+            template.delegated_memory_ancestor or request is not None
+        ),
+        timeout_seconds=template.timeout_seconds,
     )
 
 

@@ -24,7 +24,7 @@ from openminion.cli.commands.config import (
 from openminion.cli.commands import setup as setup_command
 from openminion.cli.commands.setup import run_setup
 from openminion.cli.parser.base import build_parser
-from openminion.modules.llm.setup_catalog import get_setup_preset
+from openminion.modules.llm.setup_catalog import get_setup_preset, list_setup_presets
 
 
 class ConfigCommandTests(unittest.TestCase):
@@ -781,6 +781,55 @@ class ConfigCommandTests(unittest.TestCase):
         self.assertIn("custom-anthropic-compatible", output)
         self.assertNotIn("fixture_verified", output)
         self.assertLessEqual(max(map(len, output.splitlines())), 80)
+
+    def test_setup_list_providers_json_projects_the_catalog(self) -> None:
+        args = Namespace(list_providers=True, json=True)
+
+        buf = io.StringIO()
+        with (
+            mock.patch("openminion.cli.commands.setup._run_wizard") as wizard,
+            mock.patch(
+                "openminion.cli.commands.setup._check_provider_with_progress"
+            ) as provider_check,
+            mock.patch(
+                "openminion.cli.commands.setup.atomic_save_setup_config"
+            ) as config_write,
+            redirect_stdout(buf),
+        ):
+            code = run_setup(args)
+
+        self.assertEqual(code, 0)
+        wizard.assert_not_called()
+        provider_check.assert_not_called()
+        config_write.assert_not_called()
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(
+            payload,
+            {
+                "providers": [
+                    {
+                        "id": preset.preset_id,
+                        "label": preset.display_label,
+                        "credential_env": preset.credential_env or None,
+                        "requires_credential": preset.requires_credential,
+                        "base_url": preset.default_base_url or None,
+                        "recommended_models": list(preset.recommended_models),
+                    }
+                    for preset in list_setup_presets()
+                ]
+            },
+        )
+        minimax = next(
+            provider for provider in payload["providers"] if provider["id"] == "minimax"
+        )
+        self.assertEqual(
+            minimax["recommended_models"],
+            ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
+        )
+        ollama = next(
+            provider for provider in payload["providers"] if provider["id"] == "ollama"
+        )
+        self.assertIsNone(ollama["credential_env"])
 
     def test_hosted_provider_check_is_recommended_by_default(self) -> None:
         with (

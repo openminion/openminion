@@ -68,6 +68,7 @@ def run_turn_payload(
     progress_callback: Callable[[object], None] | None = None,
     approval_callback: Any | None = None,
     cancel_event: Any | None = None,
+    trusted_subagent_context: Any | None = None,
 ) -> dict[str, Any]:
     from openminion.modules.telemetry.trace.phase_timing import (
         ChatPhaseTimer,
@@ -82,6 +83,7 @@ def run_turn_payload(
             runtime=runtime,
             payload=payload,
             request_id=request_id,
+            trusted_subagent_context=trusted_subagent_context,
         )
     try:
         with use_chat_phase_timer(timer):

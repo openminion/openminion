@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from openminion.api import Agent
+from openminion.api.handoff import DelegatedMemoryReadRequest, subagent
 from openminion.api.runtime import APIRuntime
 from openminion.api.turns import run_turn
 from openminion.base.config import OpenMinionConfig, save_config
@@ -13,9 +16,26 @@ from openminion.modules.memory.runtime.capture_bundle import (
     CaptureBundleInput,
     CaptureCandidateInput,
 )
+from openminion.modules.llm.providers.base import (
+    LLMProvider,
+    ProviderRequest,
+    ProviderResponse,
+)
 from tests._csc_fixtures import _csc_install_default_agent
+from sophiagraph.models import MemoryNamespace, MemoryRecord
 
 pytestmark = pytest.mark.e2e
+
+
+class _CaptureProvider(LLMProvider):
+    name = "capture"
+
+    def __init__(self) -> None:
+        self.requests: list[ProviderRequest] = []
+
+    async def generate(self, request: ProviderRequest) -> ProviderResponse:
+        self.requests.append(request)
+        return ProviderResponse(text="captured", model="capture")
 
 
 def _echo_config(tmp_path: Path) -> Path:
@@ -125,5 +145,83 @@ def test_terminal_capture_uses_shared_runtime_and_releases_hold(tmp_path) -> Non
         assert recalled["meta"]["record_key"] == "project_codename:blue-orchid"
         assert recalled["text"] == "The project codename is Blue Orchid."
         assert bundle.capture_id in recalled["meta"]["record_evidence_refs"]
+    finally:
+        runtime.close()
+
+
+def test_developer_subagent_receives_only_grant_bound_memory(tmp_path) -> None:
+    runtime = APIRuntime.from_config_path(str(_echo_config(tmp_path)))
+    namespace = MemoryNamespace(
+        agent_id="parent",
+        project_id="project",
+        graph_id="main",
+    )
+    now = datetime.now(UTC).isoformat()
+    try:
+        store = runtime.runtime_memory_assembly.delegated_store
+        assert store is not None
+        store.put_record(
+            MemoryRecord(
+                id="delegated-record",
+                scope="agent:parent",
+                type="fact",
+                content="delegated marker",
+                created_at=now,
+                updated_at=now,
+                namespace=namespace,
+            )
+        )
+        store.put_record(
+            MemoryRecord(
+                id="foreign-record",
+                scope="agent:other",
+                type="fact",
+                content="delegated marker foreign secret",
+                created_at=now,
+                updated_at=now,
+                namespace=MemoryNamespace(
+                    agent_id="other",
+                    project_id="project",
+                    graph_id="main",
+                ),
+            )
+        )
+        parent = Agent(runtime=runtime, name="parent")
+        child = subagent(
+            parent,
+            name="child",
+            memory=DelegatedMemoryReadRequest(
+                namespaces=(namespace,),
+                workspace_ids=("workspace",),
+                record_types=("fact",),
+                max_results=2,
+                max_context_tokens=128,
+            ),
+        )
+        capture = _CaptureProvider()
+        runtime.gateway._agent._llm_runtime = None
+        runtime.gateway._agent._provider = capture
+
+        child.run("delegated marker")
+
+        provider_context = repr(capture.requests)
+        assert "delegated-record" in provider_context
+        assert "delegated marker" in provider_context
+        assert "foreign-record" not in provider_context
+        assert "foreign secret" not in provider_context
+
+        selection_events = [
+            event
+            for event in runtime.telemetry_service._store.fetch_events()
+            if event.data.get("operation") == "delegated_access.selection"
+        ]
+        assert len(selection_events) == 1
+        assert selection_events[0].data["selected_count"] == 1
+        assert "delegated-record" not in repr(selection_events[0].data)
+        assert "foreign-record" not in repr(selection_events[0].data)
+        assert all(
+            grant.revoked_at is not None
+            for grant in runtime.action_policy.list_grants()
+        )
     finally:
         runtime.close()

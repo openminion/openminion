@@ -59,15 +59,11 @@ class RuntimeTokenUsageMixin:
                 0.0,
                 time.monotonic() - self._current_turn_started_at_monotonic,
             )
-        context_limit = self._context_limit_tokens()
-        context_used = getattr(session_usage, "total_tokens", None)
-        if context_limit is None:
-            context_used = None
         return build_token_usage_snapshot(
             turn=turn_usage,
             session=session_usage,
-            context_used_tokens=context_used,
-            context_limit_tokens=context_limit,
+            context_used_tokens=None,
+            context_limit_tokens=self._context_limit_tokens(),
             has_live_deltas=self._current_turn_has_live_deltas,
             turn_elapsed_seconds=turn_elapsed_seconds,
             updated_at_monotonic=self._usage_updated_at_monotonic,
@@ -86,8 +82,10 @@ class RuntimeTokenUsageMixin:
         try:
             service = StatsService(store)
             if recent is None:
-                return format_interactive_token_summary(
-                    service.get_session_token_usage(self._turn_session_id())
+                return str(
+                    format_interactive_token_summary(
+                        service.get_session_token_usage(self._turn_session_id())
+                    )
                 )
             summaries = tuple(
                 replace(
@@ -98,7 +96,24 @@ class RuntimeTokenUsageMixin:
                 )
                 for session in self._recent_surface_sessions(recent)
             )
-            return format_interactive_token_history(summaries, requested=recent)
+            return str(format_interactive_token_history(summaries, requested=recent))
+        finally:
+            if owns_store:
+                store.close()
+
+    def token_cost_report(self) -> str:
+        if not self.is_bound:
+            return "No active session."
+        from openminion.cli.presentation.tokens import format_interactive_cost_summary
+        from openminion.modules.telemetry.usage import StatsService
+
+        store, owns_store = self._token_usage_store()
+        try:
+            return str(
+                format_interactive_cost_summary(
+                    StatsService(store).get_session_token_usage(self._turn_session_id())
+                )
+            )
         finally:
             if owns_store:
                 store.close()

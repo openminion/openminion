@@ -113,7 +113,17 @@ async def run_slash_project(
             Text(focus_project_help(), style=token_rich_style(StyleToken.SYSTEM))
         )
         return
-    if text.split()[1] in {"status", "show", "pause", "resume", "cancel"}:
+    if text.split()[1] in {
+        "status",
+        "show",
+        "report",
+        "pause",
+        "resume",
+        "cancel",
+        "answer",
+        "reprioritize",
+        "extend-budget",
+    }:
         try:
             tone, body = runtime.execute_project_control(text)
         except (KeyError, OSError, RuntimeError, ValueError) as exc:

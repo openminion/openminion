@@ -16,14 +16,16 @@ from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 
 
 class _FakeRuntime:
-    def __init__(self, snapshot: Any = None, raises: bool = False) -> None:
-        self._snapshot = snapshot
+    def __init__(
+        self, report: str = "Cost\nAmount: unavailable", raises: bool = False
+    ) -> None:
+        self._report = report
         self._raises = raises
 
-    def token_usage_snapshot(self) -> Any:
+    def token_cost_report(self) -> str:
         if self._raises:
-            raise RuntimeError("snapshot failed")
-        return self._snapshot
+            raise RuntimeError("cost failed")
+        return self._report
 
     def token_usage_report(self, *, recent: int | None = None) -> str:
         if recent is not None:
@@ -63,7 +65,7 @@ def test_cost_in_catalog() -> None:
 def test_render_cost_snapshot_missing_method() -> None:
     console, buf = _make_console()
     _render_cost_snapshot(runtime=object(), console=console)
-    assert "does not expose token_usage_snapshot" in buf.getvalue()
+    assert "does not expose token_cost_report" in buf.getvalue()
 
 
 def test_render_cost_snapshot_handles_raise() -> None:
@@ -74,32 +76,27 @@ def test_render_cost_snapshot_handles_raise() -> None:
 
 
 def test_render_cost_snapshot_no_data_hint() -> None:
-    # An empty snapshot will likely have format_token_usage_summary
-    # return "" — but if not, the test still passes (either path
-    # is acceptable: dim hint OR a "cost:" line).
-    runtime = _FakeRuntime(snapshot=None)
+    runtime = _FakeRuntime(report="")
     console, buf = _make_console()
     _render_cost_snapshot(runtime=runtime, console=console)
-    out = buf.getvalue()
-    # Either branch is acceptable; what matters is no crash.
-    assert "cost" in out.lower() or "no usage data" in out
+    assert buf.getvalue().strip() == "(no usage data yet)"
 
 
 def test_slash_cost_does_NOT_fall_through() -> None:
-    runtime = _FakeRuntime(snapshot=None)
+    runtime = _FakeRuntime()
     out = asyncio.run(_dispatch(runtime))
     assert "not yet implemented" not in out
 
 
 def test_slash_cost_dispatch_runs() -> None:
-    runtime = _FakeRuntime(snapshot=None)
+    runtime = _FakeRuntime()
     out = asyncio.run(_dispatch(runtime))
-    # Some content rendered (either hint or summary).
-    assert len(out.strip()) > 0
+    assert "Cost" in out
+    assert "unavailable" in out
 
 
 def test_slash_tokens_dispatches_durable_report() -> None:
-    runtime = _FakeRuntime(snapshot=None)
+    runtime = _FakeRuntime()
     out = asyncio.run(_dispatch(runtime, "/tokens"))
 
     assert "Token usage" in out
@@ -107,7 +104,7 @@ def test_slash_tokens_dispatches_durable_report() -> None:
 
 
 def test_slash_tokens_supports_recent_history() -> None:
-    runtime = _FakeRuntime(snapshot=None)
+    runtime = _FakeRuntime()
 
     default = asyncio.run(_dispatch(runtime, "/tokens recent"))
     explicit = asyncio.run(_dispatch(runtime, "/tokens recent 5"))

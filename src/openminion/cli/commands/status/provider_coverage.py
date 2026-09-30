@@ -16,6 +16,7 @@ from openminion.modules.telemetry.usage.token_usage import (
     SURFACE_LLM_CACHE_WRITE,
     SURFACE_LLM_OUTPUT,
     SURFACE_LLM_PROMPT,
+    SURFACE_LLM_REASONING,
     SURFACE_LLM_TOTAL,
 )
 
@@ -23,6 +24,7 @@ _LLM_USAGE_SURFACES = frozenset(
     {
         SURFACE_LLM_TOTAL,
         SURFACE_LLM_PROMPT,
+        SURFACE_LLM_REASONING,
         SURFACE_LLM_OUTPUT,
         SURFACE_LLM_CACHE_READ,
         SURFACE_LLM_CACHE_WRITE,
@@ -42,6 +44,7 @@ class ProviderCoverage:
     derived_tokens: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    reasoning_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
 
@@ -56,6 +59,7 @@ class ProviderCoverage:
             "derived_tokens": self.derived_tokens,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
             "cache_read_tokens": self.cache_read_tokens,
             "cache_write_tokens": self.cache_write_tokens,
         }
@@ -94,6 +98,7 @@ def provider_coverage_payload(
                 + (record.total_tokens if derived_total else 0),
                 input_tokens=current.input_tokens + record.input_tokens,
                 output_tokens=current.output_tokens + record.output_tokens,
+                reasoning_tokens=current.reasoning_tokens + record.reasoning_tokens,
                 cache_read_tokens=current.cache_read_tokens + record.cache_read_tokens,
                 cache_write_tokens=current.cache_write_tokens
                 + record.cache_write_tokens,
@@ -121,7 +126,8 @@ def format_provider_coverage(summaries: tuple[TokenUsageSummary, ...]) -> list[s
             f"records:{row['llm_total_records']} "
             f"provider:{row['provider_tokens']:,} "
             f"derived:{row['derived_tokens']:,} "
-            f"cache_read:{row['cache_read_tokens']:,}"
+            f"cache_read:{row['cache_read_tokens']:,} "
+            f"reasoning:{row['reasoning_tokens']:,}"
         )
     return ["provider coverage: " + "; ".join(parts)]
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from openminion.cli.status.token_usage import TokenUsageSnapshot
+from openminion.cli.status.token_usage import TokenUsageSnapshot, format_context_window
 from openminion.cli.presentation.visible_parity import (
     handle_effort_command,
     handle_statusline_command,
@@ -67,6 +67,12 @@ class _Runtime:
 
     def undo_last_turn(self):
         return {"ok": True, "message": "rewound latest turn"}
+
+
+def test_context_window_labels_known_limit_with_unknown_occupancy() -> None:
+    snapshot = TokenUsageSnapshot(context_limit_tokens=200_000)
+
+    assert format_context_window(snapshot) == "unknown / 200k"
 
 
 def test_render_context_report_includes_grid_and_inventory() -> None:

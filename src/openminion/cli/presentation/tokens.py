@@ -9,6 +9,8 @@ from openminion.cli.status.token_usage import format_token_count
 from openminion.modules.telemetry.usage import TokenUsageSummary
 from openminion.modules.telemetry.usage.token_usage import (
     SURFACE_CONTEXT_PACK,
+    SURFACE_LLM_OUTPUT,
+    SURFACE_LLM_PROMPT,
     SURFACE_LLM_TOTAL,
 )
 
@@ -89,7 +91,36 @@ def format_interactive_token_summary(summary: TokenUsageSummary) -> str:
         ),
         f"History: /tokens recent {DEFAULT_RECENT_SESSIONS}",
     ]
+    if summary.total_reasoning_tokens:
+        lines.insert(
+            5,
+            f"Reasoning: {format_token_count(summary.total_reasoning_tokens)} output detail",
+        )
     return "\n".join(lines)
+
+
+def format_interactive_cost_summary(summary: TokenUsageSummary) -> str:
+    observed, unmetered, failed = _call_counts(summary)
+    if not observed:
+        return "\n".join(
+            (
+                "Cost",
+                "No model calls in this session yet.",
+                "Next: send a prompt, then run /cost.",
+            )
+        )
+    total_tokens = summary.total_provider_tokens + summary.total_derived_tokens
+    return "\n".join(
+        (
+            "Cost",
+            f"Session: {_short_label(summary.session_id)}",
+            f"Amount: {_cost_label(summary)}",
+            (
+                f"Usage: {format_token_count(total_tokens)} tokens · "
+                f"{observed} observed · {unmetered} unmetered · {failed} failed"
+            ),
+        )
+    )
 
 
 def format_interactive_token_history(
@@ -134,13 +165,20 @@ def format_interactive_token_history(
     daily: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0])
     for summary in used:
         for record in summary.records:
-            if record.surface != SURFACE_LLM_TOTAL:
+            if record.surface not in {
+                SURFACE_LLM_TOTAL,
+                SURFACE_LLM_PROMPT,
+                SURFACE_LLM_OUTPUT,
+            }:
                 continue
             day = record.observed_at[:10] or "date unavailable"
             totals = daily[day]
-            totals[0] += record.total_tokens
-            totals[1] += record.input_tokens
-            totals[2] += record.output_tokens
+            if record.surface == SURFACE_LLM_TOTAL:
+                totals[0] += record.total_tokens
+            elif record.surface == SURFACE_LLM_PROMPT:
+                totals[1] += record.input_tokens
+            else:
+                totals[2] += record.output_tokens
     if daily:
         lines.append("By day (UTC, metered model calls):")
         for day, (total, input_tokens, output_tokens) in sorted(
@@ -274,6 +312,7 @@ def _unmetered_history_detail(summary: TokenUsageSummary) -> str:
 
 __all__ = [
     "TOKENS_USAGE",
+    "format_interactive_cost_summary",
     "format_interactive_token_history",
     "format_interactive_token_summary",
     "render_tokens_slash",

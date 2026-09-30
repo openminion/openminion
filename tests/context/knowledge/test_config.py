@@ -24,6 +24,7 @@ from openminion.modules.context.knowledge.errors import (
     InvalidLayerError,
     InvalidProviderTagError,
     MultiActiveSecondBrainError,
+    UnsupportedCapabilityError,
 )
 
 
@@ -39,6 +40,35 @@ def test_refresh_config_defaults():
     assert cfg.mode == DEFAULT_REFRESH_MODE
     assert cfg.on_start is False
     assert cfg.watch is False
+
+
+@pytest.mark.parametrize(
+    "refresh",
+    (
+        {"mode": "on_start"},
+        {"mode": "manual", "on_start": True},
+        {"mode": "manual", "watch": True},
+    ),
+)
+def test_config_rejects_unimplemented_automatic_refresh(refresh):
+    from openminion.modules.context.knowledge.config import (
+        knowledge_graphs_config_from_mapping,
+    )
+
+    payload = {
+        "provider": {
+            "providers": {
+                "repo": {
+                    "provider": "pragmagraph",
+                    "refresh": refresh,
+                },
+            },
+        },
+    }
+
+    with pytest.raises(UnsupportedCapabilityError) as exc_info:
+        knowledge_graphs_config_from_mapping(payload)
+    assert exc_info.value.code == "UNSUPPORTED_CAPABILITY"
 
 
 def test_provider_config_validates_tags():

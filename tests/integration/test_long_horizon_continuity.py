@@ -1,16 +1,29 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import replace
 
+from openminion.base.channel import ChannelRegistry
 from openminion.base.config import OpenMinionConfig
+from openminion.services.agent import AgentService
 from openminion.modules.context.slices import build_session_slice_from_runtime_store
 from openminion.modules.memory.config import from_base_config
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 from openminion.modules.storage.runtime.migrations import migrate_database
+from openminion.modules.storage.runtime.idempotency_store import IdempotencyStore
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.storage.runtime.sqlite import connect_database
 from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
+from openminion.services.context.session import SessionContextService
+from openminion.services.gateway import GatewayService
+from openminion.services.runtime.plugins import PluginRegistry
+from tests._csc_fixtures import _csc_install_default_agent
+from tests.services.gateway._gateway_service_support import (
+    _CaptureProvider,
+    _SinkChannel,
+)
 
 
 def _memory_runtime(memory_path, tmp_path):
@@ -35,6 +48,32 @@ def _memory_runtime(memory_path, tmp_path):
         capsule_max_chars=700,
     )
     return service, adapter
+
+
+def _gateway_runtime(connection, sessions):
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config, name="main")
+    provider = _CaptureProvider()
+    gateway = GatewayService(
+        agent=AgentService(
+            config=config,
+            plugins=PluginRegistry([]),
+            provider=provider,
+            logger=logging.getLogger("openminion.tests.continuity.agent"),
+        ),
+        channels=ChannelRegistry([_SinkChannel()]),
+        logger=logging.getLogger("openminion.tests.continuity.gateway"),
+        sessions=sessions,
+        idempotency=IdempotencyStore(connection),
+        agent_id="main",
+        history_limit=1,
+        session_context=SessionContextService(
+            sessions,
+            keep_recent_messages=1,
+            archive_enabled=False,
+        ),
+    )
+    return gateway, provider
 
 
 def test_objective_correction_and_bounded_context_survive_three_processes(
@@ -140,3 +179,116 @@ def test_objective_correction_and_bounded_context_survive_three_processes(
     if "blue headings" in recalled:
         assert recalled.index("Use us-east-1") < recalled.index("blue headings")
     assert metadata["memory_envelope_limit_chars"] == "700"
+
+
+def test_focus_compacted_history_survives_restart_for_brain_request(tmp_path) -> None:
+    session_path = tmp_path / "runtime.db"
+    migrate_database(session_path)
+    focus_id = "focus-session-1"
+
+    connection = connect_database(session_path)
+    store = SessionStore(connection)
+    session = store.resolve_session(
+        agent_id="main",
+        channel="console",
+        target="focus",
+        session_id="session-1",
+    )
+    for role, body in (
+        ("inbound", "Objective: finish the deployment migration."),
+        ("outbound", "Constraint: preserve the public API."),
+        ("inbound", "Use the linked tool result before continuing."),
+        ("outbound", "Tool result artifact: deployment-plan.json"),
+        ("inbound", "Continue after restart."),
+    ):
+        store.append_message(
+            session_id=session.id,
+            conversation_id=focus_id,
+            role=role,
+            body=body,
+        )
+    SessionContextService(
+        store,
+        keep_recent_messages=1,
+        max_compact_per_turn=20,
+        archive_enabled=False,
+    ).compact_session(session_id=session.id)
+    connection.close()
+
+    connection = connect_database(session_path)
+    restored_store = SessionStore(connection)
+    gateway, provider = _gateway_runtime(connection, restored_store)
+    asyncio.run(
+        gateway.run_once(
+            channel="console",
+            target="focus",
+            message="Continue after restart.",
+            session_id=session.id,
+            inbound_metadata={"conversation_id": focus_id},
+            deliver=False,
+        )
+    )
+    connection.close()
+
+    request_context = "\n".join(
+        message.content for message in provider.requests[-1].history
+    )
+    assert request_context.count("finish the deployment migration") == 1
+    assert request_context.count("preserve the public API") == 1
+    assert request_context.count("deployment-plan.json") == 1
+
+
+def test_gateway_rejects_mixed_focus_compaction_summary(tmp_path) -> None:
+    session_path = tmp_path / "runtime.db"
+    migrate_database(session_path)
+    connection = connect_database(session_path)
+    store = SessionStore(connection)
+    session = store.resolve_session(
+        agent_id="main",
+        channel="console",
+        target="focus",
+        session_id="mixed-session",
+    )
+    store.append_message(
+        session_id=session.id,
+        conversation_id="focus-mixed-session",
+        role="inbound",
+        body="Canonical objective must not escape a mixed summary.",
+    )
+    store.append_message(
+        session_id=session.id,
+        conversation_id="foreign-conversation",
+        role="outbound",
+        body="Foreign room fact must stay isolated.",
+    )
+    store.append_message(
+        session_id=session.id,
+        conversation_id="focus-mixed-session",
+        role="inbound",
+        body="Canonical recent tail.",
+    )
+    SessionContextService(
+        store,
+        keep_recent_messages=1,
+        max_compact_per_turn=20,
+        archive_enabled=False,
+    ).compact_session(session_id=session.id)
+    gateway, provider = _gateway_runtime(connection, store)
+
+    asyncio.run(
+        gateway.run_once(
+            channel="console",
+            target="focus",
+            message="Continue safely.",
+            session_id=session.id,
+            inbound_metadata={"conversation_id": "focus-mixed-session"},
+            deliver=False,
+        )
+    )
+    request_context = "\n".join(
+        message.content for message in provider.requests[-1].history
+    )
+    connection.close()
+
+    assert "Canonical objective must not escape" not in request_context
+    assert "Foreign room fact" not in request_context

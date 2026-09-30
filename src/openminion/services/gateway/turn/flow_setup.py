@@ -269,6 +269,8 @@ class GatewayTurnSetupMixin:
             memory_dynamic_retrieval_enabled=self._memory_dynamic_retrieval_enabled,
             knowledge_graphs=self._knowledge_graphs,
             contextctl_adapter=self._contextctl_adapter,
+            inbound_metadata=routing.normalized_inbound_metadata,
+            agent=self._agent,
         )
 
     def _build_gtgs_terminal_resolver(

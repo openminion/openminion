@@ -490,6 +490,7 @@ def test_status_tokens_recent_json_wraps_raw_session_envelopes(
             "derived_tokens": 0,
             "input_tokens": 3,
             "output_tokens": 2,
+            "reasoning_tokens": 0,
             "cache_read_tokens": 0,
             "cache_write_tokens": 0,
         }

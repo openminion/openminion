@@ -143,7 +143,7 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         config_ref=_clean(getattr(args, "config", None)) or None,
         verification_domain=cast(
             VerificationDomain,
-            str(getattr(args, "verification_domain", "cross_application")),
+            str(getattr(args, "verification_domain", "coding")),
         ),
         verification_commands=verification_commands,
         turn_timeout_seconds=turn_timeout_seconds,
@@ -152,6 +152,8 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         goal_id=_clean(getattr(args, "goal_id", None)) or None,
         task_plan_required=True,
         expected_checks=tuple(getattr(args, "expected_check", ()) or ()),
+        success_criteria=tuple(getattr(args, "success_criterion", ()) or ()),
+        source_request=goal,
     )
     run = request.run
     manager = project_task_manager(args)
@@ -918,13 +920,19 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         default=[],
         help="Exact required GitHub check name (repeat for each check)",
     )
+    start.add_argument(
+        "--success-criterion",
+        action="append",
+        default=[],
+        help="Explicit project completion criterion (repeat as needed)",
+    )
     start.add_argument("--max-iterations", type=int, default=1)
     start.add_argument("--max-wall-clock-ms", type=int, default=None)
     start.add_argument("--max-tool-calls", type=int, default=None)
     start.add_argument("--permission-profile", default="local-safe")
     start.add_argument(
         "--verification-domain",
-        choices=("coding", "research", "operations", "cross_application"),
+        choices=("coding", "research"),
         default="coding",
     )
     start.add_argument(
@@ -966,7 +974,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     resume.add_argument("--max-tool-calls", type=int, default=None)
     resume.add_argument(
         "--verification-domain",
-        choices=("coding", "research", "operations", "cross_application"),
+        choices=("coding", "research"),
         default=None,
     )
     resume.add_argument("--unattended", action="store_true")

@@ -75,6 +75,30 @@ def test_llm_call_completed_backfills_run_record_tokens(
     assert int(record["output_tokens"]) == 5
 
 
+def test_llm_call_completed_backfills_canonical_run_record_tokens(
+    store: SQLiteSessionStore,
+) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    run_id = store.create_run_record(session_id, run_type="llm", run_id="run-canonical")
+
+    store.append_event(
+        session_id=session_id,
+        event_type="llm.call.completed",
+        payload={
+            "run_id": run_id,
+            "usage": {"input_tokens": 12, "output_tokens": 5},
+        },
+    )
+    store.finish_run_record(run_id, status="completed")
+
+    record = store.get_run_record(run_id)
+    assert record is not None
+    assert int(record["input_tokens"]) == 12
+    assert int(record["output_tokens"]) == 5
+
+
 def test_token_usage_record_coerces_malformed_values() -> None:
     record = TokenUsageRecord(
         session_id="session-1",

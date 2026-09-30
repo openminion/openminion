@@ -145,10 +145,10 @@ class OpenTelemetryTraceExporter:
                 self._config,
                 logger=self._logger,
             )
-        self._pending_paired_spans: dict[str, dict[str, Any]] = {}
-        self._deferred_spans: dict[str, list[dict[str, Any]]] = {}
-        self._deferred_events: dict[str, list[dict[str, Any]]] = {}
-        self._deferred_logs: dict[str, list[dict[str, Any]]] = {}
+        self._pending_paired_spans: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self._deferred_spans: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        self._deferred_events: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        self._deferred_logs: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self._state_lock = Lock()
         self._closing = False
         self._queue_stopped = False
@@ -439,12 +439,13 @@ class OpenTelemetryTraceExporter:
         )
         return True
 
-    def _pending_execution_id(self, event: TelemetryEvent) -> str:
+    def _pending_execution_scope(self, event: TelemetryEvent) -> tuple[str, str] | None:
         execution_id = _execution_id_for_event(event)
         if not execution_id:
-            return ""
-        slot = f"agent.execution.started:{execution_id}"
-        return execution_id if slot in self._pending_paired_spans else ""
+            return None
+        trace_key = _trace_key_for_event(event)
+        slot = (trace_key, "agent.execution.started", execution_id)
+        return (trace_key, execution_id) if slot in self._pending_paired_spans else None
 
     def _emit_or_defer_span(
         self,
@@ -453,9 +454,13 @@ class OpenTelemetryTraceExporter:
         execution_id: str = "",
         **span: Any,
     ) -> None:
-        pending_execution_id = execution_id or self._pending_execution_id(event)
-        if pending_execution_id:
-            self._deferred_spans.setdefault(pending_execution_id, []).append(span)
+        pending_scope = (
+            (_trace_key_for_event(event), execution_id)
+            if execution_id
+            else self._pending_execution_scope(event)
+        )
+        if pending_scope is not None:
+            self._deferred_spans.setdefault(pending_scope, []).append(span)
             return
         assert self._sink is not None
         self._sink.emit_span(**span)
@@ -466,9 +471,9 @@ class OpenTelemetryTraceExporter:
         event: TelemetryEvent,
         **record: Any,
     ) -> None:
-        execution_id = self._pending_execution_id(event)
-        if execution_id:
-            self._deferred_events.setdefault(execution_id, []).append(record)
+        pending_scope = self._pending_execution_scope(event)
+        if pending_scope is not None:
+            self._deferred_events.setdefault(pending_scope, []).append(record)
             return
         assert self._sink is not None
         self._sink.emit_event(**record)
@@ -479,23 +484,24 @@ class OpenTelemetryTraceExporter:
         event: TelemetryEvent,
         **record: Any,
     ) -> None:
-        execution_id = self._pending_execution_id(event)
-        if execution_id:
-            self._deferred_logs.setdefault(execution_id, []).append(record)
+        pending_scope = self._pending_execution_scope(event)
+        if pending_scope is not None:
+            self._deferred_logs.setdefault(pending_scope, []).append(record)
             return
         assert self._sink is not None
         self._sink.emit_log(**record)
 
     def _flush_execution(self, execution_id: str, trace_key: str) -> None:
         assert self._sink is not None
-        spans = self._deferred_spans.pop(execution_id, [])
+        scope = (trace_key, execution_id)
+        spans = self._deferred_spans.pop(scope, [])
         trace_keys = {trace_key}
         trace_keys.update(str(span.get("trace_key") or "") for span in spans)
         spans.sort(key=lambda item: _span_depth(str(item.get("span_key") or "")))
         for span in spans:
             self._sink.emit_span(**span)
-        events = self._deferred_events.pop(execution_id, [])
-        logs = self._deferred_logs.pop(execution_id, [])
+        events = self._deferred_events.pop(scope, [])
+        logs = self._deferred_logs.pop(scope, [])
         trace_keys.update(str(record.get("trace_key") or "") for record in events)
         trace_keys.update(str(record.get("trace_key") or "") for record in logs)
         for record in events:
@@ -552,19 +558,20 @@ class OpenTelemetryTraceExporter:
                 parent_span_key=_parent_span_key_for_event(event),
             )
             return
-        slot = f"{event_type}:{pairing_id}"
+        slot = (trace_key, event_type, pairing_id)
         span_key, parent_span_key = _span_keys(event_type, event, pairing_id)
         if (
             slot not in self._pending_paired_spans
             and len(self._pending_paired_spans) >= self._MAX_PENDING_PAIRED_SPANS
         ):
             oldest = next(iter(self._pending_paired_spans))
-            self._pending_paired_spans.pop(oldest, None)
-            if oldest.startswith("agent.execution.started:"):
-                execution_id = oldest.partition(":")[2]
-                self._deferred_spans.pop(execution_id, None)
-                self._deferred_events.pop(execution_id, None)
-                self._deferred_logs.pop(execution_id, None)
+            pending = self._pending_paired_spans.pop(oldest)
+            execution_id = str(pending.get("execution_id") or "")
+            if execution_id:
+                scope = (str(pending["trace_key"]), execution_id)
+                self._deferred_spans.pop(scope, None)
+                self._deferred_events.pop(scope, None)
+                self._deferred_logs.pop(scope, None)
         self._pending_paired_spans[slot] = {
             "trace_key": trace_key,
             "session_id": event.session_id,
@@ -586,6 +593,9 @@ class OpenTelemetryTraceExporter:
             "span_links": tuple((event.data or {}).get("span_links") or ()),
             "span_key": span_key,
             "parent_span_key": parent_span_key,
+            "execution_id": (
+                pairing_id if event_type == "agent.execution.started" else ""
+            ),
         }
 
     def _emit_paired_completion(
@@ -602,7 +612,7 @@ class OpenTelemetryTraceExporter:
         pairing_id = _resolve_pairing_id(event, pairing_keys)
         if not pairing_id:
             return False
-        slot = f"{start_event_type}:{pairing_id}"
+        slot = (trace_key, start_event_type, pairing_id)
         pending = self._pending_paired_spans.pop(slot, None)
         if pending is None:
             return False

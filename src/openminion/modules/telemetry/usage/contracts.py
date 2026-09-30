@@ -33,7 +33,9 @@ class TokenUsageRecordPayload(TypedDict):
     session_id: str
     run_id: str
     turn_id: str
+    trace_id: str
     llm_call_id: str
+    purpose: str
     prompt_context_id: str
     provider: str
     model: str
@@ -47,6 +49,7 @@ class TokenUsageRecordPayload(TypedDict):
     total_source: TokenTotalSource
     input_tokens: int
     output_tokens: int
+    reasoning_tokens: int
     cache_read_tokens: int
     cache_write_tokens: int
     estimated_tokens: int
@@ -82,6 +85,7 @@ class TokenUsageCoveragePayload(TypedDict):
     llm_call_id_present_events: int
     input_tokens: TokenUsageDimensionCoveragePayload
     output_tokens: TokenUsageDimensionCoveragePayload
+    reasoning_tokens: TokenUsageDimensionCoveragePayload
     total_tokens: TokenUsageDimensionCoveragePayload
     cache_read_tokens: TokenUsageDimensionCoveragePayload
     cache_write_tokens: TokenUsageDimensionCoveragePayload
@@ -92,6 +96,7 @@ class TokenUsageTotalsPayload(TypedDict):
     derived_tokens: int
     input_tokens: int
     output_tokens: int
+    reasoning_tokens: int
     cache_read_tokens: int
     cache_write_tokens: int
     estimated_tokens: int
@@ -132,6 +137,7 @@ class TokenUsageRollupTotalsPayload(TypedDict):
     context_estimated_tokens: int
     cache_read_tokens: int
     cache_write_tokens: int
+    reasoning_tokens: int
 
 
 class TokenUsageRollupCoveragePayload(TypedDict):
@@ -157,6 +163,7 @@ class TokenUsageProviderCoveragePayload(TypedDict):
     derived_tokens: int
     input_tokens: int
     output_tokens: int
+    reasoning_tokens: int
     cache_read_tokens: int
     cache_write_tokens: int
 
@@ -181,6 +188,7 @@ class TokenUsageSessionTrendPayload(TypedDict):
     context_estimated_tokens: int
     cache_read_tokens: int
     cache_write_tokens: int
+    reasoning_tokens: int
     llm_tokens: int
     total_visible_tokens: int
     provider_cost_usd: float | None

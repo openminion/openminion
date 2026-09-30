@@ -395,6 +395,44 @@ class SessionContextServiceTests(unittest.TestCase):
         self.assertEqual([item.id for item in history], [first.id, second.id])
         self.assertNotEqual(history[0].metadata.get("role"), "system")
 
+    def test_focus_history_rejects_mixed_compacted_conversations(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main",
+            channel="console",
+            target="focus",
+            session_id="focus-mixed",
+        )
+        for conversation_id, body in (
+            ("focus-focus-mixed", "canonical objective"),
+            ("other-conversation", "unrelated room fact"),
+            ("focus-focus-mixed", "recent request"),
+        ):
+            self.store.append_message(
+                session_id=session.id,
+                conversation_id=conversation_id,
+                role="inbound",
+                body=body,
+            )
+        service = SessionContextService(
+            self.store,
+            keep_recent_messages=1,
+            archive_enabled=False,
+        )
+        service.compact_session(session_id=session.id)
+
+        history = service.build_history(
+            session_id=session.id,
+            channel="console",
+            target="focus",
+            recent_limit=1,
+            conversation_id="focus-focus-mixed",
+        )
+
+        rendered = "\n".join(item.body for item in history)
+        self.assertNotIn("canonical objective", rendered)
+        self.assertNotIn("unrelated room fact", rendered)
+        self.assertEqual(rendered, "recent request")
+
     def test_latest_conversation_lookup_does_not_widen_conversation_scoped_history(
         self,
     ) -> None:

@@ -399,21 +399,21 @@ def test_shared_evidence_packing_runs_once_independent_of_full_build_flag(
         assert "duplicate graph fact" in context.knowledge_graph_context
     else:
         assert "remembered fact" in context.memory_retrieval_context
-        assert context.knowledge_graph_context == ""
+        assert "duplicate graph fact" in context.knowledge_graph_context
     assert context.evidence_pack is not None
-    expected_source_kind = "knowledge" if full_build_enabled else "memory"
-    expected_item_id = (
-        "repo_graph:shared-provenance" if full_build_enabled else "shared-provenance"
-    )
-    assert [
+    packed_items = [
         (item.source_kind, item.item_id) for item in context.evidence_pack.items
-    ] == [(expected_source_kind, expected_item_id)]
-    assert (
-        any(
-            omission.source_kind == "knowledge" and omission.reason == "duplicate"
-            for omission in context.evidence_pack.omissions
-        )
-        is not full_build_enabled
+    ]
+    if full_build_enabled:
+        assert packed_items == [("knowledge", "repo_graph:shared-provenance")]
+    else:
+        assert packed_items == [
+            ("memory", "shared-provenance"),
+            ("knowledge", "repo_graph:shared-provenance"),
+        ]
+    assert not any(
+        omission.source_kind == "knowledge" and omission.reason == "duplicate"
+        for omission in context.evidence_pack.omissions
     )
 
 

@@ -54,19 +54,14 @@ def _latest_working_state_inline(
     runner: BrainRunner,
     session_id: str,
 ) -> dict[str, Any] | None:
-    try:
-        raw = runner.session_api.get_latest_working_state(
-            session_id,
-            agent_id=runner.profile.agent_id,
-        )
-    except Exception:  # noqa: BLE001
-        return None
+    raw = runner.session_api.get_latest_working_state(
+        session_id,
+        agent_id=runner.profile.agent_id,
+    )
     if not isinstance(raw, dict):
         return None
-    state_inline = (
-        raw.get("state_inline") if isinstance(raw.get("state_inline"), dict) else raw
-    )
-    return state_inline if isinstance(state_inline, dict) else None
+    state_inline = raw.get("state_inline")
+    return state_inline if isinstance(state_inline, dict) else raw
 
 
 def _write_working_state_inline(
@@ -74,12 +69,8 @@ def _write_working_state_inline(
     runner: BrainRunner,
     session_id: str,
     state_inline: dict[str, Any],
-) -> bool:
-    try:
-        runner.session_api.put_working_state(session_id, state_inline=state_inline)
-    except Exception:  # noqa: BLE001
-        return False
-    return True
+) -> None:
+    runner.session_api.put_working_state(session_id, state_inline=state_inline)
 
 
 def _mission_reset_preview(

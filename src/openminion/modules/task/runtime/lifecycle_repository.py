@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from threading import RLock
 from typing import Any
-from collections.abc import Mapping
 
 from openminion.base.time import utc_now_iso as _utc_now_iso
 
@@ -75,6 +75,35 @@ class TaskLifecycleRepository(
             )
             self._conn.commit()
         return _require_task_record(self.get(record.task_id), task_id=record.task_id)
+
+    def mutate_metadata(
+        self,
+        *,
+        task_id: str,
+        mutate: Callable[[dict[str, Any]], Mapping[str, Any]],
+    ) -> TaskLifecycleRecord:
+        normalized = str(task_id or "").strip()
+        if not normalized:
+            raise ValueError("task_id is required")
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute(
+                "SELECT metadata FROM scheduled_tasks WHERE task_id = ?",
+                (normalized,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"task not found: {normalized}")
+            metadata = dict(mutate(dict(_load_metadata(row["metadata"]))))
+            self._conn.execute(
+                """
+                UPDATE scheduled_tasks
+                SET metadata = ?,
+                    updated_at = ?
+                WHERE task_id = ?
+                """,
+                (_dump_metadata(metadata), _utc_now_iso(), normalized),
+            )
+        return _require_task_record(self.get(normalized), task_id=normalized)
 
     def _row_to_record(self, row: sqlite3.Row | None) -> TaskLifecycleRecord | None:
         if row is None:

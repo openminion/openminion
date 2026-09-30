@@ -41,6 +41,7 @@ from openminion.modules.task.project import (
     commit_project_run_checkpoint,
     evaluate_project_turn_verification,
     project_condition_from_metadata,
+    project_checkpoint_guidance,
     project_cycle_checkpoint_payload,
     project_cycle_prompt,
     project_metadata_refs,
@@ -364,9 +365,11 @@ class ProjectWorker:
         project_tool_calls_remaining: int | None,
         cycle_limit: int,
     ) -> ProjectWorkerResult:
+        guidance = project_checkpoint_guidance(task.metadata, checkpoint)
         evaluation = self._evaluate_cycle(
             run,
             checkpoint,
+            operator_guidance=guidance[0],
             cycle_number=cycle_number,
             project_tool_calls_remaining=project_tool_calls_remaining,
             cycle_limit=cycle_limit,
@@ -402,7 +405,6 @@ class ProjectWorker:
                 verification_state=ProjectVerificationState.BLOCKED,
                 reason="repository_checks_failed",
             )
-        waiting_for_checks = next_check_event is not None
         updated_project = self._updated_project_run(
             run,
             checkpoint,
@@ -438,7 +440,8 @@ class ProjectWorker:
                 verification_closure=evaluation.closure_payload,
                 decision_reason=evaluation.reason,
                 replan_count=evaluation.replan_count,
-                waiting_for_checks=waiting_for_checks,
+                waiting_for_checks=next_check_event is not None,
+                operator_guidance_consumed_revision=guidance[1],
             ),
         )
         return self._finalize_cycle(
@@ -608,6 +611,7 @@ class ProjectWorker:
         run: AutonomyRun,
         checkpoint: ProjectCheckpoint,
         *,
+        operator_guidance: dict[str, object],
         cycle_number: int,
         project_tool_calls_remaining: int | None,
         cycle_limit: int,
@@ -641,6 +645,7 @@ class ProjectWorker:
                 repository_check_observation=(
                     project_cp.repository_check_observation(checkpoint)
                 ),
+                operator_guidance=operator_guidance,
             ),
             allowed_tools=allowed_tools,
             project_tool_calls_remaining=project_tool_calls_remaining,

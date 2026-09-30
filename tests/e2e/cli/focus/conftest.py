@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import sys
 
 import pytest
 
@@ -25,13 +26,17 @@ def framework_root(openminion_root: Path) -> Path:
     return openminion_root.parent
 
 
-@pytest.fixture(scope="session")
-def python_bin(openminion_root: Path) -> Path:
+def _resolve_python_bin(openminion_root: Path) -> Path:
     override = str(os.getenv("OPENMINION_PYTHON", "")).strip()
     if override:
         return Path(override)
     local = openminion_root / ".venv" / "bin" / "python3.11"
-    return local if local.exists() else Path("python3.11")
+    return local if local.exists() else Path(sys.executable)
+
+
+@pytest.fixture(scope="session")
+def python_bin(openminion_root: Path) -> Path:
+    return _resolve_python_bin(openminion_root)
 
 
 @pytest.fixture(scope="session")

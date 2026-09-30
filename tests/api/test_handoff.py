@@ -9,13 +9,17 @@ import pytest
 
 from openminion.api.agent import Agent
 from openminion.api.handoff import (
+    DelegatedMemoryReadRequest,
     Handoff,
     SubagentRunContext,
     build_delegate_family_spec,
     build_delegate_tool,
     subagent,
 )
+from openminion.modules.policy.models import PolicyConfig
+from openminion.modules.policy.runtime.service import PolicyCtl
 from openminion.modules.tool.registry import ToolRegistry
+from sophiagraph.models import MemoryNamespace
 
 
 class _FakeRuntime:
@@ -24,16 +28,35 @@ class _FakeRuntime:
         reply_body: str = "hello back",
         *,
         tools: ToolRegistry | None = None,
+        action_policy: PolicyCtl | None = None,
     ) -> None:
         self.reply_body = reply_body
         self.tools = tools
+        self.action_policy = action_policy
         self.last_payload: dict[str, Any] | None = None
+        self.last_trusted_subagent_context: SubagentRunContext | None = None
+        self.active_grant_during_run = None
         self.seen_tool_names_during_run: list[str] = []
         self.prompt_visible_tools_during_run: list[str] = []
         self.tool_result_during_run: Any = None
 
     def run_turn(self, *, payload, progress_callback=None, **kwargs):
         self.last_payload = payload
+        self.last_trusted_subagent_context = kwargs.get("trusted_subagent_context")
+        context = self.last_trusted_subagent_context
+        if (
+            context is not None
+            and context.memory_grant_id is not None
+            and self.action_policy is not None
+        ):
+            self.active_grant_during_run = (
+                self.action_policy.resolve_active_grant_for_use(
+                    context.memory_grant_id,
+                    subject_id=context.child_agent_id,
+                    tool="memory",
+                    method="delegated_read",
+                )
+            )
         if self.tools is not None:
             self.seen_tool_names_during_run = sorted(self.tools.list())
             self.prompt_visible_tools_during_run = sorted(
@@ -300,12 +323,15 @@ def test_subagent_run_threads_context_as_runtime_metadata() -> None:
     assert "parent secret" not in str(payload)
     assert payload["allowed_tools"] == ["safe.read"]
     assert payload["timeout_seconds"] == 30
-    assert payload["subagent_context"]["parent_agent_id"] == "parent"
-    assert payload["subagent_context"]["child_agent_id"] == "child"
-    assert payload["subagent_context"]["tool_allowlist"] == ["safe.read"]
-    assert payload["subagent_context"]["implicit_memory_write"] is False
-    assert payload["inbound_metadata"]["subagent_memory_posture"] == "none"
-    assert payload["inbound_metadata"]["subagent_tool_allowlist"] == "safe.read"
+    assert "subagent_context" not in payload
+    assert "inbound_metadata" not in payload
+    context = runtime.last_trusted_subagent_context
+    assert context is not None
+    assert context.parent_agent_id == "parent"
+    assert context.child_agent_id == "child"
+    assert context.tool_allowlist == ("safe.read",)
+    assert context.implicit_memory_write is False
+    assert context.memory_posture == "none"
 
 
 def test_subagent_rejects_unbound_memory_posture_before_run() -> None:
@@ -344,8 +370,80 @@ def test_subagent_disallowed_parent_tools_are_absent_by_default() -> None:
 
     payload = runtime.last_payload
     assert "allowed_tools" not in payload
-    assert payload["subagent_context"]["tool_allowlist"] == []
-    assert payload["inbound_metadata"]["subagent_tool_allowlist"] == ""
+    assert runtime.last_trusted_subagent_context is not None
+    assert runtime.last_trusted_subagent_context.tool_allowlist == ()
+
+
+def test_subagent_issues_and_revokes_fresh_memory_grant_per_run(tmp_path) -> None:
+    policy = PolicyCtl.with_sqlite(
+        tmp_path / "policy.db",
+        config=PolicyConfig(mode="enforce"),
+    )
+    try:
+        runtime = _FakeRuntime(action_policy=policy)
+        parent = Agent(runtime=runtime, name="parent")
+        child = subagent(
+            parent,
+            name="child",
+            timeout_seconds=30,
+            memory=DelegatedMemoryReadRequest(
+                namespaces=(
+                    MemoryNamespace(
+                        agent_id="parent",
+                        project_id="project",
+                        graph_id="main",
+                    ),
+                ),
+                workspace_ids=("workspace",),
+                record_types=("fact",),
+                max_results=3,
+                max_context_tokens=256,
+            ),
+        )
+
+        child.run("first")
+        first_context = runtime.last_trusted_subagent_context
+        assert first_context is not None
+        assert runtime.active_grant_during_run is not None
+        assert first_context.memory_posture == "read_only_bounded"
+        assert policy.list_grants()[0].revoked_at is not None
+
+        runtime.active_grant_during_run = None
+        child.run("second")
+        second_context = runtime.last_trusted_subagent_context
+        assert second_context is not None
+        assert second_context.context_id != first_context.context_id
+        assert second_context.child_run_id != first_context.child_run_id
+        assert second_context.memory_grant_id != first_context.memory_grant_id
+        assert runtime.active_grant_during_run is not None
+        assert all(grant.revoked_at is not None for grant in policy.list_grants())
+    finally:
+        policy.close()
+
+
+def test_delegated_memory_ancestry_cannot_be_laundered_through_child() -> None:
+    root = Agent(runtime=_FakeRuntime(), name="root")
+    memory_child = subagent(
+        root,
+        name="memory-child",
+        memory=DelegatedMemoryReadRequest(
+            namespaces=(MemoryNamespace(agent_id="root"),),
+            record_types=("fact",),
+        ),
+    )
+    middle = subagent(memory_child, name="middle")
+
+    assert middle.subagent_context is not None
+    assert middle.subagent_context.delegated_memory_ancestor is True
+    with pytest.raises(ValueError, match="cannot be re-shared"):
+        subagent(
+            middle,
+            name="leaf",
+            memory=DelegatedMemoryReadRequest(
+                namespaces=(MemoryNamespace(agent_id="root"),),
+                record_types=("fact",),
+            ),
+        )
 
 
 def test_subagent_lazy_runtime_construction_only_happens_once() -> None:

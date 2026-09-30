@@ -27,6 +27,7 @@ class RuntimeMemoryAssembly:
     memctl: Any | None = None
     vector_adapter: Any | None = None
     scheduler: RuntimeMemoryScheduler | None = None
+    delegated_store: Any | None = None
     _started: bool = field(default=False, init=False, repr=False)
     _close_result: RuntimeMemoryCloseResult | None = field(
         default=None,

@@ -20,6 +20,8 @@ from openminion.cli.commands.config import (
     load_config_import,
     resolve_config_import_path,
 )
+from openminion.cli.parser.flags import add_json_output_flag
+from openminion.cli.presentation.json_output import print_json_payload
 from openminion.modules.llm.setup_catalog import (
     ProviderSetupPreset,
     SetupCatalogError,
@@ -399,6 +401,22 @@ def _print_provider_listing() -> None:
     )
 
 
+def _provider_listing_payload() -> dict[str, Any]:
+    return {
+        "providers": [
+            {
+                "id": preset.preset_id,
+                "label": preset.display_label,
+                "credential_env": preset.credential_env or None,
+                "requires_credential": preset.requires_credential,
+                "base_url": preset.default_base_url or None,
+                "recommended_models": list(preset.recommended_models),
+            }
+            for preset in list_setup_presets()
+        ]
+    }
+
+
 def _prompt_provider_check(preset: ProviderSetupPreset) -> bool:
     if preset.is_local:
         print(
@@ -539,8 +557,14 @@ def _check_provider_with_progress(config_path: Path) -> int:
 def run_setup(args) -> int:
     from openminion.base.config.core import resolve_default_agent_id
 
+    if getattr(args, "json", False) and not getattr(args, "list_providers", False):
+        print("Setup failed: --json requires --list-providers.")
+        return 2
     if getattr(args, "list_providers", False):
-        _resolve_runtime_helper("_print_provider_listing")()
+        if getattr(args, "json", False):
+            print_json_payload(_provider_listing_payload())
+        else:
+            _resolve_runtime_helper("_print_provider_listing")()
         return 0
     if _reject_incompatible_model_flags(args):
         return 2
@@ -655,6 +679,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         action="store_true",
         help="List setup provider presets and API formats without making network requests",
     )
+    add_json_output_flag(setup)
     setup.add_argument(
         "--model",
         default=None,

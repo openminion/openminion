@@ -37,6 +37,7 @@ class RuntimeTurnRequest:
     run_profile_overrides: RunProfileOverrides = field(
         default_factory=RunProfileOverrides
     )
+    trusted_subagent_context: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,7 @@ class RuntimeTurnHandle:
 
     @property
     def trace_id(self) -> str:
-        return self.handle.trace_id
+        return str(self.handle.trace_id)
 
     def result(self, timeout_s: float | None = None) -> Any:
         effective_timeout = self.timeout_s if timeout_s is None else timeout_s

@@ -773,7 +773,9 @@ class OpenMinionRuntime(
         if self._project_context_pending and self._project_context is not None:
             merged.update(build_project_context_metadata(self._project_context))
             self._project_context_pending = False
-        if (
+        if self._target == _TARGET_KIND_FOCUS and self._conversation_id:
+            merged["conversation_id"] = self._conversation_id
+        elif (
             self._conversation_id
             and not str(merged.get("conversation_id", "") or "").strip()
         ):

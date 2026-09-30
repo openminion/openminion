@@ -375,10 +375,32 @@ print(json.dumps(results, sort_keys=True))
     def test_setup_list_providers_parse(self) -> None:
         parser = build_parser()
 
-        args = parser.parse_args(["setup", "--list-providers"])
+        args = parser.parse_args(["setup", "--list-providers", "--json"])
 
         self.assertEqual(args.command, "setup")
         self.assertTrue(args.list_providers)
+        self.assertTrue(args.json)
+
+    def test_setup_rejects_json_without_provider_listing_before_wizard(self) -> None:
+        args = build_parser().parse_args(["setup", "--json"])
+
+        with (
+            mock.patch("openminion.cli.commands.setup._run_wizard") as wizard,
+            mock.patch(
+                "openminion.cli.commands.setup._check_provider_with_progress"
+            ) as provider_check,
+            mock.patch(
+                "openminion.cli.commands.setup.atomic_save_setup_config"
+            ) as config_write,
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            code = args.handler(args)
+
+        self.assertEqual(code, 2)
+        wizard.assert_not_called()
+        provider_check.assert_not_called()
+        config_write.assert_not_called()
+        self.assertIn("--json requires --list-providers", output.getvalue())
 
     def test_setup_parse_stale_handler_still_uses_canonical_patched_helpers(
         self,

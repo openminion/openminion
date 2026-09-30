@@ -45,8 +45,23 @@ def parse_inbound_metadata(
         normalized_key = str(key or "").strip()
         if not normalized_key:
             continue
+        if normalized_key.startswith("subagent_"):
+            raise error_factory(
+                "`inbound_metadata` cannot set reserved subagent fields."
+            )
         parsed[normalized_key] = str(value or "").strip()
     return parsed
+
+
+def reject_reserved_subagent_fields(
+    payload: Mapping[str, Any],
+    *,
+    error_factory: Callable[[str], BaseException],
+) -> None:
+    if "subagent_context" in payload or any(
+        str(key).startswith("subagent_") for key in payload
+    ):
+        raise error_factory("payload cannot set reserved subagent fields.")
 
 
 def apply_inbound_overrides(
