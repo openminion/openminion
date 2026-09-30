@@ -46,6 +46,30 @@ def test_delete_secret(service):
         _run(service.get_secret("test_key"))
 
 
+def test_consume_secret_is_one_time(service):
+    _run(service.set_secret("oauth_state", "verifier", namespace="mcp"))
+
+    assert service.consume_secret_sync("oauth_state", namespace="mcp") == "verifier"
+    with pytest.raises(SecretNotFoundError):
+        service.consume_secret_sync("oauth_state", namespace="mcp")
+
+
+def test_consumed_secret_stays_deleted_after_reopen(tmp_path, master_key):
+    db_path = tmp_path / "secret.db"
+    service = SecretService(str(db_path), master_key)
+    _run(service.set_secret("oauth_state", "verifier", namespace="mcp"))
+
+    assert service.consume_secret_sync("oauth_state", namespace="mcp") == "verifier"
+    service.close_sync()
+
+    reopened = SecretService(str(db_path), master_key)
+    try:
+        with pytest.raises(SecretNotFoundError):
+            reopened.consume_secret_sync("oauth_state", namespace="mcp")
+    finally:
+        reopened.close_sync()
+
+
 def test_list_keys(service):
     _run(service.set_secret("key1", "value1"))
     _run(service.set_secret("key2", "value2"))

@@ -19,6 +19,9 @@ class SecretStore(ABC):
     def fetch_value(self, *, key: str, namespace: str) -> str | None: ...
 
     @abstractmethod
+    def consume_value(self, *, key: str, namespace: str) -> str | None: ...
+
+    @abstractmethod
     def delete(self, *, key: str, namespace: str) -> None: ...
 
     @abstractmethod

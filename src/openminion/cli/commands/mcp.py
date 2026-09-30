@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 from pathlib import Path
 import secrets
 import sys
+import time
 from typing import TYPE_CHECKING, Any
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -15,12 +16,17 @@ from openminion.cli.presentation.json_output import print_json_payload
 if TYPE_CHECKING:
     from openminion.base.config.mcp import MCPServerConfig
 
-_SECRET_KEY_TOKENS = ("token", "secret", "password", "key", "authorization")
-
 
 def run_mcp(args: argparse.Namespace) -> int:
     command = str(getattr(args, "mcp_command", "") or "").strip().lower()
     handler = {
+        "add": _mcp_add,
+        "get": _mcp_get,
+        "remove": _mcp_remove,
+        "enable": _mcp_enable,
+        "disable": _mcp_disable,
+        "trust": _mcp_trust,
+        "untrust": _mcp_untrust,
         "import": _mcp_import,
         "list": _mcp_list,
         "validate": _mcp_validate,
@@ -35,6 +41,128 @@ def run_mcp(args: argparse.Namespace) -> int:
     if handler is None:
         raise RuntimeError("Unknown mcp command")
     return handler(args)
+
+
+def _mcp_add(args: argparse.Namespace) -> int:
+    from openminion.base.config.io import load_config, save_config
+    from openminion.base.config.mcp import MCPServerConfig
+
+    config_path = getattr(args, "config", None)
+    config = load_config(config_path)
+    command = list(getattr(args, "command", []) or [])
+    if command[:1] == ["--"]:
+        command = command[1:]
+    url = str(getattr(args, "url", "") or "").strip()
+    if bool(command) == bool(url):
+        raise RuntimeError("mcp add requires either --url or --command")
+
+    server = MCPServerConfig(
+        name=args.name,
+        enabled=not bool(getattr(args, "disabled", False)),
+        required=bool(getattr(args, "required", False)),
+        transport="streamable_http" if url else "stdio",
+        command=command,
+        url=url,
+        cwd=str(getattr(args, "cwd", "") or ""),
+        trusted=bool(getattr(args, "trusted", False)),
+    )
+    if any(item.name == server.name for item in config.runtime.mcp_servers):
+        raise RuntimeError(f"MCP server already exists: {server.name}")
+    config.runtime.mcp_servers.append(server)
+    save_config(config, config_path)
+    print_json_payload(
+        {
+            "ok": True,
+            "server": _redacted_server_payload(server),
+            "applies": "next_startup",
+        }
+    )
+    return 0
+
+
+def _mcp_get(args: argparse.Namespace) -> int:
+    from openminion.base.config.io import load_config
+
+    config = load_config(getattr(args, "config", None))
+    server = _require_server(config.runtime.mcp_servers, args.name)
+    print_json_payload({"ok": True, "server": _redacted_server_payload(server)})
+    return 0
+
+
+def _mcp_remove(args: argparse.Namespace) -> int:
+    from openminion.base.config.io import load_config, save_config
+
+    config_path = getattr(args, "config", None)
+    config = load_config(config_path)
+    server = _require_server(config.runtime.mcp_servers, args.name)
+    config.runtime.mcp_servers = [
+        item for item in config.runtime.mcp_servers if item.name != server.name
+    ]
+    save_config(config, config_path)
+    print_json_payload({"ok": True, "removed": server.name, "applies": "next_startup"})
+    return 0
+
+
+def _mcp_enable(args: argparse.Namespace) -> int:
+    return _mcp_set_enabled(args, enabled=True)
+
+
+def _mcp_disable(args: argparse.Namespace) -> int:
+    return _mcp_set_enabled(args, enabled=False)
+
+
+def _mcp_trust(args: argparse.Namespace) -> int:
+    return _mcp_set_trusted(args, trusted=True)
+
+
+def _mcp_untrust(args: argparse.Namespace) -> int:
+    return _mcp_set_trusted(args, trusted=False)
+
+
+def _mcp_set_enabled(args: argparse.Namespace, *, enabled: bool) -> int:
+    from openminion.base.config.io import load_config, save_config
+
+    config_path = getattr(args, "config", None)
+    config = load_config(config_path)
+    server = _require_server(config.runtime.mcp_servers, args.name)
+    updated = replace(server, enabled=enabled)
+    config.runtime.mcp_servers = [
+        updated if item.name == server.name else item
+        for item in config.runtime.mcp_servers
+    ]
+    save_config(config, config_path)
+    print_json_payload(
+        {
+            "ok": True,
+            "server": _redacted_server_payload(updated),
+            "applies": "next_startup",
+        }
+    )
+    return 0
+
+
+def _mcp_set_trusted(args: argparse.Namespace, *, trusted: bool) -> int:
+    from openminion.base.config.io import load_config, save_config
+
+    config_path = getattr(args, "config", None)
+    config = load_config(config_path)
+    server = _require_server(config.runtime.mcp_servers, args.name)
+    if server.transport != "stdio":
+        raise RuntimeError("mcp trust/untrust applies only to stdio servers")
+    updated = replace(server, trusted=trusted)
+    config.runtime.mcp_servers = [
+        updated if item.name == server.name else item
+        for item in config.runtime.mcp_servers
+    ]
+    save_config(config, config_path)
+    print_json_payload(
+        {
+            "ok": True,
+            "server": _redacted_server_payload(updated),
+            "applies": "next_startup",
+        }
+    )
+    return 0
 
 
 def _mcp_import(args: argparse.Namespace) -> int:
@@ -87,11 +215,7 @@ def _mcp_validate(args: argparse.Namespace) -> int:
     for server in servers:
         if not server.enabled:
             continue
-        if (
-            server.transport == "stdio"
-            and server.stdio_sandbox.require_trust
-            and not server.trusted
-        ):
+        if server.transport == "stdio" and not server.trusted:
             issues.append(
                 {
                     "server": server.name,
@@ -106,36 +230,42 @@ def _mcp_validate(args: argparse.Namespace) -> int:
 
 
 def _mcp_test(args: argparse.Namespace) -> int:
-    from openminion.base.config.io import load_config
-    from openminion.tools.mcp.manager import MCPFleetManager
-
-    config = load_config(getattr(args, "config", None))
-    servers = [
-        server
-        for server in _filter_servers(
-            config.runtime.mcp_servers, getattr(args, "name", "")
-        )
-        if server.enabled
-    ]
-    manager = MCPFleetManager(servers)
+    manager = _configured_manager(args)
     try:
         tools = manager.discover_tools(parallel=True)
-        failed = manager.failed_servers
+        failures = manager.failed_servers
+        prompts = manager.discover_prompts(parallel=True)
+        failures.update(manager.failed_servers)
+        resources = manager.discover_resources(parallel=True)
+        failures.update(manager.failed_servers)
+        templates = manager.discover_resource_templates(parallel=True)
+        failures.update(manager.failed_servers)
+        status = manager.server_status_snapshot()
         print_json_payload(
             {
-                "ok": not failed,
-                "server_count": len(servers),
-                "tool_count": len(tools),
+                "ok": not failures,
+                "servers": {
+                    name: {
+                        "protocol": item["protocol_version"],
+                        "identity": item["server_info"],
+                    }
+                    for name, item in status.items()
+                },
+                "tools": [asdict(item) for item in tools],
+                "prompts": [asdict(item) for item in prompts],
+                "resources": [asdict(item) for item in resources],
+                "resource_templates": [asdict(item) for item in templates],
                 "failed_servers": {
                     key: {
                         "reason_code": value.reason_code,
                         "message": value.message,
+                        "details": value.details,
                     }
-                    for key, value in failed.items()
+                    for key, value in failures.items()
                 },
             }
         )
-        return 0 if not failed else 1
+        return 0 if not failures else 1
     finally:
         manager.close()
 
@@ -144,61 +274,16 @@ def _mcp_login(args: argparse.Namespace) -> int:
     from openminion.base.config.manager import ConfigManager
     from openminion.modules.secret.factory import build_secret_service
     from openminion.tools.mcp.auth import (
-        MCPOAuthPKCEChallenge,
         SecretServiceMCPTokenStore,
-        build_authorization_url,
-        build_pkce_challenge,
         discover_oauth_metadata,
-        exchange_authorization_code,
     )
+    from openminion.tools.mcp.transport import probe_oauth_challenge
 
     manager = ConfigManager.load(getattr(args, "config", None))
     servers = _filter_servers(manager.base_config.runtime.mcp_servers, args.name)
     if len(servers) != 1 or servers[0].authorization.mode != "oauth_pkce":
         raise RuntimeError("mcp login requires one oauth_pkce server")
     server = servers[0]
-    metadata = discover_oauth_metadata(server.authorization)
-    code = str(getattr(args, "code", "") or "").strip()
-    if not code:
-        challenge = build_pkce_challenge()
-        state = secrets.token_urlsafe(24)
-        print_json_payload(
-            {
-                "ok": True,
-                "server": server.name,
-                "authorization_url": build_authorization_url(
-                    config=server.authorization,
-                    metadata=metadata,
-                    challenge=challenge,
-                    state=state,
-                    resource=server.url,
-                ),
-                "code_verifier": challenge.code_verifier,
-                "state": state,
-                "client_registration": (
-                    "cimd"
-                    if metadata.client_id_metadata_document_supported
-                    and server.authorization.client_id.startswith("https://")
-                    else "pre_registered"
-                ),
-            }
-        )
-        return 0
-
-    verifier = str(getattr(args, "verifier", "") or "").strip()
-    if not verifier:
-        raise RuntimeError("mcp login --code requires --verifier")
-    token_state = exchange_authorization_code(
-        config=server.authorization,
-        metadata=metadata,
-        code=code,
-        challenge=MCPOAuthPKCEChallenge(
-            code_verifier=verifier,
-            code_challenge="",
-        ),
-        authorization_issuer=str(getattr(args, "issuer", "") or ""),
-        resource=server.url,
-    )
     if not server.authorization.access_token_ref:
         raise RuntimeError("oauth_pkce server requires access_token_ref for mcp login")
     secret_service = build_secret_service(data_root=manager.data_root, env=manager.env)
@@ -206,14 +291,134 @@ def _mcp_login(args: argparse.Namespace) -> int:
         raise RuntimeError("mcp login requires OPENMINION_SECRET_KEY")
     token_store = SecretServiceMCPTokenStore(secret_service)
     try:
-        token_store.set(server.authorization.access_token_ref, token_state.access_token)
-        if token_state.refresh_token and server.authorization.refresh_token_ref:
-            token_store.set(
-                server.authorization.refresh_token_ref,
-                token_state.refresh_token,
+        code = str(getattr(args, "code", "") or "").strip()
+        if not code:
+            auth_challenge = probe_oauth_challenge(server)
+            metadata = discover_oauth_metadata(
+                server.authorization,
+                resource=server.url,
+                resource_metadata_url=auth_challenge["resource_metadata"],
             )
+            return _start_mcp_login(
+                server, token_store, metadata, auth_challenge=auth_challenge
+            )
+        return _complete_mcp_login(args, server, token_store, code)
     finally:
         token_store.close()
+
+
+def _start_mcp_login(
+    server: Any,
+    token_store: Any,
+    metadata: Any,
+    *,
+    auth_challenge: dict[str, str],
+) -> int:
+    from openminion.tools.mcp.auth import (
+        MCPOAuthTransaction,
+        build_authorization_url,
+        build_pkce_challenge,
+        store_oauth_transaction,
+    )
+
+    challenge = build_pkce_challenge()
+    state = secrets.token_urlsafe(24)
+    store_oauth_transaction(
+        token_store,
+        MCPOAuthTransaction(
+            server_name=server.name,
+            resource=server.url,
+            redirect_uri=server.authorization.redirect_uri,
+            state=state,
+            code_verifier=challenge.code_verifier,
+            issuer=metadata.issuer,
+            issuer_required=metadata.authorization_response_iss_parameter_supported,
+            authorization_endpoint=metadata.authorization_endpoint,
+            token_endpoint=metadata.token_endpoint,
+            expires_at=time.time() + 600,
+            resource_metadata_url=auth_challenge["resource_metadata"],
+            scope=auth_challenge.get("scope", ""),
+        ),
+    )
+    print_json_payload(
+        {
+            "ok": True,
+            "server": server.name,
+            "authorization_url": build_authorization_url(
+                config=server.authorization,
+                metadata=metadata,
+                challenge=challenge,
+                state=state,
+                resource=server.url,
+                scope=auth_challenge.get("scope", ""),
+            ),
+            "state": state,
+            "issuer_required": metadata.authorization_response_iss_parameter_supported,
+            "client_registration": (
+                "cimd"
+                if metadata.client_id_metadata_document_supported
+                and server.authorization.client_id.startswith("https://")
+                else "pre_registered"
+            ),
+        }
+    )
+    return 0
+
+
+def _complete_mcp_login(
+    args: argparse.Namespace,
+    server: Any,
+    token_store: Any,
+    code: str,
+) -> int:
+    from openminion.tools.mcp.auth import (
+        MCPOAuthPKCEChallenge,
+        consume_oauth_transaction,
+        exchange_authorization_code,
+        discover_oauth_metadata,
+        store_issuer_bound_token,
+    )
+
+    returned_state = str(getattr(args, "state", "") or "").strip()
+    if not returned_state:
+        raise RuntimeError("mcp login --code requires --state")
+    transaction = consume_oauth_transaction(
+        token_store,
+        server_name=server.name,
+        state=returned_state,
+    )
+    metadata = discover_oauth_metadata(
+        server.authorization,
+        resource=server.url,
+        resource_metadata_url=transaction.resource_metadata_url,
+    )
+    if not _oauth_transaction_matches(transaction, server, metadata):
+        raise RuntimeError("mcp login metadata changed since authorization")
+    token_state = exchange_authorization_code(
+        config=server.authorization,
+        metadata=metadata,
+        code=code,
+        challenge=MCPOAuthPKCEChallenge(
+            code_verifier=transaction.code_verifier,
+            code_challenge="",
+        ),
+        authorization_issuer=str(getattr(args, "issuer", "") or ""),
+        resource=server.url,
+        scope=transaction.scope,
+    )
+    store_issuer_bound_token(
+        token_store,
+        server.authorization.access_token_ref,
+        token_state.access_token,
+        metadata.issuer,
+    )
+    if token_state.refresh_token and server.authorization.refresh_token_ref:
+        store_issuer_bound_token(
+            token_store,
+            server.authorization.refresh_token_ref,
+            token_state.refresh_token,
+            metadata.issuer,
+        )
     print_json_payload(
         {
             "ok": True,
@@ -224,6 +429,18 @@ def _mcp_login(args: argparse.Namespace) -> int:
         }
     )
     return 0
+
+
+def _oauth_transaction_matches(transaction: Any, server: Any, metadata: Any) -> bool:
+    return bool(
+        transaction.resource == server.url
+        and transaction.redirect_uri == server.authorization.redirect_uri
+        and transaction.issuer == metadata.issuer
+        and transaction.issuer_required
+        == metadata.authorization_response_iss_parameter_supported
+        and transaction.authorization_endpoint == metadata.authorization_endpoint
+        and transaction.token_endpoint == metadata.token_endpoint
+    )
 
 
 def _mcp_browse(args: argparse.Namespace) -> int:
@@ -385,7 +602,7 @@ def _servers_from_external_payload(payload: Any) -> list[MCPServerConfig]:
                 env=dict(raw_config.get("env", {}) or {}),
                 env_secret_refs=dict(raw_config.get("env_secret_refs", {}) or {}),
                 cwd=str(raw_config.get("cwd", "") or ""),
-                trusted=bool(raw_config.get("trusted", False)),
+                trusted=False,
                 package_metadata=package_metadata,
             )
         )
@@ -401,17 +618,26 @@ def _filter_servers(
     return [server for server in servers if server.name == token]
 
 
+def _require_server(servers: list[MCPServerConfig], name: object) -> MCPServerConfig:
+    from openminion.base.config.mcp import normalize_mcp_server_name
+
+    normalized = normalize_mcp_server_name(name)
+    for server in servers:
+        if server.name == normalized:
+            return server
+    raise RuntimeError(f"MCP server not found: {normalized}")
+
+
 def _redacted_server_payload(server: MCPServerConfig) -> dict[str, Any]:
     return {
         "name": server.name,
         "enabled": server.enabled,
+        "required": server.required,
         "transport": server.transport,
         "command": list(server.command),
         "url": server.url,
         "authorization": server.authorization.redacted_dict(),
-        "env": {
-            key: _redact_env_value(key, value) for key, value in server.env.items()
-        },
+        "env": {key: "<redacted>" for key in server.env},
         "env_secret_refs": dict(server.env_secret_refs),
         "cwd": server.cwd,
         "trusted": server.trusted,
@@ -424,16 +650,40 @@ def _redacted_server_payload(server: MCPServerConfig) -> dict[str, Any]:
     }
 
 
-def _redact_env_value(key: str, value: str) -> str:
-    lowered = str(key or "").lower()
-    if any(token in lowered for token in _SECRET_KEY_TOKENS):
-        return "<redacted>"
-    return str(value or "")
-
-
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("mcp", help="Manage MCP servers")
     mcp_sub = parser.add_subparsers(dest="mcp_command", required=True)
+
+    add_parser = mcp_sub.add_parser("add", help="Add an MCP server")
+    add_parser.add_argument("name", help="Server name")
+    add_parser.add_argument("--url", default="", help="Streamable HTTP endpoint")
+    add_parser.add_argument("--cwd", default="", help="stdio working directory")
+    add_parser.add_argument("--trusted", action="store_true", help="Trust stdio server")
+    add_parser.add_argument(
+        "--required", action="store_true", help="Require server discovery at startup"
+    )
+    add_parser.add_argument(
+        "--disabled", action="store_true", help="Add without enabling"
+    )
+    add_parser.add_argument(
+        "--command",
+        nargs=argparse.REMAINDER,
+        default=[],
+        help="stdio command after --",
+    )
+    add_parser.set_defaults(handler=run_mcp)
+
+    for command, help_text in (
+        ("get", "Show one configured MCP server"),
+        ("remove", "Remove an MCP server"),
+        ("enable", "Enable an MCP server"),
+        ("disable", "Disable an MCP server"),
+        ("trust", "Trust a local stdio MCP server"),
+        ("untrust", "Revoke trust from a local stdio MCP server"),
+    ):
+        lifecycle_parser = mcp_sub.add_parser(command, help=help_text)
+        lifecycle_parser.add_argument("name", help="Server name")
+        lifecycle_parser.set_defaults(handler=run_mcp)
 
     import_parser = mcp_sub.add_parser("import", help="Import MCP server config")
     import_parser.add_argument(
@@ -459,8 +709,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     login_parser = mcp_sub.add_parser("login", help="Authorize a remote MCP server")
     login_parser.add_argument("name", help="Configured MCP server name")
     login_parser.add_argument("--code", default="", help="Authorization code")
-    login_parser.add_argument("--verifier", default="", help="PKCE code verifier")
     login_parser.add_argument("--issuer", default="", help="Authorization issuer")
+    login_parser.add_argument(
+        "--state",
+        default="",
+        help="State returned with the authorization response",
+    )
     login_parser.set_defaults(handler=run_mcp)
 
     browse_parser = mcp_sub.add_parser("browse", help="List server capabilities")

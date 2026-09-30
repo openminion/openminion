@@ -21,6 +21,7 @@ def _runtime_config(*, sampling_mode: str) -> RuntimeConfig:
             MCPServerConfig(
                 name="Fixture",
                 transport="stdio",
+                trusted=True,
                 command=[sys.executable, str(FIXTURE_SERVER_PATH)],
                 env={
                     "MOCK_MCP_ENABLE_CLIENT_REQUEST_TOOLS": "1",

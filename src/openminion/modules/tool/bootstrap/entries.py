@@ -6,6 +6,7 @@ from openminion.modules.tool.constants import (
     TOOL_BOOTSTRAP_GATE_ALWAYS,
     TOOL_BOOTSTRAP_GATE_NEVER,
 )
+from openminion.modules.tool.errors import ToolRuntimeError
 
 
 @dataclass
@@ -79,8 +80,17 @@ def _dynamic_tool_bootstrap_entries(
     tool_bootstrap_entries: tuple[_ToolBootstrapEntry, ...] | None = None,
 ) -> tuple[_ToolBootstrapEntry, ...]:
     runtime_entries = list(tool_bootstrap_entries or _TOOL_BOOTSTRAP_ENTRIES)
-    if getattr(config, "mcp_servers", None):
-        runtime_entries.append(_MCP_TOOL_BOOTSTRAP_ENTRY)
+    servers = list(getattr(config, "mcp_servers", None) or [])
+    if servers:
+        runtime_entries.append(
+            _ToolBootstrapEntry(
+                kind=_MCP_TOOL_BOOTSTRAP_ENTRY.kind,
+                module_name=_MCP_TOOL_BOOTSTRAP_ENTRY.module_name,
+                label=_MCP_TOOL_BOOTSTRAP_ENTRY.label,
+                required=any(server.enabled and server.required for server in servers),
+                gate=_MCP_TOOL_BOOTSTRAP_ENTRY.gate,
+            )
+        )
     return tuple(runtime_entries)
 
 
@@ -88,6 +98,7 @@ def _prepare_tool_register_state(
     *,
     entry: _ToolBootstrapEntry,
     config: Any | None,
+    strict: bool = False,
 ) -> Any | None:
     if entry.module_name != "openminion.tools.mcp":
         return None
@@ -100,21 +111,26 @@ def _prepare_tool_register_state(
     fleet_manager = MCPFleetManager.from_runtime_config(config)
     if not fleet_manager.has_servers():
         return None
-    if bool(getattr(config, "mcp_deferred_discovery_enabled", False)):
-        return MCPToolRegistrationState(
-            manager=fleet_manager,
-            discovered_tools=(),
-            discovered_prompts=(),
-            discovered_resources=(),
-            discovered_resource_templates=(),
-            client_capability_state=fleet_manager.client_capability_state,
-        )
     discovered_tools = tuple(fleet_manager.discover_tools(parallel=True))
     discovered_prompts = tuple(fleet_manager.discover_prompts(parallel=True))
     discovered_resources = tuple(fleet_manager.discover_resources(parallel=True))
     discovered_resource_templates = tuple(
         fleet_manager.discover_resource_templates(parallel=True)
     )
+    required_names = {
+        server.name
+        for server in config.mcp_servers
+        if server.enabled and server.required
+    }
+    required_failures = required_names.intersection(fleet_manager.failed_servers)
+    if required_failures and strict:
+        fleet_manager.close()
+        failed = ", ".join(sorted(required_failures))
+        raise ToolRuntimeError(
+            "MCP_REQUIRED_SERVER_UNAVAILABLE",
+            f"Required MCP server discovery failed: {failed}",
+            {"failed_servers": sorted(required_failures)},
+        )
     return MCPToolRegistrationState(
         manager=fleet_manager,
         discovered_tools=discovered_tools,
@@ -134,7 +150,6 @@ def _apply_dynamic_runtime_ownership(
 
     if isinstance(prepared_state, MCPToolRegistrationState):
         registry.mcp_manager = prepared_state.manager
-        prepared_state.manager.attach_registry(registry)
 
 
 def _prepared_state_record_details(

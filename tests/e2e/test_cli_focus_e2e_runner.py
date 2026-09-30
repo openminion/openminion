@@ -86,6 +86,15 @@ def test_main_exports_the_active_interpreter_for_pty_children(monkeypatch) -> No
     assert captured["env"]["OPENMINION_PYTHON"] == sys.executable
 
 
+def test_runner_exposes_mcp_suites() -> None:
+    runner = _load_runner()
+
+    assert runner.SUITES["mcp"] == runner.Suite(("tests/e2e/cli/focus/test_mcp.py",))
+    assert runner.SUITES["mcp-live"] == runner.Suite(
+        ("tests/e2e/cli/focus/test_live_mcp.py",), live=True
+    )
+
+
 def test_live_preflight_requires_posix(monkeypatch, tmp_path: Path) -> None:
     runner = _load_runner()
     config_path = tmp_path / "config.json"

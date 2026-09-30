@@ -118,7 +118,6 @@ class RuntimeConfig:
     mcp_publish: MCPPublishConfig = field(default_factory=MCPPublishConfig)
     mcp_sampling_mode: str = "disabled"
     mcp_discovery_cache_ttl_seconds: float = 0.0
-    mcp_deferred_discovery_enabled: bool = False
 
     def __post_init__(self) -> None:
         self.tools = coerce_tool_runtime_config(self.tools)
@@ -146,7 +145,6 @@ class RuntimeConfig:
         except (TypeError, ValueError):
             cache_ttl = 0.0
         self.mcp_discovery_cache_ttl_seconds = max(0.0, cache_ttl)
-        self.mcp_deferred_discovery_enabled = bool(self.mcp_deferred_discovery_enabled)
 
 
 @dataclass

@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import pytest
+
 from openminion.base.config.mcp import MCPServerConfig
-from openminion.tools.mcp.manager import MCPFleetManager, MCPServerSession
+from openminion.tools.mcp.manager import (
+    MCPFleetManager,
+    MCPProtocolError,
+    MCPServerSession,
+)
 
 
 class _CompletionTransport:
+    @property
+    def authorization_identity(self) -> str:
+        return ""
+
     def stderr_tail(self, *, limit: int = 4096) -> str:
         del limit
         return ""
@@ -38,6 +48,8 @@ class _CompletionTransport:
         self.requests.append((method, payload))
         if self.fail:
             raise RuntimeError("completion failed")
+        if method == "server/discover":
+            raise MCPProtocolError("method not found", details={"code": -32601})
         if method == "initialize":
             return {
                 "protocolVersion": "2025-03-26",
@@ -86,7 +98,8 @@ def test_mcp_completion_supports_prompt_argument_completion() -> None:
 
 def test_mcp_completion_supports_resource_template_arguments_through_fleet() -> None:
     session = _session()
-    session._transport = _CompletionTransport()  # noqa: SLF001
+    transport = _CompletionTransport()
+    session._transport = transport  # noqa: SLF001
     manager = MCPFleetManager(servers=[])
     manager._sessions = {"fixture": session}  # noqa: SLF001
 
@@ -100,6 +113,24 @@ def test_mcp_completion_supports_resource_template_arguments_through_fleet() -> 
     )
 
     assert result.values == ("dalpha", "dbeta")
+    assert transport.requests[-1][1]["ref"] == {
+        "type": "ref/resource",
+        "uri": "file://fixture/{slug}.md",
+    }
+
+
+def test_mcp_completion_rejects_unknown_reference_type() -> None:
+    session = _session()
+    session._transport = _CompletionTransport()  # noqa: SLF001
+
+    with pytest.raises(MCPProtocolError) as excinfo:
+        session.complete(
+            ref_type="ref/unknown",
+            ref_name="fixture",
+            argument_name="name",
+        )
+
+    assert excinfo.value.reason_code == "mcp_completion_ref_invalid"
 
 
 def test_mcp_completion_failure_is_isolated_to_completion_call() -> None:

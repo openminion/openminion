@@ -9,12 +9,19 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.runtime import RuntimeConfig
 
 from .auth import MCPTokenStore, build_runtime_mcp_token_store
+from .errors import (
+    MCPProtocolError,
+    MCPRemoteTransportError,
+    MCPServerUnavailableError,
+    MCPTimeoutError,
+    MCPTransportError,
+)
 from .elicitation import OpenMinionElicitationHandler
 from .interfaces import (
     MCPCapabilityChangeListener,
@@ -32,26 +39,11 @@ from .schemas import (
     MCPLogMessage,
     MCPResourceUpdate,
     MCPRoot,
-    build_mcp_runtime_prompt_name,
-    build_mcp_runtime_resource_name,
-    build_mcp_runtime_resource_template_name,
-    build_mcp_runtime_tool_name,
 )
 from .results import MCPCallError, MCPManagerError
 from .session import MCPServerSession
 from .risk import resolve_mcp_tool_posture as _resolve_mcp_tool_posture
-from .transport import (
-    MCPAuthorizationError,
-    MCPProtocolError,
-    MCPRemoteTransportError,
-    MCPServerUnavailableError,
-    MCPTimeoutError,
-    MCPTransportError,
-)
-
-
-if TYPE_CHECKING:
-    from openminion.modules.tool.registry import ToolRegistry
+from .transport import MCPAuthorizationError
 
 
 @dataclass(frozen=True)
@@ -81,7 +73,6 @@ class MCPFleetManager:
         capability_change_listener: MCPCapabilityChangeListener | None = None,
         progress_listener: MCPProgressListener | None = None,
         discovery_cache_ttl_seconds: float = 0.0,
-        deferred_discovery_enabled: bool = False,
         token_store: MCPTokenStore | None = None,
     ) -> None:
         self._client_capability_state = (
@@ -97,12 +88,10 @@ class MCPFleetManager:
         self._resource_catalog_by_server: dict[str, tuple[str, ...]] = {}
         self._resource_template_catalog_by_server: dict[str, tuple[str, ...]] = {}
         self._metrics_by_server: dict[str, dict[str, Any]] = {}
-        self._live_registry: ToolRegistry | None = None
         self._discovery_cache_ttl_seconds = max(
             0.0,
             float(discovery_cache_ttl_seconds or 0.0),
         )
-        self._deferred_discovery_enabled = bool(deferred_discovery_enabled)
         self._token_store = token_store
         self._discovery_cache: dict[str, _DiscoveryCacheEntry] = {}
         enabled_servers = [server for server in servers if server.enabled]
@@ -136,10 +125,6 @@ class MCPFleetManager:
             return None
         return session.server_config
 
-    def attach_registry(self, registry: ToolRegistry) -> None:
-        with self._state_lock:
-            self._live_registry = registry
-
     @property
     def client_capability_state(self) -> MCPClientCapabilityState:
         return self._client_capability_state
@@ -172,7 +157,6 @@ class MCPFleetManager:
             servers=servers,
             client_capability_state=client_capability_state,
             discovery_cache_ttl_seconds=runtime_config.mcp_discovery_cache_ttl_seconds,
-            deferred_discovery_enabled=runtime_config.mcp_deferred_discovery_enabled,
             token_store=build_runtime_mcp_token_store(runtime_config),
         )
 
@@ -335,9 +319,9 @@ class MCPFleetManager:
         self,
         *,
         server_name: str,
-        subscriptions: list[dict[str, Any]],
+        notifications: dict[str, Any],
     ) -> dict[str, Any]:
-        return self._require_session(server_name).listen(subscriptions)
+        return self._require_session(server_name).listen(notifications)
 
     def set_log_level(self, *, server_name: str, level: str) -> None:
         session = self._require_session(server_name)
@@ -394,10 +378,6 @@ class MCPFleetManager:
         with self._state_lock:
             return [dict(item) for item in self._capability_change_events]
 
-    @property
-    def deferred_discovery_enabled(self) -> bool:
-        return self._deferred_discovery_enabled
-
     def invalidate_discovery_cache(self, primitive: str | None = None) -> None:
         token = str(primitive or "").strip()
         with self._state_lock:
@@ -428,6 +408,10 @@ class MCPFleetManager:
                 name: {
                     "transport": session.server_config.transport,
                     "trusted": session.server_config.trusted,
+                    "protocol_version": session.negotiated_protocol_version,
+                    "server_info": session.server_info,
+                    "capabilities": session.server_capabilities,
+                    "instructions": session.server_instructions,
                     "tool_names": self._tool_catalog_by_server.get(name, ()),
                     "prompt_names": self._prompt_catalog_by_server.get(name, ()),
                     "resource_uris": self._resource_catalog_by_server.get(name, ()),
@@ -649,19 +633,11 @@ class MCPFleetManager:
         new_catalog = set(self._catalog_for(primitive, server_name))
         added = tuple(sorted(new_catalog - old_catalog))
         removed = tuple(sorted(old_catalog - new_catalog))
-        registration_errors = self._apply_live_registry_delta(
-            primitive=primitive,
-            server_name=server_name,
-            items=items,
-            added=added,
-            removed=removed,
-        )
         event = {
             "server_name": server_name,
             "primitive": primitive,
             "added": list(added),
             "removed": list(removed),
-            "registration_errors": list(registration_errors),
         }
         with self._state_lock:
             self._capability_change_events.append(event)
@@ -673,47 +649,6 @@ class MCPFleetManager:
                 added=added,
                 removed=removed,
             )
-
-    def _apply_live_registry_delta(
-        self,
-        *,
-        primitive: str,
-        server_name: str,
-        items: list[Any],
-        added: tuple[str, ...],
-        removed: tuple[str, ...],
-    ) -> tuple[str, ...]:
-        with self._state_lock:
-            registry = self._live_registry
-        if registry is None:
-            return ()
-
-        live_items = {
-            _mcp_catalog_key_for_item(primitive=primitive, item=item): item
-            for item in items
-        }
-        for token in removed:
-            runtime_name = _mcp_runtime_name_for_catalog_token(
-                primitive=primitive,
-                server_name=server_name,
-                token=token,
-                item=None,
-            )
-            if runtime_name:
-                registry.unregister(runtime_name)
-        errors: list[str] = []
-        for token in added:
-            item = live_items.get(token)
-            if item is None:
-                continue
-            spec = _mcp_tool_spec_for_item(manager=self, primitive=primitive, item=item)
-            if spec is None:
-                continue
-            try:
-                registry.register(spec)
-            except Exception as exc:
-                errors.append(f"{spec.name}:{type(exc).__name__}:{exc}")
-        return tuple(errors)
 
     def _catalog_for(self, primitive: str, server_name: str) -> tuple[str, ...]:
         with self._state_lock:
@@ -740,6 +675,7 @@ class MCPFleetManager:
                 reason_code=exc.reason_code or primitive,
                 message=str(exc),
                 primitive=primitive,
+                details=dict(exc.details),
             )
 
     def _clear_failed_server(self, server_name: str, *, primitive: str = "") -> None:
@@ -820,74 +756,3 @@ def _default_client_capability_state(
         roots=tuple(roots),
         elicitation_handler=OpenMinionElicitationHandler(mode="decline"),
     )
-
-
-def _mcp_catalog_key_for_item(*, primitive: str, item: Any) -> str:
-    if primitive == "tools" and isinstance(item, MCPListedTool):
-        return str(item.remote_name or "").strip()
-    if primitive == "prompts" and isinstance(item, MCPListedPrompt):
-        return str(item.remote_name or "").strip()
-    if primitive == "resources" and isinstance(item, MCPListedResource):
-        return str(item.resource_uri or "").strip()
-    if primitive == "resource_templates" and isinstance(
-        item, MCPListedResourceTemplate
-    ):
-        return str(item.uri_template or "").strip()
-    return ""
-
-
-def _mcp_runtime_name_for_catalog_token(
-    *,
-    primitive: str,
-    server_name: str,
-    token: str,
-    item: Any | None,
-) -> str:
-    if primitive == "tools":
-        listed = item if isinstance(item, MCPListedTool) else None
-        return build_mcp_runtime_tool_name(
-            server_name=server_name or (listed.server_name if listed else ""),
-            remote_name=listed.remote_name if listed else token,
-        )
-    if primitive == "prompts":
-        listed = item if isinstance(item, MCPListedPrompt) else None
-        return build_mcp_runtime_prompt_name(
-            server_name=server_name or (listed.server_name if listed else ""),
-            remote_name=listed.remote_name if listed else token,
-        )
-    if primitive == "resources":
-        listed = item if isinstance(item, MCPListedResource) else None
-        return build_mcp_runtime_resource_name(
-            server_name=server_name or (listed.server_name if listed else ""),
-            resource_uri=listed.resource_uri if listed else token,
-            resource_name=listed.resource_name if listed else "",
-        )
-    if primitive == "resource_templates":
-        listed = item if isinstance(item, MCPListedResourceTemplate) else None
-        return build_mcp_runtime_resource_template_name(
-            server_name=server_name or (listed.server_name if listed else ""),
-            uri_template=listed.uri_template if listed else token,
-            template_name=listed.template_name if listed else "",
-        )
-    return ""
-
-
-def _mcp_tool_spec_for_item(*, manager: Any, primitive: str, item: Any) -> Any | None:
-    from .plugin import (
-        build_mcp_prompt_spec,
-        build_mcp_resource_spec,
-        build_mcp_resource_template_spec,
-        build_mcp_tool_spec,
-    )
-
-    if primitive == "tools" and isinstance(item, MCPListedTool):
-        return build_mcp_tool_spec(manager=manager, tool=item)
-    if primitive == "prompts" and isinstance(item, MCPListedPrompt):
-        return build_mcp_prompt_spec(manager=manager, prompt=item)
-    if primitive == "resources" and isinstance(item, MCPListedResource):
-        return build_mcp_resource_spec(manager=manager, resource=item)
-    if primitive == "resource_templates" and isinstance(
-        item, MCPListedResourceTemplate
-    ):
-        return build_mcp_resource_template_spec(manager=manager, template=item)
-    return None

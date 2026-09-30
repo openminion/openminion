@@ -4,12 +4,20 @@ import sys
 
 from openminion.api.queries.runtime_reports import _build_mcp_section
 from openminion.base.config.mcp import MCPServerConfig
-from openminion.tools.mcp.manager import MCPFleetManager, MCPServerSession
+from openminion.tools.mcp.manager import (
+    MCPFleetManager,
+    MCPProtocolError,
+    MCPServerSession,
+)
 
 
 class _ResourceSubscriptionTransport:
     def __init__(self) -> None:
         self.requests: list[tuple[str, dict]] = []
+
+    @property
+    def authorization_identity(self) -> str:
+        return ""
 
     def stderr_tail(self, *, limit: int = 4096) -> str:
         del limit
@@ -37,6 +45,8 @@ class _ResourceSubscriptionTransport:
     ) -> dict:
         del timeout_seconds, server_request_handler
         self.requests.append((method, dict(params or {})))
+        if method == "server/discover":
+            raise MCPProtocolError("method not found", details={"code": -32601})
         if method == "initialize":
             return {
                 "protocolVersion": "2025-03-26",
@@ -65,13 +75,14 @@ def test_mcp_resource_subscription_lifecycle_and_update_report() -> None:
 
     methods = [method for method, _payload in transport.requests]
     assert methods == [
+        "server/discover",
         "initialize",
         "notifications/initialized",
         "resources/subscribe",
         "resources/unsubscribe",
     ]
-    assert transport.requests[2][1]["uri"] == "file://fixture/readme.md"
     assert transport.requests[3][1]["uri"] == "file://fixture/readme.md"
+    assert transport.requests[4][1]["uri"] == "file://fixture/readme.md"
 
     updates = session.recent_resource_updates(limit=1)
     assert updates[0].server_name == "fixture"
