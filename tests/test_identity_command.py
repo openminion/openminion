@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-import argparse
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 import yaml
 
 from openminion.cli.commands import identity as identity_command
+from openminion.cli.commands import identity_editor
 from openminion.modules.identity.runtime.bundle_importer import (
     BundleTextDocument,
     build_profile_from_bundle_documents,
@@ -15,6 +18,99 @@ from openminion.modules.identity.runtime.bundle_importer import (
 from openminion.modules.identity.models import AgentProfile
 from openminion.modules.identity.runtime.service import IdentityCtl
 from openminion.modules.identity.storage.store import SQLiteIdentityStore
+
+
+def test_top_level_cli_routes_identity_apply_and_inspect_with_config(
+    tmp_path: Path,
+) -> None:
+    identity_root = tmp_path / "custom-identity"
+    identity_db = tmp_path / "custom-state" / "identity.db"
+    config_path = tmp_path / "openminion.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "identity": {
+                    "bundle_root": str(identity_root),
+                    "db_path": str(identity_db),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    profile = build_profile_from_bundle_documents(
+        agent_id="ops-agent",
+        documents=[
+            BundleTextDocument(
+                relative_path="AGENT.md",
+                content="## Mission\nReach the real top-level CLI.\n",
+            ),
+            BundleTextDocument(
+                relative_path="SOUL.md",
+                content="## Voice\n- Precise\n",
+            ),
+        ],
+    )
+    candidate = tmp_path / "candidate.yaml"
+    candidate.write_text(
+        yaml.safe_dump(profile.model_dump(mode="python"), sort_keys=False),
+        encoding="utf-8",
+    )
+    env = dict(os.environ)
+    env.pop("OPENMINION_IDENTITY_ROOT", None)
+    env.pop("OPENMINION_IDENTITY_DB", None)
+    command = [
+        sys.executable,
+        "-m",
+        "openminion",
+        "--config",
+        str(config_path),
+        "identity",
+    ]
+
+    applied = subprocess.run(
+        [
+            *command,
+            "apply",
+            "--file",
+            str(candidate),
+            "--expected-profile-version",
+            "missing",
+            "--expected-source-sha256",
+            "missing",
+            "--json",
+        ],
+        cwd=Path.cwd(),
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    inspected = subprocess.run(
+        [*command, "inspect", "--agent-id", "ops-agent", "--json"],
+        cwd=Path.cwd(),
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    listed = subprocess.run(
+        [*command, "list"],
+        cwd=Path.cwd(),
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert applied.returncode == 0, applied.stderr
+    assert inspected.returncode == 0, inspected.stderr
+    assert listed.returncode == 0, listed.stderr
+    assert "ops-agent" in listed.stdout
+    assert json.loads(inspected.stdout)["effective_profile"]["role"]["mission"] == (
+        "Reach the real top-level CLI."
+    )
+    assert (identity_root / "ops-agent" / "profile.yaml").is_file()
+    assert identity_db.is_file()
 
 
 def test_run_identity_import_from_bundle_stamps_bundle_provenance(
@@ -372,6 +468,130 @@ def _seed_profile(ctl: IdentityCtl, agent_id: str = "ops-agent") -> AgentProfile
     return profile
 
 
+def test_identity_inspect_cli_emits_structured_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctl = IdentityCtl(
+        store=SQLiteIdentityStore(sqlite_path=str(tmp_path / "identity.db"))
+    )
+    identity_root = tmp_path / "identity"
+    source = identity_root / "ops-agent" / "profile.yaml"
+    source.parent.mkdir(parents=True)
+    profile = _seed_profile(ctl).model_copy(update={"meta": {"source": "yaml"}})
+    ctl.upsert_profile(profile)
+    source.write_text(
+        yaml.safe_dump(profile.model_dump(mode="python", exclude_none=True)),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        identity_editor,
+        "get_identity_context",
+        lambda **_kwargs: (ctl, identity_root),
+    )
+
+    identity_command.run_identity_inspect(agent_id="ops-agent", json_output=True)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["agent_id"] == "ops-agent"
+    assert payload["source"] == "yaml"
+    assert payload["authored_yaml"]
+    assert payload["render"]["profile_version"] == payload["profile_version"]
+
+
+def test_identity_validate_file_does_not_open_the_canonical_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    profile = build_profile_from_bundle_documents(
+        agent_id="ops-agent",
+        documents=[
+            BundleTextDocument(
+                relative_path="AGENT.md",
+                content="## Mission\nValidate without storage mutation.\n",
+            )
+        ],
+    )
+    candidate = tmp_path / "candidate.yaml"
+    candidate.write_text(
+        yaml.safe_dump(profile.model_dump(mode="python", exclude_none=True)),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        identity_command,
+        "_get_identityctl",
+        lambda: pytest.fail("candidate validation must not open the canonical store"),
+    )
+
+    identity_command.run_identity_validate(file_path=str(candidate), json_output=True)
+
+    assert json.loads(capsys.readouterr().out)["agent_id"] == "ops-agent"
+
+
+def test_identity_apply_cli_writes_and_reports_source_fingerprint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctl = IdentityCtl(
+        store=SQLiteIdentityStore(sqlite_path=str(tmp_path / "identity.db"))
+    )
+    identity_root = tmp_path / "identity"
+    candidate = tmp_path / "candidate.yaml"
+    profile = build_profile_from_bundle_documents(
+        agent_id="ops-agent",
+        documents=[
+            BundleTextDocument(
+                relative_path="AGENT.md",
+                content="## Mission\nApply through the CLI.\n",
+            )
+        ],
+    )
+    candidate.write_text(
+        yaml.safe_dump(profile.model_dump(mode="python", exclude_none=True)),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        identity_editor,
+        "get_identity_context",
+        lambda **_kwargs: (ctl, identity_root),
+    )
+
+    identity_command.run_identity_apply(
+        str(candidate),
+        expected_profile_version="missing",
+        expected_source_sha256="missing",
+        json_output=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["source_sha256"]
+    assert payload["verification"]["ok"] is True
+    assert (identity_root / "ops-agent" / "profile.yaml").is_file()
+
+
+def test_identity_delete_rejects_yaml_managed_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctl = IdentityCtl(
+        store=SQLiteIdentityStore(sqlite_path=str(tmp_path / "identity.db"))
+    )
+    profile = _seed_profile(ctl).model_copy(update={"meta": {"source": "yaml"}})
+    ctl.upsert_profile(profile)
+    monkeypatch.setattr(identity_command, "_get_identityctl", lambda **_kwargs: ctl)
+
+    with pytest.raises(SystemExit) as exc_info:
+        identity_command.run_identity_delete("ops-agent")
+
+    assert exc_info.value.code == 1
+    assert "cannot be deleted from SQLite" in capsys.readouterr().err
+    assert ctl.get_profile("ops-agent") is not None
+
+
 # ── IRGR-05: list ──────────────────────────────────────────────────────────
 
 
@@ -384,7 +604,7 @@ def test_run_identity_list_outputs_seeded_profile(
         store=SQLiteIdentityStore(sqlite_path=str(tmp_path / "identity.db"))
     )
     _seed_profile(ctl, agent_id="ops-agent")
-    monkeypatch.setattr(identity_command, "_get_identityctl", lambda: ctl)
+    monkeypatch.setattr(identity_command, "_get_identityctl", lambda **_kwargs: ctl)
 
     identity_command.run_identity_list()
 
@@ -457,7 +677,7 @@ def test_run_identity_validate_outputs_profile_result(
         store=SQLiteIdentityStore(sqlite_path=str(tmp_path / "identity.db"))
     )
     _seed_profile(ctl, agent_id="ops-agent")
-    monkeypatch.setattr(identity_command, "_get_identityctl", lambda: ctl)
+    monkeypatch.setattr(identity_command, "_get_identityctl", lambda **_kwargs: ctl)
 
     identity_command.run_identity_validate("ops-agent")
 
@@ -474,7 +694,7 @@ def test_run_identity_validate_missing_profile_exits_one(
     ctl = IdentityCtl(
         store=SQLiteIdentityStore(sqlite_path=str(tmp_path / "identity.db"))
     )
-    monkeypatch.setattr(identity_command, "_get_identityctl", lambda: ctl)
+    monkeypatch.setattr(identity_command, "_get_identityctl", lambda **_kwargs: ctl)
 
     with pytest.raises(SystemExit) as exc_info:
         identity_command.run_identity_validate("missing-agent")
@@ -500,35 +720,6 @@ def test_run_identity_warm_cache_and_clear_cache(
     out = capsys.readouterr().out
     assert "warmed: ops-agent (1)" in out
     assert "cleared_cache: ops-agent" in out
-
-
-def test_identity_bridge_argv_includes_admin_commands() -> None:
-    validate_args = argparse.Namespace(
-        identity_command="validate", agent_id="ops-agent", strict=True
-    )
-    warm_args = argparse.Namespace(
-        identity_command="warm-cache",
-        agent_id="ops-agent",
-        purpose=["act", "judge"],
-    )
-    clear_args = argparse.Namespace(identity_command="clear-cache", agent_id="")
-
-    assert identity_command._build_identity_bridge_argv(validate_args) == [
-        "validate",
-        "--agent-id",
-        "ops-agent",
-        "--strict",
-    ]
-    assert identity_command._build_identity_bridge_argv(warm_args) == [
-        "warm-cache",
-        "--agent-id",
-        "ops-agent",
-        "--purpose",
-        "act",
-        "--purpose",
-        "judge",
-    ]
-    assert identity_command._build_identity_bridge_argv(clear_args) == ["clear-cache"]
 
 
 # ── IRGR-05: upsert ────────────────────────────────────────────────────────

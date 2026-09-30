@@ -1972,7 +1972,7 @@ class AdapterInterfaceContractTests(unittest.TestCase):
             )
         )
 
-    def test_factory_context_adapter_cold_agent_seeded_without_fallback(self) -> None:
+    def test_factory_context_adapter_cold_agent_uses_explicit_fallback(self) -> None:
         try:
             from openminion.modules.brain.adapters.factory import create_context_adapter
             from openminion.modules.context.service import ContextCtlService  # noqa: F401
@@ -2013,10 +2013,9 @@ class AdapterInterfaceContractTests(unittest.TestCase):
                     "openminion_context not available in this test environment"
                 )
 
-            with self.assertNoLogs(
-                "openminion.modules.brain.adapters.context.bridges",
-                level="WARNING",
-            ):
+            with self.assertLogs(
+                "openminion.modules.brain.adapters.context.bridges", level="WARNING"
+            ) as captured:
                 payload = adapter.build(
                     session_id="s-cold",
                     agent_id="cold-agent-test",
@@ -2025,92 +2024,24 @@ class AdapterInterfaceContractTests(unittest.TestCase):
                     hints={"query": "hello"},
                 )
 
-        self.assertNotEqual(payload.get("profile_version"), "brain-bridge:fallback:v1")
-        self.assertNotEqual(payload.get("render_version"), "brain-bridge:fallback:v1")
+        self.assertEqual(payload.get("profile_version"), "brain-bridge:fallback:v1")
+        self.assertEqual(payload.get("render_version"), "brain-bridge:fallback:v1")
+        self.assertIn("reason=profile_absent", captured.output[0])
 
-    def test_bridge_identity_default_profile_uses_system_prompt_mission(self) -> None:
+    def test_identity_bridge_does_not_mask_invalid_identity_config(self) -> None:
         from openminion.modules.brain.adapters.context.bridges.identity import (
-            _ensure_default_profile,
+            BridgeIdentityClient,
         )
 
-        class _IdentityCtl:
-            def __init__(self) -> None:
-                self.profile = None
-
-            def get_profile(self, agent_id: str):  # noqa: ANN201
-                del agent_id
-                return
-
-            def upsert_profile(self, profile) -> None:  # noqa: ANN001
-                self.profile = profile
-
-        identityctl = _IdentityCtl()
-        _ensure_default_profile(
-            identityctl,
-            "minimax-m2-5",
-            system_prompt="You are OpenMinion, a pragmatic assistant. Keep answers concise.",
-        )
-
-        self.assertIsNotNone(identityctl.profile)
-        if identityctl.profile is None:  # pragma: no cover
-            self.fail("expected default profile")
-        self.assertEqual(
-            identityctl.profile.role.mission,
-            "You are OpenMinion, a pragmatic assistant.",
-        )
-
-    def test_bridge_identity_repairs_legacy_default_profile_mission(self) -> None:
-        from openminion.modules.brain.adapters.context.bridges.identity import (
-            _ensure_default_profile,
-        )
-        from openminion.modules.identity.models import (
-            AgentProfile,
-            PersonalitySpec,
-            RiskSpec,
-            RoleSpec,
-            ToolPostureSpec,
-        )
-
-        class _IdentityCtl:
-            def __init__(self) -> None:
-                self.profile = AgentProfile(
-                    agent_id="minimax-m2-5",
-                    display_name="minimax-m2-5",
-                    profile_revision=1,
-                    role=RoleSpec(
-                        mission="I am minimax-m2-5, a pragmatic AI assistant.",
-                        responsibilities=[],
-                        hard_constraints=[],
-                    ),
-                    personality=PersonalitySpec(
-                        tone="professional", verbosity="normal"
-                    ),
-                    risk=RiskSpec(
-                        risk_level="medium",
-                        confirm_before=["destructive_actions"],
-                    ),
-                    tool_posture=ToolPostureSpec(tool_use="allowed"),
-                    meta={"source": "default"},
-                )
-
-            def get_profile(self, agent_id: str):  # noqa: ANN201
-                del agent_id
-                return self.profile
-
-            def upsert_profile(self, profile) -> None:  # noqa: ANN001
-                self.profile = profile
-
-        identityctl = _IdentityCtl()
-        _ensure_default_profile(
-            identityctl,
-            "minimax-m2-5",
-            system_prompt="You are OpenMinion, a pragmatic assistant. Keep answers concise.",
-        )
-
-        self.assertEqual(
-            identityctl.profile.role.mission,
-            "You are OpenMinion, a pragmatic assistant.",
-        )
+        client = BridgeIdentityClient(backing_store=object())
+        with (
+            patch(
+                "openminion.modules.identity.config.load_config",
+                side_effect=ValueError("invalid identity config"),
+            ),
+            self.assertRaisesRegex(ValueError, "invalid identity config"),
+        ):
+            client.render(agent_id="ops-agent", purpose="act", max_tokens=180)
 
     def test_factory_context_adapter_sanitizes_technical_error_turns(self) -> None:
         try:

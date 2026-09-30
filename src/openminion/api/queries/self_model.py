@@ -141,26 +141,30 @@ def _policy(
 
 
 def _identity(runtime: Any, agent_id: str) -> SelfModelSection:
-    profile = None
-    resolver = getattr(runtime, "resolve_agent_profile", None)
+    owner = getattr(runtime, "agent", None)
+    resolver = getattr(runtime, "resolve_agent_service", None)
     if callable(resolver):
         try:
-            profile = resolver(agent_id)
+            owner = resolver(agent_id)
         except Exception:  # noqa: BLE001
-            profile = None
-    if profile is None:
+            owner = None
+    snapshot_fn = getattr(owner, "identity_snapshot", None)
+    if not callable(snapshot_fn):
+        return section_unavailable(DEGRADED_IDENTITY_UNAVAILABLE, agent_id=agent_id)
+    snapshot = snapshot_fn()
+    if not isinstance(snapshot, dict):
         return section_unavailable(DEGRADED_IDENTITY_UNAVAILABLE, agent_id=agent_id)
     return section_ok(
         agent_id=agent_id,
-        profile_name=str(getattr(profile, "name", "") or agent_id),
-        display_name=str(
-            getattr(profile, "display_name", "")
-            or getattr(profile, "name", "")
-            or agent_id
-        ),
-        mission=_profile_mission(profile),
-        tone=_profile_tone(profile),
-        source="runtime_agent_profile",
+        profile_name=str(snapshot.get("display_name", "") or agent_id),
+        display_name=str(snapshot.get("display_name", "") or agent_id),
+        mission=str(snapshot.get("mission", "")),
+        tone=str(snapshot.get("tone", "")),
+        source="identityctl",
+        source_classification=str(snapshot.get("source", "unknown")),
+        profile_revision=int(snapshot.get("profile_revision", 0) or 0),
+        profile_version=str(snapshot.get("profile_version", "")),
+        render_version=str(snapshot.get("render_version", "")),
     )
 
 
@@ -221,16 +225,6 @@ def _selected_model(runtime: Any, agent_id: str) -> str:
         if value:
             return value
     return ""
-
-
-def _profile_mission(profile: Any) -> str:
-    role = getattr(profile, "role", None)
-    return str(getattr(role, "mission", "") or getattr(profile, "mission", "") or "")
-
-
-def _profile_tone(profile: Any) -> str:
-    personality = getattr(profile, "personality", None)
-    return str(getattr(personality, "tone", "") or getattr(profile, "tone", "") or "")
 
 
 def _permission_mode(runtime: Any) -> str:

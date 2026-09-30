@@ -30,6 +30,9 @@ class InMemoryIdentityStore(IdentityStore):
             updated_at=_iso_now(),
         )
 
+    def restore_profile(self, profile: StoredProfile) -> None:
+        self._profiles[profile.agent_id] = profile
+
     def update_profile_version(self, agent_id: str, profile_version: str) -> None:
         current = self._profiles.get(agent_id)
         if current is None:

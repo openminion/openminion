@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from hashlib import sha256
+import os
 from pathlib import Path
+import tempfile
 
 from openminion.modules.identity.runtime.lockfile import (
     IDENTITY_LOCKFILE_NAME,
@@ -74,11 +76,32 @@ def resolve_generated_bundle_root_for_profile_path(
 
 def _write_text_if_changed(path: Path, content: str) -> None:
     normalized = content if content.endswith("\n") else f"{content}\n"
-    existing = path.read_text(encoding="utf-8") if path.is_file() else None
+    existing = (
+        path.read_text(encoding="utf-8")
+        if path.is_file() and not path.is_symlink()
+        else None
+    )
     if existing == normalized:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(normalized, encoding="utf-8")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(normalized)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
 
 
 def _build_manifest_for_paths(

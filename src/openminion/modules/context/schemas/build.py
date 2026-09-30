@@ -37,4 +37,5 @@ class BuildPackRequest(BaseModel):
     live_state_overlay: Dict[str, Any] = Field(default_factory=dict)
     phase_hints: Dict[str, Any] = Field(default_factory=dict)
     gateway_system_context: str = ""
+    include_identity: bool = True
     self_awareness: Dict[str, Any] = Field(default_factory=dict)

@@ -95,11 +95,17 @@ def test_runtime_self_model_reports_bsil_only_when_candidate_registry_absent(
             "capability_layering": {"provider_selected": "echo"},
         },
     )
-    profile = SimpleNamespace(
-        name="mini",
-        display_name="Mini",
-        role=SimpleNamespace(mission="Help the operator."),
-        personality=SimpleNamespace(tone="clear"),
+    identity_owner = SimpleNamespace(
+        identity_snapshot=lambda: {
+            "agent_id": "mini",
+            "display_name": "Mini",
+            "mission": "Help the operator.",
+            "tone": "clear",
+            "source": "yaml",
+            "profile_revision": 2,
+            "profile_version": "profile-v2",
+            "render_version": "render-v1",
+        }
     )
     runtime = SimpleNamespace(
         config=SimpleNamespace(
@@ -110,13 +116,16 @@ def test_runtime_self_model_reports_bsil_only_when_candidate_registry_absent(
         memory=SimpleNamespace(list_scopes=lambda: ["agent:mini"]),
         provenance_recorder=object(),
         sessions=object(),
-        resolve_agent_profile=lambda *_args, **_kwargs: profile,
+        agent=identity_owner,
     )
 
     snapshot = self_model_query.build_runtime_self_model(runtime, agent_id="mini")
 
     assert snapshot.health == SELF_MODEL_HEALTH_DEGRADED
     assert snapshot.capabilities.facts["provider"] == "echo"
+    assert snapshot.identity.facts["source"] == "identityctl"
+    assert snapshot.identity.facts["source_classification"] == "yaml"
+    assert snapshot.identity.facts["profile_version"] == "profile-v2"
     assert snapshot.policy.facts["destructive_action_posture"] == "approval_required"
     assert snapshot.improvement_state.facts["promotion_posture"] == "bsil_only"
     assert (

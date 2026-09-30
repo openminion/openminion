@@ -1170,6 +1170,32 @@ class CacheBehaviorTests(unittest.TestCase):
         pack2 = service.build_pack(_make_request(query="different query"))
         self.assertNotEqual(pack1.pack_version, pack2.pack_version)
 
+    def test_identity_inclusion_changes_cache_and_pack_version_in_both_orders(
+        self,
+    ) -> None:
+        for first_includes_identity in (True, False):
+            with self.subTest(first_includes_identity=first_includes_identity):
+                service = _make_service()
+                requests = [
+                    _make_request().model_copy(
+                        update={"include_identity": first_includes_identity}
+                    ),
+                    _make_request().model_copy(
+                        update={"include_identity": not first_includes_identity}
+                    ),
+                ]
+
+                packs = [service.build_pack(request) for request in requests]
+
+                self.assertEqual(len(service._cache), 2)
+                self.assertNotEqual(packs[0].pack_version, packs[1].pack_version)
+                for request, pack in zip(requests, packs, strict=True):
+                    rendered = "\n".join(message.content for message in pack.messages)
+                    if request.include_identity:
+                        self.assertIn("Identity for agent-test", rendered)
+                    else:
+                        self.assertNotIn("Identity for agent-test", rendered)
+
     def test_cache_miss_on_provider_pref_change(self) -> None:
         service = _make_service()
         req1 = BuildPackRequest(

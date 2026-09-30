@@ -197,6 +197,18 @@ class OpenMinionRuntime(
     def working_dir(self) -> str:
         return str(self._working_dir or "")
 
+    def identity_snapshot(self) -> dict[str, Any] | None:
+        service = self._rt.resolve_agent_service(self.agent_id)
+        return cast(dict[str, Any] | None, service.identity_snapshot())
+
+    def identity_verify(self) -> dict[str, Any] | None:
+        service = self._rt.resolve_agent_service(self.agent_id)
+        return cast(dict[str, Any] | None, service.identity_verify())
+
+    def identity_reload(self) -> dict[str, Any]:
+        service = self._rt.resolve_agent_service(self.agent_id)
+        return cast(dict[str, Any], service.identity_reload())
+
     @property
     def project_context(self) -> ProjectContextInfo | None:
         return self._project_context

@@ -1,4 +1,5 @@
 import asyncio
+from hashlib import sha256
 import logging
 import tempfile
 import time
@@ -28,6 +29,7 @@ from openminion.modules.identity.models import (
     ToolPostureSpec,
 )
 from openminion.modules.identity.runtime.service import IdentityCtl
+from openminion.modules.identity.runtime.operator import apply_identity_candidate
 from openminion.modules.identity.storage.store import SQLiteIdentityStore
 from openminion.services.agent.identity_binding import AgentIdentityMixin
 from tests._csc_fixtures import _csc_install_default_agent
@@ -130,7 +132,7 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
             self.assertIn(name, AgentService.__dict__)
             self.assertTrue(callable(getattr(AgentService, name)))
 
-    def test_identityctl_replaces_real_identity_client_in_context_adapter(self) -> None:
+    def test_gateway_context_adapter_does_not_duplicate_identity_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "identity.db"
             ctl = IdentityCtl(store=SQLiteIdentityStore(sqlite_path=str(db_path)))
@@ -150,7 +152,7 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
                 )
 
             rendered = "\n".join(m.content for m in messages)
-            self.assertIn("Mission:", rendered)
+            self.assertNotIn("Mission:", rendered)
             self.assertNotIn("# Agent Identity", rendered)
 
     def test_ensure_default_profile_creates_on_first_run(self) -> None:
@@ -211,12 +213,13 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
             self.assertIn("## Your Identity", provider.last_request.system_prompt)
             self.assertIn("Mission:", provider.last_request.system_prompt)
 
-    def test_derived_yaml_identity_activates_and_refreshes_only_after_upsert(
+    def test_derived_yaml_identity_activates_and_refreshes_only_after_apply(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp) / "data"
             profile_path = data_root / "identity" / "openminion" / "profile.yaml"
+            candidate_path = Path(tmp) / "updated-profile.yaml"
             original_mission = "Unique YAML mission alpha."
             updated_mission = "Unique YAML mission beta."
             _write_profile_yaml(profile_path, mission=original_mission)
@@ -264,13 +267,45 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
                 self.assertIn(original_mission, provider.last_request.system_prompt)
                 self.assertNotIn(updated_mission, provider.last_request.system_prompt)
 
-                service._identityctl.load_profiles_from_path(profile_path)  # noqa: SLF001
-                asyncio.run(
+                snapshot = service.identity_snapshot()
+                self.assertIsNotNone(snapshot)
+                if snapshot is None:  # pragma: no cover
+                    self.fail("expected identity snapshot")
+                _write_profile_yaml(candidate_path, mission=updated_mission)
+                applied = apply_identity_candidate(
+                    service._identityctl,  # noqa: SLF001
+                    identity_root=data_root / "identity",
+                    candidate_path=candidate_path,
+                    expected_profile_version=snapshot["profile_version"],
+                    expected_source_sha256=sha256(
+                        profile_path.read_bytes()
+                    ).hexdigest(),
+                )
+                self.assertEqual(applied["generated_sidecars"]["status"], "clean")
+                self.assertTrue((profile_path.parent / "AGENT.md").is_file())
+                self.assertTrue((profile_path.parent / "SOUL.md").is_file())
+                self.assertTrue((profile_path.parent / "README.md").is_file())
+
+                refreshed = service.identity_verify()
+                self.assertIsNotNone(refreshed)
+                if refreshed is None:  # pragma: no cover
+                    self.fail("expected refreshed identity")
+                self.assertEqual(
+                    refreshed["profile_version"], applied["profile_version"]
+                )
+                self.assertEqual(refreshed["mission"], updated_mission)
+                self.assertTrue(refreshed["validation"]["ok"])
+
+                response = asyncio.run(
                     service.run_turn(
                         Message(channel="console", target="cli", body="third")
                     )
                 )
                 self.assertIn(updated_mission, provider.last_request.system_prompt)
+                self.assertEqual(
+                    response.metadata.get("identity_profile_version"),
+                    applied["profile_version"],
+                )
                 service.close()
 
     def test_existing_derived_database_activates_current_agent_identity(self) -> None:
@@ -365,7 +400,7 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
 
             self.assertIsNone(service._identityctl)  # noqa: SLF001
 
-    def test_invalid_current_agent_yaml_disables_identity_without_fallback(
+    def test_invalid_current_agent_yaml_fails_startup_without_fallback(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -393,15 +428,15 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
                     "openminion.tests.identity.invalid", level="ERROR"
                 ) as captured,
             ):
-                service = AgentService(
-                    config=config,
-                    plugins=PluginRegistry([]),
-                    provider=_CaptureProvider(),
-                    logger=logging.getLogger("openminion.tests.identity.invalid"),
-                    home_root=Path(tmp),
-                )
+                with self.assertRaises(ValueError):
+                    AgentService(
+                        config=config,
+                        plugins=PluginRegistry([]),
+                        provider=_CaptureProvider(),
+                        logger=logging.getLogger("openminion.tests.identity.invalid"),
+                        home_root=Path(tmp),
+                    )
 
-            self.assertIsNone(service._identityctl)  # noqa: SLF001
             ensure_mock.assert_not_called()
             self.assertIn("identity runtime startup failed", "\n".join(captured.output))
 
@@ -893,7 +928,7 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
             self.assertEqual(profile.role.mission, "Bundle mission source.")
             self.assertEqual(dict(profile.meta or {}).get("source"), "bundle")
 
-    def test_startup_without_bundle_uses_default_profile_fallback(self) -> None:
+    def test_startup_without_bundle_keeps_identity_optional(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "identity.db"
             config = OpenMinionConfig()
@@ -920,17 +955,13 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
                     logger=logging.getLogger("openminion.tests.identity.runtime"),
                 )
 
-            self.assertEqual(ensure_mock.call_count, 1)
+            self.assertEqual(ensure_mock.call_count, 0)
             self.assertIsNotNone(service._identityctl)  # noqa: SLF001
             if service._identityctl is None:  # pragma: no cover
                 self.fail("identity runtime should be initialized")
-            profile = service._identityctl.get_profile("openminion")
-            self.assertIsNotNone(profile)
-            if profile is None:  # pragma: no cover
-                self.fail("expected fallback default profile")
-            self.assertEqual(dict(profile.meta or {}).get("source"), "default")
+            self.assertIsNone(service._identityctl.get_profile("openminion"))
 
-    def test_startup_fallback_runs_after_yaml_and_bundle_attempts(self) -> None:
+    def test_startup_stops_after_yaml_and_bundle_attempts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "identity.db"
             config = OpenMinionConfig()
@@ -974,7 +1005,7 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
                     logger=logging.getLogger("openminion.tests.identity.runtime"),
                 )
 
-            self.assertEqual(events, ["yaml", "bundle", "fallback"])
+            self.assertEqual(events, ["yaml", "bundle"])
 
     def test_startup_yaml_sync_runs_before_bundle_import(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1168,7 +1199,7 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
             self.assertTrue(startup_lines)
             summary = startup_lines[-1]
             self.assertIn("status=imported", summary)
-            self.assertIn("fallback_default=False", summary)
+            self.assertIn("imported=True", summary)
             self.assertRegex(summary, r"defaulted_fields=\d+")
             self.assertRegex(summary, r"warnings=\d+")
 
@@ -1484,7 +1515,7 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
             self.assertEqual(second.profile_version, first.profile_version)
             self.assertEqual(second.render_version, first.render_version)
 
-    def test_agent_service_bundle_root_only_activates_identity_runtime(self) -> None:
+    def test_agent_service_empty_bundle_root_keeps_identity_optional(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bundle_root = Path(tmp) / "bundle"
             bundle_root.mkdir(parents=True)
@@ -1516,10 +1547,7 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
                 )
 
             self.assertEqual(response.text, "ok")
-            self.assertNotEqual(
-                response.metadata.get("identity_profile_version", "none"),
-                "none",
-            )
+            self.assertEqual(response.metadata.get("identity_profile_version"), "none")
 
     def test_resolve_bundle_root_prefers_env_over_config_and_legacy(self) -> None:
         config = OpenMinionConfig()

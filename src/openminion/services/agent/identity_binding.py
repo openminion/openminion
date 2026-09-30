@@ -13,6 +13,11 @@ from openminion.modules.identity.config import (
     from_base_config,
     resolve_default_render_budget,
 )
+from openminion.modules.identity import (
+    reload_runtime_identity,
+    runtime_identity_snapshot,
+    verify_runtime_identity,
+)
 from openminion.modules.identity.constants import (
     IDENTITY_RUNTIME_STATUS_BUNDLE_EMPTY,
     IDENTITY_RUNTIME_STATUS_BUNDLE_INVALID,
@@ -72,10 +77,8 @@ class AgentIdentityMixin:
 
         def _create_identity_ctl(self) -> Any: ...
 
-        def _ensure_default_identity_profile(self, *, imported: bool) -> bool: ...
-
         def _log_identity_startup_sync(
-            self, *, yaml_summary: dict[str, Any], fallback_applied: bool
+            self, *, yaml_summary: dict[str, Any]
         ) -> None: ...
 
         def _disable_identity_runtime(self, exc: Exception) -> None: ...
@@ -533,50 +536,29 @@ class AgentIdentityMixin:
             self._create_identity_ctl()
             yaml_summary = self._sync_startup_yaml_profiles()
             self._identity_yaml_sync_summary = dict(yaml_summary or {})
-            imported = (
+            if explicitly_configured:
                 self._import_identity_bundle_profile()
-                if explicitly_configured
-                else False
-            )
-            fallback_applied = (
-                self._ensure_default_identity_profile(imported=imported)
-                if explicitly_configured
-                else False
-            )
-            self._log_identity_startup_sync(
-                yaml_summary=yaml_summary,
-                fallback_applied=fallback_applied,
-            )
+            self._log_identity_startup_sync(yaml_summary=yaml_summary)
             self._refresh_identity_runtime_state()
         except Exception as exc:  # noqa: BLE001
             self._disable_identity_runtime(exc)
+            raise
 
     def _refresh_identity_runtime_state(self) -> None:
         if self._identityctl is None:
             return
-        try:
-            profile = self._identityctl.get_profile(self._identity_agent_id)
-            if profile is None:
-                self._identity_llm_policy_ref = ""
-                self._identity_llm_policy_ref_enforced = False
-                return
-            self._update_llm_policy_ref_diagnostics(profile=profile)
-            self._identity_tool_filter = (
-                profile.tool_posture.model_dump()
-                if hasattr(profile.tool_posture, "model_dump")
-                else None
-            )
-            if self._security_policy is not None and hasattr(
-                self._security_policy, "update_identity_constraints"
-            ):
-                constraints = list(getattr(profile.role, "hard_constraints", []) or [])
-                self._security_policy.update_identity_constraints(constraints)
-        except Exception as exc:  # noqa: BLE001
-            self._logger.debug(
-                "failed to refresh identity runtime state agent_id=%s reason=%s",
-                self._identity_agent_id,
-                exc,
-            )
+        profile = self._identityctl.get_profile(self._identity_agent_id)
+        if profile is None:
+            self._identity_llm_policy_ref = ""
+            self._identity_llm_policy_ref_enforced = False
+            return
+        self._update_llm_policy_ref_diagnostics(profile=profile)
+        self._identity_tool_filter = profile.tool_posture.model_dump()
+        if self._security_policy is not None and hasattr(
+            self._security_policy, "update_identity_constraints"
+        ):
+            constraints = list(getattr(profile.role, "hard_constraints", []) or [])
+            self._security_policy.update_identity_constraints(constraints)
 
     @staticmethod
     def _budget_value(budget: Any, key: str, default: int = 0) -> int:
@@ -650,6 +632,41 @@ class AgentIdentityMixin:
             else "false",
         }
 
+    def identity_snapshot(self, *, purpose: str = "act") -> dict[str, Any] | None:
+        if self._identityctl is None:
+            return None
+        return runtime_identity_snapshot(
+            self._identityctl,
+            agent_id=self._identity_agent_id,
+            purpose=purpose,
+            max_tokens=self._resolve_identity_render_budget_tokens(purpose=purpose),
+        )
+
+    def identity_verify(self, *, purpose: str = "act") -> dict[str, Any] | None:
+        if self._identityctl is None:
+            return None
+        return verify_runtime_identity(
+            self._identityctl,
+            identity_root=self._resolve_startup_identity_root(),
+            agent_id=self._identity_agent_id,
+            purpose=purpose,
+            max_tokens=self._resolve_identity_render_budget_tokens(purpose=purpose),
+        )
+
+    def identity_reload(self, *, purpose: str = "act") -> dict[str, Any]:
+        if self._identityctl is None:
+            raise RuntimeError("identity is not configured for this agent")
+        reload_runtime_identity(
+            self._identityctl,
+            identity_root=self._resolve_startup_identity_root(),
+            agent_id=self._identity_agent_id,
+        )
+        self._refresh_identity_runtime_state()
+        snapshot = self.identity_snapshot(purpose=purpose)
+        if snapshot is None:
+            raise RuntimeError("identity reload completed without an active profile")
+        return snapshot
+
     def _inject_identity_system_prompt(
         self,
         *,
@@ -658,25 +675,19 @@ class AgentIdentityMixin:
     ) -> str:
         if self._identityctl is None:
             return system_prompt
+        if self._identityctl.get_profile(self._identity_agent_id) is None:
+            return system_prompt
         render_purpose = self._resolve_identity_render_purpose(
             inbound_metadata=inbound_metadata
         )
         render_max_tokens = self._resolve_identity_render_budget_tokens(
             purpose=render_purpose
         )
-        try:
-            snippet = self._identityctl.render(
-                agent_id=self._identity_agent_id,
-                purpose=render_purpose,
-                max_tokens=render_max_tokens,
-            )
-        except Exception as exc:  # noqa: BLE001
-            self._logger.debug(
-                "identity render failed agent_id=%s reason=%s",
-                self._identity_agent_id,
-                exc,
-            )
-            return system_prompt
+        snippet = self._identityctl.render(
+            agent_id=self._identity_agent_id,
+            purpose=render_purpose,
+            max_tokens=render_max_tokens,
+        )
 
         self._last_identity_snippet = snippet
         snippet_text = str(getattr(snippet, "text", "")).strip()
@@ -709,31 +720,10 @@ def _create_identity_ctl(self) -> None:
     self._identityctl = IdentityCtl(store=SQLiteIdentityStore(sqlite_path=str(db_path)))
 
 
-def _ensure_default_identity_profile(self, *, imported: bool) -> bool:
-    if imported or self._identityctl is None:
-        return False
-    existing_profile = self._identityctl.get_profile(self._identity_agent_id)
-    if existing_profile is not None:
-        return False
-    from openminion.services.identity.bootstrap import ensure_default_profile
-
-    ensure_default_profile(
-        self._identityctl,
-        self._identity_agent_id,
-        system_prompt=_resolve_system_prompt(self._config),
-    )
-    return True
-
-
-def _log_identity_startup_sync(
-    self,
-    *,
-    yaml_summary: dict[str, Any],
-    fallback_applied: bool,
-) -> None:
+def _log_identity_startup_sync(self, *, yaml_summary: dict[str, Any]) -> None:
     import_summary = dict(getattr(self, "_identity_import_summary", {}) or {})
     self._logger.info(
-        "identity startup sync agent_id=%s yaml_status=%s yaml_profiles=%s yaml_upserted=%s yaml_errors=%s status=%s imported=%s fallback_default=%s defaulted_fields=%s warnings=%s errors=%s",
+        "identity startup sync agent_id=%s yaml_status=%s yaml_profiles=%s yaml_upserted=%s yaml_errors=%s status=%s imported=%s defaulted_fields=%s warnings=%s errors=%s",
         self._identity_agent_id,
         str(yaml_summary.get("status", "unknown")),
         int(yaml_summary.get("profile_files_count", 0) or 0),
@@ -741,7 +731,6 @@ def _log_identity_startup_sync(
         int(yaml_summary.get("errors_count", 0) or 0),
         str(import_summary.get("status", "unknown")),
         bool(import_summary.get("imported", False)),
-        fallback_applied,
         int(import_summary.get("defaulted_fields_count", 0) or 0),
         int(import_summary.get("warnings_count", 0) or 0),
         int(import_summary.get("errors_count", 0) or 0),
@@ -763,7 +752,6 @@ def _disable_identity_runtime(self, exc: Exception) -> None:
 
 AgentIdentityMixin._identity_runtime_configured = _identity_runtime_configured
 AgentIdentityMixin._create_identity_ctl = _create_identity_ctl
-AgentIdentityMixin._ensure_default_identity_profile = _ensure_default_identity_profile
 AgentIdentityMixin._log_identity_startup_sync = _log_identity_startup_sync
 AgentIdentityMixin._disable_identity_runtime = _disable_identity_runtime
 
@@ -787,13 +775,15 @@ _AGENT_IDENTITY_RUNTIME_API_NAMES = (
     "_resolve_identity_db_path",
     "_identity_runtime_configured",
     "_create_identity_ctl",
-    "_ensure_default_identity_profile",
     "_log_identity_startup_sync",
     "_disable_identity_runtime",
     "_init_identity_runtime",
     "_refresh_identity_runtime_state",
     "_budget_value",
     "_identity_metadata",
+    "identity_snapshot",
+    "identity_verify",
+    "identity_reload",
     "_inject_identity_system_prompt",
 )
 

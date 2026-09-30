@@ -41,14 +41,16 @@ class PinnedPrefixBuilder:
         identity_text: str,
         tool_schemas: Iterable[Any] | None = None,
         policy_rules: Iterable[str] | None = None,
+        include_identity: bool = True,
     ) -> str:
-        sections: list[str] = [
-            "[SYSTEM SAFETY]\n" + self._safety_text,
-            "[IDENTITY]\n"
-            + _normalize_lines(identity_text)
-            + "\n\n"
-            + _IDENTITY_DIRECTIVE,
-        ]
+        sections: list[str] = ["[SYSTEM SAFETY]\n" + self._safety_text]
+        if include_identity:
+            sections.append(
+                "[IDENTITY]\n"
+                + _normalize_lines(identity_text)
+                + "\n\n"
+                + _IDENTITY_DIRECTIVE
+            )
 
         normalized_tools = self._normalize_tools(tool_schemas or [])
         if normalized_tools:

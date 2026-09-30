@@ -135,14 +135,23 @@ class CommandRegistryBaseMixin:
                 ok=False,
                 text=f"Unknown command: /{command.canonical}. Type /help for available commands.",
             )
-        if self.auth is not None and self.auth.is_admin_command(command.canonical):
-            allowed, reason = self.auth.check(ctx.user_key, command.canonical)
-            if not allowed:
-                return CommandResult(
-                    ok=False,
-                    text=f"Permission denied: {reason}",
-                    error={"code": "PERMISSION_DENIED", "reason": reason},
-                )
+        spec = self._command_specs.get(command.canonical)
+        admin_required = bool(
+            spec is not None and spec.auth_requirement is AuthRequirement.ADMIN
+        ) or bool(
+            self.auth is not None and self.auth.is_admin_command(command.canonical)
+        )
+        if (
+            admin_required
+            and self.auth is not None
+            and not self.auth.is_admin(ctx.user_key)
+        ):
+            reason = f"command '{command.canonical}' requires admin role"
+            return CommandResult(
+                ok=False,
+                text=f"Permission denied: {reason}",
+                error={"code": "PERMISSION_DENIED", "reason": reason},
+            )
         return handler(command, ctx)
 
     def _help(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:

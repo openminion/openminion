@@ -583,6 +583,54 @@ def test_every_non_control_slash_uses_prompt_safe_output() -> None:
     assert PROMPT_SAFE_OUTPUT_SLASHES == expected
 
 
+@pytest.mark.parametrize(
+    ("command", "method_name"),
+    [
+        ("/identity", "identity_snapshot"),
+        ("/identity verify", "identity_verify"),
+        ("/identity reload", "identity_reload"),
+    ],
+)
+def test_identity_slashes_use_the_runtime_identity_owner(
+    command: str,
+    method_name: str,
+) -> None:
+    calls: list[str] = []
+    payload = {
+        "agent_id": "ops",
+        "display_name": "Operations",
+        "source": "yaml",
+        "profile_revision": 2,
+        "profile_version": "profile-v2",
+        "render_version": "render-v1",
+        "rendered_text": "Mission: Operate safely.",
+        "validation": {"ok": True},
+    }
+
+    def invoke() -> dict[str, object]:
+        calls.append(method_name)
+        return payload
+
+    runtime = SimpleNamespace(**{method_name: invoke})
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    asyncio.run(
+        _handle_slash(
+            command,
+            runtime=runtime,
+            console=console,
+            transcript=TerminalTranscript(console),
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert calls == [method_name]
+    assert "Source: yaml" in buf.getvalue()
+    assert "Profile version: profile-v2" in buf.getvalue()
+
+
 def test_context_review_forwards_explicit_paths(monkeypatch, tmp_path: Path) -> None:
     from openminion.cli.interactive.terminal.shell import slash_output
 
