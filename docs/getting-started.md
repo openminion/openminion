@@ -156,26 +156,20 @@ store a pasted key locally only after a hidden prompt, warning, and confirmation
 On POSIX systems, setup-owned config directories are tightened to owner-only
 `0700`, and setup-created config files are owner-only `0600`.
 
-Built-in hosted presets currently include:
+The setup catalog is runtime-owned, so use the CLI instead of a copied provider
+table when choosing or integrating a provider:
 
-| Preset | API format | Environment variable | Default base URL | Recommended model source |
-| --- | --- | --- | --- | --- |
-| `openai` | OpenAI-compatible | `OPENAI_API_KEY` | `https://api.openai.com/v1` | live-optional, otherwise recommended |
-| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1` | recommended |
-| `openrouter` | OpenAI-compatible | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | live-optional, otherwise recommended |
-| `cerebras` | OpenAI-compatible | `CEREBRAS_API_KEY` | `https://api.cerebras.ai/v1` | recommended |
-| `groq` | OpenAI-compatible | `GROQ_API_KEY` | `https://api.groq.com/openai/v1` | recommended |
-| `cortensor-portal` | OpenAI-compatible | `CORTENSOR_API_KEY` | `https://api.cortensor.app/v1` | experimental; manual model selection |
-| `minimax` | OpenAI-compatible | `MINIMAX_API_KEY` | `https://api.minimax.io/v1` | live-optional, otherwise recommended |
-| `kimi` | OpenAI-compatible | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | recommended |
-| `zai` | OpenAI-compatible | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4/` | recommended |
-| `zai-coding` | OpenAI-compatible | `ZAI_API_KEY` | `https://api.z.ai/api/coding/paas/v4` | recommended |
-| `deepseek` | OpenAI-compatible | `DEEPSEEK_API_KEY` | `https://api.deepseek.com` | recommended |
-| `qwen-dashscope` | OpenAI-compatible | `DASHSCOPE_API_KEY` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | recommended |
-| `gemini` | OpenAI-compatible | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai/` | live-optional, otherwise recommended |
-| `xai` | OpenAI-compatible | `XAI_API_KEY` | `https://api.x.ai/v1` | recommended |
-| `mistral` | OpenAI-compatible | `MISTRAL_API_KEY` | `https://api.mistral.ai/v1` | recommended |
-| `together` | OpenAI-compatible | `TOGETHER_API_KEY` | `https://api.together.ai/v1` | recommended |
+```bash
+# Human-readable catalog
+openminion setup --list-providers
+
+# Stable machine-readable catalog for clients and scripts
+openminion setup --list-providers --json
+```
+
+The JSON form reports each provider's ID, label, credential environment
+variable, credential requirement, default base URL, and ordered recommended
+models. Listing providers does not make a provider request.
 
 Cortensor Portal remains an experimental hosted path because current service
 availability can be slow or unstable. Portal owns routing, quota, capacity,
@@ -218,12 +212,6 @@ Unless a setup run says `live`, a checked-in model is only a recommended
 fallback. Fixture-backed provider support means OpenMinion has local request and
 configuration coverage; it is not a live account, billing, quota, or model
 availability guarantee.
-
-List the static setup catalog without making a provider request:
-
-```bash
-openminion setup --list-providers
-```
 
 To move an existing setup, export it without embedded secrets and import it on
 the new machine:
