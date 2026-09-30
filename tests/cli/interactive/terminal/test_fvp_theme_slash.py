@@ -219,7 +219,7 @@ def test_shell_outputs_follow_live_theme_switch() -> None:
     from openminion.cli.interactive.terminal.shell.actions import (
         _handle_slash_expand,
     )
-    from openminion.cli.interactive.terminal.shell import _build_ctrl_key_handlers
+    from openminion.cli.interactive.terminal.shell import _build_ctrl_o_handler
     from openminion.cli.interactive.terminal.shell.delegation import (
         handle_slash_delegate,
     )
@@ -267,10 +267,10 @@ def test_shell_outputs_follow_live_theme_switch() -> None:
         ]
         muted_outputs = [
             rendered_style(
-                lambda console: _build_ctrl_key_handlers(
+                lambda console: _build_ctrl_o_handler(
                     transcript=transcript,
                     console=console,
-                )[1]()
+                )()
             ),
             rendered_style(
                 lambda console: start_new_session(

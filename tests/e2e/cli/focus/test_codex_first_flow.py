@@ -253,6 +253,25 @@ def test_codex_first_shell_journey_is_compact_truthful_and_persistent(
             )
             assert "line-40-detail" in expanded
 
+            help_text = visible_text(
+                probe.run_slash(session, "?", marker="Keyboard shortcuts:")
+            )
+            assert "Ctrl-L" in help_text
+            assert "Shift-Tab" in help_text
+
+            session.send("ab")
+            session.send("\x1b[D")
+            session.send("\x0c")
+            session.send("X")
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if "aXb" in visible_text(session.read_screen()):
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("Ctrl-L did not preserve the draft and cursor")
+            session.send("\x01\x0b")
+
             status = visible_text(probe.run_slash(session, "/status", marker="Status:"))
             assert "provider:" in status
 

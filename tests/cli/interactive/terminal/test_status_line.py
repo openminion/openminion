@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.presentation.contracts import StatusLine
+from openminion.cli.presentation.styles import StyleToken, style_token
 
 
 def test_status_key_drives_activity_callback() -> None:
@@ -234,3 +237,37 @@ def test_bottom_identity_row_stays_stable_when_turn_finishes() -> None:
     assert "queue:" not in line.bottom_toolbar()
     assert "Status:" not in line.bottom_toolbar()
     assert line.bottom_toolbar() == active_footer
+
+
+@pytest.mark.parametrize(
+    ("permission_mode", "action_policy_mode", "label", "severity"),
+    (
+        ("readonly", "bypass", "read-only + bypass approvals", StyleToken.WARNING),
+        ("default", "bypass", "full access", StyleToken.ERROR),
+        ("bypass", "ask", "full access", StyleToken.ERROR),
+        ("default", "ask", "ask", StyleToken.SYSTEM),
+        ("default", "auto", "auto", StyleToken.SYSTEM),
+    ),
+)
+def test_permission_footer_uses_both_raw_axes_and_raw_severity(
+    permission_mode: str,
+    action_policy_mode: str,
+    label: str,
+    severity: StyleToken,
+) -> None:
+    line = TerminalStatusLine()
+    line.set_state(
+        permission_mode=permission_mode,
+        action_policy_mode=action_policy_mode,
+    )
+
+    text = line.bottom_toolbar()
+    open_code, _ = style_token(severity)
+    assert f"{open_code}{label}" in text
+
+
+def test_default_permission_footer_stays_hidden() -> None:
+    line = TerminalStatusLine()
+    line.set_state(permission_mode="default", action_policy_mode="")
+
+    assert "permissions:" not in line.bottom_toolbar()

@@ -255,7 +255,6 @@ class TerminalComposer:
         bottom_toolbar: object = None,
         active_status: Callable[[], str] | None = None,
         history_file: str | None = None,
-        on_ctrl_l: object = None,
         on_ctrl_o: object = None,
         on_shift_tab: object = None,
         on_escape: Callable[[], None] | None = None,
@@ -311,12 +310,6 @@ class TerminalComposer:
 
         kb.add("backspace")(self._delete_before_cursor)
         kb.add("<bracketed-paste>")(self._handle_bracketed_paste)
-
-        if callable(on_ctrl_l):
-
-            @kb.add("c-l")
-            def _ctrl_l(event) -> None:
-                _call_safely(on_ctrl_l)
 
         if callable(on_ctrl_o):
 

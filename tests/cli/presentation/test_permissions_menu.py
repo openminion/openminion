@@ -71,6 +71,7 @@ def test_apply_readonly_preserves_existing_action_policy_axis() -> None:
     assert runtime.permission_mode == "readonly"
     assert runtime.action_policy_mode_override == "auto"
     assert result.action_policy_mode is None
+    assert "read-only + auto" in result.message
 
 
 def test_full_access_requires_explicit_confirmation() -> None:
@@ -96,6 +97,35 @@ def test_status_label_keeps_permission_and_approval_axes_distinct() -> None:
             action_policy_mode="auto",
         )
         == "read-only + auto"
+    )
+
+
+@pytest.mark.parametrize(
+    ("permission_mode", "action_policy_mode", "expected"),
+    (
+        ("default", "", "default"),
+        ("default", "ask", "ask"),
+        ("default", "auto", "auto"),
+        ("default", "bypass", "full access"),
+        ("readonly", "", "read-only"),
+        ("readonly", "ask", "read-only + ask"),
+        ("readonly", "auto", "read-only + auto"),
+        ("readonly", "bypass", "read-only + bypass approvals"),
+        ("bypass", "", "full access"),
+        ("bypass", "ask", "full access"),
+    ),
+)
+def test_status_label_covers_permission_truth_table(
+    permission_mode: str,
+    action_policy_mode: str,
+    expected: str,
+) -> None:
+    assert (
+        format_permission_status_label(
+            permission_mode=permission_mode,
+            action_policy_mode=action_policy_mode,
+        )
+        == expected
     )
 
 

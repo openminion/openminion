@@ -13,6 +13,7 @@ from openminion.cli.presentation.models import (
     MessageKind,
     ToolEvent,
 )
+from openminion.cli.presentation.permissions import format_permission_status_label
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style as _style
 from openminion.cli.presentation.theme import handle_theme
@@ -171,6 +172,27 @@ def _runtime_permission_mode(runtime: Any) -> str:
     return str(getattr(runtime, "permission_mode", "default") or "default").strip()
 
 
+def _runtime_action_policy_mode(runtime: Any) -> str:
+    return str(getattr(runtime, "action_policy_mode_override", "") or "").strip()
+
+
+def _runtime_permission_label(runtime: Any) -> str:
+    return format_permission_status_label(
+        permission_mode=_runtime_permission_mode(runtime),
+        action_policy_mode=_runtime_action_policy_mode(runtime),
+    )
+
+
+def _sync_permission_status(
+    runtime: Any, status_line: TerminalStatusLine | None
+) -> None:
+    if status_line is not None:
+        status_line.set_state(
+            permission_mode=_runtime_permission_mode(runtime),
+            action_policy_mode=_runtime_action_policy_mode(runtime),
+        )
+
+
 def _set_permission_mode(
     mode: str,
     *,
@@ -181,8 +203,7 @@ def _set_permission_mode(
     if not callable(setter):
         raise RuntimeError("runtime does not expose set_permission_mode")
     new_mode = str(setter(mode) or "default").strip() or "default"
-    if status_line is not None:
-        status_line.set_state(permission_mode=new_mode)
+    _sync_permission_status(runtime, status_line)
     return new_mode
 
 
@@ -197,12 +218,11 @@ def _cycle_permission_mode(
     if not callable(cycler):
         raise RuntimeError("runtime does not expose cycle_permission_mode")
     new_mode = str(cycler() or "default").strip() or "default"
-    if status_line is not None:
-        status_line.set_state(permission_mode=new_mode)
+    _sync_permission_status(runtime, status_line)
     if announce:
         console.print(
             Text(
-                f"(permissions: {new_mode} — Shift+Tab cycles modes)",
+                f"(permissions: {_runtime_permission_label(runtime)} — Shift+Tab cycles modes)",
                 style=_muted_style(italic=True),
             )
         )
@@ -218,7 +238,6 @@ def _handle_slash_permissions(
 ) -> None:
     arg = _slash_arg(text).strip().lower()
     if not arg:
-        mode = _runtime_permission_mode(runtime)
         overrides = getattr(runtime, "permission_overrides", {})
         override_text = ""
         if isinstance(overrides, dict) and overrides:
@@ -228,7 +247,7 @@ def _handle_slash_permissions(
             override_text = f"; overrides: {pairs}"
         console.print(
             Text(
-                f"(permissions: {mode}{override_text}; use `/permissions default|readonly|bypass`, `/permissions <tool> <ask|auto|bypass|readonly|default>`, or Shift+Tab)",
+                f"(permissions: {_runtime_permission_label(runtime)}{override_text}; use `/permissions default|readonly|bypass`, `/permissions <tool> <ask|auto|bypass|readonly|default>`, or Shift+Tab)",
                 style=_muted_style(italic=True),
             )
         )
@@ -286,21 +305,13 @@ def _handle_slash_permissions(
             )
         )
         return
-    console.print(
-        Text(
-            _permission_mode_message(mode),
-            style=_muted_style(italic=True),
-        )
+    message = (
+        "(permissions: bypass — full access for this session; use `/permissions` "
+        "in the interactive CLI for the safer chooser)"
+        if mode == "bypass"
+        else f"(permissions: {_runtime_permission_label(runtime)} — session-scoped)"
     )
-
-
-def _permission_mode_message(mode: str) -> str:
-    if str(mode or "").strip().lower() == "bypass":
-        return (
-            "(permissions: bypass — full access for this session; "
-            "use `/permissions` in the interactive CLI for the safer chooser)"
-        )
-    return f"(permissions: {mode} — session-scoped)"
+    console.print(Text(message, style=_muted_style(italic=True)))
 
 
 def _handle_slash_agents(text: str, *, runtime: Any, console: Console) -> None:
@@ -463,12 +474,11 @@ def _handle_slash_readonly(
         )
         return
     label = "ON" if new_state else "OFF"
-    if status_line is not None:
-        status_line.set_state(permission_mode=_runtime_permission_mode(runtime))
+    _sync_permission_status(runtime, status_line)
     hint = (
         "write tools (Edit/Write/Bash) will be blocked at the runtime tier (FPC-11b)"
         if new_state
-        else "all tools allowed (default)"
+        else f"remaining posture: {_runtime_permission_label(runtime)}"
     )
     console.print(
         Text(

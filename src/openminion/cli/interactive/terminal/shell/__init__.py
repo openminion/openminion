@@ -57,6 +57,7 @@ from .actions import (
     _handle_slash,
     _run_shell_escape,
     _runtime_permission_mode,
+    _runtime_action_policy_mode,
     _cycle_permission_mode,
     _SLASH_COMMANDS,
 )
@@ -193,16 +194,13 @@ def run_terminal_focus(
         return 0
 
 
-def _build_ctrl_key_handlers(
+def _build_ctrl_o_handler(
     *, transcript: TerminalTranscript, console: Console
-) -> tuple:
-    def _handle_ctrl_l() -> None:
-        transcript.clear_messages()
-
+) -> Callable[[], None]:
     def _handle_ctrl_o() -> None:
         _copy_latest_message(transcript, console)
 
-    return _handle_ctrl_l, _handle_ctrl_o
+    return _handle_ctrl_o
 
 
 async def _handle_slash_input(
@@ -330,6 +328,7 @@ class _TerminalFocusLoop:
             cwd=self.working_dir,
             model=_runtime_label(self.runtime),
             permission_mode=_runtime_permission_mode(self.runtime),
+            action_policy_mode=_runtime_action_policy_mode(self.runtime),
             custom=statusline_label(self.runtime),
             queued_count=len(self.pending_turns),
             state=state,
@@ -601,6 +600,8 @@ class _TerminalFocusLoop:
         if not text:
             self.start_read_task()
             return None
+        if text == "?":
+            text = "/help"
         if self.active_turn_task is not None:
             await self.handle_busy_input(text)
             self.start_read_task()
@@ -663,9 +664,7 @@ async def _run_terminal_focus_async(
             transcript=transcript,
             working_dir=working_dir,
         )
-    handle_ctrl_l, handle_ctrl_o = _build_ctrl_key_handlers(
-        transcript=transcript, console=console
-    )
+    handle_ctrl_o = _build_ctrl_o_handler(transcript=transcript, console=console)
     custom_commands = _discover_custom_commands_for(
         runtime=runtime, working_dir=working_dir
     )
@@ -683,7 +682,6 @@ async def _run_terminal_focus_async(
         bottom_toolbar=status_line.bottom_toolbar,
         active_status=status_line.active_status,
         history_file=_focus_history_path(runtime),
-        on_ctrl_l=handle_ctrl_l,
         on_ctrl_o=handle_ctrl_o,
         on_shift_tab=handle_shift_tab,
         on_escape=lambda: None,
@@ -848,6 +846,7 @@ def _finalize_turn_status_line(runtime: Any, status_line: TerminalStatusLine) ->
     status_line.set_state(
         state="idle",
         permission_mode=_runtime_permission_mode(runtime),
+        action_policy_mode=_runtime_action_policy_mode(runtime),
         custom=statusline_label(runtime),
         turn_status="",
     )

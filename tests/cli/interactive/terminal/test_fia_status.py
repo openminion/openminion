@@ -89,8 +89,19 @@ def test_render_status_block_shows_agent_model_cwd() -> None:
     assert "openai/gpt-4" not in out
     assert "test-session-123" in out
     assert "/work/dir" in out
-    assert "permissions: readonly" in out
+    assert "permissions: read-only" in out
     assert "added directories: 2" in out
+
+
+def test_render_status_block_shows_combined_permission_posture() -> None:
+    runtime = _FakeRuntime()
+    runtime.permission_mode = "readonly"
+    runtime.action_policy_mode_override = "bypass"
+    console, buf = _make_console()
+
+    _render_status_block(runtime=runtime, console=console, working_dir="/work")
+
+    assert "permissions: read-only + bypass approvals" in buf.getvalue()
 
 
 def test_render_status_block_no_usage_shows_hint() -> None:

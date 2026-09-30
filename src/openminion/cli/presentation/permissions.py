@@ -128,16 +128,21 @@ def format_permission_status_label(
 ) -> str:
     mode = str(permission_mode or PERMISSION_MODE_DEFAULT).strip().lower()
     action = normalize_action_policy_mode_override(action_policy_mode)
+    if mode == PERMISSION_MODE_READONLY:
+        parts = ["read-only"]
+        if action == "bypass":
+            parts.append("bypass approvals")
+        elif action in {"ask", "auto"}:
+            parts.append(action)
+        return " + ".join(parts)
     if mode == PERMISSION_MODE_BYPASS or action == "bypass":
         return "full access"
     parts: list[str] = []
-    if mode == PERMISSION_MODE_READONLY:
-        parts.append("read-only")
-    elif mode and mode != PERMISSION_MODE_DEFAULT:
+    if mode and mode != PERMISSION_MODE_DEFAULT:
         parts.append(mode)
     if action in {"ask", "auto"}:
         parts.append(action)
-    return " + ".join(parts)
+    return " + ".join(parts) or "default"
 
 
 def format_permission_overrides_label(overrides: object) -> str:
@@ -168,7 +173,11 @@ def apply_permission_menu_choice(
         )
     status = format_permission_status_label(
         permission_mode=mode,
-        action_policy_mode=action_mode,
+        action_policy_mode=(
+            action_mode
+            if action_mode is not None
+            else getattr(runtime, "action_policy_mode_override", None)
+        ),
     )
     warning = " — full access for this session" if choice.requires_confirmation else ""
     return PermissionApplyResult(

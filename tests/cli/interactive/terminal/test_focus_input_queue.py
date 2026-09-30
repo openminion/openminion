@@ -215,12 +215,14 @@ class _BusyHelpComposer:
             return "first"
         if self._calls == 2:
             await type(self).runtime.first_chunk_sent.wait()
-            return "/agents ?"
+            return "?"
         if self._calls == 3:
-            return "/help statsu"
+            return "/agents ?"
         if self._calls == 4:
-            return "/exit --help"
+            return "/help statsu"
         if self._calls == 5:
+            return "/exit --help"
+        if self._calls == 6:
             type(self).runtime.release_turn.set()
             raise EOFError
         raise EOFError
@@ -607,10 +609,45 @@ async def test_terminal_focus_runs_contextual_help_while_turn_streams(
     transcript = _CapturedTranscript.last_instance
     assert transcript is not None
     bodies = [message.body for message in transcript._messages]
+    assert any(body.startswith("Slash commands:") for body in bodies)
+    assert any("Keyboard shortcuts:" in body for body in bodies)
     assert any(body.startswith("/agents —") for body in bodies)
     assert any(body.startswith("Unknown command: /statsu") for body in bodies)
     assert any(body.startswith("/exit —") for body in bodies)
     assert not any("Queued for next turn" in body for body in bodies)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entered", "routed"),
+    (("?", "/help"), ("? explain this", "? explain this")),
+)
+async def test_read_completion_only_normalizes_exact_question_mark(
+    entered: str,
+    routed: str,
+) -> None:
+    console = Console(file=io.StringIO(), force_terminal=False, width=120)
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=_SingleTurnRuntime(),
+        console=console,
+        transcript=terminal_shell.TerminalTranscript(console),
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=_LoopComposer(),
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-help-alias",
+        custom_commands={},
+        approval_grants=set(),
+    )
+    captured: list[str] = []
+
+    async def _capture(text: str) -> None:
+        captured.append(text)
+
+    loop.handle_idle_input = _capture  # type: ignore[method-assign]
+    loop.read_task = asyncio.create_task(asyncio.sleep(0, result=entered))
+
+    assert await loop.handle_read_completion() is None
+    assert captured == [routed]
 
 
 @pytest.mark.asyncio

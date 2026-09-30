@@ -25,10 +25,9 @@ def test_composer_accepts_bottom_toolbar_kwarg() -> None:
     assert "bottom_toolbar" in sig.parameters
 
 
-def test_composer_accepts_on_ctrl_l_kwarg() -> None:
+def test_composer_leaves_ctrl_l_to_prompt_toolkit() -> None:
     sig = inspect.signature(TerminalComposer.__init__)
-    assert "on_ctrl_l" in sig.parameters
-    assert sig.parameters["on_ctrl_l"].default is None
+    assert "on_ctrl_l" not in sig.parameters
 
 
 def test_composer_accepts_on_ctrl_o_kwarg() -> None:
@@ -45,7 +44,6 @@ def test_composer_constructs_without_callbacks() -> None:
 def test_composer_constructs_with_callbacks() -> None:
     composer = TerminalComposer(
         slash_commands=("/help",),
-        on_ctrl_l=lambda: None,
         on_ctrl_o=lambda: None,
     )
     assert composer is not None
