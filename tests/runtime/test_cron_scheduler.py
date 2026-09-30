@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import threading
 from time import sleep
 from uuid import uuid4
@@ -175,6 +176,7 @@ def test_scheduler_executes_agent_turn_and_calls_delivery() -> None:
     )
     store.seed_due("job-1")
     deliveries: list[tuple[str, str]] = []
+    events: list[tuple[str, dict]] = []
 
     def _exec_agent(job: dict, run: dict) -> dict:  # noqa: ANN001
         del job
@@ -182,6 +184,7 @@ def test_scheduler_executes_agent_turn_and_calls_delivery() -> None:
 
     def _deliver(mode: str, to_value: str, job: dict, run: dict, result) -> None:  # noqa: ANN001
         del job, run, result
+        assert store.delivery_targets == {}
         deliveries.append((mode, to_value))
 
     scheduler = CronScheduler(
@@ -192,6 +195,7 @@ def test_scheduler_executes_agent_turn_and_calls_delivery() -> None:
         max_concurrent_runs=2,
         execute_agent_turn=_exec_agent,
         delivery_handler=_deliver,
+        on_event=lambda name, payload: events.append((name, payload)),
     )
     scheduler.start()
     try:
@@ -203,6 +207,16 @@ def test_scheduler_executes_agent_turn_and_calls_delivery() -> None:
     assert run["state"] == "finished"
     assert run["summary"].startswith("done:")
     assert deliveries == [("announce", "cli:ops")]
+    assert run["output"]["delivery"] == {
+        "state": "succeeded",
+        "mode": "announce",
+        "targets": ["announce:cli:ops"],
+    }
+    assert store.delivery_targets[run["run_id"]] == {"announce:cli:ops"}
+    delivery_event = next(
+        payload for name, payload in events if name == "cron.delivery.succeeded"
+    )
+    assert delivery_event["target"] == "announce:cli:ops"
 
 
 def test_scheduler_dispatches_project_cycle_to_runtime_executor() -> None:
@@ -233,6 +247,11 @@ def test_scheduler_dispatches_project_cycle_to_runtime_executor() -> None:
     run = next(iter(store.runs.values()))
     assert run["state"] == "finished"
     assert run["summary"] == "project cycle completed"
+    assert run["output"]["delivery"] == {
+        "state": "not_requested",
+        "mode": "none",
+        "targets": [],
+    }
     assert dispatched == ["projectCycle"]
 
 
@@ -244,13 +263,15 @@ def test_scheduler_reconciles_task_outcomes_on_tick_and_completion() -> None:
     )
     store.seed_due("job-task")
     reconciled: list[str | None] = []
+    events: list[tuple[str, dict]] = []
 
     scheduler = CronScheduler(
         store=store,
         daemon_id="daemon-task",
         tick_seconds=0.05,
         execute_agent_turn=lambda _job, _run: "done",
-        record_task_outcomes=lambda job_id: reconciled.append(job_id) or 0,
+        record_task_outcomes=lambda job_id: reconciled.append(job_id) or 1,
+        on_event=lambda name, payload: events.append((name, payload)),
     )
     scheduler.start()
     try:
@@ -260,6 +281,48 @@ def test_scheduler_reconciles_task_outcomes_on_tick_and_completion() -> None:
 
     assert None in reconciled
     assert "job-task" in reconciled
+    reconciliation = next(
+        payload
+        for name, payload in events
+        if name == "cron.task_outcomes.reconciled" and payload["job_id"] == "job-task"
+    )
+    assert reconciliation["count"] == 1
+
+
+def test_execution_failure_remains_distinct_from_delivery_failure() -> None:
+    store = FakeCronStore()
+    store.add_job(
+        job_id="job-execution-failure",
+        payload={"kind": "agentTurn", "message": "task"},
+        delivery={"mode": "announce", "to": "cli:ops"},
+    )
+    store.seed_due("job-execution-failure")
+    events: list[tuple[str, dict]] = []
+
+    def _execute(_job: dict, _run: dict) -> str:
+        raise RuntimeError("provider unavailable")
+
+    scheduler = CronScheduler(
+        store=store,
+        daemon_id="daemon-execution-failure",
+        tick_seconds=0.05,
+        execute_agent_turn=_execute,
+        on_event=lambda name, payload: events.append((name, payload)),
+    )
+    scheduler.start()
+    try:
+        assert store.finished.wait(timeout=3.0)
+    finally:
+        scheduler.shutdown(grace_s=1.0)
+
+    run = next(iter(store.runs.values()))
+    assert run["state"] == "failed"
+    assert run["error"]["code"] == "cron_failed"
+    assert run["output"] == {}
+    finished = next(payload for name, payload in events if name == "cron.run.finished")
+    assert finished["state"] == "failed"
+    assert finished["error"]["code"] == "cron_failed"
+    assert not any(name.startswith("cron.delivery.") for name, _payload in events)
 
 
 def test_scheduler_preserves_terminal_run_when_task_outcome_callback_fails() -> None:
@@ -369,7 +432,7 @@ def test_scheduler_renews_lease_for_long_running_run() -> None:
     assert store.renew_counts.get(run_id, 0) >= 1
 
 
-def test_best_effort_delivery_errors_do_not_fail_run() -> None:
+def test_delivery_failure_records_best_effort_metadata_without_failing_run() -> None:
     store = FakeCronStore()
     store.add_job(
         job_id="job-best-effort",
@@ -377,6 +440,7 @@ def test_best_effort_delivery_errors_do_not_fail_run() -> None:
         delivery={"mode": "announce", "best_effort": True},
     )
     store.seed_due("job-best-effort")
+    events: list[tuple[str, dict]] = []
 
     def _exec_agent(job: dict, run: dict) -> str:  # noqa: ANN001
         del job, run
@@ -389,7 +453,8 @@ def test_best_effort_delivery_errors_do_not_fail_run() -> None:
         lease_ttl_seconds=2,
         max_concurrent_runs=1,
         execute_agent_turn=_exec_agent,
-        delivery_handler=None,  # intentionally missing for best-effort path
+        delivery_handler=None,  # missing handler exercises the separated delivery phase
+        on_event=lambda name, payload: events.append((name, payload)),
     )
     scheduler.start()
     try:
@@ -399,6 +464,121 @@ def test_best_effort_delivery_errors_do_not_fail_run() -> None:
 
     run = next(iter(store.runs.values()))
     assert run["state"] == "finished"
+    assert run["error"] is None
+    assert run["output"]["delivery"] == {
+        "state": "failed",
+        "mode": "announce",
+        "targets": [],
+        "error": {
+            "code": "cron_delivery_failed",
+            "message": "delivery mode 'announce' is configured but no delivery handler is installed",
+        },
+    }
+    assert store.delivery_targets == {}
+    failure_event = next(
+        payload for name, payload in events if name == "cron.delivery.failed"
+    )
+    assert failure_event["best_effort"] is True
+    assert failure_event["error"]["code"] == "cron_delivery_failed"
+
+
+def test_delivery_failure_does_not_retry_execution_or_mark_target() -> None:
+    store = FakeCronStore()
+    store.add_job(
+        job_id="job-delivery-failure",
+        payload={"kind": "agentTurn", "message": "task"},
+        delivery={"mode": "announce", "to": "cli:ops"},
+    )
+    store.seed_due("job-delivery-failure")
+    execution_count = 0
+    delivery_count = 0
+    events: list[tuple[str, dict]] = []
+
+    def _exec_agent(job: dict, run: dict) -> str:  # noqa: ANN001
+        nonlocal execution_count
+        del job, run
+        execution_count += 1
+        return "execution completed"
+
+    def _deliver(mode: str, to_value: str, job: dict, run: dict, result) -> None:  # noqa: ANN001
+        nonlocal delivery_count
+        del mode, to_value, job, run, result
+        delivery_count += 1
+        raise sqlite3.OperationalError("sink unavailable " + ("x" * 600))
+
+    scheduler = CronScheduler(
+        store=store,
+        daemon_id="daemon-delivery-failure",
+        tick_seconds=0.05,
+        lease_ttl_seconds=2,
+        max_concurrent_runs=1,
+        execute_agent_turn=_exec_agent,
+        delivery_handler=_deliver,
+        on_event=lambda name, payload: events.append((name, payload)),
+    )
+    scheduler.start()
+    try:
+        assert store.finished.wait(timeout=3.0)
+    finally:
+        scheduler.shutdown(grace_s=1.0)
+
+    run = next(iter(store.runs.values()))
+    assert execution_count == 1
+    assert delivery_count == 1
+    assert run["attempts"] == 1
+    assert run["state"] == "finished"
+    assert run["error"] is None
+    assert run["output"]["delivery"]["state"] == "failed"
+    assert run["output"]["delivery"]["targets"] == []
+    assert len(run["output"]["delivery"]["error"]["message"]) == 500
+    assert store.delivery_targets == {}
+    assert any(name == "cron.delivery.failed" for name, _payload in events)
+    finished = next(payload for name, payload in events if name == "cron.run.finished")
+    assert finished["state"] == "finished"
+    assert not any(name == "cron.run.retry_scheduled" for name, _payload in events)
+
+
+def test_delivery_marker_failure_does_not_retry_execution() -> None:
+    class MarkerFailingStore(FakeCronStore):
+        def mark_cron_delivery_target(self, run_id: str, *, target: str) -> bool:
+            del run_id, target
+            raise sqlite3.OperationalError("marker store unavailable")
+
+    store = MarkerFailingStore()
+    store.add_job(
+        job_id="job-marker-failure",
+        payload={"kind": "agentTurn", "message": "task"},
+        delivery={"mode": "announce", "to": "cli:ops"},
+    )
+    store.seed_due("job-marker-failure")
+    execution_count = 0
+
+    def _execute(_job: dict, _run: dict) -> str:
+        nonlocal execution_count
+        execution_count += 1
+        return "execution completed"
+
+    scheduler = CronScheduler(
+        store=store,
+        daemon_id="daemon-marker-failure",
+        tick_seconds=0.05,
+        lease_ttl_seconds=2,
+        max_concurrent_runs=1,
+        execute_agent_turn=_execute,
+        delivery_handler=lambda *_args: None,
+    )
+    scheduler.start()
+    try:
+        assert store.finished.wait(timeout=3.0)
+    finally:
+        scheduler.shutdown(grace_s=1.0)
+
+    run = next(iter(store.runs.values()))
+    assert execution_count == 1
+    assert run["state"] == "finished"
+    assert run["error"] is None
+    assert run["output"]["delivery"]["state"] == "failed"
+    assert run["output"]["delivery"]["error"]["message"] == "marker store unavailable"
 
 
 def test_scheduler_emits_daemon_hosted_heartbeat_metadata() -> None:

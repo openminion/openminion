@@ -235,6 +235,7 @@ def run_step(
     forced_tools: list[str] | None = None,
     capability_category: str | None = None,
     capture_identity: "CaptureIdentity | None" = None,
+    runtime_conversation_id: str | None = None,
 ) -> "StepOutput":
     started = _runner_delegate("_now_ms", runner)
     with active_chat_phase("brain_state_load"):
@@ -242,6 +243,7 @@ def run_step(
             "_load_or_init_state", runner, session_id, capture_identity
         )
     pending_trigger = _stamp_pending_run_context(runner, state)
+    state.runtime_conversation_id = str(runtime_conversation_id or "").strip() or None
     _refresh_budget_for_new_trigger(runner, state, pending_trigger)
     logger = CanonicalEventLogger(
         session_api=runner.session_api,

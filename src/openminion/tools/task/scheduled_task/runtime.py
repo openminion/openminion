@@ -1,8 +1,6 @@
 from collections.abc import Mapping
-from datetime import timedelta
 from typing import Any
 
-from openminion.modules.task.scheduling.schedule import to_iso_utc, utc_now
 from openminion.modules.tool.runtime.context import RuntimeContext
 
 from ..constants import (
@@ -90,18 +88,6 @@ def _coerce_schedule_aliases(schedule: Mapping[str, Any]) -> dict[str, Any]:
         if normalized.get("at") is None and normalized.get("time") is not None:
             normalized["at"] = normalized.get("time")
             normalized.pop("time", None)
-        has_at = normalized.get("at") not in (None, "")
-        has_after = normalized.get("after_seconds") is not None
-        if has_at == has_after:
-            raise ValueError("at schedule requires exactly one of at or after_seconds")
-        if has_after:
-            delay_seconds = normalized["after_seconds"]
-            if isinstance(delay_seconds, bool) or not isinstance(delay_seconds, int):
-                raise ValueError("after_seconds must be a positive integer")
-            if delay_seconds <= 0:
-                raise ValueError("after_seconds must be greater than 0")
-            normalized["at"] = to_iso_utc(utc_now() + timedelta(seconds=delay_seconds))
-            normalized.pop("after_seconds")
         return normalized
 
     if kind != "every" or normalized.get("every_ms") is not None:
@@ -147,6 +133,9 @@ def _origin_delivery_context(ctx: RuntimeContext) -> dict[str, str]:
         runtime_session_id = _safe_str(orchestration, "runtime_session_id")
         if runtime_session_id:
             origin["session_id"] = runtime_session_id
+        conversation_id = _safe_str(orchestration, "conversation_id")
+        if conversation_id:
+            origin["conversation_id"] = conversation_id
     for key in (
         "session_id",
         "channel",

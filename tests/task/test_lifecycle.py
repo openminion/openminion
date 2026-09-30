@@ -317,14 +317,27 @@ def test_cancelled_task_keeps_late_run_visible_without_reviving(tmp_path: Path) 
     manager.cancel_task(created.task_id)
     repository.finish_cron_run(run_id, state="finished", summary="late completion")
 
-    assert manager.reconcile_scheduled_outcomes(created.cron_job_id) == 0
+    assert manager.reconcile_scheduled_outcomes(created.cron_job_id) == 1
     record = manager.get_task(created.task_id)
     assert record is not None
     assert record.state == TaskLifecycleState.CANCELLED
+    assert record.metadata["last_run"]["run_id"] == run_id
+    assert record.metadata["last_run"]["summary"] == "late completion"
     assert (
         manager.list_scheduled_runs(job_id=created.cron_job_id, limit=1)[0]["state"]
         == "finished"
     )
+
+    repository._store._conn.execute(
+        "UPDATE cron_runs SET created_at = ? WHERE run_id = ?",
+        (to_iso_utc(utc_now() - timedelta(days=8)), run_id),
+    )
+    repository._store._conn.commit()
+    assert repository._store.delete_old_cron_runs(to_iso_utc(utc_now())) == 1
+    retained = manager.get_task(created.task_id)
+    assert retained is not None
+    assert retained.state == TaskLifecycleState.CANCELLED
+    assert retained.metadata["last_run"]["run_id"] == run_id
 
 
 def test_terminal_metadata_survives_cron_run_pruning(tmp_path: Path) -> None:
@@ -423,6 +436,113 @@ def test_pause_resume_updates_lifecycle_without_deleting_job(tmp_path: Path) -> 
     assert resumed_record.state == TaskLifecycleState.ACTIVE
     assert resumed_job["enabled"] is True
     assert resumed_job["next_due_at"] is not None
+
+
+def test_lifecycle_and_cron_queries_filter_before_limit(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    owned = manager.schedule_task(
+        name="owned-old-row",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "owned"},
+        agent_id="agent-a",
+    )
+    manager.schedule_task(
+        name="unowned-old-row",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "unowned"},
+        agent_id=None,
+    )
+    for index in range(60):
+        manager.schedule_task(
+            name=f"foreign-{index}",
+            schedule={"kind": "every", "every_ms": 60_000},
+            payload={"kind": "agentTurn", "message": "foreign"},
+            agent_id="agent-b",
+        )
+
+    exact = manager.lifecycle_repository.list(agent_id="agent-a", limit=1)
+    owner_and_unowned = manager.list_scheduled_jobs(
+        agent_id="agent-a", include_unowned=True, limit=2
+    )
+    unrestricted = manager.list_scheduled_jobs(limit=100)
+
+    assert [record.task_id for record in exact] == [owned.task_id]
+    assert {job["name"] for job in owner_and_unowned} == {
+        "owned-old-row",
+        "unowned-old-row",
+    }
+    assert len(unrestricted) == 62
+
+
+def test_resume_expired_one_time_rejects_before_any_mutation(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    created = manager.schedule_task(
+        name="expired-resume",
+        schedule={"kind": "at", "at": "2000-01-01T00:00:00Z"},
+        payload={
+            "kind": "agentTurn",
+            "message": "expired",
+            "_openminion_pause_reason": "operator",
+            "_openminion_pause_source": "cli",
+        },
+        agent_id="agent-a",
+        enabled=False,
+    )
+    manager.transition_task(
+        task_id=created.task_id,
+        to_state=TaskLifecycleState.PAUSED,
+    )
+    before_record = manager.get_task(created.task_id)
+    before_job = manager.get_scheduled_job(created.cron_job_id)
+
+    with pytest.raises(ValueError) as excinfo:
+        manager.resume_task(created.task_id)
+
+    assert getattr(excinfo.value, "code", None) == "TASK_RESUME_EXPIRED_ONE_SHOT"
+    assert manager.get_task(created.task_id) == before_record
+    assert manager.get_scheduled_job(created.cron_job_id) == before_job
+
+
+def test_reconcile_selects_oldest_unresolved_run_before_limit(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    oldest = manager.schedule_task(
+        name="oldest",
+        schedule={"kind": "at", "at": to_iso_utc(utc_now() + timedelta(hours=1))},
+        payload={"kind": "agentTurn", "message": "oldest"},
+        agent_id="agent-a",
+    )
+    repository = getattr(manager, "_cron_repository")
+    oldest_run = repository.trigger_cron_run(oldest.cron_job_id)
+    repository.finish_cron_run(
+        oldest_run,
+        state="finished",
+        summary="oldest result",
+        now_iso="2026-01-01T00:00:00+00:00",
+    )
+    for index in range(101):
+        record = manager.schedule_task(
+            name=f"newer-{index}",
+            schedule={
+                "kind": "at",
+                "at": to_iso_utc(utc_now() + timedelta(hours=1)),
+            },
+            payload={"kind": "agentTurn", "message": "newer"},
+            agent_id="agent-a",
+        )
+        run_id = repository.trigger_cron_run(record.cron_job_id)
+        repository.finish_cron_run(
+            run_id,
+            state="finished",
+            summary="newer result",
+            now_iso=f"2026-01-02T00:{index // 60:02d}:{index % 60:02d}+00:00",
+        )
+
+    assert manager.reconcile_scheduled_outcomes(limit=1) == 1
+    reconciled = manager.get_task(oldest.task_id)
+    assert reconciled is not None
+    assert reconciled.state == TaskLifecycleState.DONE
+    assert reconciled.metadata["last_run"]["run_id"] == oldest_run
+    assert manager.reconcile_scheduled_outcomes(oldest.cron_job_id) == 0
 
 
 def test_schedule_rolls_back_cron_job_when_lifecycle_insert_fails(

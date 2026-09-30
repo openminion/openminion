@@ -1023,22 +1023,26 @@ def test_cron_delivery_bridge_routes_announce_to_origin_session() -> None:
     event = runtime.sessions.events[-1]
     assert event["session_id"] == "sess-123"
     assert event["event_type"] == "cron.announce"
+    assert event["payload"]["conversation_id"] == "conv-123"
 
 
-def test_cron_delivery_bridge_drops_unroutable_announce() -> None:
+def test_cron_delivery_bridge_surfaces_unroutable_announce() -> None:
     runtime, _runtime_manager = _runtime([], registered_agents=["agent-main"])
     bridge = CronDeliveryBridge(runtime=runtime)
 
-    bridge.deliver(
-        "announce",
-        "last",
-        {
-            "job_id": "job-abc",
-            "payload": {"kind": "agentTurn", "message": "cron message"},
-        },
-        {"run_id": "run-def", "due_at": "2026-03-20T00:00:00Z"},
-        {"summary": "scheduled result"},
-    )
+    with pytest.raises(
+        RuntimeError, match="cron announce delivery route is unavailable"
+    ):
+        bridge.deliver(
+            "announce",
+            "last",
+            {
+                "job_id": "job-abc",
+                "payload": {"kind": "agentTurn", "message": "cron message"},
+            },
+            {"run_id": "run-def", "due_at": "2026-03-20T00:00:00Z"},
+            {"summary": "scheduled result"},
+        )
 
     assert runtime.sessions.messages == []
     assert runtime.sessions.events == []

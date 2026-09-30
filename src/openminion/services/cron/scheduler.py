@@ -10,6 +10,7 @@ from openminion.modules.task.scheduling.interfaces import (
     CronStoreProtocol,
 )
 from openminion.modules.task.scheduling.coordination import (
+    deliver_cron_run,
     persist_cron_run_outcome,
     recover_and_acquire_cron_runs,
 )
@@ -308,7 +309,20 @@ class CronScheduler:
             else:
                 raise RuntimeError(f"unsupported cron payload kind: {kind}")
 
-            self._deliver_if_needed(job=job, run=run, result=result)
+            delivery = deliver_cron_run(
+                store=self._store,
+                job=job,
+                run=run,
+                result=result,
+                delivery_handler=self._delivery_handler,
+                emit=self._emit,
+            )
+            result = CronExecutionResult(
+                summary=result.summary,
+                artifact_refs=list(result.artifact_refs),
+                output={**result.output, "delivery": delivery},
+                isolated_session_id=result.isolated_session_id,
+            )
         except TimeoutError as exc:
             state = "timed_out"
             error = {"code": "cron_timeout", "message": str(exc)}
@@ -355,7 +369,12 @@ class CronScheduler:
     def _record_task_outcome(self, job_id: str | None) -> None:
         if self._record_task_outcomes is None:
             return
-        self._record_task_outcomes(job_id)
+        reconciled = self._record_task_outcomes(job_id)
+        if reconciled > 0:
+            self._emit(
+                "cron.task_outcomes.reconciled",
+                {"job_id": job_id, "count": reconciled},
+            )
 
     def _lease_renewer(self, *, run_id: str, stop_event: Event) -> None:
         interval_s = max(1.0, self._lease_ttl_seconds / 2.0)
@@ -378,63 +397,6 @@ class CronScheduler:
                     {"run_id": run_id, "daemon_id": self._daemon_id},
                 )
                 break
-
-    def _deliver_if_needed(
-        self,
-        *,
-        job: dict[str, Any],
-        run: dict[str, Any],
-        result: CronExecutionResult,
-    ) -> None:
-        payload = job.get("payload", {})
-        if isinstance(payload, dict) and isinstance(
-            payload.get("_openminion_watch"), dict
-        ):
-            if not bool(result.output.get("watch_delivery_requested", False)):
-                return
-        delivery = job.get("delivery", {})
-        if not isinstance(delivery, dict):
-            delivery = {}
-        best_effort = bool(delivery.get("best_effort", False))
-        mode = str(delivery.get("mode", "none") or "none").strip() or "none"
-        if mode == "none":
-            return
-        if mode == "webhook" and not result.summary.strip():
-            return
-        try:
-            if self._delivery_handler is None:
-                raise RuntimeError(
-                    f"delivery mode '{mode}' is configured but no delivery handler is installed"
-                )
-
-            to_value = str(delivery.get("to", "") or "").strip()
-            channel = str(delivery.get("channel", "") or "").strip()
-            marker = f"{mode}:{to_value or channel}"
-            if not to_value and mode in {"announce", "webhook"}:
-                raise RuntimeError("delivery target is required")
-
-            marker_fn = getattr(self._store, "mark_cron_delivery_target", None)
-            if callable(marker_fn):
-                accepted = bool(marker_fn(str(run.get("run_id", "")), target=marker))
-                if not accepted:
-                    self._emit(
-                        "cron.delivery.duplicate",
-                        {"run_id": run.get("run_id"), "target": marker},
-                    )
-                    return
-
-            self._delivery_handler(mode, to_value, job, run, result)
-        except Exception as exc:
-            if not best_effort:
-                raise
-            self._emit(
-                "cron.delivery.best_effort_error",
-                {
-                    "run_id": run.get("run_id"),
-                    "mode": mode,
-                    "error": str(exc),
-                },
-            )
 
     def _cleanup_if_requested(
         self,

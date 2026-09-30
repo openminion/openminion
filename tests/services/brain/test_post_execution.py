@@ -336,6 +336,37 @@ def test_run_turn_accepts_and_forwards_approval_callback() -> None:
     assert response.text == "done"
 
 
+def test_execute_turn_forwards_explicit_runtime_conversation_id() -> None:
+    bridge = DummyBridge()
+    captured: dict[str, object] = {}
+
+    def _run(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(message="done")
+
+    runner = SimpleNamespace(
+        options=SimpleNamespace(autonomous_continuation_enabled=False),
+        run=_run,
+    )
+    message = Message(
+        channel="console",
+        target="focus",
+        body="schedule this",
+        metadata={"conversation_id": "focus-conversation"},
+    )
+
+    bridge._execute_turn(
+        runner=runner,
+        session_id="runtime-session",
+        request_id="request-1",
+        message=message,
+        forced_tools=None,
+        capability_category=None,
+    )
+
+    assert captured["runtime_conversation_id"] == "focus-conversation"
+
+
 def test_run_turn_bridges_async_approval_into_sync_execution() -> None:
     bridge = DummyBridge()
     bridge._logger = SimpleNamespace(info=lambda *args, **kwargs: None)  # type: ignore[attr-defined]

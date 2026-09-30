@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from openminion.modules.storage.runtime.migrations import migrate_database
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.storage.runtime.sqlite import connect_database
@@ -48,9 +50,11 @@ def test_cron_announce_delivery_writes_session_message_and_event(tmp_path) -> No
     assert turns[-1].metadata["origin_channel"] == "telegram"
     assert events[-1].payload["summary"] == "Scheduled weather check complete."
     assert events[-1].payload["cron_run_id"] == "run-1"
+    assert events[-1].payload["conversation_id"] == "chat-1"
+    assert events[-1].session_id == session.id
 
 
-def test_cron_announce_without_route_is_best_effort(tmp_path) -> None:
+def test_cron_announce_without_route_surfaces_failure(tmp_path) -> None:
     db_path = tmp_path / "state" / "openminion.db"
     migrate_database(db_path)
     connection = connect_database(db_path)
@@ -63,13 +67,81 @@ def test_cron_announce_without_route_is_best_effort(tmp_path) -> None:
     )
     bridge = CronDeliveryBridge(runtime=SimpleNamespace(sessions=sessions))
 
-    bridge.deliver(
-        "announce",
-        "last",
-        {"job_id": "cron-unroutable", "payload": {}},
-        {"run_id": "run-2"},
-        {"summary": "No origin route."},
-    )
+    with pytest.raises(
+        RuntimeError, match="cron announce delivery route is unavailable"
+    ):
+        bridge.deliver(
+            "announce",
+            "last",
+            {"job_id": "cron-unroutable", "payload": {}},
+            {"run_id": "run-2"},
+            {"summary": "No origin route."},
+        )
 
     assert sessions.list_messages(session_id=session.id) == []
     assert sessions.list_events(session_id=session.id, event_type_prefix="cron.") == []
+
+
+def test_cron_announce_supports_legacy_origin_without_conversation(tmp_path) -> None:
+    db_path = tmp_path / "state" / "openminion.db"
+    migrate_database(db_path)
+    connection = connect_database(db_path)
+    sessions = SessionStore(connection)
+    session = sessions.resolve_session(
+        agent_id="agent-default",
+        channel="cli",
+        target="local",
+        session_id="legacy-session",
+    )
+    bridge = CronDeliveryBridge(runtime=SimpleNamespace(sessions=sessions))
+
+    bridge.deliver(
+        "announce",
+        "last",
+        {
+            "job_id": "cron-legacy",
+            "payload": {"_openminion_origin": {"session_id": session.id}},
+        },
+        {"run_id": "run-legacy"},
+        {"summary": "Legacy delivery."},
+    )
+
+    message = sessions.list_messages(session_id=session.id)[0]
+    assert message.conversation_id == ""
+    event = next(
+        item
+        for item in sessions.list_events(
+            session_id=session.id, event_type_prefix="cron."
+        )
+        if item.event_type == "cron.announce"
+    )
+    assert "conversation_id" not in event.payload
+
+
+def test_cron_announce_session_write_failure_is_not_swallowed() -> None:
+    class _FailingSessions:
+        def append_message(self, **kwargs) -> None:  # noqa: ANN003
+            del kwargs
+            raise RuntimeError("session store unavailable")
+
+        def append_event(self, **kwargs) -> None:  # noqa: ANN003
+            raise AssertionError(f"unexpected event write: {kwargs}")
+
+    bridge = CronDeliveryBridge(runtime=SimpleNamespace(sessions=_FailingSessions()))
+
+    with pytest.raises(RuntimeError, match="session store unavailable"):
+        bridge.deliver(
+            "announce",
+            "last",
+            {
+                "job_id": "cron-write-failure",
+                "payload": {
+                    "_openminion_origin": {
+                        "session_id": "base-session",
+                        "conversation_id": "conversation-1",
+                    }
+                },
+            },
+            {"run_id": "run-write-failure"},
+            {"summary": "Delivery should fail."},
+        )

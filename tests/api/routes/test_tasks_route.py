@@ -198,3 +198,146 @@ def test_tasks_route_rejects_unknown_creation_fields() -> None:
     assert result is not None
     assert result.status == HTTPStatus.BAD_REQUEST
     assert result.payload["error"]["code"] == "invalid_task"
+
+
+def test_tasks_route_filters_owner_before_limit(tmp_path) -> None:
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "tasks.db")
+    )
+    owned = manager.schedule_task(
+        name="owned-old-row",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "owned"},
+        agent_id="agent-a",
+    )
+    for index in range(60):
+        manager.schedule_task(
+            name=f"foreign-{index}",
+            schedule={"kind": "every", "every_ms": 60_000},
+            payload={"kind": "agentTurn", "message": "foreign"},
+            agent_id="agent-b",
+        )
+    ctx = APIRouteContext(
+        config_path=None,
+        runtime=SimpleNamespace(task_manager=manager),
+        runtime_bootstrap_error=None,
+        request_headers=None,
+        request_id="test-request",
+    )
+
+    result = handle_request(
+        ctx,
+        method_name="GET",
+        path="/v1/tasks",
+        body=None,
+        query="agent_id=agent-a&limit=1",
+    )
+
+    assert result is not None
+    assert result.status == HTTPStatus.OK
+    assert [task["id"] for task in result.payload["tasks"]] == [owned.task_id]
+
+
+def test_tasks_route_uses_shared_relative_schedule_contract(tmp_path) -> None:
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "tasks.db")
+    )
+    ctx = APIRouteContext(
+        config_path=None,
+        runtime=SimpleNamespace(
+            task_manager=manager,
+            scheduler_readiness=lambda: {"state": "ready"},
+        ),
+        runtime_bootstrap_error=None,
+        request_headers=None,
+        request_id="test-request",
+    )
+
+    relative = handle_request(
+        ctx,
+        method_name="POST",
+        path="/v1/tasks",
+        body={
+            "instruction": "run later",
+            "schedule": {"kind": "at", "after_seconds": 120},
+        },
+        query="agent_id=agent-a",
+    )
+    alias = handle_request(
+        ctx,
+        method_name="POST",
+        path="/v1/tasks",
+        body={
+            "instruction": "do not widen API aliases",
+            "schedule": {"kind": "every", "minutes": 5},
+        },
+        query="agent_id=agent-a",
+    )
+
+    assert relative is not None
+    assert relative.status == HTTPStatus.CREATED
+    assert relative.payload["task"]["schedule"]["kind"] == "at"
+    assert alias is not None
+    assert alias.status == HTTPStatus.BAD_REQUEST
+    assert alias.payload["error"]["code"] == "invalid_task"
+
+
+def test_tasks_route_maps_inventory_and_expired_resume_errors(tmp_path) -> None:
+    class BrokenRepository:
+        def list(self, **kwargs):
+            del kwargs
+            raise RuntimeError("database unavailable")
+
+    class BrokenManager:
+        lifecycle_repository = BrokenRepository()
+
+        def get_task(self, task_id: str):
+            del task_id
+            return None
+
+    broken_ctx = APIRouteContext(
+        config_path=None,
+        runtime=SimpleNamespace(task_manager=BrokenManager()),
+        runtime_bootstrap_error=None,
+        request_headers=None,
+        request_id="test-request",
+    )
+    unavailable = handle_request(
+        broken_ctx,
+        method_name="GET",
+        path="/v1/tasks",
+        body=None,
+        query="agent_id=agent-a",
+    )
+    assert unavailable is not None
+    assert unavailable.status == HTTPStatus.SERVICE_UNAVAILABLE
+    assert unavailable.payload["error"]["code"] == "TASK_INVENTORY_UNAVAILABLE"
+
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "expired.db")
+    )
+    record = manager.schedule_task(
+        name="expired",
+        schedule={"kind": "at", "at": "2000-01-01T00:00:00Z"},
+        payload={"kind": "agentTurn", "message": "expired"},
+        agent_id="agent-a",
+        enabled=False,
+    )
+    manager.transition_task(task_id=record.task_id, to_state="paused")
+    expired_ctx = APIRouteContext(
+        config_path=None,
+        runtime=SimpleNamespace(task_manager=manager),
+        runtime_bootstrap_error=None,
+        request_headers=None,
+        request_id="test-request",
+    )
+    rejected = handle_request(
+        expired_ctx,
+        method_name="POST",
+        path=f"/v1/tasks/{record.task_id}/resume",
+        body={},
+        query="agent_id=agent-a",
+    )
+    assert rejected is not None
+    assert rejected.status == HTTPStatus.BAD_REQUEST
+    assert rejected.payload["error"]["code"] == "TASK_RESUME_EXPIRED_ONE_SHOT"

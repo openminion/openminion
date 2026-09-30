@@ -16,7 +16,17 @@ class TaskCronStoreProtocol(Protocol):
 
     def get_cron_job(self, job_id: str) -> dict[str, Any] | None: ...
 
-    def list_cron_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]: ...
+    def list_cron_jobs(
+        self,
+        *,
+        limit: int = 100,
+        agent_id: str | None = None,
+        include_unowned: bool = False,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_unresolved_task_runs(
+        self, *, limit: int = 100
+    ) -> list[dict[str, Any]]: ...
 
     def set_cron_job_enabled(
         self,
@@ -169,7 +179,18 @@ class _NullCronRepository:
     def get_cron_job(self, job_id: str) -> dict[str, Any] | None:
         return None
 
-    def list_cron_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_cron_jobs(
+        self,
+        *,
+        limit: int = 100,
+        agent_id: str | None = None,
+        include_unowned: bool = False,
+    ) -> list[dict[str, Any]]:
+        del agent_id, include_unowned
+        return []
+
+    def list_unresolved_task_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        del limit
         return []
 
     def set_cron_job_enabled(

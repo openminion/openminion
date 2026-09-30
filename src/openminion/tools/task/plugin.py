@@ -4,11 +4,12 @@ from typing import Any
 from uuid import uuid4
 
 from openminion.modules.brain.runtime.goal.policy import authorize_goal_action
-from openminion.modules.task.scheduling.schedule import (
-    normalize_schedule,
-    parse_iso_datetime,
-    utc_now,
+from openminion.modules.task.errors import (
+    TaskResumeExpiredError,
+    TaskScheduleIntervalTooShortError,
 )
+from openminion.modules.task.scheduling.schedule import utc_now
+from openminion.modules.task.scheduling.user_schedule import normalize_user_schedule
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_TASK_CONSOLIDATE_MEMORY,
     MODEL_TASK_CANCEL,
@@ -32,7 +33,6 @@ from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.task import TaskManager
 from openminion.modules.task.constants import (
-    DEFAULT_TASK_MIN_EVERY_MS,
     TASK_INTERNAL_PAUSE_REASON_KEY,
     TASK_INTERNAL_PAUSE_SOURCE_KEY,
     TASK_REASON_RESUME_EXPIRED_ONE_SHOT,
@@ -243,27 +243,6 @@ def _derive_task_name(*, name: str | None, instruction: str) -> str:
     return f"{compact[: DEFAULT_TASK_NAME_MAX_CHARS - 3].rstrip()}..."
 
 
-def _enforce_every_schedule_floor(schedule: Mapping[str, Any]) -> None:
-    if _safe_str(schedule, "kind") != "every":
-        return
-    every_ms = int(schedule.get("every_ms", 0) or 0)
-    if every_ms >= DEFAULT_TASK_MIN_EVERY_MS:
-        return
-    raise _tool_error(
-        "INVALID_ARGUMENT",
-        message=(
-            "Recurring task cadence is below the minimum allowed interval of "
-            f"{DEFAULT_TASK_MIN_EVERY_MS} ms"
-        ),
-        reason_code=TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
-        details={
-            "field": "schedule.every_ms",
-            "every_ms": every_ms,
-            "minimum_every_ms": DEFAULT_TASK_MIN_EVERY_MS,
-        },
-    )
-
-
 def _paused_reason_from_payload(payload: Mapping[str, Any] | None) -> str | None:
     if not isinstance(payload, Mapping):
         return None
@@ -328,15 +307,20 @@ def _h_task_schedule(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
 
     try:
         raw_schedule = _coerce_schedule_aliases(validated.schedule or {})
-        normalized_schedule = normalize_schedule(raw_schedule)
+        normalized_schedule = normalize_user_schedule(raw_schedule, now=utc_now())
+    except TaskScheduleIntervalTooShortError as exc:
+        raise _tool_error(
+            "INVALID_ARGUMENT",
+            message=str(exc),
+            reason_code=TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
+            details=exc.details,
+        ) from exc
     except Exception as exc:
         raise ToolRuntimeError(
             "INVALID_ARGUMENT",
             f"Invalid schedule: {exc}",
             {"field": "schedule"},
         ) from exc
-    _enforce_every_schedule_floor(normalized_schedule)
-
     origin = _origin_delivery_context(ctx)
     agent_id = _agent_id_from_context(ctx)
     manager = _resolve_task_manager(ctx)
@@ -669,40 +653,25 @@ def _h_task_resume(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     task_id = validated.task_id
     caller_agent_id = _agent_id_from_context(ctx)
     manager = _resolve_task_manager(ctx)
-    job = _owned_job_or_error(
+    _owned_job_or_error(
         manager=manager,
         task_id=task_id,
         caller_agent_id=caller_agent_id,
     )
-    schedule = dict(job.get("schedule") or {})
-    if _safe_str(schedule, "kind") == "at":
-        at_raw = _text(schedule.get("at"))
-        if at_raw:
-            try:
-                if parse_iso_datetime(at_raw) <= utc_now():
-                    raise _tool_error(
-                        "INVALID_ARGUMENT",
-                        message="One-shot task is already expired and cannot be resumed",
-                        reason_code=TASK_REASON_RESUME_EXPIRED_ONE_SHOT,
-                        details={"task_id": task_id},
-                    )
-            except ToolRuntimeError:
-                raise
-            except Exception:
-                pass
-    updated_payload = _apply_pause_metadata(
-        job.get("payload"),
-        reason=None,
-        source=None,
-    )
-    with _storage_operation(
-        message="Failed to resume scheduled task",
-        details={"task_id": task_id},
-        passthrough=(KeyError,),
-    ):
-        if updated_payload != dict(job.get("payload") or {}):
-            manager.replace_cron_job_payload(task_id, updated_payload)
-        _, resumed_job = manager.resume_task(task_id)
+    try:
+        with _storage_operation(
+            message="Failed to resume scheduled task",
+            details={"task_id": task_id},
+            passthrough=(KeyError, TaskResumeExpiredError),
+        ):
+            _, resumed_job = manager.resume_task(task_id)
+    except TaskResumeExpiredError as exc:
+        raise _tool_error(
+            "INVALID_ARGUMENT",
+            message=str(exc),
+            reason_code=TASK_REASON_RESUME_EXPIRED_ONE_SHOT,
+            details=exc.details,
+        ) from exc
     return {
         "ok": True,
         "task_id": task_id,
@@ -767,27 +736,20 @@ def _h_task_list(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = TaskListArgs.model_validate(args)
     requested_limit = int(validated.limit)
     effective_limit = max(1, min(requested_limit, 100))
-    expanded_limit = max(effective_limit * 4, 100)
 
     caller_agent_id = _agent_id_from_context(ctx)
     allow_cross_agent, include_unowned = _task_list_policy(ctx)
     manager = _resolve_task_manager(ctx)
     with _storage_operation(message="Failed to list scheduled tasks"):
-        jobs = manager.list_scheduled_jobs(limit=expanded_limit)
+        jobs = manager.list_scheduled_jobs(
+            limit=effective_limit,
+            agent_id=None if allow_cross_agent else caller_agent_id,
+            include_unowned=include_unowned,
+        )
 
     visible_jobs: list[dict[str, Any]] = []
     for job in jobs:
-        try:
-            manager.ensure_task_record_for_job(job)
-        except Exception:
-            # Lifecycle backfill is best-effort for pre-TaskManager rows.
-            pass
-        owner = _safe_str(job, "agent_id")
-        if owner:
-            if not allow_cross_agent and owner != caller_agent_id:
-                continue
-        elif not include_unowned:
-            continue
+        manager.ensure_task_record_for_job(job)
         visible_jobs.append(dict(job))
 
     tasks = _task_list_payload(
