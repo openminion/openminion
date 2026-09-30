@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
+
+
+_MACOS_HOME_PREFIX = "/" + "Users" + "/"
+_DEVELOPER_HOME_PATTERNS = (
+    ("macOS", _MACOS_HOME_PREFIX),
+    ("Windows", r"[A-Za-z]:\\Users\\[^\\[:space:]]+"),
+    ("Linux", r"/home/[^/[:space:]]+/(repos?|projects?|workspace)/"),
+)
 
 
 def test_root_layout_stays_clean_and_intentional() -> None:
@@ -45,7 +54,7 @@ def test_public_markdown_docs_stay_package_local_and_portable() -> None:
         ),
     ]
 
-    local_path_markers = ("/Users/", "file://")
+    local_path_markers = (_MACOS_HOME_PREFIX, "file://")
     internal_repo_markers = ("docs/discussions/", "docs/trackers/")
     relative_link_pattern = re.compile(r"\]\((?!https?://|mailto:|#)([^)]+)\)")
 
@@ -62,3 +71,32 @@ def test_public_markdown_docs_stay_package_local_and_portable() -> None:
             assert not target.startswith("/"), (
                 f"{markdown_file} contains an absolute local link target: {target}"
             )
+
+
+def test_package_surfaces_do_not_contain_developer_home_paths() -> None:
+    root = Path(__file__).resolve().parents[1]
+    for platform, pattern in _DEVELOPER_HOME_PATTERNS:
+        result = subprocess.run(
+            [
+                "git",
+                "grep",
+                "-n",
+                "-I",
+                "-E",
+                pattern,
+                "--",
+                "src",
+                "tests",
+                "examples",
+                "scripts",
+            ],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode in {0, 1}, result.stderr
+        assert result.returncode == 1, (
+            f"package surfaces contain a {platform} developer-home path:\n"
+            f"{result.stdout}"
+        )

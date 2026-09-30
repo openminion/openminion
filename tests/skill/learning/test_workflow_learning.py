@@ -627,7 +627,7 @@ def test_workflow_learning_telemetry_is_registered_and_redacted() -> None:
         WORKFLOW_TRUST_DOWNGRADED,
         shape_id="wlsh-test",
         raw_transcript="secret chat",
-        path="/Users/j/repos/base/agent-frameworks",
+        path="/workspace/agent-frameworks",
     )
 
     assert event["event_type"] == WORKFLOW_TRUST_DOWNGRADED
