@@ -16,6 +16,7 @@ from openminion.modules.context.budget import (
     ContextBudgetOverflowError,
     assemble_budgeted_context,
 )
+from openminion.modules.context.render.sections import render_compacted_session_context
 from openminion.modules.context.summary.engine import (
     DEFAULT_SESSION_SUMMARY_ENGINE,
     SessionSummaryEngine,
@@ -40,6 +41,7 @@ from openminion.modules.storage.runtime.session_store import (
     MessageRecord,
     RuntimeSessionTurnBusyError,
     RuntimeSessionTurnFenceError,
+    SessionContextRecord,
     SessionStore,
 )
 from openminion.modules.telemetry.events import catalog as telemetry_events
@@ -545,6 +547,37 @@ class SessionContextService:
             to_compact[-1].rowid,
         )
 
+    def _history_session_context(
+        self,
+        *,
+        session_id: str,
+        target: str,
+        conversation_id: str,
+        session_turn_fence_token: int | None,
+    ) -> SessionContextRecord | None:
+        if conversation_id and not (
+            target == "focus" and conversation_id == f"focus-{session_id}"
+        ):
+            return None
+        context = self._sessions.ensure_session_context(
+            session_id=session_id,
+            session_turn_fence_token=session_turn_fence_token,
+        )
+        if not conversation_id:
+            return context
+        count = int(context.compacted_message_count or 0)
+        compacted = self._sessions.list_messages_after_rowid(
+            session_id=session_id, limit=count
+        )
+        if (
+            count
+            and len(compacted) == count
+            and compacted[-1].rowid <= context.compacted_until_rowid
+            and all(item.conversation_id == conversation_id for item in compacted)
+        ):
+            return context
+        return None
+
     def build_history(
         self,
         *,
@@ -559,38 +592,39 @@ class SessionContextService:
     ) -> List[Message]:
         conversation_value = str(conversation_id or "").strip()
         thread_value = str(thread_id or "").strip()
-        context = (
-            self._sessions.ensure_session_context(
-                session_id=session_id,
-                session_turn_fence_token=session_turn_fence_token,
-            )
-            if not conversation_value
-            else None
+        context = self._history_session_context(
+            session_id=session_id,
+            target=target,
+            conversation_id=conversation_value,
+            session_turn_fence_token=session_turn_fence_token,
         )
-
-        system_messages: list[Message] = []
-        if context is not None:
-            archive_refs = self._list_recent_archive_refs(session_id=session_id)
-            rendered_context = _render_context_block(
-                context.pinned_context,
-                context.rolling_summary,
+        archive_refs = (
+            self._list_recent_archive_refs(session_id=session_id) if context else []
+        )
+        rendered_context = (
+            render_compacted_session_context(
+                rendered_pinned_context=render_pinned_context(context.pinned_context),
+                rolling_summary=context.rolling_summary,
                 archive_refs=archive_refs,
             )
-            if rendered_context:
-                system_messages.append(
-                    Message(
-                        channel=channel,
-                        target=target,
-                        body=rendered_context,
-                        metadata={
-                            "role": "system",
-                            "session_id": session_id,
-                            "context_compacted": "true",
-                            "context_archive_ref_count": str(len(archive_refs)),
-                        },
-                    )
-                )
-
+            if context is not None
+            else None
+        )
+        context_message = (
+            Message(
+                channel=channel,
+                target=target,
+                body=rendered_context,
+                metadata={
+                    "role": "system",
+                    "session_id": session_id,
+                    "context_compacted": "true",
+                    "context_archive_ref_count": str(len(archive_refs)),
+                },
+            )
+            if rendered_context
+            else None
+        )
         recent_limit = max(1, int(recent_limit))
         recent_records = self._sessions.list_recent_messages(
             session_id=session_id,
@@ -615,17 +649,15 @@ class SessionContextService:
             )
             for item in recent_records
         ]
-
         budget_config = ContextBudgetConfig(
             max_tokens=self._token_budget,
             chars_per_token=self._chars_per_token,
         )
         budgeted = assemble_budgeted_context(
-            system_messages=system_messages,
+            system_messages=[context_message] if context_message else [],
             history_messages=history_messages,
             budget=budget_config,
         )
-
         try:
             self._sessions.append_event(
                 session_id=session_id,
@@ -908,45 +940,6 @@ def _archive_compacted_messages(
 
 SessionContextService._ingest_compacted_messages = _ingest_compacted_messages
 SessionContextService._archive_compacted_messages = _archive_compacted_messages
-
-
-def _render_context_block(
-    pinned_context: str,
-    rolling_summary: str,
-    *,
-    archive_refs: list[dict[str, Any]] | None = None,
-) -> str:
-    pinned = render_pinned_context(pinned_context)
-    summary = rolling_summary.strip()
-    refs = list(archive_refs or [])
-    if not pinned and not summary and not refs:
-        return ""
-
-    sections: list[str] = [
-        "Session context (compacted). Use this as continuity reference.",
-    ]
-    if pinned:
-        sections.append("Pinned context:\n" + pinned)
-    if summary:
-        sections.append("Rolling summary:\n" + summary)
-    if refs:
-        ref_lines: list[str] = []
-        for ref in refs:
-            path = str(ref.get("path", "")).strip()
-            first_rowid = _safe_int(ref.get("first_rowid"), default=0)
-            last_rowid = _safe_int(ref.get("last_rowid"), default=0)
-            message_count = _safe_int(ref.get("message_count"), default=0)
-            if not path:
-                continue
-            ref_lines.append(
-                f"- {path} (rowid={first_rowid}-{last_rowid}, messages={message_count})"
-            )
-        if ref_lines:
-            sections.append(
-                "Compaction archive refs (full transcript chunks):\n"
-                + "\n".join(ref_lines)
-            )
-    return "\n\n".join(sections).strip()
 
 
 def _archive_ref_to_payload(archive_ref: SessionArchiveRef) -> dict[str, Any]:

@@ -641,23 +641,17 @@ def _recalled_memory_count_from_runner(
     runner: Any,
     session_id: str,
 ) -> int:
-    try:
-        state = runner.get_latest_working_state(session_id)
-        if state is None:
-            return 0
-        state_inline = (
-            state if isinstance(state, dict) else getattr(state, "state_inline", None)
+    state = (
+        runner.session_api.get_latest_working_state(
+            session_id, agent_id=runner.profile.agent_id
         )
-        if isinstance(state_inline, dict):
-            refs = state_inline.get("decision_memory_refs")
-            if isinstance(refs, list):
-                return len(refs)
-        refs = getattr(state, "decision_memory_refs", None)
-        if isinstance(refs, list):
-            return len(refs)
-    except Exception:
-        pass
-    return 0
+        or {}
+    )
+    state_inline = state.get("state_inline")
+    if not isinstance(state_inline, dict):
+        state_inline = state
+    refs = state_inline.get("decision_memory_refs")
+    return len(refs) if isinstance(refs, list) else 0
 
 
 def _collect_system_history_context(*, history: list[Message]) -> str:

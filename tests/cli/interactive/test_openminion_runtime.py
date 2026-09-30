@@ -1258,7 +1258,6 @@ async def test_openminion_runtime_injects_project_context_once_per_session() -> 
 
     _ = [chunk async for chunk in focus_rt.send_message("first")]
     _ = [chunk async for chunk in focus_rt.send_message("second")]
-
     assert captured_metadata[0]["project_context_name"] == "OPENMINION.md"
     assert captured_metadata[0]["project_context_body"] == "Follow repo rules."
     assert "project_context_name" not in captured_metadata[1]
@@ -1277,15 +1276,24 @@ async def test_openminion_focus_runtime_reuses_stable_conversation_id() -> None:
     first_session_id = focus_rt.session_id
     _ = [chunk async for chunk in focus_rt.send_message("first")]
     _ = [chunk async for chunk in focus_rt.send_message("second")]
+    _ = [
+        chunk
+        async for chunk in focus_rt.send_message(
+            "third",
+            inbound_metadata={"conversation_id": "caller-supplied"},
+        )
+    ]
 
     calls = rt.resolve_gateway("alpha").calls
     first_metadata = calls[0]["inbound_metadata"]
     second_metadata = calls[1]["inbound_metadata"]
+    third_metadata = calls[2]["inbound_metadata"]
 
     assert isinstance(first_metadata, dict)
     assert isinstance(second_metadata, dict)
     assert first_metadata["conversation_id"] == f"focus-{first_session_id}"
     assert second_metadata["conversation_id"] == f"focus-{first_session_id}"
+    assert third_metadata["conversation_id"] == f"focus-{first_session_id}"
     assert first_metadata["caller_handles_delivery"] == "true"
     assert second_metadata["caller_handles_delivery"] == "true"
     assert first_metadata["resume"] == "true"

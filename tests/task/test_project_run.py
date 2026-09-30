@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from openminion.modules.task import (
@@ -108,6 +110,130 @@ def _create_project_task(tmp_path) -> tuple[TaskManager, object]:
     )
     save_project_run_checkpoint(manager, project_run, checkpoint_id="checkpoint-1")
     return manager, project_run
+
+
+def test_operator_guidance_updates_allocate_distinct_revisions(tmp_path) -> None:
+    manager, _ = _create_project_task(tmp_path)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = (
+            executor.submit(
+                apply_project_control,
+                manager,
+                task_id="task-1",
+                action=ProjectControlAction.REPRIORITIZE,
+                priority="finish the failing test first",
+            ),
+            executor.submit(
+                apply_project_control,
+                manager,
+                task_id="task-1",
+                action=ProjectControlAction.ANSWER_INPUT,
+                input_request_id="input-1",
+                answer="use the existing migration",
+            ),
+        )
+        for future in futures:
+            future.result()
+
+    record = manager.get_task("task-1")
+    assert record is not None
+    answer = record.metadata["operator_answers"][0]
+    assert record.metadata["operator_guidance_revision"] == 2
+    assert {record.metadata["priority_revision"], answer["revision"]} == {1, 2}
+    manager.close()
+
+
+def test_operator_guidance_rejects_oversized_text_without_revision(tmp_path) -> None:
+    manager, _ = _create_project_task(tmp_path)
+
+    with pytest.raises(ValueError, match="priority exceeds 4000 characters"):
+        apply_project_control(
+            manager,
+            task_id="task-1",
+            action=ProjectControlAction.REPRIORITIZE,
+            priority="x" * 4001,
+        )
+
+    record = manager.get_task("task-1")
+    assert record is not None
+    assert "operator_guidance_revision" not in record.metadata
+    assert "priority" not in record.metadata
+    manager.close()
+
+
+def test_operator_guidance_rejects_full_inbox_until_checkpoint_consumes_it(
+    tmp_path,
+) -> None:
+    manager, project_run = _create_project_task(tmp_path)
+    for index in range(32):
+        apply_project_control(
+            manager,
+            task_id="task-1",
+            action=ProjectControlAction.ANSWER_INPUT,
+            input_request_id=f"input-{index}",
+            answer=f"answer-{index}",
+        )
+
+    with pytest.raises(ValueError, match="operator answers are full"):
+        apply_project_control(
+            manager,
+            task_id="task-1",
+            action=ProjectControlAction.ANSWER_INPUT,
+            input_request_id="input-33",
+            answer="wait for checkpoint consumption",
+        )
+    record = manager.get_task("task-1")
+    assert record is not None
+    assert record.metadata["operator_guidance_revision"] == 32
+    assert len(record.metadata["operator_answers"]) == 32
+    assert record.metadata["operator_answers"][0]["answer"] == "answer-0"
+
+    save_project_run_checkpoint(
+        manager,
+        project_run,
+        checkpoint_id="checkpoint-consumed",
+        payload={"operator_guidance_consumed_revision": 32},
+    )
+    apply_project_control(
+        manager,
+        task_id="task-1",
+        action=ProjectControlAction.ANSWER_INPUT,
+        input_request_id="input-33",
+        answer="accepted after consumption",
+    )
+    record = manager.get_task("task-1")
+    assert record is not None
+    assert record.metadata["operator_guidance_revision"] == 33
+    assert record.metadata["operator_answers"] == [
+        {
+            "request_id": "input-33",
+            "answer": "accepted after consumption",
+            "revision": 33,
+        }
+    ]
+    manager.close()
+
+
+def test_extend_budget_rejects_malformed_persisted_extensions(tmp_path) -> None:
+    manager, _ = _create_project_task(tmp_path)
+    manager.update_task_metadata(
+        task_id="task-1",
+        metadata={"budget_extensions": "invalid"},
+    )
+
+    with pytest.raises(ValueError, match="budget_extensions must be a mapping"):
+        apply_project_control(
+            manager,
+            task_id="task-1",
+            action=ProjectControlAction.EXTEND_BUDGET,
+            extra_iterations=1,
+        )
+
+    record = manager.get_task("task-1")
+    assert record is not None
+    assert record.metadata["budget_extensions"] == "invalid"
+    manager.close()
 
 
 def test_project_objective_contract_is_strict_and_serializable() -> None:
@@ -858,3 +984,22 @@ def test_project_report_includes_outcome_metrics_and_baseline_comparison() -> No
     assert "baseline_comparisons:" in rendered
     assert "capabilities: 16 rows" in rendered
     assert "deny-first permission policy passed" in rendered
+
+
+def test_project_report_renders_unmeasured_metrics_as_unknown() -> None:
+    project_run = build_project_run_projection(
+        _autonomy_run(),
+        objective_ledger_ref="artifact:objective.json",
+        evidence_ledger_ref="artifact:evidence.jsonl",
+        resume_packet_ref="artifact:resume.json",
+        operator_decision_log_ref="artifact:operator-decisions.jsonl",
+        capability_plan_ref="artifact:capabilities.json",
+        metrics_summary_ref="artifact:metrics.json",
+    )
+
+    report = build_project_report(project_run, metrics=ProjectMetricSnapshot())
+    rendered = render_project_report(report)
+
+    assert report.baseline_comparisons == ()
+    assert "active_work_ms: unknown" in rendered
+    assert "operator_intervention_count: unknown" in rendered

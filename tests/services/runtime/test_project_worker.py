@@ -25,7 +25,10 @@ from openminion.modules.task import (
 )
 from openminion.modules.task.project import (
     AutonomyLoopConditionKind,
+    ProjectControlAction,
+    apply_project_control,
     project_condition_from_metadata,
+    project_operator_guidance,
 )
 from openminion.modules.task.project.reports import (
     build_project_report_from_task,
@@ -143,16 +146,16 @@ def _project(
     return store, manager, run
 
 
-def test_project_turn_budget_rollover_remains_productive() -> None:
+def test_project_turn_budget_exhaustion_is_structural() -> None:
     assert (
         project_condition_from_metadata(
             {
                 "brain_status": "waiting_user",
                 "tool_loop_termination_reason": "budget_exhausted",
-                "error_code": "act_adaptive_budget_exhausted",
+                "error_code": "ACT_ADAPTIVE_BUDGET_EXHAUSTED",
             }
         )
-        == AutonomyLoopConditionKind.PRODUCTIVE
+        == AutonomyLoopConditionKind.BUDGET_EXHAUSTED
     )
     assert (
         project_condition_from_metadata({"brain_status": "waiting_user"})
@@ -162,11 +165,61 @@ def test_project_turn_budget_rollover_remains_productive() -> None:
         project_condition_from_metadata(
             {
                 "brain_status": "waiting_user",
-                "error_code": "act_adaptive_budget_exhausted",
+                "error_code": "ACT_ADAPTIVE_BUDGET_EXHAUSTED",
             }
         )
-        == AutonomyLoopConditionKind.PRODUCTIVE
+        == AutonomyLoopConditionKind.BUDGET_EXHAUSTED
     )
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    (
+        ({"project_condition": "cancelled"}, AutonomyLoopConditionKind.CANCELLED),
+        ({"error_code": "POLICY_DENIED"}, AutonomyLoopConditionKind.DENIED),
+        (
+            {"error_code": "TOOL_API_UNAVAILABLE"},
+            AutonomyLoopConditionKind.MISSING_CAPABILITY,
+        ),
+        (
+            {"error_code": "BUDGET_EXCEEDED"},
+            AutonomyLoopConditionKind.BUDGET_EXHAUSTED,
+        ),
+        ({"error_code": "TIMEOUT"}, AutonomyLoopConditionKind.DEADLINE_EXHAUSTED),
+        (
+            {"error_code": "provider_failed"},
+            AutonomyLoopConditionKind.RETRYABLE_FAILURE,
+        ),
+        (
+            {"tool_loop_termination_reason": "cancelled"},
+            AutonomyLoopConditionKind.CANCELLED,
+        ),
+        (
+            {"tool_loop_termination_reason": "time_budget_exceeded"},
+            AutonomyLoopConditionKind.DEADLINE_EXHAUSTED,
+        ),
+        (
+            {"finalization_status": {"status": "blocked"}},
+            AutonomyLoopConditionKind.TERMINAL_INABILITY,
+        ),
+        (
+            {
+                "finalization_status": {"status": "blocked"},
+                "brain_status": "waiting_user",
+            },
+            AutonomyLoopConditionKind.WAITING,
+        ),
+        (
+            {"finalization_status": {"status": "incomplete"}},
+            AutonomyLoopConditionKind.STRATEGY_FAILURE,
+        ),
+        ({}, AutonomyLoopConditionKind.PRODUCTIVE),
+    ),
+)
+def test_project_condition_uses_typed_fact_precedence(
+    metadata: dict[str, object], expected: AutonomyLoopConditionKind
+) -> None:
+    assert project_condition_from_metadata(metadata) == expected
 
 
 def _save_ci_effect(
@@ -399,6 +452,89 @@ def test_iteration_extension_allows_next_cycle_after_worker_reopen(tmp_path) -> 
     assert second.run.status == AutonomyRunStatus.COMPLETED
     assert second.project_run.cycle_limit == 2
     assert len(requests) == 2
+
+
+def test_operator_guidance_is_checkpointed_and_late_guidance_waits(tmp_path) -> None:
+    store, manager, run = _project(tmp_path, max_iterations=2)
+    apply_project_control(
+        manager,
+        task_id=run.task_id,
+        action=ProjectControlAction.REPRIORITIZE,
+        priority="repair the parser first",
+    )
+    requests: list[ProjectTurnRequest] = []
+    verification = iter(
+        (
+            (_evidence(_TestEvidenceStatus.FAILED),),
+            (_evidence(_TestEvidenceStatus.PASSED),),
+        )
+    )
+
+    def turn(request: ProjectTurnRequest) -> ProjectTurnResult:
+        requests.append(request)
+        if len(requests) == 1:
+            apply_project_control(
+                manager,
+                task_id=run.task_id,
+                action=ProjectControlAction.REPRIORITIZE,
+                priority="then update the focused regression",
+            )
+            return ProjectTurnResult(
+                summary="first",
+                evidence_refs=("artifact:first",),
+            )
+        return ProjectTurnResult(summary="second")
+
+    result = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=turn,
+        verify=lambda: next(verification),
+    ).run(run.run_id, max_cycles=2)
+
+    checkpoint = load_latest_project_checkpoint(manager, task_id=run.task_id)
+    assert result.run.status == AutonomyRunStatus.COMPLETED
+    assert "repair the parser first" in requests[0].prompt
+    assert "then update the focused regression" not in requests[0].prompt
+    assert "then update the focused regression" in requests[1].prompt
+    assert "repair the parser first" not in requests[1].prompt
+    assert checkpoint.payload["operator_guidance_consumed_revision"] == 2
+
+
+def test_failed_cycle_replays_uncommitted_operator_guidance(tmp_path) -> None:
+    store, manager, run = _project(tmp_path)
+    apply_project_control(
+        manager,
+        task_id=run.task_id,
+        action=ProjectControlAction.ANSWER_INPUT,
+        input_request_id="input-1",
+        answer="continue with the approved local fixture",
+    )
+
+    def interrupt(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        raise RuntimeError("interrupted")
+
+    first = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=interrupt,
+        verify=lambda: pytest.fail("verification ran after an interrupted turn"),
+    )
+    with pytest.raises(RuntimeError, match="interrupted"):
+        first.run_cycle(run.run_id)
+
+    checkpoint = load_latest_project_checkpoint(manager, task_id=run.task_id)
+    task = manager.get_task(run.task_id)
+    assert task is not None
+    consumed = int(checkpoint.payload.get("operator_guidance_consumed_revision") or 0)
+    guidance, revision = project_operator_guidance(
+        task.metadata,
+        consumed_revision=consumed,
+    )
+    assert guidance["answers"][0]["answer"] == (
+        "continue with the approved local fixture"
+    )
+    assert revision == 1
 
 
 def test_project_worker_replans_once_then_commits_verified_completion(

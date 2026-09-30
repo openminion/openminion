@@ -2,9 +2,11 @@ from typing import Any
 
 from openminion.base.constants import STATE_KEY_WORKING
 from openminion.base.types import Message
+from openminion.modules.llm import ProviderError
 
 from .postprocess_sources import (
     _action_result_termination_reason,
+    _append_search_source_attribution_if_needed,
     _tool_result_response_text,
     _tool_results_from_action_outputs,
 )
@@ -68,7 +70,12 @@ async def _apply_tool_result_postprocess(
                 )
         if not all(bool(item.get("ok")) for item in aggregated_tool_results):
             termination_reason = explicit_termination_reason or "tool_no_success"
-        response_text = _tool_result_response_text(
+        response_text = str(response_text or "").strip()
+        if not response_text:
+            raise ProviderError(
+                "empty aggregated model continuation", code="EMPTY_PROVIDER_RESPONSE"
+            )
+        response_text = _append_search_source_attribution_if_needed(
             response_text=response_text,
             tool_results_payload=aggregated_tool_results,
         )
@@ -80,13 +87,11 @@ async def _apply_tool_result_postprocess(
         and command.get("kind") == "tool"
     ):
         return response_text, explicit_termination_reason or termination_reason, []
-
     tool_result = self._tool_result_from_action(
         command=command,
         action_result=action_result,
     )
     tool_results_payload = [tool_result]
-
     if self._telemetryctl:
         tool_name = command.get("tool_name", "unknown")
         await self._telemetryctl.emit_tool_call(
@@ -96,7 +101,6 @@ async def _apply_tool_result_postprocess(
             bool(tool_result.get("ok")),
             active_mode_name,
         )
-
     termination_reason = (
         "tool_final"
         if bool(tool_result.get("ok"))

@@ -47,26 +47,28 @@ class ProjectOutcomeClassification(StrEnum):
 
 
 class ProjectMetricSnapshot(_StrictReportModel):
-    objective_completion_percent: float = Field(default=0.0, ge=0.0, le=100.0)
-    milestone_completion_percent: float = Field(default=0.0, ge=0.0, le=100.0)
-    verification_pass_count: int = Field(default=0, ge=0)
-    verification_fail_count: int = Field(default=0, ge=0)
-    escaped_regression_count: int = Field(default=0, ge=0)
-    restart_resume_success_count: int = Field(default=0, ge=0)
+    objective_completion_percent: float | None = Field(default=None, ge=0.0, le=100.0)
+    milestone_completion_percent: float | None = Field(default=None, ge=0.0, le=100.0)
+    verification_pass_count: int | None = Field(default=None, ge=0)
+    verification_fail_count: int | None = Field(default=None, ge=0)
+    escaped_regression_count: int | None = Field(default=None, ge=0)
+    restart_resume_success_count: int | None = Field(default=None, ge=0)
     restart_resume_attempt_count: int = Field(default=0, ge=0)
-    checkpoint_interval_ms: int = Field(default=0, ge=0)
-    stale_evidence_invalidation_count: int = Field(default=0, ge=0)
-    active_work_ms: int = Field(default=0, ge=0)
-    idle_wait_ms: int = Field(default=0, ge=0)
-    approval_wait_ms: int = Field(default=0, ge=0)
-    first_visible_progress_ms: int = Field(default=0, ge=0)
-    duplicate_tool_call_count: int = Field(default=0, ge=0)
-    retry_count: int = Field(default=0, ge=0)
-    blocked_duration_ms: int = Field(default=0, ge=0)
-    token_usage: int = Field(default=0, ge=0)
-    cost_microusd: int = Field(default=0, ge=0)
-    proof_packet_completeness_percent: float = Field(default=0.0, ge=0.0, le=100.0)
-    operator_intervention_count: int = Field(default=0, ge=0)
+    checkpoint_interval_ms: int | None = Field(default=None, ge=0)
+    stale_evidence_invalidation_count: int | None = Field(default=None, ge=0)
+    active_work_ms: int | None = Field(default=None, ge=0)
+    idle_wait_ms: int | None = Field(default=None, ge=0)
+    approval_wait_ms: int | None = Field(default=None, ge=0)
+    first_visible_progress_ms: int | None = Field(default=None, ge=0)
+    duplicate_tool_call_count: int | None = Field(default=None, ge=0)
+    retry_count: int | None = Field(default=None, ge=0)
+    blocked_duration_ms: int | None = Field(default=None, ge=0)
+    token_usage: int | None = Field(default=None, ge=0)
+    cost_microusd: int | None = Field(default=None, ge=0)
+    proof_packet_completeness_percent: float | None = Field(
+        default=None, ge=0.0, le=100.0
+    )
+    operator_intervention_count: int | None = Field(default=None, ge=0)
     plan_revision_count: int = Field(default=0, ge=0)
 
 
@@ -149,9 +151,6 @@ def build_project_report_from_task(
     )
     metrics = ProjectMetricSnapshot(
         restart_resume_attempt_count=int(record.metadata.get("resume_count") or 0),
-        restart_resume_success_count=int(record.metadata.get("resume_count") or 0),
-        operator_intervention_count=_operator_intervention_count(record.metadata),
-        proof_packet_completeness_percent=round((len(proof_refs) / 3) * 100, 2),
         plan_revision_count=cast(
             int, checkpoint.payload.get("plan_revision_count") or 0
         ),
@@ -229,6 +228,7 @@ def compare_project_metrics(
             delta=float(value) - float(baseline_values[metric]),
         )
         for metric, value in current_values.items()
+        if value is not None and baseline_values[metric] is not None
     )
 
 
@@ -270,7 +270,7 @@ def render_project_report(report: ProjectReport) -> str:
         "metrics:",
     ]
     for name, value in report.metrics.model_dump().items():
-        lines.append(f"  {name}: {value}")
+        lines.append(f"  {name}: {'unknown' if value is None else value}")
     if report.task_plan is not None:
         lines.append(f"plan: {report.task_plan.plan_id} ({report.task_plan.status})")
         lines.extend(
@@ -322,15 +322,6 @@ def render_project_report(report: ProjectReport) -> str:
         lines.append("ux_notes:")
         lines.extend(f"  - {note}" for note in report.ux_notes)
     return "\n".join(lines)
-
-
-def _operator_intervention_count(metadata: dict[str, object]) -> int:
-    answers = metadata.get("operator_answers")
-    answer_count = len(answers) if isinstance(answers, list) else 0
-    extensions = metadata.get("budget_extensions")
-    extension_count = 1 if isinstance(extensions, dict) and extensions else 0
-    priority_count = 1 if metadata.get("priority") else 0
-    return answer_count + extension_count + priority_count
 
 
 __all__ = (

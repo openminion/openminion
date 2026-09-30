@@ -1,13 +1,87 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from openminion.modules.task.runtime.lifecycle import (
     TaskLifecycleRecord,
     TaskLifecycleState,
     TaskManager,
 )
 
-from .checkpoints import replay_project_cycles
+from .checkpoints import load_latest_project_checkpoint, replay_project_cycles
+from .constants import (
+    PROJECT_OPERATOR_GUIDANCE_MAX_ANSWERS,
+    REPOSITORY_LIFECYCLE_TEXT_MAX_CHARS,
+)
 from .models import ProjectControlAction, ProjectControlResult
+
+
+def _bounded_guidance_text(value: str | None, *, field: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"{field} is required")
+    if len(normalized) > REPOSITORY_LIFECYCLE_TEXT_MAX_CHARS:
+        raise ValueError(
+            f"{field} exceeds {REPOSITORY_LIFECYCLE_TEXT_MAX_CHARS} characters"
+        )
+    return normalized
+
+
+def _next_guidance_revision(metadata: dict[str, object]) -> int:
+    revision = int(str(metadata.get("operator_guidance_revision") or 0)) + 1
+    metadata["operator_guidance_revision"] = revision
+    return revision
+
+
+def _consumed_guidance_revision(task_manager: TaskManager, task_id: str) -> int:
+    latest = load_latest_project_checkpoint(task_manager, task_id=task_id)
+    if latest is None:
+        return 0
+    return int(str(latest.payload.get("operator_guidance_consumed_revision") or 0))
+
+
+def _answer_project_input(
+    task_manager: TaskManager,
+    record: TaskLifecycleRecord,
+    *,
+    input_request_id: str | None,
+    answer: str | None,
+) -> TaskLifecycleRecord:
+    request_id = _bounded_guidance_text(input_request_id, field="input_request_id")
+    normalized_answer = _bounded_guidance_text(answer, field="answer")
+    consumed_revision = _consumed_guidance_revision(task_manager, record.task_id)
+
+    def answer_input(metadata: dict[str, object]) -> dict[str, object]:
+        current_answers = metadata.get("operator_answers")
+        answers = (
+            [
+                item
+                for item in current_answers
+                if isinstance(item, dict)
+                and int(item.get("revision") or 0) > consumed_revision
+            ]
+            if isinstance(current_answers, list)
+            else []
+        )
+        if len(answers) >= PROJECT_OPERATOR_GUIDANCE_MAX_ANSWERS:
+            raise ValueError(
+                "operator answers are full; let the project consume them first"
+            )
+        revision = _next_guidance_revision(metadata)
+        answers.append(
+            {
+                "request_id": request_id,
+                "answer": normalized_answer,
+                "revision": revision,
+            }
+        )
+        metadata["operator_answers"] = answers
+        return metadata
+
+    return task_manager.mutate_task_metadata(
+        task_id=record.task_id,
+        mutate=answer_input,
+    )
 
 
 def apply_project_control(
@@ -48,45 +122,49 @@ def apply_project_control(
             to_state=TaskLifecycleState.CANCELLED,
         )
     elif action == ProjectControlAction.REPRIORITIZE:
-        normalized_priority = (priority or "").strip()
-        if not normalized_priority:
-            raise ValueError("priority is required for reprioritize")
-        metadata = dict(record.metadata)
-        metadata["priority"] = normalized_priority
-        record = task_manager.update_task_metadata(
+        normalized_priority = _bounded_guidance_text(priority, field="priority")
+
+        def reprioritize(metadata: dict[str, object]) -> dict[str, object]:
+            revision = _next_guidance_revision(metadata)
+            metadata["priority"] = normalized_priority
+            metadata["priority_revision"] = revision
+            return metadata
+
+        record = task_manager.mutate_task_metadata(
             task_id=record.task_id,
-            metadata=metadata,
+            mutate=reprioritize,
         )
     elif action == ProjectControlAction.ANSWER_INPUT:
-        request_id = (input_request_id or "").strip()
-        normalized_answer = (answer or "").strip()
-        if not request_id:
-            raise ValueError("input_request_id is required for answer-input-request")
-        if not normalized_answer:
-            raise ValueError("answer is required for answer-input-request")
-        metadata = dict(record.metadata)
-        answers = list(metadata.get("operator_answers", []) or [])
-        answers.append({"request_id": request_id, "answer": normalized_answer})
-        metadata["operator_answers"] = answers
-        record = task_manager.update_task_metadata(
-            task_id=record.task_id,
-            metadata=metadata,
+        record = _answer_project_input(
+            task_manager,
+            record,
+            input_request_id=input_request_id,
+            answer=answer,
         )
     elif action == ProjectControlAction.EXTEND_BUDGET:
         if extra_iterations < 1 and extra_wall_clock_ms < 1 and extra_tool_calls < 1:
             raise ValueError("extend-budget requires a positive budget delta")
-        metadata = dict(record.metadata)
-        current = dict(metadata.get("budget_extensions", {}) or {})
-        for key, delta in (
-            ("extra_iterations", extra_iterations),
-            ("extra_wall_clock_ms", extra_wall_clock_ms),
-            ("extra_tool_calls", extra_tool_calls),
-        ):
-            current[key] = int(current.get(key) or 0) + max(0, delta)
-        metadata["budget_extensions"] = current
-        record = task_manager.update_task_metadata(
+
+        def extend_budget(metadata: dict[str, object]) -> dict[str, object]:
+            raw_extensions = metadata.get("budget_extensions")
+            if raw_extensions is None:
+                current: dict[str, object] = {}
+            elif isinstance(raw_extensions, Mapping):
+                current = dict(raw_extensions)
+            else:
+                raise ValueError("budget_extensions must be a mapping")
+            for key, delta in (
+                ("extra_iterations", extra_iterations),
+                ("extra_wall_clock_ms", extra_wall_clock_ms),
+                ("extra_tool_calls", extra_tool_calls),
+            ):
+                current[key] = int(str(current.get(key) or 0)) + max(0, delta)
+            metadata["budget_extensions"] = current
+            return metadata
+
+        record = task_manager.mutate_task_metadata(
             task_id=record.task_id,
-            metadata=metadata,
+            mutate=extend_budget,
         )
 
     return build_project_control_result(task_manager, record, action=action)
