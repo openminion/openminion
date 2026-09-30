@@ -110,7 +110,16 @@ def test_busy_slash_policy_allows_reads_and_blocks_changes() -> None:
         assert slash_command_runs_while_busy(command)
     for command in ("/new", "/undo", "/model openai/gpt-5", "/permissions bypass"):
         assert not slash_command_runs_while_busy(command)
-    assert not slash_command_runs_while_busy("/tasks pause task-1")
+    for command in (
+        "/tasks pause task-1",
+        "/tasks resume task-1",
+        "/tasks cancel task-1",
+    ):
+        assert not slash_command_runs_while_busy(command)
+
+    tasks_help = format_slash_help("tasks")
+    assert "/tasks <pause|resume|cancel> <task-id>" in tasks_help
+    assert "allow|deny" not in tasks_help
 
 
 def test_help_shaped_commands_are_busy_safe_without_relaxing_normal_commands() -> None:

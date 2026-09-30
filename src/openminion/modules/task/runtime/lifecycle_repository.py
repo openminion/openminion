@@ -208,17 +208,33 @@ class TaskLifecycleRepository(
             ).fetchone()
         return self._row_to_record(row)
 
-    def list(self, *, limit: int = 100) -> list[TaskLifecycleRecord]:
+    def list(
+        self,
+        *,
+        limit: int = 100,
+        agent_id: str | None = None,
+        include_unowned: bool = False,
+    ) -> list[TaskLifecycleRecord]:
         safe_limit = max(1, min(int(limit), 1000))
+        clauses: list[str] = []
+        params: list[Any] = []
+        if agent_id is not None:
+            if include_unowned:
+                clauses.append("(agent_id = ? OR agent_id IS NULL)")
+            else:
+                clauses.append("agent_id = ?")
+            params.append(str(agent_id).strip())
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._lock:
             rows = self._conn.execute(
-                """
+                f"""
                 SELECT *
                 FROM scheduled_tasks
+                {where_sql}
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
-                (safe_limit,),
+                (*params, safe_limit),
             ).fetchall()
         return [
             record for row in rows if (record := self._row_to_record(row)) is not None

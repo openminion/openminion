@@ -137,6 +137,7 @@ class WorkingState(BaseModel):
     phase: RunSubstate | None = None
     trace_id: str | None = None
     runtime_session_id: str | None = None
+    runtime_conversation_id: str | None = None
     root_turn_id: str | None = None
     capture_event_id: str | None = None
     capture_id: str | None = None

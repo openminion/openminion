@@ -236,7 +236,12 @@ class CronStore(CronCoordinationStore):
         return row_to_cron_job(row)
 
     def list_cron_jobs(
-        self, *, enabled: bool | None = None, limit: int = 50
+        self,
+        *,
+        enabled: bool | None = None,
+        limit: int = 50,
+        agent_id: str | None = None,
+        include_unowned: bool = False,
     ) -> list[dict[str, Any]]:
         safe_limit = max(1, min(limit, 1000))
         clauses: list[str] = []
@@ -244,6 +249,12 @@ class CronStore(CronCoordinationStore):
         if enabled is not None:
             clauses.append("enabled = ?")
             params.append(1 if enabled else 0)
+        if agent_id is not None:
+            if include_unowned:
+                clauses.append("(agent_id = ? OR agent_id IS NULL)")
+            else:
+                clauses.append("agent_id = ?")
+            params.append(str(agent_id).strip())
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._lock:
             rows = self._record_store.query_dicts(
@@ -452,6 +463,45 @@ class CronStore(CronCoordinationStore):
                 LIMIT ?
                 """,
                 (*params, safe_limit),
+            )
+        return [row_to_cron_run(row) for row in rows]
+
+    def list_unresolved_task_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(limit, 1000))
+        with self._lock:
+            rows = self._record_store.query_dicts(
+                """
+                WITH newest_terminal AS (
+                    SELECT
+                        r.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY r.job_id
+                            ORDER BY COALESCE(
+                                r.finished_at, r.updated_at, r.created_at
+                            ) DESC, r.run_id DESC
+                        ) AS row_number
+                    FROM cron_runs AS r
+                    WHERE r.state IN ('finished', 'failed', 'cancelled', 'timed_out')
+                      AND NOT (r.state = 'cancelled' AND r.attempts = 0)
+                )
+                SELECT r.*
+                FROM newest_terminal AS r
+                JOIN scheduled_tasks AS t ON t.cron_job_id = r.job_id
+                LEFT JOIN cron_jobs AS j ON j.job_id = r.job_id
+                WHERE r.row_number = 1
+                  AND (
+                    json_extract(t.metadata, '$.last_run.run_id') IS NULL
+                    OR json_extract(t.metadata, '$.last_run.run_id') != r.run_id
+                    OR (
+                        json_extract(j.schedule_json, '$.kind') = 'at'
+                        AND t.state IN ('active', 'paused')
+                    )
+                  )
+                ORDER BY COALESCE(r.finished_at, r.updated_at, r.created_at) ASC,
+                         r.run_id ASC
+                LIMIT ?
+                """,
+                (safe_limit,),
             )
         return [row_to_cron_run(row) for row in rows]
 

@@ -57,6 +57,16 @@ def test_tasks_cli_shows_live_scheduler_readiness_for_scheduled_task(
         payload={"kind": "agentTurn", "message": "work"},
         agent_id="agent",
     )
+    repository = getattr(manager, "_cron_repository")
+    run_id = repository.trigger_cron_run(record.cron_job_id)
+    repository.finish_cron_run(
+        run_id,
+        state="finished",
+        summary="done",
+        output={"delivery": {"state": "succeeded"}},
+        isolated_session_id="result-session",
+    )
+    repository.mark_cron_delivery_target(run_id, target="session:origin")
     args = Namespace(
         tasks_command="show",
         task_id=record.task_id,
@@ -75,7 +85,11 @@ def test_tasks_cli_shows_live_scheduler_readiness_for_scheduled_task(
     )
 
     assert run_tasks(args, app) == 0
-    assert "scheduler: ready" in capsys.readouterr().out
+    detail = capsys.readouterr().out
+    assert "scheduler: ready" in detail
+    assert "result_session: result-session" in detail
+    assert "delivery: succeeded" in detail
+    assert "delivery_targets: session:origin" in detail
 
     args.tasks_command = "list"
     assert run_tasks(args, app) == 0
@@ -107,3 +121,55 @@ def test_tasks_cli_uses_configured_default_agent(capsys) -> None:
     assert run_tasks(args, SimpleNamespace(task_ctl=ctl, config=config)) == 0
     assert seen["agent_id"] == "agent-default"
     capsys.readouterr()
+
+
+def test_tasks_cli_list_always_shows_scheduler_readiness(capsys) -> None:
+    args = Namespace(
+        tasks_command="list",
+        agent_id="agent",
+        session="s1",
+        limit=10,
+        json=False,
+    )
+    app = SimpleNamespace(
+        task_ctl=InMemoryTaskCtl(),
+        scheduler_readiness=lambda: {
+            "state": "unreachable",
+            "check_command": "openminion status",
+        },
+    )
+
+    assert run_tasks(args, app) == 0
+    output = capsys.readouterr().out
+    assert "No tasks found." in output
+    assert "scheduler: unreachable" in output
+    assert "scheduler_check: openminion status" in output
+
+
+def test_tasks_cli_reports_inventory_backend_failure(capsys) -> None:
+    class BrokenRepository:
+        def list(self, **kwargs):
+            del kwargs
+            raise RuntimeError("database unavailable")
+
+    class BrokenManager:
+        lifecycle_repository = BrokenRepository()
+
+        def get_task(self, task_id: str):
+            del task_id
+            return None
+
+    args = Namespace(
+        tasks_command="list",
+        agent_id="agent",
+        session="s1",
+        limit=10,
+        json=True,
+    )
+    app = SimpleNamespace(
+        task_manager=BrokenManager(),
+        scheduler_readiness=lambda: {"state": "unknown"},
+    )
+
+    assert run_tasks(args, app) == 1
+    assert "TASK_INVENTORY_UNAVAILABLE" in capsys.readouterr().out

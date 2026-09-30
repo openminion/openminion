@@ -47,7 +47,7 @@ class CronDeliveryBridge:
                         target=target,
                     )
                 )
-                return
+                raise RuntimeError("cron announce delivery route is unavailable")
 
             body = str(payload.get("text", "") or payload.get("summary", "")).strip()
             if not body:
@@ -66,39 +66,32 @@ class CronDeliveryBridge:
                 if value:
                     metadata[f"origin_{key}"] = value
 
-            try:
-                self._runtime.sessions.append_message(
-                    session_id=session_id,
-                    conversation_id=origin.get("conversation_id") or None,
-                    thread_id=origin.get("thread_id") or None,
-                    attach_id=origin.get("attach_id") or None,
-                    role="outbound",
-                    body=body,
-                    metadata=metadata,
-                )
-                self._runtime.sessions.append_event(
-                    session_id=session_id,
-                    event_type="cron.announce",
-                    payload={
-                        "cron_job_id": metadata["cron_job_id"],
-                        "cron_run_id": metadata["cron_run_id"],
-                        "scheduled_for": metadata["scheduled_for"],
-                        "summary": body,
-                        "source": metadata["source"],
-                    },
-                )
-            except Exception as exc:  # noqa: BLE001
-                _CRON_LOGGER.warning(
-                    format_structured_event(
-                        "cron.announce.write_failed",
-                        session_id=session_id,
-                        job_id=job.get("job_id"),
-                        run_id=run.get("run_id"),
-                        error=exc,
-                    )
-                )
+            self._runtime.sessions.append_message(
+                session_id=session_id,
+                conversation_id=origin.get("conversation_id") or None,
+                thread_id=origin.get("thread_id") or None,
+                attach_id=origin.get("attach_id") or None,
+                role="outbound",
+                body=body,
+                metadata=metadata,
+            )
+            event_payload = {
+                "cron_job_id": metadata["cron_job_id"],
+                "cron_run_id": metadata["cron_run_id"],
+                "scheduled_for": metadata["scheduled_for"],
+                "summary": body,
+                "source": metadata["source"],
+            }
+            conversation_id = origin.get("conversation_id", "")
+            if conversation_id:
+                event_payload["conversation_id"] = conversation_id
+            self._runtime.sessions.append_event(
+                session_id=session_id,
+                event_type="cron.announce",
+                payload=event_payload,
+            )
 
-        deliver_cron_result(
+        outcome = deliver_cron_result(
             mode,
             resolved_to_value,
             job,
@@ -106,6 +99,8 @@ class CronDeliveryBridge:
             result_dict,
             outbound=_outbound,
         )
+        if not bool(outcome.get("ok", False)):
+            raise RuntimeError(str(outcome.get("error") or "cron delivery failed"))
 
     def _origin_from_job(self, job: dict[str, Any]) -> dict[str, str]:
         payload = job.get("payload", {})

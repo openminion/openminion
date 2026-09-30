@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from openminion.modules.brain.adapters.tool import ToolAdapter
+from openminion.modules.task import TaskManager
 from openminion.modules.task.constants import (
     DEFAULT_TASK_MIN_EVERY_MS,
     TASK_REASON_RESUME_EXPIRED_ONE_SHOT,
@@ -137,7 +138,7 @@ def test_schedule_relative_one_time_uses_runtime_clock(
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
     monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
     monkeypatch.setattr(
-        "openminion.tools.task.scheduled_task.runtime.utc_now",
+        "openminion.tools.task.plugin.utc_now",
         lambda: datetime(2026, 9, 12, 10, 40, tzinfo=timezone.utc),
     )
 
@@ -382,7 +383,7 @@ def test_schedule_persists_origin_delivery_context_when_available(
     }
 
 
-def test_schedule_uses_runtime_session_when_metadata_omits_origin(
+def test_schedule_uses_runtime_session_and_conversation_lineage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -392,7 +393,8 @@ def test_schedule_uses_runtime_session_when_metadata_omits_origin(
     ctx = _ctx(tmp_path, agent_id="agent-a")
     ctx.session_id = "focus-session::conv:focus-conversation"
     ctx.policy.raw["context_metadata"]["orchestration"] = {
-        "runtime_session_id": "focus-session"
+        "runtime_session_id": "focus-session",
+        "conversation_id": "focus-conversation",
     }
     store = _resolve_cron_store(ctx)
 
@@ -406,7 +408,10 @@ def test_schedule_uses_runtime_session_when_metadata_omits_origin(
 
     row = store.get_cron_job(created["task_id"])
     assert row is not None
-    assert row["payload"]["_openminion_origin"] == {"session_id": "focus-session"}
+    assert row["payload"]["_openminion_origin"] == {
+        "session_id": "focus-session",
+        "conversation_id": "focus-conversation",
+    }
 
 
 def test_task_schedule_dedupes_identical_enabled_job(
@@ -550,6 +555,8 @@ def test_resume_rejects_expired_one_shot(
     schedule = dict(job.get("schedule") or {})
     schedule["at"] = "2000-01-01T00:00:00Z"
     payload = dict(job.get("payload") or {})
+    payload["_openminion_pause_reason"] = "operator"
+    payload["_openminion_pause_source"] = "tool"
     store.delete_cron_job(created["task_id"])
     store.add_cron_job(
         job_id=created["task_id"],
@@ -567,10 +574,15 @@ def test_resume_rejects_expired_one_shot(
         max_lateness_s=int(job.get("max_lateness_s", 600)),
         max_concurrency=int(job.get("max_concurrency", 1)),
     )
+    manager = TaskManager.from_cron_repository(store)
+    before_record = manager.get_task(created["task_id"])
+    before_job = store.get_cron_job(created["task_id"])
     with pytest.raises(ToolRuntimeError) as excinfo:
         _h_task_resume({"task_id": created["task_id"]}, ctx)
     assert excinfo.value.code == "INVALID_ARGUMENT"
     assert excinfo.value.details["reason_code"] == TASK_REASON_RESUME_EXPIRED_ONE_SHOT
+    assert manager.get_task(created["task_id"]) == before_record
+    assert store.get_cron_job(created["task_id"]) == before_job
 
 
 def test_task_consolidate_memory_creates_cron_backed_payload(
@@ -1213,6 +1225,37 @@ def test_list_shape_scope_and_limit_clamp(
     clamped = _h_task_list({"limit": 5_000}, owner_ctx)
     assert clamped["limit"] == 100
     assert clamped["count"] <= 100
+
+
+def test_task_list_filters_before_limit_under_foreign_row_pressure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+    owner_ctx = _ctx(tmp_path, agent_id="agent-owner")
+    foreign_ctx = _ctx(tmp_path, agent_id="agent-foreign")
+    owned = _h_task_schedule(
+        {
+            "instruction": "old visible task",
+            "schedule": {"kind": "every", "every_ms": 60_000},
+            "name": "owned-old-row",
+        },
+        owner_ctx,
+    )
+    for index in range(60):
+        _h_task_schedule(
+            {
+                "instruction": f"foreign {index}",
+                "schedule": {"kind": "every", "every_ms": 60_000},
+                "name": f"foreign-{index}",
+            },
+            foreign_ctx,
+        )
+
+    result = _h_task_list({"limit": 1}, owner_ctx)
+
+    assert [task["task_id"] for task in result["tasks"]] == [owned["task_id"]]
 
 
 def test_task_handlers_route_through_task_manager_lifecycle_table(

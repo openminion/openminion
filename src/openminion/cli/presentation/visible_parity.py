@@ -308,78 +308,128 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
         try:
             surface.apply_action(task_id=selected_id, action=action)
         except (KeyError, ValueError, PermissionError, NotImplementedError) as exc:
-            return f"Task action failed: {exc}"
+            return _task_failure_text("Task action failed", exc)
+        except (AttributeError, TypeError, RuntimeError) as exc:
+            return _task_failure_text("Task action failed", exc)
     if selected_id:
-        task = surface.show_task(selected_id)
+        try:
+            task = surface.show_task(selected_id)
+        except (AttributeError, TypeError, RuntimeError) as exc:
+            return _task_failure_text("Task inventory failed", exc)
         if task is None:
             return f"Task not found: {selected_id}"
-        lines = [
-            "Task",
-            "====",
-            f"id: {task.get('id')}",
-            f"title: {task.get('title')}",
-            f"status: {task.get('status')}",
-            f"operator_state: {task.get('operator_state', '-')}",
-            f"resume_action: {task.get('resume_action', '-')}",
-        ]
-        if task.get("due_at"):
-            lines.append(f"due: {task.get('due_at')}")
-        if task.get("schedule_summary"):
-            lines.append(f"schedule: {task.get('schedule_summary')}")
-        if task.get("daemon_required"):
-            scheduler = _runtime_scheduler_readiness(runtime)
-            scheduler_line = f"scheduler: {scheduler['state']}"
-            if scheduler.get("check_command"):
-                scheduler_line += f" (check: {scheduler['check_command']})"
-            lines.append(scheduler_line)
-        if task.get("last_run"):
-            last_run = task["last_run"]
-            lines.append(
-                f"last_run: {last_run.get('state')} "
-                f"at {last_run.get('finished_at') or last_run.get('due_at')}"
-            )
-            if last_run.get("last_error"):
-                error = last_run["last_error"]
-                lines.append(f"last_error: {error.get('code')}: {error.get('message')}")
-        actions = task.get("valid_actions")
-        if actions:
-            lines.append(f"actions: {', '.join(actions)}")
-        return "\n".join(lines)
+        return _render_task_detail(runtime, task)
 
-    payload = surface.inventory()
+    try:
+        payload = surface.inventory()
+    except (AttributeError, TypeError, RuntimeError) as exc:
+        return _task_failure_text("Task inventory failed", exc)
+    return _render_task_inventory(runtime, payload)
+
+
+def _render_task_detail(runtime: Any, task: dict[str, Any]) -> str:
+    lines = [
+        "Task",
+        "====",
+        f"id: {task.get('id')}",
+        f"title: {task.get('title')}",
+        f"status: {task.get('status')}",
+        f"operator_state: {task.get('operator_state', '-')}",
+        f"resume_action: {task.get('resume_action', '-')}",
+    ]
+    if task.get("due_at"):
+        lines.append(f"due: {task.get('due_at')}")
+    if task.get("schedule_summary"):
+        lines.append(f"schedule: {task.get('schedule_summary')}")
+    if task.get("daemon_required"):
+        scheduler = _runtime_scheduler_readiness(runtime)
+        scheduler_line = f"scheduler: {scheduler['state']}"
+        if scheduler.get("check_command"):
+            scheduler_line += f" (check: {scheduler['check_command']})"
+        lines.append(scheduler_line)
+    _append_task_run_detail(lines, task)
+    actions = task.get("valid_actions")
+    if actions:
+        lines.append(f"actions: {', '.join(actions)}")
+    return "\n".join(lines)
+
+
+def _append_task_run_detail(lines: list[str], task: dict[str, Any]) -> None:
+    last_run = task.get("last_run")
+    if last_run:
+        lines.append(
+            f"last_run: {last_run.get('state')} "
+            f"at {last_run.get('finished_at') or last_run.get('due_at')}"
+        )
+        if last_run.get("last_error"):
+            error = last_run["last_error"]
+            lines.append(f"last_error: {error.get('code')}: {error.get('message')}")
+        if last_run.get("isolated_session_id"):
+            lines.append(f"result_session: {last_run['isolated_session_id']}")
+        delivery = last_run.get("delivery") or {}
+        if delivery:
+            lines.append(
+                f"delivery: {delivery.get('state') or delivery.get('mode') or '-'}"
+            )
+            if delivery.get("error"):
+                lines.append(f"delivery_error: {delivery['error']}")
+        if last_run.get("delivery_targets"):
+            lines.append(f"delivery_targets: {', '.join(last_run['delivery_targets'])}")
+    recent_runs = list(task.get("recent_runs") or [])[:5]
+    if recent_runs:
+        lines.append("recent_runs:")
+        for run in recent_runs:
+            lines.append(
+                f"- {run.get('run_id')}: {run.get('state')} "
+                f"session={run.get('isolated_session_id') or '-'}"
+            )
+
+
+def _render_task_inventory(runtime: Any, payload: dict[str, Any]) -> str:
     lines = ["Tasks", "====="]
+    scheduler = _runtime_scheduler_readiness(runtime)
+    scheduler_line = f"scheduler: {scheduler['state']}"
+    if scheduler.get("check_command"):
+        scheduler_line += f" (check: {scheduler['check_command']})"
+    lines.append(scheduler_line)
     tasks = list(payload.get("tasks", []))
     if not tasks:
         lines.append("No tasks found.")
     for task in tasks[:20]:
         last_run = task.get("last_run") or {}
-        lines.append(
-            f"[{task.get('lifecycle_state') or task.get('status', 'PENDING')}] "
-            f"{task.get('id')}: {task.get('title')}"
-        )
-        lines.append(
-            f"  type={task.get('task_kind', '-')} "
-            f"schedule={task.get('schedule_summary', '-')}"
-        )
-        lines.append(
-            f"  next={task.get('due_at') or '-'} "
-            f"last={last_run.get('state') or '-'} "
-            f"operator={task.get('operator_state', '-')} | "
-            f"resume={task.get('resume_action', '-')}"
+        lines.extend(
+            (
+                f"[{task.get('lifecycle_state') or task.get('status', 'PENDING')}] "
+                f"{task.get('id')}: {task.get('title')}",
+                f"  type={task.get('task_kind', '-')} "
+                f"schedule={task.get('schedule_summary', '-')}",
+                f"  next={task.get('due_at') or '-'} "
+                f"last={last_run.get('state') or '-'} "
+                f"operator={task.get('operator_state', '-')} | "
+                f"resume={task.get('resume_action', '-')}",
+            )
         )
     pending = list(payload.get("pending_actions", []))
     if pending:
         lines.extend(("", "Pending actions:"))
-        for action in pending[:20]:
-            lines.append(
-                f"- {action.get('decision_id')}: task={action.get('task_id') or '-'}"
-            )
+        lines.extend(
+            f"- {action.get('decision_id')}: task={action.get('task_id') or '-'}"
+            for action in pending[:20]
+        )
     return "\n".join(lines)
+
+
+def _task_failure_text(prefix: str, exc: Exception) -> str:
+    code = str(getattr(exc, "code", "") or "").strip()
+    return f"{prefix}: {code + ': ' if code else ''}{exc}"
 
 
 def _runtime_scheduler_readiness(runtime: Any) -> dict[str, Any]:
     api_runtime = getattr(runtime, "api_runtime", runtime)
-    return cast(dict[str, Any], api_runtime.scheduler_readiness())
+    readiness = getattr(api_runtime, "scheduler_readiness", None)
+    if not callable(readiness):
+        return {"state": "unknown"}
+    return cast(dict[str, Any], readiness())
 
 
 def handle_effort_command(runtime: Any, arg: str) -> str:

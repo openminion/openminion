@@ -70,6 +70,31 @@ class RunnerTests(unittest.TestCase):
         self.assertIs(result, expected)
         self.assertEqual(state.trace_id, "trace-fresh")
 
+    def test_unscoped_turn_clears_prior_runtime_conversation(self) -> None:
+        runner = BrainRunner(profile=_profile(), session_api=MagicMock())
+        state = WorkingState(
+            session_id="s-conversation-scope",
+            agent_id="router-agent",
+            budgets_remaining=BudgetCounters(
+                ticks=10,
+                tool_calls=5,
+                a2a_calls=5,
+                tokens=1000,
+                time_ms=10000,
+            ),
+            runtime_conversation_id="previous-conversation",
+        )
+        runner._load_or_init_state = MagicMock(return_value=state)
+        expected = SimpleNamespace(working_state=state)
+
+        with patch(
+            "openminion.modules.brain.runner.tick.orchestrator._run_pre_dispatch_checks",
+            return_value=expected,
+        ):
+            run_step(runner, session_id=state.session_id)
+
+        self.assertIsNone(state.runtime_conversation_id)
+
     def test_load_or_init_state_normalizes_legacy_strict_clarify_mode(self) -> None:
         session_api = MagicMock()
         seed_state = WorkingState(
