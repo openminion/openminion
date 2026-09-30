@@ -14,6 +14,7 @@ from openminion.modules.brain.paths import (
     resolve_brain_sessions_db_path,
 )
 from openminion.modules.memory.runtime.assembly import RuntimeMemoryAssembly
+from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.services.runtime.bootstrap import (
     build_agent_runtime_service,
     build_brain_runner_bundle,
@@ -258,7 +259,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_and_artifact_ownership(
                 return_value=SimpleNamespace(),
             )
         )
-        stack.enter_context(
+        task_manager_factory = stack.enter_context(
             mock.patch(
                 "openminion.modules.task.TaskManager.from_cron_repository",
                 return_value=shared_task_manager,
@@ -295,6 +296,11 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_and_artifact_ownership(
     assert captured["mission_db_path"] == expected_runtime_db_path
     assert captured["owns_stores"] is True
     assert captured["goal_db_path"] != session_db_path
+    assert (
+        task_manager_factory.call_args.kwargs["db_path"]
+        == (tmp_path / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve()
+    )
+    assert task_manager_factory.call_args.kwargs["db_path"] != session_db_path
     assert tool_api_factory.call_args.kwargs["task_manager"] is shared_task_manager
     assert runner_factory.call_args.kwargs["task_manager"] is shared_task_manager
     assert runner_factory.call_args.kwargs["turn_input_queue"] is turn_input_queue
