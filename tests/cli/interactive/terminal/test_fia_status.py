@@ -26,6 +26,7 @@ class _FakeRuntime:
         transport_adapter_name: str = "",
         session_id: str = "test-session-123",
         usage: Any = None,
+        timing: dict[str, object] | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.provider_name = provider_name
@@ -34,9 +35,13 @@ class _FakeRuntime:
         self.transport_adapter_name = transport_adapter_name
         self.session_id = session_id
         self._usage = usage
+        self._timing = timing
 
     def token_usage_snapshot(self) -> Any:
         return self._usage
+
+    def last_chat_phase_timing_payload(self) -> dict[str, object] | None:
+        return self._timing
 
     def is_room_session(self) -> bool:
         return False
@@ -95,6 +100,33 @@ def test_render_status_block_no_usage_shows_hint() -> None:
     out = buf.getvalue()
     # No real usage data → defensive hint.
     assert "no usage data" in out or "usage:" in out
+    assert "Timing:" not in out
+
+
+def test_render_status_block_shows_last_turn_timing() -> None:
+    runtime = _FakeRuntime(
+        timing={
+            "total_turn_ms": 1250,
+            "provider_round_trip_ms": 800,
+            "phases_instrumented": ["provider_round_trip"],
+        }
+    )
+    console, buf = _make_console()
+
+    _render_status_block(runtime=runtime, console=console, working_dir="/tmp")
+
+    out = buf.getvalue()
+    assert "Timing: total 1.2s" in out
+    assert "Phases: provider 800ms" in out
+
+
+def test_render_status_block_omits_unrenderable_timing() -> None:
+    runtime = _FakeRuntime(timing={"provider_round_trip_ms": 800})
+    console, buf = _make_console()
+
+    _render_status_block(runtime=runtime, console=console, working_dir="/tmp")
+
+    assert "Timing:" not in buf.getvalue()
 
 
 def test_render_status_block_shows_room_facts() -> None:

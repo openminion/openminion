@@ -97,6 +97,7 @@ class TerminalTranscript:
             handle.set_terminal_writer(self._terminal_writer)
         handle.start()
         self._active_handle = handle
+        self._live_narrated_call_ids.clear()
         self._completed_call_ids.clear()
         original_complete = handle.complete
 

@@ -7,7 +7,6 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
-from openminion.cli.interactive.tool_exposure import tool_exposure_command
 from openminion.cli.presentation.models import (
     ChatMessage,
     MessageKind,
@@ -18,8 +17,6 @@ from openminion.cli.presentation.markers import token_rich_style as _style
 from openminion.cli.presentation.theme import handle_theme
 from openminion.cli.presentation.theme_roots import resolve_theme_data_root
 from openminion.cli.presentation.detail_modes import resolve_details_mode
-from .delegation import run_slash_delegate
-from .model_setup import handle_model_setup
 from openminion.cli.presentation.slash_commands import (
     format_slash_help,
     terminal_slash_commands,
@@ -35,9 +32,6 @@ from openminion.cli.presentation.visible_parity import (
     render_tasks_report,
     statusline_label,
 )
-from openminion.cli.presentation.browser import render_browser_command
-from openminion.cli.presentation.graph import render_graph_command
-
 from ..overlays import TerminalOverlayPresenter
 from ..status_line import TerminalStatusLine
 from ..transcript import TerminalTranscript
@@ -50,7 +44,6 @@ from .renderers import (
     _render_tools_list,
     _switch_theme_variant,
 )
-from .project import run_init_command, run_slash_goal, run_slash_project
 from .sessions import (
     close_current_session,
     handle_room_slash,
@@ -635,6 +628,7 @@ def _handle_visible_parity_slash(
             )
         )
     elif cmd == "/graph":
+        from openminion.cli.presentation.graph import render_graph_command
         console.print(Text(render_graph_command(arg), style=_system_style()))
     elif cmd == "/skills":
         console.print(
@@ -644,6 +638,7 @@ def _handle_visible_parity_slash(
             )
         )
     elif cmd == "/browser":
+        from openminion.cli.presentation.browser import render_browser_command
         console.print(
             Text(
                 render_browser_command(arg, working_dir=working_dir),
@@ -680,6 +675,7 @@ def _handle_visible_parity_slash(
             )
         )
     elif cmd == "/goal":
+        from .project import run_slash_goal
         run_slash_goal(
             text,
             runtime=runtime,
@@ -692,6 +688,8 @@ def _render_tools_command(runtime: Any, console: Console, text: str) -> None:
     if text.strip() == "/tools":
         _render_tools_list(runtime=runtime, console=console)
     else:
+        from openminion.cli.interactive.tool_exposure import tool_exposure_command
+
         console.print(tool_exposure_command(runtime, text))
 
 
@@ -708,6 +706,8 @@ async def _handle_session_slash(
     if cmd == "/clear":
         transcript.clear_messages()
     elif cmd == "/init":
+        from .project import run_init_command
+
         run_init_command(
             runtime=runtime,
             console=console,
@@ -759,7 +759,6 @@ async def _handle_slash(
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> bool:
     cmd = text.split(maxsplit=1)[0]
-
     if cmd in ("/exit", "/quit"):
         return True
     if cmd in ("/", "/help"):
@@ -776,9 +775,11 @@ async def _handle_slash(
     ):
         return False
     if cmd == "/delegate":
+        from .delegation import run_slash_delegate
         await run_slash_delegate(text, runtime, console, approval_callback, transcript)
         return False
     if cmd == "/project":
+        from .project import run_slash_project
         await run_slash_project(
             text,
             runtime=runtime,
@@ -864,6 +865,8 @@ async def _handle_tool_view_slash(
         _handle_slash_theme(text, runtime=runtime, console=console)
     elif cmd == "/model":
         if _slash_arg(text).strip() == "setup":
+            from .model_setup import handle_model_setup
+
             await handle_model_setup(runtime=runtime, console=console, overlay=overlay)
         else:
             _handle_slash_model(text, runtime=runtime, console=console)

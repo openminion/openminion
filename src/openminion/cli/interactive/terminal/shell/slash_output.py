@@ -16,10 +16,6 @@ from openminion.cli.status.models import (
     build_memory_context_review,
     render_memory_context_review,
 )
-from openminion.cli.presentation.telemetry import (
-    render_telemetry_slash,
-    render_trace_slash,
-)
 from openminion.cli.presentation.tokens import render_tokens_slash
 from ..overlays import TerminalOverlayPresenter
 from ..status_line import TerminalStatusLine
@@ -61,12 +57,14 @@ def render_context_review(runtime: Any, args: str) -> str:
             options["artifacts_dir"] = value
 
     payload = runtime.context_trace_payload(session_id=options["session_id"])
-    return render_memory_context_review(
-        build_memory_context_review(
-            payload,
-            canary_path=options["canary"],
-            calibration_path=options["calibration"],
-            artifacts_dir=options["artifacts_dir"],
+    return str(
+        render_memory_context_review(
+            build_memory_context_review(
+                payload,
+                canary_path=options["canary"],
+                calibration_path=options["calibration"],
+                artifacts_dir=options["artifacts_dir"],
+            )
         )
     )
 
@@ -133,12 +131,17 @@ def handle_debug_output_slash(
             )
         )
         return True
+    if cmd not in {"/telemetry", "/trace"}:
+        return False
+    from openminion.cli.presentation.telemetry import (
+        render_telemetry_slash,
+        render_trace_slash,
+    )
+
     if cmd == "/telemetry":
         renderer = render_telemetry_slash
     elif cmd == "/trace":
         renderer = render_trace_slash
-    else:
-        return False
     parts = text.split(maxsplit=1)
     console.print(renderer(parts[1] if len(parts) > 1 else "", runtime=runtime))
     return True

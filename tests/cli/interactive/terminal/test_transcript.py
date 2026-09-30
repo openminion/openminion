@@ -168,6 +168,31 @@ def test_reset_session_state_clears_live_render_state() -> None:
     assert t._hidden_failed_count == 0
 
 
+def test_begin_turn_clears_live_narration_ids_for_reused_calls() -> None:
+    t, buf = _make_transcript()
+    t._live_narrated_call_ids.add("reused-call")
+
+    handle = t.begin_turn()
+    t.push_message(
+        ChatMessage(
+            kind=MessageKind.TOOL,
+            sender="tool",
+            body="",
+            tool_event=ToolEvent(
+                tool_name="read",
+                args={"path": "README.md"},
+                content="later-turn-marker",
+                full_content="later-turn-marker",
+                exit_code=0,
+                call_id="reused-call",
+            ),
+        )
+    )
+    handle.complete(final_text="done")
+
+    assert "later-turn-marker" in buf.getvalue()
+
+
 def test_copy_last_copyable_message_falls_back() -> None:
     t, _ = _make_transcript()
     t.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body="first"))

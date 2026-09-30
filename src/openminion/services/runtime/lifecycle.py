@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any, Callable
 import logging
@@ -392,9 +391,6 @@ class LifecycleService:
                 raise RuntimeError(
                     "LifecycleService entry point groups must be non-empty strings."
                 )
-        # Touch entry point groups so missing/renamed groups surface during tests.
-        for group in groups:
-            entry_points(group=group)
 
 
 def _channel_runtime_status(

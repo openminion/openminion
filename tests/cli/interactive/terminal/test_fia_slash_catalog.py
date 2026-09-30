@@ -546,10 +546,10 @@ def test_terminal_room_start_runs_exact_task() -> None:
 
 
 def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> None:
-    from openminion.cli.interactive.terminal.shell import actions
+    from openminion.cli.presentation import browser
 
     monkeypatch.setattr(
-        actions,
+        browser,
         "render_browser_command",
         lambda _arg, *, working_dir: "Browser: providers=pinchtab sidecar=ready",
     )
@@ -764,16 +764,7 @@ def test_copy_uses_latest_copyable_message(monkeypatch, tmp_path: Path) -> None:
     assert "copied last message" in buf.getvalue()
 
 
-def test_prompt_loop_routes_output_slashes_through_transcript(
-    monkeypatch, tmp_path: Path
-) -> None:
-    from openminion.cli.interactive.terminal.shell import actions
-
-    monkeypatch.setattr(
-        actions,
-        "render_browser_command",
-        lambda _arg, *, working_dir: "Browser: providers=pinchtab sidecar=ready",
-    )
+def test_prompt_loop_routes_output_slashes_through_transcript(tmp_path: Path) -> None:
     buf = io.StringIO()
     console = Console(file=buf, force_terminal=False, width=160)
     transcript = TerminalTranscript(console)
