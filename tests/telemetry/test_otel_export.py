@@ -357,6 +357,48 @@ def test_paired_llm_call_events_collapse_to_single_span() -> None:
     assert record.attributes.get("gen_ai.usage.input_tokens") == 100
 
 
+def test_paired_spans_with_same_call_id_are_isolated_by_trace() -> None:
+    exporter, sink = _make_exporter()
+
+    exporter.export(
+        _event(
+            "llm.call.started",
+            trace_id="trace-a",
+            timestamp=1000.0,
+            llm_call_id="call-shared",
+            model="model-a",
+        )
+    )
+    exporter.export(
+        _event(
+            "llm.call.started",
+            trace_id="trace-b",
+            timestamp=2000.0,
+            llm_call_id="call-shared",
+            model="model-b",
+        )
+    )
+    exporter.export(
+        _event(
+            "llm.call.completed",
+            trace_id="trace-a",
+            timestamp=1001.0,
+            llm_call_id="call-shared",
+        )
+    )
+    exporter.export(
+        _event(
+            "llm.call.completed",
+            trace_id="trace-b",
+            timestamp=2001.0,
+            llm_call_id="call-shared",
+        )
+    )
+
+    spans = [record for record in sink.records if record.kind == "span"]
+    assert [record.name for record in spans] == ["chat model-a", "chat model-b"]
+
+
 def test_paired_rlm_tick_events_collapse_to_single_span() -> None:
     exporter, sink = _make_exporter()
 
@@ -418,10 +460,10 @@ def test_execution_parent_eviction_discards_current_deferred_records() -> None:
     for i in range(1, cap + 1):
         exporter.export(_event("agent.execution.started", execution_id=f"exec-{i}"))
 
-    assert "agent.execution.started:exec-0" not in exporter._pending_paired_spans
-    assert "exec-0" not in exporter._deferred_spans
-    assert "exec-0" not in exporter._deferred_events
-    assert "exec-0" not in exporter._deferred_logs
+    assert not any(slot[2] == "exec-0" for slot in exporter._pending_paired_spans)
+    assert not any(scope[1] == "exec-0" for scope in exporter._deferred_spans)
+    assert not any(scope[1] == "exec-0" for scope in exporter._deferred_events)
+    assert not any(scope[1] == "exec-0" for scope in exporter._deferred_logs)
     assert len(exporter._pending_paired_spans) == cap
     assert sink.records == []
 

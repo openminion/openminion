@@ -18,6 +18,7 @@ OUTPUT_TOKEN_KEYS = (
     "completion_tokens",
     "total_output_tokens_used",
 )
+REASONING_TOKEN_KEYS = ("reasoning_tokens",)
 CACHE_READ_TOKEN_KEYS = (
     "cache_read_tokens",
     "cached_tokens",
@@ -107,6 +108,9 @@ class TokenUsageCoverage:
     output_tokens: TokenUsageDimensionCoverage = field(
         default_factory=TokenUsageDimensionCoverage
     )
+    reasoning_tokens: TokenUsageDimensionCoverage = field(
+        default_factory=TokenUsageDimensionCoverage
+    )
     total_tokens: TokenUsageDimensionCoverage = field(
         default_factory=TokenUsageDimensionCoverage
     )
@@ -154,6 +158,7 @@ class TokenUsageCoverage:
             "llm_call_id_present_events": self.llm_call_id_present_events,
             "input_tokens": self.input_tokens.as_payload(),
             "output_tokens": self.output_tokens.as_payload(),
+            "reasoning_tokens": self.reasoning_tokens.as_payload(),
             "total_tokens": self.total_tokens.as_payload(),
             "cache_read_tokens": self.cache_read_tokens.as_payload(),
             "cache_write_tokens": self.cache_write_tokens.as_payload(),
@@ -245,6 +250,7 @@ def coverage_from_session_events(
         ),
         input_tokens=_dimension(INPUT_TOKEN_KEYS),
         output_tokens=_dimension(OUTPUT_TOKEN_KEYS),
+        reasoning_tokens=_dimension(REASONING_TOKEN_KEYS),
         total_tokens=_dimension(TOTAL_TOKEN_KEYS),
         cache_read_tokens=_dimension(CACHE_READ_TOKEN_KEYS),
         cache_write_tokens=_dimension(CACHE_WRITE_TOKEN_KEYS),

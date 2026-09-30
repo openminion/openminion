@@ -42,6 +42,7 @@ def _response_usage_payload(response: Any) -> dict[str, Any]:
         "total_source": "total_source",
         "cached_tokens": "cached_tokens",
         "cache_creation_tokens": "cache_creation_tokens",
+        "reasoning_tokens": "reasoning_tokens",
     }
     return {
         output_key: normalized[source_key]

@@ -113,6 +113,7 @@ def _bridge_usage_payload(usage_info: Any) -> dict[str, Any]:
     total_tokens = getattr(usage_info, "total_tokens", None)
     cached_tokens = getattr(usage_info, "cached_tokens", None)
     cache_creation_tokens = getattr(usage_info, "cache_creation_tokens", None)
+    reasoning_tokens = getattr(usage_info, "reasoning_tokens", None)
     if input_tokens is not None:
         usage["prompt_tokens"] = int(input_tokens)
     if output_tokens is not None:
@@ -124,6 +125,8 @@ def _bridge_usage_payload(usage_info: Any) -> dict[str, Any]:
         usage["cached_tokens"] = int(cached_tokens)
     if cache_creation_tokens is not None:
         usage["cache_creation_tokens"] = int(cache_creation_tokens)
+    if reasoning_tokens is not None:
+        usage["reasoning_tokens"] = int(reasoning_tokens)
     return usage
 
 

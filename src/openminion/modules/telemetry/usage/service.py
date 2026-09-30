@@ -502,6 +502,7 @@ class StatsService:
                 session_id,
                 limit=fetch_limit,
                 types=sorted(event_types) if event_types else None,
+                newest_first=fetch_limit is not None,
             )
             applied_limit = normalized_limit
         elif hasattr(self._store, "list_events"):
@@ -509,7 +510,7 @@ class StatsService:
             events = self._store.list_events(
                 session_id=session_id,
                 limit=applied_limit + 1,
-                newest_first=False,
+                newest_first=True,
             )
         else:
             return _EventReadResult(
@@ -523,8 +524,11 @@ class StatsService:
         included_events = (
             raw_events[:applied_limit] if applied_limit is not None else raw_events
         )
+        normalized_events = [
+            _normalize_session_event(event) for event in included_events
+        ]
         return _EventReadResult(
-            events=tuple(_normalize_session_event(event) for event in included_events),
+            events=tuple(sort_session_events(normalized_events)),
             complete=complete,
             events_scanned=len(raw_events),
             event_limit=applied_limit,

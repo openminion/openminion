@@ -561,8 +561,8 @@ def _usage_from_openai_like(payload: Any) -> UsageInfo:
     if not isinstance(payload, dict):
         return UsageInfo()
 
-    prompt_tokens = payload.get("prompt_tokens")
-    completion_tokens = payload.get("completion_tokens")
+    prompt_tokens = payload.get("prompt_tokens", payload.get("input_tokens"))
+    completion_tokens = payload.get("completion_tokens", payload.get("output_tokens"))
     total_tokens = payload.get("total_tokens")
     total_source: str | None = None
     if isinstance(total_tokens, int) and not isinstance(total_tokens, bool):
@@ -572,11 +572,22 @@ def _usage_from_openai_like(payload: Any) -> UsageInfo:
         total_source = "derived"
 
     cached_tokens: int | None = None
-    details = payload.get("prompt_tokens_details")
+    details = payload.get("prompt_tokens_details") or payload.get(
+        "input_tokens_details"
+    )
     if isinstance(details, dict):
         raw = details.get("cached_tokens")
         if isinstance(raw, int):
             cached_tokens = raw
+
+    reasoning_tokens: int | None = None
+    output_details = payload.get("output_tokens_details") or payload.get(
+        "completion_tokens_details"
+    )
+    if isinstance(output_details, dict):
+        raw = output_details.get("reasoning_tokens")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            reasoning_tokens = raw
 
     return UsageInfo(
         input_tokens=prompt_tokens if isinstance(prompt_tokens, int) else None,
@@ -584,6 +595,7 @@ def _usage_from_openai_like(payload: Any) -> UsageInfo:
         total_tokens=total_tokens if isinstance(total_tokens, int) else None,
         total_source=total_source,
         cached_tokens=cached_tokens,
+        reasoning_tokens=reasoning_tokens,
     )
 
 

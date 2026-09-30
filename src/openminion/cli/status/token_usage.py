@@ -341,10 +341,16 @@ def format_token_count(value: int | None) -> str:
 
 
 def format_context_window(snapshot: TokenUsageSnapshot | None) -> str:
-    if snapshot is None or snapshot.context_used_tokens is None:
+    if snapshot is None:
         return "—"
     used = snapshot.context_used_tokens
     limit = snapshot.context_limit_tokens
+    if used is None:
+        return (
+            f"unknown / {format_token_count(limit)}"
+            if limit is not None and limit > 0
+            else "—"
+        )
     used_text = format_token_count(used)
     if limit is None or limit <= 0:
         return used_text
