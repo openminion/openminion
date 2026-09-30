@@ -95,6 +95,7 @@ def validate_qualification_evidence(evidence: dict, source: dict) -> dict:
             raise ValueError("invalid target qualification evidence")
         identity = f"{target.get('platform')}-{target.get('arch')}"
         actual_targets.add(identity)
+        checks = target.get("checks")
         if (
             not re.fullmatch(r"[a-f0-9]{64}", target.get("package_sha256", ""))
             or not re.fullmatch(r"[a-f0-9]{64}", target.get("app_asar_sha256", ""))
@@ -103,7 +104,9 @@ def validate_qualification_evidence(evidence: dict, source: dict) -> dict:
                 target.get("verification_id", ""),
             )
             or target.get("result") != "passed"
-            or set(target.get("checks", [])) != QUALIFICATION_CHECKS
+            or not isinstance(checks, list)
+            or len(checks) != len(QUALIFICATION_CHECKS)
+            or set(checks) != QUALIFICATION_CHECKS
         ):
             raise ValueError("invalid target qualification evidence")
     if actual_targets != DESKTOP_TARGETS:

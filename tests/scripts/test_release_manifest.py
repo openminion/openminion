@@ -101,7 +101,15 @@ def test_certification_creates_a_new_same_wheel_revision_with_evidence_pointer()
 
 @pytest.mark.parametrize(
     "mutation",
-    ["development-version", "wheel", "target", "checks", "bounds", "release-id"],
+    [
+        "development-version",
+        "wheel",
+        "target",
+        "checks",
+        "duplicate-checks",
+        "bounds",
+        "release-id",
+    ],
 )
 def test_certification_rejects_unqualified_or_mutated_evidence(mutation):
     source = source_record("1.0.0", "b" * 40, "source.1", metadata())
@@ -116,6 +124,8 @@ def test_certification_rejects_unqualified_or_mutated_evidence(mutation):
         evidence["targets"].pop()
     elif mutation == "checks":
         evidence["targets"][0]["checks"].pop()
+    elif mutation == "duplicate-checks":
+        evidence["targets"][0]["checks"].append(evidence["targets"][0]["checks"][0])
     elif mutation == "bounds":
         evidence["compatibility"]["min_version"] = "2.0.0"
     else:
