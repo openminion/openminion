@@ -30,8 +30,7 @@ def resolve_config_path(config_path: str | None, home_root: Path | None = None) 
             home_root = Path(env_home).expanduser()
 
     config_root = _resolve_config_root(home_root)
-    filename: str = DEFAULT_CONFIG_FILENAME
-    return (config_root / filename).resolve()
+    return (config_root / str(DEFAULT_CONFIG_FILENAME)).resolve()
 
 
 def _resolve_config_root(home_root: Path | None) -> Path:
