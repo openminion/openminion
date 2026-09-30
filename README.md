@@ -73,6 +73,7 @@ approved run window, provider/model access, workspace, and budgets.
 ```bash
 openminion config init
 openminion setup --list-providers
+openminion setup --list-providers --json
 openminion run "hello"
 openminion
 openminion tools list
@@ -149,7 +150,8 @@ Setup asks for a provider, model, and credential. For built-in providers,
 OpenMinion selects the API adapter automatically. For example, MiniMax remains
 the provider when it uses an OpenAI-compatible API. Press Enter at the hosted
 provider check to send one recommended test request before Focus opens; the
-request may consume a small amount of quota.
+request may consume a small amount of quota. Use the provider-list commands
+above for the current human-readable or machine-readable catalog.
 
 An explicit `--dir` trusts that workspace for the current process. A bare
 launch also trusts an ordinary Git worktree; another implicit directory starts
