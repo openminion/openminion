@@ -14,7 +14,12 @@ from urllib.request import Request, urlopen
 from packaging.version import Version
 
 from scripts.ci.binary_manifest import official_binary_record
-from scripts.ci.release_manifest import official_record
+from scripts.ci.release_manifest import (
+    DESKTOP_REPOSITORY,
+    certified_source_record,
+    evidence_path,
+    official_record,
+)
 
 
 REPOSITORY = "openminion/openminion"
@@ -137,6 +142,17 @@ def read_public(url: str, expected: bytes) -> None:
         raise ValueError("public readback differs; publication is unconfirmed")
 
 
+def read_public_bytes(url: str) -> bytes:
+    request = Request(url, headers={"Cache-Control": "no-cache"})
+    with urlopen(request, timeout=15) as response:
+        if response.url != url:
+            raise ValueError("unexpected public metadata redirect")
+        content = response.read(1024 * 1024 + 1)
+    if len(content) > 1024 * 1024:
+        raise ValueError("public metadata exceeds size limit")
+    return content
+
+
 def github(*args: str) -> str:
     return subprocess.run(
         ["gh", *args, "--repo", REPOSITORY],
@@ -145,6 +161,96 @@ def github(*args: str) -> str:
         text=True,
         timeout=60,
     ).stdout.strip()
+
+
+def github_api(repository: str, path: str, *args: str) -> str:
+    return subprocess.run(
+        ["gh", "api", f"repos/{repository}/{path}", *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    ).stdout.strip()
+
+
+def load_source_record(
+    repository: Path, version: str, source_release_id: str
+) -> tuple[dict, str]:
+    """Load one immutable source record already reachable from current main."""
+    path = f"{BASE}/pypi/releases/{version}/{source_release_id}.json"
+    destination = repository / path
+    if not destination.is_file():
+        raise ValueError(
+            "source record is not present on the checked-out main revision"
+        )
+    content = destination.read_bytes()
+    feed = json.loads((repository / BASE / "pypi/channels/stable.json").read_bytes())
+    references = [
+        item for item in feed["releases"] if item["manifest_url"].endswith("/" + path)
+    ]
+    if len(references) != 1:
+        raise ValueError("source record is not uniquely published in the stable feed")
+    reference = references[0]
+    if hashlib.sha256(content).hexdigest() != reference["manifest_sha256"]:
+        raise ValueError("source record differs from its stable feed reference")
+    match = re.fullmatch(
+        re.escape(RAW) + rf"/([a-f0-9]{{40}})/{re.escape(path)}",
+        reference["manifest_url"],
+    )
+    if match is None:
+        raise ValueError("source record URL is not commit pinned")
+    record_commit = match.group(1)
+    git(repository, "merge-base", "--is-ancestor", record_commit, "HEAD")
+    record = json.loads(content)
+    if (
+        record.get("runtime_version"),
+        record.get("release_id"),
+        record.get("distribution"),
+    ) != (version, source_release_id, "pypi"):
+        raise ValueError("source record identity does not match the request")
+    return record, record_commit
+
+
+def source_certification_record(
+    repository: Path,
+    version: str,
+    source_release_id: str,
+    certification_release_id: str,
+    evidence_commit: str,
+    evidence_id: str,
+    published_at: str,
+) -> dict:
+    """Verify public qualification evidence and prepare a same-wheel revision."""
+    source, _ = load_source_record(repository, version, source_release_id)
+    official = official_record(
+        version, source["source_commit"], certification_release_id
+    )
+    if (
+        source.get("pypi") != official["pypi"]
+        or source.get("release_notes_url") != official["release_notes_url"]
+    ):
+        raise ValueError("published source record differs from the official PyPI wheel")
+    status = github_api(
+        DESKTOP_REPOSITORY,
+        f"compare/{evidence_commit}...main",
+        "--jq",
+        ".status",
+    )
+    if status not in {"ahead", "identical"}:
+        raise ValueError("Desktop evidence commit is not reachable from main")
+    path = evidence_path("qualification", version, evidence_id)
+    url = f"https://raw.githubusercontent.com/{DESKTOP_REPOSITORY}/{evidence_commit}/{path}"
+    evidence_bytes = read_public_bytes(url)
+    record = certified_source_record(
+        source,
+        certification_release_id,
+        json.loads(evidence_bytes),
+        evidence_commit,
+        evidence_id,
+        evidence_bytes,
+    )
+    record["published_at"] = published_at
+    return record
 
 
 def verify_published(workspace: Path, feed_ref: str = BRANCH) -> None:
@@ -312,6 +418,17 @@ def main() -> None:
     parser.add_argument("--producer-wheel", type=Path)
     parser.add_argument("--binary-release-tag")
     parser.add_argument("--binary-release-id")
+    parser.add_argument("--certify-source-version")
+    parser.add_argument("--source-release-id")
+    parser.add_argument("--certification-release-id")
+    parser.add_argument("--desktop-evidence-commit")
+    parser.add_argument("--desktop-evidence-id")
+    parser.add_argument(
+        "--repository",
+        type=Path,
+        default=Path("."),
+        help="Full-history main checkout used to resolve immutable source records",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verify-main", action="store_true")
     args = parser.parse_args()
@@ -324,9 +441,61 @@ def main() -> None:
     if args.binary_release_tag or args.binary_release_id:
         if not args.binary_release_tag or not args.binary_release_id:
             parser.error("binary publication requires release tag and release id")
-        if any((args.version, args.source_commit, args.release_id, args.published_at)):
+        if any(
+            (
+                args.version,
+                args.source_commit,
+                args.release_id,
+                args.published_at,
+                args.certify_source_version,
+                args.source_release_id,
+                args.certification_release_id,
+                args.desktop_evidence_commit,
+                args.desktop_evidence_id,
+            )
+        ):
             parser.error("binary publication does not accept source-release inputs")
         record = official_binary_record(args.binary_release_tag, args.binary_release_id)
+        if args.dry_run:
+            print(
+                json.dumps(
+                    {"record_path": record_path(record), "record": record}, indent=2
+                )
+            )
+            return
+        if args.workspace is None:
+            parser.error("publication requires a fresh workspace directory")
+        print(json.dumps(publish(record, args.workspace)))
+        return
+    certification_inputs = (
+        args.certify_source_version,
+        args.source_release_id,
+        args.certification_release_id,
+        args.desktop_evidence_commit,
+        args.desktop_evidence_id,
+    )
+    if any(certification_inputs):
+        if not all(certification_inputs) or not args.published_at:
+            parser.error(
+                "source certification requires version, source and certification "
+                "release IDs, Desktop evidence commit and ID, and published-at"
+            )
+        if any(
+            (args.version, args.source_commit, args.release_id, args.producer_wheel)
+        ):
+            parser.error("source certification does not accept source-release inputs")
+        if not args.published_at.endswith("Z"):
+            parser.error("published-at must be a UTC timestamp")
+        datetime.fromisoformat(args.published_at)
+        record = source_certification_record(
+            args.repository,
+            args.certify_source_version,
+            args.source_release_id,
+            args.certification_release_id,
+            args.desktop_evidence_commit,
+            args.desktop_evidence_id,
+            args.published_at,
+        )
         if args.dry_run:
             print(
                 json.dumps(

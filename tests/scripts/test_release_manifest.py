@@ -8,7 +8,12 @@ from zipfile import ZipFile
 
 import pytest
 
-from scripts.ci.release_manifest import official_record, source_record
+from scripts.ci.release_manifest import (
+    QUALIFICATION_CHECKS,
+    certified_source_record,
+    official_record,
+    source_record,
+)
 
 
 def metadata():
@@ -27,12 +32,113 @@ def metadata():
     }
 
 
+def qualification(source):
+    return {
+        "schema_version": 1,
+        "kind": "openminion-source-runtime-qualification",
+        "runtime": {
+            "version": source["runtime_version"],
+            "source_release_id": source["release_id"],
+            "wheel_sha256": source["pypi"]["sha256"],
+            "wheel_size_bytes": source["pypi"]["size_bytes"],
+        },
+        "desktop": {"version": "1.2.3", "source_commit": "c" * 40},
+        "compatibility": {
+            "min_version": "1.2.0",
+            "max_version_exclusive": "1.3.0",
+        },
+        "targets": [
+            {
+                "platform": platform,
+                "arch": arch,
+                "package_sha256": "d" * 64,
+                "app_asar_sha256": "e" * 64,
+                "verification_id": f"{platform}-{arch}-1",
+                "result": "passed",
+                "checks": sorted(QUALIFICATION_CHECKS),
+            }
+            for platform, arch in (
+                ("darwin", "arm64"),
+                ("linux", "x64"),
+                ("win32", "x64"),
+            )
+        ],
+        "completed_at": "2026-09-30T12:00:00Z",
+    }
+
+
 def test_source_record_keeps_uncertified_bounds_and_exact_wheel():
     result = source_record("1.0.0", "b" * 40, "source.1", metadata())
     assert result["desktop_compatibility"] is None
     assert result["promotion_status"] == "promoted"
     assert result["pypi"]["sha256"] == "a" * 64
     assert "artifacts" not in result
+
+
+def test_certification_creates_a_new_same_wheel_revision_with_evidence_pointer():
+    source = source_record("1.0.0", "b" * 40, "source.1", metadata())
+    evidence = qualification(source)
+    evidence_bytes = json.dumps(evidence).encode()
+    result = certified_source_record(
+        source,
+        "source-certification.1",
+        evidence,
+        "f" * 40,
+        "desktop-1.2.3",
+        evidence_bytes,
+    )
+    assert result["pypi"] == source["pypi"]
+    assert result["desktop_compatibility"] == {
+        "min_version": "1.2.0",
+        "max_version_exclusive": "1.3.0",
+    }
+    assert result["certification"]["commit"] == "f" * 40
+    assert result["certification"]["path"].endswith(
+        "/qualification/1.0.0/desktop-1.2.3.json"
+    )
+    assert source["desktop_compatibility"] is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "development-version",
+        "wheel",
+        "target",
+        "checks",
+        "duplicate-checks",
+        "bounds",
+        "release-id",
+    ],
+)
+def test_certification_rejects_unqualified_or_mutated_evidence(mutation):
+    source = source_record("1.0.0", "b" * 40, "source.1", metadata())
+    evidence = qualification(source)
+    release_id = "source-certification.1"
+    if mutation == "development-version":
+        evidence["desktop"]["version"] = "0.0.0"
+        evidence["compatibility"]["min_version"] = "0.0.0"
+    elif mutation == "wheel":
+        evidence["runtime"]["wheel_sha256"] = "0" * 64
+    elif mutation == "target":
+        evidence["targets"].pop()
+    elif mutation == "checks":
+        evidence["targets"][0]["checks"].pop()
+    elif mutation == "duplicate-checks":
+        evidence["targets"][0]["checks"].append(evidence["targets"][0]["checks"][0])
+    elif mutation == "bounds":
+        evidence["compatibility"]["min_version"] = "2.0.0"
+    else:
+        release_id = source["release_id"]
+    with pytest.raises(ValueError):
+        certified_source_record(
+            source,
+            release_id,
+            evidence,
+            "f" * 40,
+            "desktop-1.2.3",
+            json.dumps(evidence).encode(),
+        )
 
 
 @pytest.mark.parametrize("version", ["1.0.0rc1", "1.0.0.dev1", "1.0.0+local", "01.0.0"])
