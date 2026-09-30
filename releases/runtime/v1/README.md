@@ -17,7 +17,11 @@ binary availability advance independently; null Desktop compatibility is not
 an accepted Desktop update.
 
 A successful production PyPI release prepares a source metadata-only PR for
-main. Binary metadata is separate: a maintainer manually dispatches `Runtime
+main with null Desktop compatibility. After exact packaged qualification, a
+maintainer may dispatch `Runtime manifests` again to create a new immutable
+same-wheel source revision with compatibility bounds and a commit-pinned
+`openminion/desktop` evidence reference. The original source record remains
+unchanged. Binary metadata is separate: a maintainer manually dispatches `Runtime
 manifests` with the immutable `openminion/runtime` release tag and a unique
 release ID. The verifier re-downloads every paired CLI/daemon asset, checks
 GitHub's recorded digests and sizes, requires final native verification IDs and
@@ -29,4 +33,4 @@ squash/rebase, to preserve referenced record SHAs. Verify public readback, then
 back-merge main into dev without regenerating metadata from dev HEAD. Never
 overwrite retained records or publish private candidate records.
 
-See [the next-release checklist](../../../RELEASING.md#next-release-runtime-metadata-checklist).
+See [the runtime metadata checklist](../../../RELEASING.md#runtime-metadata-checklist).
