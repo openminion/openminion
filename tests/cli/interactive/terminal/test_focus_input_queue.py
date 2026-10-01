@@ -1054,7 +1054,9 @@ async def test_terminal_approval_callback_serializes_bursty_session_grants() -> 
 
 
 @pytest.mark.asyncio
-async def test_terminal_approval_grant_is_exact_invocation_scoped_and_session_local() -> None:
+async def test_terminal_approval_grant_is_exact_invocation_scoped_and_session_local() -> (
+    None
+):
     prompts: list[str] = []
 
     class _Overlay:

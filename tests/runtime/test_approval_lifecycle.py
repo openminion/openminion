@@ -50,9 +50,7 @@ def _start_approval(
         )
     )
     thread.start()
-    requested = next(
-        handle.subscribe(after_sequence=after_sequence, timeout_s=1.0)
-    )
+    requested = next(handle.subscribe(after_sequence=after_sequence, timeout_s=1.0))
     assert requested.kind == "approval"
     assert requested.data["phase"] == "requested"
     return thread, requested
@@ -66,12 +64,16 @@ def test_turn_handle_resolves_exact_approval_and_isolates_reused_source_id() -> 
     first_thread, first = _start_approval(handle, results, events=events)
     replayed = next(handle.subscribe(timeout_s=1.0))
     assert replayed.event_id == first.event_id
-    assert handle.resolve_approval(
-        approval_id="wrong-approval", decision="allow_once"
-    ) is False
-    assert handle.resolve_approval(
-        approval_id=first.data["approval_id"], decision="allow_once"
-    ) is True
+    assert (
+        handle.resolve_approval(approval_id="wrong-approval", decision="allow_once")
+        is False
+    )
+    assert (
+        handle.resolve_approval(
+            approval_id=first.data["approval_id"], decision="allow_once"
+        )
+        is True
+    )
     first_thread.join(timeout=1.0)
 
     second_thread, second = _start_approval(
@@ -81,9 +83,10 @@ def test_turn_handle_resolves_exact_approval_and_isolates_reused_source_id() -> 
         events=events,
     )
     assert second.data["approval_id"] != first.data["approval_id"]
-    assert handle.resolve_approval(
-        approval_id=second.data["approval_id"], decision="deny"
-    ) is True
+    assert (
+        handle.resolve_approval(approval_id=second.data["approval_id"], decision="deny")
+        is True
+    )
     second_thread.join(timeout=1.0)
 
     assert results == [True, False]
@@ -226,9 +229,7 @@ def test_runtime_manager_shutdown_releases_pending_approval() -> None:
         TurnRequest("trace-shutdown", "main", "session", "run")
     )
     requested = next(
-        chunk
-        for chunk in handle.subscribe(timeout_s=1.0)
-        if chunk.kind == "approval"
+        chunk for chunk in handle.subscribe(timeout_s=1.0) if chunk.kind == "approval"
     )
     assert requested.data["phase"] == "requested"
 
@@ -280,7 +281,9 @@ def test_daemon_negotiated_approval_emits_stream_and_session_events() -> None:
     handle = _handle(trace_id="trace-daemon")
     runtime = SimpleNamespace(
         runtime_manager=SimpleNamespace(
-            get_turn_handle=lambda trace_id: handle if trace_id == handle.trace_id else None
+            get_turn_handle=lambda trace_id: (
+                handle if trace_id == handle.trace_id else None
+            )
         ),
         sessions=SimpleNamespace(
             append_event=lambda **kwargs: session_events.append(dict(kwargs))
