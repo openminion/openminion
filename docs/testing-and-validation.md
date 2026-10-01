@@ -100,7 +100,8 @@ suppress this evidence. Required merge checks remain a repository setting,
 verified separately from workflow presence.
 
 For an authorized real-provider baseline, the existing runner selects exactly
-two cases: an exact final reply and a correlated current-time acquisition.
+three cases: an exact final reply, a correlated current-time acquisition, and
+durable memory recall in a distinct session.
 From the package root with a configured MiniMax key in the environment:
 
 ```bash
@@ -110,12 +111,13 @@ export OPENMINION_CLI_FOCUS_E2E_RUNNER_TIMEOUT_SECONDS=480
 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py baseline-live
 ```
 
-The fixture contains no key and applies explicit call/time limits. The two
+The fixture contains no key and applies explicit call/time limits. The three
 cases use read-only permissions and no host execution or auto-approval.
 The current public Focus surface has no time-only profile allowlist; the
 baseline rejects successful unrelated tool calls and does not claim to change
-runtime tool exposure. This smoke qualifies response/tool dispatch only;
-coding, research, approval, recovery and long work need their existing suites.
+runtime tool exposure. This smoke qualifies response, tool dispatch, and
+cross-session memory only; coding, research, approval, recovery, and long work
+need their existing suites.
 
 The manual-only `Focus live validation` workflow runs only on the default branch
 and uses the `focus-live-validation` environment's MiniMax secret. Its daily
@@ -214,10 +216,11 @@ PYTHONDONTWRITEBYTECODE=1 \
 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py tier-a
 ```
 
-This gate covers PTY answer/interrupt/queue behavior, approval and session-grant
-flows, and an isolated code edit/diff/validation/rollback journey. Live MiniMax
-smoke remains separate evidence for provider behavior and must not replace this
-deterministic gate.
+This gate covers approval, session grants, keyboard-interrupt handling, and an
+isolated code edit/diff/validation/rollback journey. Run `codex-first-local`
+when the claim also needs a real PTY queue and approval journey. Live MiniMax
+smoke remains separate evidence for provider behavior and must not replace
+these deterministic gates.
 
 Run live MiniMax interactive CLI smoke when a compatible config and credentials are
 available:
