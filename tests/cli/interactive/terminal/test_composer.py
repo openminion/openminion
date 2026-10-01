@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from prompt_toolkit.application import create_app_session
 from prompt_toolkit.completion import Completion
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit import PromptSession
@@ -240,6 +241,21 @@ def test_completion_menu_requests_clicks_without_all_motion_tracking() -> None:
     output.flush()
 
     assert stream.getvalue() == "\x1b[?1000h\x1b[?1006h"
+
+
+def test_composer_suppresses_unsupported_cursor_position_warning() -> None:
+    output = Vt100_Output(
+        stdout=io.StringIO(),
+        get_size=lambda: Size(rows=24, columns=80),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+        enable_cpr=True,
+    )
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=output):
+        composer = TerminalComposer()
+
+    assert output.enable_cpr is True
+    assert composer._session.app.renderer.cpr_not_supported_callback is None
 
 
 def _completion_menu_controls(node: object) -> list[CompletionsMenuControl]:

@@ -386,6 +386,9 @@ class TerminalComposer:
             reserve_space_for_menu=_COMPLETION_MENU_ROWS,
             style=_focus_prompt_style(color=self._color),
         )
+        output = self._session.app.output
+        if isinstance(output, Vt100_Output):
+            self._session.app.renderer.cpr_not_supported_callback = None
         _configure_completion_menu(self._session)
         _configure_bottom_input_layout(self._session)
 
