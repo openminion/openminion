@@ -50,6 +50,7 @@ def _complete_identity(module, identity):
             "runner_path": "/opt/owpr/performance_baseline.py",
             "runner_source_sha256": "c" * 64,
             "loaded_openminion_package_root": "/opt/owpr/openminion",
+            "loaded_openminion_package_source_sha256": "f" * 64,
             "runtime_environment": {
                 "resolved_python_executable": sys.executable,
                 "running_python_executable": sys.executable,
@@ -617,6 +618,20 @@ def test_dirty_fingerprint_includes_nested_untracked_file_bytes(
     second = module._dirty_worktree_fingerprint(tmp_path)
 
     assert first != second
+
+
+def test_package_source_hash_binds_relative_paths_and_bytes(tmp_path: Path) -> None:
+    module = _load_module()
+    package_root = tmp_path / "openminion"
+    package_root.mkdir()
+    source = package_root / "module.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+
+    first = module._package_source_sha256(str(package_root))
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+
+    assert first != module._package_source_sha256(str(package_root))
+    assert module._package_source_sha256(str(tmp_path / "missing")) == "unavailable"
 
 
 def test_requested_baseline_must_be_readable_and_well_formed(tmp_path: Path) -> None:
@@ -1260,6 +1275,45 @@ def test_runtime_manager_idle_fixture_has_fixed_geometry(tmp_path: Path) -> None
     }
 
 
+def test_runtime_manager_idle_interval_encloses_counter_snapshots(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    events: list[str] = []
+    original_process_metrics = module._process_metrics
+    original_perf_counter_ns = module.time.perf_counter_ns
+    original_sleep = module.time.sleep
+
+    def record_process_metrics(process_id=None):
+        events.append("process")
+        return original_process_metrics(process_id)
+
+    def record_timer() -> int:
+        events.append("timer")
+        return original_perf_counter_ns()
+
+    def record_sleep(seconds: float) -> None:
+        events.append("sleep")
+        original_sleep(seconds)
+
+    monkeypatch.setattr(module, "_process_metrics", record_process_metrics)
+    monkeypatch.setattr(module.time, "perf_counter_ns", record_timer)
+    monkeypatch.setattr(module.time, "sleep", record_sleep)
+
+    run = module._measure_runtime_manager_idle(
+        _omfla_options(module, tmp_path),
+        agent_count=1,
+        idle_interval_seconds=0.001,
+    )
+
+    assert run.ok is True
+    expected = ["timer", "process", "sleep", "process", "timer"]
+    assert any(
+        events[index : index + 5] == expected for index in range(len(events) - 4)
+    )
+
+
 def test_finish_inventory_does_not_inflate_in_process_tracemalloc_peak(
     tmp_path: Path,
     monkeypatch,
@@ -1795,6 +1849,9 @@ def test_run_baseline_writes_artifacts(tmp_path: Path) -> None:
     }
     assert payload["measurement_identity"]["dirty_tree_fingerprint"] != ("unavailable")
     assert payload["measurement_identity"]["runner_source_sha256"] != ("unavailable")
+    assert payload["measurement_identity"][
+        "loaded_openminion_package_source_sha256"
+    ] != ("unavailable")
     assert payload["measurement_identity"]["config_hash"] == module._stable_json_hash(
         payload["measurement_identity"]["runtime_config"]
     )
@@ -1886,6 +1943,7 @@ def test_run_baseline_rejects_source_drift_at_campaign_close(
                 "runner_path": "/opt/owpr/performance_baseline.py",
                 "runner_source_sha256": "c" * 64,
                 "loaded_openminion_package_root": "/opt/owpr/openminion",
+                "loaded_openminion_package_source_sha256": "f" * 64,
                 "runtime_environment": _bound_identity(
                     module,
                     scenario_id="repeated_local_turns",
@@ -1901,6 +1959,7 @@ def test_run_baseline_rejects_source_drift_at_campaign_close(
                 "runner_path": "/opt/owpr/performance_baseline.py",
                 "runner_source_sha256": "c" * 64,
                 "loaded_openminion_package_root": "/opt/owpr/openminion",
+                "loaded_openminion_package_source_sha256": "f" * 64,
                 "runtime_environment": _bound_identity(
                     module,
                     scenario_id="repeated_local_turns",

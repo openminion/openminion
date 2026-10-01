@@ -614,6 +614,24 @@ def _loaded_openminion_package_root() -> str:
     return str(Path(module_path).resolve().parent)
 
 
+def _package_source_sha256(package_root: str) -> str:
+    root = Path(package_root)
+    if not root.is_dir():
+        return "unavailable"
+    source_files = sorted(path for path in root.rglob("*.py") if path.is_file())
+    if not source_files:
+        return "unavailable"
+    digest = hashlib.sha256()
+    for path in source_files:
+        file_hash = _file_sha256(path)
+        if file_hash == "unavailable":
+            return "unavailable"
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file_hash.encode("ascii"))
+    return digest.hexdigest()
+
+
 def _installed_distribution_provenance() -> dict[str, Any]:
     distributions: dict[str, dict[str, Any]] = {}
     for distribution in importlib_metadata.distributions():
@@ -918,13 +936,15 @@ def _measurement_identity(
 
 
 def _campaign_source_identity(options: RunOptions) -> dict[str, Any]:
+    package_root = _loaded_openminion_package_root()
     return {
         "git_head": _git_head(options.workspace_root),
         "dirty_tree_fingerprint": _dirty_worktree_fingerprint(options.workspace_root),
         "dirty_worktree_summary": _dirty_worktree_summary(options.workspace_root),
         "runner_path": str(Path(__file__).resolve()),
         "runner_source_sha256": _file_sha256(Path(__file__)),
-        "loaded_openminion_package_root": _loaded_openminion_package_root(),
+        "loaded_openminion_package_root": package_root,
+        "loaded_openminion_package_source_sha256": _package_source_sha256(package_root),
         "runtime_environment": _runtime_environment_identity(options),
     }
 
@@ -934,7 +954,12 @@ def _campaign_source_identity_errors(
 ) -> list[str]:
     return [
         key
-        for key in ("git_head", "dirty_tree_fingerprint", "runner_source_sha256")
+        for key in (
+            "git_head",
+            "dirty_tree_fingerprint",
+            "runner_source_sha256",
+            "loaded_openminion_package_source_sha256",
+        )
         if str(expected.get(key) or "") in {"", "unknown", "unavailable"}
         or expected.get(key) != actual.get(key)
     ]
@@ -5616,6 +5641,7 @@ def _sample_identity_errors(
             "runner_path",
             "runner_source_sha256",
             "loaded_openminion_package_root",
+            "loaded_openminion_package_source_sha256",
         )
         if str(expected_identity.get(key) or "").strip()
         in {"", "unknown", "unavailable"}
@@ -5803,6 +5829,9 @@ def _run_to_artifact(
             "runner_path": campaign_source_identity["runner_path"],
             "loaded_openminion_package_root": campaign_source_identity[
                 "loaded_openminion_package_root"
+            ],
+            "loaded_openminion_package_source_sha256": campaign_source_identity[
+                "loaded_openminion_package_source_sha256"
             ],
             "runtime_environment": campaign_source_identity["runtime_environment"],
             "config_hash": _stable_json_hash(runtime_config),
