@@ -3,11 +3,11 @@
     "width": 72,
     "cursor": {
       "x": 30,
-      "y": 3
+      "y": 22
     },
     "rows": [
       {
-        "row": 0,
+        "row": 19,
         "text": "Status: Reviewing terminal rendering across narrow layouts and queued in",
         "styles": [
           {
@@ -21,7 +21,7 @@
         ]
       },
       {
-        "row": 2,
+        "row": 21,
         "text": "❯ Keep the queued prompt editable while this deliberately long draft wra",
         "styles": [
           {
@@ -34,7 +34,7 @@
         ]
       },
       {
-        "row": 3,
+        "row": 22,
         "text": "ps across the narrow terminal.",
         "styles": []
       },
@@ -90,11 +90,11 @@
     "width": 100,
     "cursor": {
       "x": 2,
-      "y": 0
+      "y": 22
     },
     "rows": [
       {
-        "row": 0,
+        "row": 22,
         "text": "❯ Ask anything · @ to mention a file · / for commands",
         "styles": [
           {
@@ -166,16 +166,16 @@
     "width": 140,
     "cursor": {
       "x": 2,
-      "y": 2
+      "y": 22
     },
     "rows": [
       {
-        "row": 0,
+        "row": 20,
         "text": "Status: Reviewing terminal rendering across narrow layouts and queued input · 3s ◐",
         "styles": []
       },
       {
-        "row": 2,
+        "row": 22,
         "text": "❯ Type to queue for the next turn · Esc interrupts",
         "styles": []
       },

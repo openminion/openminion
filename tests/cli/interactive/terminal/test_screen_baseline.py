@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pyte
 import pytest
-from prompt_toolkit import PromptSession
+from prompt_toolkit.application.current import create_app_session
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output.color_depth import ColorDepth
@@ -18,6 +18,9 @@ from prompt_toolkit.output.vt100 import Vt100_Output
 from rich.console import Console
 
 from openminion.cli.interactive.terminal.composer import TerminalComposer
+from openminion.cli.interactive.terminal.prompt_output import (
+    build_prompt_safe_terminal_writer,
+)
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.presentation.animation.models import (
@@ -48,6 +51,14 @@ async def _wait_for_output(raw: io.StringIO, text: str) -> None:
             return
         await asyncio.sleep(0.005)
     raise AssertionError(f"terminal did not render {text!r}")
+
+
+async def _wait_for_renderer_height(composer: TerminalComposer) -> None:
+    for _ in range(200):
+        if composer.prompt_session.app.renderer.height_is_known:
+            return
+        await asyncio.sleep(0.005)
+    raise AssertionError("terminal did not report its cursor position")
 
 
 def _render_completed_turn(console: Console) -> None:
@@ -105,31 +116,144 @@ async def _render_composer(
         ),
         elapsed_seconds=3,
     )
-    composer = TerminalComposer(
-        bottom_toolbar=status_line.bottom_toolbar,
-        active_status=status_line.active_status,
-        animation=AnimationResolution(
-            AnimationSpec("unicode", "baseline", ("◐",), 1_000),
-            source="flag",
-        ),
-        color=color_enabled,
-    )
-    if draft:
-        composer.prefill_draft(draft)
-    composer.set_busy(busy)
+    with (
+        patch.dict("os.environ", {"TERM": "xterm-256color"}),
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=output),
+    ):
+        composer = TerminalComposer(
+            bottom_toolbar=status_line.bottom_toolbar,
+            active_status=status_line.active_status,
+            animation=AnimationResolution(
+                AnimationSpec("unicode", "baseline", ("◐",), 1_000),
+                source="flag",
+            ),
+            color=color_enabled,
+        )
+        if draft:
+            composer.prefill_draft(draft)
+        composer.set_busy(busy)
 
-    with create_pipe_input() as pipe:
-        composer._session = PromptSession(
-            input=pipe,
-            output=output,
-            key_bindings=composer.prompt_session.key_bindings,
-            style=composer.prompt_session.style,
+        read_task = asyncio.create_task(composer.read_line())
+        await _wait_for_output(raw, "❯")
+        pipe.send_bytes(b"\x1b[1;1R")
+        await _wait_for_renderer_height(composer)
+        await asyncio.sleep(0.01)
+        snapshot = raw.getvalue()
+        pipe.send_text("\n")
+        await read_task
+    return snapshot
+
+
+async def _render_bottom_layout_checkpoints() -> tuple[dict, dict]:
+    raw = io.StringIO()
+    output = Vt100_Output(
+        raw,
+        get_size=lambda: Size(rows=24, columns=100),
+        default_color_depth=ColorDepth.TRUE_COLOR,
+        enable_cpr=True,
+    )
+    status_line = TerminalStatusLine()
+    status_line.set_state(
+        agent="minimax-m2-7",
+        model="MiniMax-M2.7",
+        cwd="/repo/openminion",
+        state="idle",
+    )
+
+    with (
+        patch.dict("os.environ", {"TERM": "xterm-256color"}),
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=output),
+    ):
+        composer = TerminalComposer(
+            bottom_toolbar=status_line.bottom_toolbar,
+            color=False,
         )
         read_task = asyncio.create_task(composer.read_line())
         await _wait_for_output(raw, "❯")
         pipe.send_bytes(b"\x1b[1;1R")
-        await _wait_for_output(raw, "◆ minimax-m2-7")
-        snapshot = raw.getvalue()
+        await _wait_for_renderer_height(composer)
+        await asyncio.sleep(0.01)
+
+        console = Console(
+            file=raw,
+            force_terminal=True,
+            color_system=None,
+            width=100,
+        )
+        writer = build_prompt_safe_terminal_writer(
+            console=console,
+            prompt_session=composer.prompt_session,
+        )
+        write_task = writer(lambda: console.print("Previous response\nDone in 13s"))
+        assert write_task is not None
+        await write_task
+        pipe.send_bytes(b"\x1b[3;1R")
+        await _wait_for_renderer_height(composer)
+        await asyncio.sleep(0.01)
+        placeholder = _screen_contract(raw.getvalue(), width=100)
+
+        pipe.send_text("test")
+        await _wait_for_output(raw, "test")
+        typed = _screen_contract(raw.getvalue(), width=100)
+
+        pipe.send_text("\n")
+        await read_task
+    return placeholder, typed
+
+
+async def _render_completion_layout_checkpoint(*, busy: bool) -> dict:
+    raw = io.StringIO()
+    output = Vt100_Output(
+        raw,
+        get_size=lambda: Size(rows=24, columns=72),
+        default_color_depth=ColorDepth.TRUE_COLOR,
+        enable_cpr=True,
+    )
+    status_line = TerminalStatusLine()
+    status_line.set_state(
+        agent="minimax-m2-7",
+        model="MiniMax-M2.7",
+        cwd="/repo/openminion",
+        state="responding" if busy else "idle",
+        turn_status="Analyzing request..." if busy else "",
+        elapsed_seconds=2,
+    )
+    slash_commands = {
+        "/agents": "list agents",
+        "/clear": "clear transcript",
+        "/context": "show context",
+        "/exit": "exit",
+        "/help": "show help",
+        "/history": "show history",
+        "/model": "select model",
+        "/permissions": "show permissions",
+        "/session": "show session",
+        "/theme": "select theme",
+    }
+
+    with (
+        patch.dict("os.environ", {"TERM": "xterm-256color"}),
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=output),
+    ):
+        composer = TerminalComposer(
+            slash_commands=slash_commands,
+            bottom_toolbar=status_line.bottom_toolbar,
+            active_status=status_line.active_status,
+            color=False,
+        )
+        composer.set_busy(busy)
+        read_task = asyncio.create_task(composer.read_line())
+        await _wait_for_output(raw, "❯")
+        pipe.send_bytes(b"\x1b[1;1R")
+        await _wait_for_renderer_height(composer)
+        pipe.send_text("/")
+        await _wait_for_output(raw, "/agents")
+        await asyncio.sleep(0.01)
+        snapshot = _screen_contract(raw.getvalue(), width=72)
+
         pipe.send_text("\n")
         await read_task
     return snapshot
@@ -323,3 +447,50 @@ def test_screen_contract_uses_only_reviewed_surface_backgrounds(
                 assert "reverse" not in style
                 if "bg" in style:
                     assert style["bg"] in allowed_backgrounds[name]
+
+
+def test_composer_scenes_pin_input_and_footer_to_terminal_bottom(
+    screen_contract: dict,
+) -> None:
+    for name, scene in screen_contract.items():
+        if not name.startswith("composer_"):
+            continue
+        footer_rows = [
+            row["row"] for row in scene["rows"] if row["text"].startswith("◆ ")
+        ]
+        assert footer_rows == [23]
+        assert scene["cursor"]["y"] == 22
+
+
+def test_composer_keeps_input_above_footer_after_prompt_safe_output() -> None:
+    placeholder, typed = asyncio.run(_render_bottom_layout_checkpoints())
+
+    for scene in (placeholder, typed):
+        rows = {row["row"]: row["text"] for row in scene["rows"]}
+        assert "Previous response" in rows.values()
+        assert "Done in 13s" in rows.values()
+        assert rows[23].startswith("◆ minimax-m2-7")
+        assert scene["cursor"]["y"] == 22
+        assert sum(text.startswith("◆ ") for text in rows.values()) == 1
+        assert sum("❯" in text for text in rows.values()) == 1
+
+    placeholder_rows = {row["row"]: row["text"] for row in placeholder["rows"]}
+    typed_rows = {row["row"]: row["text"] for row in typed["rows"]}
+    assert placeholder_rows[22].startswith("❯ Ask anything")
+    assert typed_rows[22] == "❯ test"
+
+
+@pytest.mark.parametrize("busy", [False, True])
+def test_completion_menu_opens_above_anchored_input(busy: bool) -> None:
+    scene = asyncio.run(_render_completion_layout_checkpoint(busy=busy))
+    rows = {row["row"]: row["text"] for row in scene["rows"]}
+
+    assert scene["cursor"]["y"] == 22
+    assert rows[22] == "❯ /"
+    assert rows[23].startswith("◆ minimax-m2-7")
+    assert any("/agents" in text for row, text in rows.items() if row < 22)
+    assert not any("Status:" in text and "/" in text for text in rows.values())
+    if busy:
+        assert any(
+            text.startswith("Status: Analyzing request...") for text in rows.values()
+        )

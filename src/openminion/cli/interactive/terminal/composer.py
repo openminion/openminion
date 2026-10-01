@@ -16,7 +16,14 @@ from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.containers import (
+    ConditionalContainer,
+    FloatContainer,
+    HSplit,
+    VerticalAlign,
+    Window,
+)
+from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.output.vt100 import Vt100_Output
@@ -171,6 +178,37 @@ def _configure_completion_menu(session: PromptSession[str]) -> None:
     except Exception:
         _LOGGER.debug("completion menu customization failed", exc_info=True)
         return
+
+
+def _configure_bottom_input_layout(session: PromptSession[str]) -> None:
+    """Keep the live input directly above the persistent footer."""
+
+    root = session.layout.container
+    input_window = session.layout.current_window
+    if not isinstance(root, HSplit) or not isinstance(input_window, Window):
+        raise RuntimeError("prompt layout does not expose the expected input stack")
+
+    main_input = root.children[0]
+    if not isinstance(main_input, ConditionalContainer) or not isinstance(
+        main_input.alternative_content, FloatContainer
+    ):
+        raise RuntimeError("prompt layout does not expose the expected menu stack")
+    input_stack = main_input.alternative_content.content
+    if not isinstance(input_stack, HSplit):
+        raise RuntimeError("prompt layout does not expose the expected menu stack")
+
+    root.align = VerticalAlign.BOTTOM
+    input_window.dont_extend_height = Condition(lambda: True)
+    input_window.height = Dimension()
+    # Leave room above the cursor so prompt-toolkit opens its completion float
+    # upward without moving the input off the penultimate terminal row.
+    input_stack.children.insert(
+        1,
+        ConditionalContainer(
+            Window(height=Dimension.exact(_COMPLETION_MENU_ROWS - 1)),
+            Condition(lambda: session.default_buffer.complete_state is not None),
+        ),
+    )
 
 
 def _use_click_only_mouse_tracking(session: PromptSession[str]) -> None:
@@ -349,6 +387,7 @@ class TerminalComposer:
             style=_focus_prompt_style(color=self._color),
         )
         _configure_completion_menu(self._session)
+        _configure_bottom_input_layout(self._session)
 
     def apply_theme(self) -> None:
         if not self._color:
