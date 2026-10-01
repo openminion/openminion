@@ -65,11 +65,15 @@ ordinary chat replies do not approve it. The proposal retains the current
 permission profile and must have a usable verifier before work starts.
 
 Use `/project status [RUN_ID]` or `/project show RUN_ID` to inspect a project.
-Use `/project pause RUN_ID`, `/project resume RUN_ID`, and
-`/project cancel RUN_ID` to control it within its owning session and agent.
-Pause takes effect at the next cycle boundary, not as an immediate process kill.
-Resume keeps the run and checkpoint identity and reuses a valid linked wake.
-Status without an ID is available only when the session has a single project.
+Use `/project pause RUN_ID`, then `/project redirect RUN_ID --direction TEXT`,
+to change the next cycle's direction. Redirect requires a paused project and
+is rejected while an active cycle claim remains; retry it after pause reaches
+the checkpoint boundary. Use `/project resume RUN_ID` or
+`/project cancel RUN_ID` to continue or stop it within its owning session and
+agent. Pause takes effect at the next cycle boundary, not as an immediate
+process kill. Resume keeps the run and checkpoint identity and reuses a valid
+linked wake. Status without an ID is available only when the session has a
+single project.
 
 Task API responses include an additive `project_report` for project tasks,
 using the same report owner as Focus. Existing task fields remain unchanged.

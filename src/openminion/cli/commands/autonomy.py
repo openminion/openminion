@@ -701,6 +701,7 @@ def _project(args: argparse.Namespace) -> int:
         manager,
         task_id=task_id,
         action=action,
+        direction=_clean(getattr(args, "direction", None)) or None,
         priority=_clean(getattr(args, "priority", None)) or None,
         input_request_id=_clean(getattr(args, "input_request_id", None)) or None,
         answer=_clean(getattr(args, "answer", None)) or None,
@@ -858,9 +859,11 @@ def _register_project_commands(
     )
     project_sub = project.add_subparsers(dest="project_command", required=True)
 
-    for action_name in ("status", "show", "pause", "resume", "cancel", "report"):
+    for action_name in "status show pause resume cancel report redirect".split():
         command = project_sub.add_parser(action_name, help=f"{action_name} a project")
         command.add_argument("task_id")
+        if action_name == "redirect":
+            command.add_argument("--direction", required=True)
         add_json_output_flag(command)
         command.set_defaults(handler=run_autonomy, needs_app=False)
 

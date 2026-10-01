@@ -634,6 +634,12 @@ def test_project_controls_select_exact_run_cancel_and_report_current_state(
     with pytest.raises(ValueError, match="exact RUN_ID"):
         runtime.execute_project_control("/project cancel")
     active_run_id = requests[1].run.run_id
+    runtime.execute_project_control(f"/project pause {active_run_id}")
+    redirect_output = runtime.execute_project_control(
+        f"/project redirect {active_run_id} --direction 'finish the report first'"
+    )[1]
+    assert "direction_queued_for_next_cycle: finish the report first" in redirect_output
+    runtime.execute_project_control(f"/project resume {active_run_id}")
     runtime.execute_project_control(
         f"/project reprioritize {active_run_id} --priority 'finish verification first'"
     )
@@ -680,6 +686,9 @@ def test_project_controls_select_exact_run_cancel_and_report_current_state(
         controlled_task = manager.get_task(requests[1].run.task_id)
         assert controlled_task is not None
         assert controlled_task.metadata["priority"] == "finish verification first"
+        assert controlled_task.metadata["operator_direction"] == (
+            "finish the report first"
+        )
         assert controlled_task.metadata["operator_answers"][0]["answer"] == (
             "use the local fixture"
         )

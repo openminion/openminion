@@ -53,6 +53,7 @@ def _parse_project_control(line: str) -> argparse.Namespace:
         "pause",
         "resume",
         "cancel",
+        "redirect",
         "answer",
         "reprioritize",
         "extend-budget",
@@ -63,7 +64,9 @@ def _parse_project_control(line: str) -> argparse.Namespace:
         prog=f"/project {action}", add_help=False, exit_on_error=False
     )
     parser.add_argument("run_id", nargs="?")
-    if action == "answer":
+    if action == "redirect":
+        parser.add_argument("--direction", default="")
+    elif action == "answer":
         parser.add_argument("--input-request-id", default="")
         parser.add_argument("--answer", default="")
     elif action == "reprioritize":
@@ -84,6 +87,8 @@ def _parse_project_control(line: str) -> argparse.Namespace:
         not parsed.input_request_id.strip() or not parsed.answer.strip()
     ):
         raise ValueError("answer requires --input-request-id and --answer")
+    if action == "redirect" and not parsed.direction.strip():
+        raise ValueError("redirect requires --direction")
     if action == "reprioritize" and not parsed.priority.strip():
         raise ValueError("reprioritize requires --priority")
     parsed.action = action
@@ -101,29 +106,36 @@ def _project_control_args(runtime: Any) -> argparse.Namespace:
     )
 
 
-def _apply_guidance_control(manager: Any, run: Any, parsed: argparse.Namespace) -> None:
+def _apply_guidance_control(manager: Any, run: Any, parsed: argparse.Namespace) -> Any:
     from openminion.modules.task.project import (
         ProjectControlAction,
         apply_project_control,
     )
 
+    if parsed.action == "redirect":
+        return apply_project_control(
+            manager,
+            task_id=run.task_id,
+            action=ProjectControlAction.REDIRECT,
+            direction=parsed.direction,
+        )
     if parsed.action == "answer":
-        apply_project_control(
+        return apply_project_control(
             manager,
             task_id=run.task_id,
             action=ProjectControlAction.ANSWER_INPUT,
             input_request_id=parsed.input_request_id,
             answer=parsed.answer,
         )
-    elif parsed.action == "reprioritize":
-        apply_project_control(
+    if parsed.action == "reprioritize":
+        return apply_project_control(
             manager,
             task_id=run.task_id,
             action=ProjectControlAction.REPRIORITIZE,
             priority=parsed.priority,
         )
-    elif parsed.action == "extend-budget":
-        apply_project_control(
+    if parsed.action == "extend-budget":
+        return apply_project_control(
             manager,
             task_id=run.task_id,
             action=ProjectControlAction.EXTEND_BUDGET,
@@ -173,6 +185,7 @@ class RuntimeProjectMixin:
         from openminion.modules.task.project import (
             ProjectControlAction,
             apply_project_control,
+            render_project_control_result,
         )
         from openminion.modules.task.project.reports import (
             build_project_report_from_task,
@@ -237,7 +250,9 @@ class RuntimeProjectMixin:
                         operator_summary="Project cancelled by operator.",
                     )
             else:
-                _apply_guidance_control(manager, run, parsed)
+                guidance_result = _apply_guidance_control(manager, run, parsed)
+                if action == "redirect":
+                    return "system", render_project_control_result(guidance_result)
             report = build_project_report_from_task(manager, task_id=run.task_id)
             report = report.model_copy(
                 update={

@@ -195,10 +195,14 @@ def project_operator_guidance(
 ) -> tuple[dict[str, object], int]:
     guidance: dict[str, object] = {}
     included_revision = consumed_revision
+    direction_revision = int(str(metadata.get("operator_direction_revision") or 0))
+    if direction_revision > consumed_revision:
+        guidance["direction"] = str(metadata.get("operator_direction") or "")
+        included_revision = direction_revision
     priority_revision = int(str(metadata.get("priority_revision") or 0))
     if priority_revision > consumed_revision:
         guidance["priority"] = str(metadata.get("priority") or "")
-        included_revision = priority_revision
+        included_revision = max(included_revision, priority_revision)
     operator_answers = metadata.get("operator_answers")
     answers = (
         [
