@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+from queue import Queue
 from threading import Event
 from time import monotonic, sleep
 
+import pytest
+
 from openminion.services.runtime import AgentRuntimeManager, TurnRequest, TurnResponse
+
+
+def _ok_executor(req, emit_chunk, cancel_event):  # noqa: ANN001
+    del req, emit_chunk, cancel_event
+    return TurnResponse(final_text="ok")
 
 
 def test_per_agent_fifo_serialization() -> None:
@@ -106,9 +114,12 @@ def test_ttl_eviction_removes_idle_agents() -> None:
             )
         )
         handle.result(timeout_s=2)
+        worker = manager._instances["agent-ttl"].thread
         # direct eviction call is deterministic and exercises lifecycle cleanup path
         manager.evict("agent-ttl", "test-manual")
         assert not manager.list_agents()
+        assert worker is not None
+        assert not worker.is_alive()
     finally:
         manager.shutdown()
 
@@ -129,6 +140,108 @@ def test_shutdown_does_not_wait_full_sweep_interval() -> None:
     manager.shutdown()
     elapsed = monotonic() - started
     assert elapsed < 2.0
+
+
+def test_idle_worker_waits_without_a_poll_timeout(monkeypatch) -> None:  # noqa: ANN001
+    observed_timeouts: list[float | None] = []
+    original_get = Queue.get
+
+    def _observed_get(queue, block=True, timeout=None):  # noqa: ANN001
+        observed_timeouts.append(timeout)
+        return original_get(queue, block=block, timeout=timeout)
+
+    monkeypatch.setattr(Queue, "get", _observed_get)
+    manager = AgentRuntimeManager(turn_executor=_ok_executor)
+    manager.start()
+    try:
+        manager.get_or_create_agent("idle-agent")
+        sleep(0.15)
+    finally:
+        manager.shutdown()
+
+    assert observed_timeouts
+    assert all(timeout is None for timeout in observed_timeouts)
+
+
+def test_shutdown_surfaces_worker_signal_failure(monkeypatch) -> None:  # noqa: ANN001
+    manager = AgentRuntimeManager(turn_executor=_ok_executor)
+    manager.start()
+    manager.get_or_create_agent("shutdown-agent")
+    instance = manager._instances["shutdown-agent"]
+    worker = instance.thread
+    sweeper = manager._sweeper_thread
+    original_put = instance.queue.put
+
+    def _raise_signal_failure(*_args, **_kwargs) -> None:
+        raise RuntimeError("signal failed")
+
+    monkeypatch.setattr(instance.queue, "put", _raise_signal_failure)
+    try:
+        with pytest.raises(RuntimeError, match="signal failed"):
+            manager.shutdown()
+    finally:
+        original_put(None)
+        if worker is not None:
+            worker.join(timeout=1.0)
+        if sweeper is not None:
+            sweeper.join(timeout=1.0)
+
+
+def test_eviction_surfaces_worker_signal_failure(monkeypatch) -> None:  # noqa: ANN001
+    manager = AgentRuntimeManager(turn_executor=_ok_executor)
+    manager.start()
+    manager.get_or_create_agent("eviction-agent")
+    instance = manager._instances["eviction-agent"]
+    worker = instance.thread
+    original_put = instance.queue.put
+
+    def _raise_signal_failure(*_args, **_kwargs) -> None:
+        raise RuntimeError("signal failed")
+
+    monkeypatch.setattr(instance.queue, "put", _raise_signal_failure)
+    try:
+        with pytest.raises(RuntimeError, match="signal failed"):
+            manager.evict("eviction-agent", "test-manual")
+    finally:
+        original_put(None)
+        if worker is not None:
+            worker.join(timeout=1.0)
+        manager.shutdown()
+
+
+def test_shutdown_keeps_bounded_grace_for_active_noncooperative_turn() -> None:
+    started = Event()
+    release = Event()
+
+    def _executor(req, emit_chunk, cancel_event):  # noqa: ANN001
+        del req, emit_chunk, cancel_event
+        started.set()
+        release.wait()
+        return TurnResponse(final_text="ok")
+
+    manager = AgentRuntimeManager(turn_executor=_executor)
+    handle = manager.submit_turn(
+        TurnRequest(
+            trace_id="trace-blocked",
+            agent_id="blocked-agent",
+            session_id="blocked-session",
+            input_text="wait",
+        )
+    )
+    assert started.wait(timeout=1.0)
+    worker = manager._instances["blocked-agent"].thread
+
+    started_at = monotonic()
+    manager.shutdown(grace_s=0.01)
+    elapsed = monotonic() - started_at
+
+    assert elapsed < 0.5
+    assert worker is not None
+    assert worker.is_alive()
+    release.set()
+    assert handle.result(timeout_s=1.0).final_text == "ok"
+    worker.join(timeout=1.0)
+    assert not worker.is_alive()
 
 
 def test_foreground_visibility_excludes_cron_and_metadata_survives() -> None:
