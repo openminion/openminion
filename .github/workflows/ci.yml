@@ -120,9 +120,9 @@ jobs:
           cache: "pip"
 
       - name: Validate introduced commit messages
-        # Every dev push is validated when it lands; promotion must not recheck
-        # GitHub-generated squash subjects already accepted by that gate.
-        if: github.event_name != 'workflow_dispatch' && !(github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'dev')
+        # Every dev push is validated when it lands; promotion and its resulting
+        # main push must not recheck squash subjects already accepted there.
+        if: github.event_name != 'workflow_dispatch' && !(github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'dev') && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
         env:
           BEFORE_SHA: ${{ github.event.before }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
