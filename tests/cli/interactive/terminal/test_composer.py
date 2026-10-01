@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 import io
 from pathlib import Path
@@ -684,6 +685,29 @@ async def test_read_line_submits_on_enter_with_real_prompt_session() -> None:
         result = await composer.read_line()
 
     assert result == "hi"
+
+
+@pytest.mark.asyncio
+async def test_ctrl_l_preserves_draft_and_cursor_with_real_prompt_session() -> None:
+    with create_pipe_input() as pipe:
+        composer = TerminalComposer()
+        composer._session = PromptSession(
+            input=pipe,
+            output=DummyOutput(),
+            style=composer._session.style,
+        )
+
+        async def _send() -> None:
+            await asyncio.sleep(0.05)
+            pipe.send_text("ab")
+            pipe.send_bytes(b"\x1b[D")
+            pipe.send_bytes(b"\x0c")
+            pipe.send_text("X\n")
+
+        asyncio.create_task(_send())
+        result = await composer.read_line()
+
+    assert result == "aXb"
 
 
 @pytest.mark.asyncio

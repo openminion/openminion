@@ -21,10 +21,9 @@ def _make_console_and_transcript() -> tuple[Console, TerminalTranscript, io.Stri
     return console, TerminalTranscript(console), buf
 
 
-def test_composer_accepts_on_ctrl_l() -> None:
+def test_composer_uses_prompt_toolkit_ctrl_l_binding() -> None:
     sig = inspect.signature(TerminalComposer.__init__)
-    assert "on_ctrl_l" in sig.parameters
-    assert sig.parameters["on_ctrl_l"].default is None
+    assert "on_ctrl_l" not in sig.parameters
 
 
 def test_composer_accepts_on_ctrl_o() -> None:
@@ -39,21 +38,17 @@ def test_composer_no_kwargs_still_works() -> None:
 
 
 def test_composer_with_callbacks_works() -> None:
-    fired: dict[str, int] = {"l": 0, "o": 0}
-
-    def _l() -> None:
-        fired["l"] += 1
+    fired: dict[str, int] = {"o": 0}
 
     def _o() -> None:
         fired["o"] += 1
 
     composer = TerminalComposer(
         slash_commands=("/help",),
-        on_ctrl_l=_l,
         on_ctrl_o=_o,
     )
     assert composer is not None
-    assert fired == {"l": 0, "o": 0}
+    assert fired == {"o": 0}
 
 
 def test_copy_to_clipboard_uses_pbcopy_when_available() -> None:

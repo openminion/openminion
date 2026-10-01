@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def discover_custom_commands_for(*, runtime: Any, working_dir: str) -> dict[str, Any]:
@@ -28,6 +32,10 @@ def focus_history_path(runtime: Any) -> str | None:
     raw = str(data_root or "").strip()
     if not raw:
         return None
-    history_dir = Path(raw).expanduser().resolve(strict=False) / "cli"
-    history_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        history_dir = Path(raw).expanduser().resolve(strict=False) / "cli"
+        history_dir.mkdir(parents=True, exist_ok=True)
+    except (OSError, RuntimeError) as exc:
+        _LOGGER.warning("Focus prompt history disabled after %s.", type(exc).__name__)
+        return None
     return str(history_dir / "terminal_history")

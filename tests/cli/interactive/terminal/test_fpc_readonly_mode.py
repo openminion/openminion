@@ -177,6 +177,8 @@ def test_readonly_off_sets_explicit() -> None:
     out = _dispatch(rt, "/readonly off")
     assert rt.read_only_mode is False
     assert "OFF" in out
+    assert "remaining posture: default" in out
+    assert "all tools allowed" not in out
 
 
 def test_readonly_toggle_alias_works() -> None:
@@ -203,19 +205,29 @@ def test_permissions_bare_shows_current_mode() -> None:
     assert "permissions: default" in out
 
 
+def test_permissions_bare_shows_combined_runtime_posture() -> None:
+    rt = _make_runtime()
+    rt.set_session_action_policy_mode("bypass")
+    rt.set_permission_mode("readonly")
+
+    out = _dispatch(rt, "/permissions")
+
+    assert "permissions: read-only + bypass approvals" in out
+
+
 def test_permissions_sets_readonly_mode() -> None:
     rt = _make_runtime()
     out = _dispatch(rt, "/permissions readonly")
     assert rt.permission_mode == "readonly"
     assert rt.read_only_mode is True
-    assert "permissions: readonly" in out
+    assert "permissions: read-only" in out
 
 
 def test_permissions_cycle_advances_mode() -> None:
     rt = _make_runtime()
     out = _dispatch(rt, "/permissions cycle")
     assert rt.permission_mode == "readonly"
-    assert "permissions: readonly" in out
+    assert "permissions: read-only" in out
 
 
 def test_permissions_unknown_arg_surfaces_error() -> None:
