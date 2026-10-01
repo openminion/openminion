@@ -5350,21 +5350,44 @@ def _threshold_result(
             "current_cv": current_cv,
         }
     if scenario_id == "runtime_manager_idle":
-        baseline_context_switches = (
-            baseline_scenario.get(
-                "idle_voluntary_context_switch_rate_per_second"
-            )
-            or {}
-        ).get("median")
-        current_context_switches = (
-            current.get("idle_voluntary_context_switch_rate_per_second") or {}
-        ).get("median")
-        baseline_cpu_duty = (
-            baseline_scenario.get("idle_process_cpu_duty_ppm") or {}
-        ).get("p95")
-        current_cpu_duty = (current.get("idle_process_cpu_duty_ppm") or {}).get(
-            "p95"
-        )
+        baseline_context_summary = baseline_scenario.get(
+            "idle_voluntary_context_switch_rate_per_second"
+        ) or {}
+        current_context_summary = current.get(
+            "idle_voluntary_context_switch_rate_per_second"
+        ) or {}
+        baseline_cpu_summary = baseline_scenario.get(
+            "idle_process_cpu_duty_ppm"
+        ) or {}
+        current_cpu_summary = current.get("idle_process_cpu_duty_ppm") or {}
+        resource_cvs = {
+            "baseline_context_switch_cv": baseline_context_summary.get(
+                "coefficient_of_variation"
+            ),
+            "current_context_switch_cv": current_context_summary.get(
+                "coefficient_of_variation"
+            ),
+            "baseline_cpu_duty_cv": baseline_cpu_summary.get(
+                "coefficient_of_variation"
+            ),
+            "current_cpu_duty_cv": current_cpu_summary.get(
+                "coefficient_of_variation"
+            ),
+        }
+        if any(
+            isinstance(value, int | float) and float(value) > 0.20
+            for value in resource_cvs.values()
+        ):
+            return {
+                "mode": threshold_mode,
+                "status": "ineligible",
+                "reason": "idle resource variance exceeds 0.20 CV",
+                **resource_cvs,
+            }
+        baseline_context_switches = baseline_context_summary.get("median")
+        current_context_switches = current_context_summary.get("median")
+        baseline_cpu_duty = baseline_cpu_summary.get("p95")
+        current_cpu_duty = current_cpu_summary.get("p95")
         if not all(
             isinstance(value, int)
             for value in (

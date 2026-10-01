@@ -780,8 +780,14 @@ def test_runtime_manager_idle_hard_gate_uses_resource_thresholds() -> None:
             "p95": 1_010_000_000,
             "coefficient_of_variation": 0.01,
         },
-        "idle_voluntary_context_switch_rate_per_second": {"median": 100},
-        "idle_process_cpu_duty_ppm": {"p95": 10_000},
+        "idle_voluntary_context_switch_rate_per_second": {
+            "median": 100,
+            "coefficient_of_variation": 0.10,
+        },
+        "idle_process_cpu_duty_ppm": {
+            "p95": 10_000,
+            "coefficient_of_variation": 0.10,
+        },
         "measurement_identity": identity,
         "comparison_identity": comparison_identity,
     }
@@ -791,8 +797,14 @@ def test_runtime_manager_idle_hard_gate_uses_resource_thresholds() -> None:
     }
     current = {
         **baseline_scenario,
-        "idle_voluntary_context_switch_rate_per_second": {"median": 50},
-        "idle_process_cpu_duty_ppm": {"p95": 20_000},
+        "idle_voluntary_context_switch_rate_per_second": {
+            "median": 50,
+            "coefficient_of_variation": 0.10,
+        },
+        "idle_process_cpu_duty_ppm": {
+            "p95": 20_000,
+            "coefficient_of_variation": 0.10,
+        },
     }
 
     passed = module._threshold_result(
@@ -805,7 +817,10 @@ def test_runtime_manager_idle_hard_gate_uses_resource_thresholds() -> None:
     assert passed["context_switch_ratio"] == 0.5
     assert passed["cpu_duty_limit_ppm"] == 20_000
 
-    current["idle_voluntary_context_switch_rate_per_second"] = {"median": 51}
+    current["idle_voluntary_context_switch_rate_per_second"] = {
+        "median": 51,
+        "coefficient_of_variation": 0.10,
+    }
     failed = module._threshold_result(
         current=current,
         baseline=baseline,
@@ -813,6 +828,19 @@ def test_runtime_manager_idle_hard_gate_uses_resource_thresholds() -> None:
         threshold_mode="hard",
     )
     assert failed["status"] == "fail"
+
+    current["idle_voluntary_context_switch_rate_per_second"] = {
+        "median": 50,
+        "coefficient_of_variation": 0.21,
+    }
+    ineligible = module._threshold_result(
+        current=current,
+        baseline=baseline,
+        scenario_id="runtime_manager_idle",
+        threshold_mode="hard",
+    )
+    assert ineligible["status"] == "ineligible"
+    assert "idle resource variance" in ineligible["reason"]
 
 
 def test_deterministic_full_turn_hard_gate_checks_median_and_p95() -> None:
@@ -822,7 +850,7 @@ def test_deterministic_full_turn_hard_gate_checks_median_and_p95() -> None:
         scenario_id="deterministic_full_turn",
         command="runtime_ingress_fixture:deterministic_full_turn",
         measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
-        fixture_revision="deterministic-full-turn-v2",
+        fixture_revision="deterministic-full-turn-v1",
     )
     comparison_identity = module._comparison_identity(identity)
     baseline_scenario = {
