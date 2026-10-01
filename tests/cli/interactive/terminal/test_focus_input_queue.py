@@ -912,7 +912,9 @@ async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() 
     assert len(events) == 4
     assert events[1].startswith("prompt:Approval required: exec.run(")
     assert "docker desktop start" in events[1]
-    assert events[2] == "label:Always allow exec.run for this shell session"
+    assert events[2] == (
+        "label:Always allow this exact exec.run call for this shell session"
+    )
 
 
 @pytest.mark.asyncio
@@ -1041,7 +1043,7 @@ async def test_terminal_approval_callback_serializes_bursty_session_grants() -> 
 
     first = asyncio.create_task(callback("file.write", {"path": "one.py"}, "call-1"))
     await first_prompt_entered.wait()
-    second = asyncio.create_task(callback("file.write", {"path": "two.py"}, "call-2"))
+    second = asyncio.create_task(callback("file.write", {"path": "one.py"}, "call-2"))
     await asyncio.sleep(0)
     release_first_prompt.set()
 
@@ -1052,7 +1054,7 @@ async def test_terminal_approval_callback_serializes_bursty_session_grants() -> 
 
 
 @pytest.mark.asyncio
-async def test_terminal_approval_grant_is_tool_scoped_and_session_local() -> None:
+async def test_terminal_approval_grant_is_exact_invocation_scoped_and_session_local() -> None:
     prompts: list[str] = []
 
     class _Overlay:
@@ -1064,28 +1066,54 @@ async def test_terminal_approval_grant_is_tool_scoped_and_session_local() -> Non
             return next(self.decisions)
 
     callback = build_terminal_approval_callback(
-        overlay=_Overlay(["always", "deny"]),
+        overlay=_Overlay(["always", "deny", "deny"]),
         session_grants=set(),
     )
 
-    assert await callback("file.write", {"path": "one.py"}, "call-1") is True
-    assert await callback("file.write", {"path": "two.py"}, "call-2") is True
-    assert await callback("exec.run", {"command": "pwd"}, "call-3") is False
-    assert len(prompts) == 2
+    assert (
+        await callback(
+            "file.write",
+            {"path": "one.py", "content": "hello"},
+            "call-1",
+        )
+        is True
+    )
+    assert (
+        await callback(
+            "file.write",
+            {"content": "hello", "path": "one.py"},
+            "call-2",
+        )
+        is True
+    )
+    assert (
+        await callback(
+            "file.write",
+            {"path": "two.py", "content": "hello"},
+            "call-3",
+        )
+        is False
+    )
+    assert await callback("exec.run", {"command": "pwd"}, "call-4") is False
+    assert len(prompts) == 3
 
     new_session_callback = build_terminal_approval_callback(
         overlay=_Overlay(["deny"]),
         session_grants=set(),
     )
     assert (
-        await new_session_callback("file.write", {"path": "three.py"}, "call-4")
+        await new_session_callback(
+            "file.write",
+            {"path": "one.py", "content": "hello"},
+            "call-5",
+        )
         is False
     )
-    assert len(prompts) == 3
+    assert len(prompts) == 4
 
 
 @pytest.mark.asyncio
-async def test_browser_approval_grant_is_operation_scoped() -> None:
+async def test_browser_approval_grant_is_exact_invocation_scoped() -> None:
     prompts: list[str] = []
 
     class _Overlay:
@@ -1098,9 +1126,12 @@ async def test_browser_approval_grant_is_operation_scoped() -> None:
         overlay=_Overlay(),
         session_grants=grants,
     )
-    upload = {"op": "tab.upload", "files": ["one.txt"]}
+    upload_one = {"op": "tab.upload", "files": ["one.txt"]}
+    upload_two = {"op": "tab.upload", "files": ["two.txt"]}
 
-    assert await callback("browser", upload, "call-1") is True
-    assert await callback("browser", upload, "call-2") is True
-    assert grants == {"browser:tab.upload"}
-    assert len(prompts) == 1
+    assert await callback("browser", upload_one, "call-1") is True
+    assert await callback("browser", upload_one, "call-2") is True
+    assert await callback("browser", upload_two, "call-3") is True
+    assert len(grants) == 2
+    assert all(len(grant) == 64 for grant in grants)
+    assert len(prompts) == 2

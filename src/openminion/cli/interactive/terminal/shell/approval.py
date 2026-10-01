@@ -3,6 +3,7 @@ from collections.abc import Callable
 from typing import Any
 
 from openminion.cli.status.tool_calls import format_tool_args_preview
+from openminion.modules.tool.plugin_api import stable_invocation_hash
 
 from ..overlays import TerminalOverlayPresenter
 
@@ -48,16 +49,16 @@ def build_terminal_approval_callback(
     ) -> bool:
         del call_id
         normalized = str(tool_name or "").strip()
-        grant_key = normalized
-        if normalized == "browser":
-            op = str(args.get("op", "") or "").strip()
-            if op:
-                grant_key = f"{normalized}:{op}"
+        grant_key = stable_invocation_hash(
+            tool=normalized,
+            method="invoke",
+            args=dict(args or {}),
+        )
         allow_session_grant = normalized != "ops.command.run"
-        if grant_key and allow_session_grant and grant_key in session_grants:
+        if allow_session_grant and grant_key in session_grants:
             return True
         async with approval_lock:
-            if grant_key and allow_session_grant and grant_key in session_grants:
+            if allow_session_grant and grant_key in session_grants:
                 return True
             prompt = format_terminal_approval_prompt(normalized, dict(args or {}))
             if callable(pause_prompt):
@@ -67,12 +68,15 @@ def build_terminal_approval_callback(
                     return await overlay.present_confirm_async(prompt)
                 decision = await overlay.present_approval_async(
                     prompt,
-                    always_label=(f"Always allow {grant_key} for this shell session"),
+                    always_label=(
+                        f"Always allow this exact {normalized} call "
+                        "for this shell session"
+                    ),
                 )
             finally:
                 if callable(resume_prompt):
                     resume_prompt()
-            if decision == "always" and grant_key:
+            if decision == "always":
                 session_grants.add(grant_key)
                 return True
             return decision == "allow"

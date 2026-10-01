@@ -1,6 +1,6 @@
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from queue import Empty, Queue
 from threading import Condition, Event, RLock, Thread
 from time import monotonic
@@ -48,6 +48,7 @@ TurnExecutor = Callable[[TurnRequest, Callable[[TurnChunk], None], Event], TurnR
 RuntimeEventHook = Callable[[str, dict[str, Any]], None]
 AgentCreateHook = Callable[[str], None]
 AgentEvictHook = Callable[[str, str], None]
+ApprovalEventHook = Callable[[dict[str, Any]], None]
 
 
 class _ConcurrencyLimiter:
@@ -89,6 +90,20 @@ class _QueuedTurn:
     request: TurnRequest
     handle: "TurnHandle"
     enqueued_at_mono: float
+
+
+@dataclass
+class _PendingApproval:
+    approval_id: str
+    tool_name: str
+    consent_preview: str
+    requested_at: str
+    expires_at: str
+    on_event: ApprovalEventHook | None
+    ready: Event = field(default_factory=Event)
+    outcome: str = "pending"
+    decision: str | None = None
+    resolved_at: str = ""
 
 
 @dataclass
@@ -141,6 +156,7 @@ class TurnHandle:
         self._next_sequence = 1
         self._primary_stream_claimed = False
         self._latest_phase_status: dict[str, Any] | None = None
+        self._pending_approval: _PendingApproval | None = None
 
     @property
     def cancel_event(self) -> Event:
@@ -152,7 +168,110 @@ class TurnHandle:
 
     def cancel(self) -> bool:
         self._cancel_event.set()
+        self._settle_pending_approval(outcome="cancelled")
         return self._on_cancel(self.trace_id)
+
+    def request_approval(
+        self,
+        *,
+        tool_name: str,
+        consent_preview: str,
+        source_callback_id: str,
+        timeout_s: float,
+        on_event: ApprovalEventHook | None = None,
+    ) -> bool:
+        del source_callback_id
+        if self._cancel_event.is_set() or self._result_ready.is_set():
+            return False
+
+        now = datetime.now(timezone.utc)
+        wait_seconds = max(0.001, float(timeout_s))
+        pending = _PendingApproval(
+            approval_id=uuid4().hex,
+            tool_name=str(tool_name or "").strip(),
+            consent_preview=str(consent_preview or ""),
+            requested_at=now.isoformat(),
+            expires_at=(now + timedelta(seconds=wait_seconds)).isoformat(),
+            on_event=on_event,
+        )
+        with self._stream_cv:
+            if (
+                self._cancel_event.is_set()
+                or self._result_ready.is_set()
+                or self._pending_approval is not None
+            ):
+                return False
+            self._pending_approval = pending
+            self._emit_approval_event(pending, phase="requested")
+        if not pending.ready.wait(timeout=wait_seconds):
+            self._settle_pending_approval(
+                outcome="expired",
+                approval_id=pending.approval_id,
+            )
+
+        with self._stream_cv:
+            approved = pending.outcome == "applied"
+            if self._pending_approval is pending:
+                self._pending_approval = None
+        return approved
+
+    def resolve_approval(self, *, approval_id: str, decision: str) -> bool:
+        normalized_decision = str(decision or "").strip().lower()
+        outcome = {
+            "allow_once": "applied",
+            "deny": "denied",
+        }.get(normalized_decision)
+        if outcome is None:
+            return False
+        return self._settle_pending_approval(
+            outcome=outcome,
+            decision=normalized_decision,
+            approval_id=str(approval_id or "").strip(),
+        )
+
+    def _settle_pending_approval(
+        self,
+        *,
+        outcome: str,
+        decision: str | None = None,
+        approval_id: str = "",
+    ) -> bool:
+        with self._stream_cv:
+            pending = self._pending_approval
+            if (
+                pending is None
+                or pending.outcome != "pending"
+                or (approval_id and pending.approval_id != approval_id)
+            ):
+                return False
+            pending.outcome = outcome
+            pending.decision = decision
+            pending.resolved_at = _utc_now_iso()
+        try:
+            self._emit_approval_event(pending, phase="resolved")
+        finally:
+            pending.ready.set()
+        return True
+
+    def _emit_approval_event(self, pending: _PendingApproval, *, phase: str) -> None:
+        payload = {
+            "phase": phase,
+            "session_id": self.session_id,
+            "trace_id": self.trace_id,
+            "approval_id": pending.approval_id,
+            "tool_name": pending.tool_name,
+            "consent_preview": pending.consent_preview,
+            "outcome": pending.outcome,
+        }
+        if phase == "requested":
+            payload["requested_at"] = pending.requested_at
+            payload["expires_at"] = pending.expires_at
+        else:
+            payload["decision"] = pending.decision
+            payload["resolved_at"] = pending.resolved_at
+        if pending.on_event is not None:
+            pending.on_event(dict(payload))
+        self._push_chunk(TurnChunk(trace_id=self.trace_id, kind="approval", data=payload))
 
     def stream(self, timeout_s: float | None = None) -> Iterator[TurnChunk]:
         with self._stream_cv:
@@ -207,6 +326,7 @@ class TurnHandle:
             self._stream_cv.notify_all()
 
     def _set_result(self, response: TurnResponse) -> None:
+        self._settle_pending_approval(outcome="cancelled")
         with self._stream_cv:
             self._result = response
             self._result_ready.set()
@@ -500,6 +620,8 @@ class AgentRuntimeManager:
             request=request, handle=handle, enqueued_at_mono=monotonic()
         )
         with self._lock:
+            if request.trace_id in self._traces:
+                raise ValueError(f"duplicate active trace_id: {request.trace_id}")
             self._traces[request.trace_id] = handle
             instance = self._instances[request.agent_id]
             instance.queue.put(queued)
@@ -523,6 +645,7 @@ class AgentRuntimeManager:
             if handle is None:
                 return False
             handle.cancel_event.set()
+            handle._settle_pending_approval(outcome="cancelled")
         self._emit(
             "runtime.turn.cancelled",
             {

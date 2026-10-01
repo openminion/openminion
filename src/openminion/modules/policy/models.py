@@ -1,10 +1,11 @@
-from openminion.base.time import utc_now_iso  # noqa: F401
-
 from dataclasses import asdict, dataclass, field
+import json
 from typing import Any, Literal, Optional, cast
 
 from openminion.base.config import ActionPolicyConfig
 from openminion.base.config.action_policy import map_action_policy_mode
+from openminion.base.redaction import redact_mapping
+from openminion.base.time import utc_now_iso  # noqa: F401
 from openminion.modules.tool.plugin_api import (
     BlockchainSendConfirmationPreview,
     stable_invocation_hash as stable_invocation_hash,
@@ -58,6 +59,61 @@ def sanitize_args(args: dict[str, Any]) -> dict[str, Any]:
         else:
             sanitized[key] = {"_type": type(value).__name__}
     return sanitized
+
+
+def build_consent_preview(
+    tool_name: str,
+    args: dict[str, Any],
+    *,
+    max_length: int = 4096,
+) -> str:
+    """Return a redacted, bounded invocation preview for operator consent."""
+    redacted, _ = redact_mapping(args or {})
+    bounded = _bounded_preview_value(redacted)
+    rendered = json.dumps(
+        bounded,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+        default=str,
+    )
+    preview = f"{str(tool_name or '').strip()}({rendered})"
+    limit = max(32, int(max_length))
+    if len(preview) <= limit:
+        return preview
+    if "command" in redacted:
+        raise ValueError("command is too long to display for informed approval")
+    return f"{preview[: limit - 3]}..."
+
+
+def _bounded_preview_value(value: Any, *, depth: int = 0) -> Any:
+    if depth >= 3:
+        return "[TRUNCATED]"
+    if isinstance(value, str):
+        return value if len(value) <= 120 else f"{value[:117]}..."
+    if isinstance(value, dict):
+        items = list(value.items())
+        bounded = {
+            str(key): (
+                child
+                if depth == 0 and str(key) == "command" and isinstance(child, str)
+                else _bounded_preview_value(child, depth=depth + 1)
+            )
+            for key, child in items[:8]
+        }
+        if len(items) > 8:
+            bounded["..."] = f"{len(items) - 8} more"
+        return bounded
+    if isinstance(value, (list, tuple)):
+        bounded_items = [
+            _bounded_preview_value(item, depth=depth + 1) for item in value[:5]
+        ]
+        if len(value) > 5:
+            bounded_items.append(f"[{len(value) - 5} more]")
+        return bounded_items
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return str(type(value).__name__)
 
 
 @dataclass(frozen=True)
