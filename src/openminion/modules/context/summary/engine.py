@@ -24,7 +24,7 @@ class SessionSummaryEngine:
         lines: list[str] = []
         for turn in turns:
             role = _normalize_role(turn.role)
-            content = _truncate(turn.text, max_chars=180)
+            content = _edge_excerpt(turn.text, max_chars=180)
             if not content:
                 continue
             lines.append(f"- {role}: {content}")
@@ -45,14 +45,42 @@ class SessionSummaryEngine:
         else:
             merged = current_trimmed + "\n" + delta_trimmed
         merged = _dedupe_summary_lines(merged)
-        if len(merged) <= max_chars:
-            return merged
+        return self.fit_summary_edges(merged, max_chars=max_chars)
 
-        trimmed = merged[-max_chars:]
-        newline_index = trimmed.find("\n")
-        if newline_index > 0:
-            trimmed = trimmed[newline_index + 1 :]
-        return _dedupe_summary_lines(trimmed)
+    def fit_summary_edges(self, value: str, *, max_chars: int) -> str:
+        summary = _dedupe_summary_lines(value)
+        if len(summary) <= max_chars:
+            return summary
+        return _bounded_edges(summary, max_chars=max_chars)
+
+    def merge_enrichment(
+        self,
+        *,
+        deterministic_summary: str,
+        enriched_summary: str,
+        max_chars: int,
+    ) -> str:
+        base = _dedupe_summary_lines(deterministic_summary)
+        enriched = _dedupe_summary_lines(enriched_summary)
+        if not enriched or enriched == base:
+            return self.fit_summary_edges(base, max_chars=max_chars)
+
+        separator = "\n...\n"
+        available = max_chars - (2 * len(separator))
+        if available <= 0:
+            return self.fit_summary_edges(base, max_chars=max_chars)
+
+        enrichment_budget = min(len(enriched), max(1, available // 3))
+        base_budget = available - enrichment_budget
+        if len(base) < base_budget:
+            enrichment_budget = min(
+                len(enriched), enrichment_budget + base_budget - len(base)
+            )
+            base_budget = available - enrichment_budget
+
+        head, tail = _split_edges(base, max_chars=base_budget)
+        middle = _edge_excerpt(enriched, max_chars=enrichment_budget)
+        return f"{head}{separator}{middle}{separator}{tail}"[:max_chars]
 
     def render_summary_short(
         self,
@@ -110,24 +138,56 @@ def _normalize_role(raw_role: str) -> str:
     return role or "user"
 
 
-def _truncate(value: str, *, max_chars: int) -> str:
+def _edge_excerpt(value: str, *, max_chars: int) -> str:
     compact = " ".join(str(value or "").strip().split())
     if len(compact) <= max_chars:
         return compact
     if max_chars <= 3:
         return compact[:max_chars]
-    return compact[: max_chars - 3].rstrip() + "..."
-
-
-def _edge_excerpt(value: str, *, max_chars: int) -> str:
-    compact = " ".join(str(value or "").strip().split())
-    if len(compact) <= max_chars:
-        return compact
     separator = "..."
     available = max_chars - len(separator)
     head_chars = available // 2
     tail_chars = available - head_chars
     return f"{compact[:head_chars].rstrip()}{separator}{compact[-tail_chars:].lstrip()}"
+
+
+def _bounded_edges(value: str, *, max_chars: int) -> str:
+    separator = "\n...\n"
+    available = max_chars - len(separator)
+    if available <= 0:
+        return value[:max_chars]
+    head, tail = _split_edges(value, max_chars=available)
+    return f"{head}{separator}{tail}"
+
+
+def _split_edges(value: str, *, max_chars: int) -> tuple[str, str]:
+    if len(value) <= max_chars:
+        split_at = (len(value) + 1) // 2
+        return value[:split_at].rstrip(), value[split_at:].lstrip()
+    head_chars = (max_chars + 1) // 2
+    tail_chars = max_chars - head_chars
+    return (
+        _leading_summary_edge(value, max_chars=head_chars),
+        _trailing_summary_edge(value, max_chars=tail_chars),
+    )
+
+
+def _leading_summary_edge(value: str, *, max_chars: int) -> str:
+    first_line = value.splitlines()[0]
+    if len(first_line) >= max_chars:
+        return _edge_excerpt(first_line, max_chars=max_chars)
+    return value[:max_chars].rstrip()
+
+
+def _trailing_summary_edge(value: str, *, max_chars: int) -> str:
+    last_line = value.splitlines()[-1]
+    if len(last_line) >= max_chars:
+        return _edge_excerpt(last_line, max_chars=max_chars)
+    prefix = value[: -len(last_line)].rstrip()
+    prefix_chars = max_chars - len(last_line) - 1
+    if prefix_chars <= 0 or not prefix:
+        return last_line
+    return f"{prefix[-prefix_chars:].lstrip()}\n{last_line}"
 
 
 def _dedupe_summary_lines(value: str) -> str:

@@ -38,6 +38,7 @@ from .ranking import (
     _rank_post_completion_critique_cards,
     _rank_strategy_outcome_cards,
 )
+from .materials import merge_query_results, retrieval_queries
 
 
 @dataclass
@@ -63,14 +64,19 @@ def _fetch_rlm_summary(
 ) -> str | None:
     if rlmctl is None:
         return None
-    try:
-        return rlmctl.get_refresh_summary(
-            session_id=request.session_id,
-            agent_id=request.agent_id,
-            query=request.query or request.purpose,
-        )
-    except Exception:
-        return None
+    summaries: list[str] = []
+    for query in tuple(filter(None, retrieval_queries(request))) or (request.purpose,):
+        try:
+            summary = rlmctl.get_refresh_summary(
+                session_id=request.session_id,
+                agent_id=request.agent_id,
+                query=query,
+            )
+        except Exception:
+            continue
+        if summary and summary not in summaries:
+            summaries.append(summary)
+    return "\n".join(reversed(summaries)) or None
 
 
 def _fetch_vector_results(
@@ -78,16 +84,23 @@ def _fetch_vector_results(
     request: BuildPackRequest,
     vectorctl: Any | None,
 ) -> list[tuple[str, float, dict[str, Any]]]:
-    if vectorctl is None or not request.query:
+    if vectorctl is None:
         return []
-    try:
-        return vectorctl.search(
-            query=request.query,
-            top_k=5,
-            filters={"session_id": request.session_id} if request.session_id else None,
-        )
-    except Exception:
-        return []
+    groups: list[list[tuple[str, float, dict[str, Any]]]] = []
+    for query in filter(None, retrieval_queries(request)):
+        try:
+            groups.append(
+                vectorctl.search(
+                    query=query,
+                    top_k=5,
+                    filters={"session_id": request.session_id}
+                    if request.session_id
+                    else None,
+                )
+            )
+        except Exception:
+            continue
+    return merge_query_results(groups, identity=lambda item: item[0], limit=5)
 
 
 def _fact_memory_limits(mode_name: str | None) -> tuple[int, int]:

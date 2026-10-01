@@ -27,6 +27,7 @@ class BuildPackRequest(BaseModel):
     purpose: Purpose
     mode_name: Optional[str] = None
     query: str
+    continuity_query: str = ""
     provider_pref: Optional[str] = None
     budgets_override: Optional[ContextBudgets] = None
     constraints: Optional[BuildConstraints] = None

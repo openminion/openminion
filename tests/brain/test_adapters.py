@@ -1398,6 +1398,27 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
         self.assertEqual(res, {"pack_version": "123"})
         mock_svc.build_pack.assert_called_once()
 
+    def test_context_adapter_maps_continuity_query(self) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+
+        mock_svc = fake_context_service(pack=fake_context_pack({"pack_version": "123"}))
+        adapter = ContextCtlAdapter(mock_svc)
+
+        adapter.build(
+            session_id="s1",
+            agent_id="a1",
+            purpose="decide",
+            budget={},
+            hints={
+                "user_input": "continue",
+                "continuity_query": "deploy release alpha",
+            },
+        )
+
+        request = mock_svc.build_pack.call_args.args[0]
+        self.assertEqual(request.query, "continue")
+        self.assertEqual(request.continuity_query, "deploy release alpha")
+
     def test_context_adapter_preserves_temporal_phase_facts(self) -> None:
         from openminion.modules.brain.adapters.context import ContextCtlAdapter
 
