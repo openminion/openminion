@@ -19,8 +19,8 @@ class _ResourceSubscriptionTransport:
     def authorization_identity(self) -> str:
         return ""
 
-    def stderr_tail(self, *, limit: int = 4096) -> str:
-        del limit
+    def stderr_tail(self, *, limit: int = 4096, wait_seconds: float = 0.0) -> str:
+        del limit, wait_seconds
         return ""
 
     def start(self) -> None:

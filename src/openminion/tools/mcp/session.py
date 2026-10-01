@@ -515,7 +515,9 @@ class MCPServerSession:
             remote_name=remote_name,
             result=result,
             output_schema=dict(self._output_schemas_by_tool.get(remote_name, {})),
-            stderr_tail=self._transport.stderr_tail().strip(),
+            stderr_tail=self._transport.stderr_tail(
+                wait_seconds=0.1 if result.get("isError") else 0.0
+            ).strip(),
         )
 
     def get_prompt(
