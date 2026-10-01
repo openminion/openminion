@@ -1,0 +1,92 @@
+name: Runtime candidate request
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  request:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'v') &&
+      !contains(github.event.workflow_run.head_branch, 'alpha') &&
+      !contains(github.event.workflow_run.head_branch, 'beta') &&
+      !contains(github.event.workflow_run.head_branch, 'rc') &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Verify the producer from trusted main code before minting a cross-repo token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - run: python -m pip install 'packaging==26.0'
+      - name: Verify final tag and successful production publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_RUN: ${{ github.event.workflow_run.id }}
+          PRODUCER_TAG: ${{ github.event.workflow_run.head_branch }}
+          PRODUCER_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          PRODUCER_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from scripts.ci.publish_runtime_manifest import verify_producer
+
+          def api(path):
+              return json.loads(subprocess.check_output(
+                  ['gh', 'api', 'repos/openminion/openminion/' + path]
+              ))
+
+          run_id = os.environ['PRODUCER_RUN']
+          tag = os.environ['PRODUCER_TAG']
+          verify_producer(
+              api('environments/runtime-publication'),
+              api('actions/runs/' + run_id),
+              api('actions/runs/' + run_id + '/jobs?per_page=100')['jobs'],
+              api('commits/' + tag)['sha'],
+              os.environ['PRODUCER_COMMIT'],
+              tag,
+              int(os.environ['PRODUCER_ATTEMPT']),
+          )
+          PY
+      - name: Create a token scoped to the private packaging repository
+        id: packaging-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RUNTIME_PACKAGING_APP_ID }}
+          private-key: ${{ secrets.RUNTIME_PACKAGING_APP_PRIVATE_KEY }}
+          owner: openminion
+          repositories: openminion-packaging
+          permission-actions: write
+      - name: Request the exact private runtime candidate
+        env:
+          GH_TOKEN: ${{ steps.packaging-token.outputs.token }}
+          PRODUCER_TAG: ${{ github.event.workflow_run.head_branch }}
+          PRODUCER_COMMIT: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          gh workflow run runtime-candidates.yml \
+            --repo openminion/openminion-packaging \
+            --ref main \
+            --field runtime_version="${PRODUCER_TAG#v}" \
+            --field source_commit="$PRODUCER_COMMIT"
+          {
+            echo '## Binary release disposition'
+            echo
+            echo '- State: private candidate requested'
+            echo "- Version: \`${PRODUCER_TAG#v}\`"
+            echo "- Source commit: \`$PRODUCER_COMMIT\`"
+            echo '- Stable publication remains blocked until signing, notarization, native verification, Desktop qualification, and protected manifest publication complete.'
+          } >> "$GITHUB_STEP_SUMMARY"

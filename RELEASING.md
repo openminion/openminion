@@ -1,7 +1,7 @@
 # OpenMinion Releasing
 
 Status: active
-Last updated: 2026-09-30
+Last updated: 2026-10-01
 
 Purpose: give maintainers a compact package-local release smoke checklist for
 the public `openminion` package surface on the active alpha line defined by
@@ -31,6 +31,14 @@ Existing release records are not rewritten. Binary promotion uses the same
 protected metadata-PR boundary but has an independent manual request and trust
 gate.
 
+Every final source release must also have an explicit binary disposition. The
+`Runtime candidate request` observer verifies the successful production-PyPI
+producer, then uses a repository-scoped GitHub App token to start the private
+`openminion-packaging` candidate workflow with the exact released version and
+source commit. The candidate workflow rejects stale or mismatched packaging
+pins. Candidate creation is automatic; stable binary promotion remains manual
+and protected.
+
 Use these completion labels exactly:
 
 1. **package published**: production PyPI and GitHub source release succeeded,
@@ -48,6 +56,17 @@ The first two labels never imply the last three. Runtime metadata verification
 cannot report full public E2E because that result requires a separate packaged
 application run.
 
+For each final version, close the release record with one of these binary
+dispositions; omission is not a valid completed state:
+
+1. **binary runtime published**: the signed, notarized, native-qualified public
+   runtime release and binary manifest are complete, or
+2. **binary blocked**: record the private candidate run and the exact unmet
+   gate, such as macOS signing/notarization, Windows signing, native
+   verification, Desktop compatibility, or immutable public-release review.
+
+Do not describe a package/source-only release as a complete runtime release.
+
 Qualify the publication environment and public feeds before the first use;
 local files and passing tests are not deployment evidence. Verify without publishing:
 
@@ -63,31 +82,47 @@ local files and passing tests are not deployment evidence. Verify without publis
 
 ### Runtime metadata checklist
 
-1. Land the publisher workflow/helpers and initial empty `releases/runtime/v1/`
+1. Install a GitHub App on `openminion/openminion-packaging` with only Actions
+   write access. Store its app ID as the `RUNTIME_PACKAGING_APP_ID` repository
+   variable and its private key as the `RUNTIME_PACKAGING_APP_PRIVATE_KEY`
+   repository secret in `openminion/openminion`. The app token is minted only
+   after the final source producer is verified and is scoped to that one
+   private repository.
+2. Land the publisher workflow/helpers and initial empty `releases/runtime/v1/`
    feeds through the normal `dev` → `main` PR. Ship the Desktop reader pointing
    to `https://raw.githubusercontent.com/openminion/openminion/main/releases/runtime/v1/pypi/channels/stable.json`.
-2. Configure the protected `runtime-publication` environment's reviewers and
+3. Configure the protected `runtime-publication` environment's reviewers and
    deployment refs, permit Actions PR creation and retain main's existing
    required checks. Do not grant a protection bypass. GitHub-token-created
    PR workflows can require **Approve workflows to run** in GitHub;
    see [GitHub's trigger rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
-3. Use the existing package release process below. A successful final
+4. Before creating the final source tag, update and review the exact production
+   wheel URL, digest, version, source tag, source commit, and all three target
+   locks in `openminion/openminion-packaging`. Its main workflow must accept the
+   version and commit that will be released. This is a pre-release gate, not a
+   repair after PyPI publication.
+5. Use the existing package release process below. A successful final
    production-PyPI `Release` run triggers **Runtime manifests** automatically;
    it verifies official/producer wheel equality, publishes immutable R then
    proposed feed F to `runtime-publication/<release-id>`, and opens/reuses a PR
    targeting main. `pending_merge` is not published and does not notify clients.
    RC/alpha/beta tag runs and manual TestPyPI runs do not request publication.
-4. Run the normal PR checks, then merge with a **merge commit**. Keep only one
+6. Confirm `Runtime candidate request` succeeded and that the corresponding
+   private `Runtime candidates` run accepted the exact version and source
+   commit. A failed request, stale packaging pin, or failed native matrix is a
+   visible **binary blocked** disposition; it must not be omitted from release
+   closeout.
+7. Run the normal PR checks, then merge with a **merge commit**. Keep only one
    pending runtime metadata PR; rerun another producer's observer after the
    first merges. If main moved while a PR was pending, merge current main into
    that transient branch normally and resolve feed conflicts without dropping
    references; no force/rebase, branch recreation or automatic conflict repair.
-5. The read-only **Runtime manifests / verify-main** job runs after a manifest
+8. The read-only **Runtime manifests / verify-main** job runs after a manifest
    change is merged into main. Manual workflow dispatch also verifies main and
    never publishes. It checks anonymous main feeds, record digests and R-SHA
    ancestry/readback. Record the actual successful job and metadata/merge SHAs;
    a failed readback remains publication-unconfirmed.
-6. Back-merge main into dev through the normal integration process. In a fresh
+9. Back-merge main into dev through the normal integration process. In a fresh
    checkout, verify the manifest trees match:
 
    ```bash
@@ -95,12 +130,12 @@ local files and passing tests are not deployment evidence. Verify without publis
    git diff --exit-code origin/main origin/dev -- releases/runtime/v1
    ```
 
-7. Verify the Desktop reader against both public feeds before offering an update.
+10. Verify the Desktop reader against both public feeds before offering an update.
    Record the exact Desktop revision, source tag, producer run/attempt, R/F/merge
    SHAs and artifact digests in the runtime-distribution tracker. Read-only feed
    consumption and a private Electron fixture are separate from shipped-app
    upgrade acceptance.
-8. Test the shipped Desktop in isolated roots against public URLs: startup
+11. Test the shipped Desktop in isolated roots against public URLs: startup
    and manual checks, explicit **Prepare update**, quit/reopen activation and
    continued replies in the same chat. Source records are initially
    **uncertified** (`desktop_compatibility: null`) and must be skipped, not
@@ -108,7 +143,7 @@ local files and passing tests are not deployment evidence. Verify without publis
    before claiming end-to-end upgrade acceptance; this observer does not
    invent or publish that certification. Binary feed stays empty until its
    packaging/native/trust gates pass.
-9. Treat observer runs as serialized requests, not a durable queue. If a
+12. Treat observer runs as serialized requests, not a durable queue. If a
    publication run was canceled while another metadata PR was pending, rerun
    the observer for the successful final-tag `Release` producer after the
    pending PR merges. Confirm the `source` job actually ran; a skipped
@@ -156,9 +191,11 @@ metadata cannot substitute for the packaged public acceptance run.
 
 ### Binary runtime publication checklist
 
-1. Run `Runtime candidates` in `openminion/openminion-packaging` at a reviewed
-   commit. Require all native matrix jobs and the aggregate candidate job to
-   pass. The private draft release is evidence only.
+1. Confirm the automatically requested `Runtime candidates` run in
+   `openminion/openminion-packaging` used the released version and full source
+   commit and ran at the reviewed packaging pin. Require all native matrix jobs
+   and the aggregate candidate job to pass. The private draft release is
+   evidence only. A manual rerun must use the same exact version and commit.
 2. Sign and notarize the macOS pair, sign the Windows pair, and retain the exact
    Linux pair. Run clean-host native checks and Desktop prepare/restart/reply
    continuity for every advertised target and compatibility range.
@@ -177,6 +214,13 @@ metadata cannot substitute for the packaged public acceptance run.
 6. Back-merge main into dev and record the candidate run, signing/notarization
    evidence, native verification IDs, runtime release URL, publication run,
    record/feed commits, and merge commit in the runtime-distribution tracker.
+
+Closeout proof for a promoted binary version:
+
+```bash
+.venv/bin/python3.11 -m scripts.ci.runtime_release_status \
+  --repository . --version X.Y.Z --require binary
+```
 
 Do not create the final runtime Release or dispatch binary publication while
 any signing, native verification, compatibility, or immutable-release gate is
