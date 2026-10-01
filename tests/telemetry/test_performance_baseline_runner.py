@@ -1226,9 +1226,7 @@ def test_runtime_manager_idle_fixture_has_fixed_geometry(tmp_path: Path) -> None
     assert run.metrics["idle_agent_count"] == 2
     assert run.metrics["idle_interval_ns"] > 0
     assert isinstance(run.metrics["idle_process_cpu_duty_ppm"], int)
-    assert isinstance(
-        run.metrics["idle_voluntary_context_switch_rate_per_second"], int
-    )
+    assert isinstance(run.metrics["idle_voluntary_context_switch_rate_per_second"], int)
     assert run.measurement_identity["scenario_config"] == {
         "agent_count": 2,
         "idle_interval_seconds": 0.01,

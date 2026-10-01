@@ -457,9 +457,7 @@ def _process_interval_metrics(
         metrics[delta_key] = delta
         return delta
 
-    process_cpu_delta = record_delta(
-        "process_cpu_total_ns", "process_cpu_delta_ns"
-    )
+    process_cpu_delta = record_delta("process_cpu_total_ns", "process_cpu_delta_ns")
     tree_cpu_delta = record_delta(
         "process_tree_cpu_total_ns", "process_tree_cpu_delta_ns", tree=True
     )
@@ -2164,9 +2162,7 @@ def _measure_runtime_manager_idle(
                 {
                     "idle_agent_count": agent_count,
                     "idle_interval_ns": elapsed_ns,
-                    "idle_process_cpu_duty_ppm": interval[
-                        "process_cpu_duty_ppm"
-                    ],
+                    "idle_process_cpu_duty_ppm": interval["process_cpu_duty_ppm"],
                     "idle_process_tree_cpu_duty_ppm": interval[
                         "process_tree_cpu_duty_ppm"
                     ],
@@ -5333,7 +5329,9 @@ def _threshold_result(
     }
     median_timing_scenarios = startup_import_scenarios | {"deterministic_full_turn"}
     requires_median = scenario_id in median_timing_scenarios
-    metric_name = "wall_time_ms" if scenario_id in startup_import_scenarios else "wall_time_ns"
+    metric_name = (
+        "wall_time_ms" if scenario_id in startup_import_scenarios else "wall_time_ns"
+    )
     baseline_wall = dict(baseline_scenario.get(metric_name) or {})
     current_wall = dict(current.get(metric_name) or {})
     baseline_cv = baseline_wall.get("coefficient_of_variation")
@@ -5350,15 +5348,13 @@ def _threshold_result(
             "current_cv": current_cv,
         }
     if scenario_id == "runtime_manager_idle":
-        baseline_context_summary = baseline_scenario.get(
-            "idle_voluntary_context_switch_rate_per_second"
-        ) or {}
-        current_context_summary = current.get(
-            "idle_voluntary_context_switch_rate_per_second"
-        ) or {}
-        baseline_cpu_summary = baseline_scenario.get(
-            "idle_process_cpu_duty_ppm"
-        ) or {}
+        baseline_context_summary = (
+            baseline_scenario.get("idle_voluntary_context_switch_rate_per_second") or {}
+        )
+        current_context_summary = (
+            current.get("idle_voluntary_context_switch_rate_per_second") or {}
+        )
+        baseline_cpu_summary = baseline_scenario.get("idle_process_cpu_duty_ppm") or {}
         current_cpu_summary = current.get("idle_process_cpu_duty_ppm") or {}
         resource_cvs = {
             "baseline_context_switch_cv": baseline_context_summary.get(
@@ -5370,9 +5366,7 @@ def _threshold_result(
             "baseline_cpu_duty_cv": baseline_cpu_summary.get(
                 "coefficient_of_variation"
             ),
-            "current_cpu_duty_cv": current_cpu_summary.get(
-                "coefficient_of_variation"
-            ),
+            "current_cpu_duty_cv": current_cpu_summary.get("coefficient_of_variation"),
         }
         if any(
             isinstance(value, int | float) and float(value) > 0.20
@@ -5406,8 +5400,7 @@ def _threshold_result(
         cpu_duty_limit = max(int(baseline_cpu_duty), 20_000)
         context_switch_ratio = (
             round(
-                int(current_context_switches)
-                / float(int(baseline_context_switches)),
+                int(current_context_switches) / float(int(baseline_context_switches)),
                 4,
             )
             if int(baseline_context_switches) > 0
