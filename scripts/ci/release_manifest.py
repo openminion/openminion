@@ -110,7 +110,9 @@ def validate_binary_qualification_evidence(
         candidate_target = candidates.get(identity)
         native_target = native.get(identity)
         checks = target.get("checks")
-        cli = candidate_target.get("cli") if isinstance(candidate_target, dict) else None
+        cli = (
+            candidate_target.get("cli") if isinstance(candidate_target, dict) else None
+        )
         daemon = (
             candidate_target.get("daemon")
             if isinstance(candidate_target, dict)
@@ -122,8 +124,7 @@ def validate_binary_qualification_evidence(
             or not isinstance(daemon, dict)
             or not isinstance(native_target, dict)
             or target.get("cli_sha256") != cli.get("sha256")
-            or target.get("daemon_sha256")
-            != daemon.get("sha256")
+            or target.get("daemon_sha256") != daemon.get("sha256")
             or target.get("verification_id") != native_target.get("verification_id")
             or not re.fullmatch(r"[a-f0-9]{64}", target.get("package_sha256", ""))
             or not re.fullmatch(r"[a-f0-9]{64}", target.get("app_asar_sha256", ""))

@@ -131,7 +131,9 @@ def promotion_arguments(item: dict) -> dict:
 
 def test_promotes_paired_executables_with_native_evidence() -> None:
     item = candidate()
-    record = promoted_record(item, release(item), verification(), **promotion_arguments(item))
+    record = promoted_record(
+        item, release(item), verification(), **promotion_arguments(item)
+    )
     assert record["promotion_status"] == "promoted"
     assert record["release_id"] == RELEASE_ID
     assert record["artifacts"][0]["format"] == "executables"
@@ -180,7 +182,9 @@ def test_rejects_duplicate_target() -> None:
     item = candidate()
     item["artifacts"].append(deepcopy(item["artifacts"][0]))
     with pytest.raises(ValueError, match="target"):
-        promoted_record(item, release(item), verification(), **promotion_arguments(item))
+        promoted_record(
+            item, release(item), verification(), **promotion_arguments(item)
+        )
 
 
 def test_rejects_desktop_evidence_for_different_runtime_bytes() -> None:
