@@ -781,10 +781,12 @@ def test_runtime_manager_idle_hard_gate_uses_resource_thresholds() -> None:
             "coefficient_of_variation": 0.01,
         },
         "idle_voluntary_context_switch_rate_per_second": {
+            "count": 20,
             "median": 100,
             "coefficient_of_variation": 0.10,
         },
         "idle_process_cpu_duty_ppm": {
+            "count": 20,
             "p95": 10_000,
             "coefficient_of_variation": 0.10,
         },
@@ -798,10 +800,12 @@ def test_runtime_manager_idle_hard_gate_uses_resource_thresholds() -> None:
     current = {
         **baseline_scenario,
         "idle_voluntary_context_switch_rate_per_second": {
+            "count": 20,
             "median": 50,
             "coefficient_of_variation": 0.10,
         },
         "idle_process_cpu_duty_ppm": {
+            "count": 20,
             "p95": 20_000,
             "coefficient_of_variation": 0.10,
         },
@@ -818,6 +822,7 @@ def test_runtime_manager_idle_hard_gate_uses_resource_thresholds() -> None:
     assert passed["cpu_duty_limit_ppm"] == 20_000
 
     current["idle_voluntary_context_switch_rate_per_second"] = {
+        "count": 20,
         "median": 51,
         "coefficient_of_variation": 0.10,
     }
@@ -830,6 +835,7 @@ def test_runtime_manager_idle_hard_gate_uses_resource_thresholds() -> None:
     assert failed["status"] == "fail"
 
     current["idle_voluntary_context_switch_rate_per_second"] = {
+        "count": 20,
         "median": 50,
         "coefficient_of_variation": 0.21,
     }
@@ -841,6 +847,20 @@ def test_runtime_manager_idle_hard_gate_uses_resource_thresholds() -> None:
     )
     assert ineligible["status"] == "ineligible"
     assert "idle resource variance" in ineligible["reason"]
+
+    current["idle_voluntary_context_switch_rate_per_second"] = {
+        "count": 19,
+        "median": 50,
+        "coefficient_of_variation": 0.10,
+    }
+    incomplete = module._threshold_result(
+        current=current,
+        baseline=baseline,
+        scenario_id="runtime_manager_idle",
+        threshold_mode="hard",
+    )
+    assert incomplete["status"] == "ineligible"
+    assert "valid idle resource samples" in incomplete["reason"]
 
 
 def test_deterministic_full_turn_hard_gate_checks_median_and_p95() -> None:

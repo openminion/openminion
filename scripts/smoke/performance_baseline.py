@@ -2148,11 +2148,11 @@ def _measure_runtime_manager_idle(
                 if response.errors or not response.final_text.startswith("idle-ready:"):
                     raise RuntimeError(f"idle agent {index} did not become ready")
 
-            before = _process_metrics()
             started_ns = time.perf_counter_ns()
+            before = _process_metrics()
             time.sleep(idle_interval_seconds)
-            elapsed_ns = _elapsed_ns(started_ns)
             after = _process_metrics()
+            elapsed_ns = _elapsed_ns(started_ns)
             interval = _process_interval_metrics(
                 before,
                 after,
@@ -5356,6 +5356,22 @@ def _threshold_result(
         )
         baseline_cpu_summary = baseline_scenario.get("idle_process_cpu_duty_ppm") or {}
         current_cpu_summary = current.get("idle_process_cpu_duty_ppm") or {}
+        resource_counts = {
+            "baseline_context_switch_count": baseline_context_summary.get("count"),
+            "current_context_switch_count": current_context_summary.get("count"),
+            "baseline_cpu_duty_count": baseline_cpu_summary.get("count"),
+            "current_cpu_duty_count": current_cpu_summary.get("count"),
+        }
+        if any(
+            not isinstance(value, int) or value < COMPARISON_MIN_SAMPLES
+            for value in resource_counts.values()
+        ):
+            return {
+                "mode": threshold_mode,
+                "status": "ineligible",
+                "reason": "fewer than twenty valid idle resource samples",
+                **resource_counts,
+            }
         resource_cvs = {
             "baseline_context_switch_cv": baseline_context_summary.get(
                 "coefficient_of_variation"
