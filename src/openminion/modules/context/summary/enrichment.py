@@ -44,7 +44,11 @@ def maybe_schedule_summary_enrichment(
             return
         if not enriched or enriched == base_summary:
             return
-        safe_summary = enriched[-service._summary_max_chars :]
+        safe_summary = service._summary_engine.merge_enrichment(
+            deterministic_summary=base_summary,
+            enriched_summary=enriched,
+            max_chars=service._summary_max_chars,
+        )
         lease = None
         lease_request_id = f"summary-enrichment:{uuid4().hex}"
         acquire_lease = getattr(service._sessions, "acquire_session_turn_lease", None)

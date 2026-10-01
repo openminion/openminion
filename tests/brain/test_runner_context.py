@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 
@@ -21,6 +22,8 @@ from openminion.modules.brain.schemas import (
     FreshnessContract,
     FreshnessObligations,
     LLMProfiles,
+    PendingTurnContext,
+    Plan,
     StepOutputEntry,
 )
 from openminion.modules.llm.schemas import (
@@ -121,6 +124,67 @@ def test_context_build_preserves_turn_order_and_hints() -> None:
         turns = context.get("turns", [])
         assert [t["content"] for t in turns] == ["first", "second", "third"]
         assert context.get("hints", {}).get("user_input") == "hello"
+
+
+def test_context_build_uses_current_goal_not_stale_plan_or_pending_turn() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, _ = _build_runner(Path(tmp))
+        state = runner._load_or_init_state("ctx-current-goal")
+        state.goal = "new unrelated task"
+        state.plan = Plan(objective="stale plan objective")
+        state.pending_turn_context = PendingTurnContext(
+            original_user_request="stale pending request"
+        )
+
+        context = runner._build_context(
+            state=state,
+            purpose="decide",
+            budget={"max_tokens": 200},
+            hints={"user_input": "new unrelated task"},
+            logger=DummyLogger(),
+        )
+
+        assert context["hints"]["continuity_query"] == "new unrelated task"
+
+
+def test_context_build_prefers_active_mission_objective() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, _ = _build_runner(Path(tmp))
+        state = runner._load_or_init_state("ctx-active-mission")
+        state.goal = "continue"
+        state.mission = SimpleNamespace(
+            status="active",
+            objective="deploy release alpha",
+        )
+
+        context = runner._build_context(
+            state=state,
+            purpose="decide",
+            budget={"max_tokens": 200},
+            hints={"user_input": "continue"},
+            logger=DummyLogger(),
+        )
+
+        assert context["hints"]["continuity_query"] == "deploy release alpha"
+
+
+def test_context_build_rejects_caller_continuity_query_without_typed_goal() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, _ = _build_runner(Path(tmp))
+        state = runner._load_or_init_state("ctx-no-goal")
+
+        context = runner._build_context(
+            state=state,
+            purpose="decide",
+            budget={"max_tokens": 200},
+            hints={
+                "user_input": "continue",
+                "continuity_query": "stale caller objective",
+            },
+            logger=DummyLogger(),
+        )
+
+        assert context["hints"]["continuity_query"] == ""
 
 
 def test_context_build_adds_runtime_time_and_freshness_to_act_context() -> None:

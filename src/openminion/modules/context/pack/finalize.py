@@ -124,6 +124,7 @@ def build_runtime_cache_lookup_key(
     profile_version: str,
 ) -> tuple[str, ...]:
     query_hash = _stable_hash(request.query)
+    continuity_query_hash = _stable_hash(request.continuity_query)
     constraints_hash = _stable_hash(
         request.constraints.model_dump() if request.constraints else {}
     )
@@ -147,6 +148,7 @@ def build_runtime_cache_lookup_key(
         phase_hints_hash,
         budgets_hash,
         budget_telemetry_hash,
+        continuity_query_hash,
     )
 
 
@@ -622,6 +624,7 @@ def _pack_version(
             "purpose": request.purpose,
             "include_identity": request.include_identity,
             "query": request.query,
+            "continuity_query": request.continuity_query,
             "constraints": constraints.model_dump(),
             "phase_hints": request.phase_hints,
             "live_state_overlay": request.live_state_overlay,

@@ -1,10 +1,12 @@
 import unittest
+from collections import Counter
 
 from openminion.modules.context.schemas import (
     ArtifactDigest,
     BuildConstraints,
     BuildPackRequest,
     ContextBudgets,
+    EvidenceItem,
     FactRecord,
     IdentitySnippet,
     MemoryCard,
@@ -15,6 +17,7 @@ from openminion.modules.context.schemas import (
     default_budgets_for,
 )
 from openminion.modules.context.pack.finalize import selected_memory_record_ids
+from openminion.modules.context.contracts import PluginRegistry
 from openminion.modules.context.service import ContextCtlService
 
 
@@ -225,6 +228,9 @@ def _make_service(**kwargs) -> ContextCtlService:
         memctl=kwargs.get("memory", _MemoryClient()),
         artifactctl=kwargs.get("artifact", _ArtifactClient()),
         compressctl=kwargs.get("compress"),
+        rlmctl=kwargs.get("rlm"),
+        vectorctl=kwargs.get("vector"),
+        plugin_registry=kwargs.get("plugin_registry"),
         identity_budget=kwargs.get("identity_budget"),
         rolling_enabled=kwargs.get("rolling_enabled", True),
         compaction_enabled=kwargs.get("compaction_enabled", True),
@@ -239,9 +245,270 @@ def _make_request(**kwargs) -> BuildPackRequest:
         agent_id=kwargs.get("agent_id", "agent-test"),
         purpose=kwargs.get("purpose", "act"),
         query=kwargs.get("query", "hello"),
+        continuity_query=kwargs.get("continuity_query", ""),
         budgets_override=kwargs.get("budgets_override"),
         budget_telemetry=kwargs.get("budget_telemetry", {}),
     )
+
+
+class EffectiveRetrievalQueryTests(unittest.TestCase):
+    def test_semantic_retrievers_share_effective_query_and_pack_identity(self) -> None:
+        queries: list[tuple[str, str]] = []
+
+        class Memory(_MemoryClient):
+            def query_facts(self, *, query, **kwargs):
+                queries.append(("facts", query))
+                return super().query_facts(query=query, **kwargs)
+
+            def query_memory_cards(self, *, query, **kwargs):
+                queries.append(("memory", query))
+                return super().query_memory_cards(query=query, **kwargs)
+
+        class Artifact(_ArtifactClient):
+            def query_digests(self, *, query, **kwargs):
+                queries.append(("artifact", query))
+                return super().query_digests(query=query, **kwargs)
+
+        class Rlm:
+            contract_version = "v1"
+
+            def get_refresh_summary(self, *, query, **kwargs):
+                queries.append(("rlm", query))
+                return None
+
+        class Vector:
+            contract_version = "v1"
+
+            def search(self, *, query, **kwargs):
+                queries.append(("vector", query))
+                return []
+
+        class Retriever:
+            contract_version = "v1"
+            name = "capture"
+
+            def retrieve(self, *, query, **kwargs):
+                queries.append(("plugin", query))
+                return []
+
+        registry = PluginRegistry()
+        registry.register_retriever(Retriever())
+        service = _make_service(
+            memory=Memory(),
+            artifact=Artifact(),
+            rlm=Rlm(),
+            vector=Vector(),
+            plugin_registry=registry,
+        )
+        request = _make_request(
+            query="continue",
+            continuity_query="deploy release alpha",
+        )
+
+        first = service.build_pack(request)
+        first_queries = list(queries)
+        queries.clear()
+        second = service.build_pack(
+            request.model_copy(update={"continuity_query": "deploy release beta"})
+        )
+
+        self.assertEqual(
+            Counter(first_queries),
+            Counter(
+                (owner, query)
+                for owner in ("facts", "memory", "artifact", "rlm", "vector", "plugin")
+                for query in ("continue", "deploy release alpha")
+            ),
+        )
+        self.assertEqual(
+            next(
+                segment for segment in first.segments if segment.id == "turn_input"
+            ).content,
+            "continue",
+        )
+        self.assertNotIn(
+            "deploy release alpha",
+            "\n".join(segment.content for segment in first.segments),
+        )
+        self.assertEqual(len(service._cache), 2)
+        self.assertNotEqual(first.pack_version, second.pack_version)
+        self.assertNotEqual(first.pack_hash, second.pack_hash)
+
+    def test_empty_or_duplicate_continuity_query_preserves_current_query(self) -> None:
+        queries: list[str] = []
+
+        class Memory(_MemoryClient):
+            def query_facts(self, *, query, **kwargs):
+                queries.append(query)
+                return super().query_facts(query=query, **kwargs)
+
+        for continuity_query in ("", "continue"):
+            service = _make_service(memory=Memory())
+            service.build_pack(
+                _make_request(
+                    query="continue",
+                    continuity_query=continuity_query,
+                )
+            )
+
+        self.assertEqual(queries, ["continue", "continue"])
+
+    def test_empty_current_query_preserves_existing_retrieval_contracts(self) -> None:
+        queries: list[tuple[str, str]] = []
+
+        class Memory(_MemoryClient):
+            def query_facts(self, *, query, **kwargs):
+                queries.append(("facts", query))
+                return super().query_facts(query=query, **kwargs)
+
+            def query_memory_cards(self, *, query, **kwargs):
+                queries.append(("memory", query))
+                return super().query_memory_cards(query=query, **kwargs)
+
+        class Artifact:
+            contract_version = "v1"
+
+            def query_digests(self, *, query, **kwargs):
+                queries.append(("artifact", query))
+                return []
+
+        class Rlm:
+            contract_version = "v1"
+
+            def get_refresh_summary(self, *, query, **kwargs):
+                queries.append(("rlm", query))
+                return None
+
+        class Vector:
+            contract_version = "v1"
+
+            def search(self, *, query, **kwargs):
+                queries.append(("vector", query))
+                return []
+
+        class Retriever:
+            contract_version = "v1"
+            name = "capture"
+
+            def retrieve(self, *, query, **kwargs):
+                queries.append(("plugin", query))
+                return []
+
+        registry = PluginRegistry()
+        registry.register_retriever(Retriever())
+        service = _make_service(
+            memory=Memory(),
+            artifact=Artifact(),
+            rlm=Rlm(),
+            vector=Vector(),
+            plugin_registry=registry,
+        )
+
+        service.build_pack(_make_request(query=""))
+
+        self.assertEqual(
+            Counter(queries),
+            Counter(
+                {
+                    ("facts", ""): 1,
+                    ("memory", ""): 1,
+                    ("artifact", ""): 1,
+                    ("rlm", "act"): 1,
+                    ("plugin", ""): 1,
+                }
+            ),
+        )
+
+    def test_saturated_current_results_keep_continuity_matches(self) -> None:
+        class Memory(_MemoryClient):
+            def query_facts(self, *, query, **kwargs):
+                if query == "continue":
+                    return [
+                        FactRecord(record_id=f"current-fact-{index}", text="current")
+                        for index in range(20)
+                    ]
+                return [FactRecord(record_id="objective-fact", text="objective")]
+
+            def query_memory_cards(self, *, query, **kwargs):
+                if query == "continue":
+                    return [
+                        MemoryCard(
+                            record_id=f"current-memory-{index}",
+                            record_type="memory",
+                            text="current",
+                        )
+                        for index in range(15)
+                    ]
+                return [
+                    MemoryCard(
+                        record_id="objective-memory",
+                        record_type="memory",
+                        text="objective",
+                    )
+                ]
+
+        class Artifact(_ArtifactClient):
+            def query_digests(self, *, query, **kwargs):
+                if query == "continue":
+                    return [
+                        ArtifactDigest(ref=f"current-artifact-{index}", bullets=["x"])
+                        for index in range(10)
+                    ]
+                return [ArtifactDigest(ref="objective-artifact", bullets=["objective"])]
+
+        class Rlm:
+            contract_version = "v1"
+
+            def get_refresh_summary(self, *, query, **kwargs):
+                if query == "continue":
+                    return "current " * 400
+                return "OBJECTIVE-RLM"
+
+        class Vector:
+            contract_version = "v1"
+
+            def search(self, *, query, **kwargs):
+                if query == "continue":
+                    return [(f"current-vector-{index}", 1.0, {}) for index in range(5)]
+                return [("objective-vector", 1.0, {})]
+
+        class Retriever:
+            contract_version = "v1"
+            name = "saturated"
+
+            def retrieve(self, *, query, **kwargs):
+                if query == "continue":
+                    return [
+                        EvidenceItem(ref=f"current-plugin-{index}", content="current")
+                        for index in range(10)
+                    ]
+                return [EvidenceItem(ref="objective-plugin", content="objective")]
+
+        registry = PluginRegistry()
+        registry.register_retriever(Retriever())
+        service = _make_service(
+            memory=Memory(),
+            artifact=Artifact(),
+            rlm=Rlm(),
+            vector=Vector(),
+            plugin_registry=registry,
+        )
+
+        pack = service.build_pack(
+            _make_request(
+                query="continue",
+                continuity_query="deploy release alpha",
+            )
+        )
+
+        selected_ids = set(selected_memory_record_ids(pack.context_manifest))
+        self.assertIn("objective-fact", selected_ids)
+        self.assertIn("objective-memory", selected_ids)
+        segments = {segment.id: segment for segment in pack.segments}
+        self.assertIn("evidence:objective-artifact", segments)
+        self.assertIn("plugin_ev:objective-plugin", segments)
+        self.assertIn("objective-vector", segments["retrieval:vector"].refs)
+        self.assertIn("OBJECTIVE-RLM", segments["retrieval:rlm_refresh"].content)
 
 
 class SessionStartRecallTests(unittest.TestCase):
@@ -267,6 +534,24 @@ class SessionStartRecallTests(unittest.TestCase):
         self.assertIn("mem-pref-1", pack.context_manifest.memory)
         rendered = "\n".join(segment.content for segment in pack.segments)
         self.assertIn("User prefers terse C++ server examples.", rendered)
+
+    def test_first_turn_recall_keeps_current_query_with_continuity_objective(
+        self,
+    ) -> None:
+        memory = _MemoryClient()
+        service = _make_service(
+            session=_SliceSession(turns=[], summary_short=""),
+            memory=memory,
+        )
+
+        service.build_pack(
+            _make_request(
+                query="current request",
+                continuity_query="durable objective",
+            )
+        )
+
+        self.assertEqual(memory.recall_calls[0]["query"], "current request")
 
     def test_later_turn_keeps_query_bound_retrieval_without_recall(self) -> None:
         recalled = MemoryCard(

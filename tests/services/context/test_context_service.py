@@ -739,6 +739,54 @@ class SessionContextServiceTests(unittest.TestCase):
             )
         )
 
+    def test_summary_enrichment_preserves_deterministic_edges_when_rewritten(
+        self,
+    ) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="enrichment-edges"
+        )
+        self.store.append_message(
+            session_id=session.id,
+            role="inbound",
+            body="OBJECTIVE-ALPHA " + ("a" * 180),
+        )
+        self.store.append_message(
+            session_id=session.id,
+            role="outbound",
+            body="middle " + ("b" * 180),
+        )
+        self.store.append_message(
+            session_id=session.id,
+            role="inbound",
+            body="progress-079 " + ("c" * 180),
+        )
+        self.store.append_message(
+            session_id=session.id,
+            role="outbound",
+            body="LATEST-MARKER-731",
+        )
+        self.store.append_message(session_id=session.id, role="inbound", body="u3")
+        self.store.append_message(session_id=session.id, role="outbound", body="a3")
+
+        service = SessionContextService(
+            self.store,
+            keep_recent_messages=2,
+            max_compact_per_turn=50,
+            summary_max_chars=256,
+            summary_enrichment_enabled=True,
+            summary_enricher=lambda _summary: "rewritten without source anchors",
+            summary_enrichment_defer=lambda task: task(),
+        )
+
+        result = service.compact_session(session_id=session.id)
+        self.assertEqual(result.compacted_count, 4)
+        context = self.store.get_session_context(session_id=session.id)
+        assert context is not None
+        self.assertIn("OBJECTIVE-ALPHA", context.rolling_summary)
+        self.assertIn("LATEST-MARKER-731", context.rolling_summary)
+        self.assertIn("rewritten without source anchors", context.rolling_summary)
+        self.assertLessEqual(len(context.rolling_summary), 256)
+
     def test_deferred_summary_enrichment_busy_skip_keeps_active_lease(self) -> None:
         session = self.store.resolve_session(
             agent_id="main", channel="console", target="summary-busy"

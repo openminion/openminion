@@ -1,7 +1,7 @@
 """Retrieved-material collection helpers for ``ContextCtlService``."""
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from ..config import (
     CONTEXT_MID_SESSION_RECALL_INTERVAL as _MID_SESSION_RECALL_INTERVAL,
@@ -24,6 +24,39 @@ from ..schemas import (
     SessionSlice,
     SkillSnippetRef,
 )
+
+_RetrievalItem = TypeVar("_RetrievalItem")
+
+
+def retrieval_queries(request: BuildPackRequest) -> tuple[str, ...]:
+    current = str(request.query or "")
+    continuity = str(request.continuity_query or "").strip()
+    if not continuity or continuity == current.strip():
+        return (current,)
+    return current, continuity
+
+
+def merge_query_results(
+    groups: list[list[_RetrievalItem]],
+    *,
+    identity: Callable[[_RetrievalItem], str],
+    limit: int,
+) -> list[_RetrievalItem]:
+    merged: list[_RetrievalItem] = []
+    seen: set[str] = set()
+    for index in range(max((len(group) for group in groups), default=0)):
+        for group in groups:
+            if index >= len(group):
+                continue
+            item = group[index]
+            item_id = identity(item)
+            if item_id in seen:
+                continue
+            seen.add(item_id)
+            merged.append(item)
+            if len(merged) == limit:
+                return merged
+    return merged
 
 
 def _latest_user_message(session_slice: SessionSlice) -> str:
@@ -76,6 +109,51 @@ class RetrievedContextMaterialsCollector:
     def __init__(self, service: Any) -> None:
         self._service = service
 
+    def _collect_query_results(
+        self, request: BuildPackRequest
+    ) -> tuple[list[FactRecord], list[MemoryCard], list[ArtifactDigest]]:
+        fact_groups: list[list[FactRecord]] = []
+        memory_groups: list[list[MemoryCard]] = []
+        artifact_groups: list[list[ArtifactDigest]] = []
+        for query in retrieval_queries(request):
+            fact_groups.append(
+                self._service._memctl.query_facts(  # noqa: SLF001
+                    session_id=request.session_id,
+                    agent_id=request.agent_id,
+                    query=query,
+                    limit=20,
+                    mode_name=request.mode_name,
+                )
+            )
+            memory_groups.append(
+                self._service._memctl.query_memory_cards(  # noqa: SLF001
+                    session_id=request.session_id,
+                    agent_id=request.agent_id,
+                    query=query,
+                    limit=15,
+                    mode_name=request.mode_name,
+                )
+            )
+            artifact_groups.append(
+                self._service._artifactctl.query_digests(  # noqa: SLF001
+                    session_id=request.session_id,
+                    agent_id=request.agent_id,
+                    query=query,
+                    limit=10,
+                )
+            )
+        return (
+            merge_query_results(
+                fact_groups, identity=lambda item: item.record_id, limit=20
+            ),
+            merge_query_results(
+                memory_groups, identity=lambda item: item.record_id, limit=15
+            ),
+            merge_query_results(
+                artifact_groups, identity=lambda item: item.ref, limit=10
+            ),
+        )
+
     def collect_retrieved_context_materials(
         self,
         *,
@@ -84,19 +162,8 @@ class RetrievedContextMaterialsCollector:
         budgets: ContextBudgets,
         session_slice: SessionSlice,
     ) -> _RetrievedContextMaterials:
-        fact_records = self._service._memctl.query_facts(  # noqa: SLF001
-            session_id=request.session_id,
-            agent_id=request.agent_id,
-            query=request.query,
-            limit=20,
-            mode_name=request.mode_name,
-        )
-        memory_cards = self._service._memctl.query_memory_cards(  # noqa: SLF001
-            session_id=request.session_id,
-            agent_id=request.agent_id,
-            query=request.query,
-            limit=15,
-            mode_name=request.mode_name,
+        fact_records, memory_cards, artifact_digests = self._collect_query_results(
+            request
         )
         prior_manifest = self._service._latest_manifest_by_session.get(  # noqa: SLF001
             request.session_id
@@ -141,12 +208,6 @@ class RetrievedContextMaterialsCollector:
             procedure = self._service._memctl.get_procedure(  # noqa: SLF001
                 procedure_id=constraints.procedure_id
             )
-        artifact_digests = self._service._artifactctl.query_digests(  # noqa: SLF001
-            session_id=request.session_id,
-            agent_id=request.agent_id,
-            query=request.query,
-            limit=10,
-        )
         return _RetrievedContextMaterials(
             fact_records=fact_records,
             memory_cards=memory_cards,

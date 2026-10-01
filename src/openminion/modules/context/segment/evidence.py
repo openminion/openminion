@@ -10,6 +10,7 @@ from ..constants import (
     ARTIFACT_PREVIEW_MAX_CHARS,
 )
 from ..input_boundaries import route_and_ledger as _pidf_route_and_ledger
+from ..retrieval.materials import merge_query_results, retrieval_queries
 from ..schemas import (
     ArtifactDigest,
     BuildPackRequest,
@@ -136,8 +137,13 @@ def _plugin_evidence_segments(
     if not plugin_registry.retriever_names:
         return []
     segments: list[ContextSegment] = []
-    plugin_items = run_plugin_evidence_pipeline(
-        request=request, query=request.query, k=10
+    plugin_groups: list[list[EvidenceItem]] = []
+    for query in retrieval_queries(request):
+        plugin_groups.append(
+            run_plugin_evidence_pipeline(request=request, query=query, k=10)
+        )
+    plugin_items = merge_query_results(
+        plugin_groups, identity=lambda item: item.ref, limit=10
     )
     runtime.bucket_stats["evidence_refs"]["total_available"] += len(plugin_items)
     for item in plugin_items:
