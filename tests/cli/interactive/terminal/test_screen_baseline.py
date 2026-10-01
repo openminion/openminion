@@ -136,7 +136,6 @@ async def _render_composer(
 
         read_task = asyncio.create_task(composer.read_line())
         await _wait_for_output(raw, "❯")
-        pipe.send_bytes(b"\x1b[1;1R")
         await _wait_for_renderer_height(composer)
         await asyncio.sleep(0.01)
         snapshot = raw.getvalue()
@@ -145,13 +144,13 @@ async def _render_composer(
     return snapshot
 
 
-async def _render_bottom_layout_checkpoints() -> tuple[dict, dict]:
+async def _render_bottom_layout_checkpoints(*, enable_cpr: bool) -> tuple[dict, dict]:
     raw = io.StringIO()
     output = Vt100_Output(
         raw,
         get_size=lambda: Size(rows=24, columns=100),
         default_color_depth=ColorDepth.TRUE_COLOR,
-        enable_cpr=True,
+        enable_cpr=enable_cpr,
     )
     status_line = TerminalStatusLine()
     status_line.set_state(
@@ -172,7 +171,6 @@ async def _render_bottom_layout_checkpoints() -> tuple[dict, dict]:
         )
         read_task = asyncio.create_task(composer.read_line())
         await _wait_for_output(raw, "❯")
-        pipe.send_bytes(b"\x1b[1;1R")
         await _wait_for_renderer_height(composer)
         await asyncio.sleep(0.01)
 
@@ -189,7 +187,6 @@ async def _render_bottom_layout_checkpoints() -> tuple[dict, dict]:
         write_task = writer(lambda: console.print("Previous response\nDone in 13s"))
         assert write_task is not None
         await write_task
-        pipe.send_bytes(b"\x1b[3;1R")
         await _wait_for_renderer_height(composer)
         await asyncio.sleep(0.01)
         placeholder = _screen_contract(raw.getvalue(), width=100)
@@ -247,7 +244,6 @@ async def _render_completion_layout_checkpoint(*, busy: bool) -> dict:
         composer.set_busy(busy)
         read_task = asyncio.create_task(composer.read_line())
         await _wait_for_output(raw, "❯")
-        pipe.send_bytes(b"\x1b[1;1R")
         await _wait_for_renderer_height(composer)
         pipe.send_text("/")
         await _wait_for_output(raw, "/agents")
@@ -462,8 +458,13 @@ def test_composer_scenes_pin_input_and_footer_to_terminal_bottom(
         assert scene["cursor"]["y"] == 22
 
 
-def test_composer_keeps_input_above_footer_after_prompt_safe_output() -> None:
-    placeholder, typed = asyncio.run(_render_bottom_layout_checkpoints())
+@pytest.mark.parametrize("enable_cpr", [False, True], ids=["no-cpr", "cpr-capable"])
+def test_composer_keeps_input_above_footer_after_prompt_safe_output(
+    enable_cpr: bool,
+) -> None:
+    placeholder, typed = asyncio.run(
+        _render_bottom_layout_checkpoints(enable_cpr=enable_cpr)
+    )
 
     for scene in (placeholder, typed):
         rows = {row["row"]: row["text"] for row in scene["rows"]}
@@ -473,6 +474,7 @@ def test_composer_keeps_input_above_footer_after_prompt_safe_output() -> None:
         assert scene["cursor"]["y"] == 22
         assert sum(text.startswith("◆ ") for text in rows.values()) == 1
         assert sum("❯" in text for text in rows.values()) == 1
+        assert not any("cursor position requests" in text for text in rows.values())
 
     placeholder_rows = {row["row"]: row["text"] for row in placeholder["rows"]}
     typed_rows = {row["row"]: row["text"] for row in typed["rows"]}

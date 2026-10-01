@@ -408,6 +408,58 @@ def test_focus_pty_survives_resize_after_launch(
         write_transcript(artifact_root(tmp_path), "local-resize-help", transcript)
 
 
+def test_focus_pty_pins_input_and_footer_across_turn_and_resize(
+    focus_probe: FocusProbe,
+) -> None:
+    def assert_bottom_layout(session: PtySession, *, rows: int) -> None:
+        screen_rows = session.screen_lines
+        assert len(screen_rows) == rows
+        assert screen_rows[-2].startswith("❯ ")
+        assert screen_rows[-1].startswith("◆ ")
+        assert session.cursor_position[0] == rows - 1
+        assert "cursor position requests" not in session.visible_transcript
+
+    with focus_probe.session(rows=24, cols=100) as session:
+        focus_probe.wait_ready(session)
+        assert_bottom_layout(session, rows=24)
+
+        focus_probe.run_turn(
+            session,
+            FocusScenario(
+                scenario_id="local_bottom_layout",
+                prompt="Reply with exactly: footer layout check",
+                expected_markers=("footer layout check",),
+                timeout=60,
+            ),
+        )
+        assert_bottom_layout(session, rows=24)
+
+        session.send("typed-check")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if session.screen_lines[-2] == "❯ typed-check":
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("typed input did not remain above the footer")
+        assert_bottom_layout(session, rows=24)
+
+        session.send("\x7f" * len("typed-check"))
+        session.send("/")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if "/agents" in session.screen_text:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("slash completion menu did not open")
+        assert_bottom_layout(session, rows=24)
+
+        session.send("\x7f")
+        session.resize(rows=18, cols=72)
+        assert_bottom_layout(session, rows=18)
+
+
 def test_focus_startup_notice_preserves_single_composer(
     focus_probe: FocusProbe,
 ) -> None:

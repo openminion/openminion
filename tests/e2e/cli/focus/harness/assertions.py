@@ -49,16 +49,22 @@ def visible_text(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+def _text_after_wrapped_prompt(frame: str, prompt: str) -> str | None:
+    characters = [character for character in prompt if not character.isspace()]
+    if not characters:
+        return None
+    wrapped_prompt = r"\s*".join(re.escape(character) for character in characters)
+    matches = list(re.finditer(rf"[❯>◆]\s*{wrapped_prompt}", frame))
+    return frame[matches[-1].end() :] if matches else None
+
+
 def final_answer_text(transcript: str, prompt: str) -> str:
     """Extract the completed answer from the latest rendered current-turn frame."""
     frames = [frame for frame in visible_text(transcript).split("\f") if frame.strip()]
     assert frames, "missing terminal frame"
     frame = frames[-1]
-    normalized_prompt = " ".join(prompt.split())
-    prompt_pattern = r"\s+".join(re.escape(word) for word in normalized_prompt.split())
-    submitted = list(re.finditer(rf"(?m)^\s*[❯>◆]\s+{prompt_pattern}(?=\s|$)", frame))
-    assert normalized_prompt and submitted, "current prompt missing from frame"
-    output = frame[submitted[-1].end() :]
+    output = _text_after_wrapped_prompt(frame, prompt)
+    assert output is not None, "current prompt missing from frame"
     done_matches = list(_DONE_RE.finditer(output))
     assert done_matches, "current turn completion missing from frame"
     output = output[: done_matches[-1].start()]
@@ -253,17 +259,13 @@ def turn_output_text(transcript: str, prompt: str) -> str:
     if prompt:
         output_frames: list[str] = []
         prompt_seen = False
-        normalized_prompt = " ".join(prompt.split())
         for frame in visible.split("\f"):
-            normalized_frame = " ".join(frame.split())
-            prompt_index = normalized_frame.find(normalized_prompt)
-            if prompt_index >= 0:
+            after_prompt = _text_after_wrapped_prompt(frame, prompt)
+            if after_prompt is not None:
                 prompt_seen = True
-                output_frames.append(
-                    normalized_frame[prompt_index + len(normalized_prompt) :]
-                )
+                output_frames.append(" ".join(after_prompt.split()))
             elif prompt_seen:
-                output_frames.append(normalized_frame)
+                output_frames.append(" ".join(frame.split()))
         if prompt_seen:
             return "\n".join(output_frames)
     prompt_index = visible.rfind("❯")
@@ -309,4 +311,7 @@ def assert_expected_markers(
         alternatives = tuple(
             part.strip().lower() for part in marker.split("|") if part.strip()
         )
-        assert any(alternative in output for alternative in alternatives), marker
+        assert any(alternative in output for alternative in alternatives), (
+            f"missing expected marker {marker!r} in visible turn output:\n"
+            f"{output[-4000:]}"
+        )
