@@ -21,7 +21,7 @@ from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.output.vt100 import Vt100_Output
 from prompt_toolkit.patch_stdout import patch_stdout
-from prompt_toolkit.styles import DummyStyle, Style
+from prompt_toolkit.styles import Style
 
 from openminion.cli.presentation.animation import default_animation_registry
 from openminion.cli.presentation.animation.models import (
@@ -64,7 +64,15 @@ _PHASE_ANIMATIONS = {
 }
 
 
-def _focus_prompt_style() -> Style:
+def _focus_prompt_style(*, color: bool = True) -> Style:
+    if not color:
+        return Style.from_dict(
+            {
+                "bottom-toolbar": "noreverse",
+                "bottom-toolbar.text": "noreverse",
+                "placeholder": "noreverse",
+            }
+        )
     from openminion.cli.presentation.styles import get_active_theme_name
     from openminion.cli.theme import DARK, lookup_theme
 
@@ -338,7 +346,7 @@ class TerminalComposer:
             enable_history_search=True,
             mouse_support=Condition(_completion_menu_is_open),
             reserve_space_for_menu=_COMPLETION_MENU_ROWS,
-            style=_focus_prompt_style() if self._color else DummyStyle(),
+            style=_focus_prompt_style(color=self._color),
         )
         _configure_completion_menu(self._session)
 
