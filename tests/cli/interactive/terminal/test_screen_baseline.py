@@ -61,6 +61,23 @@ async def _wait_for_renderer_height(composer: TerminalComposer) -> None:
     raise AssertionError("terminal did not report its cursor position")
 
 
+async def _wait_for_screen_row(
+    raw: io.StringIO,
+    *,
+    width: int,
+    height: int,
+    row: int,
+    text: str,
+) -> None:
+    for _ in range(200):
+        scene = _screen_contract(raw.getvalue(), width=width, height=height)
+        rows = {item["row"]: item["text"] for item in scene["rows"]}
+        if rows.get(row) == text:
+            return
+        await asyncio.sleep(0.005)
+    raise AssertionError(f"terminal row {row} did not render {text!r}")
+
+
 def _render_completed_turn(console: Console) -> None:
     transcript = TerminalTranscript(console)
     transcript.set_terminal_writer(lambda render: render())
@@ -306,10 +323,16 @@ def _styled_spans(screen: pyte.Screen, row: int) -> list[dict]:
     return spans
 
 
-def _screen_contract(raw: str, *, width: int) -> dict:
+def _screen_contract(
+    raw: str,
+    *,
+    width: int,
+    height: int = 24,
+    include_cursor_visibility: bool = False,
+) -> dict:
     assert "\x1b[?1049h" not in raw
     normalized = raw.replace("\r\n", "\n").replace("\n", "\r\n")
-    screen = pyte.Screen(width, 24)
+    screen = pyte.Screen(width, height)
     pyte.Stream(screen).feed(normalized)
 
     rows = []
@@ -319,11 +342,114 @@ def _screen_contract(raw: str, *, width: int) -> dict:
         if not visible and not styles:
             continue
         rows.append({"row": row, "text": visible, "styles": styles})
+    cursor = {"x": screen.cursor.x, "y": screen.cursor.y}
+    if include_cursor_visibility:
+        cursor["hidden"] = screen.cursor.hidden
     return {
         "width": width,
-        "cursor": {"x": screen.cursor.x, "y": screen.cursor.y},
+        "cursor": cursor,
         "rows": rows,
     }
+
+
+async def _render_stale_terminal_height_checkpoints() -> dict[str, object]:
+    raw = io.StringIO()
+    output = Vt100_Output(
+        raw,
+        get_size=lambda: Size(rows=24, columns=100),
+        default_color_depth=ColorDepth.TRUE_COLOR,
+        enable_cpr=False,
+    )
+    status_line = TerminalStatusLine()
+    status_line.set_state(
+        agent="minimax-m2-7",
+        model="MiniMax-M2.7",
+        cwd="/repo/openminion",
+        state="responding",
+        turn_status="Reviewing request...",
+        elapsed_seconds=4,
+    )
+
+    with (
+        patch.dict("os.environ", {"TERM": "xterm-256color"}),
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=output),
+    ):
+        composer = TerminalComposer(
+            bottom_toolbar=status_line.bottom_toolbar,
+            active_status=status_line.active_status,
+            color=False,
+        )
+        composer.set_busy(True)
+        read_task = asyncio.create_task(composer.read_line())
+        await _wait_for_output(raw, "❯")
+
+        console = Console(
+            file=raw,
+            force_terminal=True,
+            color_system=None,
+            width=100,
+        )
+        writer = build_prompt_safe_terminal_writer(
+            console=console,
+            prompt_session=composer.prompt_session,
+        )
+        typing = []
+        redraws = []
+        draft = ""
+        for index, character in enumerate("typing while busy", start=1):
+            draft += character
+            pipe.send_text(character)
+            await _wait_for_screen_row(
+                raw,
+                width=100,
+                height=42,
+                row=40,
+                text=f"❯ {draft}".rstrip(),
+            )
+            await asyncio.sleep(0.005)
+            typing.append(
+                _screen_contract(
+                    raw.getvalue(),
+                    width=100,
+                    height=42,
+                    include_cursor_visibility=True,
+                )
+            )
+
+            if index in (4, 10, 17):
+                update = len(redraws) + 1
+                write_task = writer(
+                    lambda update=update: console.print(f"Response update {update}")
+                )
+                assert write_task is not None
+                await write_task
+                await asyncio.sleep(0.01)
+                redraws.append(
+                    {
+                        "draft": draft,
+                        "scene": _screen_contract(
+                            raw.getvalue(),
+                            width=100,
+                            height=42,
+                            include_cursor_visibility=True,
+                        ),
+                    }
+                )
+
+        status_line.set_state(state="idle", turn_status="")
+        composer.set_busy(False)
+        await asyncio.sleep(0.01)
+        completed = _screen_contract(
+            raw.getvalue(),
+            width=100,
+            height=42,
+            include_cursor_visibility=True,
+        )
+
+        pipe.send_text("\n")
+        await read_task
+    return {"typing": typing, "redraws": redraws, "completed": completed}
 
 
 def _capture_completed_scene(*, width: int, theme, color_mode: str) -> dict:
@@ -480,6 +606,50 @@ def test_composer_keeps_input_above_footer_after_prompt_safe_output(
     typed_rows = {row["row"]: row["text"] for row in typed["rows"]}
     assert placeholder_rows[22].startswith("❯ Ask anything")
     assert typed_rows[22] == "❯ test"
+
+
+def test_bottom_layout_uses_physical_edge_when_reported_height_is_stale() -> None:
+    checkpoints = asyncio.run(_render_stale_terminal_height_checkpoints())
+    typing = checkpoints["typing"]
+    redraws = checkpoints["redraws"]
+    completed = checkpoints["completed"]
+    assert isinstance(typing, list)
+    assert isinstance(redraws, list)
+    assert isinstance(completed, dict)
+
+    expected_draft = ""
+    for character, scene in zip("typing while busy", typing, strict=True):
+        expected_draft += character
+        rows = {row["row"]: row["text"] for row in scene["rows"]}
+        assert rows[40] == f"❯ {expected_draft}".rstrip()
+        assert rows[41].startswith("◆ minimax-m2-7")
+        assert rows[38].startswith("Status: Reviewing request...")
+        assert scene["cursor"] == {
+            "x": len(expected_draft) + 2,
+            "y": 40,
+            "hidden": False,
+        }
+
+    for update, checkpoint in enumerate(redraws, start=1):
+        draft = checkpoint["draft"]
+        scene = checkpoint["scene"]
+        rows = {row["row"]: row["text"] for row in scene["rows"]}
+        assert rows[40] == f"❯ {draft}".rstrip()
+        assert rows[41].startswith("◆ minimax-m2-7")
+        assert rows[38].startswith("Status: Reviewing request...")
+        assert scene["cursor"] == {
+            "x": len(draft) + 2,
+            "y": 40,
+            "hidden": False,
+        }
+        assert any(row["text"] == f"Response update {update}" for row in scene["rows"])
+
+    completed_rows = {row["row"]: row["text"] for row in completed["rows"]}
+    assert completed_rows[40] == "❯ typing while busy"
+    assert completed_rows[41].startswith("◆ minimax-m2-7")
+    assert not any(text.startswith("Status:") for text in completed_rows.values())
+    assert completed["cursor"] == {"x": 19, "y": 40, "hidden": False}
+    assert any(row["text"] == "Response update 3" for row in completed["rows"])
 
 
 @pytest.mark.parametrize("busy", [False, True])
