@@ -30,6 +30,7 @@ QUALIFICATION_CHECKS = {
     "same_chat_reply",
     "startup_activation",
 }
+BINARY_QUALIFICATION_CHECKS = {*QUALIFICATION_CHECKS, "native_trust"}
 
 
 def _stable_three_part_version(value: str, name: str) -> Version:
@@ -42,12 +43,103 @@ def _stable_three_part_version(value: str, name: str) -> Version:
 
 
 def evidence_path(kind: str, version: str, evidence_id: str) -> str:
-    if kind not in {"qualification", "acceptance"}:
+    if kind not in {"qualification", "binary-qualification", "acceptance"}:
         raise ValueError("invalid certification evidence kind")
     _stable_three_part_version(version, "runtime version")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", evidence_id):
         raise ValueError("invalid evidence_id")
     return f"{DESKTOP_EVIDENCE_BASE}/{kind}/{version}/{evidence_id}.json"
+
+
+def validate_binary_qualification_evidence(
+    evidence: dict,
+    candidate: dict,
+    verification: dict,
+    release_tag: str,
+) -> None:
+    """Validate exact packaged-Desktop qualification for immutable binary bytes."""
+    if (
+        evidence.get("schema_version"),
+        evidence.get("kind"),
+    ) != (1, "openminion-binary-runtime-qualification"):
+        raise ValueError("invalid binary qualification evidence identity")
+    runtime = evidence.get("runtime")
+    desktop = evidence.get("desktop")
+    compatibility = evidence.get("compatibility")
+    targets = evidence.get("targets")
+    if not all(isinstance(item, dict) for item in (runtime, desktop, compatibility)):
+        raise ValueError("binary qualification evidence is incomplete")
+    if runtime != {
+        "version": candidate.get("runtime_version"),
+        "release_tag": release_tag,
+    }:
+        raise ValueError("binary qualification does not match the runtime Release")
+    desktop_version = _stable_three_part_version(
+        desktop.get("version", ""), "desktop version"
+    )
+    if desktop_version == Version("0.0.0"):
+        raise ValueError("development Desktop version cannot certify a release")
+    if not re.fullmatch(r"[a-f0-9]{40}", desktop.get("source_commit", "")):
+        raise ValueError("desktop source commit must be a full SHA")
+    if compatibility != candidate.get("desktop_compatibility"):
+        raise ValueError("binary qualification compatibility differs from candidate")
+    minimum = _stable_three_part_version(
+        compatibility.get("min_version", ""), "minimum Desktop version"
+    )
+    maximum = _stable_three_part_version(
+        compatibility.get("max_version_exclusive", ""),
+        "maximum Desktop version",
+    )
+    if not minimum <= desktop_version < maximum:
+        raise ValueError("qualified Desktop version is outside its claimed bounds")
+    native = verification.get("targets") if isinstance(verification, dict) else None
+    if not isinstance(native, dict) or not isinstance(targets, list):
+        raise ValueError("binary qualification lacks target evidence")
+    candidates = {
+        f"{item.get('platform')}-{item.get('arch')}": item
+        for item in candidate.get("artifacts", [])
+        if isinstance(item, dict)
+    }
+    if set(candidates) != DESKTOP_TARGETS or len(targets) != len(DESKTOP_TARGETS):
+        raise ValueError("binary qualification requires every supported Desktop target")
+    actual_targets = set()
+    for target in targets:
+        if not isinstance(target, dict):
+            raise ValueError("invalid binary target qualification evidence")
+        identity = f"{target.get('platform')}-{target.get('arch')}"
+        candidate_target = candidates.get(identity)
+        native_target = native.get(identity)
+        checks = target.get("checks")
+        cli = candidate_target.get("cli") if isinstance(candidate_target, dict) else None
+        daemon = (
+            candidate_target.get("daemon")
+            if isinstance(candidate_target, dict)
+            else None
+        )
+        if (
+            candidate_target is None
+            or not isinstance(cli, dict)
+            or not isinstance(daemon, dict)
+            or not isinstance(native_target, dict)
+            or target.get("cli_sha256") != cli.get("sha256")
+            or target.get("daemon_sha256")
+            != daemon.get("sha256")
+            or target.get("verification_id") != native_target.get("verification_id")
+            or not re.fullmatch(r"[a-f0-9]{64}", target.get("package_sha256", ""))
+            or not re.fullmatch(r"[a-f0-9]{64}", target.get("app_asar_sha256", ""))
+            or target.get("result") != "passed"
+            or not isinstance(checks, list)
+            or set(checks) != BINARY_QUALIFICATION_CHECKS
+            or len(checks) != len(BINARY_QUALIFICATION_CHECKS)
+        ):
+            raise ValueError("invalid binary target qualification evidence")
+        actual_targets.add(identity)
+    if actual_targets != DESKTOP_TARGETS:
+        raise ValueError("binary qualification target set is incomplete or duplicated")
+    completed_at = evidence.get("completed_at", "")
+    if not isinstance(completed_at, str) or not completed_at.endswith("Z"):
+        raise ValueError("binary qualification completion must be a UTC timestamp")
+    datetime.fromisoformat(completed_at)
 
 
 def validate_qualification_evidence(evidence: dict, source: dict) -> dict:

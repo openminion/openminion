@@ -67,7 +67,12 @@ jobs:
           python - <<'PY'
           import os
 
-          binary = [os.environ["BINARY_TAG"], os.environ["BINARY_ID"]]
+          binary = [
+              os.environ["BINARY_TAG"],
+              os.environ["BINARY_ID"],
+              os.environ["EVIDENCE_COMMIT"],
+              os.environ["EVIDENCE_ID"],
+          ]
           certification = [
               os.environ["SOURCE_VERSION"],
               os.environ["SOURCE_ID"],
@@ -75,12 +80,16 @@ jobs:
               os.environ["EVIDENCE_COMMIT"],
               os.environ["EVIDENCE_ID"],
           ]
-          if any(binary) and not all(binary):
-              raise SystemExit("binary publication inputs must be complete")
-          if any(certification) and not all(certification):
-              raise SystemExit("source certification inputs must be complete")
-          if any(binary) and any(certification):
+          binary_requested = any(binary[:2])
+          certification_requested = any(certification[:3])
+          if binary_requested and certification_requested:
               raise SystemExit("choose binary publication or source certification")
+          if binary_requested and not all(binary):
+              raise SystemExit("binary publication inputs must be complete")
+          if certification_requested and not all(certification):
+              raise SystemExit("source certification inputs must be complete")
+          if not binary_requested and not certification_requested and any(binary[2:]):
+              raise SystemExit("Desktop evidence requires a publication request")
           PY
 
   source:
@@ -163,7 +172,9 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       inputs.binary_release_tag != '' &&
-      inputs.binary_release_id != ''
+      inputs.binary_release_id != '' &&
+      inputs.desktop_evidence_commit != '' &&
+      inputs.desktop_evidence_id != ''
     needs: validate-dispatch
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -188,6 +199,8 @@ jobs:
           python -m scripts.ci.publish_runtime_manifest \
             --binary-release-tag "${{ inputs.binary_release_tag }}" \
             --binary-release-id "${{ inputs.binary_release_id }}" \
+            --desktop-evidence-commit "${{ inputs.desktop_evidence_commit }}" \
+            --desktop-evidence-id "${{ inputs.desktop_evidence_id }}" \
             --workspace "$RUNNER_TEMP/runtime-manifest-publication"
 
   source-certification:

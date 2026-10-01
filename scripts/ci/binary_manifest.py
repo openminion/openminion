@@ -11,6 +11,12 @@ from urllib.request import Request, urlopen
 
 from packaging.version import Version
 
+from scripts.ci.release_manifest import (
+    DESKTOP_REPOSITORY,
+    evidence_path,
+    validate_binary_qualification_evidence,
+)
+
 
 RUNTIME_REPOSITORY = "openminion/runtime"
 GITHUB_API = f"https://api.github.com/repos/{RUNTIME_REPOSITORY}"
@@ -96,6 +102,10 @@ def promoted_record(
     verification: dict,
     *,
     release_id: str,
+    desktop_evidence: dict,
+    evidence_commit: str,
+    evidence_id: str,
+    evidence_bytes: bytes,
 ) -> dict:
     version = _stable_version(candidate.get("runtime_version"))
     if (
@@ -121,6 +131,17 @@ def promoted_record(
         or Version(minimum) >= Version(maximum)
     ):
         raise ValueError("invalid Desktop compatibility bounds")
+    candidate_targets = [
+        f"{item.get('platform')}-{item.get('arch')}"
+        for item in candidate.get("artifacts", [])
+        if isinstance(item, dict)
+    ]
+    if (
+        len(candidate_targets) != 3
+        or len(set(candidate_targets)) != 3
+        or set(candidate_targets) != {"darwin-arm64", "linux-x64", "win32-x64"}
+    ):
+        raise ValueError("binary candidate must contain each supported target once")
     expected_tag = f"runtime-v{version}-{release_id}"
     if (
         release.get("tag_name") != expected_tag
@@ -141,6 +162,17 @@ def promoted_record(
     checks = verification.get("targets") if isinstance(verification, dict) else None
     if verification.get("schema_version") != 1 or not isinstance(checks, dict):
         raise ValueError("invalid native verification evidence")
+    if set(checks) != set(candidate_targets):
+        raise ValueError("native verification target set differs from candidate")
+    validate_binary_qualification_evidence(
+        desktop_evidence,
+        candidate,
+        verification,
+        expected_tag,
+    )
+    if not re.fullmatch(r"[a-f0-9]{40}", evidence_commit):
+        raise ValueError("desktop evidence commit must be a full SHA")
+    path = evidence_path("binary-qualification", version, evidence_id)
 
     promoted = []
     targets = set()
@@ -211,11 +243,24 @@ def promoted_record(
         "source_commit": candidate["source_commit"],
         "release_notes_url": candidate["release_notes_url"],
         "desktop_compatibility": bounds,
+        "certification": {
+            "repository": DESKTOP_REPOSITORY,
+            "commit": evidence_commit,
+            "path": path,
+            "sha256": hashlib.sha256(evidence_bytes).hexdigest(),
+        },
         "artifacts": promoted,
     }
 
 
-def official_binary_record(tag: str, release_id: str) -> dict:
+def official_binary_record(
+    tag: str,
+    release_id: str,
+    desktop_evidence: dict,
+    evidence_commit: str,
+    evidence_id: str,
+    evidence_bytes: bytes,
+) -> dict:
     release = release_metadata(tag)
     assets = {asset["name"]: asset for asset in release.get("assets", [])}
     try:
@@ -225,7 +270,16 @@ def official_binary_record(tag: str, release_id: str) -> dict:
         )
     except KeyError as exc:
         raise ValueError("runtime Release lacks publication evidence") from exc
-    record = promoted_record(candidate, release, verification, release_id=release_id)
+    record = promoted_record(
+        candidate,
+        release,
+        verification,
+        release_id=release_id,
+        desktop_evidence=desktop_evidence,
+        evidence_commit=evidence_commit,
+        evidence_id=evidence_id,
+        evidence_bytes=evidence_bytes,
+    )
     for target in record["artifacts"]:
         for role in ("cli", "daemon"):
             identity = target[role]
