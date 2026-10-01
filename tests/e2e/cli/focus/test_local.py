@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import time
 
 import pytest
@@ -79,6 +80,56 @@ def test_focus_pty_handles_contextual_slash_help(
         "local-contextual-slash-help",
         "\n".join(transcripts),
     )
+
+
+def test_focus_pty_controls_durable_project(
+    focus_probe: FocusProbe,
+    tmp_path,
+) -> None:
+    command = (
+        "/project start --goal 'verify project controls' "
+        f"--verify-command {shlex.quote(f'{focus_probe.python_bin} -c pass')}"
+    )
+    approval_events: list[dict[str, object]] = []
+    with focus_probe.session() as session:
+        focus_probe.wait_ready(session)
+        launched = focus_probe.run_slash_turn(
+            session,
+            command,
+            marker=r"Project queued:\s*awrk_[A-Za-z0-9]+",
+            requires_approval=True,
+            approval_events=approval_events,
+        )
+        assert [(event["action"], event["decision"]) for event in approval_events] == [
+            ("project.start", "yes")
+        ]
+        match = re.search(r"Project queued:\s*(awrk_[A-Za-z0-9]+)", launched)
+        assert match is not None
+        run_id = match.group(1)
+        paused = focus_probe.run_slash_turn(
+            session,
+            f"/project pause {run_id}",
+            marker=r"task_state: paused",
+        )
+        redirected = focus_probe.run_slash_turn(
+            session,
+            f"/project redirect {run_id} --direction 'finish the report first'",
+            marker=r"direction_queued_for_next_cycle: finish the report first",
+        )
+        resumed = focus_probe.run_slash_turn(
+            session,
+            f"/project resume {run_id}",
+            marker=r"task_state: active|status: running",
+        )
+        cancelled = focus_probe.run_slash_turn(
+            session,
+            f"/project cancel {run_id}",
+            marker=r"cancelled",
+        )
+
+    transcript = "\n".join((launched, paused, redirected, resumed, cancelled))
+    assert run_id in transcript
+    write_transcript(artifact_root(tmp_path), "local-project-controls", transcript)
 
 
 def test_focus_pty_custom_help_is_metadata_only(
