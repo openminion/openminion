@@ -488,6 +488,64 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
             [str(event.get("event_type")) for event in events],
         )
 
+    def test_flush_waits_once_for_active_followup_completion(self) -> None:
+        for followup_fails in (False, True):
+            with self.subTest(followup_fails=followup_fails):
+                queue = MemoryFollowupQueue(auto_start=False)
+                session_id = f"session-{followup_fails}"
+                with queue._condition:
+                    queue._active_by_session[session_id] = 1
+
+                wait_started = threading.Event()
+                followup_started = threading.Event()
+                release_followup = threading.Event()
+                wait_timeouts: list[float | None] = []
+                worker_errors: list[Exception] = []
+                original_wait = queue._condition.wait
+
+                def _observed_wait(timeout=None):  # noqa: ANN001
+                    wait_timeouts.append(timeout)
+                    wait_started.set()
+                    return original_wait(timeout=timeout)
+
+                def _run_followup(_job) -> None:  # noqa: ANN001
+                    followup_started.set()
+                    release_followup.wait(timeout=1.0)
+                    if followup_fails:
+                        raise RuntimeError("followup failed")
+
+                def _run_job() -> None:
+                    try:
+                        queue._run(SimpleNamespace(session_id=session_id))
+                    except Exception as exc:
+                        worker_errors.append(exc)
+
+                with (
+                    patch.object(queue._condition, "wait", side_effect=_observed_wait),
+                    patch(
+                        "openminion.services.gateway.memory.run_memory_followup",
+                        side_effect=_run_followup,
+                    ),
+                ):
+                    flush_thread = threading.Thread(
+                        target=queue.flush,
+                        kwargs={"session_id": session_id},
+                    )
+                    worker_thread = threading.Thread(target=_run_job)
+                    flush_thread.start()
+                    self.assertTrue(wait_started.wait(timeout=0.5))
+                    worker_thread.start()
+                    self.assertTrue(followup_started.wait(timeout=0.5))
+                    threading.Event().wait(timeout=0.22)
+                    release_followup.set()
+                    worker_thread.join(timeout=1.0)
+                    flush_thread.join(timeout=1.0)
+
+                self.assertFalse(worker_thread.is_alive())
+                self.assertFalse(flush_thread.is_alive())
+                self.assertEqual(wait_timeouts, [None])
+                self.assertEqual(bool(worker_errors), followup_fails)
+
     def test_gateway_injects_agent_memory_across_sessions(self) -> None:
         memory_service = _make_v2_memory(Path(self._tmp.name), "-inject")
         provider = _CaptureProvider()
