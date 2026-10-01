@@ -50,6 +50,8 @@ _PROMPT_RESUMED = "↳ "
 _PROMPT_DISABLED = "… "
 _PROMPT_BUSY = "❯ "
 _COMPLETION_MENU_ROWS = 10
+# VT100 terminals clamp an oversized CUP row to the physical screen edge.
+_TERMINAL_EDGE_ROW = 999
 _PLACEHOLDER_IDLE = "Ask anything · @ to mention a file · / for commands"
 _PLACEHOLDER_BUSY = "Type to queue for the next turn · Esc interrupts"
 _SLASH_NAME_CHARS = tuple("abcdefghijklmnopqrstuvwxyz0123456789-_")
@@ -596,9 +598,10 @@ class TerminalComposer:
             renderer._min_available_height == 0
             and self._anchored_terminal_rows == terminal_rows
         ):
-            output.cursor_goto(row=terminal_rows, column=1)
+            output.cursor_goto(row=_TERMINAL_EDGE_ROW, column=1)
             output.write_raw("\n" * layout_rows)
-        output.cursor_goto(row=terminal_rows - layout_rows + 1, column=1)
+        output.cursor_goto(row=_TERMINAL_EDGE_ROW, column=1)
+        output.cursor_up(layout_rows - 1)
         output.flush()
         # Prompt-toolkit normally learns this value through a cursor position
         # response. Seed the known space after explicitly positioning the
