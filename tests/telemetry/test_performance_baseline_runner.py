@@ -628,9 +628,15 @@ def test_package_source_hash_binds_relative_paths_and_bytes(tmp_path: Path) -> N
     source.write_text("VALUE = 1\n", encoding="utf-8")
 
     first = module._package_source_sha256(str(package_root))
-    source.write_text("VALUE = 2\n", encoding="utf-8")
+    nested = package_root / "nested"
+    nested.mkdir()
+    moved = nested / source.name
+    source.rename(moved)
+    path_changed = module._package_source_sha256(str(package_root))
+    moved.write_text("VALUE = 2\n", encoding="utf-8")
 
-    assert first != module._package_source_sha256(str(package_root))
+    assert first != path_changed
+    assert path_changed != module._package_source_sha256(str(package_root))
     assert module._package_source_sha256(str(tmp_path / "missing")) == "unavailable"
 
 
