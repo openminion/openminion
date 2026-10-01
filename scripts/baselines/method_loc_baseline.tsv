@@ -21,7 +21,7 @@ src/openminion/modules/brain/loop/adaptive/seeded.py	ActLoopSeededMixin._finaliz
 src/openminion/modules/brain/loop/orchestration.py	decide	627	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/recursive/generation.py	generate	414	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/strategies/coding/results.py	_result_from_outcome	192	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/loop/strategies/research/handler.py	ResearchMode.execute	150	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/loop/strategies/research/handler.py	ResearchMode.execute	146	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/budget_control.py	_force_budget_answer_only_finalization	208	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/direct_tool.py	_force_direct_tool_answer_only_closure	174	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/duplicate_batch.py	_force_duplicate_batch_answer_only_closure	184	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

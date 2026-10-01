@@ -97,6 +97,7 @@ def test_project_turn_metadata_carries_the_exact_selected_tool_scope() -> None:
         cycle_id="cycle-1",
         milestone="milestone-1",
         prompt="continue",
+        act_profile="research",
         allowed_tools=("git.status", "github.fetch_checks"),
         project_tool_calls_remaining=0,
         plan_revision_required=True,
@@ -109,6 +110,7 @@ def test_project_turn_metadata_carries_the_exact_selected_tool_scope() -> None:
     assert metadata["turn_tool_allowlist_supplied"] == "true"
     assert metadata["project_tool_calls_remaining"] == "0"
     assert metadata["project_plan_revision_required"] == "true"
+    assert metadata["project_act_profile"] == "research"
     default_metadata = project_turn_inbound_metadata(
         ProjectTurnRequest(
             run_id="run-2",
@@ -123,6 +125,7 @@ def test_project_turn_metadata_carries_the_exact_selected_tool_scope() -> None:
     )
     assert "project_tool_calls_remaining" not in default_metadata
     assert default_metadata["project_plan_revision_required"] == "false"
+    assert default_metadata["project_act_profile"] == "coding"
 
 
 @pytest.mark.parametrize(

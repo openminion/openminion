@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-import openminion.modules.brain.loop.strategies.research.handler as research_handler_module
+import openminion.modules.brain.loop.strategies.research.findings as research_findings_module
 from openminion.modules.brain.bootstrap.route_catalog import get_route_descriptor
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.loop.strategies.research import (
@@ -22,6 +22,7 @@ from openminion.modules.brain.loop.strategies.research import (
     ResearchMode,
     ResearchPayload,
 )
+from openminion.modules.brain.loop.strategies.research.schemas import ResearchSynthesis
 from openminion.modules.brain.checkpoint.contracts import (
     TaskBackedModeContract,
     TaskProgress,
@@ -523,8 +524,8 @@ def test_iteration_goal_includes_typed_current_datetime_and_evidence_dates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        research_handler_module,
-        "_local_now_iso",
+        research_findings_module,
+        "local_now_iso",
         lambda: "2026-05-08T12:34:56+00:00",
     )
     mode = _make_mode(max_iterations=3)
@@ -572,8 +573,8 @@ def test_synthesis_passes_typed_temporal_facts_to_structured_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        research_handler_module,
-        "_local_now_iso",
+        research_findings_module,
+        "local_now_iso",
         lambda: "2026-05-08T12:34:56+00:00",
     )
     with tempfile.TemporaryDirectory() as tmp:
@@ -1409,6 +1410,180 @@ def test_synthesize_and_finalize_pauses_without_model_synthesis(
         assert "did not produce a usable synthesized answer" in str(result.message)
         assert "Continue in a new turn to resume." in str(result.message)
         assert tm.get_task(record.task_id).state == TaskLifecycleState.PAUSED
+
+
+@pytest.mark.parametrize("status", ["incomplete", "blocked"])
+def test_synthesize_and_finalize_preserves_nonterminal_research(
+    status: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
+        ctx, _ = _ctx(
+            tm,
+            synthesis_payload={
+                "answer": "Partial evidence.",
+                "status": status,
+                "remaining_work": "Verify the unresolved source.",
+            },
+        )
+        mode = _make_mode(max_iterations=1)
+        record = tm.create_task(
+            session_id="s-research",
+            mode_name=RESEARCH_MODE,
+            goal="test synthesis",
+            agent_id="router-agent",
+        )
+        ctx.state.task_backed_task_id = record.task_id
+        mode._next_iteration = 1
+        scheduled: list[str] = []
+        monkeypatch.setattr(
+            mode,
+            "_schedule_pause_resume",
+            lambda **kwargs: scheduled.append(kwargs["task_id"]),
+        )
+
+        result = mode._synthesize_and_finalize(
+            ctx,
+            task_id=record.task_id,
+            query="What remains?",
+            findings=[
+                ResearchFinding(
+                    iteration=0,
+                    source_tool="act",
+                    source_query="q1",
+                    content="Partial evidence.",
+                ).model_dump(mode="python")
+            ],
+        )
+
+        assert result.status == "waiting_user"
+        assert "Remaining work: Verify the unresolved source." in result.message
+        assert tm.get_task(record.task_id).state == TaskLifecycleState.PAUSED
+        latest = tm.get_latest_checkpoint(record.task_id)
+        assert latest is not None and latest[1]["payload"]["next_iteration"] == 0
+        assert latest[1]["payload"]["remaining_work"] == (
+            "Verify the unresolved source."
+        )
+        assert scheduled == ([record.task_id] if status == "incomplete" else [])
+
+
+def test_project_owned_research_returns_typed_finalization_without_child_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
+        project = tm.create_task(
+            session_id="s-project",
+            mode_name="project",
+            goal="durable research",
+            agent_id="router-agent",
+        )
+        state = _state(session_id="s-project")
+        state.resume_task_id_hint = project.task_id
+        ctx, _ = _ctx(
+            tm,
+            state=state,
+            synthesis_payload={
+                "answer": "Partial evidence.",
+                "status": "incomplete",
+                "remaining_work": "Collect one more source.",
+            },
+        )
+        mode = _make_mode(max_iterations=1)
+        monkeypatch.setattr(
+            mode,
+            "_execute_search_iteration",
+            lambda *args, **kwargs: ResearchFinding(
+                iteration=0,
+                source_tool="act",
+                source_query="q1",
+                content="Partial evidence.",
+            ),
+        )
+        monkeypatch.setattr(
+            mode,
+            "_schedule_pause_resume",
+            lambda **kwargs: pytest.fail(f"unexpected backoff: {kwargs}"),
+        )
+
+        result = mode.execute(ctx)
+
+        assert result.status == "done"
+        assert ctx.state.task_backed_task_id is None
+        assert tm.get_task(project.task_id).state == TaskLifecycleState.ACTIVE
+        assert tm.list_checkpoints(project.task_id) == []
+        assert [
+            record.task_id for record in tm.list_open_tasks_for_session("s-project")
+        ] == [project.task_id]
+        payload = result.action_result.outputs["adaptive.finalization_status"]
+        assert payload == {
+            "status": "incomplete",
+            "reasoning": "",
+            "remaining_work": "Collect one more source.",
+            "blocking_reason": "",
+        }
+
+
+@pytest.mark.parametrize("with_findings", [False, True])
+def test_project_owned_research_without_synthesis_does_not_create_child_task(
+    with_findings: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
+        project = tm.create_task(
+            session_id="s-project",
+            mode_name="project",
+            goal="durable research",
+            agent_id="router-agent",
+        )
+        state = _state(session_id="s-project")
+        state.resume_task_id_hint = project.task_id
+        ctx, _ = _ctx(tm, state=state)
+        mode = _make_mode(max_iterations=1)
+        monkeypatch.setattr(mode, "_build_synthesis", lambda *args, **kwargs: None)
+        monkeypatch.setattr(
+            mode,
+            "_schedule_pause_resume",
+            lambda **kwargs: pytest.fail(f"unexpected backoff: {kwargs}"),
+        )
+        findings = (
+            [
+                ResearchFinding(
+                    iteration=0,
+                    source_tool="act",
+                    source_query="q1",
+                    content="Unstructured evidence.",
+                ).model_dump(mode="python")
+            ]
+            if with_findings
+            else []
+        )
+
+        result = mode._synthesize_and_finalize(
+            ctx,
+            task_id="",
+            query="What remains?",
+            findings=findings,
+            project_owned=True,
+        )
+
+        assert result.status == "done"
+        assert [
+            record.task_id for record in tm.list_open_tasks_for_session("s-project")
+        ] == [project.task_id]
+        assert tm.list_checkpoints(project.task_id) == []
+        payload = result.action_result.outputs["adaptive.finalization_status"]
+        assert payload["status"] == "incomplete"
+        assert payload["remaining_work"] == (
+            "Collect evidence and produce a usable synthesis."
+        )
+
+
+def test_research_synthesis_requires_remaining_work_until_complete() -> None:
+    with pytest.raises(ValidationError, match="remaining_work is required"):
+        ResearchSynthesis(answer="Partial", status="incomplete")
 
 
 def test_execute_records_findings_in_checkpoint_state() -> None:

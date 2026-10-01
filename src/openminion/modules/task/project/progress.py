@@ -598,6 +598,20 @@ def cycle_disposition(
     )
     if plan_disposition is not None:
         return plan_disposition
+    if condition in {
+        AutonomyLoopConditionKind.STRATEGY_FAILURE,
+        AutonomyLoopConditionKind.TERMINAL_INABILITY,
+    }:
+        judgment = classify_autonomy_loop_condition(
+            condition=condition,
+            evidence_refs=condition_evidence_refs,
+        )
+        return _nonproductive_disposition(
+            cycle_limit,
+            cycle_number=cycle_number,
+            judgment=judgment,
+            previous_replans=previous_replans,
+        )
     if closure_status == ProjectDomainVerificationStatus.VERIFIED and not has_error:
         return _productive_disposition(
             cycle_limit,

@@ -245,6 +245,7 @@ def _extract_ephemeral_prompt_metadata(
         "linked_task_id",
         "project_tool_calls_remaining",
         "project_plan_revision_required",
+        "project_act_profile",
         "subagent_context_id",
         "subagent_tool_allowlist",
         "turn_tool_allowlist",

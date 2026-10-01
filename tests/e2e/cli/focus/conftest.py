@@ -79,7 +79,7 @@ def _isolated_live_config(
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         runtime["ipc_port"] = listener.getsockname()[1]
-    isolated_path = run_root / "live-config.json"
+    isolated_path = run_root / "config.json"
     isolated_path.touch(mode=0o600)
     isolated_path.write_text(json.dumps(config), encoding="utf-8")
     isolated_path.chmod(0o600)
@@ -104,14 +104,13 @@ def focus_probe(
         pytest.skip("focus PTY E2E harness requires a POSIX platform")
     run_root = artifact_root(tmp_path)
     node_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", request.node.name).strip("-")
-    if os.getenv("OPENMINION_LIVE_CLI_FOCUS_E2E") == "1":
-        config_root = run_root / "configs" / node_name
-        config_root.mkdir(parents=True, exist_ok=True)
-        minimax_config_path = _isolated_live_config(
-            minimax_config_path,
-            config_root,
-            monkeypatch=monkeypatch,
-        )
+    config_root = run_root / "configs" / node_name
+    config_root.mkdir(parents=True, exist_ok=True)
+    minimax_config_path = _isolated_live_config(
+        minimax_config_path,
+        config_root,
+        monkeypatch=monkeypatch,
+    )
     data_root = (
         run_root
         / "data"

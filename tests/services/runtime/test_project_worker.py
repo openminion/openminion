@@ -325,6 +325,7 @@ def test_research_project_uses_configured_runtime_scope(tmp_path) -> None:
     worker.run_cycle(run.run_id)
 
     assert requests[0].allowed_tools == ()
+    assert requests[0].act_profile == "research"
 
 
 @pytest.mark.parametrize("domain", ["operations", "cross_application"])

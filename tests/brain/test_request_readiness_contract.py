@@ -68,6 +68,7 @@ def test_project_handoff_round_trips_without_permission_overrides() -> None:
                 "goal": "Fix the slug implementation",
                 "success_criteria": ["The slug test passes"],
                 "verification_commands": ["python -m pytest -q"],
+                "verification_domain": "coding",
                 "max_iterations": 3,
             },
         },
@@ -87,6 +88,32 @@ def test_project_handoff_budget_fields_are_explicit_user_limits() -> None:
 
     assert "user-requested" in properties["max_wall_clock_ms"]["description"]
     assert "user-requested" in properties["max_tool_calls"]["description"]
+
+
+def test_project_handoff_defaults_historical_domain_to_coding() -> None:
+    handoff = ProjectHandoff.model_validate(
+        {"goal": "Fix slug", "success_criteria": ["Tests pass"]}
+    )
+
+    assert handoff.verification_domain == "coding"
+
+
+def test_project_handoff_requires_matching_act_profile() -> None:
+    with pytest.raises(ValidationError, match="matching verification_domain"):
+        ActDecision(
+            act_profile="coding",
+            sub_intents=["Collect evidence"],
+            request_readiness={
+                "posture": "review_before_act",
+                "requested_outcome": "execute",
+                "state": "needs_plan_review",
+                "project_handoff": {
+                    "goal": "Research durable agents",
+                    "success_criteria": ["Cited report"],
+                    "verification_domain": "research",
+                },
+            },
+        )
 
 
 @pytest.mark.parametrize(

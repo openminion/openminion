@@ -654,6 +654,7 @@ class ProjectWorker:
                 ),
                 operator_guidance=operator_guidance,
             ),
+            act_profile=run.execution_selectors.verification_domain,
             allowed_tools=allowed_tools,
             project_tool_calls_remaining=project_tool_calls_remaining,
             plan_revision_required=revision_required,
