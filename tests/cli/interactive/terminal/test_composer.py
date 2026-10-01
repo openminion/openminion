@@ -14,7 +14,7 @@ from prompt_toolkit.formatted_text.ansi import ANSI
 from prompt_toolkit.formatted_text.utils import fragment_list_to_text
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.input.defaults import create_pipe_input
-from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.containers import VerticalAlign, Window
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
 from prompt_toolkit.output import DummyOutput
@@ -197,9 +197,16 @@ def test_history_file_enables_file_history(tmp_path: Path) -> None:
     assert isinstance(c._session.history, FileHistory)
 
 
-def test_completion_menu_reserves_ten_rows() -> None:
+def test_input_stays_packed_when_completion_menu_opens() -> None:
     c = TerminalComposer()
-    assert c._session.reserve_space_for_menu == 10
+    input_window = c._session.layout.current_window
+
+    assert c._session.layout.container.align == VerticalAlign.BOTTOM
+    assert input_window.dont_extend_height() is True
+    assert int(input_window.height.min) == 0
+
+    c._session.default_buffer.complete_state = object()
+    assert int(input_window.height.min) == 0
 
 
 def test_mouse_capture_is_limited_to_open_completion_menu(
