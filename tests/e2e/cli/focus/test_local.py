@@ -363,6 +363,11 @@ def test_focus_startup_notice_preserves_single_composer(
         cols=140,
     ) as session:
         focus_probe.wait_ready(session)
+        time.sleep(0.2)
+        assert "Update available!" not in session.transcript
+        assert session.transcript.count("Ask anything") == 1
+
+        session.type_line("/status")
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             screen = session.screen_text

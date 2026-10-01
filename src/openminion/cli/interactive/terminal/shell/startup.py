@@ -4,8 +4,6 @@ import asyncio
 from collections.abc import Callable
 from typing import Any
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.utils import is_dumb_terminal
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -19,9 +17,6 @@ from openminion.cli.presentation.header import (
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.styles import is_color_enabled
 from openminion.cli.presentation.styles import StyleToken
-from openminion.cli.presentation.models import ChatMessage, MessageKind
-from openminion.cli.interactive.terminal.transcript import TerminalTranscript
-
 from .labels import _runtime_label
 
 
@@ -115,45 +110,23 @@ def push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
     console.print()
 
 
-async def emit_startup_notice(
-    startup_notice: Callable[[], str],
-    *,
-    transcript: TerminalTranscript,
-    prompt_session: PromptSession[str] | None = None,
-) -> None:
+async def resolve_startup_notice(startup_notice: Callable[[], str]) -> str:
     try:
         notice = await asyncio.to_thread(startup_notice)
     except (OSError, RuntimeError, TypeError, ValueError):
-        return
-    notice = str(notice or "").strip()
-    if not notice:
-        return
-    if prompt_session is not None and not is_dumb_terminal():
-        while not prompt_session.app.is_running:
-            await asyncio.sleep(0)
-    transcript.push_message(
-        ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=notice)
-    )
+        return ""
+    return str(notice or "").strip()
 
 
 def schedule_startup_notice(
     startup_notice: Callable[[], str] | None,
-    *,
-    transcript: TerminalTranscript,
-    prompt_session: PromptSession[str] | None = None,
-) -> asyncio.Task[None] | None:
+) -> asyncio.Task[str] | None:
     if startup_notice is None:
         return None
-    return asyncio.create_task(
-        emit_startup_notice(
-            startup_notice,
-            transcript=transcript,
-            prompt_session=prompt_session,
-        )
-    )
+    return asyncio.create_task(resolve_startup_notice(startup_notice))
 
 
-def cancel_startup_notice(task: asyncio.Task[None] | None) -> None:
+def cancel_startup_notice(task: asyncio.Task[str] | None) -> None:
     if task is not None and not task.done():
         task.cancel()
 
@@ -162,8 +135,8 @@ __all__ = [
     "build_terminal_console",
     "cancel_startup_notice",
     "configured_editor",
-    "emit_startup_notice",
     "push_greeter",
+    "resolve_startup_notice",
     "schedule_startup_notice",
     "show_response_time_enabled",
 ]
