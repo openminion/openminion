@@ -70,7 +70,7 @@ def test_isolated_live_config_keeps_runtime_env_out_of_artifacts(
                         "FOCUS_PRIVATE_KEY": "private-value",
                         "FOCUS_EXISTING_KEY": "stale-config-value",
                     }
-                }
+                },
             }
         ),
         encoding="utf-8",
