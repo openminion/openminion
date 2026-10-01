@@ -12,6 +12,7 @@ from scripts.ci import publish_runtime_manifest as publisher
 from scripts.ci.publish_runtime_manifest import (
     BASE,
     add_reference,
+    binary_release_record,
     encoded,
     publish,
     source_certification_record,
@@ -61,6 +62,41 @@ def test_binary_publication_is_a_protected_manual_release_request():
     assert (
         "official_binary_record"
         in Path("scripts/ci/publish_runtime_manifest.py").read_text()
+    )
+
+
+def test_binary_publication_reverifies_desktop_main_evidence():
+    evidence = b'{"kind":"openminion-binary-runtime-qualification"}'
+    expected = {"runtime_version": "1.2.3", "distribution": "binary"}
+    with (
+        patch.object(publisher, "github_api", return_value="identical") as api,
+        patch.object(publisher, "read_public_bytes", return_value=evidence) as read,
+        patch.object(
+            publisher, "official_binary_record", return_value=expected
+        ) as official,
+    ):
+        result = binary_release_record(
+            "runtime-v1.2.3-build.1",
+            "build.1",
+            "a" * 40,
+            "desktop-1.2.3-build.1",
+        )
+    assert result == expected
+    api.assert_called_once_with(
+        "openminion/desktop", f"compare/{'a' * 40}...main", "--jq", ".status"
+    )
+    read.assert_called_once_with(
+        "https://raw.githubusercontent.com/openminion/desktop/"
+        f"{'a' * 40}/releases/runtime-certification/v1/binary-qualification/"
+        "1.2.3/desktop-1.2.3-build.1.json"
+    )
+    official.assert_called_once_with(
+        "runtime-v1.2.3-build.1",
+        "build.1",
+        {"kind": "openminion-binary-runtime-qualification"},
+        "a" * 40,
+        "desktop-1.2.3-build.1",
+        evidence,
     )
 
 

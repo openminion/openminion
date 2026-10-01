@@ -196,24 +196,31 @@ metadata cannot substitute for the packaged public acceptance run.
    commit and ran at the reviewed packaging pin. Require all native matrix jobs
    and the aggregate candidate job to pass. The private draft release is
    evidence only. A manual rerun must use the same exact version and commit.
-2. Sign and notarize the macOS pair, sign the Windows pair, and retain the exact
-   Linux pair. Run clean-host native checks and Desktop prepare/restart/reply
-   continuity for every advertised target and compatibility range.
-3. Create a final immutable `openminion/runtime` GitHub Release tagged
-   `runtime-v<runtime-version>-<release-id>`. Upload every exact executable,
-   `candidate.json`, and `verification.json`. The verification document must
-   map every target to its final native `verification_id`.
-4. Manually dispatch `Runtime manifests` on `openminion/openminion` with that
-   exact tag and release ID. Approve the `runtime-publication` environment.
-   The job independently verifies release immutability, metadata identity,
-   GitHub asset digests and sizes, and downloaded bytes before opening the
+2. Require the candidate workflow's protected `runtime-signing` jobs to sign
+   and notarize the macOS pair, sign the Windows pair, refresh hashes after
+   signing, and retain the exact Linux pair. Require clean-host native checks
+   for all three targets and the aggregate `verification.json`.
+3. Approve `openminion-packaging` **Runtime promotion**. It re-verifies the
+   candidate bundle and publishes a final immutable `openminion/runtime`
+   Release tagged `runtime-v<runtime-version>-<release-id>`. The promotion must
+   stop there; it must not request stable metadata before Desktop qualification.
+4. Dispatch Desktop **Runtime qualification** for that exact release tag/ID and
+   a real Desktop version. Review and merge the generated evidence PR containing
+   all three package/ASAR/CLI/daemon hashes, native verification IDs and
+   packaged lifecycle results. Record its full Desktop-main commit and evidence
+   ID. `0.0.0`, partial targets or workflow artifacts not merged to main fail.
+5. Manually dispatch `Runtime manifests` on `openminion/openminion` with the
+   release tag/ID and Desktop evidence commit/ID. Approve the
+   `runtime-publication` environment. The job independently verifies Release
+   immutability and bytes plus Desktop-main ancestry/evidence before opening the
    metadata-only PR.
-5. Run required PR checks and merge with a merge commit. Confirm `verify-main`
+6. Run required PR checks and merge with a merge commit. Confirm `verify-main`
    succeeds against anonymous public URLs; only then can Desktop discover the
    binary release.
-6. Back-merge main into dev and record the candidate run, signing/notarization
-   evidence, native verification IDs, runtime release URL, publication run,
-   record/feed commits, and merge commit in the runtime-distribution tracker.
+7. Back-merge main into dev and run the unchanged shipped packaged Desktop in
+   public target mode on every claimed host. Record the candidate, signing,
+   native qualification, Desktop evidence, immutable Release, publication,
+   record/feed/merge and post-public acceptance identities in the tracker.
 
 Closeout proof for a promoted binary version:
 
