@@ -339,10 +339,7 @@ class AgentRuntimeManager:
         deadline = monotonic() + max(0.0, float(grace_s))
         for instance in instances:
             instance.stop_event.set()
-            try:
-                instance.queue.put_nowait(None)
-            except Exception:
-                pass
+            instance.queue.put(None)
             thread = instance.thread
             if thread is not None:
                 remaining = max(0.0, deadline - monotonic())
@@ -654,10 +651,7 @@ class AgentRuntimeManager:
                 status=RUNTIME_TURN_STATUS_FAILED,
             )
         instance.stop_event.set()
-        try:
-            instance.queue.put_nowait(None)
-        except Exception:
-            pass
+        instance.queue.put(None)
         thread = instance.thread
         if thread is not None:
             thread.join(timeout=1.0)
@@ -681,10 +675,7 @@ class AgentRuntimeManager:
 
     def _worker_loop(self, instance: _AgentInstance) -> None:
         while not self._stop_event.is_set() and not instance.stop_event.is_set():
-            try:
-                queued = instance.queue.get(timeout=0.1)
-            except Empty:
-                continue
+            queued = instance.queue.get()
             if queued is None:
                 break
 
