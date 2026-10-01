@@ -51,12 +51,18 @@ class WorkItemOverview:
     task_id: str
     title: str
     status: str
+    operator_state: str
+    resume_action: str
+    pending_action_count: int
+    due_at: str = ""
+    schedule_summary: str = ""
 
 
 @dataclass(frozen=True)
 class WorkOverview:
     count: int
     statuses: tuple[tuple[str, int], ...]
+    pending_action_count: int
     items: tuple[WorkItemOverview, ...]
 
 
@@ -173,11 +179,17 @@ def _work_overview(
     data = WorkOverview(
         count=len(tasks),
         statuses=tuple(sorted(statuses.items())),
+        pending_action_count=len(payload.get("pending_actions", [])),
         items=tuple(
             WorkItemOverview(
                 task_id=str(task.get("id", "")),
                 title=str(task.get("title", "")),
                 status=str(task.get("status", "unknown")),
+                operator_state=str(task.get("operator_state", "unknown")),
+                resume_action=str(task.get("resume_action", "none")),
+                pending_action_count=len(task.get("pending_actions", [])),
+                due_at=str(task.get("due_at") or ""),
+                schedule_summary=str(task.get("schedule_summary") or ""),
             )
             for task in tasks[:5]
         ),
@@ -356,12 +368,27 @@ def _render_work(section: OverviewSection[WorkOverview]) -> str:
     if section.data is not None:
         data = section.data
         status_text = ", ".join(f"{name}={count}" for name, count in data.statuses)
-        lines.append(
-            f"tasks        {data.count}" + (f" · {status_text}" if status_text else "")
-        )
-        lines.extend(
-            f"  {item.status:<10} {item.task_id}  {item.title}" for item in data.items
-        )
+        summary = f"tasks        {data.count}"
+        if status_text:
+            summary += f" · {status_text}"
+        if data.pending_action_count:
+            summary += f" · task approvals={data.pending_action_count}"
+        lines.append(summary)
+        for item in data.items:
+            details = [f"state={item.operator_state}", f"next={item.resume_action}"]
+            if item.pending_action_count:
+                details.append(f"task approvals={item.pending_action_count}")
+            if item.due_at:
+                details.append(f"due={item.due_at}")
+            if item.schedule_summary:
+                details.append(f"schedule={item.schedule_summary}")
+            details.append(f"inspect=/tasks {item.task_id}")
+            lines.extend(
+                (
+                    f"  {item.status:<10} {item.task_id}  {item.title}",
+                    f"             {' · '.join(details)}",
+                )
+            )
     return "\n".join(lines)
 
 
