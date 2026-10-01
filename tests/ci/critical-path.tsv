@@ -1,5 +1,6 @@
 # area	pytest_path
 guardrail	tests/ci/test_critical_path_manifest.py
+tui-rendering	tests/cli/interactive/terminal/test_screen_baseline.py
 brain-loop	tests/integration/test_openminion_brain_client_real_runtime.py
 freshness-runtime	tests/brain/test_runner_context.py
 freshness-adapter	tests/brain/test_adapters.py
