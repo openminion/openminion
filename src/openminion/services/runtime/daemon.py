@@ -1,10 +1,12 @@
+import asyncio
 import json
 from contextlib import suppress
 from dataclasses import asdict
 from functools import partial
 import hashlib
+import sqlite3
 from threading import Lock
-from time import perf_counter
+from time import monotonic, perf_counter
 from typing import Any
 
 from openminion.services.runtime.manager import (
@@ -16,6 +18,7 @@ from openminion.services.runtime.manager import (
     TurnTelemetry,
 )
 from openminion.modules.brain.diagnostics.status import phase_status_payload
+from openminion.modules.policy.models import build_consent_preview
 from openminion.modules.telemetry.lifecycle import (
     lifecycle_event_from_payload,
     map_cron_event_to_lifecycle_event,
@@ -356,6 +359,7 @@ def execute_turn(
             request=request,
             timer=timer,
             progress_callback=emit_phase_status,
+            cancel_event=cancel_event,
         )
     except TurnRequestError as exc:
         return _turn_error_response(
@@ -399,6 +403,7 @@ def _execute_runtime_turn_with_timer(
     request: Any,
     timer: phase_timing.ChatPhaseTimer,
     progress_callback: Any,
+    cancel_event: Any,
 ) -> tuple[Any, Any]:
     with phase_timing.use_chat_phase_timer(timer):
         with phase_timing.active_chat_phase("provider_request_build"):
@@ -406,12 +411,70 @@ def _execute_runtime_turn_with_timer(
                 runtime=runtime,
                 request=request,
             )
+        approval_callback = None
+        if str(request.meta.get("approval_transport", "")).strip() == "turn_stream":
+            approval_callback = _approval_callback_for_turn(
+                runtime=runtime,
+                request=request,
+                timeout_seconds=ingress_request.timeout_seconds,
+            )
         turn_result = execute_runtime_turn(
             runtime=runtime,
             request=ingress_request,
             progress_callback=progress_callback,
+            cancel_event=cancel_event,
+            approval_callback=approval_callback,
         )
     return turn_result, ingress_request
+
+
+def _approval_callback_for_turn(
+    *,
+    runtime: "RuntimeFacade",
+    request: Any,
+    timeout_seconds: float,
+) -> Any | None:
+    manager = getattr(runtime, "runtime_manager", None)
+    handle = manager.get_turn_handle(request.trace_id) if manager is not None else None
+    if handle is None:
+        return None
+    turn_deadline_mono = monotonic() + float(timeout_seconds)
+
+    def _record_event(payload: dict[str, Any]) -> None:
+        try:
+            runtime.sessions.append_event(
+                session_id=request.session_id,
+                event_type=f"approval.{payload['phase']}",
+                payload=payload,
+            )
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            _DAEMON_LOGGER.warning(
+                format_structured_event(
+                    "approval.session_event_failed",
+                    trace_id=request.trace_id,
+                    phase=payload["phase"],
+                    error=exc,
+                )
+            )
+
+    async def _approval_callback(
+        tool_name: str,
+        args: dict[str, Any],
+        source_callback_id: Any,
+    ) -> bool:
+        remaining_turn_seconds = max(0.0, turn_deadline_mono - monotonic())
+        if remaining_turn_seconds <= 0:
+            return False
+        return await asyncio.to_thread(
+            handle.request_approval,
+            tool_name=tool_name,
+            consent_preview=build_consent_preview(tool_name, args),
+            source_callback_id=str(source_callback_id or ""),
+            timeout_s=min(55.0, remaining_turn_seconds * 0.9),
+            on_event=_record_event,
+        )
+
+    return _approval_callback
 
 
 def _turn_error_response(

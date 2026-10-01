@@ -35,7 +35,9 @@ scope	max_python_files	max_loc
 # bounded queue, manager, and ingress facts required for public client parity.
 # LSMK (2026-09-30) adds the trusted subagent-context ingress boundary and the
 # single gateway call that selects grant-bound delegated memory.
-services	207	41202
+# AEUX (2026-10-01) adds resumable approval transport and extracts TurnHandle
+# from the over-ceiling runtime manager into one bounded lifecycle owner.
+services	208	41348
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

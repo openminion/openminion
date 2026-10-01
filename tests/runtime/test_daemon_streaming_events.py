@@ -22,8 +22,11 @@ def test_execute_turn_maps_structural_progress_payloads_to_chunk_kinds() -> None
         stream=True,
     )
 
-    def _fake_execute_runtime_turn(*, runtime, request, progress_callback):  # noqa: ANN001
-        del runtime, request
+    def _fake_execute_runtime_turn(  # noqa: ANN001
+        *, runtime, request, progress_callback, cancel_event, approval_callback
+    ):
+        del runtime, request, cancel_event
+        assert approval_callback is None
         progress_callback(
             {
                 "kind": "tool_started",
@@ -57,7 +60,7 @@ def test_execute_turn_maps_structural_progress_payloads_to_chunk_kinds() -> None
     with (
         mock.patch(
             "openminion.services.runtime.daemon.runtime_turn_request_from_manager_request",
-            return_value=SimpleNamespace(),
+            return_value=SimpleNamespace(timeout_seconds=2.0),
         ),
         mock.patch(
             "openminion.services.runtime.daemon.execute_runtime_turn",

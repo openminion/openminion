@@ -1,10 +1,10 @@
-from collections import OrderedDict, deque
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from queue import Empty, Queue
 from threading import Condition, Event, RLock, Thread
 from time import monotonic
-from typing import Any, Callable, Iterator
+from typing import Any, Callable
 from uuid import uuid4
 
 from openminion.modules.brain.diagnostics.status import (
@@ -22,7 +22,6 @@ from openminion.modules.runtime.contracts import (
     AgentHandle as AgentHandle,
     AgentStatus as AgentStatus,
     ToolCallSummary as ToolCallSummary,
-    TURN_STREAM_SCHEMA_VERSION,
     TurnChunk as TurnChunk,
     TurnError as TurnError,
     TurnRequest as TurnRequest,
@@ -35,7 +34,8 @@ from openminion.modules.telemetry.lifecycle import (
     build_runtime_manager_component_identity,
 )
 from .events import emit_runtime_operation
-from .constants import RUNTIME_HEARTBEAT_INTERVAL_SECONDS, TURN_STREAM_HISTORY_LIMIT
+from .constants import RUNTIME_HEARTBEAT_INTERVAL_SECONDS
+from .turn_handle import TurnHandle
 
 from openminion.base.time import utc_now_iso as _utc_now_iso
 
@@ -112,126 +112,6 @@ class _AgentInstance:
             active_turns=self.active_turns,
             turns_handled=self.turns_handled,
         )
-
-
-class TurnHandle:
-    stream_schema_version = TURN_STREAM_SCHEMA_VERSION
-
-    def __init__(
-        self,
-        *,
-        trace_id: str,
-        on_cancel: Callable[[str], bool],
-        background: bool = False,
-        agent_id: str = "",
-        session_id: str = "",
-        request_meta: dict[str, Any] | None = None,
-    ) -> None:
-        self.trace_id = trace_id
-        self.agent_id = agent_id
-        self.session_id = session_id
-        self._request_meta = dict(request_meta or {})
-        self._on_cancel = on_cancel
-        self._background = background
-        self._cancel_event = Event()
-        self._result_ready = Event()
-        self._result: TurnResponse | None = None
-        self._stream_cv = Condition(RLock())
-        self._history: deque[TurnChunk] = deque(maxlen=TURN_STREAM_HISTORY_LIMIT)
-        self._next_sequence = 1
-        self._primary_stream_claimed = False
-        self._latest_phase_status: dict[str, Any] | None = None
-
-    @property
-    def cancel_event(self) -> Event:
-        return self._cancel_event
-
-    @property
-    def request_meta(self) -> dict[str, Any]:
-        return dict(self._request_meta)
-
-    def cancel(self) -> bool:
-        self._cancel_event.set()
-        return self._on_cancel(self.trace_id)
-
-    def stream(self, timeout_s: float | None = None) -> Iterator[TurnChunk]:
-        with self._stream_cv:
-            if self._primary_stream_claimed:
-                return
-            self._primary_stream_claimed = True
-        yield from self._iter_chunks(after_sequence=0, timeout_s=timeout_s)
-
-    def subscribe(
-        self,
-        *,
-        after_sequence: int = 0,
-        timeout_s: float | None = None,
-    ) -> Iterator[TurnChunk]:
-        yield from self._iter_chunks(
-            after_sequence=max(0, int(after_sequence)),
-            timeout_s=timeout_s,
-        )
-
-    @property
-    def replay_floor_sequence(self) -> int:
-        with self._stream_cv:
-            return self._history[0].sequence if self._history else self._next_sequence
-
-    def current_phase_status(self) -> dict[str, Any] | None:
-        with self._stream_cv:
-            return (
-                dict(self._latest_phase_status) if self._latest_phase_status else None
-            )
-
-    def result(self, timeout_s: float | None = None) -> TurnResponse:
-        if not self._result_ready.wait(timeout=timeout_s):
-            raise TimeoutError(f"turn result timed out trace_id={self.trace_id}")
-        if self._result is None:
-            raise RuntimeError(f"turn result missing trace_id={self.trace_id}")
-        return self._result
-
-    def _push_chunk(self, chunk: TurnChunk) -> None:
-        with self._stream_cv:
-            sequence = self._next_sequence
-            self._next_sequence += 1
-            sequenced = replace(
-                chunk,
-                trace_id=self.trace_id,
-                schema_version=TURN_STREAM_SCHEMA_VERSION,
-                sequence=sequence,
-                event_id=f"{self.trace_id}:{sequence}",
-            )
-            self._history.append(sequenced)
-            if sequenced.kind == "status":
-                self._latest_phase_status = dict(sequenced.data)
-            self._stream_cv.notify_all()
-
-    def _set_result(self, response: TurnResponse) -> None:
-        with self._stream_cv:
-            self._result = response
-            self._result_ready.set()
-            self._stream_cv.notify_all()
-
-    def _iter_chunks(
-        self,
-        *,
-        after_sequence: int,
-        timeout_s: float | None,
-    ) -> Iterator[TurnChunk]:
-        cursor = after_sequence
-        while True:
-            with self._stream_cv:
-                chunk = next(
-                    (item for item in self._history if item.sequence > cursor),
-                    None,
-                )
-                if chunk is None:
-                    if self._result_ready.is_set():
-                        return
-                    self._stream_cv.wait(timeout=timeout_s)
-                    continue
-            cursor = chunk.sequence
-            yield chunk
 
 
 class AgentRuntimeManager:
@@ -500,6 +380,8 @@ class AgentRuntimeManager:
             request=request, handle=handle, enqueued_at_mono=monotonic()
         )
         with self._lock:
+            if request.trace_id in self._traces:
+                raise ValueError(f"duplicate active trace_id: {request.trace_id}")
             self._traces[request.trace_id] = handle
             instance = self._instances[request.agent_id]
             instance.queue.put(queued)
@@ -523,6 +405,7 @@ class AgentRuntimeManager:
             if handle is None:
                 return False
             handle.cancel_event.set()
+            handle._settle_pending_approval(outcome="cancelled")
         self._emit(
             "runtime.turn.cancelled",
             {

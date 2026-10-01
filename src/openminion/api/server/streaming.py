@@ -32,6 +32,7 @@ from openminion.modules.runtime.contracts import TURN_STREAM_SCHEMA_VERSION
 TURN_STREAM_CAPABILITIES = (
     "active_status_snapshot",
     "active_turn_replay",
+    "approval_interaction_v1",
     "sse_event_id",
 )
 _TURN_STREAM_ATTACH_RE = re.compile(r"/v1/turn/([^/]+)/stream")
