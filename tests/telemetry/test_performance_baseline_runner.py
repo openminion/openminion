@@ -50,6 +50,7 @@ def _complete_identity(module, identity):
             "runner_path": "/opt/owpr/performance_baseline.py",
             "runner_source_sha256": "c" * 64,
             "loaded_openminion_package_root": "/opt/owpr/openminion",
+            "loaded_openminion_package_source_sha256": "f" * 64,
             "runtime_environment": {
                 "resolved_python_executable": sys.executable,
                 "running_python_executable": sys.executable,
@@ -619,6 +620,26 @@ def test_dirty_fingerprint_includes_nested_untracked_file_bytes(
     assert first != second
 
 
+def test_package_source_hash_binds_relative_paths_and_bytes(tmp_path: Path) -> None:
+    module = _load_module()
+    package_root = tmp_path / "openminion"
+    package_root.mkdir()
+    source = package_root / "module.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+
+    first = module._package_source_sha256(str(package_root))
+    nested = package_root / "nested"
+    nested.mkdir()
+    moved = nested / source.name
+    source.rename(moved)
+    path_changed = module._package_source_sha256(str(package_root))
+    moved.write_text("VALUE = 2\n", encoding="utf-8")
+
+    assert first != path_changed
+    assert path_changed != module._package_source_sha256(str(package_root))
+    assert module._package_source_sha256(str(tmp_path / "missing")) == "unavailable"
+
+
 def test_requested_baseline_must_be_readable_and_well_formed(tmp_path: Path) -> None:
     module = _load_module()
     missing = tmp_path / "missing.json"
@@ -759,6 +780,154 @@ def test_comparison_uses_twenty_sample_nanosecond_p95_and_variance_rule() -> Non
     )
     assert result["status"] == "ineligible"
     assert "variance" in result["reason"]
+
+
+def test_runtime_manager_idle_hard_gate_uses_resource_thresholds() -> None:
+    module = _load_module()
+    identity = _bound_identity(
+        module,
+        scenario_id="runtime_manager_idle",
+        command="runtime_manager_fixture:idle_resources",
+        measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+        fixture_revision="runtime-manager-idle-v1",
+        scenario_config={"agent_count": 8, "idle_interval_seconds": 1.0},
+    )
+    comparison_identity = module._comparison_identity(identity)
+    baseline_scenario = {
+        "count": 20,
+        "ok_count": 20,
+        "wall_time_ns": {
+            "median": 1_000_000_000,
+            "p95": 1_010_000_000,
+            "coefficient_of_variation": 0.01,
+        },
+        "idle_voluntary_context_switch_rate_per_second": {
+            "count": 20,
+            "median": 100,
+            "coefficient_of_variation": 0.10,
+        },
+        "idle_process_cpu_duty_ppm": {
+            "count": 20,
+            "p95": 10_000,
+            "coefficient_of_variation": 0.10,
+        },
+        "measurement_identity": identity,
+        "comparison_identity": comparison_identity,
+    }
+    baseline = {
+        "artifact_schema_version": module.ARTIFACT_SCHEMA_VERSION,
+        "scenarios": {"runtime_manager_idle": baseline_scenario},
+    }
+    current = {
+        **baseline_scenario,
+        "idle_voluntary_context_switch_rate_per_second": {
+            "count": 20,
+            "median": 50,
+            "coefficient_of_variation": 0.10,
+        },
+        "idle_process_cpu_duty_ppm": {
+            "count": 20,
+            "p95": 20_000,
+            "coefficient_of_variation": 0.10,
+        },
+    }
+
+    passed = module._threshold_result(
+        current=current,
+        baseline=baseline,
+        scenario_id="runtime_manager_idle",
+        threshold_mode="hard",
+    )
+    assert passed["status"] == "pass"
+    assert passed["context_switch_ratio"] == 0.5
+    assert passed["cpu_duty_limit_ppm"] == 20_000
+
+    current["idle_voluntary_context_switch_rate_per_second"] = {
+        "count": 20,
+        "median": 51,
+        "coefficient_of_variation": 0.10,
+    }
+    failed = module._threshold_result(
+        current=current,
+        baseline=baseline,
+        scenario_id="runtime_manager_idle",
+        threshold_mode="hard",
+    )
+    assert failed["status"] == "fail"
+
+    current["idle_voluntary_context_switch_rate_per_second"] = {
+        "count": 20,
+        "median": 50,
+        "coefficient_of_variation": 0.21,
+    }
+    ineligible = module._threshold_result(
+        current=current,
+        baseline=baseline,
+        scenario_id="runtime_manager_idle",
+        threshold_mode="hard",
+    )
+    assert ineligible["status"] == "ineligible"
+    assert "idle resource variance" in ineligible["reason"]
+
+    current["idle_voluntary_context_switch_rate_per_second"] = {
+        "count": 19,
+        "median": 50,
+        "coefficient_of_variation": 0.10,
+    }
+    incomplete = module._threshold_result(
+        current=current,
+        baseline=baseline,
+        scenario_id="runtime_manager_idle",
+        threshold_mode="hard",
+    )
+    assert incomplete["status"] == "ineligible"
+    assert "valid idle resource samples" in incomplete["reason"]
+
+
+def test_deterministic_full_turn_hard_gate_checks_median_and_p95() -> None:
+    module = _load_module()
+    identity = _bound_identity(
+        module,
+        scenario_id="deterministic_full_turn",
+        command="runtime_ingress_fixture:deterministic_full_turn",
+        measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+        fixture_revision="deterministic-full-turn-v1",
+    )
+    comparison_identity = module._comparison_identity(identity)
+    baseline_scenario = {
+        "count": 20,
+        "ok_count": 20,
+        "wall_time_ns": {
+            "median": 100,
+            "p95": 100,
+            "coefficient_of_variation": 0.10,
+        },
+        "measurement_identity": identity,
+        "comparison_identity": comparison_identity,
+    }
+    baseline = {
+        "artifact_schema_version": module.ARTIFACT_SCHEMA_VERSION,
+        "scenarios": {"deterministic_full_turn": baseline_scenario},
+    }
+    current = {
+        **baseline_scenario,
+        "wall_time_ns": {
+            "median": 106,
+            "p95": 104,
+            "coefficient_of_variation": 0.10,
+        },
+    }
+
+    result = module._threshold_result(
+        current=current,
+        baseline=baseline,
+        scenario_id="deterministic_full_turn",
+        threshold_mode="hard",
+    )
+
+    assert result["status"] == "fail"
+    assert result["regression_ratio"] == 1.05
+    assert result["median_ratio"] == 1.06
 
 
 def test_summary_rejects_mixed_sample_identities() -> None:
@@ -917,6 +1086,13 @@ def test_local_status_scenario_records_required_metric_keys() -> None:
         "current_rss_bytes",
         "max_rss_bytes",
         "process_tree_current_rss_bytes",
+        "process_cpu_total_ns",
+        "process_tree_cpu_total_ns",
+        "voluntary_context_switch_count",
+        "involuntary_context_switch_count",
+        "process_tree_voluntary_context_switch_count",
+        "process_tree_involuntary_context_switch_count",
+        "process_tree_identity_hash",
         "thread_count",
         "async_task_count",
         "child_process_count",
@@ -941,6 +1117,15 @@ def test_local_status_scenario_records_required_metric_keys() -> None:
     assert run.metrics["tool_call_count"] == 1
     assert run.metrics["wall_time_ns"] >= 0
     assert run.metrics["process_cpu_time_ns"] >= 0
+    assert run.metrics["process_cpu_total_ns"] >= 0
+    process_tree_cpu_total_ns = run.metrics["process_tree_cpu_total_ns"]
+    if process_tree_cpu_total_ns is None:
+        assert (
+            run.metrics["availability_reasons"]["process_tree_cpu_total_ns"]
+            == "descendant_cpu_unavailable"
+        )
+    else:
+        assert process_tree_cpu_total_ns >= 0
     assert run.metrics["python_gc_collection_count"] >= 0
     assert run.metrics["measurement_resolution"] == "perf_counter_ns"
     assert "local_status_collect_ns" in run.metrics["phase_timings_ns"]
@@ -1009,6 +1194,129 @@ def test_process_tree_bounds_members_without_publishing_partial_rss(
     )
     assert metrics["availability_reasons"]["process_tree_current_rss_bytes"] == (
         "descendant_rss_unavailable"
+    )
+
+
+def test_process_interval_metrics_records_cpu_duty_and_switch_rates() -> None:
+    module = _load_module()
+    before = {
+        "process_cpu_total_ns": 100,
+        "process_tree_cpu_total_ns": 200,
+        "voluntary_context_switch_count": 10,
+        "involuntary_context_switch_count": 2,
+        "process_tree_voluntary_context_switch_count": 20,
+        "process_tree_involuntary_context_switch_count": 4,
+        "process_tree_identity_hash": "stable",
+    }
+    after = {
+        "process_cpu_total_ns": 300,
+        "process_tree_cpu_total_ns": 500,
+        "voluntary_context_switch_count": 14,
+        "involuntary_context_switch_count": 3,
+        "process_tree_voluntary_context_switch_count": 26,
+        "process_tree_involuntary_context_switch_count": 6,
+        "process_tree_identity_hash": "stable",
+    }
+
+    metrics = module._process_interval_metrics(before, after, elapsed_ns=1_000)
+
+    assert metrics["process_cpu_delta_ns"] == 200
+    assert metrics["process_cpu_duty_ppm"] == 200_000
+    assert metrics["process_tree_cpu_delta_ns"] == 300
+    assert metrics["process_tree_cpu_duty_ppm"] == 300_000
+    assert metrics["voluntary_context_switch_delta"] == 4
+    assert metrics["voluntary_context_switch_rate_per_second"] == 4_000_000
+    assert metrics["process_tree_involuntary_context_switch_delta"] == 2
+    assert metrics["availability_reasons"] == {}
+
+
+@pytest.mark.parametrize(
+    ("after_identity", "after_cpu"),
+    [("replacement", 500), ("stable", 100)],
+)
+def test_process_interval_metrics_rejects_tree_churn_and_decreasing_counters(
+    after_identity: str,
+    after_cpu: int,
+) -> None:
+    module = _load_module()
+    before = {
+        "process_cpu_total_ns": 200,
+        "process_tree_cpu_total_ns": 200,
+        "voluntary_context_switch_count": 10,
+        "involuntary_context_switch_count": 2,
+        "process_tree_voluntary_context_switch_count": 20,
+        "process_tree_involuntary_context_switch_count": 4,
+        "process_tree_identity_hash": "stable",
+    }
+    after = {
+        **before,
+        "process_tree_cpu_total_ns": after_cpu,
+        "process_tree_identity_hash": after_identity,
+    }
+
+    metrics = module._process_interval_metrics(before, after, elapsed_ns=1_000)
+
+    assert metrics["process_tree_cpu_delta_ns"] is None
+    reason = metrics["availability_reasons"]["process_tree_cpu_delta_ns"]
+    assert reason in {"process_tree_membership_changed", "counter_decreased"}
+
+
+def test_runtime_manager_idle_fixture_has_fixed_geometry(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module._measure_runtime_manager_idle(
+        _omfla_options(module, tmp_path),
+        agent_count=2,
+        idle_interval_seconds=0.01,
+    )
+
+    assert run.ok is True
+    assert run.metrics["idle_agent_count"] == 2
+    assert run.metrics["idle_interval_ns"] > 0
+    assert isinstance(run.metrics["idle_process_cpu_duty_ppm"], int)
+    assert isinstance(run.metrics["idle_voluntary_context_switch_rate_per_second"], int)
+    assert run.measurement_identity["scenario_config"] == {
+        "agent_count": 2,
+        "idle_interval_seconds": 0.01,
+    }
+
+
+def test_runtime_manager_idle_interval_encloses_counter_snapshots(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    events: list[str] = []
+    original_process_metrics = module._process_metrics
+    original_perf_counter_ns = module.time.perf_counter_ns
+    original_sleep = module.time.sleep
+
+    def record_process_metrics(process_id=None):
+        events.append("process")
+        return original_process_metrics(process_id)
+
+    def record_timer() -> int:
+        events.append("timer")
+        return original_perf_counter_ns()
+
+    def record_sleep(seconds: float) -> None:
+        events.append("sleep")
+        original_sleep(seconds)
+
+    monkeypatch.setattr(module, "_process_metrics", record_process_metrics)
+    monkeypatch.setattr(module.time, "perf_counter_ns", record_timer)
+    monkeypatch.setattr(module.time, "sleep", record_sleep)
+
+    run = module._measure_runtime_manager_idle(
+        _omfla_options(module, tmp_path),
+        agent_count=1,
+        idle_interval_seconds=0.001,
+    )
+
+    assert run.ok is True
+    expected = ["timer", "process", "sleep", "process", "timer"]
+    assert any(
+        events[index : index + 5] == expected for index in range(len(events) - 4)
     )
 
 
@@ -1547,6 +1855,9 @@ def test_run_baseline_writes_artifacts(tmp_path: Path) -> None:
     }
     assert payload["measurement_identity"]["dirty_tree_fingerprint"] != ("unavailable")
     assert payload["measurement_identity"]["runner_source_sha256"] != ("unavailable")
+    assert payload["measurement_identity"][
+        "loaded_openminion_package_source_sha256"
+    ] != ("unavailable")
     assert payload["measurement_identity"]["config_hash"] == module._stable_json_hash(
         payload["measurement_identity"]["runtime_config"]
     )
@@ -1638,6 +1949,7 @@ def test_run_baseline_rejects_source_drift_at_campaign_close(
                 "runner_path": "/opt/owpr/performance_baseline.py",
                 "runner_source_sha256": "c" * 64,
                 "loaded_openminion_package_root": "/opt/owpr/openminion",
+                "loaded_openminion_package_source_sha256": "f" * 64,
                 "runtime_environment": _bound_identity(
                     module,
                     scenario_id="repeated_local_turns",
@@ -1653,6 +1965,7 @@ def test_run_baseline_rejects_source_drift_at_campaign_close(
                 "runner_path": "/opt/owpr/performance_baseline.py",
                 "runner_source_sha256": "c" * 64,
                 "loaded_openminion_package_root": "/opt/owpr/openminion",
+                "loaded_openminion_package_source_sha256": "f" * 64,
                 "runtime_environment": _bound_identity(
                     module,
                     scenario_id="repeated_local_turns",
