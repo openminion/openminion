@@ -71,6 +71,7 @@ def _isolated_live_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Path:
     config = json.loads(config_path.read_text(encoding="utf-8"))
+    config.setdefault("storage", {})["path"] = "state/openminion.db"
     runtime = config.setdefault("runtime", {})
     for name, value in runtime.pop("env", {}).items():
         if name not in os.environ:

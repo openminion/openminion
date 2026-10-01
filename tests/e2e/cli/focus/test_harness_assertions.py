@@ -64,12 +64,13 @@ def test_isolated_live_config_keeps_runtime_env_out_of_artifacts(
     source.write_text(
         json.dumps(
             {
+                "storage": {"path": "/tmp/shared-openminion.db"},
                 "runtime": {
                     "env": {
                         "FOCUS_PRIVATE_KEY": "private-value",
                         "FOCUS_EXISTING_KEY": "stale-config-value",
                     }
-                }
+                },
             }
         ),
         encoding="utf-8",
@@ -82,6 +83,7 @@ def test_isolated_live_config_keeps_runtime_env_out_of_artifacts(
     payload = json.loads(isolated.read_text(encoding="utf-8"))
 
     assert "env" not in payload["runtime"]
+    assert payload["storage"]["path"] == "state/openminion.db"
     assert os.environ["FOCUS_PRIVATE_KEY"] == "private-value"
     assert os.environ["FOCUS_EXISTING_KEY"] == "operator-value"
     assert "private-value" not in isolated.read_text(encoding="utf-8")

@@ -39,6 +39,7 @@ class ProjectControlAction(StrEnum):
     PAUSE = "pause"
     RESUME = "resume"
     CANCEL = "cancel"
+    REDIRECT = "redirect"
     REPRIORITIZE = "reprioritize"
     ANSWER_INPUT = "answer-input-request"
     EXTEND_BUDGET = "extend-budget"
@@ -147,6 +148,7 @@ class ProjectControlResult(_StrictProjectModel):
     goal_id: str | None = None
     last_checkpoint_id: str | None = None
     resume_count: int = Field(default=0, ge=0)
+    direction: str | None = None
     priority: str | None = None
     operator_answer_count: int = Field(default=0, ge=0)
     budget_extensions: dict[str, int] = Field(default_factory=dict)

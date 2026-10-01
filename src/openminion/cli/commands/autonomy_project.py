@@ -78,11 +78,15 @@ def focus_project_help() -> str:
             "       [--expected-check NAME] [--success-criterion TEXT] [--release-tools]",
             "Repository is optional for non-Git work. Verification is required.",
             "usage: /project status [RUN_ID] | show/report RUN_ID",
-            "       /project pause/resume/cancel RUN_ID",
+            "       /project pause RUN_ID",
+            "       /project redirect RUN_ID --direction TEXT",
+            "       /project resume RUN_ID",
+            "       /project cancel RUN_ID",
             "       /project answer RUN_ID --input-request-id ID --answer TEXT",
             "       /project reprioritize RUN_ID --priority TEXT",
             "       /project extend-budget RUN_ID [--extra-iterations N]",
             "Pause takes effect at the checkpoint boundary; it does not roll back work.",
+            "Redirect updates the next cycle and requires the project to be paused.",
         )
     )
 

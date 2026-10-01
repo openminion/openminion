@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
@@ -39,6 +40,7 @@ from openminion.modules.task import (
     load_project_policy_state,
     record_project_cycle,
     render_project_capability_matrix,
+    render_project_control_result,
     render_project_report,
     render_project_run_summary,
     replay_project_cycles,
@@ -55,6 +57,7 @@ from openminion.modules.task.plan import (
 )
 from openminion.modules.task.project import checkpoints as project_checkpoints
 from openminion.modules.task.project.turn import ProjectTurnResult
+from openminion.modules.task.project.turn import project_checkpoint_guidance
 
 
 def _autonomy_run():
@@ -141,6 +144,193 @@ def test_operator_guidance_updates_allocate_distinct_revisions(tmp_path) -> None
     answer = record.metadata["operator_answers"][0]
     assert record.metadata["operator_guidance_revision"] == 2
     assert {record.metadata["priority_revision"], answer["revision"]} == {1, 2}
+    manager.close()
+
+
+def test_project_redirect_survives_restart_and_is_consumed_once(tmp_path) -> None:
+    manager, _ = _create_project_task(tmp_path)
+    apply_project_control(
+        manager,
+        task_id="task-1",
+        action=ProjectControlAction.PAUSE,
+    )
+    result = apply_project_control(
+        manager,
+        task_id="task-1",
+        action=ProjectControlAction.REDIRECT,
+        direction="finish the release notes before packaging",
+    )
+    manager.close()
+
+    restarted = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
+    record = restarted.get_task("task-1")
+    checkpoint = load_latest_project_checkpoint(restarted, task_id="task-1")
+    assert record is not None
+    assert checkpoint is not None
+    guidance, revision = project_checkpoint_guidance(record.metadata, checkpoint)
+
+    assert result.direction == "finish the release notes before packaging"
+    assert (
+        "direction_queued_for_next_cycle: finish the release notes before packaging"
+        in render_project_control_result(result)
+    )
+    assert guidance == {"direction": "finish the release notes before packaging"}
+    assert revision == 1
+    consumed = checkpoint.model_copy(
+        update={
+            "payload": {
+                **checkpoint.payload,
+                "operator_guidance_consumed_revision": revision,
+            }
+        }
+    )
+    assert project_checkpoint_guidance(record.metadata, consumed) == ({}, revision)
+    restarted.close()
+
+
+def test_project_redirect_waits_for_active_cycle_claim(tmp_path) -> None:
+    manager, _ = _create_project_task(tmp_path)
+    claim = manager.lifecycle_repository.acquire_project_cycle_claim(
+        task_id="task-1",
+        owner_id="worker-1",
+        expected_checkpoint_id="checkpoint-1",
+    )
+    apply_project_control(
+        manager,
+        task_id="task-1",
+        action=ProjectControlAction.PAUSE,
+    )
+
+    with pytest.raises(ValueError, match="active project cycle"):
+        apply_project_control(
+            manager,
+            task_id="task-1",
+            action=ProjectControlAction.REDIRECT,
+            direction="change course",
+        )
+
+    manager.lifecycle_repository.release_project_cycle_claim(claim)
+    result = apply_project_control(
+        manager,
+        task_id="task-1",
+        action=ProjectControlAction.REDIRECT,
+        direction="change course",
+    )
+    assert result.direction == "change course"
+    manager.close()
+
+
+def test_project_redirect_survives_concurrent_resume(tmp_path, monkeypatch) -> None:
+    manager, _ = _create_project_task(tmp_path)
+    apply_project_control(
+        manager,
+        task_id="task-1",
+        action=ProjectControlAction.PAUSE,
+    )
+    resumer = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
+    resume_read = Event()
+    redirect_done = Event()
+    original_get = resumer.lifecycle_repository.get
+
+    def wait_after_resume_read(task_id):
+        record = original_get(task_id)
+        if not resume_read.is_set():
+            resume_read.set()
+            assert redirect_done.wait(timeout=5)
+        return record
+
+    monkeypatch.setattr(
+        resumer.lifecycle_repository,
+        "get",
+        wait_after_resume_read,
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        resumed = executor.submit(
+            resumer.transition_task,
+            task_id="task-1",
+            to_state=TaskLifecycleState.ACTIVE,
+        )
+        assert resume_read.wait(timeout=5)
+        try:
+            result = apply_project_control(
+                manager,
+                task_id="task-1",
+                action=ProjectControlAction.REDIRECT,
+                direction="change course",
+            )
+        finally:
+            redirect_done.set()
+        resumed.result(timeout=5)
+
+    record = manager.get_task("task-1")
+    assert record is not None
+    assert result.direction == "change course"
+    assert record.state == TaskLifecycleState.ACTIVE
+    assert record.metadata["operator_direction"] == "change course"
+    resumer.close()
+    manager.close()
+
+
+def test_project_redirect_keeps_newest_mixed_guidance_revision(tmp_path) -> None:
+    manager, _ = _create_project_task(tmp_path)
+    apply_project_control(
+        manager,
+        task_id="task-1",
+        action=ProjectControlAction.REPRIORITIZE,
+        priority="verify first",
+    )
+    apply_project_control(
+        manager,
+        task_id="task-1",
+        action=ProjectControlAction.PAUSE,
+    )
+    apply_project_control(
+        manager,
+        task_id="task-1",
+        action=ProjectControlAction.REDIRECT,
+        direction="prepare the report before packaging",
+    )
+    record = manager.get_task("task-1")
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+    assert record is not None
+    assert checkpoint is not None
+
+    guidance, revision = project_checkpoint_guidance(record.metadata, checkpoint)
+
+    assert guidance == {
+        "direction": "prepare the report before packaging",
+        "priority": "verify first",
+    }
+    assert revision == 2
+    manager.close()
+
+
+@pytest.mark.parametrize(
+    "state",
+    (
+        TaskLifecycleState.ACTIVE,
+        TaskLifecycleState.CANCELLED,
+        TaskLifecycleState.DONE,
+        TaskLifecycleState.FAILED,
+    ),
+)
+def test_project_redirect_requires_paused_state(tmp_path, state) -> None:
+    manager, _ = _create_project_task(tmp_path)
+    if state != TaskLifecycleState.ACTIVE:
+        manager.transition_task(task_id="task-1", to_state=state)
+
+    with pytest.raises(ValueError, match="redirect requires a paused project"):
+        apply_project_control(
+            manager,
+            task_id="task-1",
+            action=ProjectControlAction.REDIRECT,
+            direction="change course",
+        )
+
+    record = manager.get_task("task-1")
+    assert record is not None
+    assert "operator_direction" not in record.metadata
     manager.close()
 
 

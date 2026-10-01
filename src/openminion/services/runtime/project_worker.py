@@ -320,11 +320,22 @@ class ProjectWorker:
             ttl_seconds=self._claim_ttl_seconds,
         )
         try:
+            current_task = self._task_manager.get_task(task.task_id)
+            if current_task is None:
+                raise KeyError(f"task not found: {task.task_id}")
+            inactive = self._inactive_task_result(
+                run,
+                checkpoint,
+                current_task,
+                triggering_cron_job_id=triggering_cron_job_id,
+            )
+            if inactive is not None:
+                return inactive
             return self._run_claimed_cycle(
                 run=run,
                 checkpoint=checkpoint,
                 observed_checkpoint=observed_checkpoint,
-                task=task,
+                task=current_task,
                 claim=claim,
                 cycle_number=cycle_number,
                 triggering_cron_job_id=triggering_cron_job_id,

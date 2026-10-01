@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime, timezone
 
 from openminion.modules.task.runtime.lifecycle import (
     TaskLifecycleRecord,
@@ -84,11 +85,46 @@ def _answer_project_input(
     )
 
 
+def _redirect_project(
+    task_manager: TaskManager,
+    record: TaskLifecycleRecord,
+    *,
+    direction: str | None,
+) -> TaskLifecycleRecord:
+    normalized_direction = _bounded_guidance_text(direction, field="direction")
+
+    def redirect(metadata: dict[str, object]) -> dict[str, object]:
+        claim = task_manager.lifecycle_repository.get_project_cycle_claim(
+            record.task_id
+        )
+        if claim is not None and datetime.fromisoformat(
+            claim.expires_at
+        ) > datetime.now(timezone.utc):
+            raise ValueError(
+                "redirect is waiting for the active project cycle to reach a checkpoint"
+            )
+        current = task_manager.get_task(record.task_id)
+        if current is None:
+            raise KeyError(f"task not found: {record.task_id}")
+        if current.state != TaskLifecycleState.PAUSED:
+            raise ValueError("redirect requires a paused project")
+        revision = _next_guidance_revision(metadata)
+        metadata["operator_direction"] = normalized_direction
+        metadata["operator_direction_revision"] = revision
+        return metadata
+
+    return task_manager.mutate_task_metadata(
+        task_id=record.task_id,
+        mutate=redirect,
+    )
+
+
 def apply_project_control(
     task_manager: TaskManager,
     *,
     task_id: str,
     action: ProjectControlAction,
+    direction: str | None = None,
     priority: str | None = None,
     input_request_id: str | None = None,
     answer: str | None = None,
@@ -121,6 +157,8 @@ def apply_project_control(
             task_id=record.task_id,
             to_state=TaskLifecycleState.CANCELLED,
         )
+    elif action == ProjectControlAction.REDIRECT:
+        record = _redirect_project(task_manager, record, direction=direction)
     elif action == ProjectControlAction.REPRIORITIZE:
         normalized_priority = _bounded_guidance_text(priority, field="priority")
 
@@ -188,6 +226,7 @@ def build_project_control_result(
         goal_id=str(metadata.get("goal_id") or "") or None,
         last_checkpoint_id=str(metadata.get("last_checkpoint_id") or "") or None,
         resume_count=int(metadata.get("resume_count") or 0),
+        direction=str(metadata.get("operator_direction") or "") or None,
         priority=str(metadata.get("priority") or "") or None,
         operator_answer_count=len(operator_answers),
         budget_extensions={

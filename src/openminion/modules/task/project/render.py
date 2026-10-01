@@ -33,6 +33,8 @@ def render_project_control_result(result: ProjectControlResult) -> str:
         f"cycles: {result.cycle_count}",
         f"resume_count: {result.resume_count}",
     ]
+    if result.direction:
+        lines.append(f"direction_queued_for_next_cycle: {result.direction}")
     if result.priority:
         lines.append(f"priority: {result.priority}")
     if result.operator_answer_count:
