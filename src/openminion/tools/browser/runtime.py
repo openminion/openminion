@@ -35,6 +35,7 @@ from .session_state import SessionBrowserState
 
 _OP_CAPABILITIES: dict[str, tuple[str, ...]] = {
     BrowserOp.TAB_ACTIONS.value: ("batch_actions",),
+    BrowserOp.TAB_UPLOAD.value: ("file_upload",),
     BrowserOp.TAB_PDF.value: ("pdf_export",),
     BrowserOp.TAB_LOCK.value: ("tab_locking",),
     BrowserOp.TAB_UNLOCK.value: ("tab_locking",),
@@ -49,6 +50,7 @@ _OPS_REQUIRE_TAB = {
     BrowserOp.TAB_ACTION.value,
     BrowserOp.TAB_ACTIONS.value,
     BrowserOp.TAB_SCREENSHOT.value,
+    BrowserOp.TAB_UPLOAD.value,
     BrowserOp.TAB_PDF.value,
     BrowserOp.TAB_LOCK.value,
     BrowserOp.TAB_UNLOCK.value,
@@ -115,6 +117,7 @@ def _materialize_artifact(
     ctx: _BrowserExecutionContext,
 ) -> ArtifactRef:
     digest = hashlib.sha256(blob).hexdigest()
+    mime = "image/png" if kind == "screenshot" else None
     target = str(output_path or "").strip()
     if target:
         normalized = self._workspace_output_path(ctx, target)
@@ -122,20 +125,22 @@ def _materialize_artifact(
         if isinstance(runtime_obj, RuntimeContext):
             Path(normalized).parent.mkdir(parents=True, exist_ok=True)
             Path(normalized).write_bytes(blob)
-            return ArtifactRef(kind=kind, path=normalized, sha256=digest)
+            return ArtifactRef(kind=kind, path=normalized, sha256=digest, mime=mime)
         if runtime_obj is not None and callable(getattr(runtime_obj, "fs_write", None)):
             runtime_obj.fs_write({"path": normalized, "content": blob})
-            return ArtifactRef(kind=kind, path=normalized, sha256=digest)
+            return ArtifactRef(kind=kind, path=normalized, sha256=digest, mime=mime)
         return ArtifactRef(
             kind=kind,
             path=normalized,
             sha256=digest,
+            mime=mime,
             content_base64=base64.b64encode(blob).decode("ascii"),
         )
     return ArtifactRef(
         kind=kind,
         path="",
         sha256=digest,
+        mime=mime,
         content_base64=base64.b64encode(blob).decode("ascii"),
     )
 
@@ -672,7 +677,7 @@ def _runtime_context_from_execution_context(
         workspace=workspace,
         run_root=run_root,
         scope="UI_AUTOMATION",
-        confirm=False,
+        confirm=bool(context.confirm),
         env=resolve_tool_env(env=runtime_env),
     )
 

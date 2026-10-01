@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from openminion.base.config import OpenMinionConfig
+from openminion.base.config.io import save_config
 from openminion.modules.identity.config import (
     IdentityCtlConfig,
     StorageConfig,
@@ -77,6 +78,30 @@ profiles:
     )
     assert Path(cfg.profiles.directory) == (data_root / "identities").resolve()
     assert Path(cfg.profiles.bundle_root) == (data_root / "identities").resolve()
+
+
+def test_missing_module_config_derives_from_active_openminion_config(
+    tmp_path: Path,
+) -> None:
+    base_config = OpenMinionConfig()
+    base_config.identity.bundle_root = "custom-identities"
+    base_config.identity.db_path = "custom-identities/custom.db"
+    config_path = tmp_path / "agents.json"
+    save_config(base_config, str(config_path), home_root=tmp_path)
+    data_root = tmp_path / "data"
+
+    cfg = load_config(
+        tmp_path / "missing-identity.yaml",
+        home_root=tmp_path,
+        data_root=data_root,
+        env={"OPENMINION_CONFIG_PATH": str(config_path)},
+    )
+
+    assert Path(cfg.profiles.bundle_root) == (data_root / "custom-identities").resolve()
+    assert (
+        Path(cfg.storage.db_path)
+        == (data_root / "custom-identities" / "custom.db").resolve()
+    )
 
 
 @pytest.mark.parametrize("purpose", sorted(CANONICAL_PURPOSES))

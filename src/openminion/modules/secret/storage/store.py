@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from openminion.modules.storage.runtime.module_store import (
     BaseModuleSQLiteStore,
@@ -42,8 +43,10 @@ ON CONFLICT(key, namespace) DO UPDATE SET
 
 
 class _SecretStoreOps(SecretStore):
+    _record_store: RecordStore
+
     def close(self) -> None:
-        BaseModuleStore.close(self)
+        BaseModuleStore.close(cast(BaseModuleStore, self))
 
     def _list_migrations(self) -> list[str]:
         return list_migrations()
@@ -71,6 +74,14 @@ class _SecretStoreOps(SecretStore):
             where={"key": key, "namespace": namespace},
             limit=1,
         )
+        return str(rows[0]["value"]) if rows else None
+
+    def consume_value(self, *, key: str, namespace: str) -> str | None:
+        with self._record_store.transaction():
+            rows = self._record_store.query_dicts(
+                "DELETE FROM secrets WHERE key = ? AND namespace = ? RETURNING value",
+                (key, namespace),
+            )
         return str(rows[0]["value"]) if rows else None
 
     def delete(self, *, key: str, namespace: str) -> None:

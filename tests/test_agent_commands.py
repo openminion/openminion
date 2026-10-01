@@ -66,6 +66,24 @@ class _DelegateSeam:
             task_id=task_id,
         )
 
+    def list_recent(self, *, limit) -> A2ADelegateResult:
+        self.calls.append(("list", {"limit": limit}))
+        return A2ADelegateResult(
+            ok=True,
+            status="success",
+            content="1 recent delegation(s).",
+            outputs={
+                "jobs": [
+                    {
+                        "task_id": "task-1",
+                        "trace_id": "trace-1",
+                        "agent_id": "worker",
+                        "state": "RUNNING",
+                    }
+                ]
+            },
+        )
+
     def resume(self, *, task_id) -> A2ADelegateResult:
         self.calls.append(("resume", {"task_id": task_id}))
         return A2ADelegateResult(
@@ -263,15 +281,35 @@ def test_agent_delegate_lifecycle_modes_use_task_id(capsys) -> None:
     assert [payload["status"] for payload in payloads] == [
         "running",
         "success",
-        "success",
+        "running",
         "canceled",
     ]
     assert [name for name, _payload in seam.calls] == [
         "status",
         "resume",
-        "resume",
+        "status",
         "cancel",
     ]
+
+
+def test_agent_delegate_list_and_focus_parser_use_bounded_limit(capsys) -> None:
+    seam = _DelegateSeam()
+
+    code = agent_delegate(
+        config=SimpleNamespace(),
+        home_root="/tmp/home",
+        parent_agent_id="parent",
+        request=AgentDelegateRequest(mode="list", limit=7),
+        as_json=False,
+        delegate_api=seam,
+    )
+    parsed = request_from_slash_args("list 7")
+
+    assert code == 0
+    assert "task-1  RUNNING  worker  trace=trace-1" in capsys.readouterr().out
+    assert seam.calls == [("list", {"limit": 7})]
+    assert parsed.mode == "list"
+    assert parsed.limit == 7
 
 
 def test_focus_delegate_accept_parses_artifact_json() -> None:

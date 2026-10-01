@@ -5,12 +5,13 @@ import json
 import shutil
 import sqlite3
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from openminion.modules.a2a.config import validate_audit_retention
 from openminion.modules.a2a.models import AuditRecord
-from openminion.modules.a2a.storage.base import AuditStore
+from openminion.modules.a2a.storage.base import AuditStore, audit_record_for_storage
 from openminion.modules.storage.migrations.module_ids import get_module_application_id
 from openminion.modules.storage.migrations.runner import MigrationRunner
 from openminion.modules.storage.record_store import RecordStoreSQLite
@@ -20,17 +21,33 @@ if TYPE_CHECKING:
 
 
 class SQLiteAuditStore(AuditStore):
-    def __init__(self, root: str | Path, *, retention_days: int = 14) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        capture_payloads: bool = False,
+        retention_days: int = 14,
+        archive_retention_days: int = 0,
+    ) -> None:
         self.root = Path(root).expanduser().resolve(strict=False)
-        self.root.mkdir(parents=True, exist_ok=True)
+        _secure_directory(self.root)
         self.archive_dir = self.root / "archive"
-        self.archive_dir.mkdir(parents=True, exist_ok=True)
-        self.retention_days = max(1, int(retention_days))
+        self.capture_payloads = bool(capture_payloads)
+        self.retention_days, self.archive_retention_days = validate_audit_retention(
+            retention_days,
+            archive_retention_days,
+        )
         self._lock = threading.RLock()
+        with self._lock:
+            self._enforce_retention()
 
     def append_audit(self, record: AuditRecord) -> None:
+        stored = audit_record_for_storage(
+            record,
+            capture_payloads=self.capture_payloads,
+        )
         with self._lock:
-            day = _date_key(record.ts)
+            day = _date_key(stored.ts)
             db_path = self.root / f"{day}.db"
             conn = _connect(db_path)
             try:
@@ -44,20 +61,20 @@ class SQLiteAuditStore(AuditStore):
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            record.ts,
-                            record.msg_id,
-                            record.trace_id,
-                            record.from_agent,
-                            record.to_agent,
-                            record.to_capability,
-                            record.type,
-                            record.method,
-                            record.status,
-                            record.task_id,
-                            record.error_code,
-                            record.error_message,
-                            _json(record.envelope),
-                            _json(record.data),
+                            stored.ts,
+                            stored.msg_id,
+                            stored.trace_id,
+                            stored.from_agent,
+                            stored.to_agent,
+                            stored.to_capability,
+                            stored.type,
+                            stored.method,
+                            stored.status,
+                            stored.task_id,
+                            stored.error_code,
+                            stored.error_message,
+                            _json(stored.envelope),
+                            _json(stored.data),
                         ),
                     )
             finally:
@@ -71,15 +88,17 @@ class SQLiteAuditStore(AuditStore):
         limit = max(1, min(int(filter_by.get("limit", 1000)), 50_000))
         where, params = _where_clause(filter_by)
 
-        rows: list[AuditRecord] = []
+        archived_rows: list[AuditRecord] = []
         with self._lock:
-            paths = sorted(self.root.glob("*.db"))
+            self._enforce_retention()
+            paths = sorted(self.root.glob("*.db"), reverse=True)
 
         if include_archive and archive_store is not None:
             archive_filter = dict(filter_by)
             archive_filter["limit"] = limit
-            rows.extend(archive_store.query_archive(archive_filter))
+            archived_rows.extend(archive_store.query_archive(archive_filter))
 
+        active_rows: list[AuditRecord] = []
         for path in paths:
             conn = _connect(path)
             try:
@@ -91,30 +110,32 @@ class SQLiteAuditStore(AuditStore):
                 )
                 if where:
                     sql += " WHERE " + " AND ".join(where)
-                sql += " ORDER BY ts ASC LIMIT ?"
-                cur = conn.execute(sql, (*params, limit))
+                sql += " ORDER BY ts DESC, msg_id DESC LIMIT ?"
+                remaining = limit - len(active_rows)
+                cur = conn.execute(sql, (*params, remaining))
                 for row in cur.fetchall():
-                    rows.append(_row_to_audit_record(row))
-                    if len(rows) >= limit:
-                        break
-                if len(rows) >= limit:
+                    active_rows.append(_row_to_audit_record(row))
+                if len(active_rows) >= limit:
                     break
             finally:
                 conn.close()
 
-        rows.sort(key=lambda item: item.ts)
-        if filter_by.get("error_only"):
-            rows = [row for row in rows if row.error_code]
-        if include_archive and archive_store is not None:
-            seen: set[str] = set()
-            deduped: list[AuditRecord] = []
-            for row in rows:
-                if row.msg_id in seen:
-                    continue
-                seen.add(row.msg_id)
-                deduped.append(row)
-            rows = deduped
-        return rows[:limit]
+        rows = sorted(
+            (*active_rows, *archived_rows),
+            key=lambda item: (item.ts, item.msg_id),
+            reverse=True,
+        )
+        seen: set[str] = set()
+        selected: list[AuditRecord] = []
+        for row in rows:
+            if row.msg_id in seen:
+                continue
+            seen.add(row.msg_id)
+            selected.append(row)
+            if len(selected) >= limit:
+                break
+        selected.reverse()
+        return selected
 
     def close(self) -> None:
         return None
@@ -122,17 +143,43 @@ class SQLiteAuditStore(AuditStore):
     def _enforce_retention(self) -> None:
         cutoff = datetime.now(timezone.utc).date() - timedelta(days=self.retention_days)
         for path in sorted(self.root.glob("*.db")):
-            stem = path.stem
-            try:
-                day = datetime.strptime(stem, "%Y-%m-%d").date()
-            except ValueError:
+            day = _daily_file_date(path.name)
+            if day is None:
                 continue
             if day >= cutoff:
                 continue
-            archive_target = self.archive_dir / f"{path.name}.gz"
-            with path.open("rb") as src, gzip.open(archive_target, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+            if self.archive_retention_days:
+                _secure_directory(self.archive_dir)
+                archive_target = self.archive_dir / f"{path.name}.gz"
+                _checkpoint_sqlite(path)
+                with path.open("rb") as src, gzip.open(archive_target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                archive_target.chmod(0o600)
             path.unlink(missing_ok=True)
+            _remove_sqlite_sidecars(path)
+
+        for pattern in ("*.db-wal", "*.db-shm"):
+            for path in self.root.glob(pattern):
+                day = _daily_file_date(
+                    path.name.removesuffix("-wal").removesuffix("-shm")
+                )
+                if day is not None and day < cutoff:
+                    path.unlink(missing_ok=True)
+
+        if not self.archive_dir.exists():
+            return
+        archive_cutoff = (
+            datetime.now(timezone.utc).date()
+            - timedelta(days=self.archive_retention_days)
+            if self.archive_retention_days
+            else None
+        )
+        for path in sorted(self.archive_dir.glob("*.db.gz")):
+            day = _daily_file_date(path.name)
+            if day is None:
+                continue
+            if archive_cutoff is None or day < archive_cutoff:
+                path.unlink(missing_ok=True)
 
 
 class PostgresAuditStore(AuditStore):
@@ -140,12 +187,21 @@ class PostgresAuditStore(AuditStore):
         self,
         pool: Engine,
         *,
+        capture_payloads: bool = False,
         retention_days: int = 14,
+        archive_retention_days: int = 0,
         database_path: str | Path | None = None,
         owns_engine: bool = False,
     ) -> None:
         self._engine = pool
-        self.retention_days = max(1, int(retention_days))
+        self.capture_payloads = bool(capture_payloads)
+        self.retention_days, self.archive_retention_days = validate_audit_retention(
+            retention_days,
+            archive_retention_days,
+        )
+        self.effective_retention_days = (
+            self.archive_retention_days or self.retention_days
+        )
         self._owns_engine = owns_engine
         placeholder_path = (
             Path(database_path).expanduser().resolve(strict=False)
@@ -153,7 +209,11 @@ class PostgresAuditStore(AuditStore):
             else (Path.cwd() / ".openminion-a2a-audit-postgres").resolve()
         )
         placeholder_path.parent.mkdir(parents=True, exist_ok=True)
+        _secure_directory(placeholder_path.parent)
         self._bootstrap_schema(placeholder_path)
+        if placeholder_path.exists():
+            placeholder_path.chmod(0o600)
+        self._enforce_retention()
 
     def close(self) -> None:
         if self._owns_engine:
@@ -162,6 +222,10 @@ class PostgresAuditStore(AuditStore):
     def append_audit(self, record: AuditRecord) -> None:
         from sqlalchemy import text
 
+        stored = audit_record_for_storage(
+            record,
+            capture_payloads=self.capture_payloads,
+        )
         with self._engine.begin() as conn:
             conn.execute(
                 text(
@@ -176,21 +240,21 @@ class PostgresAuditStore(AuditStore):
                     """
                 ),
                 {
-                    "record_date": _date_key(record.ts),
-                    "ts": record.ts,
-                    "msg_id": record.msg_id,
-                    "trace_id": record.trace_id,
-                    "from_agent": record.from_agent,
-                    "to_agent": record.to_agent,
-                    "to_capability": record.to_capability,
-                    "type": record.type,
-                    "method": record.method,
-                    "status": record.status,
-                    "task_id": record.task_id,
-                    "error_code": record.error_code,
-                    "error_message": record.error_message,
-                    "envelope_json": _json(record.envelope),
-                    "data_json": _json(record.data),
+                    "record_date": _date_key(stored.ts),
+                    "ts": stored.ts,
+                    "msg_id": stored.msg_id,
+                    "trace_id": stored.trace_id,
+                    "from_agent": stored.from_agent,
+                    "to_agent": stored.to_agent,
+                    "to_capability": stored.to_capability,
+                    "type": stored.type,
+                    "method": stored.method,
+                    "status": stored.status,
+                    "task_id": stored.task_id,
+                    "error_code": stored.error_code,
+                    "error_message": stored.error_message,
+                    "envelope_json": _json(stored.envelope),
+                    "data_json": _json(stored.data),
                 },
             )
             self._enforce_retention(connection=conn)
@@ -199,6 +263,7 @@ class PostgresAuditStore(AuditStore):
         from sqlalchemy import text
 
         filter_by = filter_by or {}
+        self._enforce_retention()
         limit = max(1, min(int(filter_by.get("limit", 1000)), 50_000))
         where, params = _postgres_where_clause(filter_by)
         sql = (
@@ -208,11 +273,13 @@ class PostgresAuditStore(AuditStore):
         )
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY ts ASC LIMIT :limit"
+        sql += " ORDER BY ts DESC, msg_id DESC LIMIT :limit"
         params["limit"] = limit
         with self._engine.connect() as conn:
             rows = conn.execute(text(sql), params).mappings().all()
-        return [_row_to_audit_record(row) for row in rows]
+        selected = [_row_to_audit_record(row) for row in rows]
+        selected.reverse()
+        return selected
 
     def _bootstrap_schema(self, placeholder_path: Path) -> None:
         runner = MigrationRunner(
@@ -226,24 +293,28 @@ class PostgresAuditStore(AuditStore):
         if not report.success:
             raise RuntimeError(report.error or "A2A audit migration failed")
 
-    def _enforce_retention(self, *, connection) -> None:  # type: ignore[no-untyped-def]
+    def _enforce_retention(self, *, connection: Any | None = None) -> None:
         from sqlalchemy import text
 
-        cutoff = datetime.now(timezone.utc).date() - timedelta(days=self.retention_days)
+        if connection is None:
+            with self._engine.begin() as owned_connection:
+                self._enforce_retention(connection=owned_connection)
+            return
+        cutoff = datetime.now(timezone.utc).date() - timedelta(
+            days=self.effective_retention_days
+        )
         connection.execute(
-            text(
-                """
-                DELETE FROM audit_records
-                WHERE record_date < :cutoff_date
-                """
-            ),
+            text("DELETE FROM audit_records WHERE record_date < :cutoff_date"),
             {"cutoff_date": cutoff.isoformat()},
         )
 
 
 def _where_clause(filter_by: dict[str, Any]) -> tuple[list[str], list[Any]]:
     clauses = _filter_clauses(filter_by, placeholder="?")
-    return list(clauses), list(clauses.values())
+    where = list(clauses)
+    if filter_by.get("error_only"):
+        where.append("error_code IS NOT NULL")
+    return where, list(clauses.values())
 
 
 def _postgres_where_clause(
@@ -303,7 +374,26 @@ def _row_text(row: Any, key: str) -> str | None:
 
 def _connect(path: Path) -> sqlite3.Connection:
     store = RecordStoreSQLite(path, wal=True)
+    path.chmod(0o600)
     return store.connection
+
+
+def _secure_directory(path: Path) -> None:
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    path.chmod(0o700)
+
+
+def _checkpoint_sqlite(path: Path) -> None:
+    connection = _connect(path)
+    try:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        connection.close()
+
+
+def _remove_sqlite_sidecars(path: Path) -> None:
+    for suffix in ("-wal", "-shm"):
+        path.with_name(f"{path.name}{suffix}").unlink(missing_ok=True)
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
@@ -347,6 +437,14 @@ def _date_key(ts: str) -> str:
     except ValueError:
         parsed = datetime.now(timezone.utc)
     return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _daily_file_date(name: str) -> date | None:
+    date_text = name.removesuffix(".gz").removesuffix(".db")
+    try:
+        return datetime.strptime(date_text, "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 
 def _json(value: Any) -> str | None:

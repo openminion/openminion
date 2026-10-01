@@ -4,6 +4,13 @@ from __future__ import annotations
 from typing import Any
 from collections.abc import Mapping
 
+from openminion.modules.task.constants import (
+    TASK_INTERNAL_PAUSE_REASON_KEY,
+    TASK_INTERNAL_PAUSE_SOURCE_KEY,
+)
+from openminion.modules.task.errors import TaskResumeExpiredError
+from openminion.modules.task.scheduling.schedule import parse_iso_datetime, utc_now
+
 from .lifecycle_models import (
     TaskLifecycleRecord,
     TaskLifecycleState,
@@ -118,8 +125,18 @@ class TaskManagerScheduleMixin:
     def get_scheduled_job(self, task_id: str) -> dict[str, Any] | None:
         return self._cron_repository.get_cron_job(task_id)
 
-    def list_scheduled_jobs(self, *, limit: int) -> list[dict[str, Any]]:
-        return self._cron_repository.list_cron_jobs(limit=limit)
+    def list_scheduled_jobs(
+        self,
+        *,
+        limit: int,
+        agent_id: str | None = None,
+        include_unowned: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self._cron_repository.list_cron_jobs(
+            limit=limit,
+            agent_id=agent_id,
+            include_unowned=include_unowned,
+        )
 
     def _require_scheduled_record(self, task_id: str) -> TaskLifecycleRecord:
         record = self.get_task(task_id) or self.get_task_by_job(task_id)
@@ -282,7 +299,12 @@ class TaskManagerScheduleMixin:
         if one_time and job is not None and bool(job.get("enabled")):
             self._cron_repository.set_cron_job_enabled(record.cron_job_id, False)
         if record.state == TaskLifecycleState.CANCELLED:
-            return self.get_task(record.task_id)
+            return self._lifecycle_repository.record_scheduled_outcome(
+                task_id=record.task_id,
+                expected_state=TaskLifecycleState.CANCELLED,
+                to_state=TaskLifecycleState.CANCELLED,
+                metadata=metadata,
+            )
 
         target = record.state
         reason = None
@@ -316,32 +338,26 @@ class TaskManagerScheduleMixin:
     ) -> int:
         normalized_job_id = str(cron_job_id or "").strip()
         if normalized_job_id:
-            records = [self.get_task_by_job(normalized_job_id)]
-        else:
-            records = self._lifecycle_repository.list(limit=max(1, min(limit, 1000)))
-        reconciled = 0
-        for record in records:
-            if record is None or record.state in {
-                TaskLifecycleState.CANCELLED,
-                TaskLifecycleState.DONE,
-                TaskLifecycleState.FAILED,
-            }:
-                continue
-            runs = self.list_scheduled_runs(job_id=record.cron_job_id, limit=1)
-            if (
-                not runs
-                or str(runs[0].get("state") or "") not in self._TERMINAL_RUN_STATES
-                or (
-                    str(runs[0].get("state") or "") == "cancelled"
-                    and int(runs[0].get("attempts") or 0) == 0
-                )
-            ):
-                continue
-            self.record_scheduled_outcome(
-                cron_job_id=record.cron_job_id,
-                run=runs[0],
+            runs = self.list_scheduled_runs(
+                job_id=normalized_job_id,
+                limit=1,
+                states=sorted(self._TERMINAL_RUN_STATES),
             )
-            reconciled += 1
+        else:
+            runs = self._cron_repository.list_unresolved_task_runs(
+                limit=max(1, min(limit, 1000))
+            )
+        reconciled = 0
+        for run in runs:
+            job_id = str(run.get("job_id") or normalized_job_id).strip()
+            before = self.get_task_by_job(job_id)
+            if before is None:
+                continue
+            after = self.record_scheduled_outcome(cron_job_id=job_id, run=run)
+            if after is not None and (
+                after.state != before.state or after.metadata != before.metadata
+            ):
+                reconciled += 1
         return reconciled
 
     def cancel_task(self, task_id: str) -> TaskLifecycleRecord:
@@ -374,6 +390,26 @@ class TaskManagerScheduleMixin:
 
     def resume_task(self, task_id: str) -> tuple[TaskLifecycleRecord, dict[str, Any]]:
         record = self._require_scheduled_record(task_id)
+        job = self.get_scheduled_job(record.cron_job_id)
+        if job is None:
+            raise KeyError(f"task not found: {task_id}")
+        schedule = dict(job.get("schedule") or {})
+        if (
+            str(schedule.get("kind") or "").strip() == "at"
+            and parse_iso_datetime(str(schedule.get("at") or "")) <= utc_now()
+        ):
+            raise TaskResumeExpiredError(task_id=record.task_id)
+        if record.state not in {
+            TaskLifecycleState.ACTIVE,
+            TaskLifecycleState.PAUSED,
+        }:
+            raise ValueError(f"task cannot be resumed from {record.state.value}")
+
+        payload = dict(job.get("payload") or {})
+        payload.pop(TASK_INTERNAL_PAUSE_REASON_KEY, None)
+        payload.pop(TASK_INTERNAL_PAUSE_SOURCE_KEY, None)
+        if payload != dict(job.get("payload") or {}):
+            self.replace_cron_job_payload(record.cron_job_id, payload)
         self._cron_repository.set_cron_job_enabled(record.cron_job_id, True)
         record = self.transition_task(
             task_id=record.task_id,

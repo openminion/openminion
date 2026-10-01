@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from openminion.modules.task.constants import TASK_DELIVERY_ERROR_MESSAGE_LIMIT
+
 from .interfaces import CronStoreProtocol
 
 CronEventHook = Callable[[str, dict[str, Any]], None]
+CronDeliveryHandler = Callable[[str, str, dict[str, Any], dict[str, Any], Any], None]
 _SCHEDULER_STATUS_COMMAND = "openminion service status cron"
 
 
@@ -136,3 +139,75 @@ def persist_cron_run_outcome(
         isolated_session_id=isolated_session_id,
     )
     return state
+
+
+def deliver_cron_run(
+    *,
+    store: CronStoreProtocol,
+    job: dict[str, Any],
+    run: dict[str, Any],
+    result: Any,
+    delivery_handler: CronDeliveryHandler | None,
+    emit: CronEventHook,
+) -> dict[str, Any]:
+    payload = job.get("payload", {})
+    delivery = job.get("delivery", {})
+    delivery = delivery if isinstance(delivery, dict) else {}
+    mode = str(delivery.get("mode", "none") or "none").strip() or "none"
+    if (
+        (
+            isinstance(payload, dict)
+            and isinstance(payload.get("_openminion_watch"), dict)
+            and not bool(result.output.get("watch_delivery_requested", False))
+        )
+        or mode == "none"
+        or (mode == "webhook" and not result.summary.strip())
+    ):
+        return {"state": "not_requested", "mode": mode, "targets": []}
+
+    to_value = str(delivery.get("to", "") or "").strip()
+    marker = f"{mode}:{to_value or str(delivery.get('channel', '') or '').strip()}"
+    try:
+        if delivery_handler is None:
+            raise RuntimeError(
+                f"delivery mode '{mode}' is configured but no delivery handler is installed"
+            )
+        if not to_value and mode in {"announce", "webhook"}:
+            raise RuntimeError("delivery target is required")
+        delivery_handler(mode, to_value, job, run, result)
+        marker_fn = getattr(store, "mark_cron_delivery_target", None)
+        if callable(marker_fn) and not marker_fn(
+            str(run.get("run_id", "")), target=marker
+        ):
+            emit(
+                "cron.delivery.duplicate",
+                {"run_id": run.get("run_id"), "target": marker},
+            )
+        outcome = {"state": "succeeded", "mode": mode, "targets": [marker]}
+        emit(
+            "cron.delivery.succeeded",
+            {
+                "run_id": run.get("run_id"),
+                "job_id": job.get("job_id"),
+                "mode": mode,
+                "target": marker,
+            },
+        )
+        return outcome
+    except Exception as exc:  # noqa: BLE001 - delivery must never retry execution
+        error = {
+            "code": "cron_delivery_failed",
+            "message": str(exc)[:TASK_DELIVERY_ERROR_MESSAGE_LIMIT],
+        }
+        emit(
+            "cron.delivery.failed",
+            {
+                "run_id": run.get("run_id"),
+                "job_id": job.get("job_id"),
+                "mode": mode,
+                "target": marker,
+                "best_effort": bool(delivery.get("best_effort", False)),
+                "error": error,
+            },
+        )
+        return {"state": "failed", "mode": mode, "targets": [], "error": error}

@@ -23,6 +23,7 @@ class AgentDelegateRequest:
     workspace_root: str = ""
     review_criteria: tuple[str, ...] = ()
     repository_instructions: str = ""
+    limit: int = 20
 
     def tool_args(self) -> dict[str, Any]:
         return {
@@ -35,13 +36,14 @@ class AgentDelegateRequest:
             "workspace_root": self.workspace_root.strip(),
             "review_criteria": list(self.review_criteria),
             "repository_instructions": self.repository_instructions.strip(),
+            "limit": max(1, min(int(self.limit), 200)),
         }
 
 
 def normalize_delegate_mode(mode: str) -> str:
     normalized = (mode or "sync").strip().lower()
     if normalized in _RESULT_MODE_ALIASES:
-        return "resume"
+        return "result"
     return normalized or "sync"
 
 
@@ -50,13 +52,15 @@ def agent_delegate_usage() -> str:
         "Usage:\n"
         "  openminion agent delegate --target-agent-id <agent> --instruction <text>\n"
         "  openminion agent delegate --mode async --target-agent-id <agent> --instruction <text>\n"
+        "  openminion agent delegate-list [--limit 20]\n"
         "  openminion agent delegate-status --task-id <task>\n"
         "  openminion agent delegate-result --task-id <task>\n"
         "  openminion agent delegate-cancel --task-id <task>\n"
         "  /delegate review '<review-request-json>'\n"
         "  /delegate accept|reject '<child-artifact-json>'\n"
         "\nCompatibility:\n"
-        "  openminion agent-ctl delegate ... remains supported."
+        "  openminion agent-ctl delegate ... remains supported.\n"
+        "  delegate-resume is recognized but does not resume completed or stopped work."
     )
 
 
@@ -72,6 +76,7 @@ def run_agent_delegate_request(
     workspace_root: str | None = None,
     cwd: str | None = None,
     artifactctl: Any | None = None,
+    session_id: str = "",
 ) -> dict[str, Any]:
     seam = delegate_api
     if seam is None:
@@ -96,6 +101,7 @@ def run_agent_delegate_request(
         }
     try:
         tool_args = request.tool_args()
+        bound_session_id = str(session_id or f"operator:{parent_agent_id}").strip()
         if tool_args["mode"] == "accept" and not tool_args["workspace_root"]:
             tool_args["workspace_root"] = str(
                 Path((cwd or workspace_root or "").strip() or ".")
@@ -108,6 +114,8 @@ def run_agent_delegate_request(
                 SimpleNamespace(
                     a2a_delegate_api=seam,
                     artifactctl=artifactctl,
+                    session_id=bound_session_id,
+                    telemetry_session_id=bound_session_id,
                     workspace=Path((cwd or workspace_root or "").strip() or ".")
                     .expanduser()
                     .resolve(strict=False),
@@ -152,6 +160,17 @@ def render_agent_delegate_result(payload: dict[str, Any]) -> str:
         lines.append(f"  trace     {trace_id}")
     if content:
         lines.extend(("", content))
+    outputs = payload.get("outputs")
+    jobs = outputs.get("jobs") if isinstance(outputs, dict) else None
+    if isinstance(jobs, list):
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            lines.append(
+                "  "
+                f"{job.get('task_id', '-')}  {job.get('state', '-')}  "
+                f"{job.get('agent_id', '-')}  trace={job.get('trace_id', '-')}"
+            )
     return "\n".join(lines)
 
 
@@ -168,6 +187,7 @@ def request_from_operator_args(args: Any) -> AgentDelegateRequest:
         instruction=str(getattr(args, "instruction", "") or "").strip(),
         task_id=str(getattr(args, "task_id", "") or "").strip(),
         timeout_seconds=int(getattr(args, "timeout_seconds", 120) or 120),
+        limit=int(getattr(args, "limit", 20) or 20),
     )
 
 
@@ -177,6 +197,7 @@ def request_from_slash_args(args: str) -> AgentDelegateRequest:
         raise ValueError(
             "Usage: /delegate <agent> <instruction...> | "
             "/delegate async <agent> <instruction...> | "
+            "/delegate list [limit] | "
             "/delegate status|result|resume|cancel <task-id> | "
             "/delegate review '<review-request-json>' | "
             "/delegate accept|reject '<child-artifact-json>'"
@@ -184,6 +205,16 @@ def request_from_slash_args(args: str) -> AgentDelegateRequest:
     first, *remainder_parts = raw.split(maxsplit=1)
     remainder = remainder_parts[0] if remainder_parts else ""
     action = first.lower()
+    if action == "list":
+        if not remainder:
+            return AgentDelegateRequest(mode="list")
+        values = remainder.split()
+        if len(values) != 1 or not values[0].isdigit():
+            raise ValueError("Usage: /delegate list [limit]")
+        limit = int(values[0])
+        if not 1 <= limit <= 200:
+            raise ValueError("/delegate list limit must be between 1 and 200")
+        return AgentDelegateRequest(mode="list", limit=limit)
     if action in {"status", "result", "resume", "cancel"}:
         task_ids = remainder.split()
         if len(task_ids) != 1:

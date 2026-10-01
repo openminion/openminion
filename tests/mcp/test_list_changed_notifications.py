@@ -8,18 +8,10 @@ from typing import Any
 
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.runtime import RuntimeConfig
-from openminion.modules.llm.providers.base import ProviderToolCall
-from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
-from openminion.modules.tool.registry import ToolRegistry
-from openminion.modules.tool.schema_service import ToolSchemaService
 from openminion.tools.mcp.interfaces import MCPCapabilityChangeListener
 from openminion.tools.mcp.manager import MCPFleetManager
-from openminion.tools.mcp.schemas import (
-    MCPListedResource,
-    MCPListedResourceTemplate,
-    MCPListedTool,
-)
+from openminion.tools.mcp.schemas import MCPListedResource, MCPListedResourceTemplate
 
 
 FIXTURE_SERVER_PATH = (
@@ -57,6 +49,7 @@ def _runtime_config() -> RuntimeConfig:
             MCPServerConfig(
                 name="Fixture",
                 transport="stdio",
+                trusted=True,
                 command=[sys.executable, str(FIXTURE_SERVER_PATH)],
                 request_timeout_seconds=5.0,
                 startup_timeout_seconds=5.0,
@@ -141,7 +134,7 @@ def test_emit_list_changed_refreshes_catalog_and_reports_added_tool() -> None:
         manager.close()
 
 
-def test_list_changed_hot_reload_updates_live_registry_and_hides_removed_tool() -> None:
+def test_list_changed_does_not_mutate_live_registry_or_dispatch_maps() -> None:
     bootstrap = build_runtime_bootstrap(config=_runtime_config(), strict=True)
     try:
         registry = bootstrap.registry
@@ -156,60 +149,16 @@ def test_list_changed_hot_reload_updates_live_registry_and_hides_removed_tool() 
         )
         assert result["ok"] is True
 
-        def _registered() -> bool:
-            return "mcp.fixture.dynamic_after_change" in registry.list()
-
-        _wait_for(_registered)
-        schema_names = {
-            str(item.get("name", "") or "")
-            for item in ToolSchemaService().collect_execution_tool_schemas(
-                registry=registry
+        _wait_for(
+            lambda: any(
+                item["primitive"] == "tools" and "dynamic-after-change" in item["added"]
+                for item in manager.capability_change_events()
             )
-        }
-        assert "mcp.fixture.dynamic_after_change" in schema_names
-
-        batch = registry.execute_calls(
-            [
-                ProviderToolCall(
-                    name="mcp.fixture.dynamic_after_change",
-                    arguments={},
-                    source="native",
-                )
-            ],
-            context=ToolExecutionContext(
-                channel="console",
-                target="unit-test",
-                session_id="session-hot-reload",
-                metadata={"tool_call_origin": "model"},
-            ),
         )
-        assert batch.results[0].ok is True
-        assert batch.results[0].content.startswith("dynamic")
-
-        result = manager.call_tool(
-            server_name="fixture",
-            remote_name="emit-list-changed",
-            arguments={},
-        )
-        assert result["ok"] is True
-
-        def _removed() -> bool:
-            return "mcp.fixture.dynamic_after_change" not in registry.list()
-
-        _wait_for(_removed)
-        schema_names_after = {
-            str(item.get("name", "") or "")
-            for item in ToolSchemaService().collect_execution_tool_schemas(
-                registry=registry
-            )
+        assert "mcp.fixture.dynamic_after_change" not in registry.list()
+        assert "mcp.fixture.dynamic_after_change" not in {
+            spec.name for spec in registry.provider_specs()
         }
-        assert "mcp.fixture.dynamic_after_change" not in schema_names_after
-        try:
-            registry.get("mcp.fixture.dynamic_after_change")
-        except KeyError:
-            pass
-        else:
-            raise AssertionError("removed MCP tool should not remain invocable")
     finally:
         manager = getattr(bootstrap, "mcp_manager", None)
         if manager is not None:
@@ -281,29 +230,3 @@ def test_duplicate_capability_refreshes_are_coalesced(monkeypatch) -> None:
     finally:
         release.set()
         manager.close()
-
-
-def test_live_registration_failure_is_returned_for_event_reporting() -> None:
-    class _RejectingRegistry(ToolRegistry):
-        def register(self, tool) -> None:
-            raise RuntimeError(f"rejected {tool.name}")
-
-    manager = MCPFleetManager(servers=[])
-    manager.attach_registry(_RejectingRegistry())
-    errors = manager._apply_live_registry_delta(  # noqa: SLF001
-        primitive="tools",
-        server_name="fixture",
-        items=[
-            MCPListedTool(
-                server_name="fixture",
-                remote_name="new-tool",
-                description="",
-                input_schema={"type": "object"},
-            )
-        ],
-        added=("new-tool",),
-        removed=(),
-    )
-
-    assert len(errors) == 1
-    assert "mcp.fixture.new_tool:RuntimeError:rejected" in errors[0]

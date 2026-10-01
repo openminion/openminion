@@ -160,6 +160,7 @@ def test_focus_pty_renders_durable_token_report(
         )
         assert "none observed in this terminal yet" in context
         assert "use /tokens for saved session totals" in context
+        assert "grid" not in context
         write_transcript(artifact_root(tmp_path), "local-tokens", transcript)
         write_transcript(artifact_root(tmp_path), "local-token-history", history)
         write_transcript(artifact_root(tmp_path), "local-telemetry-empty", telemetry)
@@ -205,6 +206,67 @@ def test_focus_pty_inspects_telemetry_after_a_turn(
         artifact_root(tmp_path),
         "local-telemetry-post-turn",
         "\n".join((turn, events, telemetry, tokens, history)),
+    )
+
+
+def test_focus_pty_status_reports_last_turn_timing(
+    focus_probe: FocusProbe,
+    tmp_path,
+) -> None:
+    with focus_probe.session() as session:
+        focus_probe.wait_ready(session)
+        turn = focus_probe.run_turn(
+            session,
+            FocusScenario(
+                scenario_id="local_status_timing",
+                prompt="Reply with exactly: timing check",
+                expected_markers=("timing check",),
+                timeout=60,
+            ),
+        )
+        status = visible_text(
+            focus_probe.run_slash(session, "/status", marker="Timing:")
+        )
+
+    assert "Status:" in status
+    assert "Timing:" in status
+    assert "Phases:" in status
+    write_transcript(
+        artifact_root(tmp_path),
+        "local-status-timing",
+        "\n".join((turn, status)),
+    )
+
+
+def test_focus_pty_runs_non_mutating_performance_commands(
+    focus_probe: FocusProbe,
+    tmp_path,
+) -> None:
+    with focus_probe.session() as session:
+        focus_probe.wait_ready(session)
+        transcripts = [
+            focus_probe.run_slash(session, "/graph help", marker="Graph viewer:"),
+            focus_probe.run_slash(session, "/browser status", marker="Browser:"),
+            focus_probe.run_slash(session, "/telemetry invalid", marker="usage:"),
+            focus_probe.run_slash(session, "/trace invalid", marker="usage:"),
+            focus_probe.run_slash(session, "/context", marker="Context usage:"),
+            focus_probe.run_slash(session, "/status", marker="Status:"),
+        ]
+
+    output = visible_text("\n".join(transcripts))
+    for marker in (
+        "Graph viewer:",
+        "Browser:",
+        "usage: /telemetry",
+        "usage: /trace",
+        "Context usage:",
+        "Status:",
+    ):
+        assert marker in output
+    write_transcript(
+        artifact_root(tmp_path),
+        "local-performance-command-journey",
+        "\n".join(transcripts),
     )
 
 

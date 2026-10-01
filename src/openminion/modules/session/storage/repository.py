@@ -65,9 +65,19 @@ class SQLiteCronRepository:
         return self._store.get_cron_job(job_id)
 
     def list_cron_jobs(
-        self, *, enabled: bool | None = None, limit: int = 50
+        self,
+        *,
+        enabled: bool | None = None,
+        limit: int = 50,
+        agent_id: str | None = None,
+        include_unowned: bool = False,
     ) -> list[dict[str, Any]]:
-        return self._store.list_cron_jobs(enabled=enabled, limit=limit)
+        return self._store.list_cron_jobs(
+            enabled=enabled,
+            limit=limit,
+            agent_id=agent_id,
+            include_unowned=include_unowned,
+        )
 
     def delete_cron_job(self, job_id: str) -> None:
         self._store.delete_cron_job(job_id)
@@ -115,6 +125,12 @@ class SQLiteCronRepository:
         states: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         return self._store.list_cron_runs(job_id=job_id, limit=limit, states=states)
+
+    def list_unresolved_task_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        return self._store.list_unresolved_task_runs(limit=limit)
+
+    def mark_cron_delivery_target(self, run_id: str, *, target: str) -> bool:
+        return self._store.mark_cron_delivery_target(run_id, target=target)
 
     def enqueue_due_cron_runs(
         self,

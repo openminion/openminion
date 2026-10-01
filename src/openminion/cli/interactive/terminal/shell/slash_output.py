@@ -28,7 +28,7 @@ from ..transcript import TerminalTranscript
 
 PROMPT_SAFE_OUTPUT_SLASHES = frozenset(
     """
-    /activate /agents /browser /close /compact /context /context-review /copy /cost
+    /activate /agents /identity /browser /close /compact /context /context-review /copy /cost
     /delegate /details /diff /editor /effort /expand /export /goal /graph /handoff /help /init
     /message
     /invite /kick /mcp /memory /model /normal /participants /permissions /project /queue
@@ -61,14 +61,40 @@ def render_context_review(runtime: Any, args: str) -> str:
             options["artifacts_dir"] = value
 
     payload = runtime.context_trace_payload(session_id=options["session_id"])
-    return render_memory_context_review(
-        build_memory_context_review(
-            payload,
-            canary_path=options["canary"],
-            calibration_path=options["calibration"],
-            artifacts_dir=options["artifacts_dir"],
+    return str(
+        render_memory_context_review(
+            build_memory_context_review(
+                payload,
+                canary_path=options["canary"],
+                calibration_path=options["calibration"],
+                artifacts_dir=options["artifacts_dir"],
+            )
         )
     )
+
+
+def render_identity_report(payload: dict[str, Any]) -> str:
+    lines = [
+        f"Identity: {payload.get('display_name') or payload.get('agent_id')}",
+        f"Source: {payload.get('source', 'unknown')}",
+        f"Profile revision: {payload.get('profile_revision', 0)}",
+        f"Profile version: {payload.get('profile_version', '')}",
+        f"Render version: {payload.get('render_version', '')}",
+    ]
+    verification = payload.get("verification")
+    if isinstance(verification, dict):
+        lines.extend(
+            (
+                f"Verification: {'ok' if verification.get('ok') else 'failed'}",
+                f"Source sync: {verification.get('source_status', 'unknown')}",
+                f"Sidecars: {verification.get('sidecar_status', 'unknown')}",
+            )
+        )
+    elif isinstance(validation := payload.get("validation"), dict):
+        lines.append(f"Validation: {'ok' if validation.get('ok') else 'failed'}")
+    if rendered := str(payload.get("rendered_text", "") or "").strip():
+        lines.extend(("", rendered))
+    return "\n".join(lines)
 
 
 def copy_latest_message(transcript: TerminalTranscript, console: Console) -> None:

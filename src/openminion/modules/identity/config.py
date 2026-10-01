@@ -5,6 +5,8 @@ from collections.abc import Mapping
 import os
 
 from openminion.base.config import OpenMinionConfig
+from openminion.base.config.io import load_config as load_base_config
+from openminion.base.constants import OPENMINION_CONFIG_PATH_ENV
 from openminion.base.config.runtime import (
     resolve_identity_db_from_env,
     resolve_identity_root_from_env,
@@ -165,8 +167,14 @@ def load_config(
     if not cfg_path.exists():
         if resolved_data_root is not None:
             base_root = resolved_home_root or Path.cwd().resolve(strict=False)
+            configured_path = str(env_map.get(OPENMINION_CONFIG_PATH_ENV, "")).strip()
+            base_config = (
+                load_base_config(configured_path, home_root=base_root)
+                if configured_path
+                else OpenMinionConfig()
+            )
             return from_base_config(
-                base_config=OpenMinionConfig(),
+                base_config=base_config,
                 home_root=base_root,
                 data_root=resolved_data_root,
                 env=env_map,

@@ -137,6 +137,7 @@ class WorkingState(BaseModel):
     phase: RunSubstate | None = None
     trace_id: str | None = None
     runtime_session_id: str | None = None
+    runtime_conversation_id: str | None = None
     root_turn_id: str | None = None
     capture_event_id: str | None = None
     capture_id: str | None = None
@@ -216,6 +217,7 @@ class WorkingState(BaseModel):
     freshness_obligations: FreshnessObligations | None = None
     freshness_diagnostics: FreshnessDiagnostics | None = None
     resume_task_id_hint: str | None = None
+    project_plan_revision_required: bool = False
     resume_cron_job_id_hint: str | None = None
     child_tasks: dict[str, str] = Field(default_factory=dict)
     child_task_order: list[str] = Field(default_factory=list)

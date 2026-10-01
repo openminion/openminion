@@ -29,9 +29,15 @@ from tests._csc_fixtures import _csc_install_default_agent
 
 
 class _GatewayStub:
-    def __init__(self, *, fail_on_call: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        fail_on_call: int | None = None,
+        metadata_by_call: tuple[dict[str, str], ...] = (),
+    ) -> None:
         self.calls: list[dict[str, object]] = []
         self.fail_on_call = fail_on_call
+        self.metadata_by_call = metadata_by_call
 
     async def run_once(self, **kwargs):
         self.calls.append(dict(kwargs))
@@ -39,8 +45,13 @@ class _GatewayStub:
         if call_number == self.fail_on_call:
             raise RuntimeError("child invocation failed")
         inbound_metadata = dict(kwargs.get("inbound_metadata") or {})
+        response_metadata = (
+            self.metadata_by_call[call_number - 1]
+            if call_number <= len(self.metadata_by_call)
+            else {}
+        )
         return SimpleNamespace(
-            id="turn-1",
+            id=response_metadata.get("result_id", "turn-1"),
             channel=str(kwargs.get("channel", "")),
             target=str(kwargs.get("target", "")),
             body="gateway ok",
@@ -52,6 +63,7 @@ class _GatewayStub:
                     "persisted_inbound_message_id", "inbound-1"
                 ),
                 "persisted_outbound_message_id": f"outbound-{call_number}",
+                **response_metadata,
             },
             stats=RunStats(
                 input_tokens=11,
@@ -439,6 +451,28 @@ def test_multi_agent_turn_derives_distinct_child_execution_ids() -> None:
 
 def test_multi_agent_turn_isolates_broadcast_history_and_attributes_results() -> None:
     runtime = _room_runtime()
+    runtime.gateway = _GatewayStub(
+        metadata_by_call=(
+            {
+                "result_id": "child-result-main",
+                "request_id": "child-request-main",
+                "invocation_id": "invocation-main",
+                "execution_id": "execution-main",
+                "run_id": "run-main",
+                "trace_id": "trace-main",
+                "status": "completed",
+                "error_code": "warning-only",
+                "error": "must not leak",
+                "persisted_inbound_message_id": "inbound-1",
+                "persisted_outbound_message_id": "outbound-1",
+            },
+            {
+                "result_id": "",
+                "run_id": "run-review",
+                "persisted_outbound_message_id": "outbound-2",
+            },
+        )
+    )
     request = runtime_turn_request_from_payload(
         runtime=runtime,
         payload={
@@ -447,6 +481,7 @@ def test_multi_agent_turn_isolates_broadcast_history_and_attributes_results() ->
             "session_id": "room-1",
             "deliver": False,
         },
+        request_id="req-room",
     )
 
     result = execute_runtime_turn(runtime=runtime, request=request)
@@ -469,15 +504,34 @@ def test_multi_agent_turn_isolates_broadcast_history_and_attributes_results() ->
         "room_router_skip_session_compaction": "true",
         "persisted_inbound_message_id": "inbound-1",
     }
+    assert result.id == "req-room"
+    assert result.body == "[main]\ngateway ok\n\n[review]\ngateway ok"
+    assert result.stats == RunStats(
+        input_tokens=22,
+        output_tokens=8,
+        llm_calls=2,
+        duration_ms=500,
+    )
     assert result.metadata["room_responses"] == [
         {
             "agent_id": "main",
             "body": "gateway ok",
+            "result_id": "child-result-main",
+            "request_id": "child-request-main",
+            "invocation_id": "invocation-main",
+            "execution_id": "execution-main",
+            "run_id": "run-main",
+            "trace_id": "trace-main",
+            "status": "completed",
+            "error_code": "warning-only",
+            "persisted_inbound_message_id": "inbound-1",
             "persisted_outbound_message_id": "outbound-1",
         },
         {
             "agent_id": "review",
             "body": "gateway ok",
+            "run_id": "run-review",
+            "persisted_inbound_message_id": "inbound-1",
             "persisted_outbound_message_id": "outbound-2",
         },
     ]
@@ -495,9 +549,13 @@ def test_multi_agent_turn_keeps_prior_peer_output_for_sequential_history() -> No
         },
     )
 
-    execute_runtime_turn(runtime=runtime, request=request)
+    result = execute_runtime_turn(runtime=runtime, request=request)
 
     assert runtime.gateway.calls[1]["exclude_history_message_ids"] == ("inbound-1",)
+    assert [response["agent_id"] for response in result.metadata["room_responses"]] == [
+        "main",
+        "review",
+    ]
 
 
 def test_multi_agent_turn_propagates_second_child_failure_without_retry() -> None:

@@ -144,15 +144,21 @@ def _exit_final_text(
         telemetry_payload=telemetry_payload,
     )
 
-    try:
-        judgment = ctx.evaluate_turn_closure(
-            action_result=final_action,
-            completion_reason="coding_final_text",
-        )
-        disposition = ctx.apply_closure_judgment(judgment=judgment)
-    except Exception:  # noqa: BLE001
-        judgment = None
-        disposition = None
+    judgment = None
+    disposition = None
+    revision_only = (
+        loop.scratchpad.get("project.plan_revision_required") is True
+        and loop.task_plan_revision is not None
+    )
+    if not revision_only:
+        try:
+            judgment = ctx.evaluate_turn_closure(
+                action_result=final_action,
+                completion_reason="coding_final_text",
+            )
+            disposition = ctx.apply_closure_judgment(judgment=judgment)
+        except Exception:  # noqa: BLE001
+            disposition = None
 
     if disposition == BRAIN_DISPOSITION_CONTINUE:
         runner._append_phase_instruction(ctx)

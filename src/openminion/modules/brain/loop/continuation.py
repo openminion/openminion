@@ -386,6 +386,7 @@ def run_with_autonomous_continuation(
     approval_callback: Any | None = None,
     initial_trigger: str = "user_input",
     runtime_session_id: str | None = None,
+    runtime_conversation_id: str | None = None,
     root_turn_id: str | None = None,
     capture_event_id: str | None = None,
     capture_id: str | None = None,
@@ -400,6 +401,7 @@ def run_with_autonomous_continuation(
         progress_callback=progress_callback,
         approval_callback=approval_callback,
         runtime_session_id=runtime_session_id,
+        runtime_conversation_id=runtime_conversation_id,
         root_turn_id=root_turn_id,
         capture_event_id=capture_event_id,
         capture_id=capture_id,
@@ -466,6 +468,7 @@ def run_with_autonomous_continuation(
             progress_callback=progress_callback,
             approval_callback=approval_callback,
             runtime_session_id=runtime_session_id,
+            runtime_conversation_id=runtime_conversation_id,
         )
     return _restore_capture_result_payload(result, initial_capture)
 

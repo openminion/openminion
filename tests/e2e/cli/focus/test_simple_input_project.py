@@ -71,7 +71,8 @@ def _proposal(runtime, monkeypatch, **changes) -> dict[str, str]:
         "goal": "Research the fixture, fix feature.py, and prove VALUE equals 2",
         "success_criteria": ["feature.VALUE equals 2"],
         "verification_commands": [
-            f"{shlex.quote(sys.executable)} -c 'from feature import VALUE; assert VALUE == 2'"
+            f"{shlex.quote(sys.executable)} -c 'from feature import VALUE; assert VALUE == 2'",
+            "git status",
         ],
         "max_iterations": 3,
         **changes,
@@ -321,7 +322,7 @@ def test_focus_plain_request_approval_verifier_repair_review_restart_and_control
     assert child.returncode == 0, child.stdout + child.stderr
     manager = _manager(runtime)
     final = load_latest_project_checkpoint(manager, task_id=run.task_id)
-    assert final.project_run.committed_cycle_count == 2
+    assert final.project_run.committed_cycle_count == 3
     assert final.payload["task_plan"]["plan_id"] == plan.plan_id
     assert final.payload["plan_revision_count"] == 1
     assert (
@@ -364,8 +365,38 @@ def _restart_and_repair(root: str, run_id: str) -> None:
         for step in checkpoint.payload["task_plan"]["steps"]
     )
 
-    def repair(request):
+    failed_verifier_refs = tuple(
+        ref for ref in checkpoint.project_run.verifier_refs if ref.endswith(":failed")
+    )
+
+    def revise(request):
         assert "Prior verifier outcome:" in request.prompt
+        return ProjectTurnResult(
+            summary="Recorded the verifier-driven repair plan",
+            gateway_run_id="fixture:revision-turn",
+            task_plan_revision=TaskPlanRevision(
+                plan_id="silc-plan",
+                revision_id="silc-repair-revision",
+                criterion_ids=objective["criterion_ids"],
+                verifier_refs=failed_verifier_refs,
+                revised_steps=[
+                    {"step_id": "repair", "description": "Repair the failed verifier"}
+                ],
+            ),
+        )
+
+    revised = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=revise,
+        verify=lambda: (_ for _ in ()).throw(
+            AssertionError("revision-only cycle must not run the verifier")
+        ),
+    ).run_cycle(run_id)
+    assert revised.decision == ProjectCycleDecision.CONTINUE
+
+    def repair(request):
+        assert "repair" in request.prompt.lower()
         with artifact_ctl(workspace / "review-artifacts") as ctl:
             record = _child_artifact(
                 workspace,
@@ -431,15 +462,6 @@ def _restart_and_repair(root: str, run_id: str) -> None:
         return ProjectTurnResult(
             summary="Repaired and independently reviewed",
             gateway_run_id="fixture:repair-turn",
-            task_plan_revision=TaskPlanRevision(
-                plan_id="silc-plan",
-                revision_id="silc-repair-revision",
-                criterion_ids=objective["criterion_ids"],
-                verifier_refs=checkpoint.project_run.verifier_refs,
-                revised_steps=[
-                    {"step_id": "repair", "description": "Repair the failed verifier"}
-                ],
-            ),
             task_plan_step_completed=TaskPlanStepCompleted(
                 plan_id="silc-plan", step_id="repair", outcome="passed"
             ),

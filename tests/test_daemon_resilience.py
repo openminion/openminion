@@ -356,10 +356,28 @@ def test_process_alive_uses_cross_platform_pid_lookup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(daemon_mod.psutil, "pid_exists", lambda pid: pid == 123)
+    monkeypatch.setattr(
+        daemon_mod.psutil,
+        "Process",
+        lambda pid: SimpleNamespace(status=lambda: "running"),
+    )
 
     assert daemon_mod.process_alive(123) is True
     assert daemon_mod.process_alive(456) is False
     assert daemon_mod.process_alive(0) is False
+
+
+def test_process_alive_treats_zombie_as_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(daemon_mod.psutil, "pid_exists", lambda _pid: True)
+    monkeypatch.setattr(
+        daemon_mod.psutil,
+        "Process",
+        lambda pid: SimpleNamespace(status=lambda: daemon_mod.psutil.STATUS_ZOMBIE),
+    )
+
+    assert daemon_mod.process_alive(123) is False
 
 
 def test_daemon_lifecycle_emitter_records_native_canonical_events(

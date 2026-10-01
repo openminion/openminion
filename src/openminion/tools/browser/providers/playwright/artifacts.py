@@ -46,13 +46,20 @@ class ArtifactWriter:
         return target
 
     def write_screenshot(
-        self, data: bytes, *, output_path: str | None = None
+        self,
+        data: bytes,
+        *,
+        output_path: str | None = None,
+        extension: str = ".png",
+        mime: str = "image/png",
     ) -> dict[str, str]:
         target = self._target_for_kind(
-            kind="screenshot", output_path=output_path, ext=".png"
+            kind="screenshot", output_path=output_path, ext=extension
         )
         target.write_bytes(data)
-        return self._artifact(kind="screenshot", path=target, content=data)
+        artifact = self._artifact(kind="screenshot", path=target, content=data)
+        artifact["mime"] = mime
+        return artifact
 
     def write_pdf(
         self, data: bytes, *, output_path: str | None = None

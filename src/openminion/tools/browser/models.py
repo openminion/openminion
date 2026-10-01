@@ -30,6 +30,7 @@ class BrowserOp(str, Enum):
     TAB_ACTION = "tab.action"
     TAB_ACTIONS = "tab.actions"
     TAB_SCREENSHOT = "tab.screenshot"
+    TAB_UPLOAD = "tab.upload"
     TAB_PDF = "tab.pdf"
     TAB_LOCK = "tab.lock"
     TAB_UNLOCK = "tab.unlock"
@@ -53,6 +54,7 @@ class BrowserCapabilities(BaseModel):
     persistent_profiles: bool = False
     headed_mode: bool = False
     downloads: bool = False
+    file_upload: bool = False
     screenshot: bool = False
     text: bool = False
     selectors: bool = False
@@ -154,6 +156,8 @@ class BrowserCallArgs(BaseModel):
     navigation: NavigateOptions | None = None
     action: BrowserAction | None = None
     actions: list[BrowserAction] = Field(default_factory=list)
+    files: list[str] = Field(default_factory=list)
+    target: ActionTarget | None = None
     output: OutputOptions | None = None
     owner: str | None = None
     ttl_s: int | None = None
@@ -174,6 +178,20 @@ class BrowserCallArgs(BaseModel):
     def _validate_op(self) -> "BrowserCallArgs":
         if self.op not in SUPPORTED_OPS:
             raise ValueError(f"unsupported browser op '{self.op}'")
+        if self.op == BrowserOp.TAB_UPLOAD.value:
+            if not self.files:
+                raise ValueError("files are required for tab.upload")
+            if any(not str(path).strip() for path in self.files):
+                raise ValueError("upload file paths must not be empty")
+            if self.target is None:
+                raise ValueError("target is required for tab.upload")
+            target_values = (
+                self.target.ref,
+                self.target.selector,
+                self.target.role.role if self.target.role else None,
+            )
+            if not any(str(value or "").strip() for value in target_values):
+                raise ValueError("target must identify an upload control")
         return self
 
 

@@ -144,6 +144,7 @@ def run_until_idle(
     capability_category: str | None,
     trigger: str = RUN_TRIGGER_USER_INPUT,
     capture_identity: "CaptureIdentity | None" = None,
+    runtime_conversation_id: str | None = None,
 ) -> "StepOutput":
     trigger_mode, user_input = _prepare_run_trigger(
         runner, session_id, trace_id, user_input, trigger
@@ -152,14 +153,16 @@ def run_until_idle(
     max_iterations = max(
         1, int(getattr(runner.options, "plan_max_iterations", 64) or 64)
     )
-    runner._pending_run_trigger = trigger_mode
-    last = runner.step(
+    last = _start_run(
+        runner,
+        trigger_mode=trigger_mode,
         session_id=session_id,
         user_input=user_input,
         trace_id=trace_id,
         forced_tools=forced_tools,
         capability_category=capability_category,
         capture_identity=capture_identity,
+        runtime_conversation_id=runtime_conversation_id,
     )
     iterations = 1
 
@@ -176,10 +179,7 @@ def run_until_idle(
                     "Paused autonomous execution after reaching the iteration safety cap. "
                     "Continue in a new turn."
                 ),
-                details={
-                    "iterations": iterations,
-                    "max_iterations": max_iterations,
-                },
+                details={"iterations": iterations, "max_iterations": max_iterations},
             )
         if last.working_state.budgets_remaining.ticks <= 0:
             return _terminate_loop(
@@ -260,6 +260,30 @@ def run_until_idle(
                 )
             break
     return last
+
+
+def _start_run(
+    runner: "BrainRunner",
+    *,
+    trigger_mode: str,
+    session_id: str,
+    user_input: str | None,
+    trace_id: str | None,
+    forced_tools: list[str] | None,
+    capability_category: str | None,
+    capture_identity: "CaptureIdentity | None",
+    runtime_conversation_id: str | None,
+) -> "StepOutput":
+    runner._pending_run_trigger = trigger_mode
+    return runner.step(
+        session_id=session_id,
+        user_input=user_input,
+        trace_id=trace_id,
+        forced_tools=forced_tools,
+        capability_category=capability_category,
+        capture_identity=capture_identity,
+        runtime_conversation_id=runtime_conversation_id,
+    )
 
 
 def _continue_run(

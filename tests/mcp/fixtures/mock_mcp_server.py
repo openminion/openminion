@@ -149,7 +149,7 @@ TOOLS = [
     },
     {
         "name": "stderr-error-tool",
-        "description": "Return an error after fixture stderr output.",
+        "description": "Emit stderr and return an error result.",
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -456,6 +456,8 @@ def _handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
                 },
             }
         if name == "stderr-error-tool":
+            if _STDERR_BANNER:
+                print(_STDERR_BANNER, file=sys.stderr, flush=True)
             return {
                 "jsonrpc": "2.0",
                 "id": request.get("id"),
@@ -547,6 +549,8 @@ def _handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
                     "isError": False,
                 },
             }
+        if _STDERR_BANNER:
+            print(_STDERR_BANNER, file=sys.stderr, flush=True)
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),
@@ -678,8 +682,6 @@ def _sampling_text(content: Any) -> str:
 
 
 def main() -> int:
-    if _STDERR_BANNER:
-        print(_STDERR_BANNER, file=sys.stderr, flush=True)
     while True:
         request = _read_message()
         if request is None:

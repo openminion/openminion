@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import base64
 import json
 from types import SimpleNamespace
 
 from openminion.base.types import Message as HistoryMessage
+from openminion.modules.brain.loop.tools.messages import action_result_to_tool_message
+from openminion.modules.brain.schemas import ActionResult, new_uuid
 from openminion.modules.llm.client_call import (
     latest_prompt_and_history,
     llm_response_kwargs,
     normalized_messages,
 )
+from openminion.modules.llm.providers.anthropic.payloads import _messages_anthropic
 from openminion.modules.llm.providers.contracts import ProviderResponse
 from openminion.modules.llm.providers.message_payloads import _messages_openai_like
-from openminion.modules.llm.schemas import LLMRequest, Message
+from openminion.modules.llm.schemas import LLMRequest, Message, ToolCall
 from openminion.modules.llm.transcript import validate_tool_transcript
 from openminion.modules.tool.contracts import ProviderToolCall
 from openminion.services.agent.context.history import _map_history_to_provider
@@ -154,6 +158,127 @@ def test_openai_like_renderer_uses_assistant_call_as_argument_owner() -> None:
             "tool_call_id": "call-1",
         },
     ]
+
+
+def _screenshot_tool_request() -> LLMRequest:
+    image_data = base64.b64encode(b"png" * 1000).decode("ascii")
+    tool_message = action_result_to_tool_message(
+        "browser-call-1",
+        "browser",
+        ActionResult(
+            command_id=new_uuid(),
+            status="success",
+            summary="screenshot captured",
+            outputs={
+                "artifact": {
+                    "kind": "screenshot",
+                    "path": "",
+                    "mime": "image/png",
+                    "content_base64": image_data,
+                }
+            },
+        ),
+    )
+    return LLMRequest(
+        messages=[
+            Message(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": "browser-call-1",
+                        "name": "browser",
+                        "arguments": {"op": "tab.screenshot", "tab_id": "tab-1"},
+                    }
+                ],
+            ),
+            tool_message,
+        ]
+    )
+
+
+def test_openai_like_screenshot_tool_result_respects_vision_setting() -> None:
+    request = _screenshot_tool_request()
+
+    text_only = _messages_openai_like(
+        request,
+        include_fallback_instruction=False,
+        enable_vision_input=False,
+        supports_vision_input=True,
+    )
+    with_vision = _messages_openai_like(
+        request,
+        include_fallback_instruction=False,
+        enable_vision_input=True,
+        supports_vision_input=True,
+    )
+
+    assert [message["role"] for message in text_only] == ["assistant", "tool"]
+    assert text_only[1]["content"] == request.messages[1].content
+    assert [message["role"] for message in with_vision] == [
+        "assistant",
+        "tool",
+        "user",
+    ]
+    assert with_vision[1]["content"] == request.messages[1].content
+    image = with_vision[2]["content"][0]
+    assert image["type"] == "image_url"
+    expected_data = request.messages[1].content_parts[1].data_base64
+    assert expected_data is not None and len(expected_data) > 1200
+    assert image["image_url"]["url"] == f"data:image/png;base64,{expected_data}"
+
+
+def test_openai_like_screenshot_waits_for_parallel_tool_result_batch() -> None:
+    request = _screenshot_tool_request()
+    request.messages[0].tool_calls.append(
+        ToolCall(
+            id="read-call-1",
+            name="file.read",
+            arguments={"path": "README.md"},
+        )
+    )
+    request.messages.append(
+        Message(
+            role="tool",
+            content='{"status":"success","content":"ok"}',
+            tool_call_id="read-call-1",
+            tool_status="success",
+        )
+    )
+
+    rendered = _messages_openai_like(
+        request,
+        include_fallback_instruction=False,
+        enable_vision_input=True,
+        supports_vision_input=True,
+    )
+
+    assert [message["role"] for message in rendered] == [
+        "assistant",
+        "tool",
+        "tool",
+        "user",
+    ]
+    assert rendered[1]["tool_call_id"] == "browser-call-1"
+    assert rendered[2]["tool_call_id"] == "read-call-1"
+    assert rendered[3]["content"][0]["type"] == "image_url"
+
+
+def test_anthropic_screenshot_tool_result_includes_inline_image_when_enabled() -> None:
+    request = _screenshot_tool_request()
+    _system, messages = _messages_anthropic(
+        request,
+        include_fallback_instruction=False,
+        enable_vision_input=True,
+        supports_vision_input=True,
+    )
+
+    tool_result = messages[1]["content"][0]
+    assert tool_result["type"] == "tool_result"
+    image = tool_result["content"][1]
+    assert image["type"] == "image"
+    assert image["source"]["type"] == "base64"
+    assert image["source"]["media_type"] == "image/png"
+    assert image["source"]["data"] == request.messages[1].content_parts[1].data_base64
 
 
 def test_normalized_messages_keeps_empty_structured_assistant_turn() -> None:

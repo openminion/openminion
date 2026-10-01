@@ -372,7 +372,15 @@ def read_pid(pid_file: Path) -> int | None:
 
 
 def process_alive(pid: int) -> bool:
-    return pid > 0 and psutil.pid_exists(pid)
+    if pid <= 0 or not psutil.pid_exists(pid):
+        return False
+    try:
+        status = str(psutil.Process(pid).status())
+        return status != str(psutil.STATUS_ZOMBIE)
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied:
+        return True
 
 
 def run_server(

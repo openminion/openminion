@@ -35,6 +35,11 @@ def _command_lineage_payload(
             getattr(state, "runtime_session_id", "") or ""
         ).strip()
         or None,
+        "conversation_id": str(
+            getattr(state, "runtime_conversation_id", "") or ""
+        ).strip()
+        or None,
+        "brain_session_id": str(getattr(state, "session_id", "") or "").strip() or None,
         "decision_mode": public_mode_name,
         "mode_name": public_mode_name,
         "workflow_name": str(getattr(state, "active_workflow_name", "") or "").strip()

@@ -3,8 +3,10 @@ from __future__ import annotations
 import copy
 import threading
 from dataclasses import replace
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from openminion.modules.a2a.config import validate_audit_retention
 from openminion.modules.a2a.constants import A2A_IDEMPOTENCY_STATUS_IN_PROGRESS
 from openminion.modules.a2a.models import (
     AgentDescriptor,
@@ -16,6 +18,7 @@ from openminion.modules.a2a.models import (
 from openminion.modules.a2a.storage.base import (
     AuditStore,
     StateStore,
+    audit_record_for_storage,
     idempotency_slot_is_stale,
 )
 
@@ -119,20 +122,29 @@ class MemoryStateStore(StateStore):
     def list_jobs(self, filter_by: dict | None = None) -> list[JobRecord]:
         with self._lock:
             rows = list(self._jobs.values())
-        if not filter_by:
-            return [copy.deepcopy(item) for item in rows]
-
+        filter_by = filter_by or {}
         out: list[JobRecord] = []
         states = filter_by.get("states")
         state_set = set(states) if states else None
         state = filter_by.get("state")
+        owner_agent_id = str(filter_by.get("owner_agent_id") or "").strip()
+        session_id = str(filter_by.get("session_id") or "").strip()
         for row in rows:
             if state and row.state != state:
                 continue
             if state_set and row.state not in state_set:
                 continue
+            if owner_agent_id and row.owner_agent_id != owner_agent_id:
+                continue
+            if session_id and row.idempotency_scope != (
+                f"job.start:{row.agent_id}:{row.method}:{session_id}"
+            ):
+                continue
             out.append(copy.deepcopy(row))
-        return out
+        if filter_by.get("order") == "recent":
+            out.sort(key=lambda item: (item.created_at, item.task_id), reverse=True)
+        limit = max(1, min(int(filter_by.get("limit", 500)), 5000))
+        return out[:limit]
 
     def upsert_agent(self, descriptor: AgentDescriptor) -> None:
         with self._lock:
@@ -148,27 +160,39 @@ class MemoryStateStore(StateStore):
 
 
 class MemoryAuditStore(AuditStore):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        capture_payloads: bool = False,
+        retention_days: int = 14,
+    ) -> None:
         self._lock = threading.RLock()
         self._rows: list[AuditRecord] = []
+        self.capture_payloads = bool(capture_payloads)
+        self.retention_days, _ = validate_audit_retention(retention_days, 0)
 
     def append_audit(self, record: AuditRecord) -> None:
         with self._lock:
-            self._rows.append(copy.deepcopy(record))
+            self._rows.append(
+                audit_record_for_storage(
+                    record,
+                    capture_payloads=self.capture_payloads,
+                )
+            )
+            self._enforce_retention()
 
     def query_audit(self, filter_by: dict | None = None) -> list[AuditRecord]:
         with self._lock:
+            self._enforce_retention()
             rows = list(self._rows)
 
-        if not filter_by:
-            return [copy.deepcopy(item) for item in rows]
-
+        filter_by = dict(filter_by or {})
         trace_id, from_agent, to_agent, method, status = (
             _as_text(filter_by.get(key))
             for key in ("trace_id", "from_agent", "to_agent", "method", "status")
         )
         error_only = bool(filter_by.get("error_only"))
-        limit = int(filter_by.get("limit", 1000))
+        limit = max(1, min(int(filter_by.get("limit", 1000)), 50_000))
 
         out: list[AuditRecord] = []
         for row in rows:
@@ -186,12 +210,29 @@ class MemoryAuditStore(AuditStore):
                 continue
             out.append(copy.deepcopy(row))
 
-        out.sort(key=lambda item: item.ts)
-        return out[:limit]
+        out.sort(key=lambda item: (item.ts, item.msg_id), reverse=True)
+        selected = out[:limit]
+        selected.reverse()
+        return selected
 
     def close(self) -> None:
         return None
 
+    def _enforce_retention(self) -> None:
+        cutoff = datetime.now(timezone.utc).date() - timedelta(days=self.retention_days)
+        self._rows = [row for row in self._rows if _record_date(row.ts) >= cutoff]
+
 
 def _as_text(value: Any) -> str:
     return "" if value is None else str(value).strip()
+
+
+def _record_date(value: str) -> date:
+    try:
+        return (
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            .astimezone(timezone.utc)
+            .date()
+        )
+    except ValueError:
+        return datetime.now(timezone.utc).date()

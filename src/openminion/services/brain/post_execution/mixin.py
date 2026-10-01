@@ -100,6 +100,15 @@ def _parse_permission_overrides(metadata_source: dict[str, Any]) -> dict[str, st
     }
 
 
+def _runner_turn_kwargs(metadata_source: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **capture_run_kwargs(metadata_source),
+        "runtime_conversation_id": (
+            str(metadata_source.get("conversation_id", "") or "").strip() or None
+        ),
+    }
+
+
 class BrainBridgeTurnMixin:
     async def _prepare_turn(
         self,
@@ -352,7 +361,7 @@ class BrainBridgeTurnMixin:
     ) -> Any:
         # cron-scheduled idle ticks arrive with a `pae_idle_tick`
         metadata_source = getattr(message, "metadata", {}) or {}
-        capture_kwargs = capture_run_kwargs(metadata_source)
+        turn_kwargs = _runner_turn_kwargs(metadata_source)
         self._bind_inbound_permission_metadata(
             runner=runner,
             metadata_source=metadata_source,
@@ -392,7 +401,7 @@ class BrainBridgeTurnMixin:
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
                 initial_trigger="idle_tick",
-                **capture_kwargs,
+                **turn_kwargs,
             )
         options = getattr(runner, "options", None)
         ctgp_enabled = bool(getattr(options, "autonomous_continuation_enabled", True))
@@ -426,7 +435,7 @@ class BrainBridgeTurnMixin:
                 ),
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
-                **capture_kwargs,
+                **turn_kwargs,
             )
         return runner.run(
             session_id=session_id,
@@ -436,7 +445,7 @@ class BrainBridgeTurnMixin:
             capability_category=capability_category,
             progress_callback=progress_callback,
             approval_callback=approval_callback,
-            **capture_kwargs,
+            **turn_kwargs,
         )
 
     async def run_turn(

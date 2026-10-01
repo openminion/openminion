@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Mapping
 from urllib.parse import quote
 
+from .errors import TaskInventoryUnavailableError
 from .project.operator import ProjectOperatorResumeAction, ProjectOperatorWorkState
 from .runtime.lifecycle import TaskLifecycleState
 from .runtime.lifecycle_models import bounded_task_run_error
@@ -18,7 +19,7 @@ _STATUS_ORDER = {
     "CANCELED": 4,
     "FAILED": 5,
 }
-_ACTIONS = {"pause", "resume", "cancel", "allow", "deny"}
+_ACTIONS = {"pause", "resume", "cancel"}
 _ACTION_STATES = {
     "pause": TaskLifecycleState.PAUSED,
     "resume": TaskLifecycleState.ACTIVE,
@@ -82,7 +83,7 @@ class TaskSurface:
                 _STATUS_ORDER.get(str(item.get("status", "")).upper(), 9),
                 str(item.get("id", "")),
             ),
-        )
+        )[: self.limit]
 
     def show_task(self, task_id: str) -> dict[str, Any] | None:
         normalized = str(task_id or "").strip()
@@ -98,9 +99,12 @@ class TaskSurface:
         )
 
     def list_pending_actions(self) -> list[dict[str, Any]]:
-        _, pending_by_id = _pending_actions_index(
-            self.source, event_limit=self.event_limit
-        )
+        pending_by_id: dict[str, dict[str, Any]] = {}
+        for task in self.list_tasks():
+            for action in task.get("pending_actions", []):
+                decision_id = str(action.get("decision_id", "")).strip()
+                if decision_id:
+                    pending_by_id[decision_id] = action
         return sorted(
             pending_by_id.values(),
             key=lambda item: (
@@ -109,19 +113,10 @@ class TaskSurface:
             ),
         )
 
-    def apply_action(
-        self, *, task_id: str, action: str, decision_id: str = ""
-    ) -> dict[str, Any]:
+    def apply_action(self, *, task_id: str, action: str) -> dict[str, Any]:
         normalized_action = str(action or "").strip().lower()
         if normalized_action not in _ACTIONS:
             raise ValueError(f"unknown task action: {action!r}")
-        if normalized_action in {"allow", "deny"}:
-            return _resolve_pending_action(
-                self.source,
-                outcome=normalized_action,
-                decision_id=decision_id,
-                session_id=self.session_id,
-            )
         normalized_task_id = str(task_id or "").strip()
         if self.show_task(normalized_task_id) is None:
             raise KeyError(f"task not found: {normalized_task_id}")
@@ -249,18 +244,6 @@ def _tasks_from_digest_source(
             payload["project"] = project
         tasks_by_id[task_id] = payload
 
-    for task_id, pending_actions in pending_by_task.items():
-        tasks_by_id.setdefault(
-            task_id,
-            {
-                "id": task_id,
-                "title": f"Task {task_id}",
-                "status": "WAITING",
-                "steps": [],
-                "pending_actions": list(pending_actions),
-                **_operator_projection("WAITING", pending_actions),
-            },
-        )
     return list(tasks_by_id.values())
 
 
@@ -272,8 +255,8 @@ def _safe_get_digest(
         return None
     try:
         return get_digest(agent_id=agent_id, session_id=session_id, limit=limit)
-    except (AttributeError, TypeError, ValueError, RuntimeError):
-        return None
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        raise _inventory_unavailable("task digest", exc) from exc
 
 
 def _iter_digest_tasks(digest: Any | None) -> list[Any]:
@@ -305,14 +288,14 @@ def _tasks_from_lifecycle_source(
     if not callable(list_records):
         return []
     try:
-        records = list_records(limit=limit)
-    except (AttributeError, TypeError, ValueError, RuntimeError):
-        return []
-    return [
-        _lifecycle_record_payload(source, record)
-        for record in records
-        if _agent_matches(record, agent_id)
-    ]
+        records = list_records(
+            limit=limit,
+            agent_id=agent_id,
+            include_unowned=False,
+        )
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        raise _inventory_unavailable("task lifecycle list", exc) from exc
+    return [_lifecycle_record_payload(source, record) for record in records]
 
 
 def _task_from_lifecycle_record(
@@ -326,8 +309,8 @@ def _task_from_lifecycle_record(
         return None
     try:
         record = get_task(task_id)
-    except (AttributeError, TypeError, ValueError, RuntimeError):
-        return None
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        raise _inventory_unavailable("task lookup", exc) from exc
     if record is None:
         return None
     if not _agent_matches(record, agent_id):
@@ -373,6 +356,7 @@ def _lifecycle_record_payload(source: Any | None, record: Any) -> dict[str, Any]
         payload["schedule_summary"] = _schedule_summary(schedule)
         payload["enabled"] = bool(job.get("enabled", True))
         payload["task_kind"] = _scheduled_task_kind(schedule)
+        payload["session_target"] = job.get("session_target")
         runs = _safe_list_runs(source, str(payload["cron_job_id"]), limit=5)
         payload["recent_runs"] = runs
         if runs:
@@ -450,8 +434,8 @@ def _safe_list_runs(
         return []
     try:
         runs = list_runs(job_id=job_id, limit=max(1, min(limit, 20)))
-    except (AttributeError, TypeError, ValueError, RuntimeError):
-        return []
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        raise _inventory_unavailable("task run list", exc) from exc
     return [
         {
             "run_id": run.get("run_id"),
@@ -463,6 +447,12 @@ def _safe_list_runs(
             "summary": str(run.get("summary") or "")[:1000] or None,
             "attempts": int(run.get("attempts", 0) or 0),
             "error": bounded_task_run_error(run.get("error")),
+            "isolated_session_id": run.get("isolated_session_id"),
+            "delivery": _bounded_delivery(run.get("output")),
+            "delivery_targets": [
+                str(target)[:200]
+                for target in list(run.get("delivery_targets") or [])[:20]
+            ],
         }
         for run in runs
         if isinstance(run, Mapping)
@@ -501,9 +491,32 @@ def _safe_get_job(source: Any | None, job_id: str) -> dict[str, Any] | None:
         return None
     try:
         job = get_job(job_id)
-    except (AttributeError, TypeError, ValueError, RuntimeError):
-        return None
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        raise _inventory_unavailable("scheduled task lookup", exc) from exc
     return dict(job) if isinstance(job, Mapping) else None
+
+
+def _bounded_delivery(output: Any) -> dict[str, Any] | None:
+    if not isinstance(output, Mapping):
+        return None
+    delivery = output.get("delivery")
+    if not isinstance(delivery, Mapping):
+        return None
+    bounded = dict(list(delivery.items())[:20])
+    error = bounded.get("error")
+    if isinstance(error, Mapping):
+        bounded["error"] = bounded_task_run_error(error)
+    elif error is not None:
+        bounded["error"] = str(error)[:500]
+    return bounded
+
+
+def _inventory_unavailable(
+    operation: str, exc: Exception
+) -> TaskInventoryUnavailableError:
+    return TaskInventoryUnavailableError(
+        f"Task inventory unavailable: {operation}: {exc}"
+    )
 
 
 def _operator_projection(
@@ -596,23 +609,6 @@ def _pending_actions_index(
                 if not pending_by_task[removed_task_id]:
                     pending_by_task.pop(removed_task_id, None)
     return pending_by_task, pending_by_id
-
-
-def _resolve_pending_action(
-    source: Any | None, *, outcome: str, decision_id: str, session_id: str
-) -> dict[str, Any]:
-    decision = str(decision_id or "").strip()
-    if not decision:
-        raise ValueError("decision_id is required for allow/deny")
-    resume_pending_action = getattr(source, "resume_pending_action", None)
-    if not callable(resume_pending_action):
-        raise NotImplementedError("pending action resolution is unavailable")
-    resume_pending_action(
-        policy_request_id=decision,
-        decision_id=f"task-surface:{outcome}:{decision}",
-        trace_id=f"task-surface:{session_id}",
-    )
-    return {"ok": True, "action": outcome, "decision_id": decision}
 
 
 def _apply_lifecycle_action(

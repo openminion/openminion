@@ -27,18 +27,14 @@ from openminion.modules.task.cron_payloads import (
     build_expired_watch_result,
     finalize_watch_turn,
     mark_idle_tick_request,
+    turn_wait_timeout as wait,
     watch_condition_value,
     watch_output,
 )
 from openminion.modules.task.watch_execution import execute_watch_check_turn
-from openminion.modules.task import (
-    ProjectCycleDecision,
-    TaskManager,
-)
-from openminion.services.runtime.project_worker import (
-    ProjectWorkerResult,
-    build_cron_project_worker,
-)
+from openminion.modules.task import ProjectCycleDecision, TaskManager
+from openminion.services.runtime.project_worker import ProjectWorkerResult
+from openminion.services.runtime.project_worker import build_cron_project_worker
 from openminion.tools.task.constants import (
     CONSOLIDATION_PAYLOAD_KEY,
     DEFAULT_CONSOLIDATION_BATCH_LIMIT,
@@ -498,7 +494,7 @@ class CronTurnExecutor:
             request = self._request_builder(request_payload, agent_id)
             handle = manager.submit_turn(request)
             try:
-                result = handle.result(timeout_s=self._timeout_s)
+                result = handle.result(timeout_s=wait(self._timeout_s, request_payload))
             except Exception as exc:  # noqa: BLE001
                 _CRON_LOGGER.warning(
                     format_structured_event(
@@ -509,10 +505,10 @@ class CronTurnExecutor:
                         error=str(exc),
                     )
                 )
-                if attempt < self._max_attempts:
-                    continue
                 if isinstance(exc, TimeoutError):
                     raise
+                if attempt < self._max_attempts:
+                    continue
                 return {
                     "summary": f"Agent turn failed after {self._max_attempts} attempt(s): {exc}",
                     "error": True,
@@ -598,7 +594,7 @@ class CronTurnExecutor:
             request = self._request_builder(request_payload, agent_id)
             handle = manager.submit_turn(request)
             try:
-                result = handle.result(timeout_s=self._timeout_s)
+                result = handle.result(timeout_s=wait(self._timeout_s, request_payload))
             except Exception as exc:  # noqa: BLE001
                 _CRON_LOGGER.warning(
                     format_structured_event(
@@ -610,10 +606,10 @@ class CronTurnExecutor:
                         error=str(exc),
                     )
                 )
-                if attempt < self._max_attempts:
-                    continue
                 if isinstance(exc, TimeoutError):
                     raise
+                if attempt < self._max_attempts:
+                    continue
                 return {
                     "summary": (
                         f"PAE idle tick failed after {self._max_attempts} "

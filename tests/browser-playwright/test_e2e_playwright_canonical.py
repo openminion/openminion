@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,10 @@ _BPGE_HTML = """<!doctype html>
 <html><head><title>BPGE Smoke</title></head>
 <body><h1 id="hdr">BPGE-07 smoke heading</h1>
 <p id="body">deterministic local content for canonical browser e2e</p>
+<button onclick="document.getElementById('body').textContent='browser action complete'">
+  Continue
+</button>
+<input id="file" type="file">
 </body></html>
 """
 
@@ -70,6 +75,8 @@ def _chromium_available() -> bool:
 @pytest.fixture(scope="module")
 def _chromium_ready() -> bool:
     if not _chromium_available():
+        if os.getenv("OPENMINION_REQUIRE_CHROMIUM") == "1":
+            pytest.fail("chromium browser binary is required for this test run")
         pytest.skip("chromium browser binary not available in this environment")
     return True
 
@@ -129,12 +136,19 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
 
     page = tmp_path / "bpge-smoke.html"
     page.write_text(_BPGE_HTML, encoding="utf-8")
+    upload_file = tmp_path / "upload.txt"
+    upload_file.write_text("browser upload", encoding="utf-8")
     page_url = page.resolve().as_uri()
 
     def _scenario() -> dict[str, object]:
+        context = _ToolContext(extras={"workspace_root": str(tmp_path)})
+        confirmed_context = _ToolContext(
+            runtime=type("_Confirmed", (), {"confirm": True})(),
+            extras=context.extras,
+        )
         started = tool.execute(
-            {"op": "instance.start", "instance_spec": {"mode": "headless"}},
-            _ToolContext(),
+            {"op": "instance.start", "instance": {"mode": "headless"}},
+            context,
         )
         assert started.ok is True, started.error
         assert started.data.get("provider") == "playwright"
@@ -142,7 +156,7 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
         # 2. tab.new navigates to the local page.
         new_tab = tool.execute(
             {"op": "tab.new", "url": page_url},
-            _ToolContext(),
+            context,
         )
         assert new_tab.ok is True, new_tab.error
         assert new_tab.data["provider"] == "playwright"
@@ -154,9 +168,9 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
             {
                 "op": "tab.text",
                 "tab_id": tab_id,
-                "options": {"mode": "visible_text", "max_chars": 200},
+                "text": {"mode": "visible_text", "max_chars": 200},
             },
-            _ToolContext(),
+            context,
         )
         assert text_result.ok is True, text_result.error
         content = text_result.data["text"]["content"]
@@ -164,18 +178,59 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
         assert len(content) <= 500  # bounded summary, not unbounded page dump
         assert "BPGE-07 smoke heading" in content
 
+        action = tool.execute(
+            {
+                "op": "tab.action",
+                "tab_id": tab_id,
+                "action": {
+                    "kind": "click",
+                    "target": {"role": {"role": "button", "name": "Continue"}},
+                },
+            },
+            context,
+        )
+        assert action.ok is True, action.error
+
+        changed = tool.execute(
+            {
+                "op": "tab.text",
+                "tab_id": tab_id,
+                "text": {"mode": "visible_text", "max_chars": 200},
+            },
+            context,
+        )
+        assert changed.ok is True, changed.error
+        assert "browser action complete" in changed.data["text"]["content"]
+
+        uploaded = tool.execute(
+            {
+                "op": "tab.upload",
+                "tab_id": tab_id,
+                "files": [upload_file.name],
+                "target": {"selector": "#file"},
+            },
+            confirmed_context,
+        )
+        assert uploaded.ok is True, uploaded.error
+        assert uploaded.data["data"]["uploaded"] == [upload_file.name]
+
         # 4. tab.screenshot writes an artifact under the workspace.
         shot = tool.execute(
             {
                 "op": "tab.screenshot",
                 "tab_id": tab_id,
-                "options": {"path": "artifacts/bpge-07-shot.png"},
+                "output": {"path": "artifacts/bpge-07-shot.png"},
             },
-            _ToolContext(),
+            context,
         )
         assert shot.ok is True, shot.error
         artifact = shot.data["artifact"]
         assert artifact["kind"] == "screenshot"
+        stopped = tool.execute(
+            {"op": "instance.stop"},
+            context,
+        )
+        assert stopped.ok is True, stopped.error
         return {"artifact_path": artifact["path"]}
 
     result = _run_in_worker_thread(_scenario)
@@ -195,7 +250,5 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
     ), (
         f"artifact path {artifact_path!s} escapes the configured workspace/artifacts tree"
     )
-    # Provider returns the path string for the screenshot artifact; the
-    # file should exist on disk so callers can read it.
-    if artifact_path.is_absolute() and artifact_path.exists():
-        assert artifact_path.stat().st_size > 0
+    assert artifact_path.is_file()
+    assert artifact_path.stat().st_size > 0

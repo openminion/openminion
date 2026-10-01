@@ -47,13 +47,7 @@ def _canonicalize(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _canonicalize(value[key]) for key in sorted(value)}
     if isinstance(value, list):
-        normalized = [_canonicalize(item) for item in value]
-        return sorted(
-            normalized,
-            key=lambda item: json.dumps(
-                item, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-            ),
-        )
+        return [_canonicalize(item) for item in value]
     return value
 
 
@@ -111,10 +105,34 @@ class IdentityCtl:
         self.store.close()
 
     def get_profile(self, agent_id: str) -> AgentProfile | None:
-        try:
-            return self._resolve_profile(agent_id)
-        except ValueError:
+        if self.store.get_profile(agent_id) is None:
             return None
+        return self._resolve_profile(agent_id)
+
+    def resolve_profile_input(
+        self,
+        profile_input: AgentProfileInput,
+        *,
+        agent_id: str,
+        source_path: Path,
+    ) -> AgentProfile:
+        patch = profile_input.model_dump(mode="python", exclude_none=True)
+        base_payload: dict[str, Any] = {}
+        if profile_input.inherits:
+            parent = self.get_profile(profile_input.inherits)
+            if parent is None:
+                raise ValueError(f"profile not found: {profile_input.inherits}")
+            base_payload = parent.model_dump(mode="python", exclude_none=True)
+        payload = _deep_merge(base_payload, patch)
+        payload["agent_id"] = agent_id
+        payload.setdefault("display_name", agent_id)
+        payload.setdefault("profile_revision", 1)
+        payload["meta"] = {
+            **dict(payload.get("meta") or {}),
+            "source": "yaml",
+            "source_path": str(source_path.resolve()),
+        }
+        return AgentProfile.model_validate(payload)
 
     def list_profiles(self) -> list[AgentProfileSummary]:
         summaries: list[AgentProfileSummary] = []
@@ -131,7 +149,21 @@ class IdentityCtl:
             )
         return summaries
 
+    def get_profile_summary(self, agent_id: str) -> AgentProfileSummary | None:
+        row = self.store.get_profile(agent_id)
+        if row is None:
+            return None
+        resolved, version = self._resolved_profile_version(row)
+        return AgentProfileSummary(
+            agent_id=row.agent_id,
+            display_name=resolved.display_name,
+            profile_revision=resolved.profile_revision,
+            profile_version=version,
+            updated_at=row.updated_at,
+        )
+
     def upsert_profile(self, profile: AgentProfile) -> str:
+        self._validate_upsert_graph(profile)
         profile_version = self._compute_profile_version(profile)
         self.store.upsert_profile(profile, profile_version)
         self._refresh_versions()
@@ -142,6 +174,20 @@ class IdentityCtl:
         return refreshed.profile_version
 
     def delete_profile(self, agent_id: str) -> None:
+        profiles = {row.agent_id: row.profile for row in self.store.list_profiles()}
+        for profile in profiles.values():
+            current = profile
+            visited: set[str] = set()
+            while current.inherits and current.agent_id not in visited:
+                visited.add(current.agent_id)
+                if current.inherits == agent_id:
+                    raise ValueError(
+                        f"cannot delete profile inherited by: {profile.agent_id}"
+                    )
+                parent = profiles.get(current.inherits)
+                if parent is None:
+                    break
+                current = parent
         self.store.delete_profile(agent_id)
         self.clear_cache(agent_id=agent_id)
         self._refresh_versions()
@@ -364,6 +410,9 @@ class IdentityCtl:
             existing_meta = merged_payload.get("meta")
             meta_payload = dict(existing_meta or {})
             meta_payload["source"] = "yaml"
+            meta_payload["source_path"] = str(
+                profile_inputs[agent_id].source_path.resolve()
+            )
             merged_payload["meta"] = meta_payload
 
             profile = AgentProfile.model_validate(merged_payload)
@@ -490,11 +539,48 @@ class IdentityCtl:
         for row in self.store.list_profiles():
             self._resolved_profile_version(row)
 
+    def _validate_upsert_graph(self, candidate: AgentProfile) -> None:
+        profiles = {row.agent_id: row.profile for row in self.store.list_profiles()}
+        profiles[candidate.agent_id] = candidate
+        resolved: dict[str, AgentProfile] = {}
+
+        def resolve(agent_id: str, stack: tuple[str, ...] = ()) -> AgentProfile:
+            if agent_id in resolved:
+                return resolved[agent_id]
+            if agent_id in stack:
+                chain = " -> ".join((*stack, agent_id))
+                raise ValueError(f"inheritance cycle detected: {chain}")
+            profile = profiles.get(agent_id)
+            if profile is None:
+                raise ValueError(f"profile not found: {agent_id}")
+            if not profile.inherits:
+                resolved[agent_id] = profile
+                return profile
+            parent = resolve(profile.inherits, (*stack, agent_id))
+            payload = _deep_merge(
+                parent.model_dump(mode="python", exclude_none=True),
+                profile.model_dump(mode="python", exclude_none=True),
+            )
+            payload["agent_id"] = profile.agent_id
+            payload["inherits"] = profile.inherits
+            resolved[agent_id] = AgentProfile.model_validate(payload)
+            return resolved[agent_id]
+
+        for agent_id in profiles:
+            current = agent_id
+            seen: set[str] = set()
+            while current not in seen:
+                seen.add(current)
+                if current == candidate.agent_id:
+                    resolve(agent_id)
+                    break
+                profile = profiles.get(current)
+                if profile is None or not profile.inherits:
+                    break
+                current = profile.inherits
+
     def _resolved_profile_version(self, row: StoredProfile) -> tuple[AgentProfile, str]:
-        try:
-            resolved = self._resolve_profile(row.agent_id)
-        except ValueError:
-            return row.profile, row.profile_version
+        resolved = self._resolve_profile(row.agent_id)
         version = self._compute_profile_version(resolved)
         if version != row.profile_version:
             self.store.update_profile_version(row.agent_id, version)
@@ -530,6 +616,7 @@ class IdentityCtl:
 
     def _compute_profile_version(self, profile: AgentProfile) -> str:
         payload = profile.model_dump(mode="python", exclude_none=True)
+        payload.pop("meta", None)
         canonical = _canonicalize(payload)
         serialized = json.dumps(
             canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True

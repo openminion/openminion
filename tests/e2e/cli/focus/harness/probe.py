@@ -17,8 +17,7 @@ from .pty import PtySession
 from .scenarios import FocusScenario
 
 _COMPOSER_READY_RE = re.compile(
-    r"Ask anything|Reply, or / for commands|input:\s*(?:send|queue next) message|"
-    r"(?:^|\n)\s*❯\s*\Z"
+    r"(?:^|\n)\s*[❯↳]\s+(?:Ask anything|Reply, or / for commands)"
 )
 _CONTENT_COMPOSER_RE = re.compile(r"Ask anything|Reply, or / for commands")
 _LEGACY_INLINE_APPROVAL_RE = re.compile(
@@ -39,6 +38,9 @@ _SIDECAR_CONSENT_RE = re.compile(
     r"(?:Allow auto-start for PinchTab|Allow [a-z_ -]+ for sidecar '[^']+')\? "
     r"\[y/N\]:\s*$",
     re.IGNORECASE,
+)
+_APPROVAL_ACTION_RE = re.compile(
+    r"Approval required:\s*([A-Za-z0-9_.-]+)\(", re.IGNORECASE
 )
 _APPROVAL_PATTERN = rf"{_APPROVAL_PROMPT_PATTERN}|Waiting for your reply"
 _APPROVAL_PROMPT_RE = re.compile(_APPROVAL_PROMPT_PATTERN)
@@ -157,6 +159,31 @@ def active_approval_visible(screen_text: str) -> bool:
 
 def sidecar_consent_prompt_visible(screen_text: str) -> bool:
     return _SIDECAR_CONSENT_RE.search(screen_text) is not None
+
+
+def _record_approval_event(
+    events: list[dict[str, object]] | None,
+    *,
+    kind: str,
+    screen_text: str,
+    reply: str,
+) -> None:
+    if events is None:
+        return
+    matches = list(_APPROVAL_ACTION_RE.finditer(screen_text))
+    action = matches[-1].group(1) if matches else f"{kind}.approval"
+    decision = str(reply or "").strip().lower()
+    if kind == "sidecar":
+        action = "sidecar.consent"
+        decision = "deny" if decision in {"no", "deny", "denied"} else "allow"
+    events.append(
+        {
+            "sequence": len(events) + 1,
+            "kind": kind,
+            "action": action,
+            "decision": decision,
+        }
+    )
 
 
 def inline_approval_menu(screen_text: str) -> str | None:
@@ -441,19 +468,24 @@ class FocusProbe:
             on_transcript_update=on_transcript_update,
         )
 
-    def wait_ready(self, session: PtySession) -> str:
-        deadline = time.monotonic() + 60
+    def wait_ready_at_ns(self, session: PtySession, *, timeout: float = 60) -> int:
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            transcript = session.transcript
-            if _COMPOSER_READY_RE.search(session.screen_text):
+            if _COMPOSER_READY_RE.search(session.read_screen(timeout=0.005)):
+                ready_at_ns = time.perf_counter_ns()
+                transcript = session.transcript
                 assert_no_terminal_crash(transcript)
-                return transcript
-            time.sleep(0.05)
+                return ready_at_ns
+            time.sleep(0.005)
         transcript = session.transcript
         raise AssertionError(
             "timed out waiting for the enabled Focus composer\n"
             f"{visible_text(transcript)[-2000:]}"
         )
+
+    def wait_ready(self, session: PtySession, *, timeout: float = 60) -> str:
+        self.wait_ready_at_ns(session, timeout=timeout)
+        return session.transcript
 
     def run_slash(self, session: PtySession, command: str, *, marker: str) -> str:
         offset = len(session.transcript)
@@ -476,6 +508,7 @@ class FocusProbe:
         requires_approval: bool = False,
         max_auto_approvals: int = 5,
         approval_reply: str = "yes",
+        approval_events: list[dict[str, object]] | None = None,
     ) -> str:
         """Run a slash command through the same approval loop as a prompt turn."""
         turn_offset = len(session.visible_transcript)
@@ -501,6 +534,12 @@ class FocusProbe:
                 assert requires_approval, transcript[-2000:]
                 approvals += 1
                 assert approvals <= max_auto_approvals, transcript[-2000:]
+                _record_approval_event(
+                    approval_events,
+                    kind="sidecar",
+                    screen_text=screen_text,
+                    reply=approval_reply,
+                )
                 self._submit_sidecar_consent(session, approval_reply)
                 event_offset = len(session.visible_transcript)
                 continue
@@ -508,6 +547,12 @@ class FocusProbe:
                 assert requires_approval, transcript[-2000:]
                 approvals += 1
                 assert approvals <= max_auto_approvals, transcript[-2000:]
+                _record_approval_event(
+                    approval_events,
+                    kind="inline",
+                    screen_text=screen_text,
+                    reply=approval_reply,
+                )
                 self._submit_inline_approval(session, approval_reply)
                 event_offset = len(session.visible_transcript)
                 continue
@@ -515,6 +560,12 @@ class FocusProbe:
                 assert requires_approval, transcript[-2000:]
                 approvals += 1
                 assert approvals <= max_auto_approvals, transcript[-2000:]
+                _record_approval_event(
+                    approval_events,
+                    kind="policy",
+                    screen_text=screen_text,
+                    reply=approval_reply,
+                )
                 self._submit_composer_line(session, approval_reply)
                 event_offset = len(session.visible_transcript)
                 continue
@@ -692,7 +743,13 @@ class FocusProbe:
             f"Focus sidecar consent did not resolve\n{session.screen_text[-2000:]}"
         )
 
-    def run_turn(self, session: PtySession, scenario: FocusScenario) -> str:
+    def run_turn(
+        self,
+        session: PtySession,
+        scenario: FocusScenario,
+        *,
+        approval_events: list[dict[str, object]] | None = None,
+    ) -> str:
         turn_offset = len(session.visible_transcript)
         completion_probe = self._submit_composer_line(session, scenario.prompt)
         event_offset = len(session.visible_transcript)
@@ -720,6 +777,12 @@ class FocusProbe:
                 assert scenario.requires_approval, transcript[-2000:]
                 approvals += 1
                 assert approvals <= scenario.max_auto_approvals, transcript[-2000:]
+                _record_approval_event(
+                    approval_events,
+                    kind="sidecar",
+                    screen_text=screen_text,
+                    reply=scenario.approval_reply,
+                )
                 self._submit_sidecar_consent(session, scenario.approval_reply)
                 event_offset = len(session.visible_transcript)
                 continue
@@ -727,6 +790,12 @@ class FocusProbe:
                 assert scenario.requires_approval, transcript[-2000:]
                 approvals += 1
                 assert approvals <= scenario.max_auto_approvals, transcript[-2000:]
+                _record_approval_event(
+                    approval_events,
+                    kind="inline",
+                    screen_text=screen_text,
+                    reply=scenario.approval_reply,
+                )
                 self._submit_inline_approval(session, scenario.approval_reply)
                 event_offset = len(session.visible_transcript)
                 continue
@@ -734,6 +803,12 @@ class FocusProbe:
                 assert scenario.requires_approval, transcript[-2000:]
                 approvals += 1
                 assert approvals <= scenario.max_auto_approvals, transcript[-2000:]
+                _record_approval_event(
+                    approval_events,
+                    kind="policy",
+                    screen_text=screen_text,
+                    reply=scenario.approval_reply,
+                )
                 completion_probe = self._submit_composer_line(
                     session, scenario.approval_reply
                 )

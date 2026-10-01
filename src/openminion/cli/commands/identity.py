@@ -6,7 +6,13 @@ from pathlib import Path
 import sys
 from typing import Any, Iterable
 
-from openminion.cli.config import load_cli_config, resolve_cli_identity_db_path
+from openminion.cli.commands.identity_editor import (
+    get_identity_context,
+    print_structured_payload,
+    run_identity_apply,
+    run_identity_candidate_validate,
+    run_identity_inspect,
+)
 from openminion.modules.identity.runtime.bundle_importer import (
     BundleTextDocument,
     build_profile_from_parsed_bundle,
@@ -23,7 +29,6 @@ from openminion.modules.identity.runtime.lockfile import (
 from openminion.modules.identity.runtime.md_generator import (
     export_profile_to_markdown_bundle,
 )
-from openminion.modules.identity.storage.store import SQLiteIdentityStore
 from openminion.modules.identity.runtime.service import IdentityCtl
 from openminion.modules.identity import (
     IdentityBundle,
@@ -32,8 +37,8 @@ from openminion.modules.identity import (
 )
 
 
-def run_identity_list() -> None:
-    ctl = _get_identityctl()
+def run_identity_list(*, ctl: IdentityCtl | None = None) -> None:
+    ctl = ctl or _get_identityctl()
     profiles = ctl.list_profiles()
 
     print(
@@ -48,10 +53,10 @@ def run_identity_list() -> None:
         )
 
 
-def run_identity_show(agent_id: str) -> None:
+def run_identity_show(agent_id: str, *, ctl: IdentityCtl | None = None) -> None:
     import yaml
 
-    ctl = _get_identityctl()
+    ctl = ctl or _get_identityctl()
     profile = ctl.get_profile(agent_id)
 
     if not profile:
@@ -62,8 +67,8 @@ def run_identity_show(agent_id: str) -> None:
     print(yaml.dump(profile_data, default_flow_style=False, indent=2))
 
 
-def run_identity_upsert(yaml_path: str) -> None:
-    ctl = _get_identityctl()
+def run_identity_upsert(yaml_path: str, *, ctl: IdentityCtl | None = None) -> None:
+    ctl = ctl or _get_identityctl()
     file_path = Path(yaml_path).expanduser().resolve()
 
     if not file_path.exists():
@@ -83,9 +88,12 @@ def run_identity_upsert(yaml_path: str) -> None:
 
 
 def run_identity_import_from_bundle(
-    from_bundle: str, agent_id: str | None = None
+    from_bundle: str,
+    agent_id: str | None = None,
+    *,
+    ctl: IdentityCtl | None = None,
 ) -> None:
-    ctl = _get_identityctl()
+    ctl = ctl or _get_identityctl()
     raw_bundle_path = Path(from_bundle).expanduser().resolve()
     if not raw_bundle_path.exists():
         print(f"ERROR: Path '{from_bundle}' does not exist", file=sys.stderr)
@@ -174,10 +182,15 @@ def run_identity_import_from_bundle(
         print(f"warnings: {len(import_warnings)}")
 
 
-def run_identity_export_yaml(output_path: str, agent_id: str | None = None) -> None:
+def run_identity_export_yaml(
+    output_path: str,
+    agent_id: str | None = None,
+    *,
+    ctl: IdentityCtl | None = None,
+) -> None:
     import yaml
 
-    ctl = _get_identityctl()
+    ctl = ctl or _get_identityctl()
     output = Path(output_path).expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     normalized_agent = str(agent_id or "").strip()
@@ -224,6 +237,7 @@ def run_identity_export(
     output_dir: str | None = None,
     agent_id: str | None = None,
     force: bool = False,
+    ctl: IdentityCtl | None = None,
 ) -> None:
     normalized_output = str(output_path or "").strip()
     normalized_output_dir = str(output_dir or "").strip()
@@ -234,12 +248,13 @@ def run_identity_export(
         )
         sys.exit(1)
     if normalized_output:
-        run_identity_export_yaml(normalized_output, agent_id=agent_id)
+        run_identity_export_yaml(normalized_output, agent_id=agent_id, ctl=ctl)
         return
     run_identity_export_markdown(
         normalized_output_dir,
         agent_id=agent_id,
         force=force,
+        ctl=ctl,
     )
 
 
@@ -248,8 +263,9 @@ def run_identity_export_markdown(
     agent_id: str | None = None,
     *,
     force: bool = False,
+    ctl: IdentityCtl | None = None,
 ) -> None:
-    ctl = _get_identityctl()
+    ctl = ctl or _get_identityctl()
     base_output_dir = Path(output_dir).expanduser().resolve()
     base_output_dir.mkdir(parents=True, exist_ok=True)
     print(
@@ -314,12 +330,17 @@ def run_identity_export_markdown(
             )
 
 
-def run_identity_diff(agent_id: str, bundle_dir: str | None = None) -> None:
+def run_identity_diff(
+    agent_id: str,
+    bundle_dir: str | None = None,
+    *,
+    ctl: IdentityCtl | None = None,
+) -> None:
     normalized_agent = str(agent_id or "").strip()
     if not normalized_agent:
         print("ERROR: agent_id is required", file=sys.stderr)
         sys.exit(1)
-    ctl = _get_identityctl()
+    ctl = ctl or _get_identityctl()
     profile = ctl.get_profile(normalized_agent)
     if profile is None:
         print(
@@ -389,12 +410,20 @@ def run_identity_diff(agent_id: str, bundle_dir: str | None = None) -> None:
     print(f"result: {'drifted' if differences else 'clean'}")
 
 
-def run_identity_delete(agent_id: str) -> None:
-    ctl = _get_identityctl()
+def run_identity_delete(agent_id: str, *, ctl: IdentityCtl | None = None) -> None:
+    ctl = ctl or _get_identityctl()
 
     profile = ctl.get_profile(agent_id)
     if not profile:
         print(f"Profile for agent '{agent_id}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    source = str((profile.meta or {}).get("source", "")).strip().lower()
+    if source in {"yaml", "bundle"}:
+        print(
+            f"ERROR: {source}-managed profile '{agent_id}' cannot be deleted from SQLite; remove or migrate its authoritative source explicitly",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     ctl.delete_profile(agent_id)
@@ -402,9 +431,13 @@ def run_identity_delete(agent_id: str) -> None:
 
 
 def run_identity_render(
-    agent_id: str, purpose: str = "act", max_tokens: int = 180
+    agent_id: str,
+    purpose: str = "act",
+    max_tokens: int = 180,
+    *,
+    ctl: IdentityCtl | None = None,
 ) -> None:
-    ctl = _get_identityctl()
+    ctl = ctl or _get_identityctl()
 
     try:
         snippet = ctl.render(agent_id, purpose=purpose, max_tokens=max_tokens)
@@ -425,8 +458,28 @@ def run_identity_render(
         sys.exit(1)
 
 
-def run_identity_validate(agent_id: str | None = None, *, strict: bool = False) -> None:
-    ctl = _get_identityctl()
+def run_identity_validate(
+    agent_id: str | None = None,
+    *,
+    file_path: str | None = None,
+    strict: bool = False,
+    json_output: bool = False,
+    config_path: object | None = None,
+    home_root: str | Path | None = None,
+    data_root: str | Path | None = None,
+    ctl: IdentityCtl | None = None,
+) -> None:
+    if file_path:
+        run_identity_candidate_validate(
+            file_path,
+            strict=strict,
+            json_output=json_output,
+        )
+        return
+
+    ctl = ctl or _get_identityctl(
+        config_path=config_path, home_root=home_root, data_root=data_root
+    )
     targets = [agent_id] if agent_id else [row.agent_id for row in ctl.list_profiles()]
     results: dict[str, object] = {}
     overall_ok = True
@@ -442,15 +495,21 @@ def run_identity_validate(agent_id: str | None = None, *, strict: bool = False) 
         overall_ok = overall_ok and result.ok
         results[normalized] = result.model_dump(mode="python")
 
-    import yaml
-
-    print(yaml.safe_dump({"ok": overall_ok, "results": results}, sort_keys=False))
+    print_structured_payload(
+        {"ok": overall_ok, "results": results},
+        json_output=json_output,
+    )
     if not overall_ok:
         sys.exit(1)
 
 
-def run_identity_warm_cache(agent_id: str, purposes: list[str] | None = None) -> None:
-    ctl = _get_identityctl()
+def run_identity_warm_cache(
+    agent_id: str,
+    purposes: list[str] | None = None,
+    *,
+    ctl: IdentityCtl | None = None,
+) -> None:
+    ctl = ctl or _get_identityctl()
     try:
         count = ctl.warm_cache(agent_id=agent_id, purposes=purposes or None)
     except ValueError as exc:
@@ -459,18 +518,26 @@ def run_identity_warm_cache(agent_id: str, purposes: list[str] | None = None) ->
     print(f"warmed: {agent_id} ({count})")
 
 
-def run_identity_clear_cache(agent_id: str | None = None) -> None:
-    ctl = _get_identityctl()
+def run_identity_clear_cache(
+    agent_id: str | None = None, *, ctl: IdentityCtl | None = None
+) -> None:
+    ctl = ctl or _get_identityctl()
     ctl.clear_cache(agent_id=agent_id)
     print(f"cleared_cache: {agent_id or 'all'}")
 
 
-def _get_identityctl() -> IdentityCtl:
-    config = load_cli_config()
-    db_path = resolve_cli_identity_db_path(config).expanduser()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    store = SQLiteIdentityStore(sqlite_path=str(db_path))
-    return IdentityCtl(store=store)
+def _get_identityctl(
+    *,
+    config_path: object | None = None,
+    home_root: str | Path | None = None,
+    data_root: str | Path | None = None,
+) -> IdentityCtl:
+    ctl, _identity_root = get_identity_context(
+        config_path=config_path,
+        home_root=home_root,
+        data_root=data_root,
+    )
+    return ctl
 
 
 def _resolve_bundle_import_target(
@@ -593,77 +660,6 @@ def _detect_bundle_lockfile_drift(bundle_dir: Path) -> list[str]:
     return issues
 
 
-def _build_identity_bridge_argv(args: argparse.Namespace) -> list[str]:
-    command = str(getattr(args, "identity_command", "") or "").strip().lower()
-    if command == "list":
-        return ["list"]
-    if command == "show":
-        return ["show", str(args.agent_id)]
-    if command == "upsert":
-        return ["upsert", str(args.yaml_path)]
-    if command == "import":
-        argv = [
-            "import",
-            "--from-bundle",
-            str(args.from_bundle),
-        ]
-        agent_id = str(getattr(args, "agent_id", "") or "").strip()
-        if agent_id:
-            argv.extend(["--agent-id", agent_id])
-        return argv
-    if command == "export":
-        argv = ["export"]
-        output = str(getattr(args, "output", "") or "").strip()
-        output_dir = str(getattr(args, "output_dir", "") or "").strip()
-        agent_id = str(getattr(args, "agent_id", "") or "").strip()
-        if output:
-            argv.extend(["--output", output])
-        if output_dir:
-            argv.extend(["--output-dir", output_dir])
-        if agent_id:
-            argv.extend(["--agent-id", agent_id])
-        if bool(getattr(args, "force", False)):
-            argv.append("--force")
-        return argv
-    if command == "diff":
-        argv = ["diff", str(args.agent_id)]
-        bundle_dir = str(getattr(args, "bundle_dir", "") or "").strip()
-        if bundle_dir:
-            argv.extend(["--bundle-dir", bundle_dir])
-        return argv
-    if command == "delete":
-        return ["delete", str(args.agent_id)]
-    if command == "render":
-        return [
-            "render",
-            str(args.agent_id),
-            "--purpose",
-            str(args.purpose),
-            "--max-tokens",
-            str(args.max_tokens),
-        ]
-    if command == "validate":
-        argv = ["validate"]
-        agent_id = str(getattr(args, "agent_id", "") or "").strip()
-        if agent_id:
-            argv.extend(["--agent-id", agent_id])
-        if bool(getattr(args, "strict", False)):
-            argv.append("--strict")
-        return argv
-    if command == "warm-cache":
-        argv = ["warm-cache", "--agent-id", str(args.agent_id)]
-        for purpose in list(getattr(args, "purpose", []) or []):
-            argv.extend(["--purpose", str(purpose)])
-        return argv
-    if command == "clear-cache":
-        argv = ["clear-cache"]
-        agent_id = str(getattr(args, "agent_id", "") or "").strip()
-        if agent_id:
-            argv.extend(["--agent-id", agent_id])
-        return argv
-    raise RuntimeError(f"Unknown identity command: {command}")
-
-
 def _add_identity_show_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("agent_id")
 
@@ -727,11 +723,30 @@ def _add_identity_render_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_identity_validate_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--agent-id", default="", help="Optional agent ID to validate")
+    parser.add_argument("--file", default="", help="Validate an unsaved YAML candidate")
     parser.add_argument(
         "--strict",
         action="store_true",
         help="Promote semantic warnings to validation errors",
     )
+    parser.add_argument("--json", action="store_true", help="Emit structured JSON")
+
+
+def _add_identity_inspect_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--agent-id", default="", help="Optional agent ID to inspect")
+    parser.add_argument("--json", action="store_true", help="Emit structured JSON")
+
+
+def _add_identity_apply_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--file", required=True, help="Complete direct profile YAML")
+    parser.add_argument("--expected-profile-version", required=True)
+    parser.add_argument("--expected-source-sha256", required=True)
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Promote semantic warnings to validation errors",
+    )
+    parser.add_argument("--json", action="store_true", help="Emit structured JSON")
 
 
 def _add_identity_warm_cache_args(parser: argparse.ArgumentParser) -> None:
@@ -748,122 +763,10 @@ def _add_identity_clear_cache_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--agent-id", default="", help="Optional agent ID cache scope")
 
 
-def _register_identity_app_subcommands(
-    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
-) -> None:
-    list_parser = subparsers.add_parser("list", help="List identity profiles")
-    list_parser.set_defaults(_handler=lambda _: run_identity_list())
-
-    show_parser = subparsers.add_parser("show", help="Show one identity profile")
-    _add_identity_show_args(show_parser)
-    show_parser.set_defaults(_handler=lambda ns: run_identity_show(ns.agent_id))
-
-    upsert_parser = subparsers.add_parser(
-        "upsert", help="Create or update profiles from a YAML file or directory"
-    )
-    _add_identity_upsert_args(upsert_parser)
-    upsert_parser.set_defaults(_handler=lambda ns: run_identity_upsert(ns.yaml_path))
-
-    import_parser = subparsers.add_parser(
-        "import", help="Import profile from markdown bundle"
-    )
-    _add_identity_import_args(import_parser)
-    import_parser.set_defaults(
-        _handler=lambda ns: run_identity_import_from_bundle(
-            ns.from_bundle, agent_id=(ns.agent_id or "")
-        )
-    )
-
-    export_parser = subparsers.add_parser(
-        "export",
-        help="Export profiles to YAML (--output) or markdown bundle (--output-dir)",
-    )
-    _add_identity_export_args(export_parser)
-    export_parser.set_defaults(
-        _handler=lambda ns: run_identity_export(
-            output_path=ns.output,
-            output_dir=ns.output_dir,
-            agent_id=(ns.agent_id or ""),
-            force=bool(ns.force),
-        )
-    )
-
-    diff_parser = subparsers.add_parser(
-        "diff",
-        help="Compare SQLite profile against on-disk markdown bundle",
-    )
-    _add_identity_diff_args(diff_parser)
-    diff_parser.set_defaults(
-        _handler=lambda ns: run_identity_diff(
-            ns.agent_id,
-            bundle_dir=(ns.bundle_dir or ""),
-        )
-    )
-
-    delete_parser = subparsers.add_parser("delete", help="Delete one identity profile")
-    _add_identity_delete_args(delete_parser)
-    delete_parser.set_defaults(_handler=lambda ns: run_identity_delete(ns.agent_id))
-
-    render_parser = subparsers.add_parser(
-        "render", help="Render identity snippet for an agent"
-    )
-    _add_identity_render_args(render_parser)
-    render_parser.set_defaults(
-        _handler=lambda ns: run_identity_render(
-            ns.agent_id, purpose=ns.purpose, max_tokens=ns.max_tokens
-        )
-    )
-
-    validate_parser = subparsers.add_parser(
-        "validate", help="Validate identity profiles"
-    )
-    _add_identity_validate_args(validate_parser)
-    validate_parser.set_defaults(
-        _handler=lambda ns: run_identity_validate(
-            agent_id=(ns.agent_id or None),
-            strict=bool(ns.strict),
-        )
-    )
-
-    warm_cache_parser = subparsers.add_parser(
-        "warm-cache", help="Warm cached identity snippets"
-    )
-    _add_identity_warm_cache_args(warm_cache_parser)
-    warm_cache_parser.set_defaults(
-        _handler=lambda ns: run_identity_warm_cache(
-            ns.agent_id,
-            purposes=list(ns.purpose or []),
-        )
-    )
-
-    clear_cache_parser = subparsers.add_parser(
-        "clear-cache", help="Clear cached identity snippets"
-    )
-    _add_identity_clear_cache_args(clear_cache_parser)
-    clear_cache_parser.set_defaults(
-        _handler=lambda ns: run_identity_clear_cache(agent_id=(ns.agent_id or None))
-    )
-
-
-def app(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="openminion identity",
-        description=(
-            "Manage agent identity profiles. Startup precedence: YAML sync first, "
-            "markdown bundle sync second, default fallback last."
-        ),
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    _register_identity_app_subcommands(subparsers)
-
-    namespace = parser.parse_args(argv)
-    namespace._handler(namespace)
-    return 0
-
-
 _IDENTITY_SUBCOMMAND_SPECS: tuple[tuple[str, str, Any], ...] = (
     ("list", "List all agent profiles", None),
     ("show", "Show specific agent profile", _add_identity_show_args),
+    ("inspect", "Inspect identity state", _add_identity_inspect_args),
     (
         "upsert",
         "Create/update profiles from YAML file or directory",
@@ -879,6 +782,7 @@ _IDENTITY_SUBCOMMAND_SPECS: tuple[tuple[str, str, Any], ...] = (
     ("delete", "Delete specific agent profile", _add_identity_delete_args),
     ("render", "Render identity snippet for agent", _add_identity_render_args),
     ("validate", "Validate identity profiles", _add_identity_validate_args),
+    ("apply", "Atomically apply direct profile YAML", _add_identity_apply_args),
     (
         "warm-cache",
         "Warm cached identity snippets",
@@ -905,7 +809,91 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         sub = identity_subparsers.add_parser(name, help=help_text)
         if add_args is not None:
             add_args(sub)
-        sub.set_defaults(
-            handler=lambda args: app(_build_identity_bridge_argv(args)),
-            needs_app=False,
+        sub.set_defaults(handler=_run_registered_identity_command, needs_app=False)
+
+
+def _run_registered_identity_command(args: argparse.Namespace) -> int:
+    command = str(getattr(args, "identity_command", "") or "").strip().lower()
+    context = {
+        "config_path": getattr(args, "config", None),
+        "home_root": getattr(args, "home_root", None),
+        "data_root": getattr(args, "data_root", None),
+    }
+    if command == "inspect":
+        run_identity_inspect(
+            agent_id=(str(getattr(args, "agent_id", "") or "").strip() or None),
+            json_output=bool(getattr(args, "json", False)),
+            **context,
         )
+        return 0
+    if command == "validate":
+        run_identity_validate(
+            agent_id=(str(getattr(args, "agent_id", "") or "").strip() or None),
+            file_path=(str(getattr(args, "file", "") or "").strip() or None),
+            strict=bool(getattr(args, "strict", False)),
+            json_output=bool(getattr(args, "json", False)),
+            **context,
+        )
+        return 0
+    if command == "apply":
+        run_identity_apply(
+            str(args.file),
+            expected_profile_version=str(args.expected_profile_version),
+            expected_source_sha256=str(args.expected_source_sha256),
+            strict=bool(getattr(args, "strict", False)),
+            json_output=bool(getattr(args, "json", False)),
+            **context,
+        )
+        return 0
+    ctl, identity_root = get_identity_context(**context)
+    if command == "list":
+        run_identity_list(ctl=ctl)
+    elif command == "show":
+        run_identity_show(str(args.agent_id), ctl=ctl)
+    elif command == "upsert":
+        run_identity_upsert(str(args.yaml_path), ctl=ctl)
+    elif command == "import":
+        run_identity_import_from_bundle(
+            str(args.from_bundle),
+            agent_id=(str(getattr(args, "agent_id", "") or "").strip() or None),
+            ctl=ctl,
+        )
+    elif command == "export":
+        run_identity_export(
+            output_path=(str(getattr(args, "output", "") or "").strip() or None),
+            output_dir=(str(getattr(args, "output_dir", "") or "").strip() or None),
+            agent_id=(str(getattr(args, "agent_id", "") or "").strip() or None),
+            force=bool(getattr(args, "force", False)),
+            ctl=ctl,
+        )
+    elif command == "diff":
+        run_identity_diff(
+            str(args.agent_id),
+            bundle_dir=(
+                str(getattr(args, "bundle_dir", "") or "").strip() or str(identity_root)
+            ),
+            ctl=ctl,
+        )
+    elif command == "delete":
+        run_identity_delete(str(args.agent_id), ctl=ctl)
+    elif command == "render":
+        run_identity_render(
+            str(args.agent_id),
+            purpose=str(args.purpose),
+            max_tokens=int(args.max_tokens),
+            ctl=ctl,
+        )
+    elif command == "warm-cache":
+        run_identity_warm_cache(
+            str(args.agent_id),
+            purposes=[str(value) for value in list(args.purpose or [])],
+            ctl=ctl,
+        )
+    elif command == "clear-cache":
+        run_identity_clear_cache(
+            agent_id=(str(getattr(args, "agent_id", "") or "").strip() or None),
+            ctl=ctl,
+        )
+    else:
+        raise RuntimeError(f"Unknown identity command: {command}")
+    return 0

@@ -29,7 +29,7 @@ class JsonFallbackToolCallParser:
     ) -> ToolCallParseResult:
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
         metadata: dict[str, Any] = {"fallback_parse_mode": "json_payload"}
-        collected = []
+        collected: list[ProviderToolCall] = []
         seen_calls: set[tuple[str, str, str]] = set()
         seen_candidates: set[str] = set()
         for candidate in _json_payload_candidates(text):

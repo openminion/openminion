@@ -4,6 +4,7 @@ import ast
 import asyncio
 import inspect
 import io
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -583,6 +584,54 @@ def test_every_non_control_slash_uses_prompt_safe_output() -> None:
     assert PROMPT_SAFE_OUTPUT_SLASHES == expected
 
 
+@pytest.mark.parametrize(
+    ("command", "method_name"),
+    [
+        ("/identity", "identity_snapshot"),
+        ("/identity verify", "identity_verify"),
+        ("/identity reload", "identity_reload"),
+    ],
+)
+def test_identity_slashes_use_the_runtime_identity_owner(
+    command: str,
+    method_name: str,
+) -> None:
+    calls: list[str] = []
+    payload = {
+        "agent_id": "ops",
+        "display_name": "Operations",
+        "source": "yaml",
+        "profile_revision": 2,
+        "profile_version": "profile-v2",
+        "render_version": "render-v1",
+        "rendered_text": "Mission: Operate safely.",
+        "validation": {"ok": True},
+    }
+
+    def invoke() -> dict[str, object]:
+        calls.append(method_name)
+        return payload
+
+    runtime = SimpleNamespace(**{method_name: invoke})
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    asyncio.run(
+        _handle_slash(
+            command,
+            runtime=runtime,
+            console=console,
+            transcript=TerminalTranscript(console),
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert calls == [method_name]
+    assert "Source: yaml" in buf.getvalue()
+    assert "Profile version: profile-v2" in buf.getvalue()
+
+
 def test_context_review_forwards_explicit_paths(monkeypatch, tmp_path: Path) -> None:
     from openminion.cli.interactive.terminal.shell import slash_output
 
@@ -645,17 +694,37 @@ def test_context_review_renders_runtime_degradation() -> None:
 def test_overview_renders_operations_sections(monkeypatch, tmp_path: Path) -> None:
     from openminion.cli.status import overview
 
-    monkeypatch.setattr(
-        overview,
-        "build_operations_overview",
-        lambda _runtime, *, working_dir: {"working_dir": working_dir},
+    unavailable = overview.OverviewSection("unavailable", "test", None, None)
+    snapshot = overview.OperationsOverview(
+        runtime=unavailable,
+        work=overview.OverviewSection(
+            "available",
+            "task-surface",
+            datetime(2026, 9, 30, tzinfo=timezone.utc),
+            overview.WorkOverview(
+                count=1,
+                statuses=(("WAITING", 1),),
+                pending_action_count=1,
+                items=(
+                    overview.WorkItemOverview(
+                        "task-1",
+                        "Review purchase",
+                        "WAITING",
+                        "waiting",
+                        "approve",
+                        1,
+                    ),
+                ),
+            ),
+        ),
+        recent_tools=unavailable,
+        telemetry=unavailable,
+        host=unavailable,
     )
     monkeypatch.setattr(
         overview,
-        "render_operations_overview",
-        lambda snapshot: (
-            f"Runtime  [available]\nHost  [available]\n{snapshot['working_dir']}"
-        ),
+        "build_operations_overview",
+        lambda _runtime, *, working_dir: snapshot,
     )
     buf = io.StringIO()
     console = Console(file=buf, force_terminal=False, width=160)
@@ -673,9 +742,10 @@ def test_overview_renders_operations_sections(monkeypatch, tmp_path: Path) -> No
     )
 
     output = buf.getvalue()
-    assert "Runtime  [available]" in output
-    assert "Host  [available]" in output
-    assert str(tmp_path) in output
+    assert "Active work  [available]" in output
+    assert "task approvals=1" in output
+    assert "state=waiting · next=approve" in output
+    assert "inspect=/tasks task-1" in output
 
 
 def test_copy_uses_latest_copyable_message(monkeypatch, tmp_path: Path) -> None:

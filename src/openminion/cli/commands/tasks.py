@@ -33,22 +33,21 @@ def run_tasks(args: argparse.Namespace, app: APIRuntime) -> int:
             payload = surface.apply_action(
                 task_id=getattr(args, "task_id", ""), action=action
             )
-        elif action in {"allow", "deny"}:
-            payload = surface.apply_action(
-                task_id=getattr(args, "task_id", ""),
-                action=action,
-                decision_id=getattr(args, "decision_id", ""),
-            )
         else:
             print(f"Unknown tasks command: {action}")
             return 1
     except (KeyError, ValueError, PermissionError, NotImplementedError) as exc:
-        payload = {"ok": False, "error": str(exc)}
+        payload = _task_error_payload(exc)
     except (AttributeError, TypeError, RuntimeError) as exc:
-        payload = {"ok": False, "error": str(exc)}
+        payload = _task_error_payload(exc)
 
-    if payload.get("ok") and _payload_requires_daemon(payload):
-        payload["scheduler"] = app.scheduler_readiness()
+    scheduler_readiness = getattr(app, "scheduler_readiness", None)
+    if (
+        payload.get("ok")
+        and (action == "list" or _payload_requires_daemon(payload))
+        and callable(scheduler_readiness)
+    ):
+        payload["scheduler"] = scheduler_readiness()
 
     if bool(getattr(args, "json", False)):
         print_json_payload(payload, sort_keys=False, default=str)
@@ -74,14 +73,29 @@ def _payload_requires_daemon(payload: dict[str, Any]) -> bool:
     )
 
 
+def _task_error_payload(exc: Exception) -> dict[str, Any]:
+    code = str(getattr(exc, "code", "") or "").strip()
+    payload: dict[str, Any] = {"ok": False, "error": str(exc)}
+    if code:
+        payload["error_code"] = code
+    return payload
+
+
 def _print_human(*, action: str, payload: dict[str, Any]) -> None:
     if not payload.get("ok"):
-        print(f"Error: {payload.get('error') or 'task operation failed'}")
+        code = str(payload.get("error_code") or "").strip()
+        prefix = f"{code}: " if code else ""
+        print(f"Error: {prefix}{payload.get('error') or 'task operation failed'}")
         return
     if action == "list":
         tasks = list(payload.get("tasks", []))
         print("Tasks")
         print("=====")
+        scheduler = dict(payload.get("scheduler") or {})
+        if scheduler:
+            print(f"scheduler: {scheduler.get('state', 'unknown')}")
+            if scheduler.get("check_command"):
+                print(f"scheduler_check: {scheduler['check_command']}")
         if not tasks:
             print("No tasks found.")
             return
@@ -95,11 +109,6 @@ def _print_human(*, action: str, payload: dict[str, Any]) -> None:
                 f"schedule={task.get('schedule_summary', '-')} "
                 f"next={due} last={last_run.get('state') or '-'}"
             )
-        scheduler = dict(payload.get("scheduler") or {})
-        if scheduler:
-            print(f"scheduler: {scheduler.get('state', 'unknown')}")
-            if scheduler.get("check_command"):
-                print(f"scheduler_check: {scheduler['check_command']}")
         return
     task = payload.get("task")
     if isinstance(task, dict):
@@ -121,9 +130,28 @@ def _print_human(*, action: str, payload: dict[str, Any]) -> None:
         if task.get("last_run"):
             last_run = task["last_run"]
             print(f"last_run: {last_run.get('state')}")
+            if last_run.get("isolated_session_id"):
+                print(f"result_session: {last_run['isolated_session_id']}")
             if last_run.get("last_error"):
                 error = last_run["last_error"]
                 print(f"last_error: {error.get('code')}: {error.get('message')}")
+            delivery = last_run.get("delivery") or {}
+            if delivery:
+                print(
+                    f"delivery: {delivery.get('state') or delivery.get('mode') or '-'}"
+                )
+                if delivery.get("error"):
+                    print(f"delivery_error: {delivery['error']}")
+            if last_run.get("delivery_targets"):
+                print(f"delivery_targets: {', '.join(last_run['delivery_targets'])}")
+        recent_runs = list(task.get("recent_runs") or [])[:5]
+        if recent_runs:
+            print("recent_runs:")
+            for run in recent_runs:
+                print(
+                    f"- {run.get('run_id')}: {run.get('state')} "
+                    f"session={run.get('isolated_session_id') or '-'}"
+                )
         if task.get("valid_actions"):
             print(f"actions: {', '.join(task['valid_actions'])}")
         return
@@ -146,15 +174,6 @@ def _register_task_action(
     _add_common_args(parser)
 
 
-def _register_pending_action(
-    subcommands: argparse._SubParsersAction[argparse.ArgumentParser], name: str
-) -> None:
-    parser = subcommands.add_parser(name, help=f"{name.capitalize()} a pending action")
-    parser.add_argument("decision_id", help="Pending action decision id")
-    parser.add_argument("task_id", nargs="?", default="", help=argparse.SUPPRESS)
-    _add_common_args(parser)
-
-
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     tasks = subparsers.add_parser("tasks", help="Task inventory and controls")
     task_subcommands = tasks.add_subparsers(dest="tasks_command")
@@ -168,7 +187,4 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
     for name in ("pause", "resume", "cancel"):
         _register_task_action(task_subcommands, name)
-    for name in ("allow", "deny"):
-        _register_pending_action(task_subcommands, name)
-
     tasks.set_defaults(handler=run_tasks, needs_app=True, tasks_command="list")

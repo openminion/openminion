@@ -56,14 +56,12 @@ src/openminion/cli/status/surface.py	1	0	current broad-handler baseline; ratchet
 src/openminion/cli/transport/daemon_client.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/daemon.py	7	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/a2a/runtime.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/a2a/storage/__init__.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/a2a/storage/archive.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/artifact/control.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/adapters/a2a/runtime.py	9	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/adapters/artifact/runtime.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/adapters/context/bridges/artifact.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/adapters/context/bridges/compress.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/brain/adapters/context/bridges/identity.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/adapters/context/bridges/memory.py	8	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/adapters/context/bridges/session.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/adapters/context/bridges/shared.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -193,7 +191,8 @@ src/openminion/modules/controlplane/wizard/runtime.py	1	0	current broad-handler 
 src/openminion/modules/controlplane/wizard/telegram.py	10	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/wizard/terminal.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/identity/cli.py	8	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/identity/controlplane/main.py	10	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/identity/controlplane/main.py	7	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/identity/runtime/operator.py	1	0	identity source/store/sidecar synchronization boundary with compensating restore
 src/openminion/modules/identity/runtime/renderer.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/llm/config.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/llm/orchestration/service.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -285,6 +284,7 @@ src/openminion/modules/storage/runtime/vector_index.py	1	0	current broad-handler
 src/openminion/modules/storage/runtime/vector_sync.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/task/events.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/task/runtime/lifecycle_schedule.py	3	2	TLRM split moved existing cron cleanup broad handlers; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/task/scheduling/coordination.py	1	0	delivery boundary must record failure without retrying completed execution
 src/openminion/modules/telemetry/events/module.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/telemetry/export/otel.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/telemetry/storage/hook.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -317,7 +317,7 @@ src/openminion/services/agent/execution/progress.py	3	3	current broad-handler ba
 src/openminion/services/agent/execution/resources.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/agent/execution/tool_arguments.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/agent/execution/tool_plan.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/agent/identity_binding.py	11	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/services/agent/identity_binding.py	9	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/agent/memory/gateway_adapter.py	6	4	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/agent/service.py	4	0	AOBS/TCPL best-effort telemetry/binding boundary; ratchet by narrowing in agent service cleanup
 src/openminion/services/agent/telemetry.py	2	0	AOBS/TCPL trace/export best-effort telemetry boundary; ratchet by narrowing in telemetry cleanup
@@ -333,7 +333,7 @@ src/openminion/services/brain/post_execution/usage.py	1	0	current broad-handler 
 src/openminion/services/brain/service.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/context/adapter.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/context/session.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/cron/scheduler.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/services/cron/scheduler.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/gateway/context.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/gateway/memory.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/gateway/security.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -350,7 +350,6 @@ src/openminion/services/runtime/bootstrap.py	5	0	current broad-handler baseline;
 src/openminion/services/runtime/catalog.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/channel_supervisor.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/cli.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/runtime/cron/delivery.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/cron/executor.py	15	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/daemon.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/engine.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -390,7 +389,7 @@ src/openminion/tools/file/backends/local.py	7	0	current broad-handler baseline; 
 src/openminion/tools/github/rest.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/ip/plugin.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/location/plugin.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/tools/mcp/manager.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/tools/mcp/manager.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/mcp/server/published.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/mcp/session.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/mcp/transport_protocol.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -407,7 +406,7 @@ src/openminion/tools/search/providers/tavily/search.py	2	0	current broad-handler
 src/openminion/tools/search/providers/tinyfish/provider.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/skill/plugin.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/skill/url_ingest.py	5	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/tools/task/plugin.py	5	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/tools/task/plugin.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/task/scheduled_task/views.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/time/plugin.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/weather/plugin.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

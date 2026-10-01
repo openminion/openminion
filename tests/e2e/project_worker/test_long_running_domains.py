@@ -233,7 +233,7 @@ def test_oacc_research_to_code_requires_both_artifacts(
     assert turns == 2
 
 
-def test_cross_application_project_blocks_before_turn(
+def test_cross_application_project_is_rejected_before_turn(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -244,16 +244,15 @@ def test_cross_application_project_blocks_before_turn(
         turn_called = True
         return {"final_text": "unexpected"}
 
-    run = _run_project(
-        tmp_path,
-        monkeypatch,
-        domain="cross_application",
-        turn=turn,
-        verify_command=f"{shlex.quote(sys.executable)} -c 'raise SystemExit(0)'",
-    )
+    with pytest.raises(SystemExit):
+        _run_project(
+            tmp_path,
+            monkeypatch,
+            domain="cross_application",
+            turn=turn,
+            verify_command=f"{shlex.quote(sys.executable)} -c 'raise SystemExit(0)'",
+        )
 
-    assert run["status"] == "blocked"
-    assert run["last_error"]["code"] == "project_domain_not_configured"
     assert turn_called is False
 
 

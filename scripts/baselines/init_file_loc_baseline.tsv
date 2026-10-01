@@ -9,7 +9,6 @@ src/openminion/cli/interactive/runtime/__init__.py	995	VOL-28 existing init-file
 src/openminion/cli/interactive/terminal/shell/__init__.py	999	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/cli/presentation/__init__.py	58	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/cli/status/__init__.py	102	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
-src/openminion/modules/a2a/storage/__init__.py	84	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/modules/brain/__init__.py	80	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/modules/brain/execution/__init__.py	92	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/modules/brain/loop/adaptive/__init__.py	82	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.

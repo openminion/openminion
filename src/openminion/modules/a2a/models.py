@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from openminion.base.time import utc_now_iso as iso_now
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -38,30 +39,15 @@ MESSAGE_TYPES = {
 }
 
 IDEMPOTENCY_REQUIRED_TYPES = {MESSAGE_TYPE_CALL, MESSAGE_TYPE_JOB_START}
+_TRACEPARENT_V00 = re.compile(r"00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})\Z")
 
 
 def is_valid_traceparent(value: str) -> bool:
-    parts = str(value or "").strip().split("-")
-    if len(parts) != 4:
+    match = _TRACEPARENT_V00.fullmatch(str(value or ""))
+    if match is None:
         return False
-    version, trace_id, parent_id, flags = parts
-    if version.lower() == "ff":
-        return False
-    try:
-        int(version, 16)
-        int(trace_id, 16)
-        int(parent_id, 16)
-        int(flags, 16)
-    except ValueError:
-        return False
-    return (
-        len(version) == 2
-        and len(trace_id) == 32
-        and trace_id != "0" * 32
-        and len(parent_id) == 16
-        and parent_id != "0" * 16
-        and len(flags) == 2
-    )
+    trace_id, parent_id, _flags = match.groups()
+    return trace_id != "0" * 32 and parent_id != "0" * 16
 
 
 class EnvelopeValidationError(ValueError):
@@ -107,6 +93,10 @@ class A2AObservabilityContext:
                 raise EnvelopeValidationError(
                     f"A2A observability {name} must be a UUID"
                 ) from exc
+        if not is_valid_traceparent(self.traceparent):
+            raise EnvelopeValidationError(
+                "A2A observability traceparent must be a valid W3C traceparent"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         payload = {

@@ -461,7 +461,6 @@ class ToolAdapter:
                 message=str(exc),
                 latency_ms=int((time.monotonic() - start_time) * 1000),
             )
-
         run_id = new_run_id()
         try:
             home_root = resolve_home_root()
@@ -584,6 +583,7 @@ class ToolAdapter:
             agent_profile=self.agent_profile,
             tool_registry=self.registry,
             task_manager=self.task_manager,
+            project_task_id=project_task_id,
             scheduler_readiness=self.scheduler_readiness,
         )
         ctx.session_id, ctx.trace_id = session_id, trace_id
@@ -992,4 +992,5 @@ class ToolAdapter:
             session_id=session_id,
             metadata=metadata,
             memory_service=self.memory_service,
+            confirm=bool(replay_confirmation_metadata),
         )

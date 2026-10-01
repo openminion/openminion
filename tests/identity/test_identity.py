@@ -695,6 +695,67 @@ def test_skill_posture_changes_profile_version_and_validates() -> None:
     identity.close()
 
 
+def test_profile_version_preserves_behavioral_list_order() -> None:
+    identity = IdentityCtl(store=InMemoryIdentityStore())
+    profile = _profile(agent_id="ordered-agent")
+    first_version = identity.upsert_profile(profile)
+    reordered = profile.model_copy(
+        update={
+            "role": profile.role.model_copy(
+                update={
+                    "responsibilities": list(reversed(profile.role.responsibilities))
+                }
+            )
+        }
+    )
+
+    second_version = identity.upsert_profile(reordered)
+
+    assert second_version != first_version
+    assert (
+        identity.render("ordered-agent", purpose="act", max_tokens=180).profile_version
+        == second_version
+    )
+
+
+def test_failed_inheritance_upsert_preserves_previous_rows() -> None:
+    identity = IdentityCtl(store=InMemoryIdentityStore())
+    base = _profile(agent_id="base-agent")
+    identity.upsert_profile(base)
+
+    missing_parent = _profile(agent_id="child-agent").model_copy(
+        update={"inherits": "missing-parent"}
+    )
+    with pytest.raises(ValueError, match="profile not found"):
+        identity.upsert_profile(missing_parent)
+    assert identity.store.get_profile("child-agent") is None
+
+    child = _profile(agent_id="child-agent").model_copy(
+        update={"inherits": "base-agent"}
+    )
+    identity.upsert_profile(child)
+    cyclic_base = base.model_copy(update={"inherits": "child-agent"})
+    with pytest.raises(ValueError, match="inheritance cycle"):
+        identity.upsert_profile(cyclic_base)
+    assert identity.store.get_profile("base-agent").profile.inherits is None
+
+
+def test_delete_rejects_profile_with_inheriting_dependents() -> None:
+    identity = IdentityCtl(store=InMemoryIdentityStore())
+    base = _profile(agent_id="base-agent")
+    child = _profile(agent_id="child-agent").model_copy(
+        update={"inherits": "base-agent"}
+    )
+    identity.upsert_profile(base)
+    identity.upsert_profile(child)
+
+    with pytest.raises(ValueError, match="inherited by: child-agent"):
+        identity.delete_profile("base-agent")
+
+    assert identity.get_profile("base-agent") is not None
+    assert identity.get_profile("child-agent") is not None
+
+
 def test_render_includes_skill_posture_snippets_with_provenance() -> None:
     skillctl = _SkillClient()
     identity = IdentityCtl(store=InMemoryIdentityStore(), skillctl=skillctl)

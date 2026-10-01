@@ -36,7 +36,15 @@ class StateConfig:
 class AuditConfig:
     backend: str = "sqlite_rotated"
     root: str = "~/.a2actl/audit"
+    capture_payloads: bool = False
     retention_days: int = 14
+    archive_retention_days: int = 0
+
+    def __post_init__(self) -> None:
+        self.retention_days, self.archive_retention_days = validate_audit_retention(
+            self.retention_days,
+            self.archive_retention_days,
+        )
 
 
 @dataclass
@@ -83,10 +91,18 @@ def from_base_config(
     home_root: Path,
     data_root: Path,
 ) -> RuntimeConfig:
-    del base_config
     default_state_path, default_audit_root, default_artifact_root = _default_paths(
         home_root, data_root
     )
+    explicit = base_config.module_configs.get("a2a")
+    if explicit is not None:
+        return _runtime_config_from_raw(
+            explicit,
+            default_state_path=default_state_path,
+            default_audit_root=default_audit_root,
+            default_artifact_root=default_artifact_root,
+            data_root=data_root,
+        )
     return _default_runtime_config(
         default_state_path,
         default_audit_root,
@@ -130,6 +146,23 @@ def load_config(path: str | Path | dict[str, Any] | RuntimeConfig) -> RuntimeCon
             raise ValueError("a2actl config must be an object")
         raw = parsed
 
+    return _runtime_config_from_raw(
+        raw,
+        default_state_path=default_state_path,
+        default_audit_root=default_audit_root,
+        default_artifact_root=default_artifact_root,
+        data_root=data_root,
+    )
+
+
+def _runtime_config_from_raw(
+    raw: dict[str, Any],
+    *,
+    default_state_path: str,
+    default_audit_root: str,
+    default_artifact_root: str,
+    data_root: Path | None,
+) -> RuntimeConfig:
     transport = _obj(raw.get("transport"), {})
     storage = _obj(raw.get("storage"), {})
     state = _obj(storage.get("state"), {})
@@ -165,7 +198,9 @@ def load_config(path: str | Path | dict[str, Any] | RuntimeConfig) -> RuntimeCon
             audit=AuditConfig(
                 backend=str(audit.get("backend", "sqlite_rotated")),
                 root=audit_root,
+                capture_payloads=_as_bool(audit.get("capture_payloads"), False),
                 retention_days=int(audit.get("retention_days", 14)),
+                archive_retention_days=int(audit.get("archive_retention_days", 0)),
             ),
         ),
         artifacts=ArtifactConfig(
@@ -192,7 +227,9 @@ def _default_runtime_config(
     return RuntimeConfig(
         storage=StorageConfig(
             state=StateConfig(path=default_state_path),
-            audit=AuditConfig(root=default_audit_root),
+            audit=AuditConfig(
+                root=default_audit_root,
+            ),
         ),
         artifacts=ArtifactConfig(root=default_artifact_root),
     )
@@ -200,6 +237,35 @@ def _default_runtime_config(
 
 def _obj(value: Any, default: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else dict(default)
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"Expected boolean value, got {value!r}")
+
+
+def validate_audit_retention(
+    retention_days: int,
+    archive_retention_days: int,
+) -> tuple[int, int]:
+    retention = int(retention_days)
+    archive = int(archive_retention_days)
+    if not 1 <= retention <= 36_500:
+        raise ValueError("A2A audit retention_days must be between 1 and 36500")
+    if archive != 0 and not retention <= archive <= 36_500:
+        raise ValueError(
+            "A2A audit archive_retention_days must be 0 or between "
+            "retention_days and 36500"
+        )
+    return retention, archive
 
 
 def _default_paths(

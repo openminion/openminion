@@ -7,6 +7,7 @@ import pytest
 
 from openminion.tools.browser import BrowserProviderContext
 from openminion.tools.browser.models import (
+    ActionTarget,
     BrowserAction,
     InstanceSpec,
     NavigateOptions,
@@ -109,9 +110,9 @@ class _FakePage:
         self.events.append(("inner_text", selector, timeout))
         return "hello world"
 
-    def screenshot(self, full_page: bool = True) -> bytes:
-        self.events.append(("screenshot", full_page))
-        return b"png"
+    def screenshot(self, full_page: bool = True, **kwargs) -> bytes:
+        self.events.append(("screenshot", full_page, kwargs))
+        return b"jpeg" if kwargs.get("type") == "jpeg" else b"png"
 
     def pdf(self) -> bytes:
         self.events.append(("pdf",))
@@ -246,8 +247,11 @@ def test_lifecycle_snapshot_action_and_artifacts(tmp_path: Path) -> None:
 
     upload_file = tmp_path / "upload.txt"
     upload_file.write_text("ok", encoding="utf-8")
-    uploaded = provider.upload(
-        tab_id=tab_id, files=[str(upload_file)], selector="#file"
+    uploaded = provider.tab_upload(
+        None,
+        tab_id=tab_id,
+        files=[str(upload_file)],
+        target=ActionTarget(selector="#file"),
     )
     assert uploaded["uploaded"] == ["upload.txt"]
 
@@ -319,7 +323,7 @@ def test_resource_selectors_include_domain_paths_and_upload_reads(
         {
             "op": "tab.upload",
             "url": "https://example.com/login",
-            "options": {"files": ["input/a.txt", "input/b.txt"]},
+            "files": ["input/a.txt", "input/b.txt"],
             "output": {"path": "artifacts/shot.png"},
         }
     )
@@ -533,6 +537,16 @@ def test_provider_supports_canonical_browser_protocol_signatures(
         ctx, tab_id=tab_id, options=OutputOptions(path="shots/example.png")
     )
     assert shot["artifact"]["kind"] == "screenshot"
+    assert shot["artifact"]["mime"] == "image/png"
+
+    jpeg = provider.tab_screenshot(
+        ctx,
+        tab_id=tab_id,
+        options=OutputOptions(path="shots/example.jpg", quality=85),
+    )
+    assert jpeg["artifact"]["path"] == "shots/example.jpg"
+    assert jpeg["artifact"]["mime"] == "image/jpeg"
+    assert (tmp_path / "shots/example.jpg").read_bytes() == b"jpeg"
 
     action = provider.tab_action(
         ctx,

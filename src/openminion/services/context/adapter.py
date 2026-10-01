@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, cast
 
-from openminion.base.config.runtime import resolve_identity_db_from_env
 from openminion.services.config import resolve_services_env, resolve_services_path
 from openminion.services.bootstrap.paths import (
     SERVICES_STATE_DB_FILENAME,
@@ -192,12 +191,13 @@ class ContextCtlGatewayAdapter:
                 purpose=cast(Purpose, purpose),
                 query=query,
                 budgets_override=budgets_override,
+                include_identity=False,
             )
         )
         return [
-            ContextCtlMessage(role=m.role, content=m.content)
-            for m in pack.messages
-            if m.content.strip()
+            ContextCtlMessage(role=message.role, content=message.content)
+            for message in pack.messages
+            if message.content.strip()
         ]
 
     def _ensure_service(self, agent_id: str) -> Any:
@@ -205,6 +205,7 @@ class ContextCtlGatewayAdapter:
             return self._service
 
         from openminion.modules.context.contracts import IdentityClient
+        from openminion.modules.context.identity_client import ContextIdentityClient
         from openminion.modules.context.service import ContextCtlService
 
         identity_ctl: Any | None = None
@@ -214,21 +215,19 @@ class ContextCtlGatewayAdapter:
                 from openminion.modules.identity.storage.store import (
                     SQLiteIdentityStore,
                 )
+                from openminion.modules.identity.config import load_config
                 from openminion.modules.identity.runtime.service import IdentityCtl
-                from openminion.services.identity.bootstrap import (
-                    ensure_default_profile,
-                )
 
-                db_path = str(resolve_identity_db_from_env(env=resolve_services_env()))
+                identity_cfg = load_config(env=resolve_services_env().values)
+                db_path = str(identity_cfg.storage.db_path)
 
                 identity_store = SQLiteIdentityStore(sqlite_path=db_path)
                 identity_ctl = IdentityCtl(store=identity_store)
                 identity_store = None
-                ensure_default_profile(identity_ctl, agent_id, "")
             except ImportError:
-                identity_ctl = _EchoIdentityClient(agent_id=agent_id)
+                identity_ctl = None
 
-            identity_client = cast(IdentityClient, identity_ctl)
+            identity_client = cast(IdentityClient, ContextIdentityClient(identity_ctl))
             session_client = self._session_client
             if session_client is None:
                 self._owned_session_client = _RuntimeMappedSessionClient(
@@ -300,35 +299,6 @@ class ContextCtlGatewayAdapter:
             contextctl_count,
             abs(history_count - contextctl_count),
         )
-
-
-class _EchoIdentityClient:
-    contract_version = "v1"
-
-    def __init__(self, agent_id: str) -> None:
-        self._agent_id = agent_id
-
-    def render(
-        self,
-        *,
-        agent_id: str,
-        purpose: str,
-        max_tokens: int,
-        provider_pref: str | None = None,
-        query_text: str | None = None,
-    ) -> Any:
-        del purpose, max_tokens, provider_pref, query_text
-        from openminion.modules.context.schemas import IdentitySnippet
-
-        return IdentitySnippet(
-            agent_id=agent_id,
-            profile_version="adapter:v0",
-            render_version="adapter:v0",
-            text=f"Agent: {agent_id}",
-        )
-
-    def close(self) -> None:
-        return None
 
 
 class _NullArtifactClient:

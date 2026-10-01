@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from openminion.modules.task import InMemoryTaskCtl, TaskCreateInput
@@ -28,21 +30,35 @@ def test_task_surface_lists_digest_tasks_and_pending_actions() -> None:
     assert payload["pending_actions"][0]["reason"] == "approval needed"
 
 
-def test_task_surface_resolves_pending_action() -> None:
+def test_task_surface_does_not_expose_pending_actions_for_hidden_tasks() -> None:
     ctl = InMemoryTaskCtl()
-    ctl.create_task(TaskCreateInput(task_id="t1", title="Run command"))
+    visible = ctl.create_task(TaskCreateInput(task_id="visible", title="Visible"))
     ctl.record_pending_action(
-        policy_request_id="pr1",
-        cursor=_cursor("t1"),
+        policy_request_id="visible-decision",
+        cursor=_cursor(visible.task_id),
         reason="approval needed",
     )
-
-    result = build_task_surface(ctl, session_id="s1").apply_action(
-        task_id="", action="allow", decision_id="pr1"
+    ctl.record_pending_action(
+        policy_request_id="hidden-decision",
+        cursor=_cursor("hidden"),
+        reason="belongs to another scope",
+    )
+    source = SimpleNamespace(
+        get_digest=lambda **_kwargs: {
+            "tasks_active": [{"task_id": "visible", "title": "Visible"}],
+            "tasks_ready": [],
+        },
+        list_events=ctl.list_events,
     )
 
-    assert result["ok"] is True
-    assert build_task_surface(ctl).list_pending_actions() == []
+    payload = build_task_surface(source, agent_id="agent", session_id="s1").inventory()
+
+    assert [task["id"] for task in payload["tasks"]] == ["visible"]
+    assert [item["decision_id"] for item in payload["pending_actions"]] == [
+        "visible-decision"
+    ]
+    with pytest.raises(ValueError, match="unknown task action"):
+        build_task_surface(source).apply_action(task_id="", action="deny")
 
 
 def test_task_surface_lists_and_controls_lifecycle_tasks() -> None:
@@ -144,6 +160,11 @@ def test_task_surface_projects_schedule_and_bounded_runs(tmp_path) -> None:
         run_id,
         state="failed",
         error={"code": "provider_failed", "message": "unavailable"},
+        output={"delivery": {"state": "failed", "error": "sink unavailable"}},
+        isolated_session_id="result-session",
+    )
+    getattr(manager, "_cron_repository").mark_cron_delivery_target(
+        run_id, target="session:origin"
     )
     manager.reconcile_scheduled_outcomes(record.cron_job_id)
 
@@ -157,6 +178,13 @@ def test_task_surface_projects_schedule_and_bounded_runs(tmp_path) -> None:
     assert task["due_at"].endswith("+00:00")
     assert task["last_run"]["run_id"] == run_id
     assert task["last_run"]["last_error"]["code"] == "provider_failed"
+    assert task["last_run"]["isolated_session_id"] == "result-session"
+    assert task["last_run"]["delivery"] == {
+        "state": "failed",
+        "error": "sink unavailable",
+    }
+    assert task["last_run"]["delivery_targets"] == ["session:origin"]
+    assert task["session_target"] == "isolated"
     assert task["valid_actions"] == ["pause", "cancel"]
 
 
@@ -205,6 +233,69 @@ def test_task_surface_merges_digest_and_lifecycle_sources(tmp_path) -> None:
     }
 
     assert task_ids == {"ordinary-1", "scheduled-1"}
+
+
+def test_task_surface_applies_limit_after_merging_sources(tmp_path) -> None:
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "bounded.db")
+    )
+    for index in range(3):
+        manager.schedule_task(
+            name=f"scheduled-{index}",
+            schedule={"kind": "every", "every_ms": 60_000},
+            payload={"kind": "agentTurn", "message": "work"},
+            agent_id="agent-a",
+            job_id=f"scheduled-{index}",
+        )
+
+    class Source:
+        lifecycle_repository = manager.lifecycle_repository
+        get_task = manager.get_task
+        get_scheduled_job = manager.get_scheduled_job
+        list_scheduled_runs = manager.list_scheduled_runs
+
+        def get_digest(self, *, agent_id: str, session_id: str, limit: int):
+            del agent_id, session_id, limit
+            tasks = [
+                type(
+                    "Task",
+                    (),
+                    {
+                        "task_id": f"ordinary-{index}",
+                        "title": f"ordinary-{index}",
+                        "status": "ACTIVE",
+                        "due_at": None,
+                        "next_step_id": "",
+                        "next_step_title": "",
+                        "metadata": {},
+                    },
+                )()
+                for index in range(3)
+            ]
+            return type(
+                "Digest",
+                (),
+                {"tasks_active": tasks, "tasks_ready": [], "current_task": None},
+            )()
+
+    tasks = build_task_surface(Source(), agent_id="agent-a", limit=2).list_tasks()
+
+    assert len(tasks) == 2
+
+
+def test_task_surface_distinguishes_backend_failure_from_empty_inventory() -> None:
+    class BrokenRepository:
+        def list(self, **kwargs):
+            del kwargs
+            raise RuntimeError("database unavailable")
+
+    class Source:
+        lifecycle_repository = BrokenRepository()
+
+    with pytest.raises(RuntimeError) as excinfo:
+        build_task_surface(Source(), agent_id="agent-a").inventory()
+
+    assert getattr(excinfo.value, "code", None) == "TASK_INVENTORY_UNAVAILABLE"
 
 
 def _cursor(task_id: str):

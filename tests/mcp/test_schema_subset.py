@@ -13,9 +13,67 @@ from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 from openminion.tools.mcp.schemas import (
     MCPArgumentValidationError,
     MCPUnsupportedSchemaError,
+    build_mcp_resource_template_arguments_schema,
+    extract_mcp_header_bindings,
     prepare_mcp_registration_schema,
+    render_mcp_resource_template_uri,
     validate_mcp_arguments,
+    validate_mcp_value,
 )
+
+
+def test_mcp_header_annotations_accept_nested_primitive_properties() -> None:
+    bindings = extract_mcp_header_bindings(
+        {
+            "type": "object",
+            "properties": {
+                "tenant": {"type": "string", "x-mcp-header": "Tenant"},
+                "options": {
+                    "type": "object",
+                    "properties": {
+                        "preview": {
+                            "type": "boolean",
+                            "x-mcp-header": "Preview",
+                        }
+                    },
+                },
+            },
+        }
+    )
+    assert [(item.path, item.header_name) for item in bindings] == [
+        (("tenant",), "Tenant"),
+        (("options", "preview"), "Preview"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {
+            "type": "object",
+            "properties": {"ratio": {"type": "number", "x-mcp-header": "Ratio"}},
+        },
+        {
+            "type": "object",
+            "properties": {
+                "a": {"type": "string", "x-mcp-header": "Tenant"},
+                "b": {"type": "string", "x-mcp-header": "tenant"},
+            },
+        },
+        {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {"type": "string", "x-mcp-header": "Item"},
+                }
+            },
+        },
+    ],
+)
+def test_mcp_header_annotations_reject_invalid_definitions(schema: dict) -> None:
+    with pytest.raises(MCPUnsupportedSchemaError, match="x-mcp-header"):
+        extract_mcp_header_bindings(schema)
 
 
 FIXTURE_SERVER_PATH = (
@@ -109,6 +167,7 @@ def _runtime_config() -> RuntimeConfig:
             MCPServerConfig(
                 name="Fixture",
                 transport="stdio",
+                trusted=True,
                 command=[sys.executable, str(FIXTURE_SERVER_PATH)],
                 request_timeout_seconds=5.0,
                 startup_timeout_seconds=5.0,
@@ -185,6 +244,55 @@ def test_anyof_schema_is_strictly_validated() -> None:
 def test_invalid_json_schema_is_rejected_at_registration() -> None:
     with pytest.raises(MCPUnsupportedSchemaError, match="JSON Schema 2020-12"):
         prepare_mcp_registration_schema({"type": "not-a-json-schema-type"})
+
+
+@pytest.mark.parametrize(
+    ("schema_type", "value"),
+    [
+        ("object", {"status": "ok"}),
+        ("array", ["ok", 2]),
+        ("string", "ok"),
+        ("number", 2.5),
+        ("boolean", True),
+        ("null", None),
+    ],
+)
+def test_json_schema_value_validation_accepts_every_json_value_type(
+    schema_type: str,
+    value,
+) -> None:
+    assert validate_mcp_value(schema={"type": schema_type}, value=value) == value
+
+
+def test_json_schema_value_validation_rejects_schema_mismatch() -> None:
+    with pytest.raises(MCPArgumentValidationError, match="value: .* is not of type"):
+        validate_mcp_value(schema={"type": "array"}, value="not-an-array")
+
+
+def test_input_argument_validation_remains_mapping_only() -> None:
+    with pytest.raises(MCPArgumentValidationError, match="arguments must be an object"):
+        validate_mcp_arguments(schema={"type": "array"}, arguments=["not", "object"])
+
+
+def test_resource_template_values_are_percent_encoded() -> None:
+    assert (
+        render_mcp_resource_template_uri(
+            uri_template="file://fixture/{slug}.md",
+            arguments={"slug": "space/and-unicode-é"},
+        )
+        == "file://fixture/space%2Fand-unicode-%C3%A9.md"
+    )
+
+
+@pytest.mark.parametrize(
+    "template",
+    ["file://fixture/{+path}", "file://fixture/{name*}", "file://fixture/{a,b}"],
+)
+def test_resource_template_rejects_unsupported_rfc6570_expressions(
+    template: str,
+) -> None:
+    with pytest.raises(MCPUnsupportedSchemaError, match="RFC 6570"):
+        build_mcp_resource_template_arguments_schema(template)
 
 
 def test_json_schema_2020_12_references_and_composition_are_supported() -> None:

@@ -6,7 +6,6 @@ from http import HTTPStatus
 from urllib.parse import parse_qs, unquote
 
 from openminion.api.operations.tasks import (
-    apply_pending_action,
     apply_task_action,
     create_task,
 )
@@ -18,11 +17,11 @@ from .contracts import (
     exception_route_result,
     runtime_unavailable_route_result,
 )
+from .task_responses import task_runtime_error, task_scope_denied
 
 _TASKS_RE = re.compile(r"/v1/tasks")
 _TASK_ACTION_RE = re.compile(r"/v1/tasks/([^/]+)/(pause|resume|cancel)")
 _TASK_RE = re.compile(r"/v1/tasks/([^/]+)")
-_PENDING_ACTION_RE = re.compile(r"/v1/tasks/pending/([^/]+)/(allow|deny)")
 
 
 @dataclass(frozen=True)
@@ -50,14 +49,6 @@ def handle_request(
         return _apply_task_action(
             ctx,
             task_id=unquote(m.group(1)),
-            action=m.group(2),
-            path=path,
-            query=query,
-        )
-    if method_name == "POST" and (m := _PENDING_ACTION_RE.fullmatch(path)):
-        return _apply_pending_action(
-            ctx,
-            decision_id=unquote(m.group(1)),
             action=m.group(2),
             path=path,
             query=query,
@@ -93,7 +84,7 @@ def _create_task(
             retryable=False,
         )
     except (AttributeError, TypeError, RuntimeError) as exc:
-        return _task_error(exc)
+        return task_runtime_error(exc)
     return RouteResult(
         status=HTTPStatus.OK if payload["deduped"] else HTTPStatus.CREATED,
         payload=payload,
@@ -126,7 +117,7 @@ def _list_tasks(ctx: APIRouteContext, *, path: str, query: str | None) -> RouteR
             ),
         )
     except (AttributeError, TypeError, RuntimeError) as exc:
-        return _task_error(exc)
+        return task_runtime_error(exc)
 
 
 def _show_task(
@@ -146,9 +137,9 @@ def _show_task(
             limit=options.limit,
         )
     except PermissionError as exc:
-        return _task_scope_denied(exc, task_id=task_id)
+        return task_scope_denied(exc, task_id=task_id)
     except (AttributeError, TypeError, RuntimeError) as exc:
-        return _task_error(exc)
+        return task_runtime_error(exc)
     if task is None:
         return exception_route_result(
             HTTPStatus.NOT_FOUND,
@@ -184,7 +175,7 @@ def _apply_task_action(
         )
         return RouteResult(status=HTTPStatus.OK, payload=payload)
     except PermissionError as exc:
-        return _task_scope_denied(exc, task_id=task_id)
+        return task_scope_denied(exc, task_id=task_id)
     except KeyError as exc:
         return exception_route_result(
             HTTPStatus.NOT_FOUND,
@@ -194,58 +185,21 @@ def _apply_task_action(
             retryable=False,
         )
     except (ValueError, NotImplementedError) as exc:
+        code = str(getattr(exc, "code", "") or "invalid_task_action")
+        typed_details = getattr(exc, "details", None)
         return exception_route_result(
             HTTPStatus.BAD_REQUEST,
-            code="invalid_task_action",
+            code=code,
             exc=exc,
-            details={"task_id": task_id, "action": action},
+            details=(
+                dict(typed_details)
+                if isinstance(typed_details, dict)
+                else {"task_id": task_id, "action": action}
+            ),
             retryable=False,
         )
     except (AttributeError, TypeError, RuntimeError) as exc:
-        return _task_error(exc)
-
-
-def _apply_pending_action(
-    ctx: APIRouteContext,
-    *,
-    decision_id: str,
-    action: str,
-    path: str,
-    query: str | None,
-) -> RouteResult:
-    if ctx.runtime is None:
-        return runtime_unavailable_route_result(path=path, exc="Runtime not available.")
-    try:
-        options = _query_options(query)
-        payload = apply_pending_action(
-            runtime=ctx.runtime,
-            decision_id=decision_id,
-            action=action,
-            agent_id=options.agent_id,
-            session_id=options.session_id,
-            limit=options.limit,
-        )
-        return RouteResult(status=HTTPStatus.OK, payload=payload)
-    except (ValueError, NotImplementedError) as exc:
-        return exception_route_result(
-            HTTPStatus.BAD_REQUEST,
-            code="invalid_task_action",
-            exc=exc,
-            details={"decision_id": decision_id, "action": action},
-            retryable=False,
-        )
-    except (AttributeError, TypeError, RuntimeError) as exc:
-        return _task_error(exc)
-
-
-def _task_error(exc: Exception) -> RouteResult:
-    return exception_route_result(
-        HTTPStatus.INTERNAL_SERVER_ERROR,
-        code="task_error",
-        exc=exc,
-        details={},
-        retryable=False,
-    )
+        return task_runtime_error(exc)
 
 
 def _first_query_value(params: dict[str, list[str]], key: str) -> str:
@@ -258,16 +212,6 @@ def _agent_id_required() -> RouteResult:
         code="agent_id_required",
         exc=ValueError("agent_id query parameter is required"),
         details={},
-        retryable=False,
-    )
-
-
-def _task_scope_denied(exc: PermissionError, *, task_id: str) -> RouteResult:
-    return exception_route_result(
-        HTTPStatus.FORBIDDEN,
-        code="task_scope_denied",
-        exc=exc,
-        details={"task_id": task_id},
         retryable=False,
     )
 

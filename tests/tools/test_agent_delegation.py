@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -31,6 +33,13 @@ from openminion.modules.tool.contracts.display_names import (
 )
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.runtime.context import RuntimeContext
+from openminion.modules.task import (
+    TaskManager,
+    build_autonomy_run,
+    build_project_run_projection,
+    save_project_run_checkpoint,
+)
+from openminion.modules.task.project import checkpoints as project_checkpoints
 from openminion.tools.agent.plugin import (
     AgentGetArgs,
     AgentListArgs,
@@ -40,6 +49,7 @@ from openminion.tools.agent.plugin import (
     _h_task_delegate,
 )
 from openminion.tools.agent.registrar import REGISTRAR
+from tests.artifact.utils import artifact_ctl
 
 
 def test_canonical_tool_ids_registered() -> None:
@@ -139,6 +149,16 @@ def test_task_delegate_timeout_bounds() -> None:
         TaskDelegateArgs(agent_id="x", instruction="y", timeout_seconds=0)
     with pytest.raises(Exception):
         TaskDelegateArgs(agent_id="x", instruction="y", timeout_seconds=99_999)
+
+
+def test_code_bearing_delegate_requires_sync_mode() -> None:
+    with pytest.raises(Exception):
+        TaskDelegateArgs(
+            mode="async",
+            agent_id="x",
+            instruction="edit files",
+            code_bearing=True,
+        )
 
 
 def _ctx_without_storage() -> SimpleNamespace:
@@ -399,6 +419,7 @@ def _ctx_with_seam(seam: Any) -> SimpleNamespace:
         env={},
         a2a_delegate_api=seam,
         workspace=Path("/workspace"),
+        session_id="session-from-context",
     )
 
 
@@ -455,6 +476,371 @@ def test_task_delegate_happy_path_maps_seam_result() -> None:
         "workspace_root": "/workspace",
         "cwd": "/workspace",
     }
+
+
+def test_tool_adapter_binds_code_delegate_to_project_worktree_and_verifier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openminion.modules.brain.execution.worktree_children import (
+        load_child_worktree_record,
+    )
+    from openminion.modules.tool.runtime.delegation import A2ADelegateResult
+    from openminion.modules.task.project.verification import (
+        run_project_verification_commands,
+    )
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    (repository / "value.py").write_text("VALUE = 0\n", encoding="utf-8")
+    (repository / "verify.py").write_text(
+        "from value import VALUE\nassert VALUE == 1\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-qm",
+            "seed",
+        ],
+        cwd=repository,
+        check=True,
+    )
+    manager = TaskManager.for_lifecycle_db(db_path=tmp_path / "task.db")
+    run = build_autonomy_run(
+        goal_text="Set VALUE to 1",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref=f"local:{repository}",
+        max_iterations=2,
+        verification_commands=(f"{sys.executable} verify.py",),
+        verification_timeout_seconds=17,
+    ).model_copy(update={"task_id": "task-1"})
+    manager.create_task(
+        session_id=run.session_id,
+        mode_name="project",
+        goal=run.goal_text,
+        agent_id="parent",
+        task_id="task-1",
+    )
+    project_run = build_project_run_projection(
+        run,
+        objective_ledger_ref="objective",
+        evidence_ledger_ref="evidence",
+        resume_packet_ref="resume",
+        operator_decision_log_ref="operator-decisions",
+        capability_plan_ref="capabilities",
+        metrics_summary_ref="metrics",
+    )
+    save_project_run_checkpoint(
+        manager,
+        project_run,
+        checkpoint_id="checkpoint-1",
+        payload=project_checkpoints.initial_repository_lifecycle_payload(
+            run,
+            project_run,
+            launch_approved=True,
+            verification_commands=run.execution_selectors.verification_commands,
+        ),
+    )
+
+    delegate_timeouts: list[int] = []
+    verifier_timeouts: list[int] = []
+
+    def run_verifier(commands, *, workspace, timeout_seconds):  # noqa: ANN001
+        verifier_timeouts.append(timeout_seconds)
+        return run_project_verification_commands(
+            commands,
+            workspace=workspace,
+            timeout_seconds=timeout_seconds,
+        )
+
+    monkeypatch.setattr(
+        "openminion.tools.agent.plugin.run_project_verification_commands",
+        run_verifier,
+    )
+
+    class _Seam:
+        def delegate(self, **kwargs):
+            delegate_timeouts.append(kwargs["timeout_seconds"])
+            child = Path(kwargs["workspace_root"])
+            (child / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            return A2ADelegateResult(
+                ok=True,
+                status="success",
+                content="implemented",
+                target_agent_id="implementer",
+                trace_id="delegate-trace",
+            )
+
+        def review_readonly(self, **kwargs):
+            return A2ADelegateResult(
+                ok=True,
+                status="success",
+                content="approved",
+                target_agent_id=kwargs["reviewer_agent_id"],
+                outputs={
+                    "review_receipt": {
+                        "passed": True,
+                        "reviewer_agent_id": kwargs["reviewer_agent_id"],
+                        "target_digest": kwargs["target_digest"],
+                        "bundle_ref": kwargs["bundle_ref"],
+                        "verifier_refs": kwargs["verifier_refs"],
+                    }
+                },
+            )
+
+    with artifact_ctl(tmp_path) as ctl:
+        adapter = ToolAdapter(
+            workspace_root=tmp_path,
+            artifactctl=ctl,
+            a2a_delegate_api=_Seam(),
+            agent_query=lambda: [
+                {"agent_id": "implementer"},
+                {"agent_id": "reviewer"},
+            ],
+            task_manager=manager,
+            agent_id="parent",
+        )
+        result = adapter.execute(
+            command={
+                "tool_name": "task.delegate",
+                "command_id": "delegate-code",
+                "args": {
+                    "mode": "sync",
+                    "agent_id": "implementer",
+                    "instruction": "Set VALUE to 1.",
+                    "code_bearing": True,
+                    "timeout_seconds": 31,
+                },
+                "inputs": {"permission_mode": "bypass"},
+                "meta": {"orchestration": {"task_backed_task_id": "task-1"}},
+            },
+            session_id="session-1",
+            trace_id="turn-1",
+        )
+        assert result["status"] == "success", result
+        artifact = result["outputs"]["child_artifact"]
+        review = adapter.execute(
+            command={
+                "tool_name": "task.delegate",
+                "command_id": "review-code",
+                "args": {
+                    "mode": "review",
+                    "agent_id": "reviewer",
+                    "instruction": "Review the exact child change.",
+                    "child_artifact": artifact,
+                    "review_criteria": ["VALUE is set to 1"],
+                },
+                "inputs": {"permission_mode": "bypass"},
+            },
+            session_id="session-1",
+            trace_id="turn-2",
+        )
+        assert review["status"] == "success", review
+        accepted = adapter.execute(
+            command={
+                "tool_name": "task.delegate",
+                "command_id": "accept-code",
+                "args": {"mode": "accept", "child_artifact": artifact},
+                "inputs": {"permission_mode": "bypass"},
+            },
+            session_id="session-1",
+            trace_id="turn-3",
+        )
+        assert accepted["status"] == "success", accepted
+        record = load_child_worktree_record(ctl, artifact["record_alias"])
+
+    manager.close()
+    assert record["validation"]["passed"] is True
+    assert record["integration_status"] == "accepted"
+    assert record["cleaned_up"] is True
+    assert (repository / "value.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert delegate_timeouts == [31]
+    assert verifier_timeouts == [17]
+
+
+def test_code_bearing_delegate_releases_worktree_when_delegate_raises(
+    tmp_path: Path, monkeypatch
+) -> None:
+    released = []
+    lease = SimpleNamespace(
+        worktree=tmp_path / "child",
+        isolator=SimpleNamespace(release=lambda: released.append(True)),
+    )
+    checkpoint = SimpleNamespace(
+        project_run=SimpleNamespace(
+            workspace_ref=f"local:{tmp_path}",
+            execution_selectors=SimpleNamespace(
+                verification_commands=(f"{sys.executable} verify.py",),
+                verification_timeout_seconds=17,
+            ),
+        )
+    )
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(
+        "openminion.tools.agent.plugin.allocate_delegated_worktree",
+        lambda **_kwargs: lease,
+    )
+    monkeypatch.setattr(
+        "openminion.tools.agent.plugin.load_latest_project_checkpoint",
+        lambda *_args, **_kwargs: checkpoint,
+    )
+    monkeypatch.setattr(
+        "openminion.tools.agent.plugin.repository_project_launch_approved",
+        lambda _checkpoint: True,
+    )
+
+    class _Seam:
+        def delegate(self, **_kwargs):
+            raise RuntimeError("delegate crashed")
+
+    with pytest.raises(RuntimeError, match="delegate crashed"):
+        _h_task_delegate(
+            {
+                "mode": "sync",
+                "agent_id": "implementer",
+                "instruction": "Edit files.",
+                "code_bearing": True,
+            },
+            cast(
+                RuntimeContext,
+                SimpleNamespace(
+                    a2a_delegate_api=_Seam(),
+                    artifactctl=object(),
+                    policy=SimpleNamespace(raw={}),
+                    workspace=tmp_path,
+                    task_manager=object(),
+                    project_task_id="task-1",
+                ),
+            ),
+        )
+
+    assert released == [True]
+
+
+def test_code_bearing_delegate_requires_project_artifact_owner_and_verifier(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class _Seam:
+        def delegate(self, **_kwargs):
+            raise AssertionError("delegation must not start")
+
+    args = {
+        "mode": "sync",
+        "agent_id": "implementer",
+        "instruction": "Edit files.",
+        "code_bearing": True,
+    }
+    with pytest.raises(ToolRuntimeError) as missing_artifact:
+        _h_task_delegate(
+            args,
+            cast(
+                RuntimeContext,
+                SimpleNamespace(
+                    a2a_delegate_api=_Seam(),
+                    artifactctl=None,
+                    policy=SimpleNamespace(raw={}),
+                ),
+            ),
+        )
+    assert missing_artifact.value.details["reason_code"] == "artifactctl_unavailable"
+
+    with pytest.raises(ToolRuntimeError) as missing_project:
+        _h_task_delegate(
+            args,
+            cast(
+                RuntimeContext,
+                SimpleNamespace(
+                    a2a_delegate_api=_Seam(),
+                    artifactctl=object(),
+                    policy=SimpleNamespace(raw={}),
+                    task_manager=None,
+                    project_task_id="",
+                ),
+            ),
+        )
+    assert missing_project.value.details["reason_code"] == "project_context_unavailable"
+
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(
+        "openminion.tools.agent.plugin.load_latest_project_checkpoint",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            project_run=SimpleNamespace(
+                workspace_ref=f"local:{tmp_path}",
+                execution_selectors=SimpleNamespace(verification_commands=()),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "openminion.tools.agent.plugin.repository_project_launch_approved",
+        lambda _checkpoint: True,
+    )
+    with pytest.raises(ToolRuntimeError) as missing_verifier:
+        _h_task_delegate(
+            args,
+            cast(
+                RuntimeContext,
+                SimpleNamespace(
+                    a2a_delegate_api=_Seam(),
+                    artifactctl=object(),
+                    policy=SimpleNamespace(raw={}),
+                    task_manager=object(),
+                    project_task_id="task-1",
+                ),
+            ),
+        )
+    assert (
+        missing_verifier.value.details["reason_code"] == "project_verifier_unavailable"
+    )
+
+
+def test_code_bearing_delegate_requires_approved_project_launch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(
+        "openminion.tools.agent.plugin.load_latest_project_checkpoint",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            project_run=SimpleNamespace(workspace_ref=f"local:{tmp_path}")
+        ),
+    )
+    monkeypatch.setattr(
+        "openminion.tools.agent.plugin.repository_project_launch_approved",
+        lambda _checkpoint: False,
+    )
+    monkeypatch.setattr(
+        "openminion.tools.agent.plugin.allocate_delegated_worktree",
+        lambda **_kwargs: pytest.fail("unapproved delegation allocated a worktree"),
+    )
+
+    with pytest.raises(ToolRuntimeError) as denied:
+        _h_task_delegate(
+            {
+                "mode": "sync",
+                "agent_id": "implementer",
+                "instruction": "Edit files.",
+                "code_bearing": True,
+            },
+            cast(
+                RuntimeContext,
+                SimpleNamespace(
+                    a2a_delegate_api=object(),
+                    artifactctl=object(),
+                    task_manager=object(),
+                    project_task_id="task-1",
+                ),
+            ),
+        )
+
+    assert denied.value.details["reason_code"] == "project_launch_unapproved"
 
 
 def test_task_delegate_async_mode_returns_task_handle() -> None:
@@ -516,12 +902,26 @@ def test_task_delegate_async_mode_returns_task_handle() -> None:
     }
 
 
-def test_task_delegate_status_resume_and_cancel_use_lifecycle_methods() -> None:
+def test_task_delegate_list_status_result_resume_and_cancel_use_lifecycle_methods() -> (
+    None
+):
     from openminion.modules.tool.runtime.delegation import A2ADelegateResult
 
     calls: list[tuple[str, str]] = []
+    bindings: list[dict[str, str]] = []
 
     class _Seam:
+        def bind_observability(self, **kwargs: str) -> None:
+            bindings.append(dict(kwargs))
+
+        def list_recent(self, *, limit):
+            calls.append(("list", str(limit)))
+            return A2ADelegateResult(
+                ok=True,
+                status="success",
+                outputs={"jobs": [], "count": 0, "limit": limit},
+            )
+
         def status(self, *, task_id):
             calls.append(("status", task_id))
             return A2ADelegateResult(ok=True, status="running", task_id=task_id)
@@ -536,6 +936,19 @@ def test_task_delegate_status_resume_and_cancel_use_lifecycle_methods() -> None:
 
     seam = _Seam()
 
+    assert (
+        _h_task_delegate(  # type: ignore[arg-type]
+            {"mode": "list", "limit": 10}, _ctx_with_seam(seam)
+        )["outputs"]["limit"]
+        == 10
+    )
+
+    assert (
+        _h_task_delegate(  # type: ignore[arg-type]
+            {"mode": "result", "task_id": "job-1"}, _ctx_with_seam(seam)
+        )["status"]
+        == "running"
+    )
     assert (
         _h_task_delegate(  # type: ignore[arg-type]
             {"mode": "status", "task_id": "job-1"}, _ctx_with_seam(seam)
@@ -555,10 +968,14 @@ def test_task_delegate_status_resume_and_cancel_use_lifecycle_methods() -> None:
         == "canceled"
     )
     assert calls == [
+        ("list", "10"),
+        ("status", "job-1"),
         ("status", "job-1"),
         ("resume", "job-1"),
         ("cancel", "job-1"),
     ]
+    assert len(bindings) == 5
+    assert {binding["session_id"] for binding in bindings} == {"session-from-context"}
 
 
 def test_task_delegate_reject_requires_durable_record_alias() -> None:

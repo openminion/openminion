@@ -99,6 +99,8 @@ def test_render_context_report_explains_empty_usage() -> None:
 
     assert "none observed in this terminal yet" in body
     assert "use /tokens for saved session totals" in body
+    assert "grid" not in body
+    assert "budget   8000 tokens (runtime_cap)" in body
     assert "turn —" not in body
 
 
@@ -331,6 +333,16 @@ def test_render_tasks_report_applies_exact_lifecycle_actions(tmp_path) -> None:
         payload={"kind": "agentTurn", "message": "work"},
         agent_id="agent-1",
     )
+    repository = getattr(manager, "_cron_repository")
+    run_id = repository.trigger_cron_run(record.cron_job_id)
+    repository.finish_cron_run(
+        run_id,
+        state="finished",
+        summary="done",
+        output={"delivery": {"state": "succeeded"}},
+        isolated_session_id="result-session",
+    )
+    repository.mark_cron_delivery_target(run_id, target="session:origin")
     runtime = type(
         "Runtime",
         (),
@@ -353,8 +365,85 @@ def test_render_tasks_report_applies_exact_lifecycle_actions(tmp_path) -> None:
     assert "status: WAITING" in paused
     assert "schedule: every:60000ms" in paused
     assert "scheduler: ready" in paused
+    assert "result_session: result-session" in paused
+    assert "delivery: succeeded" in paused
+    assert "delivery_targets: session:origin" in paused
     assert "status: ACTIVE" in resumed
     assert "status: CANCELED" in cancelled
+
+
+def test_render_tasks_report_lists_scheduler_and_exact_pending_actions() -> None:
+    from datetime import datetime, timezone
+
+    from openminion.modules.task import (
+        InMemoryTaskCtl,
+        ResumePointer,
+        TaskCreateInput,
+    )
+
+    ctl = InMemoryTaskCtl()
+    ctl.create_task(TaskCreateInput(task_id="task-1", title="Approve work"))
+    ctl.record_pending_action(
+        policy_request_id="decision-1",
+        cursor=ResumePointer(
+            task_id="task-1",
+            plan_id="plan-1",
+            step_id="step-1",
+            trace_id=f"trace:{datetime.now(timezone.utc).isoformat()}",
+        ),
+        reason="approval needed",
+    )
+    runtime = type(
+        "Runtime",
+        (),
+        {
+            "task_ctl": ctl,
+            "agent_id": "agent-1",
+            "session_id": "session-1",
+            "scheduler_readiness": lambda self: {
+                "state": "degraded",
+                "check_command": "openminion status",
+            },
+        },
+    )()
+
+    listing = render_tasks_report(runtime)
+
+    assert "scheduler: degraded" in listing
+    assert "openminion status" in listing
+    assert "decision-1" in listing
+    assert (
+        "task not found: allow decision-1"
+        in render_tasks_report(runtime, "allow decision-1").lower()
+    )
+    assert "decision-1" in render_tasks_report(runtime)
+
+
+def test_render_tasks_report_reports_inventory_backend_failure() -> None:
+    class BrokenRepository:
+        def list(self, **kwargs):
+            del kwargs
+            raise RuntimeError("database unavailable")
+
+    class BrokenManager:
+        lifecycle_repository = BrokenRepository()
+
+        def get_task(self, task_id: str):
+            del task_id
+            return None
+
+    runtime = type(
+        "Runtime",
+        (),
+        {
+            "task_manager": BrokenManager(),
+            "agent_id": "agent-1",
+            "session_id": "session-1",
+            "scheduler_readiness": lambda self: {"state": "unknown"},
+        },
+    )()
+
+    assert "TASK_INVENTORY_UNAVAILABLE" in render_tasks_report(runtime)
 
 
 def test_effort_and_statusline_handlers_delegate_to_runtime() -> None:

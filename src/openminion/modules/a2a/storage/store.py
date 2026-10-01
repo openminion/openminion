@@ -335,6 +335,15 @@ class _StateStoreMixin(StateStore):
         if filter_by.get("method"):
             where.append("method = ?")
             values.append(str(filter_by["method"]))
+        if filter_by.get("owner_agent_id"):
+            where.append("owner_agent_id = ?")
+            values.append(str(filter_by["owner_agent_id"]))
+        if filter_by.get("session_id"):
+            where.append(
+                "idempotency_scope = "
+                "('job.start:' || agent_id || ':' || method || ':' || ?)"
+            )
+            values.append(str(filter_by["session_id"]))
 
         sql = (
             "SELECT task_id, trace_id, idempotency_key, idempotency_scope, agent_id, method, state, current_step, progress, "
@@ -343,7 +352,10 @@ class _StateStoreMixin(StateStore):
         )
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY created_at ASC"
+        if filter_by.get("order") == "recent":
+            sql += " ORDER BY created_at DESC, task_id DESC"
+        else:
+            sql += " ORDER BY created_at ASC"
 
         limit = int(filter_by.get("limit", 500))
         sql += " LIMIT ?"

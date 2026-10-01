@@ -124,6 +124,35 @@ def test_a2a_audit_store_round_trip(a2a_audit_store_case) -> None:
     assert [row.msg_id for row in range_rows] == ["msg-1", "msg-2"]
 
 
+def test_a2a_audit_store_selects_newest_errors_after_filtering(
+    a2a_audit_store_case,
+) -> None:
+    _backend, store = a2a_audit_store_case
+    start = datetime.now(timezone.utc) - timedelta(minutes=5)
+    records = (
+        ("success-1", None),
+        ("success-2", None),
+        ("error-1", "FAILED_1"),
+        ("error-2", "FAILED_2"),
+        ("error-3", "FAILED_3"),
+    )
+    for offset, (msg_id, error_code) in enumerate(records):
+        store.append_audit(
+            _audit_record(
+                ts=(start + timedelta(minutes=offset)).isoformat(),
+                msg_id=msg_id,
+                trace_id=f"trace-{msg_id}",
+                method="job.status",
+                status="FAILED" if error_code else "SUCCESS",
+                error_code=error_code,
+            )
+        )
+
+    assert [
+        row.msg_id for row in store.query_audit({"error_only": True, "limit": 2})
+    ] == ["error-2", "error-3"]
+
+
 @pytest.mark.postgres
 def test_a2a_audit_store_postgres_retention_and_migration(tmp_path: Path) -> None:
     with open_postgres_record_store("sfc_a2a_audit_retention") as (
@@ -165,6 +194,51 @@ def test_a2a_audit_store_postgres_retention_and_migration(tmp_path: Path) -> Non
             assert [row.msg_id for row in store.query_audit({"limit": 10})] == [
                 "new-msg"
             ]
+        finally:
+            store.close()
+
+
+@pytest.mark.postgres
+def test_postgres_uses_archive_retention_as_effective_finite_window(
+    tmp_path: Path,
+) -> None:
+    with open_postgres_record_store("sfc_a2a_audit_archive_window") as (
+        _record_store,
+        schema_name,
+    ):
+        del _record_store
+        store = build_a2a_audit_store(
+            config=build_postgres_storage_config(
+                tmp_path=tmp_path,
+                schema_name=schema_name,
+                sqlite_name="audit.db",
+            ),
+            audit_root=tmp_path / "audit",
+            retention_days=1,
+            archive_retention_days=7,
+        )
+        try:
+            retained_ts = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+            expired_ts = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+            store.append_audit(
+                _audit_record(
+                    ts=retained_ts,
+                    msg_id="retained-msg",
+                    trace_id="trace-retained",
+                    method="job.retained",
+                )
+            )
+            store.append_audit(
+                _audit_record(
+                    ts=expired_ts,
+                    msg_id="expired-msg",
+                    trace_id="trace-expired",
+                    method="job.expired",
+                )
+            )
+
+            assert store.effective_retention_days == 7
+            assert [row.msg_id for row in store.query_audit()] == ["retained-msg"]
         finally:
             store.close()
 

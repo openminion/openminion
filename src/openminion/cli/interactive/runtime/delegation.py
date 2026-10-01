@@ -16,6 +16,7 @@ class RuntimeDelegationMixin:
         instruction: str = "",
         task_id: str = "",
         timeout_seconds: int = 120,
+        limit: int = 20,
         child_artifact: dict[str, Any] | None = None,
         workspace_root: str = "",
         review_criteria: tuple[str, ...] = (),
@@ -28,25 +29,29 @@ class RuntimeDelegationMixin:
         )
 
         agent_service = self._rt.resolve_agent_service(self.agent_id)
-        return run_agent_delegate_request(
-            config=self._rt.config,
-            home_root=self._rt.home_root,
-            parent_agent_id=self.agent_id,
-            runtime_resolver=lambda: self._rt,
-            approval_callback=approval_callback,
-            workspace_root=self.working_dir,
-            cwd=self.working_dir,
-            artifactctl=getattr(agent_service, "artifactctl", None),
-            request=AgentDelegateRequest(
-                mode=mode,
-                target_agent_id=target_agent_id,
-                instruction=instruction,
-                task_id=task_id,
-                timeout_seconds=timeout_seconds,
-                child_artifact=child_artifact,
-                workspace_root=workspace_root or self.working_dir,
-                review_criteria=review_criteria,
-                repository_instructions=repository_instructions,
+        return dict(
+            run_agent_delegate_request(
+                config=self._rt.config,
+                home_root=self._rt.home_root,
+                parent_agent_id=self.agent_id,
+                runtime_resolver=lambda: self._rt,
+                approval_callback=approval_callback,
+                workspace_root=self.working_dir,
+                cwd=self.working_dir,
+                artifactctl=getattr(agent_service, "artifactctl", None),
+                session_id=self.session_id,
+                request=AgentDelegateRequest(
+                    mode=mode,
+                    target_agent_id=target_agent_id,
+                    instruction=instruction,
+                    task_id=task_id,
+                    timeout_seconds=timeout_seconds,
+                    limit=limit,
+                    child_artifact=child_artifact,
+                    workspace_root=workspace_root or self.working_dir,
+                    review_criteria=review_criteria,
+                    repository_instructions=repository_instructions,
+                ),
             ),
         )
 

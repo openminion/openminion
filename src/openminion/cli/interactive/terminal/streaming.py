@@ -158,12 +158,12 @@ class TerminalTurnHandle:
                 auto_refresh=True,
             )
             self._live.start(refresh=True)
-        self._refresh_thread = Thread(
-            target=self._run_live_refresh_loop,
-            name="terminal-turn-refresh",
-            daemon=True,
-        )
-        self._refresh_thread.start()
+            self._refresh_thread = Thread(
+                target=self._run_live_refresh_loop,
+                name="terminal-turn-refresh",
+                daemon=True,
+            )
+            self._refresh_thread.start()
         return self
 
     def append_token(self, s: str) -> None:

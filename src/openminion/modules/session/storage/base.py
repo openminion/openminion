@@ -218,7 +218,12 @@ class SessionStore(ABC):
 
     @abstractmethod
     def list_cron_jobs(
-        self, *, enabled: bool | None = None, limit: int = 50
+        self,
+        *,
+        enabled: bool | None = None,
+        limit: int = 50,
+        agent_id: str | None = None,
+        include_unowned: bool = False,
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
@@ -255,6 +260,11 @@ class SessionStore(ABC):
         job_id: str | None = None,
         limit: int = 100,
         states: list[str] | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    @abstractmethod
+    def list_unresolved_task_runs(
+        self, *, limit: int = 100
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod

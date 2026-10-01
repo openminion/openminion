@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+import tempfile
 from typing import Any
 
 
@@ -78,12 +80,29 @@ def compute_tree_sha256(entries: tuple[IdentityLockManifestEntry, ...]) -> str:
 def write_identity_lockfile(
     lockfile_path: str | Path, lockfile: IdentityLockfile
 ) -> None:
-    path = Path(lockfile_path).expanduser().resolve()
+    path = Path(lockfile_path).expanduser().absolute()
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = json.dumps(
         lockfile.to_payload(), indent=2, sort_keys=True, ensure_ascii=True
     )
-    path.write_text(f"{serialized}\n", encoding="utf-8")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(f"{serialized}\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
 
 
 def read_identity_lockfile(lockfile_path: str | Path) -> IdentityLockfile:

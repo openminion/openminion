@@ -40,6 +40,10 @@ class IdentityStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def restore_profile(self, profile: StoredProfile) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def update_profile_version(self, agent_id: str, profile_version: str) -> None:
         raise NotImplementedError
 

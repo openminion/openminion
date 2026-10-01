@@ -125,6 +125,12 @@ class CronStoreProtocol(Protocol):
         *,
         enabled: bool | None = None,
         limit: int = 50,
+        agent_id: str | None = None,
+        include_unowned: bool = False,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_unresolved_task_runs(
+        self, *, limit: int = 100
     ) -> list[dict[str, Any]]: ...
 
     def delete_cron_job(self, job_id: str) -> None: ...

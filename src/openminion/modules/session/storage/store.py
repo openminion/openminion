@@ -64,6 +64,7 @@ from .components import (
     get_slice as _get_slice_facade,
     list_cron_jobs as _list_cron_jobs_facade,
     list_cron_runs as _list_cron_runs_facade,
+    list_unresolved_task_runs as _list_unresolved_task_runs_facade,
     list_run_records as _list_run_records_facade,
     list_run_records_by_invocation as _list_run_records_by_invocation_facade,
     list_run_records_by_thread as _list_run_records_by_thread_facade,
@@ -386,6 +387,7 @@ class SQLiteSessionStore(SessionStore):
     delete_cron_job = _delete_cron_job_facade
     trigger_cron_run = _trigger_cron_run_facade
     list_cron_runs = _list_cron_runs_facade
+    list_unresolved_task_runs = _list_unresolved_task_runs_facade
     enqueue_due_cron_runs = _enqueue_due_cron_runs_facade
     acquire_cron_runs = _acquire_cron_runs_facade
     renew_cron_run_lease = _renew_cron_run_lease_facade

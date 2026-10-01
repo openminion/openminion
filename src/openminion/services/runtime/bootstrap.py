@@ -597,6 +597,16 @@ def _build_a2a_runtime_apis(
     )
 
 
+def _build_brain_task_manager(service: Any, cron_repository: Any) -> Any:
+    from openminion.modules.task import TaskManager
+    from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
+
+    task_db_path = (
+        service._context.home_paths.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH
+    )
+    return TaskManager.from_cron_repository(cron_repository, db_path=task_db_path)
+
+
 def build_brain_runner_bundle(service: Any) -> Any:
     """BBSE-02: canonical bootstrap path for the bridge's runner bundle."""
     import openminion.services.brain.service as bridge_module
@@ -610,7 +620,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
     )
     from openminion.modules.brain.storage.goals import SQLiteGoalStore
     from openminion.modules.brain.storage.missions import SQLiteMissionStateStore
-    from openminion.modules.task import TaskManager
     from openminion.services.brain.service import _RuntimeProviderAdapter
     from openminion.services.brain.metadata import (
         resolve_agent_budgets,
@@ -736,7 +745,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         telemetryctl=service._telemetryctl,
     )
     cron_repository = create_sqlite_cron_repository(db_path=service.db_path)
-    task_manager = TaskManager.from_cron_repository(cron_repository)
+    task_manager = _build_brain_task_manager(service, cron_repository)
     runtime_handle = service._runtime_handle
     tool_api = bridge_module.create_tool_api(
         mode=service.mode,

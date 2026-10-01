@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import shlex
@@ -11,10 +12,14 @@ from unittest.mock import patch
 import pytest
 
 from openminion.cli.main import main
-from openminion.cli.commands.autonomy_project import run_project_turn
+from openminion.cli.commands.autonomy_project import (
+    apply_resume_overrides,
+    run_project_turn,
+)
 from openminion.cli.parser.base import build_parser
 from openminion.modules.task import (
     AutonomyRunError,
+    AutonomyRunStore,
     TaskLifecycleState,
     TaskManager,
     build_project_run_projection,
@@ -181,6 +186,125 @@ def test_direct_start_persists_goal_and_success_criteria(tmp_path: Path) -> None
     assert objective["source_request"] == goal
     assert objective["success_criteria"] == ["focused tests pass"]
     assert len(objective["criterion_ids"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("waiver_reason", "required_evidence_kinds", "expected"),
+    (
+        (None, ("verification", "repository_status"), ("verification",)),
+        ("approved waiver", ("waiver", "repository_status"), ("waiver",)),
+    ),
+)
+def test_resume_as_research_drops_coding_repository_evidence(
+    tmp_path: Path,
+    waiver_reason: str | None,
+    required_evidence_kinds: tuple[str, ...],
+    expected: tuple[str, ...],
+) -> None:
+    store = AutonomyRunStore(root=tmp_path / "autonomy")
+    run = build_autonomy_run(
+        goal_text="ship",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref=f"local:{tmp_path}#commit=abc;dirty=clean",
+        max_iterations=1,
+        verification_domain="coding",
+        verification_commands=("verify",),
+        verification_waiver_reason=waiver_reason,
+        required_evidence_kinds=required_evidence_kinds,
+    )
+    store.create(run)
+    args = argparse.Namespace(
+        verification_domain="research",
+        verify_command=(),
+    )
+
+    updated = apply_resume_overrides(args, store, run, waiver=None)
+
+    assert updated.execution_selectors.required_evidence_kinds == expected
+
+
+def test_resume_with_verifier_replaces_persisted_waiver(tmp_path: Path) -> None:
+    store = AutonomyRunStore(root=tmp_path / "autonomy")
+    run = build_autonomy_run(
+        goal_text="ship",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref=f"local:{tmp_path}#commit=abc;dirty=clean",
+        max_iterations=1,
+        verification_domain="coding",
+        verification_waiver_reason="approved waiver",
+        required_evidence_kinds=("waiver", "repository_status"),
+    )
+    store.create(run)
+    args = argparse.Namespace(
+        verification_domain=None,
+        verify_command=("verify",),
+    )
+
+    updated = apply_resume_overrides(args, store, run, waiver=None)
+
+    assert updated.execution_selectors.verification_waiver_reason is None
+    assert updated.execution_selectors.required_evidence_kinds == (
+        "verification",
+        "repository_status",
+    )
+
+
+def test_resume_git_coding_project_preserves_explicit_repository_semantics(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    store = AutonomyRunStore(root=tmp_path / "autonomy")
+    run = build_autonomy_run(
+        goal_text="ship",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref=f"local:{tmp_path}#commit=abc;dirty=clean",
+        max_iterations=1,
+        verification_domain="coding",
+        verification_waiver_reason="approved waiver",
+        required_evidence_kinds=("waiver",),
+    )
+    store.create(run)
+
+    updated = apply_resume_overrides(
+        argparse.Namespace(verification_domain=None, verify_command=("verify",)),
+        store,
+        run,
+        waiver=None,
+    )
+
+    assert updated.execution_selectors.required_evidence_kinds == ("verification",)
+
+
+def test_resume_git_research_project_as_coding_requires_repository_status(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    store = AutonomyRunStore(root=tmp_path / "autonomy")
+    run = build_autonomy_run(
+        goal_text="ship",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref=f"local:{tmp_path}#commit=abc;dirty=clean",
+        max_iterations=1,
+        verification_domain="research",
+        verification_commands=("verify",),
+        required_evidence_kinds=("verification",),
+    )
+    store.create(run)
+    args = argparse.Namespace(
+        verification_domain="coding",
+        verify_command=(),
+    )
+
+    updated = apply_resume_overrides(args, store, run, waiver=None)
+
+    assert updated.execution_selectors.required_evidence_kinds == (
+        "verification",
+        "repository_status",
+    )
 
 
 def test_summary_only_replay_does_not_fake_task_plan_completion(tmp_path: Path) -> None:

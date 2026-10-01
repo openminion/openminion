@@ -58,13 +58,16 @@ def _tool_schemas(
 def _append_static_prefix(
     runtime: _SegmentAssemblyRuntime,
     *,
+    include_identity: bool,
     constraints: BuildConstraints,
     prompt_tool_schemas: list[dict[str, Any]],
     identity_text: str,
     prefix_builder: Any,
 ) -> None:
-    identity_block = runtime.fit_section(
-        "identity", identity_text, runtime.budgets.identity_tokens
+    identity_block = (
+        runtime.fit_section("identity", identity_text, runtime.budgets.identity_tokens)
+        if include_identity
+        else ""
     )
     static_content = prefix_builder.build(
         identity_text=identity_block,
@@ -73,6 +76,7 @@ def _append_static_prefix(
             prompt_tool_schemas=prompt_tool_schemas,
         ),
         policy_rules=[f"safety_tag:{tag}" for tag in sorted(constraints.safety_tags)],
+        include_identity=include_identity,
     )
     runtime.bucket_stats["static_prefix"] = {"total_available": 1, "dropped": 0}
     runtime.segments.append(
@@ -249,6 +253,7 @@ def append_prefix_and_mission_segments(
 ) -> None:
     _append_static_prefix(
         runtime,
+        include_identity=request.include_identity,
         constraints=constraints,
         prompt_tool_schemas=prompt_tool_schemas,
         identity_text=identity_text,

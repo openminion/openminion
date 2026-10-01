@@ -303,6 +303,34 @@ class A2actlAdapter:
                 "metrics": _metrics(start),
             }
 
+    def list_tasks(self, *, session_id: str, limit: int = 20) -> dict[str, Any]:
+        owner_agent_id = self._agent_id.strip()
+        bound_session_id = str(session_id or "").strip()
+        if not owner_agent_id or not bound_session_id:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "A2A_DELEGATE_LIST_SCOPE_REQUIRED",
+                    "message": "Delegation listing requires a bound agent and session.",
+                },
+            }
+        runtime = self._ensure_runtime()
+        requested_limit = max(1, min(int(limit), 200))
+        jobs = runtime.list_jobs(
+            {
+                "owner_agent_id": owner_agent_id,
+                "session_id": bound_session_id,
+                "order": "recent",
+                "limit": requested_limit,
+            }
+        )
+        return {
+            "ok": True,
+            "jobs": [_job_record_to_summary(job) for job in jobs],
+            "count": len(jobs),
+            "limit": requested_limit,
+        }
+
     def _require_job_owner(self, job: Any, *, session_id: str) -> None:
         owner = str(getattr(job, "owner_agent_id", "") or "").strip()
         job_scope = str(getattr(job, "idempotency_scope", "") or "").strip()
@@ -313,14 +341,19 @@ class A2actlAdapter:
         if not owner or owner != self._agent_id or job_scope != expected_scope:
             raise PermissionError("A2A job handle does not belong to this agent")
 
-    def _ensure_runtime(self):
+    def _ensure_runtime(self) -> Any:
         if self._runtime is not None:
             return self._runtime
 
         self._bootstrap_a2a_path()
 
         from openminion.modules.a2a.artifacts import LocalArtifactStore
-        from openminion.modules.a2a.config import RuntimeConfig, load_config
+        from openminion.base.config import OpenMinionConfig
+        from openminion.modules.a2a.config import (
+            RuntimeConfig,
+            from_base_config,
+            load_config,
+        )
         from openminion.modules.a2a.policy import PolicyEngine
         from openminion.modules.a2a.runtime import A2ARuntime
         from openminion.modules.a2a.storage import (
@@ -330,8 +363,19 @@ class A2actlAdapter:
             SQLiteStateStore,
         )
 
-        if isinstance(self._config, (str, Path)):
+        if isinstance(self._config, (str, Path, dict, RuntimeConfig)):
             cfg = load_config(self._config)
+        elif isinstance(self._config, OpenMinionConfig) and self._home_root is not None:
+            integrated_data_root = resolve_data_root(
+                self._home_root,
+                data_root=str(self._env.get("OPENMINION_DATA_ROOT", "")).strip()
+                or None,
+            )
+            cfg = from_base_config(
+                base_config=self._config,
+                home_root=self._home_root,
+                data_root=integrated_data_root,
+            )
         else:
             cfg = RuntimeConfig()
 
@@ -362,10 +406,16 @@ class A2actlAdapter:
 
         audit_backend = str(cfg.storage.audit.backend).strip().lower()
         if audit_backend in {"memory", "inmemory"}:
-            audit_store = MemoryAuditStore()
+            audit_store = MemoryAuditStore(
+                capture_payloads=cfg.storage.audit.capture_payloads,
+                retention_days=cfg.storage.audit.retention_days,
+            )
         elif audit_backend in {"sqlite", "sqlite_rotated"}:
             audit_store = SQLiteAuditStore(
-                audit_root, retention_days=cfg.storage.audit.retention_days
+                audit_root,
+                capture_payloads=cfg.storage.audit.capture_payloads,
+                retention_days=cfg.storage.audit.retention_days,
+                archive_retention_days=cfg.storage.audit.archive_retention_days,
             )
         else:
             raise RuntimeError(
@@ -713,6 +763,7 @@ def _delegated_inbound_metadata(
 
 def _job_record_to_response(job: Any) -> dict[str, Any]:
     task_id = str(getattr(job, "task_id", "") or "").strip()
+    trace_id = str(getattr(job, "trace_id", "") or "").strip()
     raw_state = str(getattr(job, "state", "") or "").strip().upper()
     result_inline = getattr(job, "result_inline", None)
     outputs = dict(result_inline) if isinstance(result_inline, dict) else {}
@@ -728,6 +779,7 @@ def _job_record_to_response(job: Any) -> dict[str, Any]:
         return {
             "status": BRAIN_JOB_STATUS_PENDING,
             "task_id": task_id,
+            "trace_id": trace_id,
             "poll_after_ms": 1000,
             "summary": summary or "Async A2A job pending.",
         }
@@ -735,6 +787,7 @@ def _job_record_to_response(job: Any) -> dict[str, Any]:
         return {
             "status": BRAIN_JOB_STATUS_RUNNING,
             "task_id": task_id,
+            "trace_id": trace_id,
             "poll_after_ms": 1000,
             "summary": summary or "Async A2A job running.",
         }
@@ -742,6 +795,7 @@ def _job_record_to_response(job: Any) -> dict[str, Any]:
         return {
             "status": "completed",
             "task_id": task_id,
+            "trace_id": trace_id,
             "summary": summary or "Async A2A job completed.",
             "outputs": outputs,
         }
@@ -749,6 +803,7 @@ def _job_record_to_response(job: Any) -> dict[str, Any]:
         return {
             "status": "cancelled",
             "task_id": task_id,
+            "trace_id": trace_id,
             "summary": summary or "Async A2A job cancelled.",
             "error": normalized_error
             or {"code": "A2A_JOB_CANCELLED", "message": "Job canceled"},
@@ -756,8 +811,24 @@ def _job_record_to_response(job: Any) -> dict[str, Any]:
     return {
         "status": "failed",
         "task_id": task_id,
+        "trace_id": trace_id,
         "summary": summary or "Async A2A job failed.",
         "outputs": outputs,
         "error": normalized_error
         or {"code": "A2A_JOB_FAILED", "message": "Async A2A job failed."},
+    }
+
+
+def _job_record_to_summary(job: Any) -> dict[str, Any]:
+    return {
+        "task_id": str(getattr(job, "task_id", "") or ""),
+        "trace_id": str(getattr(job, "trace_id", "") or ""),
+        "agent_id": str(getattr(job, "agent_id", "") or ""),
+        "method": str(getattr(job, "method", "") or ""),
+        "state": str(getattr(job, "state", "") or ""),
+        "current_step": str(getattr(job, "current_step", "") or ""),
+        "progress": float(getattr(job, "progress", 0.0) or 0.0),
+        "created_at": str(getattr(job, "created_at", "") or ""),
+        "updated_at": str(getattr(job, "updated_at", "") or ""),
+        "heartbeat_at": str(getattr(job, "heartbeat_at", "") or ""),
     }

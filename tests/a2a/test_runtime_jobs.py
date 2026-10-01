@@ -12,7 +12,11 @@ import pytest
 from openminion.modules.a2a.artifacts import LocalArtifactStore
 from openminion.modules.a2a.models import Envelope, JobRecord
 from openminion.modules.a2a.runtime import A2ARuntime
-from openminion.modules.a2a.storage import MemoryAuditStore, SQLiteStateStore
+from openminion.modules.a2a.storage import (
+    MemoryAuditStore,
+    MemoryStateStore,
+    SQLiteStateStore,
+)
 
 
 @pytest.fixture
@@ -190,6 +194,159 @@ def test_cancel_signals_registered_job_handler(root: Path) -> None:
         assert canceled.state == "CANCELED"
         assert stopped.wait(1.0)
         assert not side_effect.is_set()
+    finally:
+        runtime.close(wait=True)
+
+
+def test_cancel_does_not_signal_worker_when_state_update_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_store = MemoryStateStore()
+    runtime = A2ARuntime(
+        state_store=state_store,
+        audit_store=MemoryAuditStore(),
+        recovery_stale_heartbeat_sec=60,
+    )
+    started = threading.Event()
+    release = threading.Event()
+    observed_cancel = threading.Event()
+
+    def job_handler(envelope: Envelope, cancel_event: threading.Event) -> dict:
+        del envelope
+        started.set()
+        assert release.wait(2.0)
+        if cancel_event.is_set():
+            observed_cancel.set()
+        return {"ok": True}
+
+    runtime.register_agent(
+        "worker",
+        ["job."],
+        lambda envelope: {"method": envelope.method},
+        job_handler=job_handler,
+    )
+    request = Envelope.new(
+        from_agent="parent",
+        to_agent="worker",
+        to_capability=None,
+        type="job.start",
+        method="job.run",
+        params={},
+        idempotency_key="cancel-write-failure",
+        timeout_ms=5000,
+    )
+    try:
+        task_id = runtime.job_start(request)
+        assert started.wait(1.0)
+        original_update = state_store.update_job
+
+        def fail_cancel_update(task_id: str, patch: dict) -> JobRecord:
+            if patch.get("state") == "CANCELED":
+                raise RuntimeError("state write failed")
+            return original_update(task_id, patch)
+
+        monkeypatch.setattr(state_store, "update_job", fail_cancel_update)
+        with pytest.raises(RuntimeError, match="state write failed"):
+            runtime.job_cancel(task_id)
+
+        release.set()
+        runtime._futures[task_id].result(timeout=1.0)
+        assert runtime.job_status(task_id).state == "SUCCESS"
+        assert not observed_cancel.is_set()
+    finally:
+        release.set()
+        runtime.close(wait=True)
+
+
+def test_cancel_signals_worker_when_idempotency_write_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_store = MemoryStateStore()
+    runtime = A2ARuntime(
+        state_store=state_store,
+        audit_store=MemoryAuditStore(),
+        recovery_stale_heartbeat_sec=60,
+    )
+    started = threading.Event()
+    release = threading.Event()
+    observed_cancel = threading.Event()
+
+    def job_handler(envelope: Envelope, cancel_event: threading.Event) -> dict:
+        del envelope
+        started.set()
+        assert release.wait(2.0)
+        if cancel_event.is_set():
+            observed_cancel.set()
+        return {"ok": True}
+
+    runtime.register_agent(
+        "worker",
+        ["job."],
+        lambda envelope: {"method": envelope.method},
+        job_handler=job_handler,
+    )
+    request = Envelope.new(
+        from_agent="parent",
+        to_agent="worker",
+        to_capability=None,
+        type="job.start",
+        method="job.run",
+        params={},
+        idempotency_key="cancel-idempotency-failure",
+        timeout_ms=5000,
+    )
+    try:
+        task_id = runtime.job_start(request)
+        assert started.wait(1.0)
+
+        def fail_idempotency_write(*args: object, **kwargs: object) -> None:
+            del args, kwargs
+            raise RuntimeError("idempotency write failed")
+
+        monkeypatch.setattr(
+            state_store,
+            "set_idempotency_result",
+            fail_idempotency_write,
+        )
+        with pytest.raises(RuntimeError, match="idempotency write failed"):
+            runtime.job_cancel(task_id)
+
+        release.set()
+        runtime._futures[task_id].result(timeout=1.0)
+        assert observed_cancel.is_set()
+        assert runtime.job_status(task_id).state == "CANCELED"
+    finally:
+        release.set()
+        runtime.close(wait=True)
+
+
+def test_cancel_does_not_signal_after_terminal_success() -> None:
+    runtime = A2ARuntime(
+        state_store=MemoryStateStore(),
+        audit_store=MemoryAuditStore(),
+        recovery_stale_heartbeat_sec=60,
+    )
+    runtime.register_agent("worker", ["job."], lambda _envelope: {"ok": True})
+    request = Envelope.new(
+        from_agent="parent",
+        to_agent="worker",
+        to_capability=None,
+        type="job.start",
+        method="job.run",
+        params={},
+        idempotency_key="cancel-after-success",
+        timeout_ms=5000,
+    )
+    try:
+        task_id = runtime.job_start(request)
+        runtime._futures[task_id].result(timeout=1.0)
+        cancel_event = threading.Event()
+        runtime._cancel_events[task_id] = cancel_event
+
+        result = runtime.job_cancel(task_id)
+
+        assert result.state == "SUCCESS"
+        assert not cancel_event.is_set()
     finally:
         runtime.close(wait=True)
 

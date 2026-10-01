@@ -65,6 +65,7 @@ def run_agent_operator(args) -> int:
         return agent_inspect(registry, agent_id, as_json=getattr(args, "json", False))
     if action in {
         "delegate",
+        "delegate-list",
         "delegate-status",
         "delegate-resume",
         "delegate-result",
@@ -575,39 +576,52 @@ def add_agent_operator_subcommands(agent_parser: argparse.ArgumentParser) -> Non
     add_json_output_flag(agent_inspect_cmd)
     agent_inspect_cmd.set_defaults(handler=run_agent_operator, needs_app=False)
 
-    agent_delegate_cmd = agent_subcommands.add_parser(
+    _add_agent_delegation_subcommands(agent_subcommands)
+
+
+def _add_agent_delegation_subcommands(
+    agent_subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    delegate_cmd = agent_subcommands.add_parser(
         "delegate",
         help="Delegate work to another configured agent",
         description=agent_delegate_usage(),
     )
-    agent_delegate_cmd.add_argument(
+    delegate_cmd.add_argument(
         "--target-agent-id",
         required=True,
         help="Exact configured agent id to receive the delegated work",
     )
-    agent_delegate_cmd.add_argument(
+    delegate_cmd.add_argument(
         "--instruction",
         required=True,
         help="Instruction or goal for the delegated agent",
     )
-    agent_delegate_cmd.add_argument(
+    delegate_cmd.add_argument(
         "--mode",
         choices=("sync", "async"),
         default="sync",
-        help="Run synchronously or return a resumable async task handle",
+        help="Run synchronously or return an inspectable async task handle",
     )
-    agent_delegate_cmd.add_argument(
+    delegate_cmd.add_argument(
         "--timeout-seconds",
         type=int,
         default=120,
         help="Delegated turn timeout in seconds",
     )
-    add_json_output_flag(agent_delegate_cmd)
-    agent_delegate_cmd.set_defaults(handler=run_agent_operator, needs_app=False)
+    add_json_output_flag(delegate_cmd)
+    delegate_cmd.set_defaults(handler=run_agent_operator, needs_app=False)
+
+    delegate_list = agent_subcommands.add_parser(
+        "delegate-list", help="List recent delegated tasks owned by this agent/session"
+    )
+    delegate_list.add_argument("--limit", type=int, default=20, choices=range(1, 201))
+    add_json_output_flag(delegate_list)
+    delegate_list.set_defaults(handler=run_agent_operator, needs_app=False)
 
     for name, help_text in (
         ("delegate-status", "Poll a delegated async task"),
-        ("delegate-resume", "Resume/poll a delegated async task"),
+        ("delegate-resume", "Deprecated: reports that delegated jobs cannot resume"),
         ("delegate-result", "Fetch the latest delegated task result"),
         ("delegate-cancel", "Cancel a delegated async task"),
     ):

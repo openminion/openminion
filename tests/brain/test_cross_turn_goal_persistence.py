@@ -608,6 +608,7 @@ class _StubRunner:
         progress_callback: Any | None = None,
         approval_callback: Any | None = None,
         runtime_session_id: str | None = None,
+        runtime_conversation_id: str | None = None,
         root_turn_id: str | None = None,
         capture_event_id: str | None = None,
         capture_id: str | None = None,
@@ -618,6 +619,7 @@ class _StubRunner:
                 "trigger": trigger,
                 "trace_id": trace_id,
                 "runtime_session_id": runtime_session_id,
+                "runtime_conversation_id": runtime_conversation_id,
                 "root_turn_id": root_turn_id,
                 "capture_event_id": capture_event_id,
                 "capture_id": capture_id,
@@ -763,6 +765,7 @@ class RunWithAutonomousContinuationTests(unittest.TestCase):
             session_id="brain-session::conversation",
             user_input="start building",
             runtime_session_id="runtime-session",
+            runtime_conversation_id="conversation",
             root_turn_id="gateway-root",
             capture_event_id="gateway-event",
             capture_id="gateway-capture",
@@ -775,12 +778,17 @@ class RunWithAutonomousContinuationTests(unittest.TestCase):
                 "trigger": "user_input",
                 "trace_id": None,
                 "runtime_session_id": "runtime-session",
+                "runtime_conversation_id": "conversation",
                 "root_turn_id": "gateway-root",
                 "capture_event_id": "gateway-event",
                 "capture_id": "gateway-capture",
             },
         )
         self.assertEqual(runner.call_log[1]["runtime_session_id"], "runtime-session")
+        self.assertEqual(
+            runner.call_log[1]["runtime_conversation_id"],
+            "conversation",
+        )
         self.assertIsNone(runner.call_log[1]["root_turn_id"])
         self.assertIsNone(runner.call_log[1]["capture_event_id"])
         self.assertIsNone(runner.call_log[1]["capture_id"])

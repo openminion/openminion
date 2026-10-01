@@ -15,6 +15,7 @@ from openminion.cli.presentation.header import (
 )
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
+from openminion.cli.presentation.timing_report import format_chat_phase_timing_report
 from .labels import _runtime_label
 
 
@@ -138,6 +139,16 @@ def _render_status_block(*, runtime: Any, console: Console, working_dir: str) ->
             Text(
                 "  usage: (no usage data yet)",
                 style=token_rich_style(StyleToken.MUTED, italic=True),
+            )
+        )
+    timing_getter = getattr(runtime, "last_chat_phase_timing_payload", None)
+    timing_payload = timing_getter() if callable(timing_getter) else None
+    timing_report = format_chat_phase_timing_report(timing_payload)
+    if timing_report:
+        console.print(
+            Text(
+                timing_report,
+                style=token_rich_style(StyleToken.MUTED),
             )
         )
 

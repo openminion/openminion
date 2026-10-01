@@ -27,6 +27,7 @@ def _runtime_config() -> RuntimeConfig:
             MCPServerConfig(
                 name="Fixture",
                 transport="stdio",
+                trusted=True,
                 command=[sys.executable, str(FIXTURE_SERVER_PATH)],
                 request_timeout_seconds=5.0,
                 startup_timeout_seconds=5.0,

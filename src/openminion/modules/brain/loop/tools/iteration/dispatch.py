@@ -42,7 +42,7 @@ from ..evidence import (
     _loop_tool_result_payloads,
 )
 from ..messages import action_result_to_tool_message
-from ..plan import _current_active_plan, _failed_result
+from ..plan import _current_active_plan
 from ..plan_control import (
     PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY,
     PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY,
@@ -50,7 +50,6 @@ from ..plan_control import (
     PLAN_TOOL_NAME,
     PLAN_TOOL_USED_SCRATCHPAD_KEY,
     append_plan_closeout_guidance,
-    handle_plan_tool_call,
     with_enabled_plan_tool_spec,
 )
 from ..review_control import (
@@ -66,6 +65,12 @@ from ..shortlisting import (
 from ..status import emit_adaptive_status
 from ..telemetry import _emit_iteration_event
 from ..transcript import persist_blocked_tool_calls, persist_terminal_tool_result
+from .helpers import (
+    _execute_plan_action,
+    _finish_terminal_plan_revision,
+    _is_plan_tool_call,
+    _record_plan_tool_execution,
+)
 
 
 class LoopDispatchResult(NamedTuple):
@@ -180,26 +185,6 @@ def _handle_mixed_decompose_calls(
         continue_loop=True,
         outcome=None,
     )
-
-
-def _is_plan_tool_call(tool_call: Any) -> bool:
-    return str(getattr(tool_call, "name", "") or "").strip() == PLAN_TOOL_NAME
-
-
-def _execute_plan_action(
-    loop_ctx: AdaptiveToolLoopContext,
-    loop_state: AdaptiveToolLoopState,
-    arguments: dict[str, Any],
-) -> ActionResult:
-    if (
-        loop_state.task_plan_completed is not None
-        and str(arguments.get("action", "") or "").strip() == "declare"
-    ):
-        return _failed_result(
-            code="PLAN_ALREADY_COMPLETED",
-            summary="The task plan is already complete for this turn.",
-        )
-    return handle_plan_tool_call(loop_ctx=loop_ctx, arguments=arguments)
 
 
 def _record_successful_plan_action(
@@ -472,7 +457,7 @@ def _process_plan_tool_calls(
     set_turn_progress: Any,
 ) -> tuple[list[Any], bool, LoopDispatchResult | None]:
     batch_had_progress = False
-    autonomous_continuation_summary = ""
+    terminal_plan_summary = ""
     plan_tool_calls = [
         tool_call for tool_call in tool_calls if _is_plan_tool_call(tool_call)
     ]
@@ -481,16 +466,23 @@ def _process_plan_tool_calls(
     regular_tool_calls = [
         tool_call for tool_call in tool_calls if not _is_plan_tool_call(tool_call)
     ]
-    for tool_call in plan_tool_calls:
+    for index, tool_call in enumerate(plan_tool_calls):
         arguments = dict(getattr(tool_call, "arguments", {}) or {})
         loop_state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] = True
         action_result = _execute_plan_action(loop_ctx, loop_state, arguments)
         _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
+        terminal_revision = False
         if str(getattr(action_result, "status", "") or "") == "success":
             outputs = dict(getattr(action_result, "outputs", {}) or {})
             _record_successful_plan_action(loop_ctx, loop_state, arguments, outputs)
-            if bool(outputs.get(PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY, False)):
-                autonomous_continuation_summary = str(
+            terminal_revision = (
+                str(arguments.get("action", "") or "").strip() == "revise"
+                and loop_state.scratchpad.get("project.plan_revision_required") is True
+            )
+            if bool(outputs.get(PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY, False)) or (
+                terminal_revision
+            ):
+                terminal_plan_summary = str(
                     getattr(action_result, "summary", "") or ""
                 ).strip()
         loop_state.messages.append(
@@ -501,33 +493,21 @@ def _process_plan_tool_calls(
             )
         )
         append_plan_closeout_guidance(loop_state, arguments, action_result)
-        iter_tool_records.append(
-            IterationToolCallRecord(
-                tool_name=PLAN_TOOL_NAME,
-                duration_ms=0,
-                status=str(getattr(action_result, "status", "") or ""),
-                cache_hit=False,
-                parallel=False,
-            )
-        )
-        set_turn_progress(
-            loop_state,
-            llm_call_count=loop_state.llm_calls,
-            llm_call_limit=_effective_cap(profile, loop_state),
-            progress_phase="tool",
-            tool_name=PLAN_TOOL_NAME,
-        )
-        emit_adaptive_status(
+        _record_plan_tool_execution(
             loop_ctx,
-            profile=profile,
-            loop_state=loop_state,
-            detail_text=f"{public_mode_tag} tool {PLAN_TOOL_NAME}",
-            mode_state="tool_call",
-            extra={
-                "tool_name": PLAN_TOOL_NAME,
-                "plan_action": str(arguments.get("action", "") or "").strip(),
-            },
+            profile,
+            loop_state,
+            iter_tool_records,
+            action_result,
+            str(arguments.get("action", "") or "").strip(),
+            public_mode_tag,
+            set_turn_progress,
         )
+        if terminal_revision:
+            skipped_calls = [*plan_tool_calls[index + 1 :], *regular_tool_calls]
+            _finish_terminal_plan_revision(loop_ctx, loop_state, skipped_calls)
+            regular_tool_calls = []
+            break
     batch_had_progress = True
     if on_tool_result is not None:
         on_tool_result(loop_state)
@@ -542,9 +522,9 @@ def _process_plan_tool_calls(
             tool_records=iter_tool_records,
             tokens_used=iter_input_tokens + iter_output_tokens,
         )
-        if autonomous_continuation_summary:
+        if terminal_plan_summary:
             result = _autonomous_plan_continuation_result(
-                summary=autonomous_continuation_summary,
+                summary=terminal_plan_summary,
                 profile=profile,
                 loop_state=loop_state,
                 batch_had_progress=batch_had_progress,

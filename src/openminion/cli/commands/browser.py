@@ -14,11 +14,12 @@ from openminion.cli.presentation.json_output import print_json_payload
 def run_browser(args: Any) -> int:
     action = str(getattr(args, "browser_command", "") or "status").strip()
     command_args = _command_args(args, action=action)
+    payload = browser_command_payload(command_args)
     if bool(getattr(args, "json", False)):
-        print_json_payload(browser_command_payload(command_args))
+        print_json_payload(payload)
     else:
-        print(render_browser_command(command_args))
-    return 0
+        print(render_browser_command(command_args, payload=payload))
+    return 0 if payload.get("ok") else 1
 
 
 def _command_args(args: Any, *, action: str) -> str:

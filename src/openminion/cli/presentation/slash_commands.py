@@ -86,10 +86,17 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         note="Agent selection: start Focus with --profile <agent-id> or --agent <agent-id>.",
     ),
     SlashCommandMetadata(
+        "/identity",
+        "Show, verify, or reload the current agent identity",
+        ("/identity", "/identity verify", "/identity reload"),
+        note="Reload reads the current agent's canonical profile.yaml.",
+    ),
+    SlashCommandMetadata(
         "/delegate",
         "Delegate work or inspect a delegated task",
         (
             "/delegate [sync|async] <agent> <instruction...>",
+            "/delegate list [limit]",
             "/delegate status|result|resume|cancel <task-id>",
             "/delegate review '<review-request-json>'",
             "/delegate accept|reject '<child-artifact-json>'",
@@ -341,6 +348,7 @@ _BUSY_SAFE_BARE_SLASH_COMMANDS = frozenset(
         "/permissions",
         "/statusline",
         "/tools",
+        "/identity",
     }
 )
 
@@ -356,6 +364,8 @@ def slash_command_runs_while_busy(text: str) -> bool:
         action = parts[1].split(maxsplit=1)[0].lower()
         if action in {"pause", "resume", "cancel"}:
             return False
+    if command == "/identity" and len(parts) > 1:
+        return parts[1].strip().lower() == "verify"
     return command in _BUSY_SAFE_SLASH_COMMANDS or (
         command in _BUSY_SAFE_BARE_SLASH_COMMANDS and len(parts) == 1
     )

@@ -12,6 +12,7 @@ from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.runtime import RuntimeConfig
 from openminion.tools.mcp.manager import MCPFleetManager
 from openminion.tools.mcp.transport import MCPProtocolError
+from openminion.tools.mcp.transport_protocol import iter_sse_messages
 
 
 class _SSEHandler(BaseHTTPRequestHandler):
@@ -33,6 +34,11 @@ class _SSEHandler(BaseHTTPRequestHandler):
 
         if method == "notifications/initialized":
             self.send_response(202)
+            self.end_headers()
+            return
+
+        if method == "server/discover":
+            self.send_response(400)
             self.end_headers()
             return
 
@@ -153,7 +159,8 @@ def test_streamable_http_transport_supports_sse_initialize_and_tools_list() -> N
             assert len(discovered) == 1
             assert discovered[0].remote_name == "remote-echo"
             methods = [item["method"] for item in server.requests]
-            assert methods[:3] == [
+            assert methods[:4] == [
+                "server/discover",
                 "initialize",
                 "notifications/initialized",
                 "tools/list",
@@ -173,3 +180,21 @@ def test_streamable_http_transport_surfaces_malformed_sse_as_protocol_error() ->
             assert excinfo.value.reason_code == "mcp_sse_parse_error"
         finally:
             manager.close()
+
+
+def test_sse_parser_ignores_standard_resume_fields_and_comments() -> None:
+    messages = list(
+        iter_sse_messages(
+            lines=[
+                b": keepalive\n",
+                b"id: 42\n",
+                b"retry: 1000\n",
+                b"event: message\n",
+                b'data: {"jsonrpc":"2.0","id":1,"result":{}}\n',
+                b"\n",
+            ],
+            server_name="fixture",
+        )
+    )
+
+    assert messages == [{"jsonrpc": "2.0", "id": 1, "result": {}}]

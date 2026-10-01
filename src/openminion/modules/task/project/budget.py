@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from openminion.modules.task.autonomy import ContinuationPolicy
+from openminion.modules.task.autonomy import AutonomyRun, ContinuationPolicy
 from openminion.modules.task.runtime.lifecycle import TaskManager
 
 from .models import (
@@ -9,6 +9,14 @@ from .models import (
     ProjectPermissionDecision,
 )
 from .policy import load_project_policy_state
+
+
+def project_cycle_claim_ttl_seconds(run: AutonomyRun) -> int:
+    selectors = run.execution_selectors
+    verifier_window = int(selectors.verification_timeout_seconds) * len(
+        selectors.verification_commands
+    )
+    return int(selectors.turn_timeout_seconds) + verifier_window
 
 
 def evaluate_project_budget(

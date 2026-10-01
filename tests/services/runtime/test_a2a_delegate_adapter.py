@@ -6,6 +6,7 @@ import uuid
 
 import pytest
 
+from openminion.modules.brain.adapters.a2a.runtime import A2actlAdapter
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_FAILED,
     BRAIN_ACTION_STATUS_SUCCESS,
@@ -444,6 +445,178 @@ def test_delegate_sends_typed_observability_and_emits_handoff_lifecycle() -> Non
     ]
 
 
+def test_async_delegate_does_not_emit_completion_before_terminal_state() -> None:
+    call = _RecordingCall({"status": BRAIN_JOB_STATUS_RUNNING, "task_id": "job-1"})
+    telemetry = _RecordingTelemetry()
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+        telemetryctl=telemetry,
+    )
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+
+    result = adapter.delegate(
+        agent_id="researcher",
+        instruction="find X",
+        timeout_seconds=30,
+        mode="async",
+    )
+
+    assert result.status == "running"
+    assert [event_type for event_type, _payload in telemetry.events] == [
+        "agent.handoff.started"
+    ]
+
+
+def test_lifecycle_uses_persisted_job_trace_and_resume_is_explicitly_unsupported() -> (
+    None
+):
+    class _Owner:
+        def call(self, **_kwargs: Any) -> dict[str, Any]:
+            return {}
+
+        def poll_task(self, **_kwargs: Any) -> dict[str, Any]:
+            return {
+                "status": "completed",
+                "task_id": "job-1",
+                "trace_id": "original-trace",
+            }
+
+    owner = _Owner()
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=owner.call,
+        parent_agent_id="parent",
+    )
+
+    status = adapter.status(task_id="job-1")
+    resume = adapter.resume(task_id="job-1")
+
+    assert status.trace_id == "original-trace"
+    assert resume.ok is False
+    assert resume.error_code == "A2A_DELEGATE_RESUME_UNSUPPORTED"
+
+
+def test_recent_delegation_list_uses_bound_session_and_limit() -> None:
+    class _Owner:
+        def call(self, **_kwargs: Any) -> dict[str, Any]:
+            return {}
+
+        def list_tasks(self, *, session_id: str, limit: int) -> dict[str, Any]:
+            assert session_id == "task-delegate::session-1"
+            assert limit == 20
+            return {
+                "ok": True,
+                "jobs": [
+                    {
+                        "task_id": "job-1",
+                        "trace_id": "trace-1",
+                        "agent_id": "child",
+                        "method": "delegate",
+                        "state": "RUNNING",
+                    }
+                ],
+            }
+
+    owner = _Owner()
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=owner.call,
+        parent_agent_id="parent",
+    )
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+
+    result = adapter.list_recent()
+
+    assert result.ok is True
+    assert result.outputs["jobs"][0]["task_id"] == "job-1"
+
+
+def test_recent_delegation_list_requires_bound_agent_and_session() -> None:
+    call = _RecordingCall({})
+
+    missing_agent = A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id="")
+    missing_session = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+    )
+
+    assert missing_agent.list_recent().error_code == "A2A_DELEGATE_LIST_SCOPE_REQUIRED"
+    assert (
+        missing_session.list_recent().error_code == "A2A_DELEGATE_LIST_SCOPE_REQUIRED"
+    )
+
+
+def test_a2actl_recent_list_projects_structural_fields_only() -> None:
+    seen: dict[str, Any] = {}
+
+    class _Runtime:
+        def list_jobs(self, filters: dict[str, Any]) -> list[Any]:
+            seen.update(filters)
+            return [
+                type(
+                    "Job",
+                    (),
+                    {
+                        "task_id": "job-1",
+                        "trace_id": "trace-1",
+                        "agent_id": "child",
+                        "method": "delegate",
+                        "state": "SUCCESS",
+                        "current_step": "done",
+                        "progress": 1.0,
+                        "created_at": "2026-09-30T00:00:00+00:00",
+                        "updated_at": "2026-09-30T00:01:00+00:00",
+                        "heartbeat_at": "2026-09-30T00:01:00+00:00",
+                        "result_inline": {"secret": "not projected"},
+                        "idempotency_key": "not projected",
+                    },
+                )()
+            ]
+
+    adapter = A2actlAdapter(agent_id="parent")
+    adapter._runtime = _Runtime()
+
+    payload = adapter.list_tasks(
+        session_id="task-delegate::session-1",
+        limit=20,
+    )
+
+    assert seen == {
+        "owner_agent_id": "parent",
+        "session_id": "task-delegate::session-1",
+        "order": "recent",
+        "limit": 20,
+    }
+    assert payload["jobs"][0]["task_id"] == "job-1"
+    assert "result_inline" not in payload["jobs"][0]
+    assert "idempotency_key" not in payload["jobs"][0]
+
+
+@pytest.mark.parametrize(
+    ("agent_id", "session_id"),
+    [("", "task-delegate::session-1"), ("parent", "")],
+)
+def test_a2actl_recent_list_fails_closed_without_exact_scope(
+    agent_id: str,
+    session_id: str,
+) -> None:
+    adapter = A2actlAdapter(agent_id=agent_id)
+
+    payload = adapter.list_tasks(session_id=session_id, limit=20)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "A2A_DELEGATE_LIST_SCOPE_REQUIRED"
+
+
 def test_idempotency_key_is_stable_for_same_inputs() -> None:
     call = _RecordingCall({"status": BRAIN_ACTION_STATUS_SUCCESS, "summary": "ok"})
     adapter = A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id="parent")
@@ -537,7 +710,7 @@ def test_running_status_maps_to_async_unsupported() -> None:
     assert result.task_id == "j1"
 
 
-def test_async_delegate_returns_resumable_running_handle() -> None:
+def test_async_delegate_returns_inspectable_running_handle() -> None:
     call = _RecordingCall(
         {"status": BRAIN_JOB_STATUS_RUNNING, "summary": "job started", "task_id": "j1"}
     )
@@ -565,9 +738,11 @@ def test_async_status_and_cancel_route_through_a2a_lifecycle() -> None:
             super().__init__({})
             self.polled: list[str] = []
             self.cancelled: list[str] = []
+            self.sessions: list[str] = []
 
         def poll_task(self, *, task_id, session_id, trace_id):
             self.polled.append(task_id)
+            self.sessions.append(session_id)
             return {
                 "status": "RUNNING",
                 "task_id": task_id,
@@ -577,6 +752,7 @@ def test_async_status_and_cancel_route_through_a2a_lifecycle() -> None:
 
         def cancel_task(self, *, task_id, session_id, trace_id):
             self.cancelled.append(task_id)
+            self.sessions.append(session_id)
             return {
                 "status": "CANCELED",
                 "task_id": task_id,
@@ -586,6 +762,12 @@ def test_async_status_and_cancel_route_through_a2a_lifecycle() -> None:
 
     call = _LifecycleCall()
     adapter = A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id="parent")
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
 
     status = adapter.status(task_id="job-1")
     resumed = adapter.resume(task_id="job-1")
@@ -593,14 +775,16 @@ def test_async_status_and_cancel_route_through_a2a_lifecycle() -> None:
 
     assert status.ok is True
     assert status.status == "running"
-    assert resumed.ok is True
-    assert call.polled == ["job-1", "job-1"]
+    assert resumed.ok is False
+    assert resumed.error_code == "A2A_DELEGATE_RESUME_UNSUPPORTED"
+    assert call.polled == ["job-1"]
     assert cancelled.ok is True
     assert cancelled.status == "canceled"
     assert call.cancelled == ["job-1"]
+    assert call.sessions == ["task-delegate::session-1"] * 2
 
 
-def test_async_resume_normalizes_durable_completion_status() -> None:
+def test_async_status_normalizes_durable_completion_status() -> None:
     class _LifecycleCall(_RecordingCall):
         def poll_task(self, *, task_id, session_id, trace_id):
             del session_id
@@ -617,7 +801,7 @@ def test_async_resume_normalizes_durable_completion_status() -> None:
         parent_agent_id="parent",
     )
 
-    result = adapter.resume(task_id="job-1")
+    result = adapter.status(task_id="job-1")
 
     assert result.ok is True
     assert result.status == "completed"

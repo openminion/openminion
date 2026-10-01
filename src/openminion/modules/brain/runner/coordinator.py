@@ -75,6 +75,10 @@ def _resolve_run_capture_identity(
     return identity
 
 
+def _result_trace_id(result: StepOutput, fallback: str) -> str:
+    return str(result.working_state.trace_id or "").strip() or fallback
+
+
 class BrainRunner:
     contract_version = BRAIN_RUNNER_INTERFACE_VERSION
 
@@ -508,6 +512,7 @@ class BrainRunner:
         approval_callback: Any | None = None,
         trigger: str = "user_input",
         runtime_session_id: str | None = None,
+        runtime_conversation_id: str | None = None,
         root_turn_id: str | None = None,
         capture_event_id: str | None = None,
         capture_id: str | None = None,
@@ -552,10 +557,9 @@ class BrainRunner:
                 capability_category=capability_category,
                 trigger=trigger,
                 capture_identity=identity,
+                runtime_conversation_id=runtime_conversation_id,
             )
-            turn_id = (
-                str(result.working_state.trace_id or "").strip() or effective_trace_id
-            )
+            turn_id = _result_trace_id(result, effective_trace_id)
             result_status = str(result.status).strip().lower()
             self._emit_brain_operation(
                 session_id=session_id,
@@ -605,6 +609,7 @@ class BrainRunner:
         forced_tools: list[str] | None = None,
         capability_category: str | None = None,
         capture_identity: CaptureIdentity | None = None,
+        runtime_conversation_id: str | None = None,
         progress_callback: Callable[[PhaseStatus], None] | None = None,
     ) -> StepOutput:
         previous_callback = self._progress_callback
@@ -636,6 +641,7 @@ class BrainRunner:
                 forced_tools=forced_tools,
                 capability_category=capability_category,
                 capture_identity=identity,
+                runtime_conversation_id=runtime_conversation_id,
             )
             if not self._telemetry_turn_active:
                 turn_id = (

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping, cast
 
 if TYPE_CHECKING:
     from .store import SQLiteSessionStore
@@ -68,8 +68,22 @@ def list_cron_jobs(
     *,
     enabled: bool | None = None,
     limit: int = 50,
+    agent_id: str | None = None,
+    include_unowned: bool = False,
 ) -> list[dict[str, Any]]:
-    return store._cron_store.list_cron_jobs(enabled=enabled, limit=limit)
+    return store._cron_store.list_cron_jobs(
+        enabled=enabled,
+        limit=limit,
+        agent_id=agent_id,
+        include_unowned=include_unowned,
+    )
+
+
+def list_unresolved_task_runs(store: Any, *, limit: int = 100) -> list[dict[str, Any]]:
+    return cast(
+        list[dict[str, Any]],
+        store._cron_store.list_unresolved_task_runs(limit=limit),
+    )
 
 
 def set_cron_job_enabled(
@@ -645,6 +659,7 @@ __all__ = [
     "get_slice",
     "list_cron_jobs",
     "list_cron_runs",
+    "list_unresolved_task_runs",
     "list_run_records",
     "mark_cron_delivery_target",
     "reindex_sidecars",
