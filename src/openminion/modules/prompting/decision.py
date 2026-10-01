@@ -5,8 +5,10 @@ from typing import Any
 DECIDE_STYLE_OVERRIDES: dict[str, str] = {
     "entry_response_rule": (
         "This is the unified entry call. Return one visible entry control or "
-        "execution tool call. If the user asks for approval before project work, "
-        "first call coding with project_handoff and sub_intents. Do not call plan, "
+        "execution tool call. If coding needs durable multi-cycle project work, "
+        "first call coding with project_handoff and sub_intents. If research needs "
+        "durable multi-cycle project work, first call research with the same "
+        "handoff fields. Do not call plan, "
         "tool.request, or an execution tool before that approval. An explicit typed "
         "or durable project handoff request needs no repository inspection before "
         "this proposal. Otherwise start the work directly. Use "

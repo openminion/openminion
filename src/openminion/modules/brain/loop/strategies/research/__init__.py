@@ -1,9 +1,12 @@
 from types import SimpleNamespace
 from typing import Any
 
-from .handler import RESEARCH_MODE, ResearchMode
+from openminion.modules.brain.constants import BRAIN_INTERNAL_MODE_ACT_RESEARCH
+
+from .handler import ResearchMode
 from .schemas import ConvergenceCheck, ResearchFinding, ResearchPayload
 
+RESEARCH_MODE = BRAIN_INTERNAL_MODE_ACT_RESEARCH
 RESEARCH_PROFILE_NAME = "research"
 
 

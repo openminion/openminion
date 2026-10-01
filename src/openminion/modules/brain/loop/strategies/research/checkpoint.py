@@ -10,12 +10,14 @@ def build_checkpoint_state(
     next_iteration: int,
     findings: list[dict[str, Any]],
     resume_count: int,
+    remaining_work: str = "",
 ) -> dict[str, Any]:
     return {
         "query": query,
         "next_iteration": next_iteration,
         "findings": list(findings),
         "resume_count": int(resume_count),
+        "remaining_work": normalized_text(remaining_work),
     }
 
 
@@ -40,4 +42,5 @@ def normalize_checkpoint_state(state: dict[str, Any]) -> dict[str, Any]:
         next_iteration=int(state.get("next_phase_index", 0) or 0),
         findings=findings,
         resume_count=int(state.get("resume_count", 0) or 0),
+        remaining_work=normalized_text(state.get("remaining_work")),
     )

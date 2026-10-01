@@ -85,47 +85,61 @@ def test_focus_pty_handles_contextual_slash_help(
 def test_focus_pty_controls_durable_project(
     focus_probe: FocusProbe,
     tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from openminion.cli.commands.daemon import daemon_stop
+
     command = (
         "/project start --goal 'verify project controls' "
         f"--verify-command {shlex.quote(f'{focus_probe.python_bin} -c pass')}"
     )
     approval_events: list[dict[str, object]] = []
-    with focus_probe.session() as session:
-        focus_probe.wait_ready(session)
-        launched = focus_probe.run_slash_turn(
-            session,
-            command,
-            marker=r"Project queued:\s*awrk_[A-Za-z0-9]+",
-            requires_approval=True,
-            approval_events=approval_events,
-        )
-        assert [(event["action"], event["decision"]) for event in approval_events] == [
-            ("project.start", "yes")
-        ]
-        match = re.search(r"Project queued:\s*(awrk_[A-Za-z0-9]+)", launched)
-        assert match is not None
-        run_id = match.group(1)
-        paused = focus_probe.run_slash_turn(
-            session,
-            f"/project pause {run_id}",
-            marker=r"task_state: paused",
-        )
-        redirected = focus_probe.run_slash_turn(
-            session,
-            f"/project redirect {run_id} --direction 'finish the report first'",
-            marker=r"direction_queued_for_next_cycle: finish the report first",
-        )
-        resumed = focus_probe.run_slash_turn(
-            session,
-            f"/project resume {run_id}",
-            marker=r"task_state: active|status: running",
-        )
-        cancelled = focus_probe.run_slash_turn(
-            session,
-            f"/project cancel {run_id}",
-            marker=r"cancelled",
-        )
+    try:
+        with focus_probe.session() as session:
+            focus_probe.wait_ready(session)
+            launched = focus_probe.run_slash_turn(
+                session,
+                command,
+                marker=r"Project queued:\s*awrk_[A-Za-z0-9]+",
+                requires_approval=True,
+                approval_events=approval_events,
+            )
+            assert [
+                (event["action"], event["decision"]) for event in approval_events
+            ] == [("project.start", "yes")]
+            match = re.search(r"Project queued:\s*(awrk_[A-Za-z0-9]+)", launched)
+            assert match is not None
+            run_id = match.group(1)
+            paused = focus_probe.run_slash_turn(
+                session,
+                f"/project pause {run_id}",
+                marker=r"task_state: paused",
+            )
+            redirected = focus_probe.run_slash_turn(
+                session,
+                f"/project redirect {run_id} --direction 'finish the report first'",
+                marker=r"direction_queued_for_next_cycle: finish the report first",
+            )
+            resumed = focus_probe.run_slash_turn(
+                session,
+                f"/project resume {run_id}",
+                marker=r"task_state: active|status: running",
+            )
+            cancelled = focus_probe.run_slash_turn(
+                session,
+                f"/project cancel {run_id}",
+                marker=r"cancelled",
+            )
+    finally:
+        environment = focus_probe.environment()
+        with monkeypatch.context() as context:
+            for name, value in environment.items():
+                context.setenv(name, value)
+            daemon_stop(
+                str(focus_probe.config_path),
+                home_root=environment["OPENMINION_HOME"],
+                data_root=environment["OPENMINION_DATA_ROOT"],
+            )
 
     transcript = "\n".join((launched, paused, redirected, resumed, cancelled))
     assert run_id in transcript

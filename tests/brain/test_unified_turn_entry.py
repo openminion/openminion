@@ -525,6 +525,7 @@ def test_unified_entry_coding_control_preserves_project_handoff(tmp_path: Path) 
                 "goal": "Fix the calculator",
                 "success_criteria": ["Tests pass"],
                 "verification_commands": ["python -m pytest -q"],
+                "verification_domain": "coding",
                 "max_iterations": 3,
             },
             "sub_intents": ["Inspect the failure", "Implement and verify the fix"],
@@ -583,7 +584,37 @@ def test_coding_control_schema_exposes_optional_project_handoff() -> None:
     assert "repository" not in handoff["properties"]
     assert "verification_commands" in handoff["required"]
     assert handoff["properties"]["verification_commands"]["minItems"] == 1
+    assert handoff["properties"]["max_iterations"]["minimum"] == 2
+    assert "verification_domain" in handoff["required"]
+    assert "max_iterations" in handoff["required"]
     assert "required" not in schema
+
+
+def test_research_control_preserves_durable_project_handoff(tmp_path: Path) -> None:
+    response = _tool_response(
+        "research",
+        {
+            "project_handoff": {
+                "goal": "Compare durable agent loops",
+                "success_criteria": ["Every claim has evidence"],
+                "verification_commands": ["python -m pytest -q"],
+                "verification_domain": "research",
+                "max_iterations": 3,
+            },
+            "sub_intents": ["Collect sources", "Reconcile contradictions"],
+        },
+    )
+    runner = _build_runner(tmp_path, llm_api=_RecordingEntryLLM(response))
+
+    decision = runner._decide(
+        state=_state("entry-research-handoff"),
+        user_input="research this thoroughly and verify the report",
+        logger=fake_logger(),
+    )
+
+    assert decision.act_profile == "research"
+    assert decision.request_readiness.project_handoff.verification_domain == "research"
+    assert decision.request_readiness.project_handoff.max_iterations == 3
 
 
 def test_unified_entry_file_write_seed_keeps_model_selected_general_profile(

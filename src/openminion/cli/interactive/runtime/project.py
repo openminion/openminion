@@ -304,6 +304,11 @@ class RuntimeProjectMixin:
         from openminion.modules.brain.state import consume_project_handoff
 
         handoff = ProjectHandoff.model_validate_json(metadata["project_handoff"])
+        if handoff.max_iterations is None or handoff.max_iterations < 2:
+            return (
+                "Project proposal needs an explicit multi-cycle budget of at least "
+                "2 iterations. Ask the agent to propose the project again."
+            )
         boundary = Path(self.working_dir)
         permission_profile_id = self.permission_mode
         if permission_profile_id not in {"readonly", "bypass"}:
@@ -322,6 +327,7 @@ class RuntimeProjectMixin:
             turn_target="focus",
             permission_profile_id=permission_profile_id,
             verification_commands=handoff.verification_commands,
+            verification_domain=handoff.verification_domain,
             success_criteria=handoff.success_criteria,
             source_request=source_request,
             **handoff.model_dump(
@@ -392,6 +398,7 @@ class RuntimeProjectMixin:
     def launch_prepared_project(self, request: ProjectLaunchRequest) -> tuple[str, str]:
         from openminion.cli.commands.autonomy_project import (
             configured_cron_store,
+            ensure_project_daemon_ready,
             launch_project,
             persisted_verification_waiver,
             schedule_project_wake,
@@ -419,6 +426,17 @@ class RuntimeProjectMixin:
                 return self._block_project_without_verifier(
                     request, store, error, AutonomyRunStatus, AutonomyRunPhase
                 )
+
+            try:
+                ensure_project_daemon_ready(
+                    argparse.Namespace(
+                        home_root=self._rt.home_root,
+                        data_root=self._rt.data_root,
+                    ),
+                    config_ref=request.run.execution_selectors.config_ref,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                return "error", f"Project was not queued: {exc}"
 
             run = launch_project(request, store=store, manager=manager)
             cron_store = None

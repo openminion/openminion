@@ -21,6 +21,7 @@ from openminion.modules.brain.execution.entry import (
     build_execution_entry_request,
     dispatch,
 )
+from openminion.modules.brain.loop.strategies.research import ResearchFinding
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from openminion.modules.brain.schemas import ActDecision
 from openminion.modules.task import (
@@ -45,6 +46,7 @@ from openminion.modules.task.project import (
     ProjectCycleDecision,
     run_project_verification_commands,
 )
+from openminion.modules.task.project.turn import project_turn_result_from_response
 from openminion.services.brain.post_execution.postprocess_metadata import (
     _attach_structured_action_output_metadata,
 )
@@ -58,12 +60,25 @@ from tests.brain.test_decision_readiness import (
     _install_direct_dispatch_capture,
     _state,
 )
+from tests.brain.modes.test_research_contract import (
+    _ctx as _research_ctx,
+    _make_mode as _make_research_mode,
+    _state as _research_state,
+)
 from tests.e2e.cli.focus.test_goal_composition import _CronStore, _project_runtime
 from tests.e2e.project_worker.test_repository_lifecycle import _child_artifact, _git
 from tests.tools.search.test_provider_chain import _ContextAwareBraveProvider
 from tests.tools.fetch.test_plugin import _FakeProvider
 
 pytestmark = pytest.mark.e2e
+
+
+@pytest.fixture(autouse=True)
+def _ready_project_daemon(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.ensure_project_daemon_ready",
+        lambda _args, config_ref: None,
+    )
 
 
 def _proposal(runtime, monkeypatch, **changes) -> dict[str, str]:
@@ -78,7 +93,7 @@ def _proposal(runtime, monkeypatch, **changes) -> dict[str, str]:
         **changes,
     }
     decision = ActDecision(
-        act_profile="coding",
+        act_profile=str(handoff.get("verification_domain", "coding")),
         sub_intents=["Inspect", "Research", "Implement", "Verify", "Review"],
         request_readiness={
             "posture": "review_before_act",
@@ -511,6 +526,119 @@ def test_focus_project_handoff_consumes_conversation_scoped_state(
     assert runs[0].execution_selectors.turn_target == "focus"
 
 
+def test_focus_research_handoff_replans_without_child_research_task(
+    tmp_path, monkeypatch
+) -> None:
+    runtime, _, _ = _project_runtime(tmp_path)
+    verify_command = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(0)'"
+    metadata = _proposal(
+        runtime,
+        monkeypatch,
+        goal="Research the fixture until the evidence is complete",
+        success_criteria=["The requested evidence is complete"],
+        verification_commands=[verify_command],
+        verification_domain="research",
+        max_iterations=2,
+    )
+    cron = _CronStore()
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.configured_cron_store",
+        lambda *args, **kwargs: cron,
+    )
+
+    async def approve(*args):
+        return True
+
+    assert "Project queued:" in asyncio.run(
+        runtime.approve_project_handoff(metadata, approve)
+    )
+    store = AutonomyRunStore(root=resolve_autonomy_state_root(runtime._rt.home_root))
+    run = store.list_runs()[0]
+    manager = _manager(runtime)
+    turn_requests = []
+    checkpoint = load_latest_project_checkpoint(manager, task_id=run.task_id)
+    assert checkpoint is not None
+    lifecycle = checkpoint.payload["repository_lifecycle"]
+    objective = lifecycle[checkpoint.project_run.objective_ledger_ref]
+    plan = TaskPlan(
+        plan_id="research-plan",
+        objective="Complete the research",
+        criterion_ids=objective["criterion_ids"],
+        steps=[
+            {
+                "step_id": "research",
+                "description": "Complete the research",
+                "status": "completed",
+            }
+        ],
+        status="completed",
+    )
+    research_state = _research_state(
+        session_id=runtime.session_id,
+        goal=run.goal_text,
+    )
+    research_state.resume_task_id_hint = run.task_id
+    research_ctx, _ = _research_ctx(
+        manager,
+        state=research_state,
+        research_query=run.goal_text,
+        synthesis_payload={
+            "answer": "Partial research evidence.",
+            "status": "incomplete",
+            "remaining_work": "Collect one more primary source.",
+        },
+    )
+    research_mode = _make_research_mode(max_iterations=1)
+    monkeypatch.setattr(
+        research_mode,
+        "_execute_search_iteration",
+        lambda *args, **kwargs: ResearchFinding(
+            iteration=0,
+            source_tool="act",
+            source_query=run.goal_text,
+            content="One primary source supports the partial finding.",
+        ),
+    )
+    monkeypatch.setattr(
+        research_mode,
+        "_schedule_pause_resume",
+        lambda **kwargs: pytest.fail(f"unexpected research backoff: {kwargs}"),
+    )
+
+    def turn(request):
+        turn_requests.append(request)
+        research_result = research_mode.execute(research_ctx)
+        return project_turn_result_from_response(
+            response={
+                "summary": research_result.message,
+                "metadata": {
+                    **research_result.action_result.outputs,
+                    "task_plan": plan.model_dump(mode="json"),
+                },
+            }
+        )
+
+    scheduled_jobs = tuple(job["job_id"] for job in cron.jobs)
+    result = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=turn,
+        verify=lambda: run_project_verification_commands(
+            run.execution_selectors.verification_commands,
+            workspace=tmp_path,
+        ),
+    ).run_cycle(run.run_id)
+
+    assert turn_requests[0].act_profile == "research"
+    assert result.decision == ProjectCycleDecision.CONTINUE
+    assert result.run.status == AutonomyRunStatus.RUNNING
+    assert [
+        record.task_id
+        for record in manager.list_open_tasks_for_session(runtime.session_id)
+    ] == [run.task_id]
+    assert tuple(job["job_id"] for job in cron.jobs) == scheduled_jobs
+
+
 @pytest.mark.parametrize("approved", [False, None])
 def test_handoff_denial_or_unsupported_client_never_launches(
     tmp_path, monkeypatch, approved
@@ -543,6 +671,53 @@ def test_handoff_outside_workspace_fails_before_approval(tmp_path, monkeypatch) 
 
     with pytest.raises(ValueError, match="inside the workspace"):
         asyncio.run(runtime.approve_project_handoff(metadata, approve))
+
+
+def test_historical_handoff_without_multi_cycle_budget_is_not_approved(
+    tmp_path, monkeypatch
+) -> None:
+    runtime, _, _ = _project_runtime(tmp_path)
+    metadata = _proposal(runtime, monkeypatch, max_iterations=None)
+
+    async def approve(*args):
+        pytest.fail("stale proposal requested approval")
+
+    result = asyncio.run(runtime.approve_project_handoff(metadata, approve))
+
+    assert "at least 2 iterations" in result
+    assert (
+        AutonomyRunStore(
+            root=resolve_autonomy_state_root(runtime._rt.home_root)
+        ).list_runs()
+        == []
+    )
+
+
+def test_focus_daemon_failure_precedes_project_launch(tmp_path, monkeypatch) -> None:
+    runtime, _, _ = _project_runtime(tmp_path)
+    request = runtime.prepare_project_command(
+        f"/project start --goal fixture --verify-command '{sys.executable} -c pass'"
+    )
+
+    def fail_daemon(*args, **kwargs):
+        raise RuntimeError("daemon unavailable")
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.ensure_project_daemon_ready",
+        fail_daemon,
+    )
+
+    kind, message = runtime.launch_prepared_project(request)
+
+    assert kind == "error"
+    assert message == "Project was not queued: daemon unavailable"
+
+    assert (
+        AutonomyRunStore(
+            root=resolve_autonomy_state_root(runtime._rt.home_root)
+        ).list_runs()
+        == []
+    )
 
 
 def test_empty_verification_blocks_before_task_or_wake(tmp_path, monkeypatch) -> None:

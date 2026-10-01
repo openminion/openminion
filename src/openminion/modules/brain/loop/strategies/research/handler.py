@@ -69,17 +69,19 @@ from .findings import (
     build_pause_partial_answer as _build_pause_partial_answer,
     evidence_dates_from_action_result as _evidence_dates_from_action_result,
     evidence_dates_from_working_state as _evidence_dates_from_working_state,
-    local_now_iso as _local_now_iso,
     normalized_text as _normalized_text,
-    render_temporal_fact_lines as _render_temporal_fact_lines_impl,
+    render_temporal_fact_lines as _render_temporal_fact_lines,
     usable_child_action_result_text as _usable_child_action_result_text,
     usable_child_working_state_text as _usable_child_working_state_text,
+)
+from .finalization import (
+    is_project_owned_turn as _is_project_owned_turn,
+    no_synthesis_closeout as _no_synthesis_closeout,
+    project_owned_finalization as _project_owned_finalization,
 )
 from .schemas import ResearchFinding, ResearchSynthesis
 from openminion.modules.brain.constants import STATE_KEY_TASK_BACKED_RESUME
 from openminion.base.constants import STATE_KEY_WORKING
-
-RESEARCH_MODE = BRAIN_INTERNAL_MODE_ACT_RESEARCH
 
 
 @contextmanager
@@ -96,13 +98,9 @@ def _non_recursive_child_profile(runner: Any):
         setattr(profile, "default_act_profile", original)
 
 
-def _render_temporal_fact_lines(findings: list[dict[str, Any]]) -> list[str]:
-    return _render_temporal_fact_lines_impl(findings, now_iso_fn=_local_now_iso)
-
-
 class ResearchMode(SimpleCheckpointMixin):
     CHECKPOINT_VERSION = 1
-    mode_name = RESEARCH_MODE
+    mode_name = BRAIN_INTERNAL_MODE_ACT_RESEARCH
     mode_description = (
         "iteratively search, gather, and synthesize information from multiple "
         "sources when the answer requires discovery — the number of searches "
@@ -138,6 +136,7 @@ class ResearchMode(SimpleCheckpointMixin):
         self._next_iteration = 0
         self._findings: list[dict[str, Any]] = []
         self._resume_count = 0
+        self._remaining_work = ""
         self._convergence_config = ResearchConvergenceConfig()
 
     def apply_mode_config(self, *, config, runner, profile) -> None:
@@ -203,6 +202,7 @@ class ResearchMode(SimpleCheckpointMixin):
             next_iteration=self._next_iteration,
             findings=self._findings,
             resume_count=self._resume_count,
+            remaining_work=self._remaining_work,
         )
 
     def restore_state(self, payload: dict[str, Any]) -> None:
@@ -214,6 +214,7 @@ class ResearchMode(SimpleCheckpointMixin):
             for item in list(migrated.get("findings", []) or [])
         ]
         self._resume_count = int(migrated.get("resume_count", 0) or 0)
+        self._remaining_work = _normalized_text(migrated.get("remaining_work"))
 
     def checkpoint(self, ctx: ExecutionContext, state: dict[str, Any]) -> str:
         self.restore_state(state)
@@ -375,9 +376,14 @@ class ResearchMode(SimpleCheckpointMixin):
             )
 
         self._query = query
-        task_id = _normalized_text(self._init_checkpoint(ctx) or "")
-        checkpoint_state = dict(
-            getattr(ctx.state, STATE_KEY_TASK_BACKED_RESUME, {}) or {}
+        project_owned = _is_project_owned_turn(ctx)
+        task_id = (
+            "" if project_owned else _normalized_text(self._init_checkpoint(ctx) or "")
+        )
+        checkpoint_state = (
+            {}
+            if project_owned
+            else dict(getattr(ctx.state, STATE_KEY_TASK_BACKED_RESUME, {}) or {})
         )
 
         if checkpoint_state.get("_resume_error"):
@@ -404,11 +410,12 @@ class ResearchMode(SimpleCheckpointMixin):
                     resume_count=0,
                 )
             )
-            checkpoint_state = self._set_resume_state(
-                ctx,
-                payload=self.snapshot_state(),
-                cursor=self._next_iteration,
-            )
+            if not project_owned:
+                checkpoint_state = self._set_resume_state(
+                    ctx,
+                    payload=self.snapshot_state(),
+                    cursor=self._next_iteration,
+                )
         else:
             restored = {
                 key: value
@@ -452,13 +459,17 @@ class ResearchMode(SimpleCheckpointMixin):
             self._findings = list(findings)
             self._next_iteration = iteration + 1
             self._resume_count = resume_count
-            checkpoint_state = self._set_resume_state(
-                ctx,
-                payload=self.snapshot_state(),
-                cursor=self._next_iteration,
-            )
+            if not project_owned:
+                checkpoint_state = self._set_resume_state(
+                    ctx,
+                    payload=self.snapshot_state(),
+                    cursor=self._next_iteration,
+                )
             checkpoint_id: str | None = None
-            if (iteration + 1) % max(1, self._checkpoint_interval) == 0:
+            if (
+                not project_owned
+                and (iteration + 1) % max(1, self._checkpoint_interval) == 0
+            ):
                 checkpoint_id = self._save_checkpoint(
                     ctx,
                     cursor=self._next_iteration,
@@ -479,29 +490,14 @@ class ResearchMode(SimpleCheckpointMixin):
             self.emit_partial_result(ctx, finding.content)
 
             if self._pause_after_phase(ctx, index=iteration):
-                if checkpoint_id is None:
-                    checkpoint_id = self._save_checkpoint(
-                        ctx,
-                        cursor=self._next_iteration,
-                    )
-                if task_id:
-                    ctx.transition_task(task_id=task_id, to_state="paused")
-                    self._schedule_pause_resume(
-                        ctx=ctx,
-                        task_id=task_id,
-                        query=query,
-                    )
-                transition(ctx.state, "checkpoint_reached", logger=ctx.logger)
-                pause_message = self._build_pause_response_message(
+                return self._pause_iteration(
+                    ctx,
+                    task_id=task_id,
                     query=query,
                     findings=findings,
                     iteration=iteration,
-                )
-                return ExecutionResult.from_step_output(
-                    ctx.respond(
-                        message=pause_message,
-                        status=BRAIN_STATE_WAITING_USER,
-                    )
+                    checkpoint_id=checkpoint_id,
+                    project_owned=project_owned,
                 )
 
             convergence = self._check_convergence(ctx, query=query, findings=findings)
@@ -513,6 +509,48 @@ class ResearchMode(SimpleCheckpointMixin):
             task_id=task_id,
             query=query,
             findings=findings,
+            project_owned=project_owned,
+        )
+
+    def _pause_iteration(
+        self,
+        ctx: ExecutionContext,
+        *,
+        task_id: str,
+        query: str,
+        findings: list[dict[str, Any]],
+        iteration: int,
+        checkpoint_id: str | None,
+        project_owned: bool,
+    ) -> ExecutionResult:
+        if project_owned:
+            partial = _build_pause_partial_answer(findings)
+            synthesis = ResearchSynthesis(
+                answer=partial or "Research collected no usable evidence yet.",
+                status="incomplete",
+                remaining_work="Continue the remaining research iterations.",
+            )
+            return _project_owned_finalization(ctx, synthesis)
+        if checkpoint_id is None:
+            checkpoint_id = self._save_checkpoint(
+                ctx,
+                cursor=self._next_iteration,
+            )
+        if task_id:
+            ctx.transition_task(task_id=task_id, to_state="paused")
+            self._schedule_pause_resume(
+                ctx=ctx,
+                task_id=task_id,
+                query=query,
+            )
+        transition(ctx.state, "checkpoint_reached", logger=ctx.logger)
+        pause_message = self._build_pause_response_message(
+            query=query,
+            findings=findings,
+            iteration=iteration,
+        )
+        return ExecutionResult.from_step_output(
+            ctx.respond(message=pause_message, status=BRAIN_STATE_WAITING_USER)
         )
 
     def _query_from_context(self, ctx: ExecutionContext) -> str:
@@ -536,6 +574,8 @@ class ResearchMode(SimpleCheckpointMixin):
         iteration: int,
     ) -> str:
         parts = [*_render_temporal_fact_lines(findings), f"Research objective: {query}"]
+        if self._remaining_work:
+            parts.append(f"Remaining work: {self._remaining_work}")
         if scope:
             parts.append(f"Scope constraints: {scope}")
         if findings:
@@ -752,6 +792,7 @@ class ResearchMode(SimpleCheckpointMixin):
         task_id: str,
         query: str,
         findings: list[dict[str, Any]],
+        project_owned: bool = False,
     ) -> ExecutionResult:
         synthesis = (
             self._build_synthesis(ctx, query=query, findings=findings)
@@ -759,11 +800,32 @@ class ResearchMode(SimpleCheckpointMixin):
             else None
         )
         answer = _normalized_text(synthesis.answer if synthesis is not None else "")
+        if project_owned:
+            if synthesis is None:
+                synthesis = ResearchSynthesis(
+                    answer=_no_synthesis_closeout(query),
+                    status="incomplete",
+                    remaining_work="Collect evidence and produce a usable synthesis.",
+                )
+            return _project_owned_finalization(ctx, synthesis)
         if not answer:
             self._pause_incomplete_research(ctx, task_id=task_id)
             return ExecutionResult.from_step_output(
                 ctx.respond(
-                    message=self._build_no_synthesis_closeout(query=query),
+                    message=_no_synthesis_closeout(query),
+                    status=BRAIN_STATE_WAITING_USER,
+                )
+            )
+
+        if synthesis is not None and synthesis.status != "complete":
+            self._next_iteration = 0
+            self._remaining_work = _normalized_text(synthesis.remaining_work)
+            self._pause_incomplete_research(ctx, task_id=task_id)
+            if synthesis.status == "incomplete" and task_id:
+                self._schedule_pause_resume(ctx=ctx, task_id=task_id, query=query)
+            return ExecutionResult.from_step_output(
+                ctx.respond(
+                    message=f"{answer}\n\nRemaining work: {self._remaining_work}",
                     status=BRAIN_STATE_WAITING_USER,
                 )
             )
@@ -791,7 +853,7 @@ class ResearchMode(SimpleCheckpointMixin):
                             cron_expr=cron_expr,
                             timezone_name=timezone_name,
                             goal=query,
-                            mode_name=RESEARCH_MODE,
+                            mode_name=BRAIN_INTERNAL_MODE_ACT_RESEARCH,
                         )
                     except Exception:
                         pass
@@ -834,7 +896,7 @@ class ResearchMode(SimpleCheckpointMixin):
                 budget={"max_tokens": RESEARCH_SYNTHESIS_MAX_TOKENS},
                 hints={"user_input": synthesis_prompt},
                 logger=ctx.logger,
-                mode_name=RESEARCH_MODE,
+                mode_name=BRAIN_INTERNAL_MODE_ACT_RESEARCH,
             )
             raw = call_structured_with_retry(
                 llm_api,
@@ -860,16 +922,6 @@ class ResearchMode(SimpleCheckpointMixin):
         if task_id:
             ctx.transition_task(task_id=task_id, to_state="paused")
         transition(ctx.state, "checkpoint_reached", logger=ctx.logger)
-
-    def _build_no_synthesis_closeout(self, *, query: str) -> str:
-        return (
-            f"Research finished for '{query}', but the run did not produce a "
-            "usable synthesized answer from the collected tool evidence.\n\n"
-            "Next steps:\n- Retry with a narrower research scope.\n"
-            "- Lower the number of requested comparison dimensions.\n"
-            "- Ask for one source family or one decision at a time.\n\n"
-            "Continue in a new turn to resume."
-        )
 
     def _build_pause_response_message(
         self,
@@ -930,7 +982,7 @@ class ResearchMode(SimpleCheckpointMixin):
                 session_id=ctx.state.session_id,
                 agent_id=ctx.state.agent_id,
                 goal=query,
-                mode_name=RESEARCH_MODE,
+                mode_name=BRAIN_INTERNAL_MODE_ACT_RESEARCH,
                 interval=interval,
                 attempt_count=0,
                 first_scheduled_at=datetime.now(timezone.utc).isoformat(),

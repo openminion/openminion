@@ -19,6 +19,7 @@ from openminion.cli.commands.autonomy_project import (
 from openminion.cli.parser.base import build_parser
 from openminion.modules.task import (
     AutonomyRunError,
+    AutonomyRunStatus,
     AutonomyRunStore,
     TaskLifecycleState,
     TaskManager,
@@ -26,6 +27,7 @@ from openminion.modules.task import (
     build_autonomy_run,
     load_latest_project_checkpoint,
     record_project_cycle,
+    resolve_autonomy_state_root,
     ProjectCycleDecision,
 )
 from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
@@ -1595,6 +1597,10 @@ def test_unattended_autonomy_schedules_one_cycle_and_cancel_removes_it(
         "openminion.cli.commands.autonomy_project.configured_cron_store",
         lambda _args, config_ref: cron_store,
     )
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.ensure_project_daemon_ready",
+        lambda _args, config_ref: None,
+    )
     verify_command = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(0)'"
     code, output = _run_cli(
         [
@@ -1636,6 +1642,115 @@ def test_unattended_autonomy_schedules_one_cycle_and_cancel_removes_it(
     assert cron_store.jobs == {}
 
 
+def test_unattended_start_daemon_failure_precedes_durable_launch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def fail_daemon(*_args, **_kwargs) -> None:
+        raise RuntimeError("daemon unavailable")
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.ensure_project_daemon_ready",
+        fail_daemon,
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.configured_cron_store",
+        lambda *_args, **_kwargs: pytest.fail("wake scheduled before readiness"),
+    )
+    verify_command = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(0)'"
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                *_root_args(tmp_path),
+                "autonomy",
+                "start",
+                "--goal",
+                "wait for the daemon",
+                "--verify-command",
+                verify_command,
+                "--unattended",
+                "--json",
+            ]
+        )
+    assert exc_info.value.code == 2
+
+    assert (
+        AutonomyRunStore(
+            root=resolve_autonomy_state_root(tmp_path / "home")
+        ).list_runs()
+        == []
+    )
+    manager = TaskManager.for_lifecycle_db(
+        db_path=tmp_path / "data" / DEFAULT_INTEGRATED_SQLITE_SUBPATH
+    )
+    try:
+        assert manager.list_open_tasks_for_session("autonomy") == []
+    finally:
+        manager.close()
+
+
+def test_unattended_resume_daemon_failure_preserves_prior_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "resume after daemon readiness",
+            "--max-iterations",
+            "0",
+            "--json",
+        ]
+    )
+    original = json.loads(output)["run"]
+
+    def fail_daemon(*_args, **_kwargs) -> None:
+        raise RuntimeError("daemon unavailable")
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.ensure_project_daemon_ready",
+        fail_daemon,
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.configured_cron_store",
+        lambda *_args, **_kwargs: pytest.fail("wake scheduled before readiness"),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                *_root_args(tmp_path),
+                "autonomy",
+                "resume",
+                original["run_id"],
+                "--max-iterations",
+                "1",
+                "--verification-waiver",
+                "deterministic readiness fixture",
+                "--unattended",
+                "--json",
+            ]
+        )
+    assert exc_info.value.code == 2
+
+    current = AutonomyRunStore(
+        root=resolve_autonomy_state_root(tmp_path / "home")
+    ).require(original["run_id"])
+    assert current.status == AutonomyRunStatus.BLOCKED
+    manager = TaskManager.for_lifecycle_db(
+        db_path=tmp_path / "data" / DEFAULT_INTEGRATED_SQLITE_SUBPATH
+    )
+    try:
+        task = manager.get_task(original["task_id"])
+        assert task is not None and task.state == TaskLifecycleState.PAUSED
+    finally:
+        manager.close()
+
+
 def test_unattended_cancel_retries_linked_wake_deletion(
     tmp_path: Path,
     monkeypatch,
@@ -1662,6 +1777,10 @@ def test_unattended_cancel_retries_linked_wake_deletion(
     monkeypatch.setattr(
         "openminion.cli.commands.autonomy_project.configured_cron_store",
         lambda _args, config_ref: cron_store,
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.ensure_project_daemon_ready",
+        lambda _args, config_ref: None,
     )
     verify = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(0)'"
     _code, output = _run_cli(
