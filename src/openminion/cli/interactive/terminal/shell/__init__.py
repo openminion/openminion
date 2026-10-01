@@ -302,6 +302,7 @@ class _TerminalFocusLoop:
         working_dir: str,
         custom_commands: dict[str, Any],
         approval_grants: set[str],
+        startup_notice_task: asyncio.Task[str] | None = None,
     ) -> None:
         self.runtime = runtime
         self.console = console
@@ -312,6 +313,7 @@ class _TerminalFocusLoop:
         self.working_dir = working_dir
         self.custom_commands = custom_commands
         self.approval_grants = approval_grants
+        self.startup_notice_task = startup_notice_task
         self.pending_turns: deque[str] = deque()
         self.active_turn_task: asyncio.Task[None] | None = None
         self.read_task: asyncio.Task[str] | None = None
@@ -596,6 +598,11 @@ class _TerminalFocusLoop:
                 return 0
             self.start_read_task()
             return None
+        notice_task = self.startup_notice_task
+        if notice_task is not None and notice_task.done():
+            self.startup_notice_task = None
+            if notice := notice_task.result():
+                self._push_system_message(notice)
         text = (text or "").strip()
         if not text:
             self.start_read_task()
@@ -709,8 +716,6 @@ async def _run_terminal_focus_async(
     _push_greeter(console, runtime=runtime, working_dir=working_dir)
     startup_notice_task = _schedule_startup_notice(
         startup_notice,
-        transcript=transcript,
-        prompt_session=composer.prompt_session,
     )
     loop = _TerminalFocusLoop(
         runtime=runtime,
@@ -722,6 +727,7 @@ async def _run_terminal_focus_async(
         working_dir=working_dir,
         custom_commands=custom_commands,
         approval_grants=approval_grants,
+        startup_notice_task=startup_notice_task,
     )
     composer._on_escape = loop.request_turn_interrupt
     try:
