@@ -200,9 +200,12 @@ def test_history_file_enables_file_history(tmp_path: Path) -> None:
 
 def test_input_stays_packed_when_completion_menu_opens() -> None:
     c = TerminalComposer()
+    root = c._session.layout.container
+    input_stack = root.children[0].alternative_content.content
     input_window = c._session.layout.current_window
 
-    assert c._session.layout.container.align == VerticalAlign.BOTTOM
+    assert root.align == VerticalAlign.JUSTIFY
+    assert isinstance(input_stack.children[0], Window)
     assert input_window.dont_extend_height() is True
     assert int(input_window.height.min) == 0
 

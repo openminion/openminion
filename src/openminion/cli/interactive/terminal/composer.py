@@ -28,6 +28,7 @@ from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.output.vt100 import Vt100_Output
 from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.renderer import CPR_Support
 from prompt_toolkit.styles import Style
 
 from openminion.cli.presentation.animation import default_animation_registry
@@ -197,13 +198,17 @@ def _configure_bottom_input_layout(session: PromptSession[str]) -> None:
     if not isinstance(input_stack, HSplit):
         raise RuntimeError("prompt layout does not expose the expected menu stack")
 
-    root.align = VerticalAlign.BOTTOM
+    root.align = VerticalAlign.JUSTIFY
     input_window.dont_extend_height = Condition(lambda: True)
     input_window.height = Dimension()
+    # Preserve prompt-toolkit's stretching main region so its footer remains
+    # attached to the physical last row. A flexible spacer inside that region
+    # absorbs the unused height and keeps only the prompt at the bottom.
+    input_stack.children.insert(0, Window())
     # Leave room above the cursor so prompt-toolkit opens its completion float
     # upward without moving the input off the penultimate terminal row.
     input_stack.children.insert(
-        1,
+        2,
         ConditionalContainer(
             Window(height=Dimension.exact(_COMPLETION_MENU_ROWS - 1)),
             Condition(lambda: session.default_buffer.complete_state is not None),
@@ -391,6 +396,8 @@ class TerminalComposer:
             self._session.app.renderer.cpr_not_supported_callback = None
         _configure_completion_menu(self._session)
         _configure_bottom_input_layout(self._session)
+        self._anchored_terminal_rows = 0
+        self._session.app.before_render += self._ensure_prompt_anchor
 
     def apply_theme(self) -> None:
         if not self._color:
@@ -563,11 +570,41 @@ class TerminalComposer:
                     placeholder=self._formatted_placeholder,
                     refresh_interval=self._prompt_refresh_interval(),
                     default=draft,
+                    pre_run=self._ensure_prompt_anchor,
                 )
                 self._next_draft = None
             finally:
                 self._multiline = False
         return str(text or "").rstrip("\n")
+
+    def _ensure_prompt_anchor(self, *_: object) -> None:
+        """Keep the prompt on the terminal edge across renderer resets."""
+
+        app = self._session.app
+        output = app.output
+        terminal_rows = max(1, output.get_size().rows)
+        layout_rows = 2 if self._bottom_toolbar is not None else 1
+        layout_rows = min(layout_rows, terminal_rows)
+        renderer = app.renderer
+        renderer.cpr_support = CPR_Support.NOT_SUPPORTED
+        if (
+            renderer._min_available_height == layout_rows
+            and self._anchored_terminal_rows == terminal_rows
+        ):
+            return
+        if (
+            renderer._min_available_height == 0
+            and self._anchored_terminal_rows == terminal_rows
+        ):
+            output.cursor_goto(row=terminal_rows, column=1)
+            output.write_raw("\n" * layout_rows)
+        output.cursor_goto(row=terminal_rows - layout_rows + 1, column=1)
+        output.flush()
+        # Prompt-toolkit normally learns this value through a cursor position
+        # response. Seed the known space after explicitly positioning the
+        # cursor so terminals without CPR render the same persistent footer.
+        renderer._min_available_height = layout_rows
+        self._anchored_terminal_rows = terminal_rows
 
     def _formatted_bottom_toolbar(self):
         if self._bottom_toolbar is None:
