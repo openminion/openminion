@@ -430,6 +430,7 @@ def test_focus_startup_notice_preserves_single_composer(
         focus_probe.wait_ready(session)
         time.sleep(0.2)
         assert "Update available!" not in session.transcript
+        assert "cursor position requests" not in session.transcript
         assert session.transcript.count("Ask anything") == 1
 
         session.type_line("/status")

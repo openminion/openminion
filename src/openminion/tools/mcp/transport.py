@@ -55,6 +55,7 @@ class StdioMCPTransport:
         self._read_buffer = bytearray()
         self._stderr_buffer = bytearray()
         self._stderr_lock = threading.Lock()
+        self._stderr_condition = threading.Condition(self._stderr_lock)
         self._stderr_thread: threading.Thread | None = None
         self._stderr_stop = threading.Event()
         self._write_lock = threading.Lock()
@@ -516,8 +517,10 @@ class StdioMCPTransport:
             )
         self._read_buffer.extend(chunk)
 
-    def stderr_tail(self, *, limit: int = 4096) -> str:
-        with self._stderr_lock:
+    def stderr_tail(self, *, limit: int = 4096, wait_seconds: float = 0.0) -> str:
+        with self._stderr_condition:
+            if not self._stderr_buffer and wait_seconds > 0:
+                self._stderr_condition.wait(timeout=wait_seconds)
             if not self._stderr_buffer:
                 return ""
             payload = bytes(self._stderr_buffer[-max(1, int(limit)) :])
@@ -539,10 +542,11 @@ class StdioMCPTransport:
                 return
             if not chunk:
                 return
-            with self._stderr_lock:
+            with self._stderr_condition:
                 self._stderr_buffer.extend(chunk)
                 if len(self._stderr_buffer) > buffer_limit:
                     del self._stderr_buffer[: len(self._stderr_buffer) - buffer_limit]
+                self._stderr_condition.notify_all()
 
 
 __all__ = [

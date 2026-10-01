@@ -581,23 +581,11 @@ def test_comparison_accepts_empty_inherited_pythonpath_shape() -> None:
     )
 
 
-def test_path_shape_normalizes_repository_descendants(tmp_path: Path) -> None:
+def test_path_shape_normalizes_repository_descendants() -> None:
     module = _load_module()
-    workspace_root = tmp_path / "workspace"
-    options = module.RunOptions(
-        workspace_root=workspace_root,
-        output_root=tmp_path / "output",
-        python=Path(sys.executable),
-        runs=1,
-        timeout_seconds=5,
-        include_importtime=False,
-        profile=False,
-    )
 
     assert (
-        module._path_shape(
-            str(workspace_root / "openminion" / "scripts" / "smoke"), options
-        )
+        module._path_shape(str(module._openminion_root() / "scripts" / "smoke"))
         == "<SUT_REPO>/scripts/smoke"
     )
 
@@ -613,9 +601,9 @@ def test_dirty_fingerprint_includes_nested_untracked_file_bytes(
     nested.parent.mkdir()
     nested.write_text("first", encoding="utf-8")
 
-    first = module._dirty_worktree_fingerprint(tmp_path)
+    first = module._dirty_worktree_fingerprint(repo)
     nested.write_text("second", encoding="utf-8")
-    second = module._dirty_worktree_fingerprint(tmp_path)
+    second = module._dirty_worktree_fingerprint(repo)
 
     assert first != second
 
@@ -1439,7 +1427,16 @@ def test_focus_prompt_ready_measures_the_interactive_composer(tmp_path: Path) ->
 @pytest.mark.skipif(os.name != "posix", reason="Focus prompt benchmark requires PTY")
 def test_focus_prompt_ready_runs_as_a_direct_script(tmp_path: Path) -> None:
     openminion_root = _SCRIPT_PATH.parents[2]
-    workspace_root = openminion_root.parent
+    workspace_root = tmp_path / "runtime-workspace"
+    decoy_root = workspace_root / "openminion" / "tests"
+    decoy_harness = decoy_root / "e2e" / "cli" / "focus" / "harness"
+    decoy_harness.mkdir(parents=True)
+    for package_root in (decoy_root, *decoy_harness.parents[:3]):
+        (package_root / "__init__.py").write_text("", encoding="utf-8")
+    (decoy_harness / "__init__.py").write_text(
+        'raise RuntimeError("loaded decoy Focus harness")\n',
+        encoding="utf-8",
+    )
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(openminion_root / "src")
 

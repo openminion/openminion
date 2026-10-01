@@ -165,8 +165,12 @@ class RunOptions:
     threshold_mode: str = DEFAULT_THRESHOLD_MODE
 
 
+def _openminion_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
 def _workspace_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return _openminion_root().parent
 
 
 def _default_output_root(workspace_root: Path) -> Path:
@@ -512,13 +516,13 @@ def _process_interval_metrics(
     return metrics
 
 
-def _dirty_worktree_summary(workspace_root: Path) -> dict[str, Any]:
+def _dirty_worktree_summary(repo_root: Path) -> dict[str, Any]:
     try:
         result = subprocess.run(
             [
                 "git",
                 "-C",
-                str(workspace_root / "openminion"),
+                str(repo_root),
                 "status",
                 "--short",
                 "--untracked-files=all",
@@ -544,9 +548,8 @@ def _stable_json_hash(payload: Any) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def _dirty_worktree_fingerprint(workspace_root: Path) -> str:
-    repo_root = workspace_root / "openminion"
-    summary = _dirty_worktree_summary(workspace_root)
+def _dirty_worktree_fingerprint(repo_root: Path) -> str:
+    summary = _dirty_worktree_summary(repo_root)
     if not summary.get("available"):
         return "unavailable"
     digest = hashlib.sha256()
@@ -683,11 +686,11 @@ def _host_runtime_hash() -> str:
     )
 
 
-def _path_shape(path_value: str, options: RunOptions) -> str:
+def _path_shape(path_value: str) -> str:
     if not path_value:
         return "<CWD>"
     path = Path(path_value).expanduser().absolute()
-    repo_root = (options.workspace_root / "openminion").absolute()
+    repo_root = _openminion_root().absolute()
     source_root = (repo_root / "src").absolute()
     if path == source_root:
         return "<SUT_SRC>"
@@ -721,10 +724,10 @@ def _runtime_environment_identity(options: RunOptions) -> dict[str, Any]:
         "platform": platform.platform(),
         "host_runtime_hash": _host_runtime_hash(),
         "effective_sys_path": list(sys.path),
-        "effective_sys_path_shape": [_path_shape(entry, options) for entry in sys.path],
+        "effective_sys_path_shape": [_path_shape(entry) for entry in sys.path],
         "inherited_pythonpath": inherited_pythonpath,
         "inherited_pythonpath_shape": [
-            _path_shape(entry, options) for entry in pythonpath_entries
+            _path_shape(entry) for entry in pythonpath_entries
         ],
         "bytecode_cache_environment": {
             "dont_write_bytecode": os.environ.get("PYTHONDONTWRITEBYTECODE", ""),
@@ -937,10 +940,11 @@ def _measurement_identity(
 
 def _campaign_source_identity(options: RunOptions) -> dict[str, Any]:
     package_root = _loaded_openminion_package_root()
+    repo_root = _openminion_root()
     return {
-        "git_head": _git_head(options.workspace_root),
-        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(options.workspace_root),
-        "dirty_worktree_summary": _dirty_worktree_summary(options.workspace_root),
+        "git_head": _git_head(repo_root),
+        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(repo_root),
+        "dirty_worktree_summary": _dirty_worktree_summary(repo_root),
         "runner_path": str(Path(__file__).resolve()),
         "runner_source_sha256": _file_sha256(Path(__file__)),
         "loaded_openminion_package_root": package_root,
@@ -1194,7 +1198,7 @@ def _command_env(
     options: RunOptions, *, data_root: Path | None = None
 ) -> dict[str, str]:
     env = os.environ.copy()
-    src_root = options.workspace_root / "openminion" / "src"
+    src_root = _openminion_root() / "src"
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (
         str(src_root)
@@ -1213,7 +1217,7 @@ def _run_subprocess(
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
-        cwd=options.workspace_root / "openminion",
+        cwd=_openminion_root(),
         env=_command_env(options, data_root=data_root),
         text=True,
         capture_output=True,
@@ -1227,7 +1231,7 @@ def _run_subprocess_measured(
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
     process = subprocess.Popen(
         command,
-        cwd=options.workspace_root / "openminion",
+        cwd=_openminion_root(),
         env=_command_env(options, data_root=data_root),
         text=True,
         stdout=subprocess.PIPE,
@@ -1493,7 +1497,7 @@ def _measure_focus_prompt_ready(
     )
     data_root = run_root / "data"
     config_path = run_root / "config.json"
-    openminion_root = options.workspace_root / "openminion"
+    openminion_root = _openminion_root()
     session_id = f"performance-{scenario_id}"
 
     def action(metrics: dict[str, Any]) -> list[str]:
@@ -3278,12 +3282,12 @@ def _measure_persistent_focus_turns(
         session_id = "omfla-focus"
         probe = FocusProbe(
             python_bin=options.python,
-            openminion_root=options.workspace_root / "openminion",
+            openminion_root=_openminion_root(),
             framework_root=options.workspace_root,
             data_root=root / "data",
             config_path=config_path,
             agent_id="openminion",
-            workdir=options.workspace_root / "openminion",
+            workdir=_openminion_root(),
             session_id=session_id,
             include_project_context=False,
         )
@@ -3933,12 +3937,12 @@ def _omfla_focus_restart_cycle(
     session_id = f"omfla-focus-restart-{cycle_index}"
     probe = FocusProbe(
         python_bin=options.python,
-        openminion_root=options.workspace_root / "openminion",
+        openminion_root=_openminion_root(),
         framework_root=options.workspace_root,
         data_root=root / "data",
         config_path=config_path,
         agent_id="openminion",
-        workdir=options.workspace_root / "openminion",
+        workdir=_openminion_root(),
         session_id=session_id,
         include_project_context=False,
     )
@@ -4675,7 +4679,7 @@ def _measure_provider_connection_reuse_decision() -> ScenarioRun:
             httpx_available = True
         except Exception:
             httpx_available = False
-        pyproject = _workspace_root() / "openminion" / "pyproject.toml"
+        pyproject = _openminion_root() / "pyproject.toml"
         project_dependencies: list[str] = []
         if pyproject.exists():
             pyproject_payload = tomllib.loads(pyproject.read_text(encoding="utf-8"))
@@ -5892,10 +5896,10 @@ def _run_to_artifact(
     }
 
 
-def _git_head(workspace_root: Path) -> str:
+def _git_head(repo_root: Path) -> str:
     try:
         result = subprocess.run(
-            ["git", "-C", str(workspace_root / "openminion"), "rev-parse", "HEAD"],
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
             text=True,
             capture_output=True,
             check=False,
@@ -6150,10 +6154,8 @@ def _tcpl_sample_from_artifact(
     scenario_id = str(artifact.get("scenario_id") or "")
     runtime_config = identity.get("runtime_config")
     comparable_identity = {
-        "git_revision": str(
-            artifact.get("git_head") or _git_head(options.workspace_root)
-        ),
-        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(options.workspace_root),
+        "git_revision": str(artifact.get("git_head") or _git_head(_openminion_root())),
+        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(_openminion_root()),
         "scenario_id": scenario_id,
         "fixture_hash": _fixture_hash(identity, command=artifact.get("command")),
         "provider": provider,
@@ -6369,9 +6371,9 @@ def _write_tcpl_artifacts(
         "artifact_schema_version": TCPL_ARTIFACT_SCHEMA_VERSION,
         "generated_at_utc": summary["generated_at_utc"],
         "lane": "TCPL",
-        "git_revision": _git_head(options.workspace_root),
-        "dirty_tree_summary": _dirty_worktree_summary(options.workspace_root),
-        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(options.workspace_root),
+        "git_revision": _git_head(_openminion_root()),
+        "dirty_tree_summary": _dirty_worktree_summary(_openminion_root()),
+        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(_openminion_root()),
         "scenario_ids": scenarios,
         "runs": int(options.runs),
         "warmup_runs": int(options.warmup_runs),
@@ -6626,7 +6628,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workspace-root",
         default=None,
-        help="Workspace root containing openminion/ and docs/.",
+        help="Runtime workspace root for homes and generated artifacts.",
     )
     parser.add_argument(
         "--python",

@@ -37,7 +37,8 @@ scope	max_python_files	max_loc
 # single gateway call that selects grant-bound delegated memory.
 # AEUX (2026-10-01) adds resumable approval transport and extracts TurnHandle
 # from the over-ceiling runtime manager into one bounded lifecycle owner.
-services	208	41348
+# Its merge with concurrent dev work establishes the integrated source total.
+services	208	41362
 services/security	6	187
 services/stats	1	25
 services/tool	3	50
