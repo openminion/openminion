@@ -1077,7 +1077,14 @@ def test_local_status_scenario_records_required_metric_keys() -> None:
     assert run.metrics["wall_time_ns"] >= 0
     assert run.metrics["process_cpu_time_ns"] >= 0
     assert run.metrics["process_cpu_total_ns"] >= 0
-    assert run.metrics["process_tree_cpu_total_ns"] >= 0
+    process_tree_cpu_total_ns = run.metrics["process_tree_cpu_total_ns"]
+    if process_tree_cpu_total_ns is None:
+        assert (
+            run.metrics["availability_reasons"]["process_tree_cpu_total_ns"]
+            == "descendant_cpu_unavailable"
+        )
+    else:
+        assert process_tree_cpu_total_ns >= 0
     assert run.metrics["python_gc_collection_count"] >= 0
     assert run.metrics["measurement_resolution"] == "perf_counter_ns"
     assert "local_status_collect_ns" in run.metrics["phase_timings_ns"]
