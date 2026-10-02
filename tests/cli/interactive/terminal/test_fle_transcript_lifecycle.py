@@ -489,6 +489,38 @@ def test_terminal_writer_overrides_direct_console_print() -> None:
     assert "hello" in rendered[0]
 
 
+def test_terminal_writer_owns_clear_expand_and_follow_up_rendering() -> None:
+    t, buf = _make("quiet")
+    rendered: list[str] = []
+
+    def _writer(render) -> None:
+        before = len(buf.getvalue())
+        render()
+        rendered.append(buf.getvalue()[before:])
+
+    t.set_terminal_writer(_writer)
+    t.render_user_input("first turn")
+    t.clear_messages()
+    t._truncated_blocks = [
+        ToolEvent(
+            tool_name="file.read",
+            args={"path": "README.md"},
+            content="expanded output",
+            full_content="expanded output",
+        )
+    ]
+    assert t.expand_block(1) is True
+    t.push_message(
+        ChatMessage(kind=MessageKind.AGENT, sender="assistant", body="next turn")
+    )
+
+    assert len(rendered) == 4
+    assert "first turn" in rendered[0]
+    assert "─" in rendered[1]
+    assert "expanded output" in rendered[2]
+    assert "next turn" in rendered[3]
+
+
 def test_terminal_writer_flows_into_active_turn_completion() -> None:
     buf = io.StringIO()
     console = Console(
@@ -618,6 +650,77 @@ def test_prompt_safe_writer_preserves_terminal_control_bytes() -> None:
     )
 
     assert out.getvalue() == "\r\033[2KWorking..."
+
+
+def test_prompt_safe_writer_keeps_transcript_cursor_separate_from_composer() -> None:
+    console = Console(force_terminal=True, color_system=None, width=80)
+    out = io.StringIO()
+    prompt_output = Vt100_Output(
+        out,
+        lambda: Size(rows=24, columns=80),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+    )
+
+    class _App:
+        is_running = False
+
+    class _Session:
+        app = _App()
+        output = prompt_output
+
+    writer = build_prompt_safe_terminal_writer(
+        console=console,
+        prompt_session=_Session(),
+    )
+    remember_cursor = getattr(writer, "remember_cursor")
+
+    remember_cursor()
+    writer(lambda: console.print("top-down response"))
+
+    rendered = out.getvalue()
+    assert rendered.startswith("\x1b7\x1b8")
+    assert "top-down response" in rendered
+    assert rendered.endswith("\x1b7")
+
+
+def test_prompt_safe_writer_reserves_composer_rows_after_transcript_output() -> None:
+    console = Console(force_terminal=True, color_system=None, width=80)
+    out = io.StringIO()
+    terminal_rows = [24]
+    composer_rows = [2]
+    prompt_output = Vt100_Output(
+        out,
+        lambda: Size(rows=terminal_rows[0], columns=80),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+    )
+
+    class _App:
+        is_running = False
+
+    class _Session:
+        app = _App()
+        output = prompt_output
+
+    writer = build_prompt_safe_terminal_writer(
+        console=console,
+        prompt_session=_Session(),
+        reserved_rows=lambda: composer_rows[0],
+    )
+    getattr(writer, "remember_cursor")()
+    writer(lambda: console.print("idle response"))
+    composer_rows[0] = 4
+    writer(lambda: console.print("busy response"))
+    terminal_rows[0] = 3
+    writer(lambda: console.print("small terminal response"))
+
+    rendered = out.getvalue()
+    assert "idle response" in rendered
+    assert "busy response" in rendered
+    assert "small terminal response" in rendered
+    assert rendered.count("\r\n" * 2 + "\x1b[2A\r\x1b7") == 2
+    assert "\r\n" * 4 + "\x1b[4A\r\x1b7" in rendered
 
 
 def test_post_turn_render_skips_already_narrated_call_id() -> None:

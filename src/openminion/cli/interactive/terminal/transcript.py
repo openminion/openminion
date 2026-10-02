@@ -75,6 +75,9 @@ class TerminalTranscript:
             return
         render()
 
+    def _print(self, renderable: Any) -> None:
+        self._write_render(lambda: self._console.print(renderable))
+
     def begin_turn(
         self,
         role: Literal["user", "assistant"] = "assistant",
@@ -125,7 +128,7 @@ class TerminalTranscript:
             self._maybe_print_hidden_tool_summary()
 
     def render_user_input(self, body: str) -> None:
-        self._write_render(lambda: self._console.print(render_user_text(body)))
+        self._print(render_user_text(body))
 
     def _maybe_print_hidden_tool_summary(self) -> None:
         if self._hidden_tool_count <= 0:
@@ -140,7 +143,7 @@ class TerminalTranscript:
             )
         else:
             line = f"({n} {noun} hidden — /verbose to show, /expand 0 to list)"
-        self._console.print(Text(line, style="dim italic"))
+        self._print(Text(line, style="dim italic"))
         self._hidden_tool_count = 0
         self._hidden_failed_count = 0
 
@@ -153,7 +156,7 @@ class TerminalTranscript:
     def clear_messages(self) -> None:
         self.reset_session_state()
         self._messages = []
-        self._console.print(Text("─" * 60, style="dim"))
+        self._print(Text("─" * 60, style="dim"))
 
     def reset_session_state(self) -> None:
         self._hidden_tool_count = 0
@@ -228,7 +231,7 @@ class TerminalTranscript:
                 self._truncated_blocks.append(message.tool_event)
                 return
             if self._verbosity == "verbose":
-                self._console.print(
+                self._print(
                     _render_full_tool_block(
                         message.tool_event,
                         cap=_TOOL_BLOCK_VERBOSE_MAX_LINES,
@@ -237,11 +240,11 @@ class TerminalTranscript:
                 if _body_line_count(message.tool_event) > _TOOL_BLOCK_VERBOSE_MAX_LINES:
                     self._truncated_blocks.append(message.tool_event)
                 return
-            self._console.print(_render_tool_block(message.tool_event))
+            self._print(_render_tool_block(message.tool_event))
             if is_truncated(message.tool_event):
                 self._truncated_blocks.append(message.tool_event)
             return
-        self._console.print(Text(message.body or ""))
+        self._print(Text(message.body or ""))
 
     def set_verbosity(self, level: str) -> None:
         self._verbosity = cast(
@@ -297,7 +300,7 @@ class TerminalTranscript:
                 return
             except (AttributeError, RuntimeError, ValueError):
                 pass
-        self._console.print(renderable)
+        self._print(renderable)
         if call_id:
             self._live_narrated_call_ids.add(call_id)
 
@@ -436,28 +439,28 @@ class TerminalTranscript:
         if self._append_live_renderable(renderable):
             return
         try:
-            self._console.print(renderable)
+            self._print(renderable)
         except Exception:
             return
 
     def expand_block(self, index: int = 1) -> bool:
         if not self._truncated_blocks:
-            self._console.print(
+            self._print(
                 Text("(no truncated tool blocks to expand)", style="dim italic")
             )
             return False
         if index == 0:
-            self._console.print(Text("Truncated tool blocks:", style="bold"))
+            self._print(Text("Truncated tool blocks:", style="bold"))
             for i, event in enumerate(reversed(self._truncated_blocks), start=1):
                 verb = event.tool_name or "tool"
                 first_line = (
                     (event.full_content or event.content or "").strip().split("\n")[0]
                 )
                 preview = first_line[:50] + ("…" if len(first_line) > 50 else "")
-                self._console.print(f"  {i}. {verb} — {preview}")
+                self._print(f"  {i}. {verb} — {preview}")
             return True
         if index < 1 or index > len(self._truncated_blocks):
-            self._console.print(
+            self._print(
                 Text(
                     f"(no truncated block at index {index})",
                     style=token_rich_style(StyleToken.ERROR),
@@ -465,7 +468,7 @@ class TerminalTranscript:
             )
             return False
         event = list(reversed(self._truncated_blocks))[index - 1]
-        self._console.print(_render_full_tool_block(event))
+        self._print(_render_full_tool_block(event))
         return True
 
 

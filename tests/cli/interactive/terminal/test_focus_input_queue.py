@@ -67,7 +67,12 @@ class _StubOverlay:
         type(self).last_kwargs = dict(kwargs)
 
 
-class _ScriptedComposer:
+class _StubComposerRows:
+    def active_prompt_rows(self) -> int:
+        return 2
+
+
+class _ScriptedComposer(_StubComposerRows):
     runtime: _QueueRuntime
 
     def __init__(self, *args, **kwargs) -> None:
@@ -115,7 +120,7 @@ class _MultiQueueRuntime(_RuntimeUsage):
         await asyncio.sleep(0)
 
 
-class _MultiQueueComposer:
+class _MultiQueueComposer(_StubComposerRows):
     runtime: _MultiQueueRuntime
     last_instance: "_MultiQueueComposer | None" = None
 
@@ -170,7 +175,7 @@ class _BusyCommandRuntime(_RuntimeUsage):
         return []
 
 
-class _BusyCommandComposer:
+class _BusyCommandComposer(_StubComposerRows):
     runtime: _BusyCommandRuntime
 
     def __init__(self, *args, **kwargs) -> None:
@@ -198,7 +203,7 @@ class _BusyCommandComposer:
         raise EOFError
 
 
-class _BusyHelpComposer:
+class _BusyHelpComposer(_StubComposerRows):
     runtime: _BusyCommandRuntime
 
     def __init__(self, *args, **kwargs) -> None:
@@ -252,7 +257,7 @@ class _QueueCommandRuntime(_RuntimeUsage):
         await asyncio.sleep(0)
 
 
-class _QueueCommandComposer:
+class _QueueCommandComposer(_StubComposerRows):
     runtime: _QueueCommandRuntime
 
     def __init__(self, *args, **kwargs) -> None:
@@ -353,7 +358,7 @@ class _ReplayRuntime(_RuntimeUsage):
         await asyncio.sleep(0)
 
 
-class _ReplayComposer:
+class _ReplayComposer(_StubComposerRows):
     runtime: _ReplayRuntime
 
     def __init__(self, *args, **kwargs) -> None:
@@ -447,7 +452,7 @@ async def test_terminal_focus_keeps_accepting_input_while_turn_streams(
         msg.kind == MessageKind.USER and msg.body == "second"
         for msg in transcript._messages
     )
-    assert "\n> second\n" in output.getvalue()
+    assert "\n❯ second\n" in output.getvalue()
 
 
 @pytest.mark.asyncio
@@ -795,8 +800,38 @@ async def test_terminal_focus_frames_idle_answer_with_one_gap() -> None:
     await loop.cancel_read_task()
 
     rendered = output.getvalue()
-    assert rendered.startswith("\n● answer")
+    assert rendered.startswith("❯ question?\n\n● answer")
     assert rendered.endswith("\n\n")
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_renders_idle_shell_escape_once() -> None:
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
+    transcript.set_terminal_writer(lambda render: render())
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=_SingleTurnRuntime(),
+        console=console,
+        transcript=transcript,
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=_LoopComposer(),
+        overlay=object(),
+        working_dir="/tmp",
+        custom_commands={},
+        approval_grants=set(),
+    )
+
+    await loop.handle_idle_input("!printf shell-output")
+    await loop.cancel_read_task()
+
+    assert output.getvalue().count("❯ !printf shell-output") == 1
+    assert output.getvalue().count("shell-output") == 2
+    assert [
+        message.body
+        for message in transcript._messages
+        if message.kind == MessageKind.USER
+    ] == ["!printf shell-output"]
 
 
 @pytest.mark.asyncio

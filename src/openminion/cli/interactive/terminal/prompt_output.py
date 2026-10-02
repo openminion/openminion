@@ -44,11 +44,25 @@ def write_terminal_control_via_prompt_output(
         flusher()
 
 
+def reserve_composer_rows(*, prompt_output: Any, rows: int) -> None:
+    """Scroll transcript output clear of the bottom composer before redraw."""
+
+    rows = min(rows, max(0, prompt_output.get_size().rows - 1))
+    if rows:
+        write_terminal_control_via_prompt_output(
+            prompt_output=prompt_output,
+            payload="\r\n" * rows + f"\x1b[{rows}A\r",
+        )
+
+
 def build_prompt_safe_terminal_writer(
     *,
     console: Console,
     prompt_session: Any,
+    reserved_rows: Callable[[], int] | None = None,
 ) -> Callable[[Callable[[], None]], Any]:
+    transcript_cursor_saved = False
+
     def _hide_cursor_while_prompt_is_suspended() -> None:
         prompt_output = getattr(prompt_session, "output", None)
         hide_cursor = getattr(prompt_output, "hide_cursor", None)
@@ -87,13 +101,40 @@ def build_prompt_safe_terminal_writer(
         prompt_output = getattr(prompt_session, "output", None)
         if prompt_output is None:
             return _run_with_prompt(render)
-        return _run_with_prompt(
-            lambda: write_console_render_via_prompt_output(
+
+        def _render_at_transcript_cursor() -> None:
+            if transcript_cursor_saved:
+                write_terminal_control_via_prompt_output(
+                    prompt_output=prompt_output,
+                    payload="\x1b8",
+                )
+            write_console_render_via_prompt_output(
                 console=console,
                 prompt_output=prompt_output,
                 render=render,
             )
+            if transcript_cursor_saved:
+                if reserved_rows is not None:
+                    reserve_composer_rows(
+                        prompt_output=prompt_output, rows=reserved_rows()
+                    )
+                write_terminal_control_via_prompt_output(
+                    prompt_output=prompt_output,
+                    payload="\x1b7",
+                )
+
+        return _run_with_prompt(_render_at_transcript_cursor)
+
+    def _remember_cursor() -> None:
+        nonlocal transcript_cursor_saved
+        prompt_output = getattr(prompt_session, "output", None)
+        if prompt_output is None:
+            return
+        write_terminal_control_via_prompt_output(
+            prompt_output=prompt_output,
+            payload="\x1b7",
         )
+        transcript_cursor_saved = True
 
     def _write_control(payload: str) -> Any:
         prompt_output = getattr(prompt_session, "output", None)
@@ -107,4 +148,5 @@ def build_prompt_safe_terminal_writer(
         )
 
     _writer.write_control = _write_control  # type: ignore[attr-defined]
+    _writer.remember_cursor = _remember_cursor  # type: ignore[attr-defined]
     return _writer

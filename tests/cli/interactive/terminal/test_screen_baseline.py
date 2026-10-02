@@ -192,11 +192,6 @@ async def _render_bottom_layout_checkpoints(
             bottom_toolbar=status_line.bottom_toolbar,
             color=False,
         )
-        read_task = asyncio.create_task(composer.read_line())
-        await _wait_for_output(raw, "❯")
-        await _wait_for_renderer_height(composer)
-        await asyncio.sleep(0.01)
-
         console = Console(
             file=raw,
             force_terminal=True,
@@ -207,6 +202,11 @@ async def _render_bottom_layout_checkpoints(
             console=console,
             prompt_session=composer.prompt_session,
         )
+        getattr(writer, "remember_cursor")()
+        read_task = asyncio.create_task(composer.read_line())
+        await _wait_for_output(raw, "❯")
+        await _wait_for_renderer_height(composer)
+        await asyncio.sleep(0.01)
         write_task = writer(lambda: console.print("Previous response\nDone in 13s"))
         assert write_task is not None
         await write_task
@@ -450,6 +450,17 @@ async def _render_terminal_resize_checkpoints() -> dict[str, object]:
             color=False,
         )
         composer.set_busy(True)
+        console = Console(
+            file=raw,
+            force_terminal=True,
+            color_system=None,
+            width=100,
+        )
+        writer = build_prompt_safe_terminal_writer(
+            console=console,
+            prompt_session=composer.prompt_session,
+        )
+        getattr(writer, "remember_cursor")()
         read_task = asyncio.create_task(composer.read_line())
         await _wait_for_output(raw, "❯")
 
@@ -463,16 +474,6 @@ async def _render_terminal_resize_checkpoints() -> dict[str, object]:
             text="❯ Type to queue for the next turn · Esc interrupts",
         )
 
-        console = Console(
-            file=raw,
-            force_terminal=True,
-            color_system=None,
-            width=100,
-        )
-        writer = build_prompt_safe_terminal_writer(
-            console=console,
-            prompt_session=composer.prompt_session,
-        )
         typing = []
         redraws = []
         draft = ""

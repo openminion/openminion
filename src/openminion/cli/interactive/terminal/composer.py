@@ -315,9 +315,7 @@ class TerminalComposer:
         self._animation_registry = default_animation_registry()
         if animation is None:
             animation = self._animation_registry.resolve(
-                "openminion",
-                "braille",
-                source="default",
+                "openminion", "braille", source="default"
             )
         self._semantic_animation = animation.source == "default"
         self._activity_animation = ""
@@ -373,6 +371,7 @@ class TerminalComposer:
             history=FileHistory(history_file) if history_file else None,
             key_bindings=kb,
             enable_history_search=True,
+            erase_when_done=True,
             mouse_support=Condition(_completion_menu_is_open),
             reserve_space_for_menu=_COMPLETION_MENU_ROWS,
             style=_focus_prompt_style(color=self._color),
@@ -408,7 +407,7 @@ class TerminalComposer:
             self._busy_started_at = time.monotonic()
             self.set_activity("working")
         self._busy = is_busy
-        self._session.app.erase_when_done = is_busy
+        self._session.app.erase_when_done = True
         self.invalidate()
 
     def set_activity(self, status_key: str) -> None:
@@ -566,6 +565,14 @@ class TerminalComposer:
                 self._multiline = False
         return str(text or "").rstrip("\n")
 
+    def active_prompt_rows(self) -> int:
+        layout_rows = 2 if self._bottom_toolbar is not None else 1
+        if self._busy and self._progress != "off":
+            status = self._active_status() if self._active_status is not None else ""
+            if status or self._busy_frame(time.monotonic()):
+                layout_rows += 2
+        return layout_rows
+
     def _ensure_prompt_anchor(self, *_: object) -> None:
         """Keep the prompt on the terminal edge across renderer resets."""
 
@@ -578,8 +585,7 @@ class TerminalComposer:
             output.write_raw(_RESET_TERMINAL_VIEWPORT)
             self._normalized_terminal_output = output
         terminal_rows = max(1, output.get_size().rows)
-        layout_rows = 2 if self._bottom_toolbar is not None else 1
-        layout_rows = min(layout_rows, terminal_rows)
+        layout_rows = min(self.active_prompt_rows(), terminal_rows)
         renderer = app.renderer
         renderer.cpr_support = CPR_Support.NOT_SUPPORTED
         last_screen = renderer._last_screen
@@ -598,12 +604,6 @@ class TerminalComposer:
             return
         if last_screen is not None:
             renderer._last_screen = None
-        if (
-            renderer._min_available_height == 0
-            and self._anchored_terminal_rows == terminal_rows
-        ):
-            output.cursor_goto(row=terminal_rows, column=1)
-            output.write_raw("\n" * layout_rows)
         output.cursor_goto(row=terminal_rows, column=1)
         output.cursor_up(layout_rows - 1)
         output.flush()

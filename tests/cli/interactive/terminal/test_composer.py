@@ -98,7 +98,7 @@ def test_set_busy_switches_placeholder_copy() -> None:
     c.set_busy(False)
     assert c._prompt_text() == "❯ "
     assert "Ask anything" in c._formatted_placeholder()[0][1]
-    assert c._session.app.erase_when_done is False
+    assert c._session.app.erase_when_done is True
 
 
 def test_busy_prompt_animates_selected_provider_above_input(
