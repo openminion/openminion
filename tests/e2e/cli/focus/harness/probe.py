@@ -19,6 +19,7 @@ from .scenarios import FocusScenario
 _COMPOSER_READY_RE = re.compile(
     r"(?:^|\n)\s*[❯↳]\s+(?:Ask anything|Reply, or / for commands)"
 )
+_ACTIVE_COMPOSER_RE = re.compile(r"^\s*[❯↳]\s+\S")
 _CONTENT_COMPOSER_RE = re.compile(r"Ask anything|Reply, or / for commands")
 _LEGACY_INLINE_APPROVAL_RE = re.compile(
     r"\[A\]\s*Allow once\s+\[S\]\s*Session allow\s+\[D\]\s*Deny"
@@ -65,6 +66,15 @@ _ACTIVE_TURN_STATUS_RE = re.compile(
 )
 _COMPOSER_ECHO_PROBE_LENGTH = 48
 _TRAILING_PUNCTUATION = ".,;:!?"
+
+
+def _composer_is_ready(screen_text: str) -> bool:
+    lines = screen_text.splitlines()
+    if not lines or not lines[-1].lstrip().startswith("◆ "):
+        return False
+    return any(
+        _ACTIVE_COMPOSER_RE.search(line) for line in lines[max(0, len(lines) - 5) : -1]
+    )
 
 
 def _config_uses_echo_agent(config_path: Path, agent_id: str) -> bool:
@@ -471,7 +481,7 @@ class FocusProbe:
     def wait_ready_at_ns(self, session: PtySession, *, timeout: float = 60) -> int:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if _COMPOSER_READY_RE.search(session.read_screen(timeout=0.005)):
+            if _composer_is_ready(session.read_screen(timeout=0.005)):
                 ready_at_ns = time.perf_counter_ns()
                 transcript = session.transcript
                 assert_no_terminal_crash(transcript)
@@ -576,7 +586,7 @@ class FocusProbe:
             if (
                 marker_seen
                 and approval_satisfied
-                and _COMPOSER_READY_RE.search(screen_text)
+                and _composer_is_ready(screen_text)
                 and not active_turn_busy(screen_text)
             ):
                 break
@@ -594,7 +604,7 @@ class FocusProbe:
     def _wait_for_composer(session: PtySession, *, timeout: float = 15.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if _COMPOSER_READY_RE.search(session.screen_text):
+            if _composer_is_ready(session.screen_text):
                 return
             time.sleep(0.05)
         raise AssertionError(
@@ -823,7 +833,7 @@ class FocusProbe:
             if (
                 done_match is not None
                 and not approval_visible
-                and _COMPOSER_READY_RE.search(screen_text)
+                and _composer_is_ready(screen_text)
                 and not active_turn_busy(screen_text)
             ):
                 completed_segment = transcript[event_offset:]
