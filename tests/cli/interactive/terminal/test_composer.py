@@ -405,6 +405,8 @@ def test_enter_binding_submits_in_single_line_mode() -> None:
     calls: list[str] = []
 
     class _Buffer:
+        text = "hello"
+
         def insert_text(self, text: str) -> None:
             calls.append(f"insert:{text}")
 
@@ -420,6 +422,27 @@ def test_enter_binding_submits_in_single_line_mode() -> None:
     c._insert_newline(_Event())
 
     assert calls == ["submit"]
+
+
+def test_enter_binding_keeps_empty_single_line_composer_open() -> None:
+    c = TerminalComposer()
+    calls: list[str] = []
+
+    class _Buffer:
+        text = "   "
+
+        def validate_and_handle(self) -> None:
+            calls.append("submit")
+
+    class _App:
+        current_buffer = _Buffer()
+
+    class _Event:
+        app = _App()
+
+    c._insert_newline(_Event())
+
+    assert calls == []
 
 
 def test_enter_binding_inserts_newline_in_multiline_mode() -> None:

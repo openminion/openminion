@@ -517,6 +517,32 @@ def test_focus_startup_notice_preserves_single_composer(
         assert screen.count("Ask anything") == 1
 
 
+def test_focus_cost_output_preserves_single_bottom_composer(
+    focus_probe: FocusProbe,
+) -> None:
+    with focus_probe.session(rows=42, cols=140) as session:
+        focus_probe.wait_ready(session)
+        focus_probe.run_slash(
+            session,
+            "/cost",
+            marker="Next: send a prompt, then run /cost.",
+        )
+        session.send("\r\r\r")
+        time.sleep(0.5)
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            screen = session.screen_text
+            if screen.count("Ask anything") == 1:
+                break
+            time.sleep(0.05)
+
+        rows = session.screen_lines
+        assert sum("Ask anything" in row for row in rows) == 1
+        assert rows[-2].startswith("❯ Ask anything")
+        assert rows[-1].startswith("◆ ")
+
+
 def test_focus_runner_exposes_tracker_suite_names() -> None:
     assert set(suite_names()) >= {
         "adversarial-local",
