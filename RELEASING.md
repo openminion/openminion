@@ -366,8 +366,8 @@ Routine releases skip that preflight and start here:
 
 1. prepare the final non-RC version on `dev`, validate it, and merge its
    reviewed PR into protected `main`,
-2. wait for the merge's build-only `Release` run, then dispatch `Release` from
-   `main` with `target=testpypi`,
+2. after the required promotion checks pass and the merge reaches `main`,
+   dispatch `Release` from `main` with `target=testpypi`,
 3. install and smoke-test the final TestPyPI artifact; confirm that successful
    run's `headSha` is still remote `main` HEAD,
 4. push the final non-RC tag such as `v<OPENMINION_VERSION>` at that exact
@@ -390,6 +390,12 @@ If a package-code back-merge happens after the GitHub Release but before
 runtime metadata approval, it does not complete release synchronization. After
 each source or binary metadata PR merges into `main`, back-merge `main` into
 `dev` again and verify identical `releases/runtime/v1/` trees.
+
+The `Release` workflow runs only for publication events: manual final-version
+TestPyPI dispatches and `v*` tags. Required CI owns promotion and metadata PR
+validation, so ordinary PRs and `main` pushes do not repeat the package release
+suite. Manual production PyPI dispatch is intentionally unavailable; a final
+non-prerelease tag is the only production publication event.
 
 ### Independent index acceptance
 
