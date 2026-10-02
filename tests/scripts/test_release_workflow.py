@@ -34,7 +34,7 @@ def test_manual_publication_is_testpypi_only_and_requires_main():
         )
         == "testpypi"
     )
-    for ref in ("refs/heads/dev", "refs/tags/v0.0.29"):
+    for ref in ("refs/heads/dev", "refs/tags/v1.2.3"):
         with pytest.raises(ValueError, match="dispatched from main"):
             release_target(
                 event_name="workflow_dispatch",
@@ -58,7 +58,7 @@ def test_production_publication_is_final_tag_only():
     assert "workflow_dispatch" not in publish_pypi
 
 
-@pytest.mark.parametrize("tag", ["0.0.29rc1", "0.0.29alpha1", "0.0.29beta1"])
+@pytest.mark.parametrize("tag", ["1.2.3rc1", "1.2.3alpha1", "1.2.3beta1"])
 def test_supported_prerelease_tags_route_only_to_testpypi(tmp_path, tag):
     version_owner = tmp_path / "src/openminion/base"
     version_owner.mkdir(parents=True)
@@ -74,7 +74,7 @@ def test_supported_prerelease_tags_route_only_to_testpypi(tmp_path, tag):
     )
 
 
-@pytest.mark.parametrize("tag", ["0.0.29a1", "0.0.29b1", "0.0.29.dev1"])
+@pytest.mark.parametrize("tag", ["1.2.3a1", "1.2.3b1", "1.2.3.dev1"])
 def test_unsupported_prerelease_spellings_fail_closed(tmp_path, tag):
     version_owner = tmp_path / "src/openminion/base"
     version_owner.mkdir(parents=True)
