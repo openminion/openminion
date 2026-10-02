@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
 import logging
 from pathlib import Path
 import shlex
@@ -238,20 +238,10 @@ class _SlashAndAtCompleter(Completer):
 
     def __init__(
         self,
-        slash_commands: Iterable[str] | Mapping[str, str],
+        slash_commands: Iterable[str],
         path_completer: Completer | None = None,
     ) -> None:
-        if isinstance(slash_commands, Mapping):
-            self._slash_descriptions = {
-                str(name): str(description)
-                for name, description in slash_commands.items()
-            }
-            self._slashes = sorted(self._slash_descriptions)
-        else:
-            self._slashes = sorted({str(name) for name in slash_commands})
-            self._slash_descriptions = {
-                slash: "slash command" for slash in self._slashes
-            }
+        self._slashes = sorted({str(name) for name in slash_commands})
         self._path_completer = path_completer
 
     def get_completions(self, document, complete_event):
@@ -268,9 +258,6 @@ class _SlashAndAtCompleter(Completer):
                         replacement,
                         start_position=-len(prefix),
                         display=slash,
-                        display_meta=self._slash_descriptions.get(
-                            slash, "slash command"
-                        ),
                     )
             return
         if text.startswith("/"):
@@ -280,9 +267,6 @@ class _SlashAndAtCompleter(Completer):
                         slash,
                         start_position=-len(text),
                         display=slash,
-                        display_meta=self._slash_descriptions.get(
-                            slash, "slash command"
-                        ),
                     )
             return
         at_pos = text.rfind("@")
@@ -305,7 +289,7 @@ class TerminalComposer:
     def __init__(
         self,
         *,
-        slash_commands: Iterable[str] | Mapping[str, str] = (),
+        slash_commands: Iterable[str] = (),
         bottom_toolbar: object = None,
         active_status: Callable[[], str] | None = None,
         history_file: str | None = None,

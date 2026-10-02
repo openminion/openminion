@@ -685,7 +685,7 @@ async def _run_terminal_focus_async(
         )
 
     composer = TerminalComposer(
-        slash_commands=slash_completion_catalog(custom_commands),
+        slash_commands=slash_completion_catalog(custom_commands).keys(),
         bottom_toolbar=status_line.bottom_toolbar,
         active_status=status_line.active_status,
         history_file=_focus_history_path(runtime),

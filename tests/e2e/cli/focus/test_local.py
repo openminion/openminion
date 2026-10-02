@@ -82,6 +82,30 @@ def test_focus_pty_handles_contextual_slash_help(
     )
 
 
+def test_focus_slash_completion_menu_shows_command_names_only(
+    focus_probe: FocusProbe,
+) -> None:
+    with focus_probe.session(rows=42, cols=140) as session:
+        focus_probe.wait_ready(session)
+        session.send("/pro")
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if any(row.strip() == "/project" for row in session.screen_lines):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("filtered slash completion did not show /project")
+
+        rows = session.screen_lines
+        assert rows[-2] == "❯ /pro"
+        assert rows[-1].startswith("◆ ")
+        assert sum(row.strip() == "/project" for row in rows) == 1
+        assert not any(
+            "Start, inspect, or control durable project work" in row for row in rows
+        )
+
+
 def test_focus_pty_controls_durable_project(
     focus_probe: FocusProbe,
     tmp_path,
