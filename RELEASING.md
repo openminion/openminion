@@ -34,10 +34,11 @@ gate.
 Every final source release must also have an explicit binary disposition. The
 `Runtime candidate request` observer verifies the successful production-PyPI
 producer, then uses a repository-scoped GitHub App token to start the private
-`openminion-packaging` candidate workflow with the exact released version and
-source commit. The candidate workflow rejects stale or mismatched packaging
-pins. Candidate creation is automatic; stable binary promotion remains manual
-and protected.
+`openminion-packaging` candidate workflow with the exact released version,
+source commit, official wheel URL, and SHA-256. The candidate workflow
+independently checks the immutable source tag and production PyPI metadata
+before downloading those bytes. Candidate creation is automatic; stable binary
+promotion remains manual and protected.
 
 Use these completion labels exactly:
 
@@ -96,11 +97,13 @@ local files and passing tests are not deployment evidence. Verify without publis
    required checks. Do not grant a protection bypass. GitHub-token-created
    PR workflows can require **Approve workflows to run** in GitHub;
    see [GitHub's trigger rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
-4. Before creating the final source tag, update and review the exact production
-   wheel URL, digest, version, source tag, source commit, and all three target
-   locks in `openminion/openminion-packaging`. Its main workflow must accept the
-   version and commit that will be released. This is a pre-release gate, not a
-   repair after PyPI publication.
+4. Before creating the final source tag, confirm the reviewed
+   `openminion/openminion-packaging` main workflow and all three target locks are
+   current. Do not pre-write a production wheel URL or digest: those immutable
+   facts do not exist until PyPI accepts the release. The trusted source
+   observer resolves and verifies them from version-specific production PyPI
+   metadata, then the packaging workflow independently verifies the same
+   URL/digest and immutable source tag before building.
 5. Use the existing package release process below. A successful final
    production-PyPI `Release` run triggers **Runtime manifests** automatically;
    it verifies official/producer wheel equality, publishes immutable R then
@@ -108,10 +111,10 @@ local files and passing tests are not deployment evidence. Verify without publis
    targeting main. `pending_merge` is not published and does not notify clients.
    RC/alpha/beta tag runs and manual TestPyPI runs do not request publication.
 6. Confirm `Runtime candidate request` succeeded and that the corresponding
-   private `Runtime candidates` run accepted the exact version and source
-   commit. A failed request, stale packaging pin, or failed native matrix is a
-   visible **binary blocked** disposition; it must not be omitted from release
-   closeout.
+   private `Runtime candidates` run accepted the exact version, source commit,
+   production wheel URL, and SHA-256. A failed request, PyPI/tag mismatch, or
+   failed native matrix is a visible **binary blocked** disposition; it must not
+   be omitted from release closeout.
 7. Run the normal PR checks, then merge with a **merge commit**. Keep only one
    pending runtime metadata PR; rerun another producer's observer after the
    first merges. If main moved while a PR was pending, merge current main into
@@ -193,9 +196,10 @@ metadata cannot substitute for the packaged public acceptance run.
 
 1. Confirm the automatically requested `Runtime candidates` run in
    `openminion/openminion-packaging` used the released version and full source
-   commit and ran at the reviewed packaging pin. Require all native matrix jobs
-   and the aggregate candidate job to pass. The private draft release is
-   evidence only. A manual rerun must use the same exact version and commit.
+   commit plus the exact production PyPI wheel URL and SHA-256. Require all
+   native matrix jobs and the aggregate candidate job to pass. The private
+   draft release is evidence only. A manual rerun must use the same four exact
+   values.
 2. Require the candidate workflow's protected `runtime-signing` jobs to sign
    and notarize the macOS pair, sign the Windows pair, refresh hashes after
    signing, and retain the exact Linux pair. Require clean-host native checks

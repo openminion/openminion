@@ -32,6 +32,7 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install 'packaging==26.0'
       - name: Verify final tag and successful production publication
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           PRODUCER_RUN: ${{ github.event.workflow_run.id }}
@@ -44,6 +45,7 @@ jobs:
           import os
           import subprocess
           from scripts.ci.publish_runtime_manifest import verify_producer
+          from scripts.ci.release_manifest import official_record
 
           def api(path):
               return json.loads(subprocess.check_output(
@@ -61,6 +63,14 @@ jobs:
               tag,
               int(os.environ['PRODUCER_ATTEMPT']),
           )
+          record = official_record(
+              tag.removeprefix('v'),
+              os.environ['PRODUCER_COMMIT'],
+              f"candidate-request.{run_id}.{os.environ['PRODUCER_ATTEMPT']}",
+          )
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"wheel_url={record['pypi']['url']}\n")
+              output.write(f"wheel_sha256={record['pypi']['sha256']}\n")
           PY
       - name: Create a token scoped to the private packaging repository
         id: packaging-token
@@ -76,12 +86,16 @@ jobs:
           GH_TOKEN: ${{ steps.packaging-token.outputs.token }}
           PRODUCER_TAG: ${{ github.event.workflow_run.head_branch }}
           PRODUCER_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          WHEEL_URL: ${{ steps.release.outputs.wheel_url }}
+          WHEEL_SHA256: ${{ steps.release.outputs.wheel_sha256 }}
         run: |
           gh workflow run runtime-candidates.yml \
             --repo openminion/openminion-packaging \
             --ref main \
             --field runtime_version="${PRODUCER_TAG#v}" \
-            --field source_commit="$PRODUCER_COMMIT"
+            --field source_commit="$PRODUCER_COMMIT" \
+            --field wheel_url="$WHEEL_URL" \
+            --field wheel_sha256="$WHEEL_SHA256"
           {
             echo '## Binary release disposition'
             echo

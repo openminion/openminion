@@ -45,8 +45,13 @@ def test_final_release_requests_an_exact_private_runtime_candidate():
         "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1",
         "repositories: openminion-packaging",
         "permission-actions: write",
+        "from scripts.ci.release_manifest import official_record",
         '--field runtime_version="${PRODUCER_TAG#v}"',
         '--field source_commit="$PRODUCER_COMMIT"',
+        "WHEEL_URL: ${{ steps.release.outputs.wheel_url }}",
+        "WHEEL_SHA256: ${{ steps.release.outputs.wheel_sha256 }}",
+        '--field wheel_url="$WHEEL_URL"',
+        '--field wheel_sha256="$WHEEL_SHA256"',
     ):
         assert marker in workflow
     assert "environment: runtime-publication" not in workflow
