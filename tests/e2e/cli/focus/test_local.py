@@ -82,10 +82,17 @@ def test_focus_pty_handles_contextual_slash_help(
     )
 
 
+@pytest.mark.parametrize(
+    ("rows", "cols"),
+    [(18, 72), (24, 100), (42, 140)],
+    ids=["compact", "standard", "wide"],
+)
 def test_focus_slash_completion_menu_shows_command_names_only(
     focus_probe: FocusProbe,
+    rows: int,
+    cols: int,
 ) -> None:
-    with focus_probe.session(rows=42, cols=140) as session:
+    with focus_probe.session(rows=rows, cols=cols) as session:
         focus_probe.wait_ready(session)
         session.send("/pro")
 
@@ -97,12 +104,14 @@ def test_focus_slash_completion_menu_shows_command_names_only(
         else:
             raise AssertionError("filtered slash completion did not show /project")
 
-        rows = session.screen_lines
-        assert rows[-2] == "❯ /pro"
-        assert rows[-1].startswith("◆ ")
-        assert sum(row.strip() == "/project" for row in rows) == 1
+        screen_rows = session.screen_lines
+        assert screen_rows[-2] == "❯ /pro"
+        assert screen_rows[-1].startswith("◆ ")
+        assert session.cursor_state == (True, rows - 1, len("❯ /pro") + 1)
+        assert sum(row.strip() == "/project" for row in screen_rows) == 1
         assert not any(
-            "Start, inspect, or control durable project work" in row for row in rows
+            "Start, inspect, or control durable project work" in row
+            for row in screen_rows
         )
 
 

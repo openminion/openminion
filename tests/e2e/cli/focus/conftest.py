@@ -73,6 +73,7 @@ def _isolated_live_config(
     config = json.loads(config_path.read_text(encoding="utf-8"))
     config.setdefault("storage", {})["path"] = "state/openminion.db"
     runtime = config.setdefault("runtime", {})
+    runtime["daemon_auto_start"] = True
     for name, value in runtime.pop("env", {}).items():
         if name not in os.environ:
             monkeypatch.setenv(name, str(value))

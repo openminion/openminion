@@ -84,6 +84,7 @@ def test_isolated_live_config_keeps_runtime_env_out_of_artifacts(
     payload = json.loads(isolated.read_text(encoding="utf-8"))
 
     assert "env" not in payload["runtime"]
+    assert payload["runtime"]["daemon_auto_start"] is True
     assert payload["storage"]["path"] == "state/openminion.db"
     assert os.environ["FOCUS_PRIVATE_KEY"] == "private-value"
     assert os.environ["FOCUS_EXISTING_KEY"] == "operator-value"
