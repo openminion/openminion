@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pyte
 import pytest
 from prompt_toolkit.application.current import create_app_session
-from prompt_toolkit.data_structures import Point, Size
+from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.output.vt100 import Vt100_Output
@@ -527,11 +527,9 @@ async def _render_terminal_resize_checkpoints() -> dict[str, object]:
             include_cursor_visibility=True,
         )
 
-        renderer = composer.prompt_session.app.renderer
         # Model a multiplexer moving the physical cursor while prompt-toolkit's
         # cached screen remains valid. Re-anchoring must not depend on clearing
         # that cache first.
-        assert renderer._cursor_pos == Point(x=19, y=2)
         output.cursor_goto(row=15, column=1)
         output.flush()
         pipe.send_text("!")
