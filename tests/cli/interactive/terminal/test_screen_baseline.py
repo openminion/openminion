@@ -6,6 +6,7 @@ import asyncio
 import io
 import json
 from pathlib import Path
+import re
 from unittest.mock import patch
 
 import pyte
@@ -161,11 +162,16 @@ async def _render_composer(
     return snapshot
 
 
-async def _render_bottom_layout_checkpoints(*, enable_cpr: bool) -> tuple[dict, dict]:
+async def _render_bottom_layout_checkpoints(
+    *,
+    enable_cpr: bool,
+    rows: int,
+    width: int,
+) -> tuple[dict, dict]:
     raw = io.StringIO()
     output = Vt100_Output(
         raw,
-        get_size=lambda: Size(rows=24, columns=100),
+        get_size=lambda: Size(rows=rows, columns=width),
         default_color_depth=ColorDepth.TRUE_COLOR,
         enable_cpr=enable_cpr,
     )
@@ -195,7 +201,7 @@ async def _render_bottom_layout_checkpoints(*, enable_cpr: bool) -> tuple[dict, 
             file=raw,
             force_terminal=True,
             color_system=None,
-            width=100,
+            width=width,
         )
         writer = build_prompt_safe_terminal_writer(
             console=console,
@@ -206,22 +212,70 @@ async def _render_bottom_layout_checkpoints(*, enable_cpr: bool) -> tuple[dict, 
         await write_task
         await _wait_for_renderer_height(composer)
         await asyncio.sleep(0.01)
-        placeholder = _screen_contract(raw.getvalue(), width=100)
+        placeholder = _screen_contract(raw.getvalue(), width=width, height=rows)
 
         pipe.send_text("test")
         await _wait_for_output(raw, "test")
-        typed = _screen_contract(raw.getvalue(), width=100)
+        typed = _screen_contract(raw.getvalue(), width=width, height=rows)
 
         pipe.send_text("\n")
         await read_task
     return placeholder, typed
 
 
-async def _render_completion_layout_checkpoint(*, busy: bool) -> dict:
+async def _render_inherited_terminal_checkpoints() -> tuple[str, str]:
+    """Render after shell output in a strict 47x153 macOS-style terminal."""
+
+    raw = io.StringIO()
+    raw.write("shell setup\r\n" * 13)
+    output = Vt100_Output(
+        raw,
+        get_size=lambda: Size(rows=47, columns=153),
+        default_color_depth=ColorDepth.TRUE_COLOR,
+        enable_cpr=True,
+    )
+    status_line = TerminalStatusLine()
+    status_line.set_state(
+        agent="minimax-m2-7",
+        model="MiniMax-M2.7",
+        cwd="/repo/openminion",
+        state="idle",
+    )
+
+    with (
+        patch.dict("os.environ", {"TERM": "xterm-256color"}),
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=output),
+    ):
+        composer = TerminalComposer(
+            bottom_toolbar=status_line.bottom_toolbar,
+            color=False,
+        )
+        read_task = asyncio.create_task(composer.read_line())
+        await _wait_for_output(raw, "❯")
+        await asyncio.sleep(0.01)
+        initial = raw.getvalue()
+        pipe.send_text("first turn\n")
+        await read_task
+
+        read_task = asyncio.create_task(composer.read_line())
+        await asyncio.sleep(0.02)
+        repeated = raw.getvalue()
+        pipe.send_text("baseline-exit\n")
+        await read_task
+    return initial, repeated
+
+
+async def _render_completion_layout_checkpoint(
+    *,
+    busy: bool,
+    rows: int,
+    width: int,
+) -> dict:
     raw = io.StringIO()
     output = Vt100_Output(
         raw,
-        get_size=lambda: Size(rows=24, columns=72),
+        get_size=lambda: Size(rows=rows, columns=width),
         default_color_depth=ColorDepth.TRUE_COLOR,
         enable_cpr=True,
     )
@@ -265,7 +319,7 @@ async def _render_completion_layout_checkpoint(*, busy: bool) -> dict:
         pipe.send_text("/")
         await _wait_for_output(raw, "/agents")
         await asyncio.sleep(0.01)
-        snapshot = _screen_contract(raw.getvalue(), width=72)
+        snapshot = _screen_contract(raw.getvalue(), width=width, height=rows)
 
         pipe.send_text("\n")
         await read_task
@@ -352,11 +406,26 @@ def _screen_contract(
     }
 
 
-async def _render_stale_terminal_height_checkpoints() -> dict[str, object]:
+def _strict_screen_contract(raw: str, *, width: int, height: int) -> dict:
+    """Model terminals that ignore CUP requests beyond the physical screen."""
+
+    def keep_in_bounds(match: re.Match[str]) -> str:
+        return match.group(0) if int(match.group(1)) <= height else ""
+
+    strict_raw = re.sub(r"\x1b\[(\d+);(\d+)H", keep_in_bounds, raw)
+    return _screen_contract(strict_raw, width=width, height=height)
+
+
+async def _render_terminal_resize_checkpoints() -> dict[str, object]:
     raw = io.StringIO()
+    terminal_rows = 24
+
+    def get_size() -> Size:
+        return Size(rows=terminal_rows, columns=100)
+
     output = Vt100_Output(
         raw,
-        get_size=lambda: Size(rows=24, columns=100),
+        get_size=get_size,
         default_color_depth=ColorDepth.TRUE_COLOR,
         enable_cpr=False,
     )
@@ -383,6 +452,16 @@ async def _render_stale_terminal_height_checkpoints() -> dict[str, object]:
         composer.set_busy(True)
         read_task = asyncio.create_task(composer.read_line())
         await _wait_for_output(raw, "❯")
+
+        terminal_rows = 42
+        composer.invalidate()
+        await _wait_for_screen_row(
+            raw,
+            width=100,
+            height=42,
+            row=40,
+            text="❯ Type to queue for the next turn · Esc interrupts",
+        )
 
         console = Console(
             file=raw,
@@ -603,32 +682,58 @@ def test_composer_scenes_pin_input_and_footer_to_terminal_bottom(
         assert scene["cursor"]["y"] == 22
 
 
+def test_composer_uses_exact_terminal_edge_after_inherited_shell_output() -> None:
+    checkpoints = asyncio.run(_render_inherited_terminal_checkpoints())
+
+    for raw in checkpoints:
+        scene = _strict_screen_contract(raw, width=153, height=47)
+        rendered_rows = {row["row"]: row["text"] for row in scene["rows"]}
+
+        assert "\x1b[999;" not in raw
+        assert rendered_rows[45].startswith("❯ Ask anything")
+        assert rendered_rows[46].startswith("◆ minimax-m2-7")
+        assert scene["cursor"]["y"] == 45
+
+
 @pytest.mark.parametrize("enable_cpr", [False, True], ids=["no-cpr", "cpr-capable"])
+@pytest.mark.parametrize(
+    ("rows", "width"),
+    [(18, 72), (24, 100), (42, 140)],
+    ids=["compact", "standard", "wide"],
+)
 def test_composer_keeps_input_above_footer_after_prompt_safe_output(
     enable_cpr: bool,
+    rows: int,
+    width: int,
 ) -> None:
     placeholder, typed = asyncio.run(
-        _render_bottom_layout_checkpoints(enable_cpr=enable_cpr)
+        _render_bottom_layout_checkpoints(
+            enable_cpr=enable_cpr,
+            rows=rows,
+            width=width,
+        )
     )
 
     for scene in (placeholder, typed):
-        rows = {row["row"]: row["text"] for row in scene["rows"]}
-        assert "Previous response" in rows.values()
-        assert "Done in 13s" in rows.values()
-        assert rows[23].startswith("◆ minimax-m2-7")
-        assert scene["cursor"]["y"] == 22
-        assert sum(text.startswith("◆ ") for text in rows.values()) == 1
-        assert sum("❯" in text for text in rows.values()) == 1
-        assert not any("cursor position requests" in text for text in rows.values())
+        rendered_rows = {row["row"]: row["text"] for row in scene["rows"]}
+        assert "Previous response" in rendered_rows.values()
+        assert "Done in 13s" in rendered_rows.values()
+        assert rendered_rows[rows - 1].startswith("◆ minimax-m2-7")
+        assert scene["cursor"]["y"] == rows - 2
+        assert sum(text.startswith("◆ ") for text in rendered_rows.values()) == 1
+        assert sum("❯" in text for text in rendered_rows.values()) == 1
+        assert not any(
+            "cursor position requests" in text for text in rendered_rows.values()
+        )
 
     placeholder_rows = {row["row"]: row["text"] for row in placeholder["rows"]}
     typed_rows = {row["row"]: row["text"] for row in typed["rows"]}
-    assert placeholder_rows[22].startswith("❯ Ask anything")
-    assert typed_rows[22] == "❯ test"
+    assert placeholder_rows[rows - 2].startswith("❯ Ask anything")
+    assert typed_rows[rows - 2] == "❯ test"
 
 
-def test_bottom_layout_uses_physical_edge_when_reported_height_is_stale() -> None:
-    checkpoints = asyncio.run(_render_stale_terminal_height_checkpoints())
+def test_bottom_layout_reanchors_when_reported_terminal_height_changes() -> None:
+    checkpoints = asyncio.run(_render_terminal_resize_checkpoints())
     typing = checkpoints["typing"]
     redraws = checkpoints["redraws"]
     completed = checkpoints["completed"]
@@ -668,7 +773,9 @@ def test_bottom_layout_uses_physical_edge_when_reported_height_is_stale() -> Non
     completed_rows = {row["row"]: row["text"] for row in completed["rows"]}
     assert completed_rows[40] == "❯ typing while busy"
     assert completed_rows[41].startswith("◆ minimax-m2-7")
-    assert not any(text.startswith("Status:") for text in completed_rows.values())
+    assert not any(
+        row >= 38 and text.startswith("Status:") for row, text in completed_rows.items()
+    )
     assert completed["cursor"] == {"x": 19, "y": 40, "hidden": False}
     assert any(row["text"] == "Response update 3" for row in completed["rows"])
 
@@ -678,23 +785,39 @@ def test_bottom_layout_uses_physical_edge_when_reported_height_is_stale() -> Non
     assert reanchored["cursor"] == {"x": 19, "y": 40, "hidden": False}
 
 
-@pytest.mark.parametrize("busy", [False, True])
-def test_completion_menu_opens_above_anchored_input(busy: bool) -> None:
-    scene = asyncio.run(_render_completion_layout_checkpoint(busy=busy))
-    rows = {row["row"]: row["text"] for row in scene["rows"]}
+@pytest.mark.parametrize("busy", [False, True], ids=["idle", "busy"])
+@pytest.mark.parametrize(
+    ("height", "width"),
+    [(18, 72), (24, 100), (42, 140)],
+    ids=["compact", "standard", "wide"],
+)
+def test_completion_menu_opens_above_anchored_input(
+    busy: bool,
+    height: int,
+    width: int,
+) -> None:
+    scene = asyncio.run(
+        _render_completion_layout_checkpoint(
+            busy=busy,
+            rows=height,
+            width=width,
+        )
+    )
+    rendered_rows = {row["row"]: row["text"] for row in scene["rows"]}
     menu_rows = [
         text.strip()
-        for row, text in rows.items()
-        if row < 22 and text.strip().startswith("/")
+        for row, text in rendered_rows.items()
+        if row < height - 2 and text.strip().startswith("/")
     ]
 
-    assert scene["cursor"]["y"] == 22
-    assert rows[22] == "❯ /"
-    assert rows[23].startswith("◆ minimax-m2-7")
+    assert scene["cursor"]["y"] == height - 2
+    assert rendered_rows[height - 2] == "❯ /"
+    assert rendered_rows[height - 1].startswith("◆ minimax-m2-7")
     assert "/agents" in menu_rows
     assert all(" " not in text for text in menu_rows)
-    assert not any("Status:" in text and "/" in text for text in rows.values())
+    assert not any("Status:" in text and "/" in text for text in rendered_rows.values())
     if busy:
         assert any(
-            text.startswith("Status: Analyzing request...") for text in rows.values()
+            text.startswith("Status: Analyzing request...")
+            for text in rendered_rows.values()
         )
