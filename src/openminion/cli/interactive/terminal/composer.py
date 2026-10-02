@@ -565,6 +565,14 @@ class TerminalComposer:
                 self._multiline = False
         return str(text or "").rstrip("\n")
 
+    def active_prompt_rows(self) -> int:
+        layout_rows = 2 if self._bottom_toolbar is not None else 1
+        if self._busy and self._progress != "off":
+            status = self._active_status() if self._active_status is not None else ""
+            if status or self._busy_frame(time.monotonic()):
+                layout_rows += 2
+        return layout_rows
+
     def _ensure_prompt_anchor(self, *_: object) -> None:
         """Keep the prompt on the terminal edge across renderer resets."""
 
@@ -577,12 +585,7 @@ class TerminalComposer:
             output.write_raw(_RESET_TERMINAL_VIEWPORT)
             self._normalized_terminal_output = output
         terminal_rows = max(1, output.get_size().rows)
-        layout_rows = 2 if self._bottom_toolbar is not None else 1
-        if self._busy and self._progress != "off":
-            status = self._active_status() if self._active_status is not None else ""
-            if status or self._busy_frame(time.monotonic()):
-                layout_rows += 2
-        layout_rows = min(layout_rows, terminal_rows)
+        layout_rows = min(self.active_prompt_rows(), terminal_rows)
         renderer = app.renderer
         renderer.cpr_support = CPR_Support.NOT_SUPPORTED
         last_screen = renderer._last_screen

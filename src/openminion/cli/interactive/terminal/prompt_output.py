@@ -44,10 +44,22 @@ def write_terminal_control_via_prompt_output(
         flusher()
 
 
+def reserve_composer_rows(*, prompt_output: Any, rows: int) -> None:
+    """Scroll transcript output clear of the bottom composer before redraw."""
+
+    rows = min(rows, max(0, prompt_output.get_size().rows - 1))
+    if rows:
+        write_terminal_control_via_prompt_output(
+            prompt_output=prompt_output,
+            payload="\r\n" * rows + f"\x1b[{rows}A\r",
+        )
+
+
 def build_prompt_safe_terminal_writer(
     *,
     console: Console,
     prompt_session: Any,
+    reserved_rows: Callable[[], int] | None = None,
 ) -> Callable[[Callable[[], None]], Any]:
     transcript_cursor_saved = False
 
@@ -102,6 +114,10 @@ def build_prompt_safe_terminal_writer(
                 render=render,
             )
             if transcript_cursor_saved:
+                if reserved_rows is not None:
+                    reserve_composer_rows(
+                        prompt_output=prompt_output, rows=reserved_rows()
+                    )
                 write_terminal_control_via_prompt_output(
                     prompt_output=prompt_output,
                     payload="\x1b7",

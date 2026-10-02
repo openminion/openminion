@@ -707,6 +707,7 @@ async def _run_terminal_focus_async(
     terminal_writer = build_prompt_safe_terminal_writer(
         console=console,
         prompt_session=composer.prompt_session,
+        reserved_rows=composer.active_prompt_rows,
     )
     transcript.set_terminal_writer(terminal_writer)
     overlay = TerminalOverlayPresenter(console=console)
@@ -715,9 +716,7 @@ async def _run_terminal_focus_async(
     remember_transcript_cursor = getattr(terminal_writer, "remember_cursor", None)
     if callable(remember_transcript_cursor):
         remember_transcript_cursor()
-    startup_notice_task = _schedule_startup_notice(
-        startup_notice,
-    )
+    startup_notice_task = _schedule_startup_notice(startup_notice)
     loop = _TerminalFocusLoop(
         runtime=runtime,
         console=console,

@@ -684,6 +684,45 @@ def test_prompt_safe_writer_keeps_transcript_cursor_separate_from_composer() -> 
     assert rendered.endswith("\x1b7")
 
 
+def test_prompt_safe_writer_reserves_composer_rows_after_transcript_output() -> None:
+    console = Console(force_terminal=True, color_system=None, width=80)
+    out = io.StringIO()
+    terminal_rows = [24]
+    composer_rows = [2]
+    prompt_output = Vt100_Output(
+        out,
+        lambda: Size(rows=terminal_rows[0], columns=80),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+    )
+
+    class _App:
+        is_running = False
+
+    class _Session:
+        app = _App()
+        output = prompt_output
+
+    writer = build_prompt_safe_terminal_writer(
+        console=console,
+        prompt_session=_Session(),
+        reserved_rows=lambda: composer_rows[0],
+    )
+    getattr(writer, "remember_cursor")()
+    writer(lambda: console.print("idle response"))
+    composer_rows[0] = 4
+    writer(lambda: console.print("busy response"))
+    terminal_rows[0] = 3
+    writer(lambda: console.print("small terminal response"))
+
+    rendered = out.getvalue()
+    assert "idle response" in rendered
+    assert "busy response" in rendered
+    assert "small terminal response" in rendered
+    assert rendered.count("\r\n" * 2 + "\x1b[2A\r\x1b7") == 2
+    assert "\r\n" * 4 + "\x1b[4A\r\x1b7" in rendered
+
+
 def test_post_turn_render_skips_already_narrated_call_id() -> None:
     t, buf = _make("normal")
     t.handle_tool_completed(
