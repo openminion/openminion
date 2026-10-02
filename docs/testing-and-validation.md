@@ -100,8 +100,9 @@ suppress this evidence. Required merge checks remain a repository setting,
 verified separately from workflow presence.
 
 For an authorized real-provider baseline, the existing runner selects exactly
-three cases: an exact final reply, a correlated current-time acquisition, and
-durable memory recall in a distinct session.
+four cases: an exact final reply, active type-ahead pinned to the terminal edge,
+a correlated current-time acquisition, and durable memory recall in a distinct
+session.
 From the package root with a configured MiniMax key in the environment:
 
 ```bash
@@ -111,7 +112,7 @@ export OPENMINION_CLI_FOCUS_E2E_RUNNER_TIMEOUT_SECONDS=480
 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py baseline-live
 ```
 
-The fixture contains no key and applies explicit call/time limits. The three
+The fixture contains no key and applies explicit call/time limits. The four
 cases use read-only permissions and no host execution or auto-approval.
 The current public Focus surface has no time-only profile allowlist; the
 baseline rejects successful unrelated tool calls and does not claim to change

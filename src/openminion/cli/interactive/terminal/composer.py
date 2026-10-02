@@ -54,6 +54,7 @@ _COMPLETION_MENU_ROWS = 10
 _PLACEHOLDER_IDLE = "Ask anything · @ to mention a file · / for commands"
 _PLACEHOLDER_BUSY = "Type to queue for the next turn · Esc interrupts"
 _SLASH_NAME_CHARS = tuple("abcdefghijklmnopqrstuvwxyz0123456789-_")
+_RESET_TERMINAL_VIEWPORT = "\x1b[?6l\x1b[r"
 _PHASE_ANIMATIONS = {
     "clarifying": "focusbeam",
     "analyzing": "braillewave",
@@ -381,6 +382,7 @@ class TerminalComposer:
             self._session.app.renderer.cpr_not_supported_callback = None
         _configure_completion_menu(self._session)
         _configure_bottom_input_layout(self._session)
+        self._normalized_terminal_output: object | None = None
         self._anchored_terminal_rows = 0
         self._session.app.before_render += self._ensure_prompt_anchor
 
@@ -569,6 +571,12 @@ class TerminalComposer:
 
         app = self._session.app
         output = app.output
+        if self._normalized_terminal_output is not output:
+            # A prior terminal application can leave origin mode or a bounded
+            # scroll region active, which makes absolute rows relative to that
+            # stale viewport instead of the physical terminal.
+            output.write_raw(_RESET_TERMINAL_VIEWPORT)
+            self._normalized_terminal_output = output
         terminal_rows = max(1, output.get_size().rows)
         layout_rows = 2 if self._bottom_toolbar is not None else 1
         layout_rows = min(layout_rows, terminal_rows)

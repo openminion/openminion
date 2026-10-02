@@ -92,9 +92,11 @@ def test_live_minimax_runner_forwards_official_focus_profile(tmp_path: Path) -> 
     }
 
 
-def _write_junit(
-    path: Path, outcomes: tuple[str, ...] = ("pass", "pass", "pass")
-) -> None:
+_PASS_OUTCOMES = ("pass",) * len(run_cli_focus_e2e.BASELINE_CASES)
+_SKIPPED_OUTCOMES = ("skipped",) * len(run_cli_focus_e2e.BASELINE_CASES)
+
+
+def _write_junit(path: Path, outcomes: tuple[str, ...] = _PASS_OUTCOMES) -> None:
     from xml.etree.ElementTree import Element, SubElement, ElementTree
 
     root = Element("testsuites")
@@ -115,13 +117,33 @@ def _write_junit(
 @pytest.mark.parametrize(
     ("outcomes", "complete", "passed", "executed"),
     [
-        (("pass", "pass", "pass"), True, 3, 3),
+        (
+            _PASS_OUTCOMES,
+            True,
+            len(run_cli_focus_e2e.BASELINE_CASES),
+            len(run_cli_focus_e2e.BASELINE_CASES),
+        ),
         (("pass",), False, 1, 1),
-        (("pass", "pass"), False, 2, 2),
-        (("pass", "pass", "pass", "pass"), False, 4, 4),
-        (("skipped", "skipped", "skipped"), True, 0, 0),
-        (("failure", "pass", "pass"), True, 2, 3),
-        (("error", "pass", "pass"), True, 2, 2),
+        (_PASS_OUTCOMES[:-1], False, len(_PASS_OUTCOMES) - 1, len(_PASS_OUTCOMES) - 1),
+        (
+            _PASS_OUTCOMES + ("pass",),
+            False,
+            len(_PASS_OUTCOMES) + 1,
+            len(_PASS_OUTCOMES) + 1,
+        ),
+        (_SKIPPED_OUTCOMES, True, 0, 0),
+        (
+            ("failure",) + _PASS_OUTCOMES[1:],
+            True,
+            len(_PASS_OUTCOMES) - 1,
+            len(_PASS_OUTCOMES),
+        ),
+        (
+            ("error",) + _PASS_OUTCOMES[1:],
+            True,
+            len(_PASS_OUTCOMES) - 1,
+            len(_PASS_OUTCOMES) - 1,
+        ),
     ],
 )
 def test_junit_case_accounting(
@@ -152,14 +174,14 @@ def test_missing_malformed_and_empty_report_cannot_certify(
 @pytest.mark.parametrize(
     ("outcomes", "code", "expected", "disposition"),
     [
-        (("pass", "pass", "pass"), 0, 0, "pass"),
+        (_PASS_OUTCOMES, 0, 0, "pass"),
         (("pass",), 0, 1, "failed"),
-        (("skipped", "skipped", "skipped"), 0, 1, "failed"),
-        (("pass", "pass", "pass", "pass"), 0, 1, "failed"),
-        (("failure", "pass", "pass"), 1, 1, "failed"),
+        (_SKIPPED_OUTCOMES, 0, 1, "failed"),
+        (_PASS_OUTCOMES + ("pass",), 0, 1, "failed"),
+        (("failure",) + _PASS_OUTCOMES[1:], 1, 1, "failed"),
         (None, 0, 1, "inconclusive"),
         (None, 124, 124, "inconclusive"),
-        (("pass", "pass", "pass"), 130, 130, "inconclusive"),
+        (_PASS_OUTCOMES, 130, 130, "inconclusive"),
     ],
 )
 def test_baseline_summary_requires_executed_exact_cases(
@@ -199,7 +221,9 @@ def test_baseline_summary_requires_executed_exact_cases(
     summary = json.loads(summary_path.read_text())
     assert summary["terminal_disposition"] == disposition
     assert summary["usage"] is None
-    assert summary["case_accounting"]["expected"] == 3
+    assert summary["case_accounting"]["expected"] == len(
+        run_cli_focus_e2e.BASELINE_CASES
+    )
     assert len(summary["candidate_commit"]) == 40
     assert len(summary["corpus_digest"]) == 64
     assert summary["environment"]["dependencies"]["pytest"]
