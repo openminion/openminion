@@ -512,6 +512,7 @@ class _TerminalFocusLoop:
     async def handle_idle_input(self, text: str) -> int | None:
         if text in ("/exit", "/quit"):
             return 0
+        self.transcript.render_user_input(text)
         try:
             if is_queue_command(text):
                 await self.handle_queue_command(text)
@@ -703,17 +704,17 @@ async def _run_terminal_focus_async(
     if callable(invalidate := getattr(composer, "invalidate", None)):
         status_line.set_refresh_callback(invalidate)
         status_line.set_activity_callback(composer.set_activity)
-    transcript.set_terminal_writer(
-        build_prompt_safe_terminal_writer(
-            console=console,
-            prompt_session=composer.prompt_session,
-        )
-    )
-    overlay = TerminalOverlayPresenter(
+    terminal_writer = build_prompt_safe_terminal_writer(
         console=console,
+        prompt_session=composer.prompt_session,
     )
+    transcript.set_terminal_writer(terminal_writer)
+    overlay = TerminalOverlayPresenter(console=console)
     approval_grants: set[str] = set()
     _push_greeter(console, runtime=runtime, working_dir=working_dir)
+    remember_transcript_cursor = getattr(terminal_writer, "remember_cursor", None)
+    if callable(remember_transcript_cursor):
+        remember_transcript_cursor()
     startup_notice_task = _schedule_startup_notice(
         startup_notice,
     )

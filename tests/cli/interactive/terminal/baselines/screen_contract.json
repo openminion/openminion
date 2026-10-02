@@ -195,7 +195,7 @@
     "rows": [
       {
         "row": 0,
-        "text": "> Review the renderer while preserving unrelated terminal behavior.",
+        "text": "❯ Review the renderer while preserving unrelated terminal behavior.",
         "styles": [
           {
             "columns": [
@@ -299,7 +299,7 @@
     "rows": [
       {
         "row": 0,
-        "text": "> Review the renderer while preserving unrelated terminal behavior.",
+        "text": "❯ Review the renderer while preserving unrelated terminal behavior.",
         "styles": [
           {
             "columns": [
@@ -408,7 +408,7 @@
     "rows": [
       {
         "row": 0,
-        "text": "> Review the renderer while preserving unrelated terminal behavior.",
+        "text": "❯ Review the renderer while preserving unrelated terminal behavior.",
         "styles": []
       },
       {

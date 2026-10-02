@@ -441,7 +441,7 @@ def test_focus_pty_survives_resize_after_launch(
         write_transcript(artifact_root(tmp_path), "local-resize-help", transcript)
 
 
-def test_focus_pty_pins_input_and_footer_across_turn_and_resize(
+def test_focus_pty_keeps_top_down_transcript_with_pinned_input_across_resize(
     focus_probe: FocusProbe,
 ) -> None:
     def assert_blank_row_after(
@@ -479,10 +479,47 @@ def test_focus_pty_pins_input_and_footer_across_turn_and_resize(
             ),
         )
         assert_bottom_layout(session, rows=24)
+        screen_rows = session.screen_lines
+        tip_row = screen_rows.index(
+            "Tip: / for commands · @ to mention a file · keep typing while a turn runs"
+        )
+        startup_row = next(
+            index for index, line in enumerate(screen_rows) if "OpenMinion CLI" in line
+        )
+        matching_rows = [
+            index
+            for index, line in enumerate(screen_rows)
+            if "footer layout check" in line
+        ]
+        assert startup_row < tip_row < matching_rows[0]
+        assert matching_rows[0] == tip_row + 2, "\n".join(
+            f"{index}: {line!r}" for index, line in enumerate(screen_rows)
+        )
+        assert len(matching_rows) >= 2
+        assert matching_rows[0] < matching_rows[1] < len(screen_rows) - 2
         assert_blank_row_after(
-            session.screen_lines,
+            screen_rows,
             "❯ Reply with exactly: footer layout check",
         )
+
+        focus_probe.run_slash(session, "/cost", marker="Cost")
+        screen_rows = session.screen_lines
+        first_response_row = next(
+            index
+            for index, line in enumerate(screen_rows)
+            if index > matching_rows[0] and "footer layout check" in line
+        )
+        command_row = screen_rows.index("❯ /cost")
+        cost_row = next(
+            index
+            for index, line in enumerate(screen_rows)
+            if index > command_row and line.startswith("Cost")
+        )
+        assert first_response_row < command_row < cost_row < len(screen_rows) - 2
+        focus_probe.run_slash(session, "/queue", marker="No queued messages.")
+        screen_rows = session.screen_lines
+        assert any(line.startswith("Cost") for line in screen_rows)
+        assert screen_rows.index("❯ /cost") < screen_rows.index("❯ /queue")
 
         session.send("typed-check")
         deadline = time.monotonic() + 5
@@ -506,8 +543,66 @@ def test_focus_pty_pins_input_and_footer_across_turn_and_resize(
         assert_bottom_layout(session, rows=24)
 
         session.send("\x7f")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if "/agents" not in session.screen_text:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("slash completion menu did not close cleanly")
         session.resize(rows=18, cols=72)
         assert_bottom_layout(session, rows=18)
+
+        session.resize(rows=42, cols=120)
+        assert_bottom_layout(session, rows=42)
+        focus_probe.run_turn(
+            session,
+            FocusScenario(
+                scenario_id="local_bottom_layout_after_resize",
+                prompt="Reply with exactly: second layout check",
+                expected_markers=("second layout check",),
+                timeout=60,
+            ),
+        )
+        assert_bottom_layout(session, rows=42)
+        screen_rows = session.screen_lines
+        second_prompt_row = screen_rows.index(
+            "❯ Reply with exactly: second layout check"
+        )
+        second_response_row = next(
+            index
+            for index, line in enumerate(screen_rows)
+            if index > second_prompt_row and "second layout check" in line
+        )
+        assert second_response_row == second_prompt_row + 2
+        assert second_response_row < len(screen_rows) - 2
+        transcript = visible_text(session.visible_transcript)
+        startup_offset = transcript.index("OpenMinion CLI")
+        first_prompt_offset = transcript.index(
+            "❯ Reply with exactly: footer layout check", startup_offset
+        )
+        first_response_offset = transcript.index(
+            "footer layout check",
+            first_prompt_offset + len("❯ Reply with exactly: footer layout check"),
+        )
+        second_prompt_offset = transcript.index(
+            "❯ Reply with exactly: second layout check", first_response_offset
+        )
+        second_response_offset = transcript.index(
+            "second layout check",
+            second_prompt_offset + len("❯ Reply with exactly: second layout check"),
+        )
+        assert (
+            startup_offset
+            < first_prompt_offset
+            < first_response_offset
+            < second_prompt_offset
+            < second_response_offset
+        )
+        assert_blank_row_after(
+            screen_rows,
+            "❯ Reply with exactly: second layout check",
+        )
 
 
 def test_focus_pty_resets_inherited_terminal_viewport(

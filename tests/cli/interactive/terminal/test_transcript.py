@@ -30,8 +30,7 @@ def test_push_user_message_renders_with_prefix() -> None:
     t, buf = _make_transcript()
     t.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body="hi"))
     output = buf.getvalue()
-    assert "hi" in output
-    assert ">" in output  # user prefix
+    assert output.startswith("❯ hi")
 
 
 def test_push_agent_message_plain_text() -> None:

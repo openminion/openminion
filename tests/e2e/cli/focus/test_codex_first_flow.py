@@ -205,7 +205,27 @@ def test_codex_first_shell_journey_is_compact_truthful_and_persistent(
                 time.sleep(0.05)
             else:
                 raise AssertionError("scripted turn never entered the busy state")
-            session.type_line("queued follow-up")
+            busy_rows = session.screen_lines
+            assert busy_rows[-4].startswith("Status:")
+            assert busy_rows[-3] == ""
+            assert busy_rows[-2].startswith("❯ Type to queue")
+            assert busy_rows[-1].startswith("◆ ")
+            assert session.cursor_position[0] == len(busy_rows) - 1
+
+            session.send("queued follow-up")
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if session.screen_lines[-2] == "❯ queued follow-up":
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("busy draft did not remain above the footer")
+            busy_draft_rows = session.screen_lines
+            assert busy_draft_rows[-4].startswith("Status:")
+            assert busy_draft_rows[-3] == ""
+            assert busy_draft_rows[-1].startswith("◆ ")
+            assert session.cursor_position[0] == len(busy_draft_rows) - 1
+            session.send("\r")
             session.wait_for_visible_match_after(
                 r"Queued for next turn \(1 pending\)\.",
                 offset=turn_offset,

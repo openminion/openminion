@@ -934,7 +934,8 @@ async def _run_shell_escape(
     if not command:
         return
     transcript.push_message(
-        ChatMessage(kind=MessageKind.USER, sender="you", body=f"!{command}")
+        ChatMessage(kind=MessageKind.USER, sender="you", body=f"!{command}"),
+        render=False,
     )
     try:
         argv = shlex.split(command)
