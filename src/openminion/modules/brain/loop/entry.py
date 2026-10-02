@@ -175,9 +175,9 @@ def coding_tool_spec() -> ToolSpec:
         name=ENTRY_CODING_TOOL_NAME,
         description=(
             "Enter the dedicated coding loop for iterative edits, tests, and final "
-            "verification. To propose durable work, call this control first with "
-            "project_handoff and sub_intents; inspection waits until the proposal "
-            "is approved."
+            "verification. Use the foreground loop unless durable, background, or "
+            "restart-persistent work is explicitly needed; then include "
+            "project_handoff and sub_intents."
         ),
         input_schema=_project_entry_input_schema(),
     )
@@ -188,8 +188,9 @@ def research_tool_spec() -> ToolSpec:
         name=ENTRY_RESEARCH_TOOL_NAME,
         description=(
             "Enter the iterative research loop for multiple searches, evidence "
-            "gathering, and synthesis. For durable work, call with project_handoff "
-            "and sub_intents to propose the existing project path."
+            "gathering, and final synthesis. Mixed workflows that produce code or "
+            "files use general foreground tools. Include project_handoff only for "
+            "durable, background, or restart-persistent work."
         ),
         input_schema=_project_entry_input_schema(),
     )

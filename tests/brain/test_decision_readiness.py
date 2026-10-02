@@ -169,7 +169,7 @@ def _event_types(logger: MagicMock) -> list[str]:
     return [call.args[0] for call in logger.emit.call_args_list]
 
 
-def test_project_handoff_waits_before_preparation_and_cannot_be_approved_by_prose(
+def test_incomplete_project_handoff_is_repaired_before_plan_review(
     monkeypatch,
 ) -> None:
     state = _state()
@@ -186,9 +186,25 @@ def test_project_handoff_waits_before_preparation_and_cannot_be_approved_by_pros
             },
         },
     )
+    repaired = ActDecision(
+        act_profile="coding",
+        sub_intents=["Inspect and fix slug"],
+        request_readiness={
+            "posture": "review_before_act",
+            "requested_outcome": "execute",
+            "state": "needs_plan_review",
+            "project_handoff": {
+                "goal": "Fix slug",
+                "success_criteria": ["Slug tests pass"],
+                "verification_commands": ["python -m pytest -q"],
+                "verification_domain": "coding",
+                "max_iterations": 3,
+            },
+        },
+    )
     manager = _FakeDirectDispatchHarness()
     _install_direct_dispatch_capture(monkeypatch, manager)
-    runner = _FakeRunner([proposal])
+    runner = _FakeRunner([proposal, repaired])
     logger = MagicMock()
 
     first = dispatch(
@@ -212,6 +228,10 @@ def test_project_handoff_waits_before_preparation_and_cannot_be_approved_by_pros
     assert first.status == replay.status == BRAIN_STATE_WAITING_USER
     assert manager.prepare_calls == 0
     assert manager.invoke_calls == []
+    assert first.action_result.outputs["project_handoff"]["verification_commands"] == [
+        "python -m pytest -q"
+    ]
+    assert "brain.entry.validation_failed" in _event_types(logger)
     assert (
         first.action_result.outputs["project_handoff"]
         == replay.action_result.outputs["project_handoff"]
