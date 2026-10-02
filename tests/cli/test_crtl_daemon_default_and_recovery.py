@@ -6,6 +6,7 @@ from unittest import mock
 import pytest
 
 from openminion.cli.commands import daemon as daemon_module
+from openminion.cli.commands import autonomy_project
 
 
 def test_default_runtime_config_now_auto_starts_daemon():
@@ -14,6 +15,33 @@ def test_default_runtime_config_now_auto_starts_daemon():
 
     cfg = RuntimeConfig()
     assert cfg.daemon_auto_start is True
+
+
+def test_project_daemon_readiness_uses_the_active_config_and_roots(
+    tmp_path, monkeypatch
+) -> None:
+    calls: list[tuple[str | None, bool, object, object]] = []
+    home_root = tmp_path / "home"
+    data_root = tmp_path / "data"
+    args = SimpleNamespace(home_root=home_root, data_root=data_root)
+
+    monkeypatch.setattr(
+        "openminion.cli.config.load_cli_config",
+        lambda config_ref, *, home_root, data_root: SimpleNamespace(
+            runtime=SimpleNamespace(daemon_auto_start=False)
+        ),
+    )
+    monkeypatch.setattr(
+        daemon_module,
+        "ensure_daemon_running",
+        lambda config_ref, *, auto_start, home_root, data_root: calls.append(
+            (config_ref, auto_start, home_root, data_root)
+        ),
+    )
+
+    autonomy_project.ensure_project_daemon_ready(args, config_ref="/config.json")
+
+    assert calls == [("/config.json", False, home_root, data_root)]
 
 
 def test_ensure_daemon_running_raises_when_auto_start_disabled():

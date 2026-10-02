@@ -157,6 +157,10 @@ def test_terminal_project_launch_approval_persists_exact_repository(
     runtime, sessions, telemetry = _project_runtime(tmp_path)
     cron_store = _CronStore()
     monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.ensure_project_daemon_ready",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
         "openminion.cli.commands.autonomy_project.configured_cron_store",
         lambda *_args, **_kwargs: cron_store,
     )
@@ -298,6 +302,10 @@ def test_terminal_project_wake_failure_is_recoverable(
     (repository / ".git").mkdir()
     runtime, sessions, _telemetry = _project_runtime(tmp_path)
     monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.ensure_project_daemon_ready",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
         "openminion.cli.commands.autonomy_project.configured_cron_store",
         lambda *_args, **_kwargs: _FailingCronStore(),
     )
@@ -338,6 +346,10 @@ def test_terminal_project_schedule_compensates_after_metadata_failure(
     (repository / ".git").mkdir()
     runtime, _sessions, _telemetry = _project_runtime(tmp_path)
     cron_store = _CronStore()
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.ensure_project_daemon_ready",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(
         "openminion.cli.commands.autonomy_project.configured_cron_store",
         lambda *_args, **_kwargs: cron_store,

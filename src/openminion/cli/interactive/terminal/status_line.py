@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from openminion.cli.presentation.permissions import format_permission_status_label
 from openminion.cli.presentation.styles import StyleToken, style_token
 from openminion.cli.interactive.terminal.spinner import format_elapsed_label
 
@@ -10,6 +11,7 @@ from openminion.cli.interactive.terminal.spinner import format_elapsed_label
 _SEGMENT_SEP = "  ·  "
 _SEGMENT_ATTRS = {
     "agent": "agent_label",
+    "action_policy_mode": "action_policy_mode",
     "branch": "branch_label",
     "cost": "cost_label",
     "cwd": "cwd_label",
@@ -68,6 +70,7 @@ class TerminalStatusLine:
         self.cost_label: str = ""
         self.agent_label: str = ""
         self.permission_mode: str = "default"
+        self.action_policy_mode: str = ""
         self.custom_label: str = ""
         self.turn_status_label: str = ""
         self.tokens_severity: str = "normal"
@@ -144,15 +147,20 @@ class TerminalStatusLine:
             )
         if self.cost_label:
             segments.append(_wrap(StyleToken.MUTED, f"cost: {self.cost_label}"))
-        if self.permission_mode and self.permission_mode != "default":
-            mode_kind = (
-                StyleToken.WARNING
-                if self.permission_mode == "readonly"
-                else StyleToken.ERROR
+        permission_mode = self.permission_mode.strip().lower()
+        action_policy_mode = self.action_policy_mode.strip().lower()
+        if permission_mode != "default" or action_policy_mode:
+            if permission_mode == "readonly":
+                mode_kind = StyleToken.WARNING
+            elif permission_mode == "bypass" or action_policy_mode == "bypass":
+                mode_kind = StyleToken.ERROR
+            else:
+                mode_kind = StyleToken.SYSTEM
+            label = format_permission_status_label(
+                permission_mode=permission_mode,
+                action_policy_mode=action_policy_mode,
             )
-            segments.append(
-                _labeled_segment("permissions: ", self.permission_mode, mode_kind)
-            )
+            segments.append(_labeled_segment("permissions: ", label, mode_kind))
         return segments
 
     def active_status(self) -> str:

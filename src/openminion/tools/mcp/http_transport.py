@@ -158,8 +158,8 @@ class StreamableHTTPMCPTransport:
     def is_running(self) -> bool:
         return True
 
-    def stderr_tail(self, *, limit: int = 4096) -> str:
-        del limit
+    def stderr_tail(self, *, limit: int = 4096, wait_seconds: float = 0.0) -> str:
+        del limit, wait_seconds
         return ""
 
     @property

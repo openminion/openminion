@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import time
 
 import pytest
@@ -79,6 +80,103 @@ def test_focus_pty_handles_contextual_slash_help(
         "local-contextual-slash-help",
         "\n".join(transcripts),
     )
+
+
+@pytest.mark.parametrize(
+    ("rows", "cols"),
+    [(18, 72), (24, 100), (42, 140)],
+    ids=["compact", "standard", "wide"],
+)
+def test_focus_slash_completion_menu_shows_command_names_only(
+    focus_probe: FocusProbe,
+    rows: int,
+    cols: int,
+) -> None:
+    with focus_probe.session(rows=rows, cols=cols) as session:
+        focus_probe.wait_ready(session)
+        session.send("/pro")
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if any(row.strip() == "/project" for row in session.screen_lines):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("filtered slash completion did not show /project")
+
+        screen_rows = session.screen_lines
+        assert screen_rows[-2] == "❯ /pro"
+        assert screen_rows[-1].startswith("◆ ")
+        assert session.cursor_state == (True, rows - 1, len("❯ /pro") + 1)
+        assert sum(row.strip() == "/project" for row in screen_rows) == 1
+        assert not any(
+            "Start, inspect, or control durable project work" in row
+            for row in screen_rows
+        )
+
+
+def test_focus_pty_controls_durable_project(
+    focus_probe: FocusProbe,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openminion.cli.commands.daemon import daemon_stop
+
+    command = (
+        "/project start --goal 'verify project controls' "
+        f"--verify-command {shlex.quote(f'{focus_probe.python_bin} -c pass')}"
+    )
+    approval_events: list[dict[str, object]] = []
+    try:
+        with focus_probe.session() as session:
+            focus_probe.wait_ready(session)
+            launched = focus_probe.run_slash_turn(
+                session,
+                command,
+                marker=r"Project queued:\s*awrk_[A-Za-z0-9]+",
+                requires_approval=True,
+                approval_events=approval_events,
+            )
+            assert [
+                (event["action"], event["decision"]) for event in approval_events
+            ] == [("project.start", "yes")]
+            match = re.search(r"Project queued:\s*(awrk_[A-Za-z0-9]+)", launched)
+            assert match is not None
+            run_id = match.group(1)
+            paused = focus_probe.run_slash_turn(
+                session,
+                f"/project pause {run_id}",
+                marker=r"task_state: paused",
+            )
+            redirected = focus_probe.run_slash_turn(
+                session,
+                f"/project redirect {run_id} --direction 'finish the report first'",
+                marker=r"direction_queued_for_next_cycle: finish the report first",
+            )
+            resumed = focus_probe.run_slash_turn(
+                session,
+                f"/project resume {run_id}",
+                marker=r"task_state: active|status: running",
+            )
+            cancelled = focus_probe.run_slash_turn(
+                session,
+                f"/project cancel {run_id}",
+                marker=r"cancelled",
+            )
+    finally:
+        environment = focus_probe.environment()
+        with monkeypatch.context() as context:
+            for name, value in environment.items():
+                context.setenv(name, value)
+            daemon_stop(
+                str(focus_probe.config_path),
+                home_root=environment["OPENMINION_HOME"],
+                data_root=environment["OPENMINION_DATA_ROOT"],
+            )
+
+    transcript = "\n".join((launched, paused, redirected, resumed, cancelled))
+    assert run_id in transcript
+    write_transcript(artifact_root(tmp_path), "local-project-controls", transcript)
 
 
 def test_focus_pty_custom_help_is_metadata_only(
@@ -343,6 +441,75 @@ def test_focus_pty_survives_resize_after_launch(
         write_transcript(artifact_root(tmp_path), "local-resize-help", transcript)
 
 
+def test_focus_pty_pins_input_and_footer_across_turn_and_resize(
+    focus_probe: FocusProbe,
+) -> None:
+    def assert_blank_row_after(
+        screen_rows: tuple[str, ...],
+        expected_line: str,
+    ) -> None:
+        row = max(
+            index for index, line in enumerate(screen_rows) if line == expected_line
+        )
+        assert screen_rows[row + 1] == ""
+
+    def assert_bottom_layout(session: PtySession, *, rows: int) -> None:
+        screen_rows = session.screen_lines
+        assert len(screen_rows) == rows
+        assert screen_rows[-2].startswith("❯ ")
+        assert screen_rows[-1].startswith("◆ ")
+        assert session.cursor_position[0] == rows - 1
+        assert "cursor position requests" not in session.visible_transcript
+
+    with focus_probe.session(rows=24, cols=100) as session:
+        focus_probe.wait_ready(session)
+        assert_bottom_layout(session, rows=24)
+        assert_blank_row_after(
+            session.screen_lines,
+            "Tip: / for commands · @ to mention a file · keep typing while a turn runs",
+        )
+
+        focus_probe.run_turn(
+            session,
+            FocusScenario(
+                scenario_id="local_bottom_layout",
+                prompt="Reply with exactly: footer layout check",
+                expected_markers=("footer layout check",),
+                timeout=60,
+            ),
+        )
+        assert_bottom_layout(session, rows=24)
+        assert_blank_row_after(
+            session.screen_lines,
+            "❯ Reply with exactly: footer layout check",
+        )
+
+        session.send("typed-check")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if session.screen_lines[-2] == "❯ typed-check":
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("typed input did not remain above the footer")
+        assert_bottom_layout(session, rows=24)
+
+        session.send("\x7f" * len("typed-check"))
+        session.send("/")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if "/agents" in session.screen_text:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("slash completion menu did not open")
+        assert_bottom_layout(session, rows=24)
+
+        session.send("\x7f")
+        session.resize(rows=18, cols=72)
+        assert_bottom_layout(session, rows=18)
+
+
 def test_focus_startup_notice_preserves_single_composer(
     focus_probe: FocusProbe,
 ) -> None:
@@ -363,6 +530,12 @@ def test_focus_startup_notice_preserves_single_composer(
         cols=140,
     ) as session:
         focus_probe.wait_ready(session)
+        time.sleep(0.2)
+        assert "Update available!" not in session.transcript
+        assert "cursor position requests" not in session.transcript
+        assert session.transcript.count("Ask anything") == 1
+
+        session.type_line("/status")
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             screen = session.screen_text
@@ -375,6 +548,32 @@ def test_focus_startup_notice_preserves_single_composer(
         assert "Local source checkout detected" in screen
         assert "pip install" not in screen
         assert screen.count("Ask anything") == 1
+
+
+def test_focus_cost_output_preserves_single_bottom_composer(
+    focus_probe: FocusProbe,
+) -> None:
+    with focus_probe.session(rows=42, cols=140) as session:
+        focus_probe.wait_ready(session)
+        focus_probe.run_slash(
+            session,
+            "/cost",
+            marker="Next: send a prompt, then run /cost.",
+        )
+        session.send("\r\r\r")
+        time.sleep(0.5)
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            screen = session.screen_text
+            if screen.count("Ask anything") == 1:
+                break
+            time.sleep(0.05)
+
+        rows = session.screen_lines
+        assert sum("Ask anything" in row for row in rows) == 1
+        assert rows[-2].startswith("❯ Ask anything")
+        assert rows[-1].startswith("◆ ")
 
 
 def test_focus_runner_exposes_tracker_suite_names() -> None:

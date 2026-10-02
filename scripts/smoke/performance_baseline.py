@@ -51,6 +51,7 @@ DEFAULT_SCENARIOS = (
     "local_status_tool_turn",
     "context_heavy_turn",
     "deterministic_full_turn",
+    "runtime_manager_idle",
     "instrumentation_overhead_aa",
     "tcpl_selector_direct_route",
     "tcpl_selector_retrieval_route",
@@ -164,8 +165,12 @@ class RunOptions:
     threshold_mode: str = DEFAULT_THRESHOLD_MODE
 
 
+def _openminion_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
 def _workspace_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return _openminion_root().parent
 
 
 def _default_output_root(workspace_root: Path) -> Path:
@@ -279,6 +284,13 @@ def _process_metrics(process_id: int | None = None) -> dict[str, Any]:
             "file_descriptor_count": None,
             "open_file_count": None,
             "network_connection_count": None,
+            "process_cpu_total_ns": None,
+            "process_tree_cpu_total_ns": None,
+            "voluntary_context_switch_count": None,
+            "involuntary_context_switch_count": None,
+            "process_tree_voluntary_context_switch_count": None,
+            "process_tree_involuntary_context_switch_count": None,
+            "process_tree_identity_hash": None,
         }
     )
     try:
@@ -286,6 +298,63 @@ def _process_metrics(process_id: int | None = None) -> dict[str, Any]:
 
         process = psutil.Process(int(process_id or os.getpid()))
         metrics["thread_count"] = int(process.num_threads())
+        children = process.children(recursive=True)
+        process_cpu = process.cpu_times()
+        metrics["process_cpu_total_ns"] = int(
+            (float(process_cpu.user) + float(process_cpu.system)) * 1_000_000_000
+        )
+        process_switches = process.num_ctx_switches()
+        metrics["voluntary_context_switch_count"] = int(process_switches.voluntary)
+        metrics["involuntary_context_switch_count"] = int(process_switches.involuntary)
+
+        tree_cpu_total = int(metrics["process_cpu_total_ns"])
+        tree_voluntary = int(metrics["voluntary_context_switch_count"])
+        tree_involuntary = int(metrics["involuntary_context_switch_count"])
+        tree_cpu_complete = True
+        tree_switches_complete = True
+        tree_identity: list[tuple[int, float]] = []
+        tree_identity_complete = True
+        for member in (process, *children):
+            try:
+                tree_identity.append((int(member.pid), float(member.create_time())))
+            except (AttributeError, psutil.Error):
+                tree_identity_complete = False
+            if member is process:
+                continue
+            try:
+                child_cpu = member.cpu_times()
+                tree_cpu_total += int(
+                    (float(child_cpu.user) + float(child_cpu.system)) * 1_000_000_000
+                )
+            except (AttributeError, psutil.Error):
+                tree_cpu_complete = False
+            try:
+                child_switches = member.num_ctx_switches()
+                tree_voluntary += int(child_switches.voluntary)
+                tree_involuntary += int(child_switches.involuntary)
+            except (AttributeError, psutil.Error):
+                tree_switches_complete = False
+
+        if tree_cpu_complete:
+            metrics["process_tree_cpu_total_ns"] = tree_cpu_total
+        else:
+            unavailable["process_tree_cpu_total_ns"] = "descendant_cpu_unavailable"
+        if tree_switches_complete:
+            metrics["process_tree_voluntary_context_switch_count"] = tree_voluntary
+            metrics["process_tree_involuntary_context_switch_count"] = tree_involuntary
+        else:
+            unavailable["process_tree_voluntary_context_switch_count"] = (
+                "descendant_context_switches_unavailable"
+            )
+            unavailable["process_tree_involuntary_context_switch_count"] = (
+                "descendant_context_switches_unavailable"
+            )
+        if tree_identity_complete:
+            metrics["process_tree_identity_hash"] = _stable_json_hash(
+                sorted(tree_identity)
+            )
+        else:
+            unavailable["process_tree_identity_hash"] = "process_identity_unavailable"
         try:
             metrics["file_descriptor_count"] = int(process.num_fds())
         except (AttributeError, psutil.Error):
@@ -304,6 +373,13 @@ def _process_metrics(process_id: int | None = None) -> dict[str, Any]:
             "file_descriptor_count",
             "open_file_count",
             "network_connection_count",
+            "process_cpu_total_ns",
+            "process_tree_cpu_total_ns",
+            "voluntary_context_switch_count",
+            "involuntary_context_switch_count",
+            "process_tree_voluntary_context_switch_count",
+            "process_tree_involuntary_context_switch_count",
+            "process_tree_identity_hash",
         ):
             unavailable[key] = "psutil_unavailable"
     except psutil.Error:
@@ -312,6 +388,13 @@ def _process_metrics(process_id: int | None = None) -> dict[str, Any]:
             "file_descriptor_count",
             "open_file_count",
             "network_connection_count",
+            "process_cpu_total_ns",
+            "process_tree_cpu_total_ns",
+            "voluntary_context_switch_count",
+            "involuntary_context_switch_count",
+            "process_tree_voluntary_context_switch_count",
+            "process_tree_involuntary_context_switch_count",
+            "process_tree_identity_hash",
         ):
             unavailable[key] = "process_unavailable"
 
@@ -324,13 +407,122 @@ def _process_metrics(process_id: int | None = None) -> dict[str, Any]:
     return metrics
 
 
-def _dirty_worktree_summary(workspace_root: Path) -> dict[str, Any]:
+def _process_interval_metrics(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    *,
+    elapsed_ns: int,
+) -> dict[str, Any]:
+    unavailable: dict[str, str] = {}
+    metrics: dict[str, Any] = {
+        "sample_interval_ns": int(elapsed_ns),
+        "process_cpu_delta_ns": None,
+        "process_cpu_duty_ppm": None,
+        "process_tree_cpu_delta_ns": None,
+        "process_tree_cpu_duty_ppm": None,
+        "voluntary_context_switch_delta": None,
+        "involuntary_context_switch_delta": None,
+        "voluntary_context_switch_rate_per_second": None,
+        "involuntary_context_switch_rate_per_second": None,
+        "process_tree_voluntary_context_switch_delta": None,
+        "process_tree_involuntary_context_switch_delta": None,
+        "process_tree_voluntary_context_switch_rate_per_second": None,
+        "process_tree_involuntary_context_switch_rate_per_second": None,
+    }
+    if elapsed_ns <= 0:
+        for key in metrics:
+            if key != "sample_interval_ns":
+                unavailable[key] = "invalid_sample_interval"
+        metrics["availability_reasons"] = unavailable
+        return metrics
+
+    def record_delta(
+        source_key: str,
+        delta_key: str,
+        *,
+        tree: bool = False,
+    ) -> int | None:
+        if tree and (
+            not before.get("process_tree_identity_hash")
+            or before.get("process_tree_identity_hash")
+            != after.get("process_tree_identity_hash")
+        ):
+            unavailable[delta_key] = "process_tree_membership_changed"
+            return None
+        start = before.get(source_key)
+        end = after.get(source_key)
+        if not isinstance(start, int) or not isinstance(end, int):
+            unavailable[delta_key] = "counter_unavailable"
+            return None
+        if end < start:
+            unavailable[delta_key] = "counter_decreased"
+            return None
+        delta = end - start
+        metrics[delta_key] = delta
+        return delta
+
+    process_cpu_delta = record_delta("process_cpu_total_ns", "process_cpu_delta_ns")
+    tree_cpu_delta = record_delta(
+        "process_tree_cpu_total_ns", "process_tree_cpu_delta_ns", tree=True
+    )
+    if process_cpu_delta is not None:
+        metrics["process_cpu_duty_ppm"] = round(
+            process_cpu_delta * 1_000_000 / elapsed_ns
+        )
+    else:
+        unavailable["process_cpu_duty_ppm"] = unavailable["process_cpu_delta_ns"]
+    if tree_cpu_delta is not None:
+        metrics["process_tree_cpu_duty_ppm"] = round(
+            tree_cpu_delta * 1_000_000 / elapsed_ns
+        )
+    else:
+        unavailable["process_tree_cpu_duty_ppm"] = unavailable[
+            "process_tree_cpu_delta_ns"
+        ]
+
+    for source_key, delta_key, rate_key, tree in (
+        (
+            "voluntary_context_switch_count",
+            "voluntary_context_switch_delta",
+            "voluntary_context_switch_rate_per_second",
+            False,
+        ),
+        (
+            "involuntary_context_switch_count",
+            "involuntary_context_switch_delta",
+            "involuntary_context_switch_rate_per_second",
+            False,
+        ),
+        (
+            "process_tree_voluntary_context_switch_count",
+            "process_tree_voluntary_context_switch_delta",
+            "process_tree_voluntary_context_switch_rate_per_second",
+            True,
+        ),
+        (
+            "process_tree_involuntary_context_switch_count",
+            "process_tree_involuntary_context_switch_delta",
+            "process_tree_involuntary_context_switch_rate_per_second",
+            True,
+        ),
+    ):
+        delta = record_delta(source_key, delta_key, tree=tree)
+        if delta is None:
+            unavailable[rate_key] = unavailable[delta_key]
+            continue
+        metrics[rate_key] = round(delta * 1_000_000_000 / elapsed_ns)
+
+    metrics["availability_reasons"] = unavailable
+    return metrics
+
+
+def _dirty_worktree_summary(repo_root: Path) -> dict[str, Any]:
     try:
         result = subprocess.run(
             [
                 "git",
                 "-C",
-                str(workspace_root / "openminion"),
+                str(repo_root),
                 "status",
                 "--short",
                 "--untracked-files=all",
@@ -356,9 +548,8 @@ def _stable_json_hash(payload: Any) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def _dirty_worktree_fingerprint(workspace_root: Path) -> str:
-    repo_root = workspace_root / "openminion"
-    summary = _dirty_worktree_summary(workspace_root)
+def _dirty_worktree_fingerprint(repo_root: Path) -> str:
+    summary = _dirty_worktree_summary(repo_root)
     if not summary.get("available"):
         return "unavailable"
     digest = hashlib.sha256()
@@ -426,6 +617,24 @@ def _loaded_openminion_package_root() -> str:
     return str(Path(module_path).resolve().parent)
 
 
+def _package_source_sha256(package_root: str) -> str:
+    root = Path(package_root)
+    if not root.is_dir():
+        return "unavailable"
+    source_files = sorted(path for path in root.rglob("*.py") if path.is_file())
+    if not source_files:
+        return "unavailable"
+    digest = hashlib.sha256()
+    for path in source_files:
+        file_hash = _file_sha256(path)
+        if file_hash == "unavailable":
+            return "unavailable"
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file_hash.encode("ascii"))
+    return digest.hexdigest()
+
+
 def _installed_distribution_provenance() -> dict[str, Any]:
     distributions: dict[str, dict[str, Any]] = {}
     for distribution in importlib_metadata.distributions():
@@ -477,11 +686,11 @@ def _host_runtime_hash() -> str:
     )
 
 
-def _path_shape(path_value: str, options: RunOptions) -> str:
+def _path_shape(path_value: str) -> str:
     if not path_value:
         return "<CWD>"
     path = Path(path_value).expanduser().absolute()
-    repo_root = (options.workspace_root / "openminion").absolute()
+    repo_root = _openminion_root().absolute()
     source_root = (repo_root / "src").absolute()
     if path == source_root:
         return "<SUT_SRC>"
@@ -515,10 +724,10 @@ def _runtime_environment_identity(options: RunOptions) -> dict[str, Any]:
         "platform": platform.platform(),
         "host_runtime_hash": _host_runtime_hash(),
         "effective_sys_path": list(sys.path),
-        "effective_sys_path_shape": [_path_shape(entry, options) for entry in sys.path],
+        "effective_sys_path_shape": [_path_shape(entry) for entry in sys.path],
         "inherited_pythonpath": inherited_pythonpath,
         "inherited_pythonpath_shape": [
-            _path_shape(entry, options) for entry in pythonpath_entries
+            _path_shape(entry) for entry in pythonpath_entries
         ],
         "bytecode_cache_environment": {
             "dont_write_bytecode": os.environ.get("PYTHONDONTWRITEBYTECODE", ""),
@@ -730,13 +939,16 @@ def _measurement_identity(
 
 
 def _campaign_source_identity(options: RunOptions) -> dict[str, Any]:
+    package_root = _loaded_openminion_package_root()
+    repo_root = _openminion_root()
     return {
-        "git_head": _git_head(options.workspace_root),
-        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(options.workspace_root),
-        "dirty_worktree_summary": _dirty_worktree_summary(options.workspace_root),
+        "git_head": _git_head(repo_root),
+        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(repo_root),
+        "dirty_worktree_summary": _dirty_worktree_summary(repo_root),
         "runner_path": str(Path(__file__).resolve()),
         "runner_source_sha256": _file_sha256(Path(__file__)),
-        "loaded_openminion_package_root": _loaded_openminion_package_root(),
+        "loaded_openminion_package_root": package_root,
+        "loaded_openminion_package_source_sha256": _package_source_sha256(package_root),
         "runtime_environment": _runtime_environment_identity(options),
     }
 
@@ -746,7 +958,12 @@ def _campaign_source_identity_errors(
 ) -> list[str]:
     return [
         key
-        for key in ("git_head", "dirty_tree_fingerprint", "runner_source_sha256")
+        for key in (
+            "git_head",
+            "dirty_tree_fingerprint",
+            "runner_source_sha256",
+            "loaded_openminion_package_source_sha256",
+        )
         if str(expected.get(key) or "") in {"", "unknown", "unavailable"}
         or expected.get(key) != actual.get(key)
     ]
@@ -981,7 +1198,7 @@ def _command_env(
     options: RunOptions, *, data_root: Path | None = None
 ) -> dict[str, str]:
     env = os.environ.copy()
-    src_root = options.workspace_root / "openminion" / "src"
+    src_root = _openminion_root() / "src"
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (
         str(src_root)
@@ -1000,7 +1217,7 @@ def _run_subprocess(
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
-        cwd=options.workspace_root / "openminion",
+        cwd=_openminion_root(),
         env=_command_env(options, data_root=data_root),
         text=True,
         capture_output=True,
@@ -1014,7 +1231,7 @@ def _run_subprocess_measured(
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
     process = subprocess.Popen(
         command,
-        cwd=options.workspace_root / "openminion",
+        cwd=_openminion_root(),
         env=_command_env(options, data_root=data_root),
         text=True,
         stdout=subprocess.PIPE,
@@ -1280,7 +1497,7 @@ def _measure_focus_prompt_ready(
     )
     data_root = run_root / "data"
     config_path = run_root / "config.json"
-    openminion_root = options.workspace_root / "openminion"
+    openminion_root = _openminion_root()
     session_id = f"performance-{scenario_id}"
 
     def action(metrics: dict[str, Any]) -> list[str]:
@@ -1916,6 +2133,110 @@ def _measure_deterministic_full_turn(options: RunOptions) -> ScenarioRun:
             measured_boundary=SUT_BOUNDARY_IN_PROCESS,
             fixture_revision="deterministic-full-turn-v1",
             options=options,
+        ),
+        action=action,
+    )
+
+
+def _measure_runtime_manager_idle(
+    options: RunOptions,
+    *,
+    agent_count: int = 8,
+    idle_interval_seconds: float = 1.0,
+) -> ScenarioRun:
+    scenario_id = "runtime_manager_idle"
+
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from openminion.services.runtime import (
+            AgentRuntimeManager,
+            TurnRequest,
+            TurnResponse,
+        )
+
+        def execute(request: Any, emit_chunk: Any, cancel_event: Any) -> Any:
+            del emit_chunk, cancel_event
+            return TurnResponse(final_text=f"idle-ready:{request.trace_id}")
+
+        manager = AgentRuntimeManager(
+            turn_executor=execute,
+            max_agents_hot=agent_count,
+            max_global_concurrency=agent_count,
+        )
+        manager.start()
+        try:
+            for index in range(agent_count):
+                handle = manager.submit_turn(
+                    TurnRequest(
+                        trace_id=f"idle-agent-{index}",
+                        agent_id=f"idle-agent-{index}",
+                        session_id=f"idle-session-{index}",
+                        input_text="ready",
+                    )
+                )
+                response = handle.result(timeout_s=5)
+                if response.errors or not response.final_text.startswith("idle-ready:"):
+                    raise RuntimeError(f"idle agent {index} did not become ready")
+
+            started_ns = time.perf_counter_ns()
+            before = _process_metrics()
+            time.sleep(idle_interval_seconds)
+            after = _process_metrics()
+            elapsed_ns = _elapsed_ns(started_ns)
+            interval = _process_interval_metrics(
+                before,
+                after,
+                elapsed_ns=elapsed_ns,
+            )
+            metrics.update(
+                {
+                    "idle_agent_count": agent_count,
+                    "idle_interval_ns": elapsed_ns,
+                    "idle_process_cpu_duty_ppm": interval["process_cpu_duty_ppm"],
+                    "idle_process_tree_cpu_duty_ppm": interval[
+                        "process_tree_cpu_duty_ppm"
+                    ],
+                    "idle_voluntary_context_switch_rate_per_second": interval[
+                        "voluntary_context_switch_rate_per_second"
+                    ],
+                    "idle_involuntary_context_switch_rate_per_second": interval[
+                        "involuntary_context_switch_rate_per_second"
+                    ],
+                    "idle_process_tree_voluntary_context_switch_rate_per_second": interval[
+                        "process_tree_voluntary_context_switch_rate_per_second"
+                    ],
+                    "idle_process_tree_involuntary_context_switch_rate_per_second": interval[
+                        "process_tree_involuntary_context_switch_rate_per_second"
+                    ],
+                    "idle_resource_interval": interval,
+                    "idle_resource_before": before,
+                    "idle_resource_after": after,
+                    "terminal_fact": {
+                        "agent_count": agent_count,
+                        "completed_turn_count": agent_count,
+                    },
+                }
+            )
+            return [
+                "Eight deterministic agent workers remain hot and receive no work during the fixed idle interval.",
+                "Process counters include harness overhead; worker-specific behavior is proven separately by queue-wait tests.",
+            ]
+        finally:
+            manager.shutdown()
+
+    return _run_with_metrics(
+        scenario_id=scenario_id,
+        command="runtime_manager_fixture:idle_resources",
+        provider_variance_class=LOCAL_VARIANCE,
+        measurement_identity=_measurement_identity(
+            scenario_id=scenario_id,
+            command="runtime_manager_fixture:idle_resources",
+            measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+            fixture_revision="runtime-manager-idle-v1",
+            options=options,
+            scenario_config={
+                "agent_count": agent_count,
+                "idle_interval_seconds": idle_interval_seconds,
+            },
         ),
         action=action,
     )
@@ -2961,12 +3282,12 @@ def _measure_persistent_focus_turns(
         session_id = "omfla-focus"
         probe = FocusProbe(
             python_bin=options.python,
-            openminion_root=options.workspace_root / "openminion",
+            openminion_root=_openminion_root(),
             framework_root=options.workspace_root,
             data_root=root / "data",
             config_path=config_path,
             agent_id="openminion",
-            workdir=options.workspace_root / "openminion",
+            workdir=_openminion_root(),
             session_id=session_id,
             include_project_context=False,
         )
@@ -3616,12 +3937,12 @@ def _omfla_focus_restart_cycle(
     session_id = f"omfla-focus-restart-{cycle_index}"
     probe = FocusProbe(
         python_bin=options.python,
-        openminion_root=options.workspace_root / "openminion",
+        openminion_root=_openminion_root(),
         framework_root=options.workspace_root,
         data_root=root / "data",
         config_path=config_path,
         agent_id="openminion",
-        workdir=options.workspace_root / "openminion",
+        workdir=_openminion_root(),
         session_id=session_id,
         include_project_context=False,
     )
@@ -4358,7 +4679,7 @@ def _measure_provider_connection_reuse_decision() -> ScenarioRun:
             httpx_available = True
         except Exception:
             httpx_available = False
-        pyproject = _workspace_root() / "openminion" / "pyproject.toml"
+        pyproject = _openminion_root() / "pyproject.toml"
         project_dependencies: list[str] = []
         if pyproject.exists():
             pyproject_payload = tomllib.loads(pyproject.read_text(encoding="utf-8"))
@@ -4802,6 +5123,8 @@ def run_scenario(scenario_id: str, options: RunOptions) -> ScenarioRun:
         return _measure_context_heavy_turn()
     if scenario_id == "deterministic_full_turn":
         return _measure_deterministic_full_turn(options)
+    if scenario_id == "runtime_manager_idle":
+        return _measure_runtime_manager_idle(options)
     if scenario_id == "instrumentation_overhead_aa":
         return _measure_instrumentation_overhead_aa(options)
     if scenario_id.startswith("tcpl_02_"):
@@ -5033,8 +5356,11 @@ def _threshold_result(
         "terminal_import_surface",
         "interactive_runtime_import_surface",
     }
-    strict_local_timing = scenario_id in startup_import_scenarios
-    metric_name = "wall_time_ms" if strict_local_timing else "wall_time_ns"
+    median_timing_scenarios = startup_import_scenarios | {"deterministic_full_turn"}
+    requires_median = scenario_id in median_timing_scenarios
+    metric_name = (
+        "wall_time_ms" if scenario_id in startup_import_scenarios else "wall_time_ns"
+    )
     baseline_wall = dict(baseline_scenario.get(metric_name) or {})
     current_wall = dict(current.get(metric_name) or {})
     baseline_cv = baseline_wall.get("coefficient_of_variation")
@@ -5050,6 +5376,104 @@ def _threshold_result(
             "baseline_cv": baseline_cv,
             "current_cv": current_cv,
         }
+    if scenario_id == "runtime_manager_idle":
+        baseline_context_summary = (
+            baseline_scenario.get("idle_voluntary_context_switch_rate_per_second") or {}
+        )
+        current_context_summary = (
+            current.get("idle_voluntary_context_switch_rate_per_second") or {}
+        )
+        baseline_cpu_summary = baseline_scenario.get("idle_process_cpu_duty_ppm") or {}
+        current_cpu_summary = current.get("idle_process_cpu_duty_ppm") or {}
+        resource_counts = {
+            "baseline_context_switch_count": baseline_context_summary.get("count"),
+            "current_context_switch_count": current_context_summary.get("count"),
+            "baseline_cpu_duty_count": baseline_cpu_summary.get("count"),
+            "current_cpu_duty_count": current_cpu_summary.get("count"),
+        }
+        if any(
+            not isinstance(value, int) or value < COMPARISON_MIN_SAMPLES
+            for value in resource_counts.values()
+        ):
+            return {
+                "mode": threshold_mode,
+                "status": "ineligible",
+                "reason": "fewer than twenty valid idle resource samples",
+                **resource_counts,
+            }
+        resource_cvs = {
+            "baseline_context_switch_cv": baseline_context_summary.get(
+                "coefficient_of_variation"
+            ),
+            "current_context_switch_cv": current_context_summary.get(
+                "coefficient_of_variation"
+            ),
+            "baseline_cpu_duty_cv": baseline_cpu_summary.get(
+                "coefficient_of_variation"
+            ),
+            "current_cpu_duty_cv": current_cpu_summary.get("coefficient_of_variation"),
+        }
+        if any(
+            isinstance(value, int | float) and float(value) > 0.20
+            for value in resource_cvs.values()
+        ):
+            return {
+                "mode": threshold_mode,
+                "status": "ineligible",
+                "reason": "idle resource variance exceeds 0.20 CV",
+                **resource_cvs,
+            }
+        baseline_context_switches = baseline_context_summary.get("median")
+        current_context_switches = current_context_summary.get("median")
+        baseline_cpu_duty = baseline_cpu_summary.get("p95")
+        current_cpu_duty = current_cpu_summary.get("p95")
+        if not all(
+            isinstance(value, int)
+            for value in (
+                baseline_context_switches,
+                current_context_switches,
+                baseline_cpu_duty,
+                current_cpu_duty,
+            )
+        ):
+            return {
+                "mode": threshold_mode,
+                "status": "not_applicable",
+                "reason": "missing comparable idle resource metrics",
+            }
+        context_switch_limit = float(baseline_context_switches) * 0.5
+        cpu_duty_limit = max(int(baseline_cpu_duty), 20_000)
+        context_switch_ratio = (
+            round(
+                int(current_context_switches) / float(int(baseline_context_switches)),
+                4,
+            )
+            if int(baseline_context_switches) > 0
+            else (0.0 if int(current_context_switches) == 0 else None)
+        )
+        passed = (
+            int(current_context_switches) <= context_switch_limit
+            and int(current_cpu_duty) <= cpu_duty_limit
+        )
+        return {
+            "mode": threshold_mode,
+            "status": (
+                "eligible"
+                if threshold_mode == "off"
+                else "pass"
+                if passed
+                else "warn"
+                if threshold_mode != "hard" or current.get("warn_only")
+                else "fail"
+            ),
+            "context_switch_ratio": context_switch_ratio,
+            "context_switch_limit": context_switch_limit,
+            "baseline_context_switch_rate": baseline_context_switches,
+            "current_context_switch_rate": current_context_switches,
+            "cpu_duty_limit_ppm": cpu_duty_limit,
+            "baseline_cpu_duty_p95_ppm": baseline_cpu_duty,
+            "current_cpu_duty_p95_ppm": current_cpu_duty,
+        }
     baseline_p95 = baseline_wall.get("p95")
     current_p95 = current_wall.get("p95")
     if not isinstance(baseline_p95, int) or not isinstance(current_p95, int):
@@ -5060,7 +5484,7 @@ def _threshold_result(
         }
     baseline_median = baseline_wall.get("median")
     current_median = current_wall.get("median")
-    if strict_local_timing and (
+    if requires_median and (
         not isinstance(baseline_median, int) or not isinstance(current_median, int)
     ):
         return {
@@ -5081,10 +5505,10 @@ def _threshold_result(
     p95_ratio = round(current_p95 / float(max(1, baseline_p95)), 4)
     median_ratio = (
         round(current_median / float(max(1, baseline_median)), 4)
-        if strict_local_timing
+        if requires_median
         else None
     )
-    regression_ratio = 1.05 if strict_local_timing else 1.10
+    regression_ratio = 1.05 if requires_median else 1.10
     timing_passed = p95_ratio <= regression_ratio and (
         median_ratio is None or median_ratio <= regression_ratio
     )
@@ -5221,6 +5645,7 @@ def _sample_identity_errors(
             "runner_path",
             "runner_source_sha256",
             "loaded_openminion_package_root",
+            "loaded_openminion_package_source_sha256",
         )
         if str(expected_identity.get(key) or "").strip()
         in {"", "unknown", "unavailable"}
@@ -5293,6 +5718,20 @@ def summarize_runs(
             ),
             "process_cpu_time_ns": _metric_summary(
                 metric.get("process_cpu_time_ns") for metric in metrics
+            ),
+            "idle_process_cpu_duty_ppm": _metric_summary(
+                metric.get("idle_process_cpu_duty_ppm") for metric in metrics
+            ),
+            "idle_process_tree_cpu_duty_ppm": _metric_summary(
+                metric.get("idle_process_tree_cpu_duty_ppm") for metric in metrics
+            ),
+            "idle_voluntary_context_switch_rate_per_second": _metric_summary(
+                metric.get("idle_voluntary_context_switch_rate_per_second")
+                for metric in metrics
+            ),
+            "idle_involuntary_context_switch_rate_per_second": _metric_summary(
+                metric.get("idle_involuntary_context_switch_rate_per_second")
+                for metric in metrics
             ),
             "python_gc_collection_count": _metric_summary(
                 metric.get("python_gc_collection_count") for metric in metrics
@@ -5395,6 +5834,9 @@ def _run_to_artifact(
             "loaded_openminion_package_root": campaign_source_identity[
                 "loaded_openminion_package_root"
             ],
+            "loaded_openminion_package_source_sha256": campaign_source_identity[
+                "loaded_openminion_package_source_sha256"
+            ],
             "runtime_environment": campaign_source_identity["runtime_environment"],
             "config_hash": _stable_json_hash(runtime_config),
             "provider_posture": run.provider_profile,
@@ -5454,10 +5896,10 @@ def _run_to_artifact(
     }
 
 
-def _git_head(workspace_root: Path) -> str:
+def _git_head(repo_root: Path) -> str:
     try:
         result = subprocess.run(
-            ["git", "-C", str(workspace_root / "openminion"), "rev-parse", "HEAD"],
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
             text=True,
             capture_output=True,
             check=False,
@@ -5712,10 +6154,8 @@ def _tcpl_sample_from_artifact(
     scenario_id = str(artifact.get("scenario_id") or "")
     runtime_config = identity.get("runtime_config")
     comparable_identity = {
-        "git_revision": str(
-            artifact.get("git_head") or _git_head(options.workspace_root)
-        ),
-        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(options.workspace_root),
+        "git_revision": str(artifact.get("git_head") or _git_head(_openminion_root())),
+        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(_openminion_root()),
         "scenario_id": scenario_id,
         "fixture_hash": _fixture_hash(identity, command=artifact.get("command")),
         "provider": provider,
@@ -5931,9 +6371,9 @@ def _write_tcpl_artifacts(
         "artifact_schema_version": TCPL_ARTIFACT_SCHEMA_VERSION,
         "generated_at_utc": summary["generated_at_utc"],
         "lane": "TCPL",
-        "git_revision": _git_head(options.workspace_root),
-        "dirty_tree_summary": _dirty_worktree_summary(options.workspace_root),
-        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(options.workspace_root),
+        "git_revision": _git_head(_openminion_root()),
+        "dirty_tree_summary": _dirty_worktree_summary(_openminion_root()),
+        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(_openminion_root()),
         "scenario_ids": scenarios,
         "runs": int(options.runs),
         "warmup_runs": int(options.warmup_runs),
@@ -6188,7 +6628,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workspace-root",
         default=None,
-        help="Workspace root containing openminion/ and docs/.",
+        help="Runtime workspace root for homes and generated artifacts.",
     )
     parser.add_argument(
         "--python",

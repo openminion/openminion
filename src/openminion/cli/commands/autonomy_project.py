@@ -57,6 +57,37 @@ from openminion.services.runtime.project_worker import (
 )
 
 
+def ensure_project_daemon_ready(
+    args: argparse.Namespace, *, config_ref: str | None
+) -> None:
+    from openminion.cli.commands.daemon import ensure_daemon_running
+    from openminion.cli.config import load_cli_config
+
+    home_root = getattr(args, "home_root", None)
+    data_root = getattr(args, "data_root", None)
+    config = load_cli_config(
+        config_ref,
+        home_root=home_root,
+        data_root=data_root,
+    )
+    ensure_daemon_running(
+        config_ref,
+        auto_start=bool(config.runtime.daemon_auto_start),
+        home_root=home_root,
+        data_root=data_root,
+    )
+
+
+def validate_project_cycle_interval(args: argparse.Namespace) -> None:
+    value = getattr(args, "cycle_interval_seconds", None)
+    if value is None:
+        return
+    if not bool(getattr(args, "unattended", False)):
+        raise ValueError("--cycle-interval-seconds requires --unattended")
+    if not 1 <= int(value) <= 3600:
+        raise ValueError("--cycle-interval-seconds must be in 1..3600")
+
+
 @dataclass(frozen=True)
 class ProjectLaunchRequest:
     run: AutonomyRun
@@ -78,11 +109,15 @@ def focus_project_help() -> str:
             "       [--expected-check NAME] [--success-criterion TEXT] [--release-tools]",
             "Repository is optional for non-Git work. Verification is required.",
             "usage: /project status [RUN_ID] | show/report RUN_ID",
-            "       /project pause/resume/cancel RUN_ID",
+            "       /project pause RUN_ID",
+            "       /project redirect RUN_ID --direction TEXT",
+            "       /project resume RUN_ID",
+            "       /project cancel RUN_ID",
             "       /project answer RUN_ID --input-request-id ID --answer TEXT",
             "       /project reprioritize RUN_ID --priority TEXT",
             "       /project extend-budget RUN_ID [--extra-iterations N]",
             "Pause takes effect at the checkpoint boundary; it does not roll back work.",
+            "Redirect updates the next cycle and requires the project to be paused.",
         )
     )
 
@@ -852,6 +887,7 @@ __all__ = [
     "resume_project_task",
     "schedule_unattended_project",
     "schedule_project_wake",
+    "validate_project_cycle_interval",
     "verifier_preflight_error",
     "workspace_path_from_ref",
 ]

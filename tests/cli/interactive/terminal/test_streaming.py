@@ -57,23 +57,25 @@ def test_complete_shows_muted_whole_second_response_time() -> None:
     handle.complete()
     output = buffer.getvalue()
     assert "Done in 3s" in output
-    assert output.endswith("Done in 3s")
+    assert output.endswith("  Done in 3s")
     assert "3.4s" not in output
 
 
-def test_response_time_uses_readable_theme_color_without_italic() -> None:
-    from openminion.cli.presentation.styles import set_color_mode
-    from openminion.cli.theme import DARK
+def test_response_time_uses_muted_theme_color_without_emphasis() -> None:
+    from openminion.cli.presentation.styles import set_active_theme, set_color_mode
+    from openminion.cli.theme import DARK, LIGHT
 
     set_color_mode("always")
     try:
         console, _ = _make_console()
-        row = TerminalTurnHandle(console)._response_time_row(3.4)
-        assert row is not None
-        assert DARK.text_secondary in str(row.style)
-        assert "dim" not in str(row.style)
-        assert "italic" not in str(row.style)
+        for theme in (DARK, LIGHT):
+            set_active_theme(theme)
+            row = TerminalTurnHandle(console)._response_time_row(3.4)
+            assert row is not None
+            assert row.plain == "  Done in 3s"
+            assert str(row.style) == theme.text_muted
     finally:
+        set_active_theme(DARK)
         set_color_mode(None)
 
 
@@ -94,10 +96,10 @@ def test_complete_renders_each_turn_usage_mode() -> None:
         turn_llm_calls=4,
     )
     expected = {
-        "off": "Done in 3s",
-        "total": "Done in 3s · 6.3k tokens",
-        "input_output": "Done in 3s · 5.7k in · 603 out",
-        "input_output_calls": "Done in 3s · 5.7k in · 603 out · 4 calls",
+        "off": "  Done in 3s",
+        "total": "  Done in 3s · 6.3k tokens",
+        "input_output": "  Done in 3s · 5.7k in · 603 out",
+        "input_output_calls": "  Done in 3s · 5.7k in · 603 out · 4 calls",
     }
     for display, footer in expected.items():
         console, buffer = _make_console()
@@ -119,7 +121,7 @@ def test_complete_omits_unavailable_usage_and_uses_singular_call() -> None:
     ).start()
     unavailable._started_at = time.monotonic() - 3.4
     unavailable.complete(final_text="reply")
-    assert buffer.getvalue().endswith("Done in 3s")
+    assert buffer.getvalue().endswith("  Done in 3s")
     assert "0 tokens" not in buffer.getvalue()
 
     console, buffer = _make_console()
@@ -135,7 +137,7 @@ def test_complete_omits_unavailable_usage_and_uses_singular_call() -> None:
         usage_display="input_output_calls",
     ).start()
     detailed.complete(final_text="reply")
-    assert buffer.getvalue().endswith("1k in · 20 out · 1 call")
+    assert buffer.getvalue().endswith("  1k in · 20 out · 1 call")
     assert "Done in" not in buffer.getvalue()
 
     console, buffer = _make_console()

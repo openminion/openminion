@@ -109,7 +109,11 @@ class FakeSession:
 
 
 class FakeCtx:
+    def __init__(self) -> None:
+        self.requests: list[Any] = []
+
     def build_pack(self, request: Any) -> dict[str, Any]:
+        self.requests.append(request)
         query = (
             request.get("query")
             if isinstance(request, dict)
@@ -348,9 +352,10 @@ def test_generate_runs_recursive_ticks_and_writes_back() -> None:
             },
         ]
     )
+    context = FakeCtx()
     service = RLMService(
         sessctl=session,
-        contextctl=FakeCtx(),
+        contextctl=context,
         llmctl=llm,
         artifactctl=artifact,
         memctl=memory,
@@ -375,6 +380,8 @@ def test_generate_runs_recursive_ticks_and_writes_back() -> None:
     )
     assert any(event["type"] == "rlm.tick.started" for event in session.events)
     assert any(event["type"] == "rlm.tick.completed" for event in session.events)
+    assert len(context.requests) == 2
+    assert context.requests[1].continuity_query == "Ship release safely"
     latest = session.get_latest_working_state("sess-1")
     assert latest is not None
     assert isinstance(latest.get("state_inline", {}).get("wm_state"), dict)

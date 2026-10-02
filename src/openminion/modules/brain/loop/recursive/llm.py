@@ -168,6 +168,7 @@ def _build_tick_messages(
         "agent_id": agent_id,
         "purpose": purpose,
         "query": query,
+        "continuity_query": wm_state.objective,
         "constraints": {},
     }
     request_obj: Any = request_payload

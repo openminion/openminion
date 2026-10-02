@@ -486,6 +486,14 @@ def format_slash_help(
             (
                 "",
                 "Use /help <command>, /<command> --help, or /<command> ? for details.",
+                "",
+                "Keyboard shortcuts:",
+                "  Ctrl-R       Search prompt history",
+                "  Esc          Interrupt the active turn",
+                "  Shift-Tab    Cycle permission modes",
+                "  Ctrl-O       Copy the latest message",
+                "  Ctrl-L       Redraw the terminal",
+                "  Ctrl-X Ctrl-E Edit the prompt externally",
             )
         )
         return "\n".join(lines)

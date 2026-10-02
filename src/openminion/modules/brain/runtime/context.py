@@ -16,6 +16,7 @@ from openminion.modules.brain.runtime.reasoning import (
 from ..bootstrap.freshness_classify import build_freshness_hints
 from ..bootstrap.route_catalog import get_route_descriptor
 from ..diagnostics.events import CanonicalEventLogger
+from ..execution.mission import mission_is_active
 from ..schemas import BudgetTelemetryBlock, BudgetTelemetryConfig, LearningLoopMetric
 from ..schemas import WorkingState, iso_now
 from ..meta.schemas import LowProgressSignal, MetaConfig
@@ -37,6 +38,7 @@ _COMMON_HINT_KEYS = {
     "_llm_call_id",
     "budget_telemetry",
     "continuation_guidance",
+    "continuity_query",
     "current_datetime",
     "freshness_contract",
     "freshness_obligations",
@@ -52,6 +54,13 @@ _COMMON_HINT_KEYS = {
     "model_capability_overrides",
 }
 _THINKING_CTL = ThinkingCtl()
+
+
+def _continuity_query(state: WorkingState) -> str:
+    if mission_is_active(state):
+        return str(getattr(state.mission, "objective", "") or "").strip()
+    return str(getattr(state, "goal", "") or "").strip()
+
 
 _PHASE_HINT_KEYS: dict[str, set[str]] = {
     "decide": {
@@ -148,6 +157,7 @@ def _runtime_freshness_hints(
         **dict(hints.get("style_overrides") or {}),
     }
     merged = {**freshness, **hints}
+    merged["continuity_query"] = _continuity_query(state)
     if style:
         merged["style_overrides"] = style
     merged.setdefault("current_datetime", datetime.now().astimezone().isoformat())

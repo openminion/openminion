@@ -114,8 +114,9 @@ def _finding_evidence_dates(findings: list[dict[str, Any]]) -> list[str]:
 def render_temporal_fact_lines(
     findings: list[dict[str, Any]],
     *,
-    now_iso_fn: Any = local_now_iso,
+    now_iso_fn: Any = None,
 ) -> list[str]:
+    now_iso_fn = now_iso_fn or local_now_iso
     lines = [f"current_datetime={now_iso_fn()}"]
     for evidence_date in _finding_evidence_dates(findings)[:6]:
         lines.append(f"evidence_date={evidence_date}")

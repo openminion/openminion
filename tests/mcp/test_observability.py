@@ -22,6 +22,7 @@ from openminion.tools.mcp.manager import (
     MCPProtocolError,
     MCPServerSession,
 )
+from openminion.tools.mcp.transport import StdioMCPTransport
 
 
 FIXTURE_SERVER_PATH = (
@@ -95,7 +96,16 @@ def test_mcp_server_policy_flags_require_explicit_booleans() -> None:
         MCPServerConfig(name="String", command=["echo"], trusted="false")
 
 
-def test_stderr_tail_is_attached_to_tool_runtime_error_details() -> None:
+def test_stderr_tail_is_attached_to_tool_runtime_error_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drain_stderr = StdioMCPTransport._drain_stderr
+
+    def delayed_drain(transport: StdioMCPTransport) -> None:
+        time.sleep(0.05)
+        drain_stderr(transport)
+
+    monkeypatch.setattr(StdioMCPTransport, "_drain_stderr", delayed_drain)
     bootstrap = build_runtime_bootstrap(
         config=_runtime_config(stderr_banner="stderr boom"),
         strict=True,
@@ -193,8 +203,8 @@ def test_mcp_metric_state_is_safe_under_concurrent_updates() -> None:
 
 
 class _LoggingTransport:
-    def stderr_tail(self, *, limit: int = 4096) -> str:
-        del limit
+    def stderr_tail(self, *, limit: int = 4096, wait_seconds: float = 0.0) -> str:
+        del limit, wait_seconds
         return ""
 
     def __init__(self) -> None:

@@ -132,6 +132,7 @@ class ContextCtlAdapter(ContextAPI):
             purpose=purpose_name,
             mode_name=mode_name,
             query=user_query,
+            continuity_query=str(hints.get("continuity_query") or "").strip(),
             constraints=BuildConstraints.model_validate(hints) if hints else None,
             budgets_override=budgets_override,
             llm_call_id=llm_call_id,

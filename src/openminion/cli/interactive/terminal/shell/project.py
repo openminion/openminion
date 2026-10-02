@@ -120,6 +120,7 @@ async def run_slash_project(
         "pause",
         "resume",
         "cancel",
+        "redirect",
         "answer",
         "reprioritize",
         "extend-budget",

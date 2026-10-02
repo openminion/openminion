@@ -253,6 +253,41 @@ def source_certification_record(
     return record
 
 
+def binary_release_record(
+    tag: str,
+    release_id: str,
+    evidence_commit: str,
+    evidence_id: str,
+) -> dict:
+    """Verify Desktop-main qualification before advertising immutable binaries."""
+    match = re.fullmatch(
+        r"runtime-v(\d+\.\d+\.\d+)-[A-Za-z0-9][A-Za-z0-9._-]{0,127}", tag
+    )
+    if match is None:
+        raise ValueError("invalid runtime release tag")
+    if not re.fullmatch(r"[a-f0-9]{40}", evidence_commit):
+        raise ValueError("Desktop evidence commit must be a full SHA")
+    status = github_api(
+        DESKTOP_REPOSITORY,
+        f"compare/{evidence_commit}...main",
+        "--jq",
+        ".status",
+    )
+    if status not in {"ahead", "identical"}:
+        raise ValueError("Desktop evidence commit is not reachable from main")
+    path = evidence_path("binary-qualification", match.group(1), evidence_id)
+    url = f"https://raw.githubusercontent.com/{DESKTOP_REPOSITORY}/{evidence_commit}/{path}"
+    evidence_bytes = read_public_bytes(url)
+    return official_binary_record(
+        tag,
+        release_id,
+        json.loads(evidence_bytes),
+        evidence_commit,
+        evidence_id,
+        evidence_bytes,
+    )
+
+
 def verify_published(workspace: Path, feed_ref: str = BRANCH) -> None:
     """Verify public main feeds and reachable commit-pinned records after merge."""
     for source in ("pypi", "binary"):
@@ -439,8 +474,18 @@ def main() -> None:
         print(json.dumps({"status": "public_main_verified"}))
         return
     if args.binary_release_tag or args.binary_release_id:
-        if not args.binary_release_tag or not args.binary_release_id:
-            parser.error("binary publication requires release tag and release id")
+        if not all(
+            (
+                args.binary_release_tag,
+                args.binary_release_id,
+                args.desktop_evidence_commit,
+                args.desktop_evidence_id,
+            )
+        ):
+            parser.error(
+                "binary publication requires release tag and release id plus "
+                "Desktop evidence commit and id"
+            )
         if any(
             (
                 args.version,
@@ -450,12 +495,15 @@ def main() -> None:
                 args.certify_source_version,
                 args.source_release_id,
                 args.certification_release_id,
-                args.desktop_evidence_commit,
-                args.desktop_evidence_id,
             )
         ):
             parser.error("binary publication does not accept source-release inputs")
-        record = official_binary_record(args.binary_release_tag, args.binary_release_id)
+        record = binary_release_record(
+            args.binary_release_tag,
+            args.binary_release_id,
+            args.desktop_evidence_commit,
+            args.desktop_evidence_id,
+        )
         if args.dry_run:
             print(
                 json.dumps(

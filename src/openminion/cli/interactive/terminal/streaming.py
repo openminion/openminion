@@ -263,8 +263,8 @@ class TerminalTurnHandle:
         if not parts:
             return None
         return Text(
-            " · ".join(parts),
-            style=token_rich_style(StyleToken.SYSTEM),
+            "  " + " · ".join(parts),
+            style=token_rich_style(StyleToken.MUTED),
         )
 
     def _render_final_body(self, *, elapsed_seconds: float | None = None) -> Any | None:

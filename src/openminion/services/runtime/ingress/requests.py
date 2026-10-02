@@ -260,6 +260,7 @@ def _lift_payload_fields(*, meta: dict[str, Any], payload: dict[str, Any]) -> No
         "forced_tools",
         "capability_category",
         "permission_mode",
+        "approval_transport",
     ):
         if key in payload:
             meta[key] = payload.get(key)

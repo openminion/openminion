@@ -492,9 +492,9 @@ class FocusProbe:
         session.send(command)
         time.sleep(0.1)
         session.send("\r")
-        transcript = session.wait_for_after(
-            re.escape(marker), offset=offset, timeout=60
-        )
+        session.wait_for_after(re.escape(marker), offset=offset, timeout=60)
+        self._wait_for_composer(session)
+        transcript = session.transcript[offset:]
         assert_no_terminal_crash(transcript)
         return transcript
 

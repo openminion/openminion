@@ -753,10 +753,15 @@ class _DecisionBase(BaseModel):
         if (
             self.request_readiness is not None
             and self.request_readiness.project_handoff is not None
-            and (self.route != "act" or self.act_profile != "coding")
+            and (
+                self.route != "act"
+                or self.act_profile
+                != self.request_readiness.project_handoff.verification_domain
+            )
         ):
             raise ValueError(
-                "project_handoff requires route='act' and act_profile='coding'"
+                "project_handoff requires route='act' and an act_profile matching "
+                "verification_domain"
             )
         if self.route == "respond":
             if self.respond_kind is None:

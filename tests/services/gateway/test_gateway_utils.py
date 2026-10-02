@@ -48,6 +48,7 @@ def test_extract_ephemeral_prompt_metadata_keeps_project_scope() -> None:
         {
             "linked_task_id": "task-1",
             "project_tool_calls_remaining": "12",
+            "project_act_profile": "research",
             "autonomy_run_id": "internal-run",
         }
     )
@@ -55,6 +56,7 @@ def test_extract_ephemeral_prompt_metadata_keeps_project_scope() -> None:
     assert extracted == {
         "linked_task_id": "task-1",
         "project_tool_calls_remaining": "12",
+        "project_act_profile": "research",
     }
 
 

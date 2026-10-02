@@ -19,6 +19,7 @@ from openminion.modules.task.autonomy import (
     TestEvidence,
     TestEvidenceStatus,
     autonomy_permission_metadata,
+    VerificationDomain,
 )
 from openminion.modules.task.plan import (
     TaskPlan,
@@ -53,6 +54,7 @@ class ProjectTurnRequest:
     cycle_id: str
     milestone: str
     prompt: str
+    act_profile: VerificationDomain = "coding"
     allowed_tools: tuple[str, ...] = ()
     project_tool_calls_remaining: int | None = None
     plan_revision_required: bool = False
@@ -195,10 +197,14 @@ def project_operator_guidance(
 ) -> tuple[dict[str, object], int]:
     guidance: dict[str, object] = {}
     included_revision = consumed_revision
+    direction_revision = int(str(metadata.get("operator_direction_revision") or 0))
+    if direction_revision > consumed_revision:
+        guidance["direction"] = str(metadata.get("operator_direction") or "")
+        included_revision = direction_revision
     priority_revision = int(str(metadata.get("priority_revision") or 0))
     if priority_revision > consumed_revision:
         guidance["priority"] = str(metadata.get("priority") or "")
-        included_revision = priority_revision
+        included_revision = max(included_revision, priority_revision)
     operator_answers = metadata.get("operator_answers")
     answers = (
         [
@@ -490,6 +496,7 @@ def project_turn_inbound_metadata(
         "linked_task_id": request.task_id,
         "resume": "true",
         "project_plan_revision_required": str(request.plan_revision_required).lower(),
+        "project_act_profile": request.act_profile,
     }
     if request.allowed_tools:
         metadata.update(

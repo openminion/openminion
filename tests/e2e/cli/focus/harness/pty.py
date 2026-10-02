@@ -82,6 +82,31 @@ class PtySession:
         return self.read_screen()
 
     @property
+    def screen_lines(self) -> tuple[str, ...]:
+        """Return every physical terminal row, including trailing blanks."""
+
+        self._read_available(timeout=0.05)
+        return tuple(self._screen_display_lines())
+
+    @property
+    def cursor_position(self) -> tuple[int, int]:
+        """Return the one-based physical cursor row and column."""
+
+        self._read_available(timeout=0.05)
+        return self._screen.cursor.y + 1, self._screen.cursor.x + 1
+
+    @property
+    def cursor_state(self) -> tuple[bool, int, int]:
+        """Return visibility and one-based position from one terminal read."""
+
+        self._read_available(timeout=0.05)
+        return (
+            not self._screen.cursor.hidden,
+            self._screen.cursor.y + 1,
+            self._screen.cursor.x + 1,
+        )
+
+    @property
     def visible_transcript(self) -> str:
         self._read_available(timeout=0.05)
         return self._screen_history

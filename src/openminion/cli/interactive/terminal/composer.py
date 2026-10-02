@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
 import logging
 from pathlib import Path
 import shlex
@@ -11,17 +11,26 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.application import run_in_terminal
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.containers import (
+    ConditionalContainer,
+    FloatContainer,
+    HSplit,
+    VerticalAlign,
+    Window,
+)
+from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.output.vt100 import Vt100_Output
 from prompt_toolkit.patch_stdout import patch_stdout
-from prompt_toolkit.styles import DummyStyle, Style
+from prompt_toolkit.renderer import CPR_Support
+from prompt_toolkit.styles import Style
 
 from openminion.cli.presentation.animation import default_animation_registry
 from openminion.cli.presentation.animation.models import (
@@ -64,7 +73,15 @@ _PHASE_ANIMATIONS = {
 }
 
 
-def _focus_prompt_style() -> Style:
+def _focus_prompt_style(*, color: bool = True) -> Style:
+    if not color:
+        return Style.from_dict(
+            {
+                "bottom-toolbar": "noreverse",
+                "bottom-toolbar.text": "noreverse",
+                "placeholder": "noreverse",
+            }
+        )
     from openminion.cli.presentation.styles import get_active_theme_name
     from openminion.cli.theme import DARK, lookup_theme
 
@@ -165,6 +182,41 @@ def _configure_completion_menu(session: PromptSession[str]) -> None:
         return
 
 
+def _configure_bottom_input_layout(session: PromptSession[str]) -> None:
+    """Keep the live input directly above the persistent footer."""
+
+    root = session.layout.container
+    input_window = session.layout.current_window
+    if not isinstance(root, HSplit) or not isinstance(input_window, Window):
+        raise RuntimeError("prompt layout does not expose the expected input stack")
+
+    main_input = root.children[0]
+    if not isinstance(main_input, ConditionalContainer) or not isinstance(
+        main_input.alternative_content, FloatContainer
+    ):
+        raise RuntimeError("prompt layout does not expose the expected menu stack")
+    input_stack = main_input.alternative_content.content
+    if not isinstance(input_stack, HSplit):
+        raise RuntimeError("prompt layout does not expose the expected menu stack")
+
+    root.align = VerticalAlign.JUSTIFY
+    input_window.dont_extend_height = Condition(lambda: True)
+    input_window.height = Dimension()
+    # Preserve prompt-toolkit's stretching main region so its footer remains
+    # attached to the physical last row. A flexible spacer inside that region
+    # absorbs the unused height and keeps only the prompt at the bottom.
+    input_stack.children.insert(0, Window())
+    # Leave room above the cursor so prompt-toolkit opens its completion float
+    # upward without moving the input off the penultimate terminal row.
+    input_stack.children.insert(
+        2,
+        ConditionalContainer(
+            Window(height=Dimension.exact(_COMPLETION_MENU_ROWS - 1)),
+            Condition(lambda: session.default_buffer.complete_state is not None),
+        ),
+    )
+
+
 def _use_click_only_mouse_tracking(session: PromptSession[str]) -> None:
     """Request clicks without the all-motion mode unused by the completion menu."""
 
@@ -184,20 +236,10 @@ class _SlashAndAtCompleter(Completer):
 
     def __init__(
         self,
-        slash_commands: Iterable[str] | Mapping[str, str],
+        slash_commands: Iterable[str],
         path_completer: Completer | None = None,
     ) -> None:
-        if isinstance(slash_commands, Mapping):
-            self._slash_descriptions = {
-                str(name): str(description)
-                for name, description in slash_commands.items()
-            }
-            self._slashes = sorted(self._slash_descriptions)
-        else:
-            self._slashes = sorted({str(name) for name in slash_commands})
-            self._slash_descriptions = {
-                slash: "slash command" for slash in self._slashes
-            }
+        self._slashes = sorted({str(name) for name in slash_commands})
         self._path_completer = path_completer
 
     def get_completions(self, document, complete_event):
@@ -214,9 +256,6 @@ class _SlashAndAtCompleter(Completer):
                         replacement,
                         start_position=-len(prefix),
                         display=slash,
-                        display_meta=self._slash_descriptions.get(
-                            slash, "slash command"
-                        ),
                     )
             return
         if text.startswith("/"):
@@ -226,9 +265,6 @@ class _SlashAndAtCompleter(Completer):
                         slash,
                         start_position=-len(text),
                         display=slash,
-                        display_meta=self._slash_descriptions.get(
-                            slash, "slash command"
-                        ),
                     )
             return
         at_pos = text.rfind("@")
@@ -251,11 +287,10 @@ class TerminalComposer:
     def __init__(
         self,
         *,
-        slash_commands: Iterable[str] | Mapping[str, str] = (),
+        slash_commands: Iterable[str] = (),
         bottom_toolbar: object = None,
         active_status: Callable[[], str] | None = None,
         history_file: str | None = None,
-        on_ctrl_l: object = None,
         on_ctrl_o: object = None,
         on_shift_tab: object = None,
         on_escape: Callable[[], None] | None = None,
@@ -312,12 +347,6 @@ class TerminalComposer:
         kb.add("backspace")(self._delete_before_cursor)
         kb.add("<bracketed-paste>")(self._handle_bracketed_paste)
 
-        if callable(on_ctrl_l):
-
-            @kb.add("c-l")
-            def _ctrl_l(event) -> None:
-                _call_safely(on_ctrl_l)
-
         if callable(on_ctrl_o):
 
             @kb.add("c-o")
@@ -345,9 +374,15 @@ class TerminalComposer:
             enable_history_search=True,
             mouse_support=Condition(_completion_menu_is_open),
             reserve_space_for_menu=_COMPLETION_MENU_ROWS,
-            style=_focus_prompt_style() if self._color else DummyStyle(),
+            style=_focus_prompt_style(color=self._color),
         )
+        output = self._session.app.output
+        if isinstance(output, Vt100_Output):
+            self._session.app.renderer.cpr_not_supported_callback = None
         _configure_completion_menu(self._session)
+        _configure_bottom_input_layout(self._session)
+        self._anchored_terminal_rows = 0
+        self._session.app.before_render += self._ensure_prompt_anchor
 
     def apply_theme(self) -> None:
         if not self._color:
@@ -448,6 +483,8 @@ class TerminalComposer:
 
     def _insert_newline(self, event) -> None:
         if not self._multiline:
+            if not event.app.current_buffer.text.strip():
+                return
             event.app.current_buffer.validate_and_handle()
             return
         event.app.current_buffer.insert_text("\n")
@@ -520,11 +557,46 @@ class TerminalComposer:
                     placeholder=self._formatted_placeholder,
                     refresh_interval=self._prompt_refresh_interval(),
                     default=draft,
+                    pre_run=self._ensure_prompt_anchor,
                 )
                 self._next_draft = None
             finally:
                 self._multiline = False
         return str(text or "").rstrip("\n")
+
+    def _ensure_prompt_anchor(self, *_: object) -> None:
+        """Keep the prompt on the terminal edge across renderer resets."""
+
+        app = self._session.app
+        output = app.output
+        terminal_rows = max(1, output.get_size().rows)
+        layout_rows = 2 if self._bottom_toolbar is not None else 1
+        layout_rows = min(layout_rows, terminal_rows)
+        renderer = app.renderer
+        renderer.cpr_support = CPR_Support.NOT_SUPPORTED
+        if (
+            renderer._min_available_height == layout_rows
+            and self._anchored_terminal_rows == terminal_rows
+            and renderer._last_screen is not None
+        ):
+            return
+        if (
+            renderer._min_available_height == 0
+            and self._anchored_terminal_rows == terminal_rows
+        ):
+            output.cursor_goto(row=terminal_rows, column=1)
+            output.write_raw("\n" * layout_rows)
+        output.cursor_goto(row=terminal_rows, column=1)
+        output.cursor_up(layout_rows - 1)
+        output.flush()
+        # Prompt-toolkit normally learns this value through a cursor position
+        # response. Seed the known space after explicitly positioning the
+        # cursor so terminals without CPR render the same persistent footer.
+        # Prompt-safe output can reset the physical cursor independently, so
+        # keep the renderer's relative origin synchronized with this anchor.
+        renderer._cursor_pos = Point(x=0, y=0)
+        renderer._min_available_height = layout_rows
+        self._anchored_terminal_rows = terminal_rows
 
     def _formatted_bottom_toolbar(self):
         if self._bottom_toolbar is None:

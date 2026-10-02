@@ -57,6 +57,7 @@ from .actions import (
     _handle_slash,
     _run_shell_escape,
     _runtime_permission_mode,
+    _runtime_action_policy_mode,
     _cycle_permission_mode,
     _SLASH_COMMANDS,
 )
@@ -193,16 +194,13 @@ def run_terminal_focus(
         return 0
 
 
-def _build_ctrl_key_handlers(
+def _build_ctrl_o_handler(
     *, transcript: TerminalTranscript, console: Console
-) -> tuple:
-    def _handle_ctrl_l() -> None:
-        transcript.clear_messages()
-
+) -> Callable[[], None]:
     def _handle_ctrl_o() -> None:
         _copy_latest_message(transcript, console)
 
-    return _handle_ctrl_l, _handle_ctrl_o
+    return _handle_ctrl_o
 
 
 async def _handle_slash_input(
@@ -304,6 +302,7 @@ class _TerminalFocusLoop:
         working_dir: str,
         custom_commands: dict[str, Any],
         approval_grants: set[str],
+        startup_notice_task: asyncio.Task[str] | None = None,
     ) -> None:
         self.runtime = runtime
         self.console = console
@@ -314,6 +313,7 @@ class _TerminalFocusLoop:
         self.working_dir = working_dir
         self.custom_commands = custom_commands
         self.approval_grants = approval_grants
+        self.startup_notice_task = startup_notice_task
         self.pending_turns: deque[str] = deque()
         self.active_turn_task: asyncio.Task[None] | None = None
         self.read_task: asyncio.Task[str] | None = None
@@ -330,6 +330,7 @@ class _TerminalFocusLoop:
             cwd=self.working_dir,
             model=_runtime_label(self.runtime),
             permission_mode=_runtime_permission_mode(self.runtime),
+            action_policy_mode=_runtime_action_policy_mode(self.runtime),
             custom=statusline_label(self.runtime),
             queued_count=len(self.pending_turns),
             state=state,
@@ -597,10 +598,17 @@ class _TerminalFocusLoop:
                 return 0
             self.start_read_task()
             return None
+        notice_task = self.startup_notice_task
+        if notice_task is not None and notice_task.done():
+            self.startup_notice_task = None
+            if notice := notice_task.result():
+                self._push_system_message(notice)
         text = (text or "").strip()
         if not text:
             self.start_read_task()
             return None
+        if text == "?":
+            text = "/help"
         if self.active_turn_task is not None:
             await self.handle_busy_input(text)
             self.start_read_task()
@@ -663,9 +671,7 @@ async def _run_terminal_focus_async(
             transcript=transcript,
             working_dir=working_dir,
         )
-    handle_ctrl_l, handle_ctrl_o = _build_ctrl_key_handlers(
-        transcript=transcript, console=console
-    )
+    handle_ctrl_o = _build_ctrl_o_handler(transcript=transcript, console=console)
     custom_commands = _discover_custom_commands_for(
         runtime=runtime, working_dir=working_dir
     )
@@ -679,11 +685,10 @@ async def _run_terminal_focus_async(
         )
 
     composer = TerminalComposer(
-        slash_commands=slash_completion_catalog(custom_commands),
+        slash_commands=slash_completion_catalog(custom_commands).keys(),
         bottom_toolbar=status_line.bottom_toolbar,
         active_status=status_line.active_status,
         history_file=_focus_history_path(runtime),
-        on_ctrl_l=handle_ctrl_l,
         on_ctrl_o=handle_ctrl_o,
         on_shift_tab=handle_shift_tab,
         on_escape=lambda: None,
@@ -711,8 +716,6 @@ async def _run_terminal_focus_async(
     _push_greeter(console, runtime=runtime, working_dir=working_dir)
     startup_notice_task = _schedule_startup_notice(
         startup_notice,
-        transcript=transcript,
-        prompt_session=composer.prompt_session,
     )
     loop = _TerminalFocusLoop(
         runtime=runtime,
@@ -724,6 +727,7 @@ async def _run_terminal_focus_async(
         working_dir=working_dir,
         custom_commands=custom_commands,
         approval_grants=approval_grants,
+        startup_notice_task=startup_notice_task,
     )
     composer._on_escape = loop.request_turn_interrupt
     try:
@@ -848,6 +852,7 @@ def _finalize_turn_status_line(runtime: Any, status_line: TerminalStatusLine) ->
     status_line.set_state(
         state="idle",
         permission_mode=_runtime_permission_mode(runtime),
+        action_policy_mode=_runtime_action_policy_mode(runtime),
         custom=statusline_label(runtime),
         turn_status="",
     )

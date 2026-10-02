@@ -21,6 +21,7 @@ from tests.e2e.cli.focus.harness.assertions import (
     assert_time_only_tools,
     assert_recorded_answer,
     current_turn_events,
+    final_answer_text,
     read_focus_evidence,
     assert_focus_turn_completed,
     turn_output_text,
@@ -64,12 +65,13 @@ def test_isolated_live_config_keeps_runtime_env_out_of_artifacts(
     source.write_text(
         json.dumps(
             {
+                "storage": {"path": "/tmp/shared-openminion.db"},
                 "runtime": {
                     "env": {
                         "FOCUS_PRIVATE_KEY": "private-value",
                         "FOCUS_EXISTING_KEY": "stale-config-value",
                     }
-                }
+                },
             }
         ),
         encoding="utf-8",
@@ -82,6 +84,8 @@ def test_isolated_live_config_keeps_runtime_env_out_of_artifacts(
     payload = json.loads(isolated.read_text(encoding="utf-8"))
 
     assert "env" not in payload["runtime"]
+    assert payload["runtime"]["daemon_auto_start"] is True
+    assert payload["storage"]["path"] == "state/openminion.db"
     assert os.environ["FOCUS_PRIVATE_KEY"] == "private-value"
     assert os.environ["FOCUS_EXISTING_KEY"] == "operator-value"
     assert "private-value" not in isolated.read_text(encoding="utf-8")
@@ -1372,6 +1376,22 @@ def test_turn_output_preserves_answers_across_repeated_screen_frames() -> None:
 
     assert "nasm is available" in output
     assert "old turn" not in output
+
+
+def test_turn_output_accepts_prompt_wrapping_between_characters() -> None:
+    prompt = "Check whether nasm is installed."
+    transcript = (
+        "❯ Check whether na\nsm is installed\n.\n"
+        "● Running command -v nasm\n"
+        "\f"
+        "❯ Check whether na\nsm is installed\n.\n"
+        "● nasm is not installed.\nDone in 4s\n"
+    )
+
+    output = turn_output_text(transcript, prompt)
+
+    assert "nasm is not installed" in output
+    assert final_answer_text(transcript, prompt) == "nasm is not installed."
 
 
 def test_pty_screen_rendering_skips_empty_cells(tmp_path) -> None:

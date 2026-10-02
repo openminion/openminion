@@ -19,9 +19,11 @@ from openminion.cli.commands.autonomy_project import (
     run_project_turn,
     resume_project_run,
     schedule_unattended_project,
+    validate_project_cycle_interval,
     verifier_preflight_error,
     workspace_path_from_ref,
     write_terminal_proof,
+    ensure_project_daemon_ready,
 )
 from openminion.cli.commands.autonomy_inspect import (
     list_autonomy_runs,
@@ -87,6 +89,8 @@ from openminion.modules.context.budget import (
 def run_autonomy(args: argparse.Namespace) -> int:
     action = str(getattr(args, "autonomy_command", "") or "").strip().lower()
     store = AutonomyRunStore()
+    if action in {"start", "resume"}:
+        validate_project_cycle_interval(args)
     if action == "start":
         return _start(args, store)
     if action == "list":
@@ -102,23 +106,11 @@ def run_autonomy(args: argparse.Namespace) -> int:
     raise RuntimeError(f"Unknown autonomy command: {action}")
 
 
-def _validate_cycle_interval(args: argparse.Namespace) -> None:
-    value = getattr(args, "cycle_interval_seconds", None)
-    if value is None:
-        return
-    if not bool(getattr(args, "unattended", False)):
-        raise ValueError("--cycle-interval-seconds requires --unattended")
-    if not 1 <= int(value) <= 3600:
-        raise ValueError("--cycle-interval-seconds must be in 1..3600")
-
-
 def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
-    _validate_cycle_interval(args)
     goal = _resolve_goal(args)
     workspace_boundary = _resolve_workspace(args)
     raw_repository = _clean(getattr(args, "repository", None))
     repository = resolve_project_repository(workspace_boundary, raw_repository)
-    verification_commands = tuple(getattr(args, "verify_command", ()) or ())
     turn_timeout_seconds = int(
         getattr(args, "turn_timeout_seconds", None)
         or DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS
@@ -145,7 +137,7 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
             VerificationDomain,
             str(getattr(args, "verification_domain", "coding")),
         ),
-        verification_commands=verification_commands,
+        verification_commands=tuple(getattr(args, "verify_command", ()) or ()),
         turn_timeout_seconds=turn_timeout_seconds,
         verification_timeout_seconds=verification_timeout_seconds,
         verification_waiver_reason=waiver.reason if waiver is not None else None,
@@ -205,7 +197,10 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
             validation_summary="Blocked before provider execution by verifier preflight.",
             final_operator_summary="Autonomy run blocked by verifier preflight.",
         )
-
+    if bool(getattr(args, "unattended", False)):
+        ensure_project_daemon_ready(
+            args, config_ref=request.run.execution_selectors.config_ref
+        )
     running = launch_project(request, store=store, manager=manager)
     if bool(getattr(args, "unattended", False)):
         scheduled = schedule_unattended_project(args, store, manager, running)
@@ -214,7 +209,6 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
 
 
 def _resume(args: argparse.Namespace, store: AutonomyRunStore) -> int:
-    _validate_cycle_interval(args)
     run = store.require(str(args.run_id))
     if run.status in {AutonomyRunStatus.COMPLETED, AutonomyRunStatus.CANCELLED}:
         raise RuntimeError(f"autonomy run cannot be resumed from {run.status}")
@@ -222,6 +216,16 @@ def _resume(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     waiver = _verification_waiver(args)
     run = apply_resume_overrides(args, store, run, waiver=waiver)
     manager = project_task_manager(args)
+    if (
+        bool(getattr(args, "unattended", False))
+        and verifier_preflight_error(
+            run,
+            workspace=workspace,
+            waiver=waiver,
+        )
+        is None
+    ):
+        ensure_project_daemon_ready(args, config_ref=run.execution_selectors.config_ref)
     running = resume_project_run(
         manager,
         store,
@@ -701,6 +705,7 @@ def _project(args: argparse.Namespace) -> int:
         manager,
         task_id=task_id,
         action=action,
+        direction=_clean(getattr(args, "direction", None)) or None,
         priority=_clean(getattr(args, "priority", None)) or None,
         input_request_id=_clean(getattr(args, "input_request_id", None)) or None,
         answer=_clean(getattr(args, "answer", None)) or None,
@@ -858,9 +863,11 @@ def _register_project_commands(
     )
     project_sub = project.add_subparsers(dest="project_command", required=True)
 
-    for action_name in ("status", "show", "pause", "resume", "cancel", "report"):
+    for action_name in "status show pause resume cancel report redirect".split():
         command = project_sub.add_parser(action_name, help=f"{action_name} a project")
         command.add_argument("task_id")
+        if action_name == "redirect":
+            command.add_argument("--direction", required=True)
         add_json_output_flag(command)
         command.set_defaults(handler=run_autonomy, needs_app=False)
 

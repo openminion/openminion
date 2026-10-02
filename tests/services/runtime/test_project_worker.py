@@ -325,6 +325,7 @@ def test_research_project_uses_configured_runtime_scope(tmp_path) -> None:
     worker.run_cycle(run.run_id)
 
     assert requests[0].allowed_tools == ()
+    assert requests[0].act_profile == "research"
 
 
 @pytest.mark.parametrize("domain", ["operations", "cross_application"])
@@ -503,6 +504,66 @@ def test_operator_guidance_is_checkpointed_and_late_guidance_waits(tmp_path) -> 
     assert "then update the focused regression" in requests[1].prompt
     assert "repair the parser first" not in requests[1].prompt
     assert checkpoint.payload["operator_guidance_consumed_revision"] == 2
+
+
+def test_paused_redirect_reaches_the_next_project_cycle(tmp_path) -> None:
+    store, manager, run = _project(tmp_path)
+    apply_project_control(
+        manager,
+        task_id=run.task_id,
+        action=ProjectControlAction.PAUSE,
+    )
+    apply_project_control(
+        manager,
+        task_id=run.task_id,
+        action=ProjectControlAction.REDIRECT,
+        direction="prepare the report before packaging",
+    )
+    apply_project_control(
+        manager,
+        task_id=run.task_id,
+        action=ProjectControlAction.RESUME,
+    )
+    requests: list[ProjectTurnRequest] = []
+
+    result = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: (
+            requests.append(request) or ProjectTurnResult(summary="redirected")
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+    ).run_cycle(run.run_id)
+
+    assert result.run.status == AutonomyRunStatus.COMPLETED
+    assert len(requests) == 1
+    assert '"direction": "prepare the report before packaging"' in requests[0].prompt
+
+
+def test_pause_racing_with_cycle_claim_stops_before_turn(tmp_path, monkeypatch) -> None:
+    store, manager, run = _project(tmp_path)
+    repository = manager.lifecycle_repository
+    acquire = repository.acquire_project_cycle_claim
+
+    def acquire_after_pause(**kwargs):  # noqa: ANN003
+        claim = acquire(**kwargs)
+        apply_project_control(
+            manager,
+            task_id=run.task_id,
+            action=ProjectControlAction.PAUSE,
+        )
+        return claim
+
+    monkeypatch.setattr(repository, "acquire_project_cycle_claim", acquire_after_pause)
+    result = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: pytest.fail("paused project started a model turn"),
+        verify=lambda: pytest.fail("paused project ran verification"),
+    ).run_cycle(run.run_id)
+
+    assert result.decision == ProjectCycleDecision.NEEDS_INPUT
+    assert manager.get_task(run.task_id).state == TaskLifecycleState.PAUSED
 
 
 def test_failed_cycle_replays_uncommitted_operator_guidance(tmp_path) -> None:

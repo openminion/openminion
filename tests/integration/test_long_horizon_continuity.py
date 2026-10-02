@@ -8,6 +8,14 @@ from openminion.base.channel import ChannelRegistry
 from openminion.base.config import OpenMinionConfig
 from openminion.services.agent import AgentService
 from openminion.modules.context.slices import build_session_slice_from_runtime_store
+from openminion.modules.context.memory_client import ContextMemoryClientAdapter
+from openminion.modules.context.pack.finalize import selected_memory_record_ids
+from openminion.modules.context.schemas import (
+    BuildPackRequest,
+    IdentitySnippet,
+    SessionSlice,
+)
+from openminion.modules.context.service import ContextCtlService
 from openminion.modules.memory.config import from_base_config
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
@@ -74,6 +82,40 @@ def _gateway_runtime(connection, sessions):
         ),
     )
     return gateway, provider
+
+
+class _ContextIdentity:
+    contract_version = "v1"
+
+    def render(self, *, agent_id, purpose, max_tokens, provider_pref=None):
+        del purpose, max_tokens, provider_pref
+        return IdentitySnippet(
+            agent_id=agent_id,
+            profile_version="test:v1",
+            render_version="test:v1",
+            text="Continuity test identity",
+        )
+
+
+class _ContextSession:
+    contract_version = "v1"
+
+    def get_slice(self, *, session_id, purpose, limits):
+        del purpose, limits
+        return SessionSlice(
+            session_id=session_id,
+            slice_version="test:v1",
+            summary_short="",
+            total_turn_count=1,
+        )
+
+
+class _ContextArtifacts:
+    contract_version = "v1"
+
+    def query_digests(self, *, session_id, agent_id, query, limit):
+        del session_id, agent_id, query, limit
+        return []
 
 
 def test_objective_correction_and_bounded_context_survive_three_processes(
@@ -181,6 +223,39 @@ def test_objective_correction_and_bounded_context_survive_three_processes(
     assert metadata["memory_envelope_limit_chars"] == "700"
 
 
+def test_contextctl_continuity_query_retrieves_seeded_durable_record(tmp_path) -> None:
+    memory, adapter = _memory_runtime(tmp_path / "memory.db", tmp_path)
+    record_id = memory.write_record(
+        scope="project:project-1",
+        record_type="fact",
+        title="Release target",
+        content="Deploy release alpha through the canary environment.",
+        confidence=0.9,
+        tags=["release"],
+    )
+    context = ContextCtlService(
+        identityctl=_ContextIdentity(),
+        sessctl=_ContextSession(),
+        memctl=ContextMemoryClientAdapter(adapter),
+        artifactctl=_ContextArtifacts(),
+    )
+
+    pack = context.build_pack(
+        BuildPackRequest(
+            session_id="continuity-session",
+            agent_id="continuity-agent",
+            purpose="act",
+            query="continue",
+            continuity_query="deploy release alpha",
+        )
+    )
+
+    assert record_id in selected_memory_record_ids(pack.context_manifest)
+    assert "Deploy release alpha" in "\n".join(
+        segment.content for segment in pack.segments
+    )
+
+
 def test_focus_compacted_history_survives_restart_for_brain_request(tmp_path) -> None:
     session_path = tmp_path / "runtime.db"
     migrate_database(session_path)
@@ -236,6 +311,97 @@ def test_focus_compacted_history_survives_restart_for_brain_request(tmp_path) ->
     assert request_context.count("finish the deployment migration") == 1
     assert request_context.count("preserve the public API") == 1
     assert request_context.count("deployment-plan.json") == 1
+
+
+def test_repeated_compaction_preserves_edges_and_recent_correction_after_restart(
+    tmp_path,
+) -> None:
+    session_path = tmp_path / "runtime.db"
+    migrate_database(session_path)
+
+    connection = connect_database(session_path)
+    store = SessionStore(connection)
+    session = store.resolve_session(
+        agent_id="main",
+        channel="console",
+        target="focus",
+        session_id="long-continuity-session",
+        metadata={"project_id": "project-1", "task_id": "task-1"},
+    )
+    service = SessionContextService(
+        store,
+        keep_recent_messages=2,
+        max_compact_per_turn=20,
+        summary_max_chars=256,
+        archive_root=tmp_path / "archives",
+    )
+
+    for batch in range(6):
+        compacted_user = (
+            "OBJECTIVE-ALPHA preserve the public API " + ("a" * 120)
+            if batch == 0
+            else f"progress-{batch:03d} " + ("p" * 120)
+        )
+        compacted_assistant = (
+            "LATEST-PROGRESS-079 " + ("z" * 120)
+            if batch == 5
+            else f"ack-{batch:03d} " + ("q" * 120)
+        )
+        for role, body in (
+            ("inbound", compacted_user),
+            ("outbound", compacted_assistant),
+            ("inbound", f"recent-user-{batch}"),
+            ("outbound", f"recent-assistant-{batch}"),
+        ):
+            store.append_message(session_id=session.id, role=role, body=body)
+        result = service.compact_session(session_id=session.id)
+        assert result.compacted_count >= 2
+
+    store.append_message(
+        session_id=session.id,
+        role="inbound",
+        body="Correction: deploy to us-east-1, not us-west-2.",
+    )
+    store.append_message(
+        session_id=session.id,
+        role="outbound",
+        body="Acknowledged current deployment correction.",
+    )
+    connection.close()
+
+    connection = connect_database(session_path)
+    restored_store = SessionStore(connection)
+    restored = restored_store.get_session("long-continuity-session")
+    assert restored is not None
+    assert restored.metadata == {"project_id": "project-1", "task_id": "task-1"}
+    restored_service = SessionContextService(
+        restored_store,
+        keep_recent_messages=2,
+        summary_max_chars=256,
+        archive_root=tmp_path / "archives",
+    )
+    history = restored_service.build_history(
+        session_id=restored.id,
+        channel="console",
+        target="focus",
+        recent_limit=2,
+    )
+    context_slice = build_session_slice_from_runtime_store(
+        store=restored_store,
+        session_id=restored.id,
+        limits={"recent_turn_limit": 2, "tool_events_limit": 2},
+    )
+    connection.close()
+
+    assert "OBJECTIVE-ALPHA" in context_slice.summary_long
+    assert "LATEST-PROGRESS-079" in context_slice.summary_long
+    assert len(context_slice.summary_long) <= 256
+    assert len(context_slice.recent_turns) == 2
+    assert context_slice.recent_turns[0].content.startswith("Correction:")
+    assert context_slice.archive_refs
+    assert "OBJECTIVE-ALPHA" in history[0].body
+    assert "LATEST-PROGRESS-079" in history[0].body
+    assert history[-2].body.startswith("Correction:")
 
 
 def test_gateway_rejects_mixed_focus_compaction_summary(tmp_path) -> None:

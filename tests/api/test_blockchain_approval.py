@@ -69,6 +69,7 @@ def test_exact_blockchain_approval_returns_stable_policy_error(monkeypatch) -> N
         "code": "PENDING_CONFIRMATION_EXPIRED",
         "message": "Pending confirmation expired.",
         "details": {"approval_id": "approval-1"},
+        "retryable": False,
     }
 
 
@@ -125,6 +126,7 @@ def test_exact_ops_command_rejects_broad_approval(monkeypatch, decision: str) ->
             "received": decision,
             "choices": ["allow_once", "deny"],
         },
+        "retryable": False,
     }
     runtime.action_policy.resolve_confirmation.assert_not_called()
     runtime.action_policy.create_grant_from_confirmation.assert_not_called()

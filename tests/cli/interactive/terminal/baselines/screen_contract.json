@@ -1,0 +1,464 @@
+{
+  "composer_busy_dark_narrow": {
+    "width": 72,
+    "cursor": {
+      "x": 30,
+      "y": 22
+    },
+    "rows": [
+      {
+        "row": 19,
+        "text": "Status: Reviewing terminal rendering across narrow layouts and queued in",
+        "styles": [
+          {
+            "columns": [
+              0,
+              72
+            ],
+            "fg": "c2a05f",
+            "bold": true
+          }
+        ]
+      },
+      {
+        "row": 21,
+        "text": "❯ Keep the queued prompt editable while this deliberately long draft wra",
+        "styles": [
+          {
+            "columns": [
+              0,
+              2
+            ],
+            "fg": "579ead"
+          }
+        ]
+      },
+      {
+        "row": 22,
+        "text": "ps across the narrow terminal.",
+        "styles": []
+      },
+      {
+        "row": 23,
+        "text": "◆ minimax-m2-7  ·  model: MiniMax-M2.7  ·  cwd: /repo/openminion  ·  que",
+        "styles": [
+          {
+            "columns": [
+              0,
+              14
+            ],
+            "fg": "579ead",
+            "bg": "2a2a2a"
+          },
+          {
+            "columns": [
+              14,
+              26
+            ],
+            "fg": "a6abb2",
+            "bg": "2a2a2a"
+          },
+          {
+            "columns": [
+              26,
+              38
+            ],
+            "fg": "cbd0d6",
+            "bg": "2a2a2a"
+          },
+          {
+            "columns": [
+              38,
+              69
+            ],
+            "fg": "a6abb2",
+            "bg": "2a2a2a"
+          },
+          {
+            "columns": [
+              69,
+              72
+            ],
+            "fg": "c2a05f",
+            "bg": "2a2a2a"
+          }
+        ]
+      }
+    ]
+  },
+  "composer_idle_light_standard": {
+    "width": 100,
+    "cursor": {
+      "x": 2,
+      "y": 22
+    },
+    "rows": [
+      {
+        "row": 22,
+        "text": "❯ Ask anything · @ to mention a file · / for commands",
+        "styles": [
+          {
+            "columns": [
+              0,
+              2
+            ],
+            "fg": "0050a0"
+          },
+          {
+            "columns": [
+              2,
+              53
+            ],
+            "fg": "404040",
+            "bg": "fafafa"
+          }
+        ]
+      },
+      {
+        "row": 23,
+        "text": "◆ minimax-m2-7  ·  model: MiniMax-M2.7  ·  cwd: /repo/openminion",
+        "styles": [
+          {
+            "columns": [
+              0,
+              14
+            ],
+            "fg": "0050a0",
+            "bg": "ffffff"
+          },
+          {
+            "columns": [
+              14,
+              26
+            ],
+            "fg": "5e5e5e",
+            "bg": "ffffff"
+          },
+          {
+            "columns": [
+              26,
+              38
+            ],
+            "fg": "404040",
+            "bg": "ffffff"
+          },
+          {
+            "columns": [
+              38,
+              64
+            ],
+            "fg": "5e5e5e",
+            "bg": "ffffff"
+          },
+          {
+            "columns": [
+              64,
+              100
+            ],
+            "fg": "404040",
+            "bg": "ffffff"
+          }
+        ]
+      }
+    ]
+  },
+  "composer_busy_plain_wide": {
+    "width": 140,
+    "cursor": {
+      "x": 2,
+      "y": 22
+    },
+    "rows": [
+      {
+        "row": 20,
+        "text": "Status: Reviewing terminal rendering across narrow layouts and queued input · 3s ◐",
+        "styles": []
+      },
+      {
+        "row": 22,
+        "text": "❯ Type to queue for the next turn · Esc interrupts",
+        "styles": []
+      },
+      {
+        "row": 23,
+        "text": "◆ minimax-m2-7  ·  model: MiniMax-M2.7  ·  cwd: /repo/openminion  ·  queued: 2",
+        "styles": []
+      }
+    ]
+  },
+  "completed_dark_standard": {
+    "width": 100,
+    "cursor": {
+      "x": 0,
+      "y": 9
+    },
+    "rows": [
+      {
+        "row": 0,
+        "text": "> Review the renderer while preserving unrelated terminal behavior.",
+        "styles": [
+          {
+            "columns": [
+              0,
+              67
+            ],
+            "fg": "579ead"
+          }
+        ]
+      },
+      {
+        "row": 2,
+        "text": "● Finished using a tool. · 1s",
+        "styles": [
+          {
+            "columns": [
+              0,
+              1
+            ],
+            "fg": "58a17a",
+            "bold": true
+          },
+          {
+            "columns": [
+              2,
+              24
+            ],
+            "fg": "58a17a",
+            "bold": true
+          },
+          {
+            "columns": [
+              24,
+              29
+            ],
+            "fg": "a6abb2"
+          }
+        ]
+      },
+      {
+        "row": 3,
+        "text": "  └ inspected streaming output",
+        "styles": [
+          {
+            "columns": [
+              0,
+              30
+            ],
+            "fg": "a6abb2"
+          }
+        ]
+      },
+      {
+        "row": 4,
+        "text": "    confirmed terminal ownership",
+        "styles": [
+          {
+            "columns": [
+              0,
+              32
+            ],
+            "fg": "a6abb2"
+          }
+        ]
+      },
+      {
+        "row": 6,
+        "text": "● Renderer baseline ready with stable spacing, wrapping, and muted details.",
+        "styles": [
+          {
+            "columns": [
+              0,
+              1
+            ],
+            "fg": "58a17a",
+            "bold": true
+          }
+        ]
+      },
+      {
+        "row": 7,
+        "text": "  Done in 3s",
+        "styles": [
+          {
+            "columns": [
+              0,
+              12
+            ],
+            "fg": "a6abb2"
+          }
+        ]
+      }
+    ]
+  },
+  "completed_light_narrow": {
+    "width": 72,
+    "cursor": {
+      "x": 0,
+      "y": 10
+    },
+    "rows": [
+      {
+        "row": 0,
+        "text": "> Review the renderer while preserving unrelated terminal behavior.",
+        "styles": [
+          {
+            "columns": [
+              0,
+              67
+            ],
+            "fg": "0050a0"
+          }
+        ]
+      },
+      {
+        "row": 2,
+        "text": "● Finished using a tool. · 1s",
+        "styles": [
+          {
+            "columns": [
+              0,
+              1
+            ],
+            "fg": "1b5e20",
+            "bold": true
+          },
+          {
+            "columns": [
+              2,
+              24
+            ],
+            "fg": "1b5e20",
+            "bold": true
+          },
+          {
+            "columns": [
+              24,
+              29
+            ],
+            "fg": "5e5e5e"
+          }
+        ]
+      },
+      {
+        "row": 3,
+        "text": "  └ inspected streaming output",
+        "styles": [
+          {
+            "columns": [
+              0,
+              30
+            ],
+            "fg": "5e5e5e"
+          }
+        ]
+      },
+      {
+        "row": 4,
+        "text": "    confirmed terminal ownership",
+        "styles": [
+          {
+            "columns": [
+              0,
+              32
+            ],
+            "fg": "5e5e5e"
+          }
+        ]
+      },
+      {
+        "row": 6,
+        "text": "● Renderer baseline ready with stable spacing, wrapping, and muted",
+        "styles": [
+          {
+            "columns": [
+              0,
+              1
+            ],
+            "fg": "1b5e20",
+            "bold": true
+          }
+        ]
+      },
+      {
+        "row": 7,
+        "text": "details.",
+        "styles": []
+      },
+      {
+        "row": 8,
+        "text": "  Done in 3s",
+        "styles": [
+          {
+            "columns": [
+              0,
+              12
+            ],
+            "fg": "5e5e5e"
+          }
+        ]
+      }
+    ]
+  },
+  "completed_plain_wide": {
+    "width": 140,
+    "cursor": {
+      "x": 0,
+      "y": 9
+    },
+    "rows": [
+      {
+        "row": 0,
+        "text": "> Review the renderer while preserving unrelated terminal behavior.",
+        "styles": []
+      },
+      {
+        "row": 2,
+        "text": "● Finished using a tool. · 1s",
+        "styles": [
+          {
+            "columns": [
+              0,
+              1
+            ],
+            "bold": true
+          },
+          {
+            "columns": [
+              2,
+              24
+            ],
+            "bold": true
+          }
+        ]
+      },
+      {
+        "row": 3,
+        "text": "  └ inspected streaming output",
+        "styles": []
+      },
+      {
+        "row": 4,
+        "text": "    confirmed terminal ownership",
+        "styles": []
+      },
+      {
+        "row": 6,
+        "text": "● Renderer baseline ready with stable spacing, wrapping, and muted details.",
+        "styles": [
+          {
+            "columns": [
+              0,
+              1
+            ],
+            "bold": true
+          }
+        ]
+      },
+      {
+        "row": 7,
+        "text": "  Done in 3s",
+        "styles": []
+      }
+    ]
+  }
+}

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 import re
 from collections.abc import Mapping
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
@@ -23,6 +23,7 @@ class ProjectHandoff(BaseModel):
     verification_commands: tuple[
         Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)], ...
     ] = ()
+    verification_domain: Literal["coding", "research"] = "coding"
     max_iterations: int | None = Field(default=None, gt=0)
     max_wall_clock_ms: int | None = Field(
         default=None,

@@ -521,18 +521,49 @@ def test_inject_resume_task_hints_initializes_first_project_turn_state() -> None
     )
     runner = SimpleNamespace(
         session_api=session_api,
-        profile=SimpleNamespace(agent_id="test-agent"),
+        profile=SimpleNamespace(agent_id="test-agent", default_act_profile="auto"),
         _load_or_init_state=lambda _session_id: state,
     )
 
     bridge._inject_resume_task_hints(
         runner=runner,
         session_id="sess-1",
-        inbound_metadata={"linked_task_id": "task-1"},
+        inbound_metadata={
+            "linked_task_id": "task-1",
+            "project_act_profile": "research",
+        },
     )
 
     assert session_api.written is not None
     assert session_api.written["resume_task_id_hint"] == "task-1"
+    assert session_api.written["working_act_profile"] == "research"
+
+
+def test_inject_resume_task_hints_rejects_fixed_project_profile_mismatch() -> None:
+    bridge = DummyBridge()
+    session_api = _DummySessionAPI({})
+    state = WorkingState(
+        session_id="sess-1",
+        agent_id="test-agent",
+        budgets_remaining=BudgetCounters(
+            ticks=8, tool_calls=8, a2a_calls=0, tokens=100000, time_ms=45000
+        ),
+    )
+    runner = SimpleNamespace(
+        session_api=session_api,
+        profile=SimpleNamespace(agent_id="test-agent", default_act_profile="coding"),
+        _load_or_init_state=lambda _session_id: state,
+    )
+
+    with pytest.raises(ValueError, match="configured default_act_profile"):
+        bridge._inject_resume_task_hints(
+            runner=runner,
+            session_id="sess-1",
+            inbound_metadata={
+                "linked_task_id": "task-1",
+                "project_act_profile": "research",
+            },
+        )
 
 
 def test_collect_system_history_context_deduplicates_and_orders() -> None:

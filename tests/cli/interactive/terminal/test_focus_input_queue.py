@@ -215,12 +215,14 @@ class _BusyHelpComposer:
             return "first"
         if self._calls == 2:
             await type(self).runtime.first_chunk_sent.wait()
-            return "/agents ?"
+            return "?"
         if self._calls == 3:
-            return "/help statsu"
+            return "/agents ?"
         if self._calls == 4:
-            return "/exit --help"
+            return "/help statsu"
         if self._calls == 5:
+            return "/exit --help"
+        if self._calls == 6:
             type(self).runtime.release_turn.set()
             raise EOFError
         raise EOFError
@@ -607,10 +609,45 @@ async def test_terminal_focus_runs_contextual_help_while_turn_streams(
     transcript = _CapturedTranscript.last_instance
     assert transcript is not None
     bodies = [message.body for message in transcript._messages]
+    assert any(body.startswith("Slash commands:") for body in bodies)
+    assert any("Keyboard shortcuts:" in body for body in bodies)
     assert any(body.startswith("/agents —") for body in bodies)
     assert any(body.startswith("Unknown command: /statsu") for body in bodies)
     assert any(body.startswith("/exit —") for body in bodies)
     assert not any("Queued for next turn" in body for body in bodies)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entered", "routed"),
+    (("?", "/help"), ("? explain this", "? explain this")),
+)
+async def test_read_completion_only_normalizes_exact_question_mark(
+    entered: str,
+    routed: str,
+) -> None:
+    console = Console(file=io.StringIO(), force_terminal=False, width=120)
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=_SingleTurnRuntime(),
+        console=console,
+        transcript=terminal_shell.TerminalTranscript(console),
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=_LoopComposer(),
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-help-alias",
+        custom_commands={},
+        approval_grants=set(),
+    )
+    captured: list[str] = []
+
+    async def _capture(text: str) -> None:
+        captured.append(text)
+
+    loop.handle_idle_input = _capture  # type: ignore[method-assign]
+    loop.read_task = asyncio.create_task(asyncio.sleep(0, result=entered))
+
+    assert await loop.handle_read_completion() is None
+    assert captured == [routed]
 
 
 @pytest.mark.asyncio
@@ -875,7 +912,9 @@ async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() 
     assert len(events) == 4
     assert events[1].startswith("prompt:Approval required: exec.run(")
     assert "docker desktop start" in events[1]
-    assert events[2] == "label:Always allow exec.run for this shell session"
+    assert events[2] == (
+        "label:Always allow this exact exec.run call for this shell session"
+    )
 
 
 @pytest.mark.asyncio
@@ -1004,7 +1043,7 @@ async def test_terminal_approval_callback_serializes_bursty_session_grants() -> 
 
     first = asyncio.create_task(callback("file.write", {"path": "one.py"}, "call-1"))
     await first_prompt_entered.wait()
-    second = asyncio.create_task(callback("file.write", {"path": "two.py"}, "call-2"))
+    second = asyncio.create_task(callback("file.write", {"path": "one.py"}, "call-2"))
     await asyncio.sleep(0)
     release_first_prompt.set()
 
@@ -1015,7 +1054,9 @@ async def test_terminal_approval_callback_serializes_bursty_session_grants() -> 
 
 
 @pytest.mark.asyncio
-async def test_terminal_approval_grant_is_tool_scoped_and_session_local() -> None:
+async def test_terminal_approval_grant_is_exact_invocation_scoped_and_session_local() -> (
+    None
+):
     prompts: list[str] = []
 
     class _Overlay:
@@ -1027,28 +1068,54 @@ async def test_terminal_approval_grant_is_tool_scoped_and_session_local() -> Non
             return next(self.decisions)
 
     callback = build_terminal_approval_callback(
-        overlay=_Overlay(["always", "deny"]),
+        overlay=_Overlay(["always", "deny", "deny"]),
         session_grants=set(),
     )
 
-    assert await callback("file.write", {"path": "one.py"}, "call-1") is True
-    assert await callback("file.write", {"path": "two.py"}, "call-2") is True
-    assert await callback("exec.run", {"command": "pwd"}, "call-3") is False
-    assert len(prompts) == 2
+    assert (
+        await callback(
+            "file.write",
+            {"path": "one.py", "content": "hello"},
+            "call-1",
+        )
+        is True
+    )
+    assert (
+        await callback(
+            "file.write",
+            {"content": "hello", "path": "one.py"},
+            "call-2",
+        )
+        is True
+    )
+    assert (
+        await callback(
+            "file.write",
+            {"path": "two.py", "content": "hello"},
+            "call-3",
+        )
+        is False
+    )
+    assert await callback("exec.run", {"command": "pwd"}, "call-4") is False
+    assert len(prompts) == 3
 
     new_session_callback = build_terminal_approval_callback(
         overlay=_Overlay(["deny"]),
         session_grants=set(),
     )
     assert (
-        await new_session_callback("file.write", {"path": "three.py"}, "call-4")
+        await new_session_callback(
+            "file.write",
+            {"path": "one.py", "content": "hello"},
+            "call-5",
+        )
         is False
     )
-    assert len(prompts) == 3
+    assert len(prompts) == 4
 
 
 @pytest.mark.asyncio
-async def test_browser_approval_grant_is_operation_scoped() -> None:
+async def test_browser_approval_grant_is_exact_invocation_scoped() -> None:
     prompts: list[str] = []
 
     class _Overlay:
@@ -1061,9 +1128,12 @@ async def test_browser_approval_grant_is_operation_scoped() -> None:
         overlay=_Overlay(),
         session_grants=grants,
     )
-    upload = {"op": "tab.upload", "files": ["one.txt"]}
+    upload_one = {"op": "tab.upload", "files": ["one.txt"]}
+    upload_two = {"op": "tab.upload", "files": ["two.txt"]}
 
-    assert await callback("browser", upload, "call-1") is True
-    assert await callback("browser", upload, "call-2") is True
-    assert grants == {"browser:tab.upload"}
-    assert len(prompts) == 1
+    assert await callback("browser", upload_one, "call-1") is True
+    assert await callback("browser", upload_one, "call-2") is True
+    assert await callback("browser", upload_two, "call-3") is True
+    assert len(grants) == 2
+    assert all(len(grant) == 64 for grant in grants)
+    assert len(prompts) == 2

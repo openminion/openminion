@@ -26,6 +26,7 @@ def test_project_slash_renders_help_without_runtime_dispatch() -> None:
     output = _render("/project help", SimpleNamespace())
 
     assert "/project answer RUN_ID" in output
+    assert "/project redirect RUN_ID" in output
     assert "/project reprioritize RUN_ID" in output
     assert "/project extend-budget RUN_ID" in output
     assert "show/report RUN_ID" in output
@@ -42,6 +43,7 @@ def test_project_slash_dispatches_existing_control_commands() -> None:
 
     for command in (
         "/project answer run-1 --input-request-id input-1 --answer yes",
+        "/project redirect run-1 --direction 'finish the report first'",
         "/project reprioritize run-1 --priority verify-first",
         "/project extend-budget run-1 --extra-iterations 1",
         "/project report run-1",
@@ -50,6 +52,7 @@ def test_project_slash_dispatches_existing_control_commands() -> None:
 
     assert calls == [
         "/project answer run-1 --input-request-id input-1 --answer yes",
+        "/project redirect run-1 --direction 'finish the report first'",
         "/project reprioritize run-1 --priority verify-first",
         "/project extend-budget run-1 --extra-iterations 1",
         "/project report run-1",

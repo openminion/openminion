@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from openminion.modules.brain.constants import (
     BRAIN_ACT_PROFILE_CODING,
@@ -130,37 +130,56 @@ def decompose_tool_spec() -> ToolSpec:
     )
 
 
+def _project_handoff_input_schema() -> dict[str, Any]:
+    handoff_schema = cast(dict[str, Any], ProjectHandoff.model_json_schema())
+    properties = handoff_schema["properties"]
+    properties.pop("repository")
+    handoff_schema.pop("title", None)
+    for field_schema in properties.values():
+        field_schema.pop("title", None)
+        field_schema.pop("default", None)
+    for field_name in ("max_iterations", "max_wall_clock_ms", "max_tool_calls"):
+        field_schema = properties[field_name]
+        choices = field_schema.pop("anyOf")
+        integer_schema = next(
+            choice for choice in choices if choice.get("type") == "integer"
+        )
+        field_schema.clear()
+        field_schema.update(integer_schema)
+    properties["verification_commands"]["minItems"] = 1
+    properties["max_iterations"].pop("exclusiveMinimum", None)
+    properties["max_iterations"]["minimum"] = 2
+    handoff_schema["required"].extend(
+        ("verification_commands", "verification_domain", "max_iterations")
+    )
+    return handoff_schema
+
+
+def _project_entry_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "project_handoff": _project_handoff_input_schema(),
+            "sub_intents": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "minItems": 1,
+            },
+        },
+        "additionalProperties": False,
+    }
+
+
 def coding_tool_spec() -> ToolSpec:
-    handoff_schema = ProjectHandoff.model_json_schema()
-    handoff_schema["properties"].pop("repository")
-    handoff_schema["properties"]["verification_commands"]["minItems"] = 1
-    handoff_schema["required"].append("verification_commands")
     return ToolSpec(
         name=ENTRY_CODING_TOOL_NAME,
         description=(
-            "Enter the dedicated coding loop when the whole request is a single "
-            "software task that needs iterative file edits, project scaffolding, "
-            "tests, command execution, and final verification before answering. "
-            "When the user requests approval before project work, call this "
-            "control first with project_handoff and sub_intents. It returns a "
-            "proposal without starting the coding loop or changing files; repository "
-            "inspection waits until the proposal is approved."
+            "Enter the dedicated coding loop for iterative edits, tests, and final "
+            "verification. To propose durable work, call this control first with "
+            "project_handoff and sub_intents; inspection waits until the proposal "
+            "is approved."
         ),
-        input_schema={
-            "type": "object",
-            "properties": {
-                "project_handoff": handoff_schema,
-                "sub_intents": {
-                    "type": "array",
-                    "items": {"type": "string", "minLength": 1},
-                    "minItems": 1,
-                    "description": (
-                        "Concrete work items for the proposed project handoff."
-                    ),
-                },
-            },
-            "additionalProperties": False,
-        },
+        input_schema=_project_entry_input_schema(),
     )
 
 
@@ -168,15 +187,11 @@ def research_tool_spec() -> ToolSpec:
     return ToolSpec(
         name=ENTRY_RESEARCH_TOOL_NAME,
         description=(
-            "Enter the dedicated iterative research loop when the whole request "
-            "is a single deep-research thread that needs multiple searches, "
-            "evidence gathering, and synthesis before a final answer."
+            "Enter the iterative research loop for multiple searches, evidence "
+            "gathering, and synthesis. For durable work, call with project_handoff "
+            "and sub_intents to propose the existing project path."
         ),
-        input_schema={
-            "type": "object",
-            "properties": {},
-            "additionalProperties": False,
-        },
+        input_schema=_project_entry_input_schema(),
     )
 
 

@@ -177,6 +177,22 @@ def test_help_wraps_with_hanging_indentation_at_eighty_columns() -> None:
     assert "[calibration=<path>] [artifacts=<dir>]" in wide_help
 
 
+def test_global_help_lists_existing_keyboard_shortcuts() -> None:
+    global_help = format_slash_help(width=80)
+
+    assert "Keyboard shortcuts:" in global_help
+    for shortcut in (
+        "Ctrl-R",
+        "Esc",
+        "Shift-Tab",
+        "Ctrl-O",
+        "Ctrl-L",
+        "Ctrl-X Ctrl-E",
+    ):
+        assert shortcut in global_help
+    assert "Keyboard shortcuts:" not in format_slash_help("status", width=80)
+
+
 def test_unknown_slash_command_message_suggests_nearest_command() -> None:
     assert unknown_slash_command_message(
         "/skill", available_commands=("/skills", "/status")

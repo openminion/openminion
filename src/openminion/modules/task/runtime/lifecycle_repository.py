@@ -283,8 +283,7 @@ class TaskLifecycleRepository(
                     cancelled_at = ?,
                     completed_at = ?,
                     failed_at = ?,
-                    failure_reason = ?,
-                    metadata = ?
+                    failure_reason = ?
                 WHERE task_id = ?
                 """,
                 (
@@ -294,7 +293,6 @@ class TaskLifecycleRepository(
                     completed_at,
                     failed_at,
                     persisted_reason,
-                    _dump_metadata(record.metadata),
                     record.task_id,
                 ),
             )

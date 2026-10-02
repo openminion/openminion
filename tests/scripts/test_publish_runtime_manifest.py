@@ -12,6 +12,7 @@ from scripts.ci import publish_runtime_manifest as publisher
 from scripts.ci.publish_runtime_manifest import (
     BASE,
     add_reference,
+    binary_release_record,
     encoded,
     publish,
     source_certification_record,
@@ -31,6 +32,31 @@ def test_observer_skips_testpypi_tags_before_publication_approval():
         )
 
 
+def test_final_release_requests_an_exact_private_runtime_candidate():
+    workflow = (
+        Path(__file__).resolve().parents[2]
+        / ".github/workflows/runtime-candidate-request.yml"
+    ).read_text()
+    for marker in (
+        "workflows: [Release]",
+        "github.event.workflow_run.conclusion == 'success'",
+        "!contains(github.event.workflow_run.head_branch, 'rc')",
+        "from scripts.ci.publish_runtime_manifest import verify_producer",
+        "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1",
+        "repositories: openminion-packaging",
+        "permission-actions: write",
+        "from scripts.ci.release_manifest import official_record",
+        '--field runtime_version="${PRODUCER_TAG#v}"',
+        '--field source_commit="$PRODUCER_COMMIT"',
+        "WHEEL_URL: ${{ steps.release.outputs.wheel_url }}",
+        "WHEEL_SHA256: ${{ steps.release.outputs.wheel_sha256 }}",
+        '--field wheel_url="$WHEEL_URL"',
+        '--field wheel_sha256="$WHEEL_SHA256"',
+    ):
+        assert marker in workflow
+    assert "environment: runtime-publication" not in workflow
+
+
 def test_binary_publication_is_a_protected_manual_release_request():
     workflow = (
         Path(__file__).resolve().parents[2] / ".github/workflows/runtime-manifests.yml"
@@ -41,6 +67,41 @@ def test_binary_publication_is_a_protected_manual_release_request():
     assert (
         "official_binary_record"
         in Path("scripts/ci/publish_runtime_manifest.py").read_text()
+    )
+
+
+def test_binary_publication_reverifies_desktop_main_evidence():
+    evidence = b'{"kind":"openminion-binary-runtime-qualification"}'
+    expected = {"runtime_version": "1.2.3", "distribution": "binary"}
+    with (
+        patch.object(publisher, "github_api", return_value="identical") as api,
+        patch.object(publisher, "read_public_bytes", return_value=evidence) as read,
+        patch.object(
+            publisher, "official_binary_record", return_value=expected
+        ) as official,
+    ):
+        result = binary_release_record(
+            "runtime-v1.2.3-build.1",
+            "build.1",
+            "a" * 40,
+            "desktop-1.2.3-build.1",
+        )
+    assert result == expected
+    api.assert_called_once_with(
+        "openminion/desktop", f"compare/{'a' * 40}...main", "--jq", ".status"
+    )
+    read.assert_called_once_with(
+        "https://raw.githubusercontent.com/openminion/desktop/"
+        f"{'a' * 40}/releases/runtime-certification/v1/binary-qualification/"
+        "1.2.3/desktop-1.2.3-build.1.json"
+    )
+    official.assert_called_once_with(
+        "runtime-v1.2.3-build.1",
+        "build.1",
+        {"kind": "openminion-binary-runtime-qualification"},
+        "a" * 40,
+        "desktop-1.2.3-build.1",
+        evidence,
     )
 
 

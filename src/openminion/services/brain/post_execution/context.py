@@ -9,6 +9,7 @@ from openminion.modules.brain.loop.context.pending_turn import (
     pending_turn_context_for_prompt,
 )
 from openminion.modules.brain.runner import BrainRunner
+from openminion.modules.brain.act_profiles import fixed_act_profile_from_profile
 from openminion.modules.memory.runtime.consolidation import (
     collect_memory_consolidation_candidates,
 )
@@ -221,6 +222,9 @@ def _inject_resume_task_hints(
     inbound_metadata: dict[str, str],
 ) -> None:
     task_id = str(inbound_metadata.get("linked_task_id", "") or "").strip()
+    project_act_profile = str(
+        inbound_metadata.get("project_act_profile", "") or ""
+    ).strip()
     cron_job_id = str(inbound_metadata.get("cron_job_id", "") or "").strip()
     has_watch_context = _metadata_bool(inbound_metadata, "watch_job")
     has_consolidation_context = _metadata_bool(
@@ -230,6 +234,7 @@ def _inject_resume_task_hints(
     if (
         not task_id
         and not cron_job_id
+        and not project_act_profile
         and not has_watch_context
         and not has_consolidation_context
         and not has_delegation_context
@@ -243,6 +248,13 @@ def _inject_resume_task_hints(
         state_inline = runner._load_or_init_state(session_id).model_dump(mode="json")
     if task_id:
         state_inline["resume_task_id_hint"] = task_id
+    if project_act_profile:
+        fixed_profile = fixed_act_profile_from_profile(runner.profile)
+        if fixed_profile is not None and fixed_profile != project_act_profile:
+            raise ValueError(
+                "project act profile does not match configured default_act_profile"
+            )
+        state_inline["working_act_profile"] = project_act_profile
     revision_required = _metadata_bool(
         inbound_metadata, "project_plan_revision_required"
     )

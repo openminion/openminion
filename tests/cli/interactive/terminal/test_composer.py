@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 import io
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from prompt_toolkit.application import create_app_session
 from prompt_toolkit.completion import Completion
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit import PromptSession
@@ -13,7 +15,7 @@ from prompt_toolkit.formatted_text.ansi import ANSI
 from prompt_toolkit.formatted_text.utils import fragment_list_to_text
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.input.defaults import create_pipe_input
-from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.containers import VerticalAlign, Window
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
 from prompt_toolkit.output import DummyOutput
@@ -196,9 +198,19 @@ def test_history_file_enables_file_history(tmp_path: Path) -> None:
     assert isinstance(c._session.history, FileHistory)
 
 
-def test_completion_menu_reserves_ten_rows() -> None:
+def test_input_stays_packed_when_completion_menu_opens() -> None:
     c = TerminalComposer()
-    assert c._session.reserve_space_for_menu == 10
+    root = c._session.layout.container
+    input_stack = root.children[0].alternative_content.content
+    input_window = c._session.layout.current_window
+
+    assert root.align == VerticalAlign.JUSTIFY
+    assert isinstance(input_stack.children[0], Window)
+    assert input_window.dont_extend_height() is True
+    assert int(input_window.height.min) == 0
+
+    c._session.default_buffer.complete_state = object()
+    assert int(input_window.height.min) == 0
 
 
 def test_mouse_capture_is_limited_to_open_completion_menu(
@@ -232,6 +244,21 @@ def test_completion_menu_requests_clicks_without_all_motion_tracking() -> None:
     output.flush()
 
     assert stream.getvalue() == "\x1b[?1000h\x1b[?1006h"
+
+
+def test_composer_suppresses_unsupported_cursor_position_warning() -> None:
+    output = Vt100_Output(
+        stdout=io.StringIO(),
+        get_size=lambda: Size(rows=24, columns=80),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+        enable_cpr=True,
+    )
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=output):
+        composer = TerminalComposer()
+
+    assert output.enable_cpr is True
+    assert composer._session.app.renderer.cpr_not_supported_callback is None
 
 
 def _completion_menu_controls(node: object) -> list[CompletionsMenuControl]:
@@ -378,6 +405,8 @@ def test_enter_binding_submits_in_single_line_mode() -> None:
     calls: list[str] = []
 
     class _Buffer:
+        text = "hello"
+
         def insert_text(self, text: str) -> None:
             calls.append(f"insert:{text}")
 
@@ -393,6 +422,27 @@ def test_enter_binding_submits_in_single_line_mode() -> None:
     c._insert_newline(_Event())
 
     assert calls == ["submit"]
+
+
+def test_enter_binding_keeps_empty_single_line_composer_open() -> None:
+    c = TerminalComposer()
+    calls: list[str] = []
+
+    class _Buffer:
+        text = "   "
+
+        def validate_and_handle(self) -> None:
+            calls.append("submit")
+
+    class _App:
+        current_buffer = _Buffer()
+
+    class _Event:
+        app = _App()
+
+    c._insert_newline(_Event())
+
+    assert calls == []
 
 
 def test_enter_binding_inserts_newline_in_multiline_mode() -> None:
@@ -606,7 +656,7 @@ def test_slash_completer_opens_menu_for_bare_slash() -> None:
     )
 
     assert [comp.text for comp in completions] == ["/help", "/model"]
-    assert completions[1].display_meta_text == "choose model"
+    assert [comp.display_meta_text for comp in completions] == ["", ""]
 
 
 def test_slash_completer_offers_canonical_help_targets() -> None:
@@ -633,6 +683,7 @@ def test_slash_completer_offers_canonical_help_targets() -> None:
         "/agents",
         "/archive",
     ]
+    assert [completion.display_meta_text for completion in completions] == ["", ""]
 
 
 def test_slash_completer_preserves_leading_slash_and_ignores_other_operands() -> None:
@@ -684,6 +735,29 @@ async def test_read_line_submits_on_enter_with_real_prompt_session() -> None:
         result = await composer.read_line()
 
     assert result == "hi"
+
+
+@pytest.mark.asyncio
+async def test_ctrl_l_preserves_draft_and_cursor_with_real_prompt_session() -> None:
+    with create_pipe_input() as pipe:
+        composer = TerminalComposer()
+        composer._session = PromptSession(
+            input=pipe,
+            output=DummyOutput(),
+            style=composer._session.style,
+        )
+
+        async def _send() -> None:
+            await asyncio.sleep(0.05)
+            pipe.send_text("ab")
+            pipe.send_bytes(b"\x1b[D")
+            pipe.send_bytes(b"\x0c")
+            pipe.send_text("X\n")
+
+        asyncio.create_task(_send())
+        result = await composer.read_line()
+
+    assert result == "aXb"
 
 
 @pytest.mark.asyncio

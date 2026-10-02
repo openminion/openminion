@@ -30,6 +30,56 @@ def test_merge_summary_dedupes_and_respects_max_chars() -> None:
     assert "- assistant: gamma" in merged
 
 
+def test_merge_summary_preserves_oldest_and_newest_edges_after_repeated_overflow() -> (
+    None
+):
+    engine = SessionSummaryEngine()
+    merged = "OBJECTIVE-ALPHA"
+
+    for index in range(80):
+        merged = engine.merge_summary(
+            current=merged,
+            delta=f"progress-{index:03d} " + ("x" * 32),
+            max_chars=800,
+        )
+
+    assert "OBJECTIVE-ALPHA" in merged
+    assert "progress-079" in merged
+    assert len(merged) <= 800
+
+
+def test_summary_enrichment_cannot_replace_deterministic_edges() -> None:
+    engine = SessionSummaryEngine()
+    base = "OBJECTIVE-ALPHA\n" + ("middle\n" * 80) + "progress-079"
+
+    merged = engine.merge_enrichment(
+        deterministic_summary=base,
+        enriched_summary="rewritten context without either anchor",
+        max_chars=256,
+    )
+
+    assert merged.startswith("OBJECTIVE-ALPHA")
+    assert merged.endswith("progress-079")
+    assert "rewritten context" in merged
+    assert len(merged) <= 256
+
+
+def test_compaction_chunk_preserves_trailing_identifier_in_long_turn() -> None:
+    engine = SessionSummaryEngine()
+
+    result = engine.summarize_compaction_chunk(
+        [
+            SummaryTurn(
+                role="user",
+                text="start " + ("filler " * 50) + "TRAILING-ID-731",
+            )
+        ]
+    )
+
+    assert "start" in result.summary_text
+    assert "TRAILING-ID-731" in result.summary_text
+
+
 def test_render_summary_short_and_long_use_recent_window() -> None:
     engine = SessionSummaryEngine()
     turns = [

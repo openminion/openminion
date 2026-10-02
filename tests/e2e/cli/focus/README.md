@@ -75,9 +75,11 @@ PYTHONDONTWRITEBYTECODE=1 \
 
 Tier A composes existing canonical owners rather than duplicating their tests:
 
-1. real PTY answer, interrupt, and queued-input flows,
-2. approval allow-once, session grant, deny, and replay behavior,
+1. approval allow-once, session grant, deny, and replay behavior,
+2. keyboard-interrupt handling,
 3. detached Git-worktree edit, diff, focused validation, and cleanup rollback.
+
+Use `codex-first-local` for the real PTY queue and approval journey.
 
 Run live MiniMax focus smoke:
 

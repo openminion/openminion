@@ -75,7 +75,7 @@ class MemoryFollowupQueue:
                 if job is None:
                     if self._active_count_locked(session_id=session_id) <= 0:
                         return
-                    self._condition.wait(timeout=0.05)
+                    self._condition.wait()
                     continue
             self._run(job)
 

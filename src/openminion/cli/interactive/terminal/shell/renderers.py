@@ -13,6 +13,7 @@ from openminion.cli.presentation.header import (
     format_runtime_adapter,
     format_runtime_provider,
 )
+from openminion.cli.presentation.permissions import format_permission_status_label
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.timing_report import format_chat_phase_timing_report
@@ -111,7 +112,11 @@ def _render_status_block(*, runtime: Any, console: Console, working_dir: str) ->
     )
     console.print(
         Text(
-            f"  permissions: {getattr(runtime, 'permission_mode', 'default')}",
+            "  permissions: "
+            + format_permission_status_label(
+                permission_mode=getattr(runtime, "permission_mode", "default"),
+                action_policy_mode=getattr(runtime, "action_policy_mode_override", ""),
+            ),
             style=token_rich_style(StyleToken.MUTED),
         )
     )

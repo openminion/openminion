@@ -255,3 +255,73 @@ def test_live_focus_contextual_help_while_busy(
             "live-contextual-help-while-busy",
             session.transcript,
         )
+
+
+def test_live_focus_typeahead_stays_at_terminal_edge_while_busy(
+    focus_probe: FocusProbe,
+    tmp_path,
+) -> None:
+    require_live_focus()
+    draft = "queue this after the current response"
+    with focus_probe.session(rows=42, cols=120) as session:
+        focus_probe.wait_ready(session)
+        turn_offset = len(session.transcript)
+        focus_probe._submit_composer_line(
+            session,
+            "Write forty short numbered lines about reliable terminal interfaces.",
+        )
+        for end, character in enumerate(draft, start=1):
+            session.send(character)
+            expected = f"❯ {draft[:end]}"
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline:
+                cursor_visible, cursor_row, cursor_column = session.cursor_state
+                if (
+                    session.screen_lines[-2] == expected.rstrip()
+                    and cursor_visible
+                    and (cursor_row, cursor_column) == (41, len(expected) + 1)
+                ):
+                    break
+                time.sleep(0.01)
+            else:
+                raise AssertionError(
+                    "type-ahead stopped repainting while MiniMax was working\n"
+                    f"expected: {expected!r}\n{session.screen_text}"
+                )
+
+        deadline = time.monotonic() + 300
+        completed = False
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            assert rows[-2] == f"❯ {draft}"
+            assert rows[-1].startswith("◆ ")
+            cursor_visible, cursor_row, cursor_column = session.cursor_state
+            if cursor_visible:
+                assert (cursor_row, cursor_column) == (41, len(draft) + 3)
+            if re.search(
+                r"Done in \d+(?:m\d{2}s|s)",
+                session.transcript[turn_offset:],
+            ):
+                completed = True
+                break
+            time.sleep(0.05)
+        assert completed, "MiniMax turn did not complete while the draft stayed open"
+
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            cursor_visible, cursor_row, cursor_column = session.cursor_state
+            if cursor_visible and (cursor_row, cursor_column) == (
+                41,
+                len(draft) + 3,
+            ):
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("visible cursor did not return to the active draft")
+
+        session.send("\x7f" * len(draft))
+        write_transcript(
+            artifact_root(tmp_path),
+            "live-typeahead-terminal-edge",
+            session.transcript,
+        )
