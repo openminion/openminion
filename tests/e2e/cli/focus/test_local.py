@@ -605,6 +605,76 @@ def test_focus_pty_keeps_top_down_transcript_with_pinned_input_across_resize(
         )
 
 
+@pytest.mark.parametrize("part_count", [18, 55])
+def test_focus_pty_long_paste_keeps_transcript_top_down_and_footer_pinned(
+    focus_probe: FocusProbe,
+    part_count: int,
+) -> None:
+    prompt = " ".join(
+        ["A long request with several paragraphs follows."]
+        + [
+            f"Part {index:02d}: check the terminal layout."
+            for index in range(1, part_count + 1)
+        ]
+        + ["Reply with exactly: long layout check"]
+    )
+    with focus_probe.session(rows=42, cols=100) as session:
+        focus_probe.wait_ready(session)
+        tip = (
+            "Tip: / for commands · @ to mention a file · keep typing while a turn runs"
+        )
+        session.send_bracketed_paste(prompt)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            if any("long layout check" in row for row in rows):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("long draft did not render\n" + "\n".join(rows))
+        if part_count == 18:
+            assert tip in rows, "\n".join(rows)
+        assert rows[-1].startswith("◆ "), "\n".join(rows)
+        assert session.cursor_position[0] == 41
+
+        session.send("\r")
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            if any("long layout check" in row for row in rows) and any(
+                "Done in" in row for row in rows
+            ):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("long prompt did not complete")
+        if part_count == 18:
+            tip_row = rows.index(tip)
+            assert rows[tip_row + 2].startswith("❯ A long request"), "\n".join(rows)
+        else:
+            assert rows[0], "\n".join(rows)
+        assert rows[-2].startswith("❯ Ask anything"), "\n".join(rows)
+        assert rows[-1].startswith("◆ "), "\n".join(rows)
+
+        session.send_bracketed_paste(prompt)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if any("long layout check" in row for row in session.screen_lines[-12:]):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("second long draft did not render")
+        session.resize(rows=36, cols=72)
+        rows = session.screen_lines
+        assert rows[-1].startswith("◆ "), "\n".join(rows)
+        assert session.cursor_position[0] == 35
+        session.resize(rows=42, cols=100)
+        rows = session.screen_lines
+        assert rows[-1].startswith("◆ "), "\n".join(rows)
+        assert session.cursor_position[0] == 41
+        session.send("\x15")
+
+
 def test_focus_pty_resets_inherited_terminal_viewport(
     focus_probe: FocusProbe,
 ) -> None:

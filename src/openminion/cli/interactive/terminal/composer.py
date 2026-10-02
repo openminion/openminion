@@ -383,6 +383,7 @@ class TerminalComposer:
         _configure_bottom_input_layout(self._session)
         self._normalized_terminal_output: object | None = None
         self._anchored_terminal_rows = 0
+        self._anchored_layout_rows = 0
         self._session.app.before_render += self._ensure_prompt_anchor
 
     def apply_theme(self) -> None:
@@ -584,12 +585,20 @@ class TerminalComposer:
             # stale viewport instead of the physical terminal.
             output.write_raw(_RESET_TERMINAL_VIEWPORT)
             self._normalized_terminal_output = output
-        terminal_rows = max(1, output.get_size().rows)
-        layout_rows = min(self.active_prompt_rows(), terminal_rows)
+        size = output.get_size()
+        terminal_rows = max(1, size.rows)
+        preferred_rows = app.layout.container.preferred_height(
+            size.columns, terminal_rows
+        ).preferred
+        layout_rows = min(max(self.active_prompt_rows(), preferred_rows), terminal_rows)
         renderer = app.renderer
         renderer.cpr_support = CPR_Support.NOT_SUPPORTED
         last_screen = renderer._last_screen
-        if last_screen is not None and self._anchored_terminal_rows == terminal_rows:
+        if (
+            last_screen is not None
+            and self._anchored_terminal_rows == terminal_rows
+            and self._anchored_layout_rows == layout_rows
+        ):
             # Multiplexers can move the physical cursor without invalidating
             # prompt-toolkit's cached screen. Restore its cached cursor at the
             # same bottom-relative position before applying the next diff.
@@ -604,6 +613,15 @@ class TerminalComposer:
             return
         if last_screen is not None:
             renderer._last_screen = None
+            if (
+                self._anchored_terminal_rows == terminal_rows
+                and layout_rows < self._anchored_layout_rows
+            ):
+                output.cursor_goto(
+                    row=max(1, terminal_rows - self._anchored_layout_rows + 1),
+                    column=1,
+                )
+                output.erase_down()
         output.cursor_goto(row=terminal_rows, column=1)
         output.cursor_up(layout_rows - 1)
         output.flush()
@@ -615,6 +633,7 @@ class TerminalComposer:
         renderer._cursor_pos = Point(x=0, y=0)
         renderer._min_available_height = layout_rows
         self._anchored_terminal_rows = terminal_rows
+        self._anchored_layout_rows = layout_rows
 
     def _formatted_bottom_toolbar(self):
         if self._bottom_toolbar is None:
