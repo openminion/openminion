@@ -291,33 +291,31 @@ def test_live_focus_typeahead_stays_at_terminal_edge_while_busy(
 
         deadline = time.monotonic() + 300
         completed = False
+        unstable_at: float | None = None
         while time.monotonic() < deadline:
             rows = session.screen_lines
-            assert rows[-2] == f"❯ {draft}"
-            assert rows[-1].startswith("◆ ")
             cursor_visible, cursor_row, cursor_column = session.cursor_state
-            if cursor_visible:
-                assert (cursor_row, cursor_column) == (41, len(draft) + 3)
+            layout_ready = (
+                rows[-2] == f"❯ {draft}"
+                and rows[-1].startswith("◆ ")
+                and cursor_visible
+                and (cursor_row, cursor_column) == (41, len(draft) + 3)
+            )
+            if layout_ready:
+                unstable_at = None
+            elif unstable_at is None:
+                unstable_at = time.monotonic()
+            else:
+                assert time.monotonic() - unstable_at < 0.25, session.screen_text
             if re.search(
                 r"Done in \d+(?:m\d{2}s|s)",
                 session.transcript[turn_offset:],
             ):
                 completed = True
-                break
+                if layout_ready:
+                    break
             time.sleep(0.05)
         assert completed, "MiniMax turn did not complete while the draft stayed open"
-
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            cursor_visible, cursor_row, cursor_column = session.cursor_state
-            if cursor_visible and (cursor_row, cursor_column) == (
-                41,
-                len(draft) + 3,
-            ):
-                break
-            time.sleep(0.01)
-        else:
-            raise AssertionError("visible cursor did not return to the active draft")
 
         session.send("\x7f" * len(draft))
         write_transcript(

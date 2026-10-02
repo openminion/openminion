@@ -156,10 +156,10 @@ def test_live_main_runs_with_an_existing_config(monkeypatch, tmp_path: Path) -> 
     assert captured["env"]["OPENMINION_LIVE_CLI_FOCUS_E2E"] == "1"
 
 
-def test_baseline_has_three_frozen_nodes() -> None:
+def test_baseline_has_four_frozen_nodes() -> None:
     runner = _load_runner()
     assert runner.SUITES["baseline-live"].paths == runner.BASELINE_CASES
-    assert len(runner.BASELINE_CASES) == 3
+    assert len(runner.BASELINE_CASES) == 4
     assert runner.SUITES["baseline-live"].live
 
 

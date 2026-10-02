@@ -565,7 +565,12 @@ def test_prompt_safe_writer_routes_rich_ansi_through_prompt_output(monkeypatch) 
 def test_prompt_safe_writer_uses_active_prompt_terminal_context(monkeypatch) -> None:
     console = Console(force_terminal=True, color_system="truecolor", width=160)
     out = io.StringIO()
-    prompt_output = create_output(stdout=out)
+    prompt_output = Vt100_Output(
+        out,
+        lambda: Size(rows=24, columns=80),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+    )
     marker = object()
     calls: list[bool] = []
 
@@ -579,6 +584,8 @@ def test_prompt_safe_writer_uses_active_prompt_terminal_context(monkeypatch) -> 
     def _fake_run_in_terminal(render, render_cli_done=False):
         assert get_app_or_none() is _Session.app
         calls.append(render_cli_done)
+        prompt_output.show_cursor()
+        prompt_output.flush()
         render()
         return marker
 
@@ -595,7 +602,10 @@ def test_prompt_safe_writer_uses_active_prompt_terminal_context(monkeypatch) -> 
 
     assert writer(lambda: console.print("Update available")) is marker
     assert calls == [False]
-    assert "Update available" in out.getvalue()
+    rendered = out.getvalue()
+    cursor_shown = rendered.index("\x1b[?25h")
+    cursor_hidden = rendered.index("\x1b[?25l", cursor_shown)
+    assert cursor_shown < cursor_hidden < rendered.index("Update available")
 
 
 def test_prompt_safe_writer_preserves_terminal_control_bytes() -> None:

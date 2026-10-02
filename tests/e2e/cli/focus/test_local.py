@@ -510,6 +510,30 @@ def test_focus_pty_pins_input_and_footer_across_turn_and_resize(
         assert_bottom_layout(session, rows=18)
 
 
+def test_focus_pty_resets_inherited_terminal_viewport(
+    focus_probe: FocusProbe,
+) -> None:
+    command = (
+        "/bin/sh",
+        "-c",
+        'printf "\\033[5;20r\\033[?6h"; exec "$@"',
+        "openminion-focus-dirty-terminal",
+        *focus_probe.command(),
+    )
+    with PtySession(
+        argv=command,
+        cwd=focus_probe.openminion_root,
+        env=focus_probe.environment(),
+        rows=42,
+        cols=120,
+    ) as session:
+        focus_probe.wait_ready(session)
+
+        assert session.screen_lines[-2].startswith("❯ Ask anything")
+        assert session.screen_lines[-1].startswith("◆ ")
+        assert session.cursor_state == (True, 41, 3)
+
+
 def test_focus_startup_notice_preserves_single_composer(
     focus_probe: FocusProbe,
 ) -> None:

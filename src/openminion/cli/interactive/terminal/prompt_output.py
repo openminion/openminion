@@ -49,13 +49,37 @@ def build_prompt_safe_terminal_writer(
     console: Console,
     prompt_session: Any,
 ) -> Callable[[Callable[[], None]], Any]:
+    def _hide_cursor_while_prompt_is_suspended() -> None:
+        prompt_output = getattr(prompt_session, "output", None)
+        hide_cursor = getattr(prompt_output, "hide_cursor", None)
+        if not callable(hide_cursor):
+            return
+        hide_cursor()
+        flush = getattr(prompt_output, "flush", None)
+        if callable(flush):
+            flush()
+
     def _run_with_prompt(render: Callable[[], None]) -> Any:
         app = getattr(prompt_session, "app", None)
         if bool(getattr(app, "is_running", False)):
+            # ``run_in_terminal`` erases the prompt before writing above it.
+            # Hide the cursor inside the suspended callback, after that erase,
+            # so a redraw between scheduling and execution cannot reveal the
+            # transient output cursor before the final draft redraw.
+            def _render_with_hidden_cursor() -> None:
+                _hide_cursor_while_prompt_is_suspended()
+                render()
+
             if get_app_or_none() is app:
-                return run_in_terminal(render, render_cli_done=False)
+                return run_in_terminal(
+                    _render_with_hidden_cursor,
+                    render_cli_done=False,
+                )
             with set_app(app):
-                return run_in_terminal(render, render_cli_done=False)
+                return run_in_terminal(
+                    _render_with_hidden_cursor,
+                    render_cli_done=False,
+                )
         render()
         return None
 
