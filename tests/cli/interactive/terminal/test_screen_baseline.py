@@ -682,11 +682,17 @@ def test_bottom_layout_uses_physical_edge_when_reported_height_is_stale() -> Non
 def test_completion_menu_opens_above_anchored_input(busy: bool) -> None:
     scene = asyncio.run(_render_completion_layout_checkpoint(busy=busy))
     rows = {row["row"]: row["text"] for row in scene["rows"]}
+    menu_rows = [
+        text.strip()
+        for row, text in rows.items()
+        if row < 22 and text.strip().startswith("/")
+    ]
 
     assert scene["cursor"]["y"] == 22
     assert rows[22] == "❯ /"
     assert rows[23].startswith("◆ minimax-m2-7")
-    assert any("/agents" in text for row, text in rows.items() if row < 22)
+    assert "/agents" in menu_rows
+    assert all(" " not in text for text in menu_rows)
     assert not any("Status:" in text and "/" in text for text in rows.values())
     if busy:
         assert any(

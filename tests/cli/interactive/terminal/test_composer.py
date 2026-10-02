@@ -656,7 +656,7 @@ def test_slash_completer_opens_menu_for_bare_slash() -> None:
     )
 
     assert [comp.text for comp in completions] == ["/help", "/model"]
-    assert completions[1].display_meta_text == "choose model"
+    assert [comp.display_meta_text for comp in completions] == ["", ""]
 
 
 def test_slash_completer_offers_canonical_help_targets() -> None:
@@ -683,6 +683,7 @@ def test_slash_completer_offers_canonical_help_targets() -> None:
         "/agents",
         "/archive",
     ]
+    assert [completion.display_meta_text for completion in completions] == ["", ""]
 
 
 def test_slash_completer_preserves_leading_slash_and_ignores_other_operands() -> None:
