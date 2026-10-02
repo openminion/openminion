@@ -94,6 +94,10 @@ class LocalStorageBackend:
                                 entry_type="directory",
                             )
                         )
+                        if len(entries) > max_entries:
+                            break
+                    if len(entries) > max_entries:
+                        break
                     for name in files:
                         entries.append(
                             EntryInfo(
@@ -102,8 +106,10 @@ class LocalStorageBackend:
                                 entry_type="file",
                             )
                         )
+                        if len(entries) > max_entries:
+                            break
 
-                    if len(entries) >= max_entries:
+                    if len(entries) > max_entries:
                         break
             else:
                 for item in target.iterdir():
@@ -116,14 +122,20 @@ class LocalStorageBackend:
                             entry_type="directory" if item.is_dir() else "file",
                         )
                     )
-                    if len(entries) >= max_entries:
+                    if len(entries) > max_entries:
                         break
         except PermissionError as exc:
             raise ToolRuntimeError("POLICY_DENIED", "permission denied") from exc
         except Exception as exc:
             raise ToolRuntimeError(_LEGACY_ERROR_CODE, str(exc)) from exc
 
-        return ListResult(entries=entries[:max_entries], count=len(entries))
+        truncated = len(entries) > max_entries
+        visible_entries = entries[:max_entries]
+        return ListResult(
+            entries=visible_entries,
+            count=len(visible_entries),
+            truncated=truncated,
+        )
 
     def read(
         self,

@@ -42,6 +42,7 @@ class FindResult:
 class ListResult:
     entries: list[EntryInfo]
     count: int
+    truncated: bool = False
 
 
 @dataclass(frozen=True)

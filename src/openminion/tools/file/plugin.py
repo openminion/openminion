@@ -397,6 +397,7 @@ def _h_list_dir(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         "path": resolved,
         "entries": [_entry_to_payload(entry) for entry in result.entries],
         "count": result.count,
+        "truncated": result.truncated,
         "source": _FILE_TOOL_SOURCE,
     }
 

@@ -2,6 +2,7 @@ import json
 
 from openminion.base.types import AgentResponse
 from openminion.modules.llm.providers.base import ProviderResponse
+from openminion.modules.tool import errors as tool_errors
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.services.agent.execution.finalization import (
     finalization_status_metadata,
@@ -30,23 +31,19 @@ def _finalize(
 
 def _blocked_tool_response_text(batch: ToolExecutionBatch) -> str:
     for result in batch.results:
+        if bool(getattr(result, "ok", False)):
+            continue
         tool_name = str(getattr(result, "tool_name", "") or "").strip()
         if not tool_name:
             continue
         data = getattr(result, "data", {}) or {}
-        error_payload = data.get("error") if isinstance(data, dict) else None
-        error_details = (
-            error_payload.get("details", {}) if isinstance(error_payload, dict) else {}
-        )
-        reason_code = str(
-            (error_payload.get("code") if isinstance(error_payload, dict) else "")
-            or (data.get("error_code") if isinstance(data, dict) else "")
-            or getattr(result, "error", "")
-            or "blocked"
-        ).strip()
+        facts = tool_errors.tool_result_error_facts(result.error, data)
+        error_details = facts.get("details", {})
+        reason_code = facts["code"].strip()
         message = f"status=error: Tool `{tool_name}` was blocked"
         if reason_code:
             message = f"{message} ({reason_code})"
+        message = tool_errors.format_tool_budget_denial(message, error_details)
         suggested_tool = str(error_details.get("suggested_tool", "") or "").strip()
         suggested_fix = str(error_details.get("suggested_fix", "") or "").strip()
         if suggested_tool:

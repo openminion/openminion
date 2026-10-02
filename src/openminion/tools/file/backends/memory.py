@@ -78,9 +78,9 @@ class InMemoryStorageBackend:
                 if not include_hidden and self._has_hidden_component(entry, root):
                     continue
                 entries.append(EntryInfo(name=name, path=entry, entry_type="directory"))
-                if len(entries) >= max_entries:
+                if len(entries) > max_entries:
                     break
-            if len(entries) < max_entries:
+            if len(entries) <= max_entries:
                 for entry in sorted(self._files):
                     if not Path(entry).is_relative_to(root):
                         continue
@@ -88,7 +88,7 @@ class InMemoryStorageBackend:
                     if not include_hidden and self._has_hidden_component(entry, root):
                         continue
                     entries.append(EntryInfo(name=name, path=entry, entry_type="file"))
-                    if len(entries) >= max_entries:
+                    if len(entries) > max_entries:
                         break
         else:
             child_dirs: list[EntryInfo] = []
@@ -113,8 +113,14 @@ class InMemoryStorageBackend:
                 if not include_hidden and name.startswith("."):
                     continue
                 child_files.append(EntryInfo(name=name, path=entry, entry_type="file"))
-            entries = [*child_dirs, *child_files][:max_entries]
-        return ListResult(entries=entries[:max_entries], count=len(entries))
+            entries = [*child_dirs, *child_files][: max_entries + 1]
+        truncated = len(entries) > max_entries
+        visible_entries = entries[:max_entries]
+        return ListResult(
+            entries=visible_entries,
+            count=len(visible_entries),
+            truncated=truncated,
+        )
 
     def read(
         self,

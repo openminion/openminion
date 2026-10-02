@@ -15,6 +15,9 @@ from openminion.services.agent.execution.dependencies import ExecutorDeps
 from openminion.services.agent.execution.unforced.loop import (
     handle_unforced_tool_calls,
 )
+from openminion.services.agent.execution.unforced.metadata import (
+    _blocked_tool_response_text,
+)
 
 
 def _final_answer_response(
@@ -290,6 +293,39 @@ def test_policy_denied_tool_still_routes_to_blocked_tool_response() -> None:
     assert response.metadata.get("tool_loop_termination_reason") == "tool_no_success"
     # NO follow-up provider call fired for denied case.
     assert runtime_ops.provider_index == 0
+
+
+def test_blocked_tool_response_uses_failed_result_budget_details() -> None:
+    batch = ToolExecutionBatch(
+        results=[
+            ToolExecutionResult(
+                tool_name="file.read",
+                ok=True,
+                verified=True,
+                content="read file",
+            ),
+            ToolExecutionResult(
+                tool_name="file.list_dir",
+                ok=False,
+                verified=False,
+                content="",
+                error="tool_budget_calls_exceeded",
+                data={
+                    "error_code": "tool_budget_calls_exceeded",
+                    "error_details": {
+                        "tool_calls": 8,
+                        "max_calls_per_tool": 8,
+                    },
+                },
+            ),
+        ]
+    )
+
+    text = _blocked_tool_response_text(batch)
+
+    assert "file.list_dir" in text
+    assert "8/8 calls" in text
+    assert "file.read" not in text
 
 
 def test_denied_recovery_path_still_works_when_recovery_hint_available() -> None:

@@ -64,6 +64,18 @@ def build_successful_tool_continuation_prompt(
     )
 
 
+def build_tool_budget_recovery_hint(
+    *, blocked_tool: str, tool_calls: object, max_calls: object
+) -> str:
+    """Tell the model how to recover from a per-tool turn limit."""
+
+    return (
+        f"The previous {blocked_tool} call was blocked because that tool reached "
+        f"its per-turn limit ({tool_calls}/{max_calls}). Do not call it again this "
+        "turn. Continue the original task using another available tool."
+    )
+
+
 def build_feasibility_choice_prompt(*, user_message: str) -> str:
     base = str(user_message or "").strip() or (
         "User guidance is required before this request can continue."
@@ -113,5 +125,6 @@ __all__ = [
     "build_feasibility_choice_prompt",
     "build_goal_run_continuation_prompt",
     "build_successful_tool_continuation_prompt",
+    "build_tool_budget_recovery_hint",
     "build_plan_checkpoint_continuation_message",
 ]
