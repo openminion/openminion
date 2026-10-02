@@ -156,7 +156,7 @@ async def _render_composer(
         await _wait_for_renderer_height(composer)
         await asyncio.sleep(0.01)
         snapshot = raw.getvalue()
-        pipe.send_text("\n")
+        pipe.send_text("baseline-exit\n")
         await read_task
     return snapshot
 

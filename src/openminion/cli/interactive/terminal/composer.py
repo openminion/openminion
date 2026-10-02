@@ -501,6 +501,8 @@ class TerminalComposer:
 
     def _insert_newline(self, event) -> None:
         if not self._multiline:
+            if not event.app.current_buffer.text.strip():
+                return
             event.app.current_buffer.validate_and_handle()
             return
         event.app.current_buffer.insert_text("\n")
