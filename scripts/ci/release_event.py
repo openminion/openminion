@@ -12,9 +12,13 @@ from packaging.version import InvalidVersion, Version
 SUPPORTED_PRERELEASE_MARKERS = ("alpha", "beta", "rc")
 
 
-def source_version(repository: Path) -> Version:
+def source_version_text(repository: Path) -> str:
     owner = repository / "src/openminion/base/version.py"
-    return Version(str(runpy.run_path(owner)["OPENMINION_VERSION"]))
+    return str(runpy.run_path(owner)["OPENMINION_VERSION"])
+
+
+def source_version(repository: Path) -> Version:
+    return Version(source_version_text(repository))
 
 
 def release_target(
@@ -42,10 +46,10 @@ def release_target(
     except InvalidVersion as exc:
         raise ValueError(f"invalid release tag version: {tag}") from exc
 
-    expected = source_version(repository)
-    if version != expected:
+    expected_text = source_version_text(repository)
+    if tag != expected_text:
         raise ValueError(
-            f"tag version {version} does not match source version {expected}"
+            f"tag version {tag} does not match source version {expected_text}"
         )
     if version.is_devrelease or version.local is not None:
         raise ValueError("development and local versions are not publishable")
