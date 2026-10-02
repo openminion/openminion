@@ -1342,6 +1342,8 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
         self.assertIn("deep research", system_text)
         self.assertIn("iterate twice", system_text)
         self.assertIn("multiple searches", system_text)
+        self.assertIn("mixed workflow", system_text)
+        self.assertIn("runnable code", system_text)
         self.assertIn("decompose control tool", system_text)
         self.assertIn("independent subtasks", system_text)
         self.assertIn('act_profile="general"', system_text)

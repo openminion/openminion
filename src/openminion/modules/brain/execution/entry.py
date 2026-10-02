@@ -152,6 +152,34 @@ def _validate_decision_readiness(
 ) -> ValidationResult | None:
     if decision is None or _decision_route_name(decision) != BRAIN_DECISION_ROUTE_ACT:
         return None
+    readiness = getattr(decision, "request_readiness", None)
+    handoff = getattr(readiness, "project_handoff", None)
+    if handoff is not None and not handoff.verification_commands:
+        return ValidationResult(
+            passed=False,
+            code="project_handoff_missing_verification",
+            feedback=(
+                "Project handoff readiness validation failed: include at least one "
+                "concrete verification command, or continue the work in the "
+                "foreground tool loop without a project handoff."
+            ),
+            details={
+                "field_path": "request_readiness.project_handoff.verification_commands"
+            },
+        )
+    if handoff is not None and (
+        handoff.max_iterations is None or handoff.max_iterations < 2
+    ):
+        return ValidationResult(
+            passed=False,
+            code="project_handoff_missing_multi_cycle_budget",
+            feedback=(
+                "Project handoff readiness validation failed: set max_iterations "
+                "to at least 2, or continue the work in the foreground tool loop "
+                "without a project handoff."
+            ),
+            details={"field_path": "request_readiness.project_handoff.max_iterations"},
+        )
     for prefix, command in _iter_decision_commands(decision):
         readiness_issue = validate_command_readiness(command, prefix=prefix)
         if readiness_issue is not None:
