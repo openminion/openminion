@@ -2,6 +2,7 @@
 
 from openminion.base.types import AgentResponse
 from openminion.modules.llm.providers.base import ProviderResponse
+from openminion.modules.tool.errors import is_per_tool_budget_denial
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.services.agent.constants import NO_PROGRESS_FAILURE_THRESHOLD
 from openminion.modules.policy import ToolBudgetState
@@ -16,6 +17,7 @@ from ..validators import (
 )
 from .followup import (
     LoopState,
+    _terminal_response,
     build_duplicate_tool_replan_request,
     build_follow_up_request,
     denied_tool_recovery_hint,
@@ -31,17 +33,8 @@ from .metadata import (
 
 
 def _max_steps_for_runner(runner) -> int:
-    return max(
-        1,
-        int(
-            getattr(
-                getattr(runner.service_port.config, "runtime", None),
-                "agent_loop_max_steps",
-                1,
-            )
-            or 1
-        ),
-    )
+    runtime_config = getattr(runner.service_port.config, "runtime", None)
+    return max(1, int(getattr(runtime_config, "agent_loop_max_steps", 1) or 1))
 
 
 def _duplicate_signature_response(
@@ -215,6 +208,11 @@ async def _request_failure_recovery(
         state.response = recover_text_tool_calls(runner, response=state.response)
         if state.response.tool_calls:
             return True, None
+        if any(
+            not result.ok and is_per_tool_budget_denial(result.error, result.data)
+            for result in batch.results
+        ):
+            return True, _terminal_response(runner, state=state, deps=deps)
     if failure_signature and failure_count >= NO_PROGRESS_FAILURE_THRESHOLD:
         tool_name, error_code = failure_signature
         return True, loop_no_progress_response(

@@ -126,6 +126,20 @@ def test_list_dir_non_recursive_returns_entries(tmp_path: Path):
     names = sorted((entry["name"], entry["type"]) for entry in result["entries"])
     assert names == [("alpha.txt", "file"), ("nested", "directory")]
     assert result["count"] == 2
+    assert result["truncated"] is False
+
+
+def test_list_dir_reports_when_entries_are_capped(tmp_path: Path):
+    ctx = _ctx(tmp_path)
+    for name in ("alpha.txt", "beta.txt", "gamma.txt"):
+        (ctx.workspace / name).write_text(name, encoding="utf-8")
+
+    result = _h_list_dir({"path": ".", "max_entries": 2}, ctx)
+
+    assert result["ok"] is True
+    assert result["count"] == 2
+    assert len(result["entries"]) == 2
+    assert result["truncated"] is True
 
 
 def test_list_dir_recursive_skips_hidden_by_default(tmp_path: Path):

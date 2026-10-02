@@ -8,10 +8,10 @@ from openminion.modules.llm.providers.base import (
     ProviderRequest,
     ProviderResponse,
 )
+from openminion.modules.prompting.continuation import build_tool_budget_recovery_hint
+from openminion.modules.tool.errors import tool_result_error_facts
 from openminion.modules.tool.registry import ToolExecutionBatch
-from openminion.services.agent.constants import (
-    DEFAULT_TOOL_LOOP_CONTINUE_PROMPT,
-)
+from openminion.services.agent.constants import DEFAULT_TOOL_LOOP_CONTINUE_PROMPT
 from openminion.services.agent.execution.finalization import (
     FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE,
     FINALIZATION_STATUS_RETRY_GUIDANCE,
@@ -93,6 +93,11 @@ def build_follow_up_request(
         if result is None:
             continue
         status = "success" if result.ok else "error"
+        error_payload = (
+            tool_result_error_facts(result.error, result.data)
+            if not result.ok
+            else None
+        )
         result_messages.append(
             ProviderHistoryMessage(
                 role="tool",
@@ -100,18 +105,14 @@ def build_follow_up_request(
                     {
                         "status": status,
                         "output": result.content if result.ok else None,
-                        "error": result.error if not result.ok else None,
+                        "error": error_payload,
                     },
                     ensure_ascii=False,
                 ),
                 tool_call_id=call_id,
                 tool_status=status,
                 tool_output=result.data if result.ok else None,
-                tool_error=(
-                    {"code": "TOOL_EXECUTION_ERROR", "message": result.error}
-                    if not result.ok
-                    else None
-                ),
+                tool_error=error_payload,
             )
         )
     guidance = build_tool_execution_results_message(
@@ -141,23 +142,23 @@ def build_follow_up_request(
 
 
 def denied_tool_recovery_hint(batch: ToolExecutionBatch) -> str | None:
-    def _tool_error_details(data: object) -> dict[str, object]:
-        if not isinstance(data, dict):
-            return {}
-        details = data.get("error_details")
-        raw_error = data.get("error")
-        if not isinstance(details, dict) and isinstance(raw_error, dict):
-            details = raw_error.get("details")
-        return dict(details) if isinstance(details, dict) else {}
-
     for result in list(getattr(batch, "results", []) or []):
         if bool(getattr(result, "ok", False)):
             continue
         data = getattr(result, "data", {})
         if not isinstance(data, dict):
             continue
-        error_code = str(data.get("error_code", "") or "").strip().upper()
-        details = _tool_error_details(data)
+        facts = tool_result_error_facts(result.error, data)
+        error_code = facts["code"].strip().upper()
+        details = facts.get("details", {})
+        if error_code.startswith("TOOL_BUDGET") and "max_calls_per_tool" in details:
+            return str(
+                build_tool_budget_recovery_hint(
+                    blocked_tool=str(getattr(result, "tool_name", "") or "tool"),
+                    tool_calls=details.get("tool_calls", 0),
+                    max_calls=details["max_calls_per_tool"],
+                )
+            )
         if not details or error_code != "POLICY_DENIED":
             continue
         suggested_tool = str(details.get("suggested_tool", "") or "").strip()
