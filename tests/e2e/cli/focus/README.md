@@ -126,6 +126,12 @@ PYTHONDONTWRITEBYTECODE=1 \
 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py soak
 ```
 
+Reusable long-horizon prompts for manual and live regression campaigns live in
+[`tests/e2e/fixtures/focus/regression-prompts/`](../../fixtures/focus/regression-prompts/README.md).
+The corpus keeps stable scenario IDs, short seed prompts, prerequisites, and
+observable evidence expectations without adding another runner or storing
+generated transcripts in the repository.
+
 Suite names:
 
 - `local`: deterministic PTY launch, slash-command smoke, and fake-runtime default-focus queue/progress/interrupt proof.
