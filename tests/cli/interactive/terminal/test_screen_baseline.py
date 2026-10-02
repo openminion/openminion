@@ -527,12 +527,20 @@ async def _render_terminal_resize_checkpoints() -> dict[str, object]:
         )
 
         renderer = composer.prompt_session.app.renderer
+        # Model a multiplexer moving the physical cursor while prompt-toolkit's
+        # cached screen remains valid. Re-anchoring must not depend on clearing
+        # that cache first.
+        assert renderer._cursor_pos == Point(x=19, y=2)
         output.cursor_goto(row=15, column=1)
         output.flush()
-        renderer._cursor_pos = Point(x=0, y=0)
-        renderer._last_screen = None
-        composer.invalidate()
-        await asyncio.sleep(0.02)
+        pipe.send_text("!")
+        await _wait_for_screen_row(
+            raw,
+            width=100,
+            height=42,
+            row=40,
+            text="❯ typing while busy!",
+        )
         reanchored = _screen_contract(
             raw.getvalue(),
             width=100,
@@ -732,7 +740,7 @@ def test_composer_keeps_input_above_footer_after_prompt_safe_output(
     assert typed_rows[rows - 2] == "❯ test"
 
 
-def test_bottom_layout_reanchors_when_reported_terminal_height_changes() -> None:
+def test_bottom_layout_reanchors_after_resize_and_cached_cursor_drift() -> None:
     checkpoints = asyncio.run(_render_terminal_resize_checkpoints())
     typing = checkpoints["typing"]
     redraws = checkpoints["redraws"]
@@ -780,9 +788,9 @@ def test_bottom_layout_reanchors_when_reported_terminal_height_changes() -> None
     assert any(row["text"] == "Response update 3" for row in completed["rows"])
 
     reanchored_rows = {row["row"]: row["text"] for row in reanchored["rows"]}
-    assert reanchored_rows[40] == "❯ typing while busy"
+    assert reanchored_rows[40] == "❯ typing while busy!"
     assert reanchored_rows[41].startswith("◆ minimax-m2-7")
-    assert reanchored["cursor"] == {"x": 19, "y": 40, "hidden": False}
+    assert reanchored["cursor"] == {"x": 20, "y": 40, "hidden": False}
 
 
 @pytest.mark.parametrize("busy", [False, True], ids=["idle", "busy"])

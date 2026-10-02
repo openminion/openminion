@@ -574,12 +574,22 @@ class TerminalComposer:
         layout_rows = min(layout_rows, terminal_rows)
         renderer = app.renderer
         renderer.cpr_support = CPR_Support.NOT_SUPPORTED
-        if (
-            renderer._min_available_height == layout_rows
-            and self._anchored_terminal_rows == terminal_rows
-            and renderer._last_screen is not None
-        ):
+        last_screen = renderer._last_screen
+        if last_screen is not None and self._anchored_terminal_rows == terminal_rows:
+            # Multiplexers can move the physical cursor without invalidating
+            # prompt-toolkit's cached screen. Restore its cached cursor at the
+            # same bottom-relative position before applying the next diff.
+            screen_height = min(last_screen.height, terminal_rows)
+            screen_top = terminal_rows - screen_height + 1
+            cursor = renderer._cursor_pos
+            output.cursor_goto(
+                row=min(terminal_rows, screen_top + cursor.y),
+                column=cursor.x + 1,
+            )
+            output.flush()
             return
+        if last_screen is not None:
+            renderer._last_screen = None
         if (
             renderer._min_available_height == 0
             and self._anchored_terminal_rows == terminal_rows

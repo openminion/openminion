@@ -28,6 +28,7 @@ from tests.e2e.cli.focus.harness.assertions import (
 )
 from tests.e2e.cli.focus.harness.probe import (
     _COMPOSER_READY_RE,
+    _composer_is_ready,
     FocusProbe,
     _record_approval_event,
     active_approval_visible,
@@ -96,6 +97,21 @@ def test_composer_ready_marker_requires_an_enabled_prompt() -> None:
     assert _COMPOSER_READY_RE.search("\n↳ Reply, or / for commands")
     assert _COMPOSER_READY_RE.search("Ask anything") is None
     assert _COMPOSER_READY_RE.search("\n… Ask anything") is None
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    ("❯ Ask anything", "↳ Reply, or / for commands", "❯ draft from editor"),
+)
+def test_composer_ready_requires_active_prompt_above_footer(prompt: str) -> None:
+    assert _composer_is_ready(f"older output\n{prompt}\n\n◆ fixture · model")
+
+
+def test_prefilled_composer_without_footer_is_not_ready() -> None:
+    assert not _composer_is_ready("❯ draft from editor\ncommand output")
+    assert not _composer_is_ready(
+        "❯ draft from editor\n◆ fixture · model\ncommand output"
+    )
 
 
 @pytest.mark.parametrize(
@@ -610,7 +626,7 @@ def test_run_turn_ignores_repeated_old_completion_after_inline_approval(
                 return "Approval required: file.write\n[y]es / [N]o / [a]lways:"
             if self.state < 3:
                 return "Status: Thinking...\n❯ Type to queue for the next turn"
-            return "result: complete\nDone in 2s\n❯ Ask anything"
+            return "result: complete\nDone in 2s\n❯ Ask anything\n◆ fixture"
 
     session = Session()
     submitted: list[str] = []
