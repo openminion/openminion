@@ -67,7 +67,12 @@ class _StubOverlay:
         type(self).last_kwargs = dict(kwargs)
 
 
-class _ScriptedComposer:
+class _StubComposerRows:
+    def active_prompt_rows(self) -> int:
+        return 2
+
+
+class _ScriptedComposer(_StubComposerRows):
     runtime: _QueueRuntime
 
     def __init__(self, *args, **kwargs) -> None:
@@ -115,7 +120,7 @@ class _MultiQueueRuntime(_RuntimeUsage):
         await asyncio.sleep(0)
 
 
-class _MultiQueueComposer:
+class _MultiQueueComposer(_StubComposerRows):
     runtime: _MultiQueueRuntime
     last_instance: "_MultiQueueComposer | None" = None
 
@@ -170,7 +175,7 @@ class _BusyCommandRuntime(_RuntimeUsage):
         return []
 
 
-class _BusyCommandComposer:
+class _BusyCommandComposer(_StubComposerRows):
     runtime: _BusyCommandRuntime
 
     def __init__(self, *args, **kwargs) -> None:
@@ -198,7 +203,7 @@ class _BusyCommandComposer:
         raise EOFError
 
 
-class _BusyHelpComposer:
+class _BusyHelpComposer(_StubComposerRows):
     runtime: _BusyCommandRuntime
 
     def __init__(self, *args, **kwargs) -> None:
@@ -252,7 +257,7 @@ class _QueueCommandRuntime(_RuntimeUsage):
         await asyncio.sleep(0)
 
 
-class _QueueCommandComposer:
+class _QueueCommandComposer(_StubComposerRows):
     runtime: _QueueCommandRuntime
 
     def __init__(self, *args, **kwargs) -> None:
@@ -353,7 +358,7 @@ class _ReplayRuntime(_RuntimeUsage):
         await asyncio.sleep(0)
 
 
-class _ReplayComposer:
+class _ReplayComposer(_StubComposerRows):
     runtime: _ReplayRuntime
 
     def __init__(self, *args, **kwargs) -> None:
