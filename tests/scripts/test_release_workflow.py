@@ -98,6 +98,20 @@ def test_tag_version_must_match_source_version():
         )
 
 
+@pytest.mark.parametrize("tag", ["1.2.3.0", "01.2.3", "1.2.3+local"])
+def test_tag_spelling_must_match_source_version_exactly(tmp_path, tag):
+    version_owner = tmp_path / "src/openminion/base"
+    version_owner.mkdir(parents=True)
+    (version_owner / "version.py").write_text('OPENMINION_VERSION = "1.2.3"\n')
+    with pytest.raises(ValueError, match="does not match source version"):
+        release_target(
+            event_name="push",
+            ref=f"refs/tags/v{tag}",
+            requested_target="",
+            repository=tmp_path,
+        )
+
+
 def test_both_indexes_keep_full_artifact_verification():
     assert "make workflow-check" in RELEASE_WORKFLOW
     assert "make format-check" in RELEASE_WORKFLOW
