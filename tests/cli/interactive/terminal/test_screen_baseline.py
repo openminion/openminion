@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pyte
 import pytest
 from prompt_toolkit.application.current import create_app_session
-from prompt_toolkit.data_structures import Size
+from prompt_toolkit.data_structures import Point, Size
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.output.vt100 import Vt100_Output
@@ -447,9 +447,28 @@ async def _render_stale_terminal_height_checkpoints() -> dict[str, object]:
             include_cursor_visibility=True,
         )
 
+        renderer = composer.prompt_session.app.renderer
+        output.cursor_goto(row=15, column=1)
+        output.flush()
+        renderer._cursor_pos = Point(x=0, y=0)
+        renderer._last_screen = None
+        composer.invalidate()
+        await asyncio.sleep(0.02)
+        reanchored = _screen_contract(
+            raw.getvalue(),
+            width=100,
+            height=42,
+            include_cursor_visibility=True,
+        )
+
         pipe.send_text("\n")
         await read_task
-    return {"typing": typing, "redraws": redraws, "completed": completed}
+    return {
+        "typing": typing,
+        "redraws": redraws,
+        "completed": completed,
+        "reanchored": reanchored,
+    }
 
 
 def _capture_completed_scene(*, width: int, theme, color_mode: str) -> dict:
@@ -613,9 +632,11 @@ def test_bottom_layout_uses_physical_edge_when_reported_height_is_stale() -> Non
     typing = checkpoints["typing"]
     redraws = checkpoints["redraws"]
     completed = checkpoints["completed"]
+    reanchored = checkpoints["reanchored"]
     assert isinstance(typing, list)
     assert isinstance(redraws, list)
     assert isinstance(completed, dict)
+    assert isinstance(reanchored, dict)
 
     expected_draft = ""
     for character, scene in zip("typing while busy", typing, strict=True):
@@ -650,6 +671,11 @@ def test_bottom_layout_uses_physical_edge_when_reported_height_is_stale() -> Non
     assert not any(text.startswith("Status:") for text in completed_rows.values())
     assert completed["cursor"] == {"x": 19, "y": 40, "hidden": False}
     assert any(row["text"] == "Response update 3" for row in completed["rows"])
+
+    reanchored_rows = {row["row"]: row["text"] for row in reanchored["rows"]}
+    assert reanchored_rows[40] == "❯ typing while busy"
+    assert reanchored_rows[41].startswith("◆ minimax-m2-7")
+    assert reanchored["cursor"] == {"x": 19, "y": 40, "hidden": False}
 
 
 @pytest.mark.parametrize("busy", [False, True])
