@@ -411,6 +411,15 @@ def test_focus_pty_survives_resize_after_launch(
 def test_focus_pty_pins_input_and_footer_across_turn_and_resize(
     focus_probe: FocusProbe,
 ) -> None:
+    def assert_blank_row_after(
+        screen_rows: tuple[str, ...],
+        expected_line: str,
+    ) -> None:
+        row = max(
+            index for index, line in enumerate(screen_rows) if line == expected_line
+        )
+        assert screen_rows[row + 1] == ""
+
     def assert_bottom_layout(session: PtySession, *, rows: int) -> None:
         screen_rows = session.screen_lines
         assert len(screen_rows) == rows
@@ -422,6 +431,10 @@ def test_focus_pty_pins_input_and_footer_across_turn_and_resize(
     with focus_probe.session(rows=24, cols=100) as session:
         focus_probe.wait_ready(session)
         assert_bottom_layout(session, rows=24)
+        assert_blank_row_after(
+            session.screen_lines,
+            "Tip: / for commands · @ to mention a file · keep typing while a turn runs",
+        )
 
         focus_probe.run_turn(
             session,
@@ -433,6 +446,10 @@ def test_focus_pty_pins_input_and_footer_across_turn_and_resize(
             ),
         )
         assert_bottom_layout(session, rows=24)
+        assert_blank_row_after(
+            session.screen_lines,
+            "❯ Reply with exactly: footer layout check",
+        )
 
         session.send("typed-check")
         deadline = time.monotonic() + 5
