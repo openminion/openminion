@@ -11,6 +11,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.application import run_in_terminal
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
@@ -592,6 +593,7 @@ class TerminalComposer:
         if (
             renderer._min_available_height == layout_rows
             and self._anchored_terminal_rows == terminal_rows
+            and renderer._last_screen is not None
         ):
             return
         if (
@@ -606,6 +608,9 @@ class TerminalComposer:
         # Prompt-toolkit normally learns this value through a cursor position
         # response. Seed the known space after explicitly positioning the
         # cursor so terminals without CPR render the same persistent footer.
+        # Prompt-safe output can reset the physical cursor independently, so
+        # keep the renderer's relative origin synchronized with this anchor.
+        renderer._cursor_pos = Point(x=0, y=0)
         renderer._min_available_height = layout_rows
         self._anchored_terminal_rows = terminal_rows
 
