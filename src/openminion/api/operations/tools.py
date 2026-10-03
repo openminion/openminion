@@ -83,9 +83,13 @@ def _resolve_tool_run_session(
     requested_session_id: str,
 ) -> Any:
     agent_id = resolve_default_agent_id(runtime.config)
-    if runtime.config.runtime.security_lab is not None:
+    lab_config = runtime.config.runtime.security_lab
+    if lab_config is not None:
         existing = runtime.sessions.get_session(requested_session_id)
-        if existing is not None:
+        if (
+            existing is not None
+            and existing.owner_agent_id == lab_config.agent_identity_id
+        ):
             agent_id = existing.owner_agent_id
     return runtime.sessions.resolve_session(
         agent_id=agent_id,

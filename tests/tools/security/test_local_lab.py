@@ -486,6 +486,23 @@ def test_direct_api_tool_run_keeps_security_lab_context(tmp_path: Path) -> None:
         "security_lab_tool_not_allowed"
     )
     assert len(contexts) == 1
+
+    sessions.resolve_session(
+        agent_id="unrelated-agent",
+        channel="console",
+        target="api-user",
+        session_id="unrelated-session",
+    )
+    with pytest.raises(ValueError, match="does not include agent 'default-agent'"):
+        execute_tool_run(
+            runtime=runtime,
+            tool_name="weather",
+            arguments={"city": "Tokyo"},
+            request_id="request-4",
+            channel="console",
+            target="api-user",
+            requested_session_id="unrelated-session",
+        )
     connection.close()
 
 
