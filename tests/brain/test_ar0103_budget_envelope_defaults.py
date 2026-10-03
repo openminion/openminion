@@ -8,7 +8,11 @@ from openminion.base.config.parser import (
 )
 from openminion.base.config.parser.runtime import _build_runtime_config
 from openminion.base.config.runtime import RuntimeConfig, ToolPolicyConfig
-from openminion.modules.brain.config import RetryConfig, RunnerOptions
+from openminion.modules.brain.config import (
+    RetryConfig,
+    RunnerOptions,
+    _default_budgets,
+)
 from openminion.modules.policy.runtime.security import ToolBudgetPolicy
 from openminion.services.brain.metadata import resolve_agent_budgets
 
@@ -110,3 +114,14 @@ def test_direct_and_standalone_defaults_match_shared_budget() -> None:
     assert ToolBudgetPolicy() == ToolBudgetPolicy(
         max_calls_per_run=100, max_calls_per_tool=50, max_budget_cost_per_run=200
     )
+
+
+def test_default_turn_token_budget_is_independent_of_context_size() -> None:
+    config = openminion_config_from_dict(
+        {
+            "agents": {"default": {"provider": "echo"}},
+            "runtime": {"session_context_token_budget": 150_000},
+        }
+    )
+
+    assert _default_budgets(config).max_total_llm_tokens == 100_000

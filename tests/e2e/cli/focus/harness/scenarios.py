@@ -108,6 +108,8 @@ RESEARCH_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         scenario_id="research_long_synthesis",
         prompt=(
             "Run a long-form research synthesis on robust CLI agent test harnesses. "
+            "Complete it in this interactive turn; do not create or queue a "
+            "background project. "
             "Cover PTY testing, transcript artifacts, live-provider gating, "
             "failure classification, and maintainability. End with prioritized "
             "next steps."
@@ -119,6 +121,7 @@ RESEARCH_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         approval_reply="session",
         use_scratch_workspace=True,
         include_project_context=False,
+        forbidden_transcript_markers=("Project queued:",),
         max_auto_continuations=4,
     ),
 )
