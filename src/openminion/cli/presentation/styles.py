@@ -14,6 +14,7 @@ from openminion.cli.theme.models import Theme
 
 class StyleToken(str, Enum):
     USER = "user"
+    USER_TEXT = "user_text"
     ASSISTANT = "assistant"
     SYSTEM = "system"
     WARNING = "warning"
@@ -27,6 +28,7 @@ class StyleToken(str, Enum):
 
 _TOKEN_TO_THEME_FIELD: dict[StyleToken, str] = {
     StyleToken.USER: "text_accent",
+    StyleToken.USER_TEXT: "text_secondary",
     StyleToken.ASSISTANT: "state_ok",
     StyleToken.SYSTEM: "text_secondary",
     StyleToken.WARNING: "state_warning",
