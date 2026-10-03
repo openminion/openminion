@@ -770,8 +770,10 @@ def test_focus_pty_long_paste_keeps_transcript_top_down_and_footer_pinned(
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             rows = session.screen_lines
-            if any("long layout check" in row for row in rows) and any(
-                "Done in" in row for row in rows
+            if (
+                any("long layout check" in row for row in rows)
+                and any("Done in" in row for row in rows)
+                and rows[-2].startswith("❯ Ask anything")
             ):
                 break
             time.sleep(0.05)
