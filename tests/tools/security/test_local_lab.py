@@ -65,6 +65,28 @@ def _active_report_payload(evidence_refs: list[str]) -> dict[str, object]:
     }
 
 
+def _lab_ref(index: int) -> str:
+    return f"artifact://sha256/{index:064x}"
+
+
+def _lab_finding(evidence_ref: str, finding_id: str = "LAB-1") -> dict[str, object]:
+    return {
+        "finding_id": finding_id,
+        "disposition": "candidate",
+        "title": "Synthetic route returned data",
+        "category": "authorization",
+        "severity": "medium",
+        "confidence": "high",
+        "explanation": "The approved request reached the observable route.",
+        "evidence_ref": evidence_ref,
+        "location": {
+            "component": "synthetic-target",
+            "path": "/defect",
+            "method": "GET",
+        },
+    }
+
+
 def _config() -> SecurityLabConfig:
     return SecurityLabConfig(
         daemon_socket="unix:///var/run/docker.sock",
@@ -764,3 +786,129 @@ def test_active_report_schema_rejects_duplicates_unknown_refs_and_opaque_fields(
                 "daemon_id": "caller-controlled",
             }
         )
+
+
+def test_active_report_schema_accepts_exact_upper_bounds() -> None:
+    refs = [_lab_ref(index) for index in range(1, 21)]
+    findings = []
+    for index in range(50):
+        finding = _lab_finding(refs[index % len(refs)], f"LAB-{index}")
+        finding.update(
+            title="t" * 300,
+            category="c" * 120,
+            explanation="e" * 4000,
+            location={
+                "component": "c" * 200,
+                "path": "/" + "p" * 499,
+                "method": "OPTIONS",
+                "parameter": "p" * 120,
+            },
+        )
+        findings.append(finding)
+
+    parsed = SecurityLabPublishArgs.model_validate(
+        {
+            "activity_class": "local_lab_active",
+            "objective": "o" * 1000,
+            "validation_evidence": refs,
+            "findings": findings,
+            "summary": "s" * 4000,
+            "limitations": "l" * 4000,
+        }
+    )
+
+    assert len(parsed.validation_evidence) == 20
+    assert len(parsed.findings) == 50
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("objective", ""),
+        ("objective", "o" * 1001),
+        ("validation_evidence", []),
+        ("validation_evidence", [_lab_ref(index) for index in range(1, 22)]),
+        ("validation_evidence", ["not-a-canonical-ref"]),
+        ("findings", [_lab_finding(_lab_ref(1), f"LAB-{i}") for i in range(51)]),
+        ("summary", ""),
+        ("summary", "s" * 4001),
+        ("limitations", "l" * 4001),
+    ],
+)
+def test_active_report_schema_rejects_out_of_bounds_publish_fields(
+    field: str, value: object
+) -> None:
+    payload = _active_report_payload([_lab_ref(1)])
+    payload[field] = value
+
+    with pytest.raises(ValidationError):
+        SecurityLabPublishArgs.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("finding_id", "bad id"),
+        ("finding_id", "F" * 81),
+        ("disposition", "validated"),
+        ("title", ""),
+        ("title", "t" * 301),
+        ("category", ""),
+        ("category", "c" * 121),
+        ("severity", "urgent"),
+        ("confidence", "certain"),
+        ("explanation", ""),
+        ("explanation", "e" * 4001),
+        ("evidence_ref", "not-a-canonical-ref"),
+    ],
+)
+def test_active_report_schema_rejects_invalid_finding_fields(
+    field: str, value: object
+) -> None:
+    finding = _lab_finding(_lab_ref(1))
+    finding[field] = value
+    payload = _active_report_payload([_lab_ref(1)])
+    payload["findings"] = [finding]
+
+    with pytest.raises(ValidationError):
+        SecurityLabPublishArgs.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("component", ""),
+        ("component", "c" * 201),
+        ("path", "relative"),
+        ("path", "/" + "p" * 500),
+        ("method", "TRACE"),
+        ("parameter", ""),
+        ("parameter", "p" * 121),
+    ],
+)
+def test_active_report_schema_rejects_invalid_location_fields(
+    field: str, value: object
+) -> None:
+    finding = _lab_finding(_lab_ref(1))
+    location = dict(finding["location"])
+    location[field] = value
+    finding["location"] = location
+    payload = _active_report_payload([_lab_ref(1)])
+    payload["findings"] = [finding]
+
+    with pytest.raises(ValidationError):
+        SecurityLabPublishArgs.model_validate(payload)
+
+
+def test_active_report_schema_rejects_duplicate_and_unknown_finding_refs() -> None:
+    payload = _active_report_payload([_lab_ref(1)])
+    payload["findings"] = [
+        _lab_finding(_lab_ref(1), "LAB-1"),
+        _lab_finding(_lab_ref(1), "LAB-1"),
+    ]
+    with pytest.raises(ValidationError, match="finding_id values must be unique"):
+        SecurityLabPublishArgs.model_validate(payload)
+
+    payload["findings"] = [_lab_finding(_lab_ref(2))]
+    with pytest.raises(ValidationError, match="must be listed"):
+        SecurityLabPublishArgs.model_validate(payload)

@@ -17,11 +17,24 @@ def _security_lab_status_rows(lab: dict[str, Any]) -> list[str]:
     rows.append(
         "  ".join(
             (
+                f"activity={lab.get('activity_class', '')}",
+                f"activation={lab.get('activation_id', '') or '(inactive)'}",
+                f"scope={lab.get('scope', '') or '(unapproved)'}",
+            )
+        )
+    )
+    rows.append(
+        "  ".join(
+            (
                 f"daemon={lab.get('daemon_state', 'unavailable')}",
-                f"target={lab.get('target_container_id') or lab.get('target', '')}",
+                f"daemon_id={lab.get('daemon_id', '')}",
                 f"isolation={lab.get('isolation_mode', '')}",
             )
         )
+    )
+    rows.append(
+        f"  target={lab.get('target_container_id') or lab.get('target', '')}"
+        f"  image={lab.get('target_image_id', '')}"
     )
     rows.append(f"  worker={lab.get('worker_image_digest', '')}")
     rows.append(f"  tools={', '.join(lab.get('allowed_tools', [])) or '(none)'}")

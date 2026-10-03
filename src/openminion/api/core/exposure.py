@@ -173,6 +173,7 @@ class RuntimeToolExposureMixin:
         identity = service._identity_security_lab_facts()  # noqa: SLF001
         status: dict[str, Any] = {
             "state": "unavailable",
+            "activity_class": "local_lab_active",
             "label": config.label,
             "target": config.target_container,
             "worker_image_digest": config.worker_image,

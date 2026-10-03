@@ -34,9 +34,12 @@ class _FakeRuntime:
             ],
             "security_lab": {
                 "state": "ready",
+                "activity_class": "local_lab_active",
                 "target": "security-target",
                 "target_container_id": "target-id",
+                "target_image_id": "target-image-id",
                 "daemon_state": "ready",
+                "daemon_id": "daemon-id",
                 "isolation_mode": "target-network-namespace",
                 "worker_image_digest": "worker@sha256:digest",
                 "allowed_tools": ["exec.run", "security.publish_report"],
@@ -49,6 +52,8 @@ class _FakeRuntime:
                 },
                 "approved_by": "operator-1",
                 "expires_at": "2030-01-01T00:00:00Z",
+                "activation_id": "activation-id",
+                "scope": "scope-fingerprint",
             },
         }
 
@@ -144,6 +149,11 @@ def test_slash_tools_dispatches_exposure_commands() -> None:
 
     assert "hidden  security_readonly  (read)" in status
     assert "daemon=ready" in status
+    assert "activity=local_lab_active" in status
+    assert "activation=activation-id" in status
+    assert "scope=scope-fingerprint" in status
+    assert "daemon_id=daemon-id" in status
+    assert "image=target-image-id" in status
     assert "tools=exec.run, security.publish_report" in status
     assert "approved_by=operator-1" in status
     assert "Activated: security_readonly (audit-1)" in activated
