@@ -36,7 +36,7 @@ from openminion.cli.presentation.animation import (
     AnimationSpec,
 )
 from openminion.cli.presentation.contracts import Composer
-from openminion.cli.theme import DARK
+from openminion.cli.theme import DARK, LIGHT
 
 
 _PROMPT_STYLE = f"fg:{DARK.text_accent}"
@@ -60,6 +60,30 @@ def test_composer_can_disable_prompt_color() -> None:
     composer = TerminalComposer(color=False)
 
     assert composer._formatted_prompt() == [("", "❯ ")]
+
+
+def test_completion_menu_uses_active_terminal_theme() -> None:
+    from openminion.cli.presentation.styles import set_active_theme
+
+    try:
+        for theme in (DARK, LIGHT):
+            set_active_theme(theme)
+            rules = dict(composer_module._focus_prompt_style()._style_rules)
+            assert theme.surface_panel_bg in rules["completion-menu"]
+            assert theme.text_primary in rules["completion-menu"]
+            assert theme.surface_divider in rules["completion-menu.completion.current"]
+            assert "noreverse" in rules["completion-menu.completion.current"]
+    finally:
+        set_active_theme(DARK)
+
+
+def test_composer_reserves_menu_space_only_in_roomy_terminals() -> None:
+    composer = TerminalComposer()
+    composer.prompt_session.output.get_size = lambda: Size(rows=24, columns=100)
+    assert composer.transcript_reserve_rows() == composer.active_prompt_rows()
+
+    composer.prompt_session.output.get_size = lambda: Size(rows=53, columns=153)
+    assert composer.transcript_reserve_rows() == 11
 
 
 def test_set_resumed_flips_prompt_prefix() -> None:

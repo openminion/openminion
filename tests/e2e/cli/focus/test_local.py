@@ -115,6 +115,129 @@ def test_focus_slash_completion_menu_shows_command_names_only(
         )
 
 
+def test_focus_full_slash_menu_preserves_visible_transcript(
+    focus_probe: FocusProbe,
+) -> None:
+    environment = focus_probe.environment()
+    environment["TERM_PROGRAM"] = "iTerm.app"
+    environment["TERM"] = "screen.xterm-256color"
+    with PtySession(
+        argv=focus_probe.command(),
+        cwd=focus_probe.openminion_root,
+        env=environment,
+        rows=53,
+        cols=153,
+    ) as session:
+        focus_probe.wait_ready(session)
+        startup_rows = session.screen_lines
+        session.send("/")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if any(row.strip() == "/agents" for row in session.screen_lines):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("startup slash menu did not open")
+        assert startup_rows[:10] == session.screen_lines[:10]
+        session.send("\x15")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if session.screen_lines[-2].startswith("❯ Ask anything"):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("startup slash menu did not close")
+        assert startup_rows == session.screen_lines
+
+        focus_probe.run_slash(session, "/help", marker="Use /help")
+        before_menu = session.screen_lines
+        session.send("/")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if any(row.strip() == "/agents" for row in session.screen_lines):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("full slash menu did not open")
+
+        assert session.screen_lines[-2] == "❯ /"
+        assert before_menu[:42] == session.screen_lines[:42]
+        session.send("\x1b[B" * 32)
+        time.sleep(0.2)
+        assert before_menu[:42] == session.screen_lines[:42]
+        session.send("\x15")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if session.screen_lines[-2].startswith("❯ Ask anything"):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("full slash menu did not close")
+        assert before_menu == session.screen_lines, "\n".join(
+            f"{index}: {before!r} -> {after!r}"
+            for index, (before, after) in enumerate(zip(before_menu, session.screen_lines))
+            if before != after
+        )
+
+
+def test_focus_submitted_input_remains_top_down_after_slash_menu(
+    focus_probe: FocusProbe,
+) -> None:
+    with focus_probe.session(rows=53, cols=153) as session:
+        focus_probe.wait_ready(session)
+        session.send("/")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if any(row.strip() == "/agents" for row in session.screen_lines):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("full slash menu did not open")
+        session.send("\x15")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if session.screen_lines[-2].startswith("❯ Ask anything"):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("full slash menu did not close")
+
+        focus_probe._submit_composer_line(session, "hi")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if "❯ hi" in session.screen_lines:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("submitted input did not appear")
+        rows = session.screen_lines
+        tip_row = next(index for index, row in enumerate(rows) if row.startswith("Tip: "))
+        assert rows.index("❯ hi") == tip_row + 2
+
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            if any("Done in" in row for row in rows):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("first reply did not complete")
+        answer_row = next(index for index, row in enumerate(rows) if row.startswith("● "))
+        assert 0 < answer_row - rows.index("❯ hi") <= 4, "\n".join(rows)
+
+        focus_probe._submit_composer_line(session, "second message")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            if "❯ second message" in rows:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("second submitted input did not appear")
+        done_row = next(index for index, row in enumerate(rows) if "Done in" in row)
+        assert 0 < rows.index("❯ second message") - done_row <= 4, "\n".join(rows)
+
+
 def test_focus_pty_controls_durable_project(
     focus_probe: FocusProbe,
     tmp_path,

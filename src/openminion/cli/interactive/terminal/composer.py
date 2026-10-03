@@ -95,6 +95,12 @@ def _focus_prompt_style(*, color: bool = True) -> Style:
             "bottom-toolbar.text": toolbar,
             "busy-indicator": active_theme_color(StyleToken.SPINNER),
             "placeholder": placeholder,
+            "completion-menu": (
+                f"noreverse bg:{theme.surface_panel_bg} {theme.text_primary}"
+            ),
+            "completion-menu.completion.current": (
+                f"noreverse bg:{theme.surface_divider} {theme.text_primary}"
+            ),
         }
     )
 
@@ -573,6 +579,14 @@ class TerminalComposer:
             if status or self._busy_frame(time.monotonic()):
                 layout_rows += 2
         return layout_rows
+
+    def transcript_reserve_rows(self) -> int:
+        prompt_rows = self.active_prompt_rows()
+        # Keep the full menu clear of transcript text on roomy terminals;
+        # compact windows need their limited rows for the conversation.
+        if self._session.output.get_size().rows < _COMPLETION_MENU_ROWS * 4:
+            return prompt_rows
+        return max(prompt_rows, _COMPLETION_MENU_ROWS + 1)
 
     def _ensure_prompt_anchor(self, *_: object) -> None:
         """Keep the prompt on the terminal edge across renderer resets."""

@@ -707,7 +707,7 @@ async def _run_terminal_focus_async(
     terminal_writer = build_prompt_safe_terminal_writer(
         console=console,
         prompt_session=composer.prompt_session,
-        reserved_rows=composer.active_prompt_rows,
+        reserved_rows=composer.transcript_reserve_rows,
     )
     transcript.set_terminal_writer(terminal_writer)
     overlay = TerminalOverlayPresenter(console=console)

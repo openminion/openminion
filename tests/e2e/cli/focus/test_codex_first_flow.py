@@ -206,6 +206,17 @@ def test_codex_first_shell_journey_is_compact_truthful_and_persistent(
             else:
                 raise AssertionError("scripted turn never entered the busy state")
             busy_rows = session.screen_lines
+            tip_row = next(
+                index for index, row in enumerate(busy_rows) if row.startswith("Tip: ")
+            )
+            echoed_row = next(
+                index
+                for index, row in enumerate(busy_rows)
+                if row == "❯ run the scripted checks"
+            )
+            assert echoed_row == tip_row + 2, "\n".join(
+                f"{index}: {row!r}" for index, row in enumerate(busy_rows)
+            )
             assert busy_rows[-4].startswith("Status:")
             assert busy_rows[-3] == ""
             assert busy_rows[-2].startswith("❯ Type to queue")
