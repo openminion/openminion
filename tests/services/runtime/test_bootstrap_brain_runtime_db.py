@@ -88,6 +88,8 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_and_artifact_ownership(
     session_db_path = tmp_path / "state" / "brain" / "sessions.db"
     expected_runtime_db_path = tmp_path / "state" / "brain" / "brain.db"
     turn_input_queue = object()
+    sandbox_runner = object()
+    security_lab_runner = object()
 
     service = SimpleNamespace(
         _config=config,
@@ -104,6 +106,9 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_and_artifact_ownership(
         _env=None,
         _vector_sync=None,
         _terminal_capture_writer=None,
+        _sandbox_runner=sandbox_runner,
+        _security_lab_runner=security_lab_runner,
+        _identity_security_lab_facts=lambda: {},
         _runtime_memory_assembly=SimpleNamespace(
             memctl=SimpleNamespace(),
             vector_adapter=SimpleNamespace(),
@@ -309,3 +314,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_and_artifact_ownership(
     assert context_factory.call_args.kwargs["artifactctl"] is expected_artifactctl
     assert context_factory.call_args.kwargs["owns_artifactctl"] is (mode == "auto")
     assert tool_api_factory.call_args.kwargs["artifactctl"] is expected_artifactctl
+    assert tool_api_factory.call_args.kwargs["sandbox_runner"] is sandbox_runner
+    assert (
+        tool_api_factory.call_args.kwargs["security_lab_runner"] is security_lab_runner
+    )

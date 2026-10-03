@@ -235,6 +235,7 @@ class RuntimeProfilesMixin:
     retrieve_ctl: object | None
     knowledge_graphs: object | None
     sandbox_runner: object | None
+    security_lab_runner: object | None
     authored_tools: object | None
     ops_service: OpsService | None
     runtime_manager: object
@@ -564,6 +565,8 @@ class RuntimeProfilesMixin:
                 telemetryctl=self.telemetryctl,
                 sessions=self.sessions,
                 runtime_memory_assembly=memory_assembly,
+                sandbox_runner=self.sandbox_runner,
+                security_lab_runner=self.security_lab_runner,
             )
             agent_service = cast(AgentService, service)
             self._bind_runtime_handle(agent_service, self)

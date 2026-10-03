@@ -78,6 +78,8 @@ from openminion.modules.runtime.sandboxes.daytona import (
     DaytonaRunner,
     DaytonaSdkTransport,
 )
+from openminion.modules.runtime.sandboxes.docker import DockerSandboxRunner
+from openminion.modules.runtime.sandboxes.security_lab import coerce_security_lab_config
 from openminion.services.runtime.errors import (
     PluginActivationError,
     RuntimeBootstrapError,
@@ -139,6 +141,17 @@ def build_daytona_runner(
     return DaytonaRunner(
         client=DaytonaClient(config=daytona_config, transport=DaytonaSdkTransport())
     )
+
+
+def build_security_lab_runner(
+    *,
+    config: OpenMinionConfig,
+) -> DockerSandboxRunner | None:
+    lab_config = coerce_security_lab_config(config.runtime.security_lab)
+    if lab_config is None:
+        return None
+    config.runtime.security_lab = lab_config
+    return DockerSandboxRunner.from_config(lab_config)
 
 
 def build_tool_authoring_service(
@@ -607,6 +620,11 @@ def _build_brain_task_manager(service: Any, cron_repository: Any) -> Any:
     return TaskManager.from_cron_repository(cron_repository, db_path=task_db_path)
 
 
+def _copy_optional_config_section(config: Any, name: str) -> Any | None:
+    value = getattr(config, name, None) if config is not None else None
+    return value.model_copy(deep=True) if value is not None else None
+
+
 def build_brain_runner_bundle(service: Any) -> Any:
     """BBSE-02: canonical bootstrap path for the bridge's runner bundle."""
     import openminion.services.brain.service as bridge_module
@@ -653,12 +671,12 @@ def build_brain_runner_bundle(service: Any) -> Any:
                 home_root=service._context.home_paths.home_root,
             )
         )
-
     session_api = bridge_module.create_session_api(
         mode=service.mode,
         db_path=service.db_path,
         telemetryctl=service._telemetryctl,
     )
+
     default_agent_id, default_profile, a2a_api, a2a_delegate_api = (
         _build_a2a_runtime_apis(
             service=service,
@@ -766,6 +784,9 @@ def build_brain_runner_bundle(service: Any) -> Any:
         scheduler_readiness=getattr(runtime_handle, "scheduler_readiness", None),
         telemetryctl=service._telemetryctl,
         artifactctl=artifactctl,
+        sandbox_runner=service._sandbox_runner,
+        security_lab_runner=service._security_lab_runner,
+        identity_security_lab_facts=service._identity_security_lab_facts,
     )
     service._validate_adapter_contracts(
         session_api=session_api,
@@ -790,28 +811,17 @@ def build_brain_runner_bundle(service: Any) -> Any:
     )
 
     pre_resolved_brain_config = service._resolve_brain_config()
-    profile_pae_config = (
-        pre_resolved_brain_config.proactive_autonomous_entrypoint.model_copy(deep=True)
-        if pre_resolved_brain_config is not None
-        and getattr(
-            pre_resolved_brain_config,
-            "proactive_autonomous_entrypoint",
-            None,
-        )
-        is not None
-        else None
+    profile_pae_config = _copy_optional_config_section(
+        pre_resolved_brain_config,
+        "proactive_autonomous_entrypoint",
     )
-    profile_afe_config = (
-        pre_resolved_brain_config.auto_fact_extraction.model_copy(deep=True)
-        if pre_resolved_brain_config is not None
-        and getattr(pre_resolved_brain_config, "auto_fact_extraction", None) is not None
-        else None
+    profile_afe_config = _copy_optional_config_section(
+        pre_resolved_brain_config,
+        "auto_fact_extraction",
     )
-    profile_aib_config = (
-        pre_resolved_brain_config.adaptive_budget.model_copy(deep=True)
-        if pre_resolved_brain_config is not None
-        and getattr(pre_resolved_brain_config, "adaptive_budget", None) is not None
-        else None
+    profile_aib_config = _copy_optional_config_section(
+        pre_resolved_brain_config,
+        "adaptive_budget",
     )
 
     from openminion.services.brain.service import _runtime_mode_config_from_agent
@@ -917,6 +927,8 @@ def build_agent_runtime_service(
     telemetryctl: Any | None = None,
     sessions: Any | None = None,
     runtime_memory_assembly: Any | None = None,
+    sandbox_runner: Any | None = None,
+    security_lab_runner: Any | None = None,
 ) -> tuple[object, str, str]:
     from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 
@@ -959,6 +971,8 @@ def build_agent_runtime_service(
             telemetryctl=telemetryctl,
             terminal_capture_writer=terminal_capture_writer,
             runtime_memory_assembly=runtime_memory_assembly,
+            sandbox_runner=sandbox_runner,
+            security_lab_runner=security_lab_runner,
         ),
         "brain",
         fallback_reason,

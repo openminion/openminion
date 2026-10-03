@@ -66,6 +66,8 @@ def build_default_runtime_stack(
         telemetryctl=infrastructure.get("telemetryctl"),
         sessions=runtime_storage.sessions,
         runtime_memory_assembly=infrastructure["runtime_memory_assembly"],
+        sandbox_runner=infrastructure["sandbox_runner"],
+        security_lab_runner=infrastructure["security_lab_runner"],
     )
     bind_mcp_sampling_executor(infrastructure["tools"], agent)
     gateway = build_gateway_service(
@@ -141,6 +143,7 @@ def finalize_runtime_instance(
         retrieve_ctl=infrastructure["retrieve_ctl"],
         knowledge_graphs=infrastructure["knowledge_graphs"],
         sandbox_runner=infrastructure["sandbox_runner"],
+        security_lab_runner=infrastructure["security_lab_runner"],
         authored_tools=infrastructure["authored_tools"],
         ops_service=infrastructure.get("ops_service"),
         runtime_manager=None,

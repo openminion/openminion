@@ -56,6 +56,7 @@ def initialize_runtime_components(
         tools=runtime_tools,
         runtime_storage=getattr(runtime, "runtime_storage", None),
         sandbox_runner=getattr(runtime, "sandbox_runner", None),
+        security_lab_runner=getattr(runtime, "security_lab_runner", None),
         authored_tools=getattr(runtime, "authored_tools", None),
         ops_service=getattr(runtime, "ops_service", None),
         telemetry_service=getattr(runtime, "telemetry_service", None),
@@ -96,6 +97,7 @@ def close_unregistered_runtime_components(runtime: object) -> None:
         tools=getattr(runtime, "tools", None),
         runtime_storage=getattr(runtime, "runtime_storage", None),
         sandbox_runner=getattr(runtime, "sandbox_runner", None),
+        security_lab_runner=getattr(runtime, "security_lab_runner", None),
         authored_tools=getattr(runtime, "authored_tools", None),
         ops_service=getattr(runtime, "ops_service", None),
         telemetry_service=getattr(runtime, "telemetry_service", None),
@@ -114,6 +116,7 @@ def close_runtime_components(
     runtime_storage: object | None,
     memory_assemblies: object | None = None,
     sandbox_runner: object | None = None,
+    security_lab_runner: object | None = None,
     authored_tools: object | None = None,
     ops_service: object | None = None,
     telemetry_service: object | None = None,
@@ -137,6 +140,7 @@ def close_runtime_components(
     _call(runtime_manager, "shutdown", grace_s=2)
     _call(lifecycle_bridge, "close")
     _call(sandbox_runner, "close")
+    _call(security_lab_runner, "close")
     _call(authored_tools, "close")
     _call(ops_service, "close")
     _call(getattr(tools, "mcp_manager", None), "close")

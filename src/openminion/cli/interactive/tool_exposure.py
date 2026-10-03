@@ -5,6 +5,61 @@ from __future__ import annotations
 import shlex
 from typing import Any
 
+from openminion.modules.tool.errors import ToolRuntimeError
+
+
+def _security_lab_status_rows(lab: dict[str, Any]) -> list[str]:
+    label = str(lab.get("label") or "")
+    target = str(lab.get("target") or "")
+    ready_detail = " → ".join(item for item in (label, target) if item)
+    detail = str(lab.get("reason") or ready_detail)
+    rows = [
+        f"Security lab: {lab.get('state', 'unavailable')}"
+        + (f" — {detail}" if detail else "")
+    ]
+    rows.append(
+        "  ".join(
+            (
+                f"activity={lab.get('activity_class', '')}",
+                f"activation={lab.get('activation_id', '') or '(inactive)'}",
+                f"scope={lab.get('scope', '') or '(unapproved)'}",
+            )
+        )
+    )
+    rows.append(
+        "  ".join(
+            (
+                f"daemon={lab.get('daemon_state', 'unavailable')}",
+                f"daemon_id={lab.get('daemon_id', '')}",
+                f"isolation={lab.get('isolation_mode', '')}",
+            )
+        )
+    )
+    rows.append(
+        f"  target={target}"
+        f"  target_id={lab.get('target_container_id', '')}"
+        f"  image={lab.get('target_image_id', '')}"
+    )
+    rows.append(f"  worker={lab.get('worker_image_digest', '')}")
+    rows.append(f"  tools={', '.join(lab.get('allowed_tools', [])) or '(none)'}")
+    rows.append(
+        "  executables=" + (", ".join(lab.get("executable_allowlist", [])) or "(none)")
+    )
+    limits = lab.get("limits") or {}
+    rows.append(
+        "  limits="
+        f"{limits.get('timeout_seconds', '')}s, "
+        f"{limits.get('max_output_bytes', '')} bytes output, "
+        f"{limits.get('cpu', '')} CPU, "
+        f"{limits.get('memory_bytes', '')} bytes memory, "
+        f"{limits.get('pids', '')} PIDs"
+    )
+    if lab.get("approved_by"):
+        rows.append(
+            f"  approved_by={lab['approved_by']}  expires={lab.get('expires_at', '')}"
+        )
+    return rows
+
 
 def tool_exposure_command(runtime: Any, text: str) -> str:
     try:
@@ -65,6 +120,9 @@ def tool_exposure_command(runtime: Any, text: str) -> str:
             profile.get("dependency_readiness") == "degraded" for profile in profiles
         ) or any(tool.get("dependency_readiness") == "degraded" for tool in unprofiled):
             rows.append("Run /tools status again after operator setup.")
+        lab = snapshot.get("security_lab", {})
+        if lab.get("state") != "not_configured":
+            rows.extend(_security_lab_status_rows(lab))
         return "Tool exposure profiles:\n" + ("\n".join(rows) or "(none)")
     if action not in {"activate", "deactivate"} or len(parts) < 3:
         return (
@@ -95,7 +153,7 @@ def tool_exposure_command(runtime: Any, text: str) -> str:
             approved_by=options.get("approved_by", ""),
             policy_source=options.get("policy_source", ""),
         )
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, ToolRuntimeError) as exc:
         return f"Activation denied: {exc}"
     return f"Activated: {activation['profile_id']} ({activation['audit_id']})"
 

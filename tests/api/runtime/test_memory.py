@@ -114,6 +114,7 @@ def test_runtime_exposes_same_memory_adapter(monkeypatch) -> None:
         "retrieve_ctl": object(),
         "knowledge_graphs": object(),
         "sandbox_runner": object(),
+        "security_lab_runner": object(),
         "authored_tools": object(),
         "default_agent": default_agent,
     }

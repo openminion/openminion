@@ -36,6 +36,11 @@ class AgentServiceTurnFlowAdapter:
         return str(getattr(self._service, "_identity_agent_id", "") or "")
 
     @property
+    def identity_security_lab_facts(self) -> dict[str, Any]:
+        resolver = getattr(self._service, "_identity_security_lab_facts", None)
+        return resolver() if resolver is not None else {}
+
+    @property
     def config(self) -> Any:
         return getattr(self._service, "_config", None)
 

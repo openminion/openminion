@@ -37,6 +37,7 @@ from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
 from openminion.services.runtime.bootstrap import (
     build_action_policy_service,
     build_daytona_runner,
+    build_security_lab_runner,
     build_knowledge_graph_source_service,
     build_session_context_service,
     build_tool_authoring_service,
@@ -318,6 +319,7 @@ def _build_runtime_support(
     memory_assembly.start()
     knowledge_graphs = build_knowledge_graph_source_service(config=base_config)
     sandbox_runner = build_daytona_runner(config=base_config, config_manager=manager)
+    security_lab_runner = build_security_lab_runner(config=base_config)
     authored_tools = build_tool_authoring_service(
         config=base_config,
         data_root=paths.data,
@@ -333,5 +335,6 @@ def _build_runtime_support(
         "vector_adapter": vector_adapter,
         "knowledge_graphs": knowledge_graphs,
         "sandbox_runner": sandbox_runner,
+        "security_lab_runner": security_lab_runner,
         "authored_tools": authored_tools,
     }

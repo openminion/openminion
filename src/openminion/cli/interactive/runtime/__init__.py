@@ -213,6 +213,12 @@ class OpenMinionRuntime(
     def project_context(self) -> ProjectContextInfo | None:
         return self._project_context
 
+    @property
+    def security_lab_required(self) -> bool:
+        config = getattr(getattr(self._rt, "config", None), "runtime", None)
+        lab = getattr(config, "security_lab", None)
+        return bool(lab is not None and self.agent_id == lab.agent_identity_id)
+
     def execute_goal_command(self, line: str) -> tuple[str, str]:
         if not self.is_bound:
             return ("error", "No active session for /goal.")
@@ -391,7 +397,7 @@ class OpenMinionRuntime(
         return pairs
 
     def tool_exposure_status(self) -> dict[str, Any]:
-        return self._rt.tool_exposure_status(session_id=self._turn_session_id())
+        return self._rt.tool_exposure_status(session_id=self.session_id)
 
     def activate_tool_profile(
         self,
@@ -409,7 +415,7 @@ class OpenMinionRuntime(
     ) -> dict[str, Any]:
         return self._rt.activate_tool_profile(
             profile_id,
-            session_id=self._turn_session_id(),
+            session_id=self.session_id,
             target_id=target_id,
             target_kind=target_kind,
             credential_scopes=credential_scopes,
@@ -429,7 +435,7 @@ class OpenMinionRuntime(
     ) -> bool:
         return self._rt.deactivate_tool_profile(
             profile_id,
-            session_id=self._turn_session_id(),
+            session_id=self.session_id,
             target_id=target_id,
         )
 
@@ -534,6 +540,8 @@ class OpenMinionRuntime(
         return session.id
 
     def set_project_context(self, info: ProjectContextInfo | None) -> None:
+        if info is not None and self.security_lab_required:
+            raise ValueError("security lab Focus requires --no-context")
         self._project_context = info
         self._project_context_pending = info is not None and self.is_bound
 
@@ -651,7 +659,7 @@ class OpenMinionRuntime(
             merged[ACTION_POLICY_SESSION_OVERRIDE_KEY] = (
                 self.action_policy_mode_override
             )
-        if self._added_workspace_roots:
+        if self._added_workspace_roots and not self.security_lab_required:
             merged["openminion_ephemeral_workspace_roots"] = json.dumps(
                 self._added_workspace_roots
             )
@@ -779,7 +787,22 @@ class OpenMinionRuntime(
         inbound_metadata: dict[str, str] | None,
     ) -> dict[str, str] | None:
         merged = dict(inbound_metadata or {})
-        if self._working_dir:
+        if self.security_lab_required:
+            for key in list(merged):
+                if key in {
+                    "cwd",
+                    "workspace_root",
+                    "working_dir",
+                    "openminion_ephemeral_workspace_roots",
+                } or key.startswith("project_context_"):
+                    merged.pop(key, None)
+            merged.update(
+                lab_required="true",
+                cwd="/workspace",
+                workspace_root="/workspace",
+            )
+            self._project_context_pending = False
+        elif self._working_dir:
             merged["workspace_root"] = self._working_dir
             merged["cwd"] = self._working_dir
         if self._project_context_pending and self._project_context is not None:
@@ -884,7 +907,13 @@ class OpenMinionRuntime(
 
     def _session_metadata_patch(self) -> dict[str, Any]:
         patch: dict[str, Any] = {}
-        if self._working_dir:
+        if self.security_lab_required:
+            patch.update(
+                lab_required="true",
+                workspace_root="/workspace",
+                cwd="/workspace",
+            )
+        elif self._working_dir:
             patch["working_dir"] = self._working_dir
             patch["workspace_root"] = self._working_dir
             patch["cwd"] = self._working_dir

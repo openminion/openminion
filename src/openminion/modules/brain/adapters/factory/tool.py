@@ -27,6 +27,9 @@ def create_tool_adapter(
     scheduler_readiness: Callable[[], dict[str, Any]] | None = None,
     telemetryctl: Any | None = None,
     artifactctl: Any | None = None,
+    sandbox_runner: Any | None = None,
+    security_lab_runner: Any | None = None,
+    identity_security_lab_facts: Callable[[], dict[str, Any]] | None = None,
 ) -> Any:
     from openminion.modules.brain.adapters.tool import LocalToolAdapter
 
@@ -56,6 +59,9 @@ def create_tool_adapter(
             scheduler_readiness=scheduler_readiness,
             telemetryctl=telemetryctl,
             artifactctl=artifactctl,
+            sandbox_runner=sandbox_runner,
+            security_lab_runner=security_lab_runner,
+            identity_security_lab_facts=identity_security_lab_facts,
         )
     except ImportError:
         raise_if_strict(mode)

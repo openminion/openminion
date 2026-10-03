@@ -40,6 +40,7 @@ class ExecResult:
     stdout: str
     stderr: str
     timed_out: bool = False
+    execution_details: object | None = None
 
 
 @dataclass

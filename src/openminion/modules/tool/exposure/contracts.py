@@ -119,6 +119,16 @@ class ToolExposureSession:
     activation_reason: str = ""
     approved_by: str = ""
     policy_source: str = ""
+    agent_id: str = ""
+    profile_revision: int = 0
+    profile_version: str = ""
+    config_fingerprint: str = ""
+    resolved_scope_fingerprint: str = ""
+    daemon_id: str = ""
+    target_container_id: str = ""
+    target_image_id: str = ""
+    worker_image_digest: str = ""
+    isolation_mode: str = ""
 
 
 @dataclass(frozen=True)

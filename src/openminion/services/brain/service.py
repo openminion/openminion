@@ -266,6 +266,8 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         telemetryctl: TelemetryCtl | None = None,
         terminal_capture_writer: Any | None = None,
         runtime_memory_assembly: Any | None = None,
+        sandbox_runner: Any | None = None,
+        security_lab_runner: Any | None = None,
     ) -> None:
         super().__init__(
             config=config,
@@ -291,6 +293,8 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             action_policy_service=action_policy_service,
             terminal_capture_writer=terminal_capture_writer,
             runtime_memory_assembly=runtime_memory_assembly,
+            sandbox_runner=sandbox_runner,
+            security_lab_runner=security_lab_runner,
         )
         self._init_bridge_telemetry(config=config, telemetryctl=telemetryctl)
         self._context = BrainBridgeContext(
@@ -316,6 +320,8 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         action_policy_service: Any | None,
         terminal_capture_writer: Any | None,
         runtime_memory_assembly: Any | None,
+        sandbox_runner: Any | None,
+        security_lab_runner: Any | None,
     ) -> None:
         self.mode = mode
         self.db_path = db_path
@@ -324,6 +330,8 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         self._action_policy_service = action_policy_service
         self._terminal_capture_writer = terminal_capture_writer
         self._runtime_memory_assembly = runtime_memory_assembly
+        self._sandbox_runner = sandbox_runner
+        self._security_lab_runner = security_lab_runner
         runtime_env = config.runtime.env
         self._env = (
             config_manager.env

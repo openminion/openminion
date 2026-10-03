@@ -1,10 +1,18 @@
 """Typed security scan requests and normalized evidence."""
 
 import json
+import re
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    field_validator,
+    model_validator,
+)
 
 ScanStatus = Literal[
     "completed",
@@ -256,6 +264,99 @@ class SecurityAuditReport(BaseModel):
     evidence_refs: list[str]
 
 
+class SecurityLabFindingLocation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    component: str = Field(min_length=1, max_length=200)
+    path: str = Field(min_length=1, max_length=500)
+    method: (
+        Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] | None
+    ) = None
+    parameter: str | None = Field(default=None, min_length=1, max_length=120)
+
+    @field_validator("path")
+    @classmethod
+    def _request_path(cls, value: str) -> str:
+        if (
+            not value.startswith("/")
+            or "://" in value
+            or "\r" in value
+            or "\n" in value
+        ):
+            raise ValueError(
+                "active finding path must be a target-relative request path"
+            )
+        return value
+
+
+class SecurityLabFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+    disposition: Literal["candidate", "rejected"]
+    title: str = Field(min_length=1, max_length=300)
+    category: str = Field(min_length=1, max_length=120)
+    severity: Literal["critical", "high", "medium", "low", "informational"]
+    confidence: Literal["high", "medium", "low"]
+    explanation: str = Field(min_length=1, max_length=4000)
+    evidence_ref: str = Field(pattern=_CANONICAL_REF_PATTERN)
+    location: SecurityLabFindingLocation
+
+
+class SecurityLabPublishArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    activity_class: Literal["local_lab_active"]
+    objective: str = Field(min_length=1, max_length=1000)
+    validation_evidence: list[str] = Field(min_length=1, max_length=20)
+    findings: list[SecurityLabFinding] = Field(default_factory=list, max_length=50)
+    summary: str = Field(min_length=1, max_length=4000)
+    limitations: str = Field(default="", max_length=4000)
+
+    @field_validator("validation_evidence")
+    @classmethod
+    def _canonical_unique_refs(cls, refs: list[str]) -> list[str]:
+        if len(refs) != len(set(refs)):
+            raise ValueError("validation_evidence values must be unique")
+        if any(re.fullmatch(_CANONICAL_REF_PATTERN, ref) is None for ref in refs):
+            raise ValueError("validation_evidence values must be canonical refs")
+        return refs
+
+    @model_validator(mode="after")
+    def _unique_findings_and_known_refs(self) -> "SecurityLabPublishArgs":
+        finding_ids = [finding.finding_id for finding in self.findings]
+        if len(finding_ids) != len(set(finding_ids)):
+            raise ValueError("finding_id values must be unique")
+        evidence = set(self.validation_evidence)
+        if any(finding.evidence_ref not in evidence for finding in self.findings):
+            raise ValueError(
+                "finding evidence_ref must be listed in validation_evidence"
+            )
+        return self
+
+
+class SecurityReportPublishArgs(
+    RootModel[SecurityAuditPublishArgs | SecurityLabPublishArgs]
+):
+    pass
+
+
+class SecurityLabReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["security-audit-report/v2"] = "security-audit-report/v2"
+    assessment_id: str
+    activity_class: Literal["local_lab_active"] = "local_lab_active"
+    objective: str
+    target: dict[str, str]
+    execution_status: Literal["completed", "partial"]
+    review_status: Literal["unreviewed"] = "unreviewed"
+    summary: str
+    limitations: str
+    findings: list[dict[str, Any]]
+    evidence_refs: list[str]
+
+
 __all__ = [
     "FindingLocation",
     "LocalScanArgs",
@@ -269,6 +370,11 @@ __all__ = [
     "SecurityAuditPublishArgs",
     "SecurityAuditReport",
     "SecurityAuditScope",
+    "SecurityLabFinding",
+    "SecurityLabFindingLocation",
+    "SecurityLabPublishArgs",
+    "SecurityLabReport",
+    "SecurityReportPublishArgs",
     "SecurityConfigurationIdentity",
     "SecurityFinding",
     "SecurityScanResult",

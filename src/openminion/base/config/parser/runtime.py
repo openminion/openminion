@@ -223,6 +223,7 @@ def _runtime_special_values(payload: dict[str, Any]) -> dict[str, Any]:
             payload.get("plugins"), field_path="system.runtime.plugins"
         ),
         "ops": dict(payload.get("ops", {})),
+        "security_lab": payload.get("security_lab"),
         "mcp_servers": coerce_mcp_server_configs(payload.get("mcp_servers")),
         "mcp_publish": coerce_mcp_publish_config(payload.get("mcp_publish")),
         "mcp_sampling_mode": normalize_mcp_sampling_mode(
@@ -320,6 +321,7 @@ def _runtime_config_to_payload(
         variant = dict(config.trailer_guidance_variant or {})
         payload["trailer_guidance_variant"] = variant
     optional_policies = {
+        "security_lab": _config_value_to_payload(config.security_lab),
         "provider_policy": provider_runtime_policy_to_dict(config.provider_policy),
         "thinking_policy": thinking_runtime_policy_to_dict(config.thinking_policy),
         "modes": mode_runtime_policy_to_dict(config.modes),
@@ -337,6 +339,7 @@ def _system_runtime_mirror(config: RuntimeConfig) -> dict[str, Any]:
         "modes": mode_runtime_policy_to_dict(config.modes),
         "plugins": plugin_runtime_policy_to_dict(config.plugins),
         "ops": _config_value_to_payload(config.ops),
+        "security_lab": _config_value_to_payload(config.security_lab),
     }
     if config.has_tool_schema_shortlisting_enabled:
         system_payload["tool_schema_shortlisting_enabled"] = bool(
