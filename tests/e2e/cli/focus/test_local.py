@@ -112,7 +112,10 @@ def test_focus_slash_completion_menu_shows_command_names_only(
 
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            if any(row.strip() == "/project" for row in session.screen_lines):
+            screen_rows = session.screen_lines
+            if "❯ /pro" in screen_rows and any(
+                row.strip() == "/project" for row in screen_rows
+            ):
                 break
             time.sleep(0.05)
         else:
@@ -156,7 +159,7 @@ def test_focus_full_slash_menu_preserves_visible_transcript(
             time.sleep(0.05)
         else:
             raise AssertionError("startup slash menu did not open")
-        assert startup_rows[0] == _occupied_rows(session)[0]
+        assert startup_rows[:-2] == _occupied_rows(session)[: len(startup_rows) - 2]
         session.send("\x15")
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -165,7 +168,7 @@ def test_focus_full_slash_menu_preserves_visible_transcript(
             time.sleep(0.05)
         else:
             raise AssertionError("startup slash menu did not close")
-        assert startup_rows == _occupied_rows(session)
+        assert startup_rows[:-2] == _occupied_rows(session)[:-2]
 
         focus_probe.run_slash(session, "/help", marker="Use /help")
         session.send("/")
@@ -609,7 +612,7 @@ def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
         focus_probe.run_turn(
             session,
             FocusScenario(
-                scenario_id="local_bottom_layout",
+                scenario_id="local_inline_layout",
                 prompt="Reply with exactly: footer layout check",
                 expected_markers=("footer layout check",),
                 timeout=60,
@@ -633,6 +636,7 @@ def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
             f"{index}: {line!r}" for index, line in enumerate(screen_rows)
         )
         assert len(matching_rows) >= 2
+        assert matching_rows[1] == matching_rows[0] + 2
         assert matching_rows[0] < matching_rows[1] < len(_occupied_rows(session)) - 2
         assert_blank_row_after(
             screen_rows,
@@ -701,7 +705,7 @@ def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
         focus_probe.run_turn(
             session,
             FocusScenario(
-                scenario_id="local_bottom_layout_after_resize",
+                scenario_id="local_inline_layout_after_resize",
                 prompt="Reply with exactly: second layout check",
                 expected_markers=("second layout check",),
                 timeout=60,

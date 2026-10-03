@@ -381,6 +381,6 @@ def test_live_focus_typeahead_stays_in_inline_composer_while_busy(
         session.send("\x7f" * len(draft))
         write_transcript(
             artifact_root(tmp_path),
-            "live-typeahead-terminal-edge",
+            "live-typeahead-inline-composer",
             session.transcript,
         )
