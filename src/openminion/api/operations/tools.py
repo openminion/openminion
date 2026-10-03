@@ -35,7 +35,8 @@ def _security_lab_tool_context(
     agent_id = str(session.owner_agent_id or resolve_default_agent_id(runtime.config))
     agent_service = runtime.resolve_agent_service(agent_id)
     identity = cast(
-        dict[str, Any], agent_service._identity_security_lab_facts()  # noqa: SLF001
+        dict[str, Any],
+        agent_service._identity_security_lab_facts(),  # noqa: SLF001
     )
     lab_runner = getattr(runtime, "security_lab_runner", None)
 

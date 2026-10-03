@@ -474,7 +474,9 @@ def test_direct_api_tool_run_keeps_security_lab_context(
     )
     assert len(contexts) == 1
 
-    identity.update(tool_use="all", allowed_tools=(*identity["allowed_tools"], "weather"))
+    identity.update(
+        tool_use="all", allowed_tools=(*identity["allowed_tools"], "weather")
+    )
     drift_status, drift_payload, _session_id = execute_tool_run(
         runtime=runtime,
         tool_name="weather",

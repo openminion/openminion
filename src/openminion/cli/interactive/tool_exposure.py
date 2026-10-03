@@ -43,8 +43,7 @@ def _security_lab_status_rows(lab: dict[str, Any]) -> list[str]:
     rows.append(f"  worker={lab.get('worker_image_digest', '')}")
     rows.append(f"  tools={', '.join(lab.get('allowed_tools', [])) or '(none)'}")
     rows.append(
-        "  executables="
-        + (", ".join(lab.get("executable_allowlist", [])) or "(none)")
+        "  executables=" + (", ".join(lab.get("executable_allowlist", [])) or "(none)")
     )
     limits = lab.get("limits") or {}
     rows.append(
