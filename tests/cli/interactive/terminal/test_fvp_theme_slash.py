@@ -207,7 +207,12 @@ def test_composer_and_shared_messages_follow_live_theme_switch() -> None:
         assert "noreverse" in dark_rules["placeholder"]
         assert "italic" not in dark_rules["placeholder"]
         assert LIGHT.surface_panel_bg in light_rules["bottom-toolbar"]
-        assert LIGHT.text_accent in str(render_user_text("hello").style)
+        user_text = render_user_text("hello")
+        assert user_text.plain == "❯ hello"
+        assert LIGHT.text_accent in str(user_text.spans[0].style)
+        assert "dim" in str(user_text.spans[0].style)
+        assert LIGHT.text_secondary in str(user_text.spans[1].style)
+        assert "dim" not in str(user_text.spans[1].style)
         assert LIGHT.text_muted in str(render_system_text("notice").style)
         assert LIGHT.state_error in str(render_error_text("failure").style)
     finally:
