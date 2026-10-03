@@ -8,6 +8,39 @@ from typing import Any
 from openminion.modules.tool.errors import ToolRuntimeError
 
 
+def _security_lab_status_rows(lab: dict[str, Any]) -> list[str]:
+    detail = str(lab.get("reason") or lab.get("target") or "")
+    rows = [
+        f"Security lab: {lab.get('state', 'unavailable')}"
+        + (f" ({detail})" if detail else "")
+    ]
+    rows.append(
+        "  ".join(
+            (
+                f"daemon={lab.get('daemon_state', 'unavailable')}",
+                f"target={lab.get('target_container_id') or lab.get('target', '')}",
+                f"isolation={lab.get('isolation_mode', '')}",
+            )
+        )
+    )
+    rows.append(f"  worker={lab.get('worker_image_digest', '')}")
+    rows.append(f"  tools={', '.join(lab.get('allowed_tools', [])) or '(none)'}")
+    limits = lab.get("limits") or {}
+    rows.append(
+        "  limits="
+        f"{limits.get('timeout_seconds', '')}s, "
+        f"{limits.get('max_output_bytes', '')} bytes output, "
+        f"{limits.get('cpu', '')} CPU, "
+        f"{limits.get('memory_bytes', '')} bytes memory, "
+        f"{limits.get('pids', '')} PIDs"
+    )
+    if lab.get("approved_by"):
+        rows.append(
+            f"  approved_by={lab['approved_by']}  expires={lab.get('expires_at', '')}"
+        )
+    return rows
+
+
 def tool_exposure_command(runtime: Any, text: str) -> str:
     try:
         parts = shlex.split(text)
@@ -69,11 +102,7 @@ def tool_exposure_command(runtime: Any, text: str) -> str:
             rows.append("Run /tools status again after operator setup.")
         lab = snapshot.get("security_lab", {})
         if lab.get("state") != "not_configured":
-            detail = str(lab.get("reason") or lab.get("target") or "")
-            rows.append(
-                f"Security lab: {lab.get('state', 'unavailable')}"
-                + (f" ({detail})" if detail else "")
-            )
+            rows.extend(_security_lab_status_rows(lab))
         return "Tool exposure profiles:\n" + ("\n".join(rows) or "(none)")
     if action not in {"activate", "deactivate"} or len(parts) < 3:
         return (

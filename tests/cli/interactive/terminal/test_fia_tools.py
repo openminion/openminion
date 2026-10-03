@@ -31,7 +31,25 @@ class _FakeRuntime:
                     "tier": "read",
                     "active": self.active,
                 }
-            ]
+            ],
+            "security_lab": {
+                "state": "ready",
+                "target": "security-target",
+                "target_container_id": "target-id",
+                "daemon_state": "ready",
+                "isolation_mode": "target-network-namespace",
+                "worker_image_digest": "worker@sha256:digest",
+                "allowed_tools": ["exec.run", "security.publish_report"],
+                "limits": {
+                    "timeout_seconds": 30,
+                    "max_output_bytes": 4096,
+                    "cpu": 0.5,
+                    "memory_bytes": 67108864,
+                    "pids": 32,
+                },
+                "approved_by": "operator-1",
+                "expires_at": "2030-01-01T00:00:00Z",
+            },
         }
 
     def activate_tool_profile(self, profile_id: str, **kwargs: Any) -> dict[str, str]:
@@ -125,6 +143,9 @@ def test_slash_tools_dispatches_exposure_commands() -> None:
     )
 
     assert "hidden  security_readonly  (read)" in status
+    assert "daemon=ready" in status
+    assert "tools=exec.run, security.publish_report" in status
+    assert "approved_by=operator-1" in status
     assert "Activated: security_readonly (audit-1)" in activated
 
 

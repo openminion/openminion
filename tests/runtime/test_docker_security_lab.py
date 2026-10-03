@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import subprocess
-from types import MethodType
+from types import MethodType, SimpleNamespace
 
 import pytest
 
@@ -14,11 +14,13 @@ from openminion.base.runtime.sandbox import (
 )
 from openminion.modules.runtime.sandboxes.security_lab import (
     SecurityLabConfig,
+    SecurityLabExecutionDetails,
     SecurityLabExecutionScope,
     SecurityLabExecutionSpec,
     coerce_security_lab_config,
 )
 from openminion.modules.runtime.sandboxes.docker import (
+    DockerLabScope,
     DockerSandboxError,
     DockerSandboxRunner,
 )
@@ -90,13 +92,14 @@ def _fake_control(runner: DockerSandboxRunner, target: dict[str, object]):
         if args[:1] == ("info",):
             return _completed({"ID": "daemon-local"})
         if args[:2] == ("container", "inspect"):
-            return _completed([target])
+            return _completed([{"Mounts": []}] if args[2] == "worker-123" else [target])
         if args[:2] == ("image", "inspect"):
             return _completed(
                 [
                     {
                         "Id": "sha256:" + "c" * 64,
                         "RepoDigests": [_IMAGE],
+                        "Config": {"Volumes": None},
                     }
                 ]
             )
@@ -240,7 +243,7 @@ def test_run_uses_exact_direct_argv_and_always_removes_worker() -> None:
         for value in create
     )
     assert "/var/run/docker.sock" not in create
-    assert calls[-1] == ("rm", "--force", "worker-123")
+    assert calls[-1] == ("rm", "--force", "--volumes", "worker-123")
 
 
 def test_run_removes_worker_when_execution_fails() -> None:
@@ -260,7 +263,7 @@ def test_run_removes_worker_when_execution_fails() -> None:
             )
     finally:
         runner.close()
-    assert calls[-1] == ("rm", "--force", "worker-123")
+    assert calls[-1] == ("rm", "--force", "--volumes", "worker-123")
 
 
 @pytest.mark.parametrize(
@@ -293,6 +296,101 @@ def test_preflight_rejects_worker_digest_drift() -> None:
             runner.preflight()
     finally:
         runner.close()
+
+
+def test_preflight_rejects_worker_image_declared_volumes() -> None:
+    runner = DockerSandboxRunner(_config(), docker_binary="/usr/bin/docker")
+    _fake_control(runner, _target())
+    original = runner._command
+
+    def command(self, *args: str, check: bool = True):
+        if args[:2] == ("image", "inspect"):
+            return _completed(
+                [
+                    {
+                        "Id": "sha256:" + "c" * 64,
+                        "RepoDigests": [_IMAGE],
+                        "Config": {"Volumes": {"/evidence": {}}},
+                    }
+                ]
+            )
+        return original(*args, check=check)
+
+    runner._command = MethodType(command, runner)  # type: ignore[method-assign]
+    try:
+        with pytest.raises(DockerSandboxError, match="persistent volumes"):
+            runner.preflight()
+    finally:
+        runner.close()
+
+
+def test_run_rejects_unexpected_worker_mount_and_removes_volume() -> None:
+    runner = DockerSandboxRunner(_config(), docker_binary="/usr/bin/docker")
+    calls = _fake_control(runner, _target())
+    original = runner._command
+
+    def command(self, *args: str, check: bool = True):
+        if args[:3] == ("container", "inspect", "worker-123"):
+            calls.append(args)
+            return _completed(
+                [{"Mounts": [{"Type": "volume", "Destination": "/evidence"}]}]
+            )
+        return original(*args, check=check)
+
+    runner._command = MethodType(command, runner)  # type: ignore[method-assign]
+    try:
+        with pytest.raises(DockerSandboxError, match="unexpected mount"):
+            runner.run_exec(
+                ExecSpec(cmd=["curl", "http://127.0.0.1"], cwd="/workspace"),
+                _execution_spec(runner),
+            )
+    finally:
+        runner.close()
+    assert calls[-1] == ("rm", "--force", "--volumes", "worker-123")
+
+
+def test_worker_reports_observed_memory_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = DockerSandboxRunner(_config(), docker_binary="/usr/bin/docker")
+    process = SimpleNamespace(returncode=137)
+    monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: process)
+    runner._read_bounded = MethodType(  # type: ignore[method-assign]
+        lambda self, _process, **_kwargs: (
+            b"",
+            b"",
+            {"stdout": 0, "stderr": 0},
+            False,
+            False,
+        ),
+        runner,
+    )
+    runner._single_inspect = MethodType(  # type: ignore[method-assign]
+        lambda self, _kind, _identity: {"State": {"OOMKilled": True}}, runner
+    )
+    scope = DockerLabScope(
+        daemon_id="daemon-local",
+        target_container_id="target-id",
+        target_image_id="target-image",
+        worker_image_id="worker-image-id",
+        worker_image_digest=_IMAGE,
+        config_fingerprint="c" * 64,
+        resolved_scope_fingerprint="s" * 64,
+    )
+    try:
+        result = runner._start_worker(  # noqa: SLF001
+            "worker-123",
+            scope=scope,
+            spec=ExecSpec(cmd=["curl", "http://127.0.0.1"], cwd="/workspace"),
+            timeout=10,
+            output_limit=4096,
+        )
+    finally:
+        runner.close()
+
+    assert isinstance(result.execution_details, SecurityLabExecutionDetails)
+    assert result.execution_details.terminated is True
+    assert result.execution_details.limit_reason == "memory"
 
 
 def test_run_refuses_stale_worker_before_create() -> None:

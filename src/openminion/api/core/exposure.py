@@ -18,6 +18,8 @@ from openminion.modules.tool.exposure.service import (
 )
 from openminion.modules.tool.exposure.contracts import ToolExposureSession
 
+ToolExposureError = ToolRuntimeError
+
 
 def _security_lab_activation(
     runtime: Any,
@@ -166,43 +168,69 @@ class RuntimeToolExposureMixin:
         config = getattr(getattr(self, "config"), "runtime").security_lab
         if config is None:
             return {"state": "not_configured"}
+        runner = getattr(self, "security_lab_runner", None)
+        service = getattr(self, "resolve_agent_service")(config.agent_identity_id)
+        identity = service._identity_security_lab_facts()  # noqa: SLF001
+        status: dict[str, Any] = {
+            "state": "unavailable",
+            "label": config.label,
+            "target": config.target_container,
+            "worker_image_digest": config.worker_image,
+            "isolation_mode": "target-network-namespace",
+            "allowed_tools": sorted(identity.get("allowed_tools", ())),
+            "limits": {
+                "timeout_seconds": config.command_timeout_seconds,
+                "max_output_bytes": config.max_output_bytes,
+                "cpu": config.cpu_limit,
+                "memory_bytes": config.memory_bytes,
+                "pids": config.pids_limit,
+            },
+        }
+        try:
+            scope = runner.preflight() if runner is not None else None
+        except RuntimeError as exc:
+            status.update(daemon_state="unavailable", daemon_reason=str(exc))
+        else:
+            status["daemon_state"] = "ready" if scope is not None else "unavailable"
+            if scope is not None:
+                status.update(
+                    daemon_id=scope.daemon_id,
+                    target_container_id=scope.target_container_id,
+                    target_image_id=scope.target_image_id,
+                    worker_image_digest=scope.worker_image_digest,
+                )
         sessions = getattr(self, "sessions")
         session = sessions.get_session(session_id) if session_id else None
         if session is None:
-            return {
-                "state": "unavailable",
-                "reason": "existing session required",
-                "label": config.label,
-                "target": config.target_container,
-            }
+            status["reason"] = "existing session required"
+            return status
         if (
             is_room_session_key(str(session.session_key or ""))
             or str(session.owner_agent_id or "") != config.agent_identity_id
         ):
-            return {
-                "state": "unavailable",
-                "reason": "session is not bound to the configured lab agent",
-                "label": config.label,
-                "target": config.target_container,
-            }
-        service = getattr(self, "resolve_agent_service")(config.agent_identity_id)
+            status["reason"] = "session is not bound to the configured lab agent"
+            return status
         tools = getattr(self, "tools")
         metadata = resolve_security_lab_metadata(
             tools.exposure_service,
             config=config,
-            runner=getattr(self, "security_lab_runner", None),
-            identity=service._identity_security_lab_facts(),  # noqa: SLF001
+            runner=runner,
+            identity=identity,
             session_id=session_id,
         )
-        return {
-            "state": str(metadata.get("security_lab_state", "unavailable")),
-            "reason": str(metadata.get("security_lab_reason", "")),
-            "label": config.label,
-            "target": config.target_container,
-            "activation_id": str(metadata.get("activation_id", "")),
-            "expires_at": str(metadata.get("activation_expires_at", "")),
-            "scope": str(metadata.get("resolved_scope_fingerprint", "")),
-        }
+        status.update(
+            state=str(metadata.get("security_lab_state", "unavailable")),
+            reason=str(metadata.get("security_lab_reason", "")),
+            activation_id=str(metadata.get("activation_id", "")),
+            expires_at=str(metadata.get("activation_expires_at", "")),
+            scope=str(metadata.get("resolved_scope_fingerprint", "")),
+        )
+        if status["state"] == "ready":
+            activation = tools.exposure_service.resolve_exact_activation(
+                "security_lab", session_id=session_id
+            )
+            status["approved_by"] = activation.approved_by
+        return status
 
     def activate_tool_profile(
         self,

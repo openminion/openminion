@@ -27,21 +27,24 @@ class ToolExecutionContextBuilder:
     identity_security_lab_facts: Callable[[], dict[str, Any]] | None
     exposure_service: Any
 
-    def project_security_lab(self, metadata: dict[str, Any], session_id: str) -> None:
+    def security_lab_metadata(self, session_id: str) -> dict[str, Any]:
         identity = (
             self.identity_security_lab_facts()
             if self.identity_security_lab_facts is not None
             else {}
         )
+        return resolve_security_lab_metadata(
+            self.exposure_service,
+            config=self.security_lab_config,
+            runner=self.security_lab_runner,
+            identity=identity,
+            session_id=session_id,
+        )
+
+    def project_security_lab(self, metadata: dict[str, Any], session_id: str) -> None:
         project_security_lab_metadata(
             metadata,
-            resolve_security_lab_metadata(
-                self.exposure_service,
-                config=self.security_lab_config,
-                runner=self.security_lab_runner,
-                identity=identity,
-                session_id=session_id,
-            ),
+            self.security_lab_metadata(session_id),
         )
 
     def build(
@@ -86,6 +89,7 @@ class ToolExecutionContextBuilder:
             memory_service=self.memory_service,
             sandbox_runner=self.sandbox_runner,
             security_lab_runner=self.security_lab_runner,
+            security_lab_metadata=lambda: self.security_lab_metadata(session_id),
             confirm=bool(replay_confirmation_metadata),
         )
 

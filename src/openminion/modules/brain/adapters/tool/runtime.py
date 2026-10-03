@@ -220,6 +220,22 @@ class ToolAdapter:
         )
         return context_metadata
 
+    def _project_execution_context(
+        self,
+        policy: Policy,
+        *,
+        session_id: str,
+        orchestration_metadata: dict[str, Any],
+        replay_confirmation_metadata: dict[str, str],
+    ) -> None:
+        policy_raw = getattr(policy, "raw", None)
+        if not isinstance(policy_raw, dict):
+            return
+        policy_raw["agent_id"] = self.agent_id
+        _merge_orchestration_context_metadata(policy_raw, orchestration_metadata)
+        context_metadata = self._project_security_lab_context(policy_raw, session_id)
+        context_metadata.update(replay_confirmation_metadata)
+
     def close(self) -> None:
         if self.secret_service is not None:
             secret_service = self.secret_service
@@ -431,21 +447,12 @@ class ToolAdapter:
                 if tool_name not in allow_exact:
                     tools_cfg["allow_exact"] = [*allow_exact, tool_name]
             policy_for_run = Policy(raw=policy_raw)
-        policy_raw = getattr(policy_for_run, "raw", None)
-        if isinstance(policy_raw, dict):
-            policy_raw["agent_id"] = self.agent_id
-            _merge_orchestration_context_metadata(policy_raw, orchestration_metadata)
-            context_metadata = self._project_security_lab_context(
-                policy_raw, session_id
-            )
-            if replay_confirmation_metadata:
-                context_metadata.update(
-                    {
-                        key: value
-                        for key, value in replay_confirmation_metadata.items()
-                        if str(value or "").strip()
-                    }
-                )
+        self._project_execution_context(
+            policy_for_run,
+            session_id=session_id,
+            orchestration_metadata=orchestration_metadata,
+            replay_confirmation_metadata=replay_confirmation_metadata,
+        )
         if runtime_tool is not None:
             return self._execute_openminion_runtime_tool(
                 tool=runtime_tool,

@@ -123,9 +123,9 @@ class ExecutionResources:
             str(getattr(runtime_cfg, "memory_provider", "memory_v2") or "").strip(),
         )
         lab_runner = getattr(runtime_handle, "security_lab_runner", None)
+        lab_session = str(tool_metadata.get("session_id", "") or "")
         project_security_lab_metadata(
-            tool_metadata,
-            self.security_lab_metadata(str(tool_metadata.get("session_id", "") or "")),
+            tool_metadata, self.security_lab_metadata(lab_session)
         )
         return ToolExecutionContext(
             channel=inbound.channel,
@@ -136,6 +136,7 @@ class ExecutionResources:
             knowledge_graph_service=getattr(runtime_handle, "knowledge_graphs", None),
             sandbox_runner=getattr(self._runtime, "sandbox_runner", None),
             security_lab_runner=lab_runner,
+            security_lab_metadata=lambda: self.security_lab_metadata(lab_session),
             authored_tools_api=getattr(self._runtime, "authored_tools", None),
             a2a_delegate_api=self._resolve_a2a_delegate_api(),
             agent_query=getattr(self._runtime, "agent_discovery_snapshot", None),

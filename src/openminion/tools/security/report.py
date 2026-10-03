@@ -158,7 +158,8 @@ def publish_security_lab_report(
             "INTERNAL_ERROR",
             "security report publication requires canonical artifact storage",
         )
-    metadata = (getattr(ctx.policy, "raw", {}) or {}).get("context_metadata") or {}
+    resolver = getattr(ctx, "security_lab_metadata", None)
+    metadata = resolver() if callable(resolver) else {}
     if metadata.get("security_lab_state") != "ready":
         raise ToolRuntimeError(
             "POLICY_DENIED", "security lab activation is unavailable"

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from openminion.base.config.base import ConfigError
-from openminion.base.runtime.sandbox import ExecResult, ExecutionSandboxSpec
+from openminion.base.runtime.sandbox import ExecutionSandboxSpec
 
 _DIGEST_IMAGE = re.compile(r"^\S+@sha256:[0-9a-f]{64}$")
 _FIELDS = {
@@ -64,7 +64,7 @@ class SecurityLabExecutionSpec(ExecutionSandboxSpec):  # type: ignore[misc]
 
 
 @dataclass
-class SecurityLabExecResult(ExecResult):  # type: ignore[misc]
+class SecurityLabExecutionDetails:
     stdout_bytes: bytes | None = None
     stderr_bytes: bytes | None = None
     stdout_observed_bytes: int | None = None
@@ -73,6 +73,7 @@ class SecurityLabExecResult(ExecResult):  # type: ignore[misc]
     stderr_truncated: bool = False
     output_limited: bool = False
     terminated: bool = False
+    limit_reason: str | None = None
     execution_facts: SecurityLabExecutionFacts | None = None
 
 
@@ -203,7 +204,7 @@ __all__ = [
     "SecurityLabExecutionFacts",
     "SecurityLabExecutionScope",
     "SecurityLabExecutionSpec",
-    "SecurityLabExecResult",
+    "SecurityLabExecutionDetails",
     "coerce_security_lab_config",
     "security_lab_config_to_dict",
 ]

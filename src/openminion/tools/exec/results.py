@@ -4,12 +4,14 @@ import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, cast
 
 from openminion.base.runtime.sandbox import (
     ExecResult as SandboxExecResult,
 )
-from openminion.modules.runtime.sandboxes.security_lab import SecurityLabExecResult
+from openminion.modules.runtime.sandboxes.security_lab import (
+    SecurityLabExecutionDetails,
+)
 from openminion.modules.tool.runtime.context import (
     RuntimeContext,
     preferred_artifact_ref,
@@ -94,16 +96,17 @@ def _decode_preview(
     if untrusted:
         decoded = "".join(
             char
-            if char in "\n\t" or ord(char) >= 32 and ord(char) != 127
+            if char in "\n\t" or 32 <= ord(char) < 127 or ord(char) >= 160
             else f"\\x{ord(char):02x}"
             for char in decoded
         )
-        decoded = f"[untrusted command output]\n{decoded}"
     if tail_lines is not None:
         decoded = _split_lines_tail(decoded, tail_lines)
-    if len(decoded) <= EXEC_MAX_PREVIEW_CHARS:
-        return decoded
-    return decoded[-EXEC_MAX_PREVIEW_CHARS:]
+    marker = "[untrusted command output]\n" if untrusted else ""
+    available = EXEC_MAX_PREVIEW_CHARS - len(marker)
+    if len(decoded) > available:
+        decoded = decoded[-available:]
+    return marker + decoded
 
 
 def _status_for_entry(entry: Any) -> str:
@@ -194,13 +197,14 @@ def _write_exec_evidence(
     ctx: RuntimeContext,
     tool_name: str,
     status: ExecStatus,
-    exec_result: SecurityLabExecResult,
+    exec_result: SandboxExecResult,
+    details: SecurityLabExecutionDetails,
     stdout_bytes: bytes,
     stderr_bytes: bytes,
     stdout_artifact: Any,
     stderr_artifact: Any,
 ) -> Any:
-    facts = exec_result.execution_facts
+    facts = details.execution_facts
     if facts is None:
         return None
     stdout_ref = _canonical_artifact_ref(stdout_artifact)
@@ -228,12 +232,13 @@ def _write_exec_evidence(
             "status": status,
             "exit_code": exec_result.returncode,
             "timed_out": exec_result.timed_out,
-            "terminated": exec_result.terminated,
-            "output_limited": exec_result.output_limited,
+            "terminated": details.terminated,
+            "output_limited": details.output_limited,
+            "limit_reason": details.limit_reason,
             "stdout": {
                 "retained_bytes": len(stdout_bytes),
-                "observed_bytes": exec_result.stdout_observed_bytes,
-                "truncated": exec_result.stdout_truncated,
+                "observed_bytes": details.stdout_observed_bytes,
+                "truncated": details.stdout_truncated,
                 "sha256": hashlib.sha256(stdout_bytes).hexdigest()
                 if stdout_bytes
                 else "",
@@ -241,8 +246,8 @@ def _write_exec_evidence(
             },
             "stderr": {
                 "retained_bytes": len(stderr_bytes),
-                "observed_bytes": exec_result.stderr_observed_bytes,
-                "truncated": exec_result.stderr_truncated,
+                "observed_bytes": details.stderr_observed_bytes,
+                "truncated": details.stderr_truncated,
                 "sha256": hashlib.sha256(stderr_bytes).hexdigest()
                 if stderr_bytes
                 else "",
@@ -267,11 +272,9 @@ def _capture_sandbox_output(
     exec_result: SandboxExecResult,
     evidence_requested: bool,
 ) -> tuple[bytes, bytes, Any, Any, str | None, str | None]:
-    if isinstance(exec_result, SecurityLabExecResult):
-        stdout_bytes = exec_result.stdout_bytes
-        stderr_bytes = exec_result.stderr_bytes
-    else:
-        stdout_bytes = stderr_bytes = None
+    details = cast(SecurityLabExecutionDetails | None, exec_result.execution_details)
+    stdout_bytes = details.stdout_bytes if details else None
+    stderr_bytes = details.stderr_bytes if details else None
     if stdout_bytes is None:
         stdout_bytes = exec_result.stdout.encode("utf-8", errors="replace")
     if stderr_bytes is None:
@@ -330,17 +333,76 @@ def _write_requested_exec_evidence(
     stdout_artifact: Any,
     stderr_artifact: Any,
 ) -> Any:
-    if not isinstance(exec_result, SecurityLabExecResult):
+    details = cast(SecurityLabExecutionDetails | None, exec_result.execution_details)
+    if details is None:
         return None
     return _write_exec_evidence(
         ctx=ctx,
         tool_name=tool_name,
         status=status,
         exec_result=exec_result,
+        details=details,
         stdout_bytes=stdout_bytes,
         stderr_bytes=stderr_bytes,
         stdout_artifact=stdout_artifact,
         stderr_artifact=stderr_artifact,
+    )
+
+
+def _sandbox_outcome(
+    *,
+    request_payload: Mapping[str, Any],
+    timeout_s: int,
+    exec_result: SandboxExecResult,
+    details: SecurityLabExecutionDetails | None,
+    stdout_preview: str | None,
+    stderr_preview: str | None,
+) -> tuple[ExecStatus, str, dict[str, Any] | None]:
+    status: ExecStatus = EXEC_STATUS_OK
+    summary = _command_summary(
+        exit_code=exec_result.returncode,
+        stdout_preview=stdout_preview,
+        stderr_preview=stderr_preview,
+    )
+    if exec_result.timed_out:
+        return (
+            EXEC_STATUS_TIMEOUT,
+            f"Command timed out after {timeout_s}s.",
+            _build_error(
+                code="SANDBOX_RESOURCE_LIMIT",
+                message="sandbox resource limit exceeded",
+                details={"timeout_s": timeout_s},
+            ),
+        )
+    if details is not None and details.limit_reason is not None:
+        return (
+            EXEC_STATUS_ERROR,
+            f"Command stopped at the sandbox {details.limit_reason} limit.",
+            _build_error(
+                code="SANDBOX_RESOURCE_LIMIT",
+                message="sandbox resource limit exceeded",
+                details={"limit_reason": details.limit_reason},
+            ),
+        )
+    if int(exec_result.returncode or 0) == 0:
+        return status, summary, None
+    error_details: dict[str, Any] = {"exit_code": exec_result.returncode}
+    error_details.update(
+        _toolchain_discovery_failure_details(
+            str(request_payload.get("command", "") or "")
+        )
+    )
+    if error_details.get("discovery_status") == "not_found":
+        tool = str(error_details.get("discovery_tool", "tool") or "tool")
+        return EXEC_STATUS_OK, f"Toolchain discovery did not find {tool}.", None
+    return (
+        EXEC_STATUS_ERROR,
+        summary,
+        _build_error(
+            code="EXEC_ERROR",
+            message=f"command exited with code {exec_result.returncode}",
+            details=error_details,
+        ),
     )
 
 
@@ -366,40 +428,15 @@ def _exec_run_result_from_sandbox(
         exec_result=exec_result,
         evidence_requested=evidence_requested,
     )
-    status: ExecStatus = EXEC_STATUS_OK
-    summary = _command_summary(
-        exit_code=exec_result.returncode,
+    details = cast(SecurityLabExecutionDetails | None, exec_result.execution_details)
+    status, summary, error_payload = _sandbox_outcome(
+        request_payload=request_payload,
+        timeout_s=timeout_s,
+        exec_result=exec_result,
+        details=details,
         stdout_preview=stdout_preview,
         stderr_preview=stderr_preview,
     )
-    error_payload = None
-    if exec_result.timed_out:
-        status = EXEC_STATUS_TIMEOUT
-        summary = f"Command timed out after {timeout_s}s."
-        error_payload = _build_error(
-            code="SANDBOX_RESOURCE_LIMIT",
-            message="sandbox resource limit exceeded",
-            details={"timeout_s": timeout_s},
-        )
-    elif int(exec_result.returncode or 0) != 0:
-        details: Dict[str, Any] = {"exit_code": exec_result.returncode}
-        details.update(
-            _toolchain_discovery_failure_details(
-                str(request_payload.get("command", "") or "")
-            )
-        )
-        message = f"command exited with code {exec_result.returncode}"
-        if details.get("discovery_status") == "not_found":
-            tool = str(details.get("discovery_tool", "tool") or "tool")
-            summary = f"Toolchain discovery did not find {tool}."
-            status = EXEC_STATUS_OK
-        else:
-            status = EXEC_STATUS_ERROR
-            error_payload = _build_error(
-                code="EXEC_ERROR",
-                message=message,
-                details=details,
-            )
     evidence_artifact = None
     if evidence_requested:
         evidence_artifact = _write_requested_exec_evidence(
@@ -419,6 +456,11 @@ def _exec_run_result_from_sandbox(
             code="EVIDENCE_UNAVAILABLE",
             message="canonical execution evidence was unavailable",
         )
+    terminated = None
+    if exec_result.timed_out:
+        terminated = True
+    elif details is not None:
+        terminated = details.terminated
     result = ExecRunResult(
         status=status,
         exit_code=exec_result.returncode,
@@ -426,6 +468,17 @@ def _exec_run_result_from_sandbox(
         stdout_artifact=stdout_artifact,
         stderr_artifact=stderr_artifact,
         evidence_artifact=evidence_artifact,
+        terminated=terminated,
+        output_limited=details.output_limited if details else None,
+        stdout_truncated=details.stdout_truncated if details else None,
+        stderr_truncated=details.stderr_truncated if details else None,
+        limit_reason=(
+            "timeout"
+            if exec_result.timed_out
+            else details.limit_reason
+            if details
+            else None
+        ),
         stdout=stdout_preview,
         stderr=stderr_preview,
         stdout_preview=stdout_preview,

@@ -205,6 +205,21 @@ class ExecRunResult(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    terminated: Optional[bool] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    output_limited: Optional[bool] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    stdout_truncated: Optional[bool] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    stderr_truncated: Optional[bool] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    limit_reason: Optional[Literal["timeout", "output", "memory"]] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     stdout: Optional[str] = None
     stderr: Optional[str] = None
     summary: str = Field(default="")

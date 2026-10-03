@@ -397,7 +397,7 @@ class OpenMinionRuntime(
         return pairs
 
     def tool_exposure_status(self) -> dict[str, Any]:
-        return self._rt.tool_exposure_status(session_id=self._turn_session_id())
+        return self._rt.tool_exposure_status(session_id=self.session_id)
 
     def activate_tool_profile(
         self,
@@ -415,7 +415,7 @@ class OpenMinionRuntime(
     ) -> dict[str, Any]:
         return self._rt.activate_tool_profile(
             profile_id,
-            session_id=self._turn_session_id(),
+            session_id=self.session_id,
             target_id=target_id,
             target_kind=target_kind,
             credential_scopes=credential_scopes,
@@ -435,7 +435,7 @@ class OpenMinionRuntime(
     ) -> bool:
         return self._rt.deactivate_tool_profile(
             profile_id,
-            session_id=self._turn_session_id(),
+            session_id=self.session_id,
             target_id=target_id,
         )
 

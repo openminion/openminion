@@ -28,7 +28,7 @@ from openminion.base.runtime.sandbox import (
 from openminion.modules.runtime.constants import DOCKER_CONTROL_OUTPUT_LIMIT_BYTES
 from openminion.modules.runtime.sandboxes.security_lab import (
     SecurityLabConfig,
-    SecurityLabExecResult,
+    SecurityLabExecutionDetails,
     SecurityLabExecutionFacts,
     SecurityLabExecutionSpec,
 )
@@ -115,6 +115,10 @@ class DockerSandboxRunner:
             raise DockerSandboxError(
                 "POLICY_DENIED", "Docker worker image digest does not match config"
             )
+        if (worker_image.get("Config") or {}).get("Volumes"):
+            raise DockerSandboxError(
+                "POLICY_DENIED", "Docker worker image declares persistent volumes"
+            )
         config_fingerprint = _fingerprint(asdict(self.config))
         scope_payload = {
             "daemon_id": daemon_id,
@@ -175,6 +179,7 @@ class DockerSandboxRunner:
                 session_id=execution_scope.session_id,
                 activation_id=execution_scope.activation_id,
             )
+            self._validate_worker_mounts(self._single_inspect("container", worker_id))
             return self._start_worker(
                 worker_id,
                 scope=scope,
@@ -184,7 +189,7 @@ class DockerSandboxRunner:
             )
         finally:
             if worker_id:
-                self._command("rm", "--force", worker_id, check=False)
+                self._command("rm", "--force", "--volumes", worker_id, check=False)
 
     def fs_write(self, spec: FsWriteSpec, sandbox: ExecutionSandboxSpec) -> FsResult:
         del sandbox
@@ -288,40 +293,54 @@ class DockerSandboxRunner:
             timeout=timeout,
             output_limit=output_limit,
         )
+        state = self._single_inspect("container", worker_id).get("State") or {}
+        memory_limited = bool(state.get("OOMKilled"))
+        limit_reason = (
+            "timeout"
+            if timed_out
+            else "output"
+            if output_limited
+            else "memory"
+            if memory_limited
+            else None
+        )
         argv_payload = json.dumps(
             spec.cmd, ensure_ascii=False, separators=(",", ":")
         ).encode()
-        return SecurityLabExecResult(
+        return ExecResult(
             returncode=int(process.returncode or 0),
             stdout=stdout.decode("utf-8", errors="replace"),
             stderr=stderr.decode("utf-8", errors="replace"),
             timed_out=timed_out,
-            stdout_bytes=stdout,
-            stderr_bytes=stderr,
-            stdout_observed_bytes=observed["stdout"],
-            stderr_observed_bytes=observed["stderr"],
-            stdout_truncated=observed["stdout"] > len(stdout),
-            stderr_truncated=observed["stderr"] > len(stderr),
-            output_limited=output_limited,
-            terminated=timed_out or output_limited,
-            execution_facts=SecurityLabExecutionFacts(
-                runner=self.name,
-                worker_container_id=worker_id,
-                worker_image_digest=scope.worker_image_digest,
-                daemon_id=scope.daemon_id,
-                target_container_id=scope.target_container_id,
-                target_image_id=scope.target_image_id,
-                isolation_mode="target-network-namespace",
-                started_at=started_at,
-                duration_ms=max(0, int((time.monotonic() - started) * 1000)),
-                executable_basename=Path(spec.cmd[0]).name,
-                argument_count=len(spec.cmd),
-                canonical_argv_sha256=hashlib.sha256(argv_payload).hexdigest(),
-                timeout_seconds=timeout,
-                max_output_bytes=output_limit,
-                cpu_limit=self.config.cpu_limit,
-                memory_bytes=self.config.memory_bytes,
-                pids_limit=self.config.pids_limit,
+            execution_details=SecurityLabExecutionDetails(
+                stdout_bytes=stdout,
+                stderr_bytes=stderr,
+                stdout_observed_bytes=observed["stdout"],
+                stderr_observed_bytes=observed["stderr"],
+                stdout_truncated=observed["stdout"] > len(stdout),
+                stderr_truncated=observed["stderr"] > len(stderr),
+                output_limited=output_limited,
+                terminated=timed_out or output_limited or memory_limited,
+                limit_reason=limit_reason,
+                execution_facts=SecurityLabExecutionFacts(
+                    runner=self.name,
+                    worker_container_id=worker_id,
+                    worker_image_digest=scope.worker_image_digest,
+                    daemon_id=scope.daemon_id,
+                    target_container_id=scope.target_container_id,
+                    target_image_id=scope.target_image_id,
+                    isolation_mode="target-network-namespace",
+                    started_at=started_at,
+                    duration_ms=max(0, int((time.monotonic() - started) * 1000)),
+                    executable_basename=Path(spec.cmd[0]).name,
+                    argument_count=len(spec.cmd),
+                    canonical_argv_sha256=hashlib.sha256(argv_payload).hexdigest(),
+                    timeout_seconds=timeout,
+                    max_output_bytes=output_limit,
+                    cpu_limit=self.config.cpu_limit,
+                    memory_bytes=self.config.memory_bytes,
+                    pids_limit=self.config.pids_limit,
+                ),
             ),
         )
 
@@ -416,6 +435,18 @@ class DockerSandboxRunner:
         if not valid:
             raise DockerSandboxError(
                 "POLICY_DENIED", "Docker target does not satisfy security lab hardening"
+            )
+
+    @staticmethod
+    def _validate_worker_mounts(worker: dict[str, Any]) -> None:
+        allowed = {"/tmp", "/workspace"}
+        mounts = worker.get("Mounts") or []
+        if any(
+            mount.get("Type") != "tmpfs" or mount.get("Destination") not in allowed
+            for mount in mounts
+        ):
+            raise DockerSandboxError(
+                "POLICY_DENIED", "Docker worker received an unexpected mount"
             )
 
     def _single_inspect(self, object_type: str, identity: str) -> dict[str, Any]:

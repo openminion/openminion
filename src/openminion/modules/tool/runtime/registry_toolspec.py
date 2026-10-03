@@ -147,6 +147,7 @@ def _build_tool_runtime_context(
         knowledge_graph_service=context.knowledge_graph_service,
         sandbox_runner=context.sandbox_runner,
         security_lab_runner=context.security_lab_runner,
+        security_lab_metadata=context.security_lab_metadata,
         authored_tools_api=context.authored_tools_api,
         a2a_delegate_api=context.a2a_delegate_api,
         agent_query=context.agent_query,

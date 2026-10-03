@@ -8,7 +8,7 @@ src/openminion/modules/brain/adapters/llm/runtime.py	_extract_structured_output	
 src/openminion/modules/brain/adapters/tool/github_merge.py	_begin_github_merge_pr_project_effect	103	OREL keeps merge approval and effect setup in the existing action owner
 src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter._execute_openminion_runtime_tool	102	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter._invoke_validated_tool	110	OREL keeps direct project effect routing in the existing tool adapter owner
-src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter.execute	325	OCSC adds trusted lab metadata and separate runner propagation to the existing execution owner
+src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter.execute	316	OCSC extracts execution-context projection while adding trusted lab propagation
 src/openminion/modules/brain/bootstrap/budget.py	trim_decide_context_to_budget	162	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/bootstrap/skill/pipeline.py	resolve_skill_pipeline	248	concurrent entry-selection growth; ratchet downward in its owning skill lane
 src/openminion/modules/brain/bootstrap/skill/selection.py	_select_skills_with_llm	138	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
@@ -103,7 +103,7 @@ src/openminion/services/supervision/service.py	SupervisionService.evaluate	119	c
 src/openminion/tools/browser/providers/playwright/config.py	provider_config_from_mapping	184	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/exec/command_parser.py	_parse_command_posix	123	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/exec/results.py	_build_completed_exec_run_result	130	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/tools/exec/results.py	_exec_run_result_from_sandbox	141	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/tools/exec/results.py	_exec_run_result_from_sandbox	132	OCSC extracts sandbox outcome classification while exposing bounded-limit truth
 src/openminion/tools/exec/sessions.py	_prepare_exec_run	213	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/exec/sessions.py	_start_exec_run_session	178	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/fetch/plugin.py	_invoke_fetch	231	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

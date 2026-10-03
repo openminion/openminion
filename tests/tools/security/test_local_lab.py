@@ -2,18 +2,25 @@ from __future__ import annotations
 
 import json
 import time
+from http import HTTPStatus
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
-from openminion.api.core.exposure import _security_lab_activation
+from openminion.api.core.exposure import (
+    RuntimeToolExposureMixin,
+    _security_lab_activation,
+)
+from openminion.api.routes.contracts import APIRouteContext
+from openminion.api.routes.tools import handle_request as tools_handle_request
 from openminion.base.config import OpenMinionConfig
 from openminion.base.config.env import EnvironmentConfig
+from openminion.base.runtime.sandbox import ExecResult
 from openminion.modules.runtime.sandboxes.security_lab import (
     SecurityLabConfig,
-    SecurityLabExecResult,
+    SecurityLabExecutionDetails,
     SecurityLabExecutionFacts,
     coerce_security_lab_config,
 )
@@ -24,7 +31,10 @@ from openminion.modules.identity.runtime.service import IdentityCtl
 from openminion.modules.identity.storage import InMemoryIdentityStore
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.exposure import ToolExposureService
-from openminion.modules.tool.exposure.service import resolve_security_lab_metadata
+from openminion.modules.tool.exposure.service import (
+    SECURITY_LAB_ALLOWED_TOOL_IDS,
+    resolve_security_lab_metadata,
+)
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.tools.exec.handlers import _h_exec_run
@@ -42,6 +52,17 @@ from tests.artifact.utils import make_config
 _DIGEST = "example.invalid/worker@sha256:" + "a" * 64
 _AGENT = "security-researcher-local-lab"
 _ROOT = Path(__file__).resolve().parents[3]
+
+
+def _active_report_payload(evidence_refs: list[str]) -> dict[str, object]:
+    return {
+        "activity_class": "local_lab_active",
+        "objective": "Validate the synthetic authorization boundary.",
+        "validation_evidence": evidence_refs,
+        "findings": [],
+        "summary": "No candidate findings were submitted.",
+        "limitations": "Synthetic target only.",
+    }
 
 
 def _config() -> SecurityLabConfig:
@@ -236,6 +257,13 @@ def test_activation_freezes_identity_scope_and_refuses_duplicates() -> None:
     assert activation.agent_id == _AGENT
     assert metadata["security_lab_state"] == "ready"
     assert metadata["target_container_id"] == "target-id"
+    status = RuntimeToolExposureMixin._security_lab_status(
+        runtime, session_id="session-1"
+    )
+    assert status["daemon_state"] == "ready"
+    assert status["allowed_tools"] == sorted(SECURITY_LAB_ALLOWED_TOOL_IDS)
+    assert status["limits"]["max_output_bytes"] == config.max_output_bytes
+    assert status["approved_by"] == "operator"
     with pytest.raises(ToolRuntimeError, match="already has an active approval"):
         _security_lab_activation(
             runtime,
@@ -296,40 +324,68 @@ def test_activation_freezes_identity_scope_and_refuses_duplicates() -> None:
     )
 
 
+def test_activation_route_returns_typed_denial() -> None:
+    def deny_activation(*_args: object, **_kwargs: object) -> None:
+        raise ToolRuntimeError("INVALID_ARGUMENT", "approval required")
+
+    runtime = SimpleNamespace(
+        runtime_manager=object(),
+        activate_tool_profile=deny_activation,
+    )
+    result = tools_handle_request(
+        APIRouteContext(None, runtime, None, None, "request-1"),
+        method_name="POST",
+        path="/v1/tools/exposure/activate",
+        body={"profile_id": "security_lab", "session_id": "session-1"},
+        query=None,
+    )
+
+    assert result is not None
+    assert result.status == HTTPStatus.BAD_REQUEST
+    assert result.payload["error"]["code"] == "tool_exposure_activation_denied"
+
+
 class _LabRunner:
     def __init__(self) -> None:
         self.config = _config()
         self.calls: list[tuple[object, object]] = []
         self.stdout_bytes = b"ok\x00\xff\x1b]8;;https://bad.invalid\x07link"
+        self.output_limited = False
 
-    def run_exec(self, spec, sandbox) -> SecurityLabExecResult:
+    def run_exec(self, spec, sandbox) -> ExecResult:
         self.calls.append((spec, sandbox))
-        return SecurityLabExecResult(
+        return ExecResult(
             returncode=0,
             stdout="replacement must not own evidence bytes",
             stderr="",
-            stdout_bytes=self.stdout_bytes,
-            stderr_bytes=b"",
-            stdout_observed_bytes=32,
-            stderr_observed_bytes=0,
-            execution_facts=SecurityLabExecutionFacts(
-                runner="docker-security-lab",
-                worker_container_id="worker-1",
-                worker_image_digest=_DIGEST,
-                daemon_id="daemon-local",
-                target_container_id="target-id",
-                target_image_id="target-image",
-                isolation_mode="target-network-namespace",
-                started_at="2026-10-03T00:00:00+00:00",
-                duration_ms=12,
-                executable_basename="curl",
-                argument_count=2,
-                canonical_argv_sha256="f" * 64,
-                timeout_seconds=10,
-                max_output_bytes=4096,
-                cpu_limit=0.5,
-                memory_bytes=67_108_864,
-                pids_limit=32,
+            execution_details=SecurityLabExecutionDetails(
+                stdout_bytes=self.stdout_bytes,
+                stderr_bytes=b"",
+                stdout_observed_bytes=32,
+                stderr_observed_bytes=0,
+                stdout_truncated=self.output_limited,
+                output_limited=self.output_limited,
+                terminated=self.output_limited,
+                limit_reason="output" if self.output_limited else None,
+                execution_facts=SecurityLabExecutionFacts(
+                    runner="docker-security-lab",
+                    worker_container_id="worker-1",
+                    worker_image_digest=_DIGEST,
+                    daemon_id="daemon-local",
+                    target_container_id="target-id",
+                    target_image_id="target-image",
+                    isolation_mode="target-network-namespace",
+                    started_at="2026-10-03T00:00:00+00:00",
+                    duration_ms=12,
+                    executable_basename="curl",
+                    argument_count=2,
+                    canonical_argv_sha256="f" * 64,
+                    timeout_seconds=10,
+                    max_output_bytes=4096,
+                    cpu_limit=0.5,
+                    memory_bytes=67_108_864,
+                    pids_limit=32,
+                ),
             ),
         )
 
@@ -378,6 +434,7 @@ def lab_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         tool_name="exec.run",
         sandbox_runner=ordinary_runner,
         security_lab_runner=runner,
+        security_lab_metadata=lambda: dict(metadata),
     )
     try:
         yield ctx, runner, ordinary_runner
@@ -433,6 +490,44 @@ def test_lab_exec_preserves_empty_raw_output(lab_context) -> None:
     assert result["stdout_artifact"] is None
     assert result["stdout_preview"] is None
     assert result["metrics"]["bytes_out"] == 0
+
+
+def test_lab_exec_keeps_untrusted_marker_after_preview_truncation(lab_context) -> None:
+    ctx, runner, _ordinary_runner = lab_context
+    runner.stdout_bytes = (b"line\n" * 81) + "\u009b31m\u009dtitle".encode()
+
+    result = _h_exec_run(
+        {
+            "command": "curl http://127.0.0.1:8080/output",
+            "timeout_s": 10,
+            "include_evidence_artifact": True,
+        },
+        ctx,
+    )
+
+    assert result["stdout_preview"].startswith("[untrusted command output]\n")
+    assert "\\x9b31m\\x9dtitle" in result["stdout_preview"]
+
+
+def test_lab_exec_returns_explicit_output_limit_truth(lab_context) -> None:
+    ctx, runner, _ordinary_runner = lab_context
+    runner.output_limited = True
+
+    result = _h_exec_run(
+        {
+            "command": "curl http://127.0.0.1:8080/output",
+            "timeout_s": 10,
+            "include_evidence_artifact": True,
+        },
+        ctx,
+    )
+
+    assert result["status"] == "error"
+    assert result["error"]["code"] == "SANDBOX_RESOURCE_LIMIT"
+    assert result["terminated"] is True
+    assert result["output_limited"] is True
+    assert result["stdout_truncated"] is True
+    assert result["limit_reason"] == "output"
 
 
 def test_lab_exec_reports_missing_canonical_evidence(lab_context, monkeypatch) -> None:
@@ -549,6 +644,99 @@ def test_active_report_rejects_evidence_from_another_session(lab_context) -> Non
             },
             ctx,
         )
+
+
+def test_active_report_rechecks_current_authorization(lab_context) -> None:
+    ctx, _runner, _ordinary_runner = lab_context
+    execution = _h_exec_run(
+        {
+            "command": "curl http://127.0.0.1:8080/defect",
+            "timeout_s": 10,
+            "include_evidence_artifact": True,
+        },
+        ctx,
+    )
+    ctx.tool_name = "security.publish_report"
+    ctx.security_lab_metadata = lambda: {
+        "security_lab_state": "unavailable",
+        "security_lab_reason": "security_lab activation is inactive",
+    }
+
+    with pytest.raises(ToolRuntimeError, match="activation is unavailable"):
+        _h_publish_report(
+            {
+                "activity_class": "local_lab_active",
+                "objective": "Reject publication after approval expires.",
+                "validation_evidence": [execution["evidence_artifact"]["ref"]],
+                "findings": [],
+                "summary": "No report should be published.",
+                "limitations": "Synthetic target only.",
+            },
+            ctx,
+        )
+
+
+def test_active_report_rejects_deleted_evidence(lab_context) -> None:
+    ctx, _runner, _ordinary_runner = lab_context
+    execution = _h_exec_run(
+        {
+            "command": "curl http://127.0.0.1:8080/defect",
+            "timeout_s": 10,
+            "include_evidence_artifact": True,
+        },
+        ctx,
+    )
+    evidence_ref = execution["evidence_artifact"]["ref"]
+    ctx.artifactctl.delete(evidence_ref)
+    ctx.tool_name = "security.publish_report"
+
+    with pytest.raises(ToolRuntimeError, match="unreadable|approved lab scope"):
+        _h_publish_report(_active_report_payload([evidence_ref]), ctx)
+
+
+def test_active_report_rejects_wrong_evidence_schema(lab_context) -> None:
+    ctx, _runner, _ordinary_runner = lab_context
+    artifact = ctx.write_artifact(
+        "security/wrong-evidence.json",
+        b'{"schema":"wrong"}',
+        "application/json",
+        durable=True,
+    )
+    evidence_ref = artifact.canonical_ref
+    ctx.tool_name = "security.publish_report"
+
+    with pytest.raises(ToolRuntimeError, match="approved lab scope"):
+        _h_publish_report(_active_report_payload([evidence_ref]), ctx)
+
+
+def test_active_report_marks_mixed_limit_evidence_partial(lab_context) -> None:
+    ctx, runner, _ordinary_runner = lab_context
+    completed = _h_exec_run(
+        {
+            "command": "curl http://127.0.0.1:8080/complete",
+            "timeout_s": 10,
+            "include_evidence_artifact": True,
+        },
+        ctx,
+    )
+    runner.output_limited = True
+    limited = _h_exec_run(
+        {
+            "command": "curl http://127.0.0.1:8080/limited",
+            "timeout_s": 10,
+            "include_evidence_artifact": True,
+        },
+        ctx,
+    )
+    refs = [
+        completed["evidence_artifact"]["ref"],
+        limited["evidence_artifact"]["ref"],
+    ]
+    ctx.tool_name = "security.publish_report"
+
+    result = _h_publish_report(_active_report_payload(refs), ctx)
+
+    assert result["execution_status"] == "partial"
 
 
 def test_active_report_schema_rejects_duplicates_unknown_refs_and_opaque_fields() -> (
