@@ -44,14 +44,17 @@ def test_manual_publication_is_testpypi_only_and_requires_main():
             )
 
 
-def test_production_publication_is_final_tag_only():
+def test_production_publication_is_final_tag_only(tmp_path):
     publish_pypi = RELEASE_WORKFLOW.split("  publish-pypi:", 1)[1]
-    version = source_version(ROOT)
+    version_owner = tmp_path / "src/openminion/base"
+    version_owner.mkdir(parents=True)
+    (version_owner / "version.py").write_text('OPENMINION_VERSION = "1.2.3"\n')
+    version = source_version(tmp_path)
     current = release_target(
         event_name="push",
         ref=f"refs/tags/v{version}",
         requested_target="",
-        repository=ROOT,
+        repository=tmp_path,
     )
     assert current == "pypi"
     assert "needs.validate-release-request.outputs.target == 'pypi'" in publish_pypi
