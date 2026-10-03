@@ -120,6 +120,48 @@ def normalize_tool_run_request(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _tool_run_response(
+    runtime: Any,
+    *,
+    request_id: str,
+    session_id: str,
+    result: ToolExecutionResult,
+) -> tuple[HTTPStatus, dict[str, Any], str]:
+    artifact_refs = tool_result_artifact_refs(
+        trace_id=request_id,
+        session_id=session_id,
+        result=result,
+    )
+    runtime.sessions.append_event(
+        session_id=session_id,
+        event_type="tool.run",
+        payload={
+            "trace_id": request_id,
+            "tool": result.tool_name,
+            "ok": result.ok,
+            "verified": result.verified,
+            "artifact_refs": artifact_refs,
+        },
+    )
+    status = HTTPStatus.OK if result.ok else HTTPStatus.BAD_REQUEST
+    payload = {
+        "ok": result.ok,
+        "trace_id": request_id,
+        "artifact_refs": artifact_refs,
+        "tool": {
+            "name": result.tool_name,
+            "ok": result.ok,
+            "verified": result.verified,
+            "content": result.content,
+            "error": result.error,
+            "data": dict(result.data or {}),
+            "call_id": result.call_id,
+            "source": result.source,
+        },
+    }
+    return status, payload, session_id
+
+
 def execute_tool_run(
     *,
     runtime,
@@ -187,36 +229,9 @@ def execute_tool_run(
             context=context,
         )
         result = batch.results[0]
-    artifact_refs = tool_result_artifact_refs(
-        trace_id=request_id,
+    return _tool_run_response(
+        runtime,
+        request_id=request_id,
         session_id=session.id,
         result=result,
     )
-    runtime.sessions.append_event(
-        session_id=session.id,
-        event_type="tool.run",
-        payload={
-            "trace_id": request_id,
-            "tool": result.tool_name,
-            "ok": result.ok,
-            "verified": result.verified,
-            "artifact_refs": artifact_refs,
-        },
-    )
-    status = HTTPStatus.OK if result.ok else HTTPStatus.BAD_REQUEST
-    payload = {
-        "ok": result.ok,
-        "trace_id": request_id,
-        "artifact_refs": artifact_refs,
-        "tool": {
-            "name": result.tool_name,
-            "ok": result.ok,
-            "verified": result.verified,
-            "content": result.content,
-            "error": result.error,
-            "data": dict(result.data or {}),
-            "call_id": result.call_id,
-            "source": result.source,
-        },
-    }
-    return status, payload, session.id
