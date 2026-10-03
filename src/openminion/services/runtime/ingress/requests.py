@@ -21,6 +21,38 @@ from .types import RuntimeTurnRequest, TurnRequestError
 if TYPE_CHECKING:
     from openminion.services.runtime.interfaces import RuntimeFacade
 
+_LAB_CONTEXT_KEYS = {
+    "cwd",
+    "workspace_root",
+    "working_dir",
+    "openminion_ephemeral_workspace_roots",
+}
+
+
+def _security_lab_inbound_metadata(
+    *,
+    runtime: "RuntimeFacade",
+    agent_id: str,
+    inbound_metadata: dict[str, str] | None,
+) -> dict[str, str] | None:
+    metadata = dict(inbound_metadata or {})
+    lab_config = getattr(getattr(runtime.config, "runtime", None), "security_lab", None)
+    lab_required = bool(
+        lab_config is not None and agent_id == lab_config.agent_identity_id
+    )
+    metadata.pop("lab_required", None)
+    if not lab_required:
+        return metadata or None
+    for key in list(metadata):
+        if key in _LAB_CONTEXT_KEYS or key.startswith("project_context_"):
+            metadata.pop(key, None)
+    metadata.update(
+        lab_required="true",
+        cwd="/workspace",
+        workspace_root="/workspace",
+    )
+    return metadata
+
 
 def runtime_turn_request_from_payload(
     *,
@@ -52,7 +84,11 @@ def runtime_turn_request_from_payload(
         agent_id=agent_profile.name,
         run_profile_overrides=effective_run_profile_overrides,
     )
-    inbound_metadata = _direct_inbound_metadata(runtime=runtime, payload=payload)
+    inbound_metadata = _security_lab_inbound_metadata(
+        runtime=runtime,
+        agent_id=agent_profile.name,
+        inbound_metadata=_direct_inbound_metadata(runtime=runtime, payload=payload),
+    )
     return RuntimeTurnRequest(
         agent_id=agent_resolution.public_agent_id,
         profile_agent_id=agent_profile.name,
@@ -132,7 +168,11 @@ def runtime_turn_request_from_manager_request(
     timeout_payload: dict[str, Any] = {}
     if "timeout_seconds" in meta:
         timeout_payload["timeout_seconds"] = meta.get("timeout_seconds")
-    inbound_metadata = _managed_inbound_metadata(runtime=runtime, meta=meta)
+    inbound_metadata = _security_lab_inbound_metadata(
+        runtime=runtime,
+        agent_id=agent_profile.name,
+        inbound_metadata=_managed_inbound_metadata(runtime=runtime, meta=meta),
+    )
     return RuntimeTurnRequest(
         agent_id=agent_resolution.public_agent_id,
         profile_agent_id=agent_profile.name,

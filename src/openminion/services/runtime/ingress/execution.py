@@ -11,6 +11,7 @@ from openminion.modules.controlplane.constants import (
 )
 from openminion.modules.telemetry.usage import RunStats
 from openminion.modules.runtime.sync import await_with_cancel
+from openminion.modules.storage import is_room_session_key
 from openminion.services.runtime.turn_router import TurnRouter
 
 from .gateway_call import _run_coro_sync
@@ -45,6 +46,12 @@ def execute_runtime_turn(
         inbound_metadata=inbound_metadata or None,
     )
     routed_agents, routing_mode = _routed_agents(runtime=runtime, request=request)
+    _enforce_security_lab_route(
+        runtime=runtime,
+        request=request,
+        routed_agents=routed_agents,
+        routing_mode=routing_mode,
+    )
     if len(routed_agents) == 1:
         result = execute_gateway_turn_impl(
             runtime=runtime,
@@ -90,6 +97,38 @@ def execute_runtime_turn(
         agent_id=response_agent_id,
         stats=getattr(result, "stats", None),
     )
+
+
+def _enforce_security_lab_route(
+    *,
+    runtime: Any,
+    request: RuntimeTurnRequest,
+    routed_agents: tuple[str, ...],
+    routing_mode: str,
+) -> None:
+    lab = getattr(getattr(runtime.config, "runtime", None), "security_lab", None)
+    if lab is None or request.profile_agent_id != lab.agent_identity_id:
+        return
+    session = (
+        runtime.sessions.get_session(request.session_id) if request.session_id else None
+    )
+    participants = (
+        runtime.sessions.list_participants(request.session_id)
+        if session is not None
+        else []
+    )
+    valid = (
+        session is not None
+        and not is_room_session_key(str(session.session_key or ""))
+        and str(session.owner_agent_id or "") == lab.agent_identity_id
+        and not participants
+        and routing_mode == "addressed"
+        and routed_agents == (lab.agent_identity_id,)
+    )
+    if not valid:
+        raise TurnRequestError(
+            "security lab turns require one exact-agent non-room session"
+        )
 
 
 def _routed_agents(

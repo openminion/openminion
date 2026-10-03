@@ -14,6 +14,7 @@ from openminion.modules.tool.executor import (
     record_external_tool_results,
 )
 from openminion.modules.tool.exposure import apply_model_exposure
+from openminion.modules.tool.exposure.service import project_security_lab_metadata
 from openminion.modules.policy import ToolBudgetState
 
 from ..telemetry import generate_with_provider_trace_telemetry
@@ -51,6 +52,10 @@ class ExecutorRuntime:
             request.metadata["session_id"] = session_id
         if run_id and not request.metadata.get("run_id"):
             request.metadata["run_id"] = run_id
+        project_security_lab_metadata(
+            request.metadata,
+            self._resources.security_lab_metadata(session_id),
+        )
         request.metadata.update(
             {
                 "turn_id": str(inbound.id),

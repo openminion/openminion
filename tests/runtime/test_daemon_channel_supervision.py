@@ -53,6 +53,14 @@ class _AgentService:
         self.closed += 1
 
 
+class _Closable:
+    def __init__(self) -> None:
+        self.closed = 0
+
+    def close(self) -> None:
+        self.closed += 1
+
+
 class _Gateway:
     def __init__(self, agent_id: str = "default") -> None:
         self.agent_id = agent_id
@@ -113,6 +121,25 @@ def test_runtime_lifecycle_closes_agent_services() -> None:
 
     assert gateway.closed == 1
     assert service.closed == 1
+
+
+def test_runtime_lifecycle_closes_each_sandbox_runner_once() -> None:
+    ordinary = _Closable()
+    security_lab = _Closable()
+
+    close_runtime_components(
+        retrieve_ctl=None,
+        action_policy=None,
+        runtime_manager=None,
+        lifecycle_bridge=None,
+        tools=None,
+        runtime_storage=None,
+        sandbox_runner=ordinary,
+        security_lab_runner=security_lab,
+    )
+
+    assert ordinary.closed == 1
+    assert security_lab.closed == 1
 
 
 def test_runtime_session_close_uses_owner_and_releases_other_gateways() -> None:

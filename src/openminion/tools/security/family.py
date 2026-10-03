@@ -1,6 +1,6 @@
 """Declarative security scanner family and exposure profile."""
 
-from openminion.modules.tool.exposure import ToolExposureProfile
+from openminion.modules.tool.exposure import ToolExposureProfile, ToolRiskAnnotations
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
 
 from .interfaces import (
@@ -19,7 +19,7 @@ from .plugin import (
     _h_scan_secrets,
     _h_publish_report,
 )
-from .schemas import LocalScanArgs, SecurityAuditPublishArgs
+from .schemas import LocalScanArgs, SecurityReportPublishArgs
 
 SECURITY_FAMILY = ToolFamilySpec(
     module_id="security",
@@ -37,6 +37,21 @@ SECURITY_FAMILY = ToolFamilySpec(
             ),
             stop_rules=("stop before remediation, network update, or remote scanning",),
             activation_hint="Activate for an approved local read-only security audit.",
+        ),
+        ToolExposureProfile(
+            profile_id="security_lab",
+            title="Authorized local security lab",
+            summary="Evidence-backed active validation of one configured local target.",
+            tool_names=frozenset({TOOL_SECURITY_PUBLISH_REPORT}),
+            risk=ToolRiskAnnotations(
+                tier="apply",
+                requires_approval=True,
+                mutates_state=False,
+            ),
+            target_kinds=frozenset({"local_docker"}),
+            evidence_expectations=("return canonical exec evidence",),
+            stop_rules=("stop before remediation or off-target access",),
+            activation_hint="Approve one configured local Docker target for this session.",
         ),
     ),
     tools=(
@@ -74,7 +89,7 @@ SECURITY_FAMILY = ToolFamilySpec(
         ),
         ToolDecl(
             TOOL_SECURITY_PUBLISH_REPORT,
-            SecurityAuditPublishArgs,
+            SecurityReportPublishArgs,
             _h_publish_report,
             "Publish one canonical unreviewed candidate security-audit report.",
         ),

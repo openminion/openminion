@@ -5,9 +5,11 @@ import tempfile
 
 from openminion.api.runtime import APIRuntime
 from openminion.base.config import OpenMinionConfig, save_config
+from openminion.modules.runtime.sandboxes.security_lab import SecurityLabConfig
 from openminion.base.runtime.sandbox import ExecSpec
 from openminion.services.runtime.bootstrap import build_daytona_runner
 from openminion.modules.runtime.sandboxes.daytona import DaytonaRunner
+from openminion.modules.runtime.sandboxes.docker import DockerSandboxRunner
 from openminion.services.runtime.engine import (
     PolicyDecision,
     RuntimeContext,
@@ -117,6 +119,44 @@ def test_api_runtime_carries_daytona_runner_when_endpoint_configured() -> None:
         runtime = APIRuntime.from_config_path(str(config_path))
         try:
             assert isinstance(runtime.sandbox_runner, DaytonaRunner)
+        finally:
+            runtime.close()
+
+
+def test_api_runtime_keeps_security_lab_runner_separate_from_daytona() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        config_path = _write_echo_config(root)
+        config = OpenMinionConfig()
+        _csc_install_default_agent(config, provider="echo")
+        config.runtime.log_level = "ERROR"
+        config.runtime.env["OPENMINION_DAYTONA_ENDPOINT"] = "https://daytona.example"
+        config.runtime.security_lab = SecurityLabConfig(
+            daemon_socket="unix:///var/run/docker.sock",
+            target_container="security-target",
+            worker_image="worker@example.invalid/image@sha256:" + "a" * 64,
+            executable_allowlist=("curl",),
+            worker_uid=10001,
+            worker_gid=10001,
+            agent_identity_id="security-researcher-local-lab",
+            command_timeout_seconds=30,
+            max_output_bytes=4096,
+            cpu_limit=0.5,
+            memory_bytes=67_108_864,
+            pids_limit=32,
+            label="Local security lab",
+        )
+        config.storage.path = str(root / "state" / "runtime.db")
+        save_config(config, str(config_path))
+
+        runtime = APIRuntime.from_config_path(str(config_path))
+        try:
+            assert isinstance(runtime.sandbox_runner, DaytonaRunner)
+            assert isinstance(runtime.security_lab_runner, DockerSandboxRunner)
+            assert (
+                runtime.authored_tools._dispatcher._sandbox_runner
+                is runtime.sandbox_runner
+            )  # noqa: SLF001
         finally:
             runtime.close()
 

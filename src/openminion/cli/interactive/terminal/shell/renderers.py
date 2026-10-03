@@ -127,6 +127,16 @@ def _render_status_block(*, runtime: Any, console: Console, working_dir: str) ->
             style=token_rich_style(StyleToken.MUTED),
         )
     )
+    if bool(getattr(runtime, "security_lab_required", False)):
+        lab = runtime.tool_exposure_status().get("security_lab", {})
+        detail = str(lab.get("reason") or lab.get("target") or "")
+        console.print(
+            Text(
+                f"  security lab: {lab.get('state', 'unavailable')}"
+                + (f" ({detail})" if detail else ""),
+                style=token_rich_style(StyleToken.MUTED),
+            )
+        )
     room_detector = getattr(runtime, "is_room_session", None)
     room_reporter = getattr(runtime, "room_participants_report", None)
     if callable(room_detector) and room_detector() and callable(room_reporter):

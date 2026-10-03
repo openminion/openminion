@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
+import math
 import time
 import uuid
 from collections import deque
@@ -22,6 +25,30 @@ from .contracts import (
 from .defaults import requires_explicit_exposure_profile
 
 _LOG = logging.getLogger(__name__)
+
+SECURITY_LAB_ALLOWED_TOOL_IDS = frozenset(
+    {"respond", "clarify", "exec.run", "security.publish_report"}
+)
+SECURITY_LAB_METADATA_KEYS = frozenset(
+    {
+        "lab_required",
+        "activity_class",
+        "security_lab_state",
+        "security_lab_reason",
+        "activation_id",
+        "activation_expires_at",
+        "profile_revision",
+        "profile_version",
+        "config_fingerprint",
+        "resolved_scope_fingerprint",
+        "daemon_id",
+        "target_container_id",
+        "target_image_id",
+        "worker_image_digest",
+        "isolation_mode",
+        "security_lab_target",
+    }
+)
 
 
 def _tokens(values: Iterable[object] | object | None) -> frozenset[str]:
@@ -109,6 +136,16 @@ class ToolExposureService:
         activation_reason: str = "",
         approved_by: str = "",
         policy_source: str = "",
+        agent_id: str = "",
+        profile_revision: int = 0,
+        profile_version: str = "",
+        config_fingerprint: str = "",
+        resolved_scope_fingerprint: str = "",
+        daemon_id: str = "",
+        target_container_id: str = "",
+        target_image_id: str = "",
+        worker_image_digest: str = "",
+        isolation_mode: str = "",
     ) -> ToolExposureSession:
         profile = self.profile(profile_id)
         if profile is None:
@@ -116,9 +153,11 @@ class ToolExposureService:
         session_id = str(session_id or "").strip()
         if not session_id:
             raise ToolRuntimeError("INVALID_ARGUMENT", "session_id is required")
-        if ttl_seconds is not None and float(ttl_seconds) <= 0:
+        ttl_value = float(ttl_seconds) if ttl_seconds is not None else None
+        if ttl_value is not None and (not math.isfinite(ttl_value) or ttl_value <= 0):
             raise ToolRuntimeError(
-                "INVALID_ARGUMENT", "ttl_seconds must be greater than zero"
+                "INVALID_ARGUMENT",
+                "ttl_seconds must be finite and greater than zero",
             )
         audit_id = uuid.uuid4().hex
         try:
@@ -147,13 +186,33 @@ class ToolExposureService:
             task_id=str(task_id or "").strip(),
             target_id=str(target_id or "").strip(),
             audit_id=audit_id,
-            expires_at=(time.time() + float(ttl_seconds)) if ttl_seconds else None,
+            expires_at=(time.time() + ttl_value) if ttl_value is not None else None,
             activation_reason=str(activation_reason or "").strip(),
             approved_by=str(approved_by or "").strip(),
             policy_source=str(policy_source or "").strip(),
+            agent_id=str(agent_id or "").strip(),
+            profile_revision=int(profile_revision or 0),
+            profile_version=str(profile_version or "").strip(),
+            config_fingerprint=str(config_fingerprint or "").strip(),
+            resolved_scope_fingerprint=str(resolved_scope_fingerprint or "").strip(),
+            daemon_id=str(daemon_id or "").strip(),
+            target_container_id=str(target_container_id or "").strip(),
+            target_image_id=str(target_image_id or "").strip(),
+            worker_image_digest=str(worker_image_digest or "").strip(),
+            isolation_mode=str(isolation_mode or "").strip(),
         )
         key = self._activation_key(activation)
         with self._lock:
+            if profile.profile_id == "security_lab" and any(
+                active.profile_id == profile.profile_id
+                and active.session_id == session_id
+                and (active.expires_at is None or active.expires_at > time.time())
+                for active in self._activations.values()
+            ):
+                raise ToolRuntimeError(
+                    "INVALID_ARGUMENT",
+                    "security_lab already has an active approval for this session",
+                )
             self._activations[key] = activation
         self._record("activated", activation=activation)
         return activation
@@ -421,6 +480,48 @@ class ToolExposureService:
             self._record("expired", activation=activation)
         return match
 
+    def resolve_exact_activation(
+        self,
+        profile_id: str,
+        *,
+        session_id: str,
+    ) -> ToolExposureSession:
+        matches = self._active_matches(
+            profile_id=str(profile_id or "").strip(),
+            session_id=str(session_id or "").strip(),
+        )
+        if len(matches) != 1:
+            reason = "inactive" if not matches else "ambiguous"
+            raise ToolRuntimeError(
+                "POLICY_DENIED",
+                f"{profile_id} activation is {reason}",
+                {"reason_code": f"{profile_id}_{reason}"},
+            )
+        return matches[0]
+
+    def _active_matches(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+    ) -> list[ToolExposureSession]:
+        now = time.time()
+        expired: list[ToolExposureSession] = []
+        matches: list[ToolExposureSession] = []
+        with self._lock:
+            for key, activation in list(self._activations.items()):
+                if activation.expires_at is not None and activation.expires_at <= now:
+                    self._activations.pop(key, None)
+                    expired.append(activation)
+                elif (
+                    activation.profile_id == profile_id
+                    and activation.session_id == session_id
+                ):
+                    matches.append(activation)
+        for activation in expired:
+            self._record("expired", activation=activation)
+        return matches
+
     @staticmethod
     def _event_matches_scope(
         event: Mapping[str, Any],
@@ -494,8 +595,137 @@ def exposure_scope(metadata: Mapping[str, Any] | None) -> dict[str, str]:
     return {
         "session_id": str(values.get("session_id", "") or "").strip(),
         "task_id": str(values.get("task_id", "") or "").strip(),
-        "target_id": str(values.get("target_id", "") or "").strip(),
+        "target_id": str(
+            values.get("target_id") or values.get("security_lab_target") or ""
+        ).strip(),
     }
 
 
-__all__ = ["ToolExposureService", "exposure_scope"]
+def security_lab_scope_fingerprint(
+    *,
+    runner_scope_fingerprint: str,
+    session_id: str,
+    agent_id: str,
+    profile_revision: int,
+    profile_version: str,
+    allowed_tools: Iterable[str],
+) -> str:
+    payload = {
+        "runner_scope_fingerprint": runner_scope_fingerprint,
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "profile_revision": int(profile_revision),
+        "profile_version": profile_version,
+        "allowed_tools": sorted(str(item) for item in allowed_tools),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def resolve_security_lab_metadata(
+    service: ToolExposureService | None,
+    *,
+    config: Any,
+    runner: Any,
+    identity: Mapping[str, Any],
+    session_id: str,
+) -> dict[str, Any]:
+    if not bool(identity.get("lab_required")):
+        return {}
+    metadata: dict[str, Any] = {
+        "lab_required": "true",
+        "activity_class": "local_lab_active",
+        "security_lab_state": "unavailable",
+    }
+    allowed_tools = frozenset(identity.get("allowed_tools", ()))
+    if (
+        identity.get("tool_use") != "restricted"
+        or allowed_tools != SECURITY_LAB_ALLOWED_TOOL_IDS
+    ):
+        metadata["security_lab_reason"] = "security_lab_identity_posture_changed"
+        return metadata
+    if config is None or runner is None or service is None:
+        metadata["security_lab_reason"] = "security_lab_not_configured"
+        return metadata
+    try:
+        activation = service.resolve_exact_activation(
+            "security_lab", session_id=session_id
+        )
+        scope = runner.preflight()
+    except (ToolRuntimeError, RuntimeError) as exc:
+        metadata["security_lab_reason"] = str(exc)
+        return metadata
+
+    expected_fingerprint = security_lab_scope_fingerprint(
+        runner_scope_fingerprint=scope.resolved_scope_fingerprint,
+        session_id=session_id,
+        agent_id=str(identity.get("agent_id", "")),
+        profile_revision=int(identity.get("profile_revision", 0) or 0),
+        profile_version=str(identity.get("profile_version", "")),
+        allowed_tools=allowed_tools,
+    )
+    matches = (
+        activation.agent_id == str(identity.get("agent_id", ""))
+        and activation.profile_revision == int(identity.get("profile_revision", 0) or 0)
+        and activation.profile_version == str(identity.get("profile_version", ""))
+        and activation.config_fingerprint == scope.config_fingerprint
+        and activation.daemon_id == scope.daemon_id
+        and activation.target_container_id == scope.target_container_id
+        and activation.target_image_id == scope.target_image_id
+        and activation.worker_image_digest == scope.worker_image_digest
+        and activation.resolved_scope_fingerprint == expected_fingerprint
+        and activation.target_id == config.target_container
+    )
+    if not matches:
+        metadata["security_lab_reason"] = "security_lab_scope_drift"
+        return metadata
+
+    metadata.update(
+        security_lab_state="ready",
+        security_lab_reason="",
+        activation_id=activation.audit_id,
+        activation_expires_at=str(activation.expires_at or ""),
+        agent_id=activation.agent_id,
+        profile_revision=str(activation.profile_revision),
+        profile_version=activation.profile_version,
+        config_fingerprint=activation.config_fingerprint,
+        resolved_scope_fingerprint=activation.resolved_scope_fingerprint,
+        daemon_id=activation.daemon_id,
+        target_container_id=activation.target_container_id,
+        target_image_id=activation.target_image_id,
+        worker_image_digest=activation.worker_image_digest,
+        isolation_mode=activation.isolation_mode,
+        security_lab_target=activation.target_id,
+    )
+    return metadata
+
+
+def project_security_lab_metadata(
+    metadata: dict[str, Any], trusted: Mapping[str, Any]
+) -> None:
+    lab_fields_present = (
+        any(
+            key in metadata
+            for key in (
+                "lab_required",
+                "security_lab_state",
+                "security_lab_target",
+            )
+        )
+        or metadata.get("activity_class") == "local_lab_active"
+    )
+    if not trusted and not lab_fields_present:
+        return
+    for key in SECURITY_LAB_METADATA_KEYS:
+        metadata.pop(key, None)
+    metadata.update(trusted)
+
+
+__all__ = [
+    "SECURITY_LAB_ALLOWED_TOOL_IDS",
+    "ToolExposureService",
+    "exposure_scope",
+    "project_security_lab_metadata",
+    "security_lab_scope_fingerprint",
+    "resolve_security_lab_metadata",
+]

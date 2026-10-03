@@ -6,6 +6,10 @@ from collections.abc import Mapping
 
 from openminion.modules.storage.runtime.sqlite import resolve_database_path
 from openminion.modules.tool.base import ToolExecutionContext
+from openminion.modules.tool.exposure.service import (
+    project_security_lab_metadata,
+    resolve_security_lab_metadata,
+)
 from openminion.modules.tool.runtime.delegation import A2ADelegateApi
 from openminion.modules.tool.runtime.memory import MemoryToolRuntimeService
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
@@ -68,6 +72,22 @@ class ExecutionResources:
             self._a2a_delegate_api = None
         return self._a2a_delegate_api
 
+    def security_lab_metadata(self, session_id: str) -> dict[str, Any]:
+        config = self._service_port.config
+        runtime_cfg = getattr(config, "runtime", None)
+        runtime_handle = getattr(self._runtime, "runtime_handle", None)
+        tools = self._service_port.tools
+        return cast(
+            dict[str, Any],
+            resolve_security_lab_metadata(
+                getattr(tools, "exposure_service", None),
+                config=getattr(runtime_cfg, "security_lab", None),
+                runner=getattr(runtime_handle, "security_lab_runner", None),
+                identity=getattr(self._service_port, "identity_security_lab_facts", {}),
+                session_id=session_id,
+            ),
+        )
+
     def build_context(self) -> ToolExecutionContext:
         inbound = self._runtime.inbound
         config = self._service_port.config
@@ -102,6 +122,11 @@ class ExecutionResources:
             "memory_provider",
             str(getattr(runtime_cfg, "memory_provider", "memory_v2") or "").strip(),
         )
+        lab_runner = getattr(runtime_handle, "security_lab_runner", None)
+        project_security_lab_metadata(
+            tool_metadata,
+            self.security_lab_metadata(str(tool_metadata.get("session_id", "") or "")),
+        )
         return ToolExecutionContext(
             channel=inbound.channel,
             target=inbound.target,
@@ -110,6 +135,7 @@ class ExecutionResources:
             memory_service=self._resolve_memory_tool_service(),
             knowledge_graph_service=getattr(runtime_handle, "knowledge_graphs", None),
             sandbox_runner=getattr(self._runtime, "sandbox_runner", None),
+            security_lab_runner=lab_runner,
             authored_tools_api=getattr(self._runtime, "authored_tools", None),
             a2a_delegate_api=self._resolve_a2a_delegate_api(),
             agent_query=getattr(self._runtime, "agent_discovery_snapshot", None),

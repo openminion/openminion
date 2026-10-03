@@ -1,0 +1,34 @@
+{
+  "default_agent": "default-agent",
+  "identity": {
+    "db_path": "identity/identity.db"
+  },
+  "runtime": {
+    "security_lab": {
+      "daemon_socket": "unix:///var/run/docker.sock",
+      "target_container": "openminion-security-target",
+      "worker_image": "example.invalid/openminion-security-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "executable_allowlist": ["curl"],
+      "worker_uid": 10001,
+      "worker_gid": 10001,
+      "agent_identity_id": "security-researcher-local-lab",
+      "command_timeout_seconds": 30,
+      "max_output_bytes": 1048576,
+      "cpu_limit": 0.5,
+      "memory_bytes": 67108864,
+      "pids_limit": 32,
+      "label": "Local security lab"
+    }
+  },
+  "agents": {
+    "default-agent": {
+      "name": "default-agent",
+      "provider": "echo"
+    },
+    "security-researcher-local-lab": {
+      "name": "security-researcher-local-lab",
+      "provider": "echo",
+      "skill": "security-researcher-local-lab"
+    }
+  }
+}

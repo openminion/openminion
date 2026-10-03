@@ -24,6 +24,21 @@ def build_context(
     history: list[Message] | None,
 ) -> ContextBuildResult:
     inbound_metadata = dict(inbound.metadata or {})
+    lab_required = bool(service._identity_security_lab_facts().get("lab_required"))
+    if lab_required:
+        for key in list(inbound_metadata):
+            if key in {
+                "cwd",
+                "workspace_root",
+                "working_dir",
+                "openminion_ephemeral_workspace_roots",
+            } or key.startswith("project_context_"):
+                inbound_metadata.pop(key, None)
+        inbound_metadata.update(
+            lab_required="true",
+            cwd="/workspace",
+            workspace_root="/workspace",
+        )
     system_prompt = _resolve_system_prompt(service._config)
     system_prompt = service._inject_identity_system_prompt(
         system_prompt=system_prompt,

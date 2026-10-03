@@ -21,7 +21,6 @@ from openminion.modules.tool import (
     DEFAULT_POLICY,
     Policy,
     RuntimeContext,
-    ToolExecutionContext,
     ToolRegistry,
     ToolSpec,
     build_runtime_repositories,
@@ -36,7 +35,6 @@ from openminion.modules.tool.plugin_api import PolicyAdapter
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.runtime.routing import (
     build_runtime_tool_routing_metadata,
-    resolve_runtime_tool_config,
 )
 from .command_metadata import (
     _confirmation_replay_metadata,
@@ -46,6 +44,7 @@ from .command_metadata import (
     _orchestration_metadata_from_command,
     _runtime_workspace_from_command,
 )
+from .execution_context import ToolExecutionContextBuilder
 from .blockchain_authorization import consume_blockchain_send_authorization
 from .github_merge import execute_github_merge_pr_project_effect
 from .github_release import execute_github_release_project_effect
@@ -126,6 +125,9 @@ class ToolAdapter:
         task_manager: Any | None = None,
         scheduler_readiness: Callable[[], dict[str, Any]] | None = None,
         telemetryctl: Any | None = None,
+        sandbox_runner: Any | None = None,
+        security_lab_runner: Any | None = None,
+        identity_security_lab_facts: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.workspace_root = workspace_root
         policy_from_none = policy is None
@@ -147,6 +149,10 @@ class ToolAdapter:
         self.task_manager = task_manager
         self.scheduler_readiness = scheduler_readiness
         self.telemetryctl = telemetryctl
+        self.sandbox_runner = sandbox_runner
+        self.security_lab_runner = security_lab_runner
+        self.security_lab_config = getattr(runtime_config, "security_lab", None)
+        self.identity_security_lab_facts = identity_security_lab_facts
         self.allow_background_write_authorization = (
             _runtime_background_write_authorization_enabled(runtime_config)
         )
@@ -190,6 +196,29 @@ class ToolAdapter:
             from openminion.modules.tool import build_default_tool_registry
 
             self.registry = build_default_tool_registry(config=runtime_config)
+
+    def _build_execution_context_builder(self) -> ToolExecutionContextBuilder:
+        return ToolExecutionContextBuilder(
+            agent_id=self.agent_id,
+            memory_service=getattr(self, "memory_service", None),
+            sandbox_runner=getattr(self, "sandbox_runner", None),
+            security_lab_runner=getattr(self, "security_lab_runner", None),
+            security_lab_config=getattr(self, "security_lab_config", None),
+            identity_security_lab_facts=getattr(
+                self, "identity_security_lab_facts", None
+            ),
+            exposure_service=getattr(self.registry, "exposure_service", None),
+        )
+
+    def _project_security_lab_context(
+        self, policy_raw: dict[str, Any], session_id: str
+    ) -> dict[str, Any]:
+        context_metadata = cast(dict[str, Any], policy_raw["context_metadata"])
+        context_metadata.setdefault("agent_id", self.agent_id)
+        self._build_execution_context_builder().project_security_lab(
+            context_metadata, session_id
+        )
+        return context_metadata
 
     def close(self) -> None:
         if self.secret_service is not None:
@@ -406,8 +435,9 @@ class ToolAdapter:
         if isinstance(policy_raw, dict):
             policy_raw["agent_id"] = self.agent_id
             _merge_orchestration_context_metadata(policy_raw, orchestration_metadata)
-            context_metadata = policy_raw["context_metadata"]
-            context_metadata.setdefault("agent_id", self.agent_id)
+            context_metadata = self._project_security_lab_context(
+                policy_raw, session_id
+            )
             if replay_confirmation_metadata:
                 context_metadata.update(
                     {
@@ -585,6 +615,8 @@ class ToolAdapter:
             task_manager=self.task_manager,
             project_task_id=project_task_id,
             scheduler_readiness=self.scheduler_readiness,
+            sandbox_runner=self.sandbox_runner,
+            security_lab_runner=self.security_lab_runner,
         )
         ctx.session_id, ctx.trace_id = session_id, trace_id
         ctx.agent_id, ctx.run_id = self.agent_id, run_id
@@ -864,7 +896,7 @@ class ToolAdapter:
         replay_confirmation_metadata: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         effective_policy = policy or self.policy
-        context = self._runtime_tool_context(
+        context = self._build_execution_context_builder().build(
             policy=effective_policy,
             session_id=session_id,
             trace_id=trace_id,
@@ -952,45 +984,3 @@ class ToolAdapter:
                 "details": error_details,
             }
         return response
-
-    def _runtime_tool_context(
-        self,
-        *,
-        policy: Policy,
-        session_id: str,
-        trace_id: str,
-        orchestration_metadata: Mapping[str, Any] | None,
-        replay_confirmation_metadata: Mapping[str, str] | None,
-    ) -> ToolExecutionContext:
-        policy_raw = getattr(policy, "raw", {}) or {}
-        raw_metadata = policy_raw.get("context_metadata")
-        metadata = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
-        workspace_root = str(policy_raw.get("workspace_root", "") or "").strip()
-        if workspace_root:
-            metadata.setdefault("workspace_root", workspace_root)
-        metadata.update(
-            agent_id=self.agent_id,
-            trace_id=trace_id,
-            runtime_env=_runtime_env_from_policy(policy),
-        )
-        if orchestration_metadata:
-            metadata["orchestration"] = dict(orchestration_metadata)
-        metadata.update(
-            build_runtime_tool_routing_metadata(resolve_runtime_tool_config(policy))
-        )
-        if replay_confirmation_metadata:
-            metadata.update(
-                {
-                    key: value
-                    for key, value in replay_confirmation_metadata.items()
-                    if str(value or "").strip()
-                }
-            )
-        return ToolExecutionContext(
-            channel="console",
-            target=session_id or "session",
-            session_id=session_id,
-            metadata=metadata,
-            memory_service=self.memory_service,
-            confirm=bool(replay_confirmation_metadata),
-        )

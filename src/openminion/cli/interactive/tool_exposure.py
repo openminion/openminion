@@ -5,6 +5,8 @@ from __future__ import annotations
 import shlex
 from typing import Any
 
+from openminion.modules.tool.errors import ToolRuntimeError
+
 
 def tool_exposure_command(runtime: Any, text: str) -> str:
     try:
@@ -65,6 +67,13 @@ def tool_exposure_command(runtime: Any, text: str) -> str:
             profile.get("dependency_readiness") == "degraded" for profile in profiles
         ) or any(tool.get("dependency_readiness") == "degraded" for tool in unprofiled):
             rows.append("Run /tools status again after operator setup.")
+        lab = snapshot.get("security_lab", {})
+        if lab.get("state") != "not_configured":
+            detail = str(lab.get("reason") or lab.get("target") or "")
+            rows.append(
+                f"Security lab: {lab.get('state', 'unavailable')}"
+                + (f" ({detail})" if detail else "")
+            )
         return "Tool exposure profiles:\n" + ("\n".join(rows) or "(none)")
     if action not in {"activate", "deactivate"} or len(parts) < 3:
         return (
@@ -95,7 +104,7 @@ def tool_exposure_command(runtime: Any, text: str) -> str:
             approved_by=options.get("approved_by", ""),
             policy_source=options.get("policy_source", ""),
         )
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, ToolRuntimeError) as exc:
         return f"Activation denied: {exc}"
     return f"Activated: {activation['profile_id']} ({activation['audit_id']})"
 

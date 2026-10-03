@@ -13,10 +13,11 @@ from openminion.modules.tool.errors import ToolRuntimeError
 
 from .config import SecurityConfig, resolve_local_target, resolve_security_config
 from .providers import scan_artifact, scan_code, scan_dependencies, scan_secrets
-from .report import publish_security_audit
+from .report import publish_security_audit, publish_security_lab_report
 from .schemas import (
     LocalScanArgs,
-    SecurityAuditPublishArgs,
+    SecurityLabPublishArgs,
+    SecurityReportPublishArgs,
     SecurityScanResult,
 )
 
@@ -187,9 +188,10 @@ _h_scan_secrets = _handler(LocalScanArgs, scan_secrets)
 
 
 def _h_publish_report(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    return publish_security_audit(
-        SecurityAuditPublishArgs.model_validate(args), ctx=ctx
-    )
+    request = SecurityReportPublishArgs.model_validate(args).root
+    if isinstance(request, SecurityLabPublishArgs):
+        return publish_security_lab_report(request, ctx=ctx)
+    return publish_security_audit(request, ctx=ctx)
 
 
 __all__ = [

@@ -112,6 +112,7 @@ class ExecRunArgs(BaseModel):
     ask: AskMode = EXEC_ASK_MODE_ON_MISS
     ask_fallback: AskMode = EXEC_ASK_MODE_OFF
     node: Optional[str] = None
+    include_evidence_artifact: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -200,6 +201,10 @@ class ExecRunResult(BaseModel):
     approval_response: Optional[ApprovalResponse] = None
     stdout_artifact: Optional[ArtifactRefModel] = None
     stderr_artifact: Optional[ArtifactRefModel] = None
+    evidence_artifact: Optional[ArtifactRefModel] = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     stdout: Optional[str] = None
     stderr: Optional[str] = None
     summary: str = Field(default="")

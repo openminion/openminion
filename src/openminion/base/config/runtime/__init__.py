@@ -114,6 +114,7 @@ class RuntimeConfig:
     modes: dict[str, ModeRuntimePolicyConfig] = field(default_factory=dict)
     plugins: PluginRuntimePolicyConfig | None = None
     ops: dict[str, object] = field(default_factory=dict)
+    security_lab: object | None = None
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
     mcp_publish: MCPPublishConfig = field(default_factory=MCPPublishConfig)
     mcp_sampling_mode: str = "disabled"

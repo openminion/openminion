@@ -146,6 +146,7 @@ def _build_tool_runtime_context(
         memory_service=context.memory_service,
         knowledge_graph_service=context.knowledge_graph_service,
         sandbox_runner=context.sandbox_runner,
+        security_lab_runner=context.security_lab_runner,
         authored_tools_api=context.authored_tools_api,
         a2a_delegate_api=context.a2a_delegate_api,
         agent_query=context.agent_query,

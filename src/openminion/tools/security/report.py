@@ -1,6 +1,7 @@
 """Publish one canonical candidate security-audit report."""
 
 import hashlib
+import json
 from pathlib import Path
 import uuid
 from typing import Any, Literal
@@ -28,6 +29,8 @@ from .schemas import (
     SecurityAuditPublishArgs,
     SecurityAuditReport,
     SecurityConfigurationIdentity,
+    SecurityLabPublishArgs,
+    SecurityLabReport,
     SecurityScanResult,
 )
 
@@ -137,6 +140,183 @@ def publish_security_audit(
             f"with status={execution_status}"
         ),
     }
+
+
+def publish_security_lab_report(
+    args: SecurityLabPublishArgs,
+    *,
+    ctx: Any,
+) -> dict[str, Any]:
+    if str(getattr(ctx, "permission_mode", "") or "") != "ask":
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            "active security report publication requires permission mode ask",
+        )
+    artifactctl = getattr(ctx, "artifactctl", None)
+    if artifactctl is None:
+        raise ToolRuntimeError(
+            "INTERNAL_ERROR",
+            "security report publication requires canonical artifact storage",
+        )
+    metadata = (getattr(ctx.policy, "raw", {}) or {}).get("context_metadata") or {}
+    if metadata.get("security_lab_state") != "ready":
+        raise ToolRuntimeError(
+            "POLICY_DENIED", "security lab activation is unavailable"
+        )
+    session_id = str(getattr(ctx, "session_id", "") or "")
+    evidence = [
+        _read_exec_evidence(
+            artifactctl,
+            ref,
+            session_id=session_id,
+            metadata=metadata,
+        )
+        for ref in args.validation_evidence
+    ]
+    execution_status: Literal["completed", "partial"] = (
+        "completed"
+        if all(_exec_evidence_completed(item) for item in evidence)
+        else "partial"
+    )
+    objective, _ = redact_sensitive_text(args.objective)
+    summary, _ = redact_sensitive_text(args.summary)
+    limitations, _ = redact_sensitive_text(args.limitations)
+    findings = _security_lab_findings(args)
+    assessment_id = uuid.uuid4().hex
+    report = SecurityLabReport(
+        assessment_id=assessment_id,
+        objective=objective,
+        target={
+            "daemon_id": str(metadata.get("daemon_id", "")),
+            "container_id": str(metadata.get("target_container_id", "")),
+            "image_id": str(metadata.get("target_image_id", "")),
+            "isolation_mode": str(metadata.get("isolation_mode", "")),
+            "worker_image_digest": str(metadata.get("worker_image_digest", "")),
+        },
+        execution_status=execution_status,
+        summary=summary,
+        limitations=limitations,
+        findings=findings,
+        evidence_refs=args.validation_evidence,
+    )
+    artifact = ctx.write_artifact(
+        f"security/audit-{assessment_id}.json",
+        report.model_dump_json(exclude_none=True, indent=2).encode(),
+        "application/json",
+        durable=True,
+    )
+    report_ref = preferred_artifact_ref(artifact)
+    if not report_ref.startswith("artifact://sha256/"):
+        raise ToolRuntimeError(
+            "INTERNAL_ERROR",
+            "security report publication did not produce a canonical artifact",
+        )
+    candidate_count = sum(
+        finding.disposition == "candidate" for finding in args.findings
+    )
+    return {
+        "ok": True,
+        "assessment_id": assessment_id,
+        "schema_version": report.schema_version,
+        "execution_status": execution_status,
+        "review_status": report.review_status,
+        "finding_count": len(findings),
+        "candidate_count": candidate_count,
+        "rejected_count": len(findings) - candidate_count,
+        "report_ref": report_ref,
+        "artifact_ref": report_ref,
+        "artifact_refs": [report_ref],
+        "content": (
+            f"Published unreviewed active security audit {assessment_id} "
+            f"with status={execution_status}"
+        ),
+    }
+
+
+def _security_lab_findings(args: SecurityLabPublishArgs) -> list[dict[str, Any]]:
+    findings = []
+    for finding in args.findings:
+        title, _ = redact_sensitive_text(finding.title)
+        category, _ = redact_sensitive_text(finding.category)
+        explanation, _ = redact_sensitive_text(finding.explanation)
+        findings.append(
+            {
+                **finding.model_dump(mode="json"),
+                "basis": "active_validation",
+                "title": title,
+                "category": category,
+                "explanation": explanation,
+            }
+        )
+    return findings
+
+
+def _read_exec_evidence(
+    artifactctl: Any,
+    evidence_ref: str,
+    *,
+    session_id: str,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        stored = artifactctl.get(evidence_ref)
+        payload = artifactctl.read_bytes(evidence_ref)
+        evidence = json.loads(payload)
+    except (ArtifactCtlError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ToolRuntimeError(
+            "INVALID_ARGUMENT", "active execution evidence is unreadable"
+        ) from exc
+    stored_meta = stored.meta_json or {}
+    expected = {
+        "schema": "exec-evidence/v1",
+        "tool_id": "exec.run",
+        "activity_class": "local_lab_active",
+        "session_id": session_id,
+        "activation_id": str(metadata.get("activation_id", "")),
+        "agent_id": str(metadata.get("agent_id", "")),
+        "profile_revision": str(metadata.get("profile_revision", "")),
+        "profile_version": str(metadata.get("profile_version", "")),
+        "permission_mode": "ask",
+        "config_fingerprint": str(metadata.get("config_fingerprint", "")),
+        "resolved_scope_fingerprint": str(
+            metadata.get("resolved_scope_fingerprint", "")
+        ),
+    }
+    execution = evidence.get("execution") if isinstance(evidence, dict) else None
+    result = evidence.get("result") if isinstance(evidence, dict) else None
+    valid = (
+        stored.deleted_at is None
+        and stored.session_id == session_id
+        and str(stored_meta.get("tool_name", "")) == "exec.run"
+        and isinstance(execution, dict)
+        and isinstance(result, dict)
+        and all(evidence.get(key) == value for key, value in expected.items())
+        and execution.get("daemon_id") == metadata.get("daemon_id")
+        and execution.get("target_container_id") == metadata.get("target_container_id")
+        and execution.get("target_image_id") == metadata.get("target_image_id")
+        and execution.get("worker_image_digest") == metadata.get("worker_image_digest")
+        and execution.get("isolation_mode") == metadata.get("isolation_mode")
+    )
+    if not valid:
+        raise ToolRuntimeError(
+            "INVALID_ARGUMENT",
+            "active execution evidence does not match the approved lab scope",
+            {"evidence_ref": evidence_ref},
+        )
+    return dict(evidence)
+
+
+def _exec_evidence_completed(evidence: dict[str, Any]) -> bool:
+    result = evidence["result"]
+    return (
+        result.get("status") == "ok"
+        and result.get("exit_code") == 0
+        and not result.get("timed_out")
+        and not result.get("terminated")
+        and not result.get("output_limited")
+        and not result["stdout"].get("truncated")
+        and not result["stderr"].get("truncated")
+    )
 
 
 def _resolve_checks(
@@ -351,4 +531,4 @@ def _execution_status(
     return "blocked"
 
 
-__all__ = ["publish_security_audit"]
+__all__ = ["publish_security_audit", "publish_security_lab_report"]

@@ -1,11 +1,15 @@
+import hashlib
+import json
 import time
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
 from openminion.base.runtime.sandbox import (
     ExecResult as SandboxExecResult,
 )
+from openminion.modules.runtime.sandboxes.security_lab import SecurityLabExecResult
 from openminion.modules.tool.runtime.context import (
     RuntimeContext,
     preferred_artifact_ref,
@@ -80,8 +84,21 @@ def _split_lines_tail(text: str, tail_lines: int) -> str:
     return "\n".join(lines[-tail_lines:])
 
 
-def _decode_preview(payload: bytes, *, tail_lines: Optional[int] = None) -> str:
+def _decode_preview(
+    payload: bytes,
+    *,
+    tail_lines: Optional[int] = None,
+    untrusted: bool = False,
+) -> str:
     decoded = payload.decode("utf-8", errors="replace")
+    if untrusted:
+        decoded = "".join(
+            char
+            if char in "\n\t" or ord(char) >= 32 and ord(char) != 127
+            else f"\\x{ord(char):02x}"
+            for char in decoded
+        )
+        decoded = f"[untrusted command output]\n{decoded}"
     if tail_lines is not None:
         decoded = _split_lines_tail(decoded, tail_lines)
     if len(decoded) <= EXEC_MAX_PREVIEW_CHARS:
@@ -165,6 +182,168 @@ def _metrics(duration_ms: int, stdout_bytes: bytes, stderr_bytes: bytes) -> Any:
     ).model_dump()
 
 
+def _canonical_artifact_ref(value: Any) -> str:
+    if not isinstance(value, Mapping):
+        return ""
+    ref = str(value.get("ref", "") or "")
+    return ref if ref.startswith("artifact://sha256/") else ""
+
+
+def _write_exec_evidence(
+    *,
+    ctx: RuntimeContext,
+    tool_name: str,
+    status: ExecStatus,
+    exec_result: SecurityLabExecResult,
+    stdout_bytes: bytes,
+    stderr_bytes: bytes,
+    stdout_artifact: Any,
+    stderr_artifact: Any,
+) -> Any:
+    facts = exec_result.execution_facts
+    if facts is None:
+        return None
+    stdout_ref = _canonical_artifact_ref(stdout_artifact)
+    stderr_ref = _canonical_artifact_ref(stderr_artifact)
+    if (stdout_bytes and not stdout_ref) or (stderr_bytes and not stderr_ref):
+        return None
+    metadata = (getattr(ctx.policy, "raw", {}) or {}).get("context_metadata") or {}
+    evidence = {
+        "schema": "exec-evidence/v1",
+        "tool_id": tool_name,
+        "activity_class": str(metadata.get("activity_class", "") or ""),
+        "session_id": str(ctx.session_id or ""),
+        "activation_id": str(metadata.get("activation_id", "") or ""),
+        "activation_expires_at": str(metadata.get("activation_expires_at", "") or ""),
+        "agent_id": str(ctx.agent_id or metadata.get("agent_id", "") or ""),
+        "profile_revision": str(metadata.get("profile_revision", "") or ""),
+        "profile_version": str(metadata.get("profile_version", "") or ""),
+        "permission_mode": str(ctx.permission_mode or ""),
+        "config_fingerprint": str(metadata.get("config_fingerprint", "") or ""),
+        "resolved_scope_fingerprint": str(
+            metadata.get("resolved_scope_fingerprint", "") or ""
+        ),
+        "execution": asdict(facts),
+        "result": {
+            "status": status,
+            "exit_code": exec_result.returncode,
+            "timed_out": exec_result.timed_out,
+            "terminated": exec_result.terminated,
+            "output_limited": exec_result.output_limited,
+            "stdout": {
+                "retained_bytes": len(stdout_bytes),
+                "observed_bytes": exec_result.stdout_observed_bytes,
+                "truncated": exec_result.stdout_truncated,
+                "sha256": hashlib.sha256(stdout_bytes).hexdigest()
+                if stdout_bytes
+                else "",
+                "artifact_ref": stdout_ref,
+            },
+            "stderr": {
+                "retained_bytes": len(stderr_bytes),
+                "observed_bytes": exec_result.stderr_observed_bytes,
+                "truncated": exec_result.stderr_truncated,
+                "sha256": hashlib.sha256(stderr_bytes).hexdigest()
+                if stderr_bytes
+                else "",
+                "artifact_ref": stderr_ref,
+            },
+        },
+    }
+    payload = json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+    artifact = ctx.write_artifact(
+        f"artifacts/exec/{uuid.uuid4().hex}-evidence.json",
+        payload,
+        "application/json",
+        durable=True,
+    )
+    value = _artifact_ref_from_runtime(artifact)
+    return value if _canonical_artifact_ref(value) else None
+
+
+def _capture_sandbox_output(
+    *,
+    ctx: RuntimeContext,
+    exec_result: SandboxExecResult,
+    evidence_requested: bool,
+) -> tuple[bytes, bytes, Any, Any, str | None, str | None]:
+    if isinstance(exec_result, SecurityLabExecResult):
+        stdout_bytes = exec_result.stdout_bytes
+        stderr_bytes = exec_result.stderr_bytes
+    else:
+        stdout_bytes = stderr_bytes = None
+    if stdout_bytes is None:
+        stdout_bytes = exec_result.stdout.encode("utf-8", errors="replace")
+    if stderr_bytes is None:
+        stderr_bytes = exec_result.stderr.encode("utf-8", errors="replace")
+    stdout_artifact = stderr_artifact = None
+    stdout_preview = stderr_preview = None
+    artifact_session_id = f"sandbox-{uuid.uuid4().hex[:12]}"
+
+    if stdout_bytes and (
+        evidence_requested or len(stdout_bytes) > EXEC_ARTIFACT_THRESHOLD_BYTES
+    ):
+        stdout_artifact = _artifactize_output(
+            ctx,
+            session_id=artifact_session_id,
+            stream="stdout",
+            payload=stdout_bytes,
+        )
+        stdout_preview = _decode_preview(
+            stdout_bytes, tail_lines=80, untrusted=evidence_requested
+        )
+    elif stdout_bytes:
+        stdout_preview = _decode_preview(stdout_bytes, untrusted=evidence_requested)
+
+    if stderr_bytes and (
+        evidence_requested or len(stderr_bytes) > EXEC_ARTIFACT_THRESHOLD_BYTES
+    ):
+        stderr_artifact = _artifactize_output(
+            ctx,
+            session_id=artifact_session_id,
+            stream="stderr",
+            payload=stderr_bytes,
+        )
+        stderr_preview = _decode_preview(
+            stderr_bytes, tail_lines=80, untrusted=evidence_requested
+        )
+    elif stderr_bytes:
+        stderr_preview = _decode_preview(stderr_bytes, untrusted=evidence_requested)
+    return (
+        stdout_bytes,
+        stderr_bytes,
+        stdout_artifact,
+        stderr_artifact,
+        stdout_preview,
+        stderr_preview,
+    )
+
+
+def _write_requested_exec_evidence(
+    *,
+    ctx: RuntimeContext,
+    tool_name: str,
+    status: ExecStatus,
+    exec_result: SandboxExecResult,
+    stdout_bytes: bytes,
+    stderr_bytes: bytes,
+    stdout_artifact: Any,
+    stderr_artifact: Any,
+) -> Any:
+    if not isinstance(exec_result, SecurityLabExecResult):
+        return None
+    return _write_exec_evidence(
+        ctx=ctx,
+        tool_name=tool_name,
+        status=status,
+        exec_result=exec_result,
+        stdout_bytes=stdout_bytes,
+        stderr_bytes=stderr_bytes,
+        stdout_artifact=stdout_artifact,
+        stderr_artifact=stderr_artifact,
+    )
+
+
 def _exec_run_result_from_sandbox(
     *,
     ctx: RuntimeContext,
@@ -174,37 +353,19 @@ def _exec_run_result_from_sandbox(
     timeout_s: int,
     exec_result: SandboxExecResult,
 ) -> Dict[str, Any]:
-    stdout_bytes = exec_result.stdout.encode("utf-8", errors="replace")
-    stderr_bytes = exec_result.stderr.encode("utf-8", errors="replace")
-
-    stdout_artifact = None
-    stderr_artifact = None
-    stdout_preview: Optional[str] = None
-    stderr_preview: Optional[str] = None
-    artifact_session_id = f"sandbox-{uuid.uuid4().hex[:12]}"
-
-    if len(stdout_bytes) > EXEC_ARTIFACT_THRESHOLD_BYTES:
-        stdout_artifact = _artifactize_output(
-            ctx,
-            session_id=artifact_session_id,
-            stream="stdout",
-            payload=stdout_bytes,
-        )
-        stdout_preview = _decode_preview(stdout_bytes, tail_lines=80)
-    elif stdout_bytes:
-        stdout_preview = _decode_preview(stdout_bytes)
-
-    if len(stderr_bytes) > EXEC_ARTIFACT_THRESHOLD_BYTES:
-        stderr_artifact = _artifactize_output(
-            ctx,
-            session_id=artifact_session_id,
-            stream="stderr",
-            payload=stderr_bytes,
-        )
-        stderr_preview = _decode_preview(stderr_bytes, tail_lines=80)
-    elif stderr_bytes:
-        stderr_preview = _decode_preview(stderr_bytes)
-
+    evidence_requested = bool(request_payload.get("include_evidence_artifact"))
+    (
+        stdout_bytes,
+        stderr_bytes,
+        stdout_artifact,
+        stderr_artifact,
+        stdout_preview,
+        stderr_preview,
+    ) = _capture_sandbox_output(
+        ctx=ctx,
+        exec_result=exec_result,
+        evidence_requested=evidence_requested,
+    )
     status: ExecStatus = EXEC_STATUS_OK
     summary = _command_summary(
         exit_code=exec_result.returncode,
@@ -239,13 +400,32 @@ def _exec_run_result_from_sandbox(
                 message=message,
                 details=details,
             )
-
+    evidence_artifact = None
+    if evidence_requested:
+        evidence_artifact = _write_requested_exec_evidence(
+            ctx=ctx,
+            tool_name=tool_name,
+            status=status,
+            exec_result=exec_result,
+            stdout_bytes=stdout_bytes,
+            stderr_bytes=stderr_bytes,
+            stdout_artifact=stdout_artifact,
+            stderr_artifact=stderr_artifact,
+        )
+    if evidence_requested and evidence_artifact is None:
+        status = EXEC_STATUS_ERROR
+        summary = "Command ran, but canonical execution evidence was unavailable."
+        error_payload = _build_error(
+            code="EVIDENCE_UNAVAILABLE",
+            message="canonical execution evidence was unavailable",
+        )
     result = ExecRunResult(
         status=status,
         exit_code=exec_result.returncode,
         summary=summary,
         stdout_artifact=stdout_artifact,
         stderr_artifact=stderr_artifact,
+        evidence_artifact=evidence_artifact,
         stdout=stdout_preview,
         stderr=stderr_preview,
         stdout_preview=stdout_preview,
@@ -255,7 +435,6 @@ def _exec_run_result_from_sandbox(
         ),
         error=ExecErrorModel.model_validate(error_payload) if error_payload else None,
     )
-
     if status == EXEC_STATUS_OK:
         emit_family_event(
             ctx,

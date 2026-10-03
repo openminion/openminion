@@ -262,6 +262,7 @@ class RuntimeContext:
     memory_service: MemoryToolRuntimeService | None = None
     knowledge_graph_service: KnowledgeGraphService | None = None
     sandbox_runner: Any | None = None
+    security_lab_runner: Any | None = None
     authored_tools_api: Any | None = None
     a2a_delegate_api: A2ADelegateApi | None = None
     permission_mode: str = "ask"

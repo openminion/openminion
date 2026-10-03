@@ -44,8 +44,10 @@ from .results import (
 from .sessions import (
     _host_execution_enabled,
     _prepare_exec_run,
+    _prepare_security_lab_exec,
     _sandbox_runner_for_ctx,
     _sandbox_session_manager_for_ctx,
+    _security_lab_required,
     _session_backend_for_ctx,
     _start_exec_run_session,
 )
@@ -97,8 +99,10 @@ def _encode_keys(keys: Iterable[str]) -> bytes:
 
 def _h_exec_run(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     normalized_args = dict(args)
+    security_lab_required = _security_lab_required(ctx)
     if (
-        "host" not in normalized_args
+        not security_lab_required
+        and "host" not in normalized_args
         and _sandbox_runner_for_ctx(ctx) is None
         and _sandbox_session_manager_for_ctx(ctx) is None
         and _host_execution_enabled(ctx)
@@ -111,7 +115,8 @@ def _h_exec_run(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         )
     params = ExecRunArgs.model_validate(normalized_args)
     if (
-        params.host == "sandbox"
+        not security_lab_required
+        and params.host == "sandbox"
         and _sandbox_runner_for_ctx(ctx) is None
         and _sandbox_session_manager_for_ctx(ctx) is None
         and _host_execution_enabled(ctx)
@@ -131,10 +136,12 @@ def _h_exec_run(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         "pty": params.pty,
         "timeout_s": params.timeout_s,
         "yield_ms": params.yield_ms,
+        "include_evidence_artifact": params.include_evidence_artifact,
     }
     emit_family_event(ctx, event="tool.requested", payload={"request": request_payload})
     if (
-        params.host == "sandbox"
+        not security_lab_required
+        and params.host == "sandbox"
         and _sandbox_runner_for_ctx(ctx) is None
         and _sandbox_session_manager_for_ctx(ctx) is None
     ):
@@ -156,7 +163,8 @@ def _h_exec_run(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
                 ),
             },
         )
-    prep, early_result = _prepare_exec_run(
+    prepare = _prepare_security_lab_exec if security_lab_required else _prepare_exec_run
+    prep, early_result = prepare(
         params=params,
         ctx=ctx,
         started=started,
