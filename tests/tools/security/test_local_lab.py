@@ -373,7 +373,9 @@ def test_activation_route_returns_typed_denial() -> None:
     assert result.payload["error"]["code"] == "tool_exposure_activation_denied"
 
 
-def test_direct_api_tool_run_keeps_security_lab_context(tmp_path: Path) -> None:
+def test_direct_api_tool_run_keeps_security_lab_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = OpenMinionConfig(
         agents={
             "default-agent": AgentProfileConfig(name="default-agent"),
@@ -417,6 +419,7 @@ def test_direct_api_tool_run_keeps_security_lab_context(tmp_path: Path) -> None:
 
     runtime = SimpleNamespace(
         config=config,
+        runtime_manager=object(),
         security_lab_runner=runner,
         sessions=sessions,
         tools=_Tools(),
@@ -493,16 +496,24 @@ def test_direct_api_tool_run_keeps_security_lab_context(tmp_path: Path) -> None:
         target="api-user",
         session_id="unrelated-session",
     )
-    with pytest.raises(ValueError, match="does not include agent 'default-agent'"):
-        execute_tool_run(
-            runtime=runtime,
-            tool_name="weather",
-            arguments={"city": "Tokyo"},
-            request_id="request-4",
-            channel="console",
-            target="api-user",
-            requested_session_id="unrelated-session",
-        )
+    monkeypatch.setattr(
+        "openminion.api.routes.tools.v1_tool_schema",
+        lambda _runtime, *, tool_name: {"name": tool_name},
+    )
+    rejected = tools_handle_request(
+        APIRouteContext(None, runtime, None, None, "request-4"),
+        method_name="POST",
+        path="/v1/tools/weather/run",
+        body={
+            "arguments": {"city": "Tokyo"},
+            "session_id": "unrelated-session",
+        },
+        query=None,
+    )
+    assert rejected is not None
+    assert rejected.status == HTTPStatus.BAD_REQUEST
+    assert rejected.payload["error"]["code"] == "invalid_request"
+    assert len(contexts) == 1
     connection.close()
 
 

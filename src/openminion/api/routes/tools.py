@@ -211,6 +211,14 @@ def _handle_tool_run(
             )
         try:
             arguments = v1_tool_arguments(body)
+            request = normalize_tool_run_request(body)
+            status, payload, session_id = execute_tool_run(
+                runtime=active_runtime,
+                tool_name=tool_name,
+                arguments=arguments,
+                request_id=ctx.request_id,
+                **request,
+            )
         except ValueError as exc:
             return exception_route_result(
                 HTTPStatus.BAD_REQUEST,
@@ -219,14 +227,6 @@ def _handle_tool_run(
                 details={"path": path},
                 retryable=False,
             )
-        request = normalize_tool_run_request(body)
-        status, payload, session_id = execute_tool_run(
-            runtime=active_runtime,
-            tool_name=tool_name,
-            arguments=arguments,
-            request_id=ctx.request_id,
-            **request,
-        )
         return RouteResult(
             status=status,
             payload=payload,
