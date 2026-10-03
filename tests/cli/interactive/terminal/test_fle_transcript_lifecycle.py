@@ -652,7 +652,7 @@ def test_prompt_safe_writer_preserves_terminal_control_bytes() -> None:
     assert out.getvalue() == "\r\033[2KWorking..."
 
 
-def test_prompt_safe_writer_keeps_transcript_cursor_separate_from_composer() -> None:
+def test_prompt_safe_writer_writes_transcript_in_normal_terminal_flow() -> None:
     console = Console(force_terminal=True, color_system=None, width=80)
     out = io.StringIO()
     prompt_output = Vt100_Output(
@@ -673,25 +673,20 @@ def test_prompt_safe_writer_keeps_transcript_cursor_separate_from_composer() -> 
         console=console,
         prompt_session=_Session(),
     )
-    remember_cursor = getattr(writer, "remember_cursor")
-
-    remember_cursor()
     writer(lambda: console.print("top-down response"))
 
     rendered = out.getvalue()
-    assert rendered.startswith("\x1b7\x1b8")
     assert "top-down response" in rendered
-    assert rendered.endswith("\x1b7")
+    assert "\x1b7" not in rendered
+    assert "\x1b8" not in rendered
 
 
-def test_prompt_safe_writer_reserves_composer_rows_after_transcript_output() -> None:
+def test_prompt_safe_writer_does_not_reserve_blank_composer_rows() -> None:
     console = Console(force_terminal=True, color_system=None, width=80)
     out = io.StringIO()
-    terminal_rows = [24]
-    composer_rows = [2]
     prompt_output = Vt100_Output(
         out,
-        lambda: Size(rows=terminal_rows[0], columns=80),
+        lambda: Size(rows=24, columns=80),
         term="xterm-256color",
         default_color_depth=ColorDepth.DEPTH_8_BIT,
     )
@@ -706,21 +701,18 @@ def test_prompt_safe_writer_reserves_composer_rows_after_transcript_output() -> 
     writer = build_prompt_safe_terminal_writer(
         console=console,
         prompt_session=_Session(),
-        reserved_rows=lambda: composer_rows[0],
     )
-    getattr(writer, "remember_cursor")()
     writer(lambda: console.print("idle response"))
-    composer_rows[0] = 4
     writer(lambda: console.print("busy response"))
-    terminal_rows[0] = 3
     writer(lambda: console.print("small terminal response"))
 
     rendered = out.getvalue()
     assert "idle response" in rendered
     assert "busy response" in rendered
     assert "small terminal response" in rendered
-    assert rendered.count("\r\n" * 2 + "\x1b[2A\r\x1b7") == 2
-    assert "\r\n" * 4 + "\x1b[4A\r\x1b7" in rendered
+    assert "\x1b7" not in rendered
+    assert "\x1b8" not in rendered
+    assert "\x1b[2A" not in rendered
 
 
 def test_post_turn_render_skips_already_narrated_call_id() -> None:

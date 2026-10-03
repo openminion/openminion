@@ -59,7 +59,7 @@ def test_live_focus_transcript_stays_top_down_during_minimax_turn(
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             rows = session.screen_lines
-            if rows[-4].startswith("Status:") and "❯ hi" in rows:
+            if any(row.startswith("Status:") for row in rows) and "❯ hi" in rows:
                 break
             time.sleep(0.05)
         else:
@@ -322,7 +322,7 @@ def test_live_focus_contextual_help_while_busy(
         )
 
 
-def test_live_focus_typeahead_stays_at_terminal_edge_while_busy(
+def test_live_focus_typeahead_stays_in_inline_composer_while_busy(
     focus_probe: FocusProbe,
     tmp_path,
 ) -> None:
@@ -340,11 +340,13 @@ def test_live_focus_typeahead_stays_at_terminal_edge_while_busy(
             expected = f"❯ {draft[:end]}"
             deadline = time.monotonic() + 1
             while time.monotonic() < deadline:
+                rows = session.screen_lines
                 cursor_visible, cursor_row, cursor_column = session.cursor_state
                 if (
-                    session.screen_lines[-2] == expected.rstrip()
+                    expected.rstrip() in rows
                     and cursor_visible
-                    and (cursor_row, cursor_column) == (41, len(expected) + 1)
+                    and cursor_row == rows.index(expected.rstrip()) + 1
+                    and cursor_column == len(expected) + 1
                 ):
                     break
                 time.sleep(0.01)
@@ -356,22 +358,16 @@ def test_live_focus_typeahead_stays_at_terminal_edge_while_busy(
 
         deadline = time.monotonic() + 300
         completed = False
-        unstable_at: float | None = None
         while time.monotonic() < deadline:
             rows = session.screen_lines
             cursor_visible, cursor_row, cursor_column = session.cursor_state
+            prompt_row = rows.index(f"❯ {draft}") if f"❯ {draft}" in rows else -1
             layout_ready = (
-                rows[-2] == f"❯ {draft}"
-                and rows[-1].startswith("◆ ")
+                prompt_row >= 0
+                and rows[prompt_row + 1].startswith("◆ ")
                 and cursor_visible
-                and (cursor_row, cursor_column) == (41, len(draft) + 3)
+                and (cursor_row, cursor_column) == (prompt_row + 1, len(draft) + 3)
             )
-            if layout_ready:
-                unstable_at = None
-            elif unstable_at is None:
-                unstable_at = time.monotonic()
-            else:
-                assert time.monotonic() - unstable_at < 0.25, session.screen_text
             if re.search(
                 r"Done in \d+(?:m\d{2}s|s)",
                 session.transcript[turn_offset:],

@@ -71,9 +71,6 @@ class _StubComposerRows:
     def active_prompt_rows(self) -> int:
         return 2
 
-    def transcript_reserve_rows(self) -> int:
-        return 2
-
 
 class _ScriptedComposer(_StubComposerRows):
     runtime: _QueueRuntime

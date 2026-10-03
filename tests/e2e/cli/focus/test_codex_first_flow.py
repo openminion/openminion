@@ -217,25 +217,33 @@ def test_codex_first_shell_journey_is_compact_truthful_and_persistent(
             assert echoed_row == tip_row + 2, "\n".join(
                 f"{index}: {row!r}" for index, row in enumerate(busy_rows)
             )
-            assert busy_rows[-4].startswith("Status:")
-            assert busy_rows[-3] == ""
-            assert busy_rows[-2].startswith("❯ Type to queue")
-            assert busy_rows[-1].startswith("◆ ")
-            assert session.cursor_position[0] == len(busy_rows) - 1
+            status_row = next(
+                index
+                for index, row in enumerate(busy_rows)
+                if row.startswith("Status:")
+            )
+            composer_row = next(
+                index
+                for index, row in enumerate(busy_rows)
+                if row.startswith("❯ Type to queue")
+            )
+            assert status_row < composer_row
+            assert busy_rows[composer_row + 1].startswith("◆ ")
+            assert session.cursor_position[0] == composer_row + 1
 
             session.send("queued follow-up")
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
-                if session.screen_lines[-2] == "❯ queued follow-up":
+                if "❯ queued follow-up" in session.screen_lines:
                     break
                 time.sleep(0.05)
             else:
                 raise AssertionError("busy draft did not remain above the footer")
             busy_draft_rows = session.screen_lines
-            assert busy_draft_rows[-4].startswith("Status:")
-            assert busy_draft_rows[-3] == ""
-            assert busy_draft_rows[-1].startswith("◆ ")
-            assert session.cursor_position[0] == len(busy_draft_rows) - 1
+            draft_row = busy_draft_rows.index("❯ queued follow-up")
+            assert any(row.startswith("Status:") for row in busy_draft_rows[:draft_row])
+            assert busy_draft_rows[draft_row + 1].startswith("◆ ")
+            assert session.cursor_position[0] == draft_row + 1
             session.send("\r")
             session.wait_for_visible_match_after(
                 r"Queued for next turn \(1 pending\)\.",
