@@ -8,6 +8,7 @@ from openminion.base.config.core import resolve_default_agent_id
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
 from openminion.modules.tool.exposure.service import (
+    SECURITY_LAB_ALLOWED_TOOL_IDS,
     project_security_lab_metadata,
     resolve_security_lab_metadata,
 )
@@ -54,9 +55,14 @@ def _security_lab_tool_context(
 def _security_lab_tool_denial(
     identity: dict[str, Any], tool_name: str
 ) -> ToolExecutionResult | None:
-    if not identity.get("lab_required") or tool_name in identity.get(
-        "allowed_tools", ()
-    ):
+    if not identity.get("lab_required"):
+        return None
+    exact_posture = (
+        identity.get("tool_use") == "restricted"
+        and frozenset(identity.get("allowed_tools", ()))
+        == SECURITY_LAB_ALLOWED_TOOL_IDS
+    )
+    if exact_posture and tool_name in SECURITY_LAB_ALLOWED_TOOL_IDS:
         return None
     return ToolExecutionResult(
         tool_name=tool_name,
@@ -111,6 +117,9 @@ def execute_tool_run(
     lab_runner, security_lab_metadata, identity = _security_lab_tool_context(
         runtime, session
     )
+    if identity.get("lab_required"):
+        workspace_root = "/workspace"
+        runtime_env = {}
 
     metadata: dict[str, Any] = {
         "trace_id": request_id,

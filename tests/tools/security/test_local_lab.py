@@ -376,6 +376,9 @@ def test_direct_api_tool_run_keeps_security_lab_context() -> None:
         default_agent=_AGENT,
     )
     config.runtime.security_lab = _config()
+    config.runtime.tool_workspace_root = "/host/private-workspace"
+    config.runtime.env = {"SECRET_CANARY": "must-not-cross"}
+    identity = _identity()
     runner = SimpleNamespace(config=_config(), preflight=_scope)
     exposure = _exposure_service()
     session = SimpleNamespace(
@@ -413,7 +416,7 @@ def test_direct_api_tool_run_keeps_security_lab_context() -> None:
         tools=_Tools(),
         authored_tools=None,
         resolve_agent_service=lambda _agent_id: SimpleNamespace(
-            _identity_security_lab_facts=lambda: _identity()
+            _identity_security_lab_facts=lambda: dict(identity)
         ),
     )
     _security_lab_activation(
@@ -441,6 +444,10 @@ def test_direct_api_tool_run_keeps_security_lab_context() -> None:
     context = contexts[0]
     assert context.security_lab_runner is runner
     assert context.metadata["security_lab_state"] == "ready"
+    assert context.metadata["workspace_root"] == "/workspace"
+    assert context.metadata["runtime_env"] == {}
+    assert "/host/private-workspace" not in str(context.metadata)
+    assert "must-not-cross" not in str(context.metadata)
     assert context.security_lab_metadata()["security_lab_state"] == "ready"
 
     denied_status, denied_payload, _session_id = execute_tool_run(
@@ -454,6 +461,22 @@ def test_direct_api_tool_run_keeps_security_lab_context() -> None:
     )
     assert denied_status == HTTPStatus.BAD_REQUEST
     assert denied_payload["tool"]["data"]["reason_code"] == (
+        "security_lab_tool_not_allowed"
+    )
+    assert len(contexts) == 1
+
+    identity.update(tool_use="all", allowed_tools=(*identity["allowed_tools"], "weather"))
+    drift_status, drift_payload, _session_id = execute_tool_run(
+        runtime=runtime,
+        tool_name="weather",
+        arguments={"city": "Tokyo"},
+        request_id="request-3",
+        channel="console",
+        target="api-user",
+        requested_session_id="session-1",
+    )
+    assert drift_status == HTTPStatus.BAD_REQUEST
+    assert drift_payload["tool"]["data"]["reason_code"] == (
         "security_lab_tool_not_allowed"
     )
     assert len(contexts) == 1
