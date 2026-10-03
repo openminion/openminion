@@ -9,10 +9,13 @@ from openminion.modules.tool.errors import ToolRuntimeError
 
 
 def _security_lab_status_rows(lab: dict[str, Any]) -> list[str]:
-    detail = str(lab.get("reason") or lab.get("target") or "")
+    label = str(lab.get("label") or "")
+    target = str(lab.get("target") or "")
+    ready_detail = " → ".join(item for item in (label, target) if item)
+    detail = str(lab.get("reason") or ready_detail)
     rows = [
         f"Security lab: {lab.get('state', 'unavailable')}"
-        + (f" ({detail})" if detail else "")
+        + (f" — {detail}" if detail else "")
     ]
     rows.append(
         "  ".join(
@@ -33,11 +36,16 @@ def _security_lab_status_rows(lab: dict[str, Any]) -> list[str]:
         )
     )
     rows.append(
-        f"  target={lab.get('target_container_id') or lab.get('target', '')}"
+        f"  target={target}"
+        f"  target_id={lab.get('target_container_id', '')}"
         f"  image={lab.get('target_image_id', '')}"
     )
     rows.append(f"  worker={lab.get('worker_image_digest', '')}")
     rows.append(f"  tools={', '.join(lab.get('allowed_tools', [])) or '(none)'}")
+    rows.append(
+        "  executables="
+        + (", ".join(lab.get("executable_allowlist", [])) or "(none)")
+    )
     limits = lab.get("limits") or {}
     rows.append(
         "  limits="

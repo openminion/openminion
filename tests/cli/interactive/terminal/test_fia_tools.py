@@ -35,6 +35,7 @@ class _FakeRuntime:
             "security_lab": {
                 "state": "ready",
                 "activity_class": "local_lab_active",
+                "label": "Synthetic target",
                 "target": "security-target",
                 "target_container_id": "target-id",
                 "target_image_id": "target-image-id",
@@ -43,6 +44,7 @@ class _FakeRuntime:
                 "isolation_mode": "target-network-namespace",
                 "worker_image_digest": "worker@sha256:digest",
                 "allowed_tools": ["exec.run", "security.publish_report"],
+                "executable_allowlist": ["curl"],
                 "limits": {
                     "timeout_seconds": 30,
                     "max_output_bytes": 4096,
@@ -93,6 +95,16 @@ async def _dispatch(runtime: Any, text: str = "/tools") -> str:
 
 def test_tools_in_catalog() -> None:
     assert "/tools" in _SLASH_COMMANDS
+
+
+def test_tools_status_shows_complete_security_lab_identity() -> None:
+    output = asyncio.run(_dispatch(_FakeRuntime(), "/tools status"))
+
+    assert "ready — Synthetic target → security-target" in output
+    assert "target=security-target" in output
+    assert "target_id=target-id" in output
+    assert "image=target-image-id" in output
+    assert "executables=curl" in output
 
 
 def test_render_tools_list_with_entries() -> None:

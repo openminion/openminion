@@ -179,6 +179,7 @@ class RuntimeToolExposureMixin:
             "worker_image_digest": config.worker_image,
             "isolation_mode": "target-network-namespace",
             "allowed_tools": sorted(identity.get("allowed_tools", ())),
+            "executable_allowlist": list(config.executable_allowlist),
             "limits": {
                 "timeout_seconds": config.command_timeout_seconds,
                 "max_output_bytes": config.max_output_bytes,

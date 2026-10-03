@@ -13,9 +13,10 @@ from openminion.api.core.exposure import (
     RuntimeToolExposureMixin,
     _security_lab_activation,
 )
+from openminion.api.operations.tools import execute_tool_run
 from openminion.api.routes.contracts import APIRouteContext
 from openminion.api.routes.tools import handle_request as tools_handle_request
-from openminion.base.config import OpenMinionConfig
+from openminion.base.config import AgentProfileConfig, OpenMinionConfig
 from openminion.base.config.env import EnvironmentConfig
 from openminion.base.runtime.sandbox import ExecResult
 from openminion.modules.runtime.sandboxes.security_lab import (
@@ -30,6 +31,7 @@ from openminion.modules.runtime.sandboxes.docker import DockerLabScope
 from openminion.modules.identity.runtime.service import IdentityCtl
 from openminion.modules.identity.storage import InMemoryIdentityStore
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.exposure import ToolExposureService
 from openminion.modules.tool.exposure.service import (
     SECURITY_LAB_ALLOWED_TOOL_IDS,
@@ -284,6 +286,7 @@ def test_activation_freezes_identity_scope_and_refuses_duplicates() -> None:
     )
     assert status["daemon_state"] == "ready"
     assert status["allowed_tools"] == sorted(SECURITY_LAB_ALLOWED_TOOL_IDS)
+    assert status["executable_allowlist"] == ["curl"]
     assert status["limits"]["max_output_bytes"] == config.max_output_bytes
     assert status["approved_by"] == "operator"
     with pytest.raises(ToolRuntimeError, match="already has an active approval"):
@@ -365,6 +368,95 @@ def test_activation_route_returns_typed_denial() -> None:
     assert result is not None
     assert result.status == HTTPStatus.BAD_REQUEST
     assert result.payload["error"]["code"] == "tool_exposure_activation_denied"
+
+
+def test_direct_api_tool_run_keeps_security_lab_context() -> None:
+    config = OpenMinionConfig(
+        agents={_AGENT: AgentProfileConfig(name=_AGENT)},
+        default_agent=_AGENT,
+    )
+    config.runtime.security_lab = _config()
+    runner = SimpleNamespace(config=_config(), preflight=_scope)
+    exposure = _exposure_service()
+    session = SimpleNamespace(
+        id="session-1",
+        session_key=f"agent:{_AGENT}|channel:console|target:api-user",
+        owner_agent_id=_AGENT,
+    )
+    contexts: list[object] = []
+
+    class _Tools:
+        exposure_service = exposure
+
+        def execute_calls(self, _calls, *, context):  # noqa: ANN001, ANN202
+            contexts.append(context)
+            return SimpleNamespace(
+                results=[
+                    ToolExecutionResult(
+                        tool_name="exec.run",
+                        ok=True,
+                        content="ok",
+                        verified=True,
+                    )
+                ]
+            )
+
+    sessions = SimpleNamespace(
+        get_session=lambda _session_id: session,
+        resolve_session=lambda **_kwargs: session,
+        append_event=lambda **_kwargs: None,
+    )
+    runtime = SimpleNamespace(
+        config=config,
+        security_lab_runner=runner,
+        sessions=sessions,
+        tools=_Tools(),
+        authored_tools=None,
+        resolve_agent_service=lambda _agent_id: SimpleNamespace(
+            _identity_security_lab_facts=lambda: _identity()
+        ),
+    )
+    _security_lab_activation(
+        runtime,
+        session_id="session-1",
+        target_id="security-target",
+        approved=True,
+        ttl_seconds=60,
+        activation_reason="approved direct API test",
+        approved_by="operator",
+        policy_source="api",
+    )
+
+    status, _payload, _session_id = execute_tool_run(
+        runtime=runtime,
+        tool_name="exec.run",
+        arguments={"command": "curl http://127.0.0.1:8080/defect"},
+        request_id="request-1",
+        channel="console",
+        target="api-user",
+        requested_session_id="session-1",
+    )
+
+    assert status == HTTPStatus.OK
+    context = contexts[0]
+    assert context.security_lab_runner is runner
+    assert context.metadata["security_lab_state"] == "ready"
+    assert context.security_lab_metadata()["security_lab_state"] == "ready"
+
+    denied_status, denied_payload, _session_id = execute_tool_run(
+        runtime=runtime,
+        tool_name="weather",
+        arguments={"city": "Tokyo"},
+        request_id="request-2",
+        channel="console",
+        target="api-user",
+        requested_session_id="session-1",
+    )
+    assert denied_status == HTTPStatus.BAD_REQUEST
+    assert denied_payload["tool"]["data"]["reason_code"] == (
+        "security_lab_tool_not_allowed"
+    )
+    assert len(contexts) == 1
 
 
 class _LabRunner:

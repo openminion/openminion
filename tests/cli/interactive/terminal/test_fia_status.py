@@ -104,6 +104,23 @@ def test_render_status_block_shows_combined_permission_posture() -> None:
     assert "permissions: read-only + bypass approvals" in buf.getvalue()
 
 
+def test_render_status_block_shows_security_lab_label_and_target() -> None:
+    runtime = _FakeRuntime()
+    runtime.security_lab_required = True
+    runtime.tool_exposure_status = lambda: {
+        "security_lab": {
+            "state": "ready",
+            "label": "Synthetic target",
+            "target": "security-target",
+        }
+    }
+    console, buf = _make_console()
+
+    _render_status_block(runtime=runtime, console=console, working_dir="/work")
+
+    assert "security lab: ready — Synthetic target → security-target" in buf.getvalue()
+
+
 def test_render_status_block_no_usage_shows_hint() -> None:
     runtime = _FakeRuntime(usage=None)
     console, buf = _make_console()

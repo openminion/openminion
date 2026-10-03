@@ -129,11 +129,14 @@ def _render_status_block(*, runtime: Any, console: Console, working_dir: str) ->
     )
     if bool(getattr(runtime, "security_lab_required", False)):
         lab = runtime.tool_exposure_status().get("security_lab", {})
-        detail = str(lab.get("reason") or lab.get("target") or "")
+        label = str(lab.get("label") or "")
+        target = str(lab.get("target") or "")
+        ready_detail = " → ".join(item for item in (label, target) if item)
+        detail = str(lab.get("reason") or ready_detail)
         console.print(
             Text(
                 f"  security lab: {lab.get('state', 'unavailable')}"
-                + (f" ({detail})" if detail else ""),
+                + (f" — {detail}" if detail else ""),
                 style=token_rich_style(StyleToken.MUTED),
             )
         )

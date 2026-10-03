@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from openminion.modules.tool import (
     ToolExecutionContext,
@@ -33,12 +33,15 @@ class ToolExecutionContextBuilder:
             if self.identity_security_lab_facts is not None
             else {}
         )
-        return resolve_security_lab_metadata(
-            self.exposure_service,
-            config=self.security_lab_config,
-            runner=self.security_lab_runner,
-            identity=identity,
-            session_id=session_id,
+        return cast(
+            dict[str, Any],
+            resolve_security_lab_metadata(
+                self.exposure_service,
+                config=self.security_lab_config,
+                runner=self.security_lab_runner,
+                identity=identity,
+                session_id=session_id,
+            ),
         )
 
     def project_security_lab(self, metadata: dict[str, Any], session_id: str) -> None:

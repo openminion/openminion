@@ -659,7 +659,7 @@ class OpenMinionRuntime(
             merged[ACTION_POLICY_SESSION_OVERRIDE_KEY] = (
                 self.action_policy_mode_override
             )
-        if self._added_workspace_roots:
+        if self._added_workspace_roots and not self.security_lab_required:
             merged["openminion_ephemeral_workspace_roots"] = json.dumps(
                 self._added_workspace_roots
             )

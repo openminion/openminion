@@ -1,11 +1,16 @@
 """Tool-run helpers for the developer API."""
 
+from collections.abc import Callable
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.modules.llm.providers.base import ProviderToolCall
-from openminion.modules.tool.base import ToolExecutionContext
+from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
+from openminion.modules.tool.exposure.service import (
+    project_security_lab_metadata,
+    resolve_security_lab_metadata,
+)
 from openminion.modules.tool.refs import tool_result_artifact_refs
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
 from openminion.modules.policy.adapters.composition import (
@@ -17,6 +22,49 @@ from openminion.modules.tool.selection import ToolSelectionService
 _API_TOOLS_DEFAULT_CHANNEL = "console"
 _API_TOOLS_DEFAULT_TARGET = "api-user"
 _API_TOOLS_DEFAULT_SESSION_ID = "tools"
+
+
+def _security_lab_tool_context(
+    runtime: Any,
+    session: Any,
+) -> tuple[Any, Callable[[], dict[str, Any]], dict[str, Any]]:
+    agent_id = str(session.owner_agent_id or resolve_default_agent_id(runtime.config))
+    agent_service = runtime.resolve_agent_service(agent_id)
+    identity = cast(
+        dict[str, Any], agent_service._identity_security_lab_facts()  # noqa: SLF001
+    )
+    lab_config = runtime.config.runtime.security_lab
+    lab_runner = getattr(runtime, "security_lab_runner", None)
+
+    def metadata() -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            resolve_security_lab_metadata(
+                runtime.tools.exposure_service,
+                config=lab_config,
+                runner=lab_runner,
+                identity=agent_service._identity_security_lab_facts(),  # noqa: SLF001
+                session_id=session.id,
+            ),
+        )
+
+    return lab_runner, metadata, identity
+
+
+def _security_lab_tool_denial(
+    identity: dict[str, Any], tool_name: str
+) -> ToolExecutionResult | None:
+    if not identity.get("lab_required") or tool_name in identity.get(
+        "allowed_tools", ()
+    ):
+        return None
+    return ToolExecutionResult(
+        tool_name=tool_name,
+        ok=False,
+        content="",
+        error="Tool is not allowed for the security lab identity",
+        data={"reason_code": "security_lab_tool_not_allowed"},
+    )
 
 
 def normalize_tool_run_request(body: dict[str, Any]) -> dict[str, Any]:
@@ -60,6 +108,10 @@ def execute_tool_run(
     workspace_root = getattr(runtime, "tool_workspace_root", None)
     workspace_root = workspace_root or runtime.config.runtime.tool_workspace_root
     runtime_env: dict[str, Any] = dict(runtime.config.runtime.env)
+    lab_runner, security_lab_metadata, identity = _security_lab_tool_context(
+        runtime, session
+    )
+
     metadata: dict[str, Any] = {
         "trace_id": request_id,
         "session_id": session.id,
@@ -72,29 +124,34 @@ def execute_tool_run(
             runtime.tools,
         ).runtime_binding_policy_metadata(),
     }
+    project_security_lab_metadata(metadata, security_lab_metadata())
     context = ToolExecutionContext(
         channel=channel,
         target=target,
         session_id=session.id,
         authored_tools_api=getattr(runtime, "authored_tools", None),
+        security_lab_runner=lab_runner,
+        security_lab_metadata=security_lab_metadata,
         metadata=metadata,
         blast_radius_adapter=build_default_composition_boundary_adapter(
             seam_id=SEAM_API_TOOLS,
         ),
         confirm=confirm,
     )
-    batch = runtime.tools.execute_calls(
-        [
-            ProviderToolCall(
-                name=tool_name,
-                arguments=arguments,
-                id=request_id,
-                source="daemon_api",
-            )
-        ],
-        context=context,
-    )
-    result = batch.results[0]
+    result = _security_lab_tool_denial(identity, tool_name)
+    if result is None:
+        batch = runtime.tools.execute_calls(
+            [
+                ProviderToolCall(
+                    name=tool_name,
+                    arguments=arguments,
+                    id=request_id,
+                    source="daemon_api",
+                )
+            ],
+            context=context,
+        )
+        result = batch.results[0]
     artifact_refs = tool_result_artifact_refs(
         trace_id=request_id,
         session_id=session.id,
