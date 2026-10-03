@@ -29,12 +29,14 @@ def _security_lab_tool_context(
     runtime: Any,
     session: Any,
 ) -> tuple[Any, Callable[[], dict[str, Any]], dict[str, Any]]:
+    lab_config = runtime.config.runtime.security_lab
+    if lab_config is None:
+        return None, lambda: {}, {}
     agent_id = str(session.owner_agent_id or resolve_default_agent_id(runtime.config))
     agent_service = runtime.resolve_agent_service(agent_id)
     identity = cast(
         dict[str, Any], agent_service._identity_security_lab_facts()  # noqa: SLF001
     )
-    lab_config = runtime.config.runtime.security_lab
     lab_runner = getattr(runtime, "security_lab_runner", None)
 
     def metadata() -> dict[str, Any]:
@@ -73,6 +75,26 @@ def _security_lab_tool_denial(
     )
 
 
+def _resolve_tool_run_session(
+    runtime: Any,
+    *,
+    channel: str,
+    target: str,
+    requested_session_id: str,
+) -> Any:
+    agent_id = resolve_default_agent_id(runtime.config)
+    if runtime.config.runtime.security_lab is not None:
+        existing = runtime.sessions.get_session(requested_session_id)
+        if existing is not None:
+            agent_id = existing.owner_agent_id
+    return runtime.sessions.resolve_session(
+        agent_id=agent_id,
+        channel=channel,
+        target=target,
+        session_id=requested_session_id,
+    )
+
+
 def normalize_tool_run_request(body: dict[str, Any]) -> dict[str, Any]:
     channel = (
         str(body.get("channel", _API_TOOLS_DEFAULT_CHANNEL)).strip()
@@ -105,11 +127,11 @@ def execute_tool_run(
     requested_session_id: str,
     confirm: bool = False,
 ) -> tuple[HTTPStatus, dict[str, Any], str]:
-    session = runtime.sessions.resolve_session(
-        agent_id=resolve_default_agent_id(runtime.config),
+    session = _resolve_tool_run_session(
+        runtime,
         channel=channel,
         target=target,
-        session_id=requested_session_id,
+        requested_session_id=requested_session_id,
     )
     workspace_root = getattr(runtime, "tool_workspace_root", None)
     workspace_root = workspace_root or runtime.config.runtime.tool_workspace_root

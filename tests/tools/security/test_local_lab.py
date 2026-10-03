@@ -28,6 +28,9 @@ from openminion.modules.runtime.sandboxes.security_lab import (
 from openminion.base.types import Message
 from openminion.modules.artifact.control import ArtifactCtl
 from openminion.modules.runtime.sandboxes.docker import DockerLabScope
+from openminion.modules.storage.runtime.migrations import migrate_database
+from openminion.modules.storage.runtime.session_store import SessionStore
+from openminion.modules.storage.runtime.sqlite import connect_database
 from openminion.modules.identity.runtime.service import IdentityCtl
 from openminion.modules.identity.storage import InMemoryIdentityStore
 from openminion.modules.tool.errors import ToolRuntimeError
@@ -370,10 +373,13 @@ def test_activation_route_returns_typed_denial() -> None:
     assert result.payload["error"]["code"] == "tool_exposure_activation_denied"
 
 
-def test_direct_api_tool_run_keeps_security_lab_context() -> None:
+def test_direct_api_tool_run_keeps_security_lab_context(tmp_path: Path) -> None:
     config = OpenMinionConfig(
-        agents={_AGENT: AgentProfileConfig(name=_AGENT)},
-        default_agent=_AGENT,
+        agents={
+            "default-agent": AgentProfileConfig(name="default-agent"),
+            _AGENT: AgentProfileConfig(name=_AGENT),
+        },
+        default_agent="default-agent",
     )
     config.runtime.security_lab = _config()
     config.runtime.tool_workspace_root = "/host/private-workspace"
@@ -381,10 +387,15 @@ def test_direct_api_tool_run_keeps_security_lab_context() -> None:
     identity = _identity()
     runner = SimpleNamespace(config=_config(), preflight=_scope)
     exposure = _exposure_service()
-    session = SimpleNamespace(
-        id="session-1",
-        session_key=f"agent:{_AGENT}|channel:console|target:api-user",
-        owner_agent_id=_AGENT,
+    database_path = tmp_path / "state" / "openminion.db"
+    migrate_database(database_path)
+    connection = connect_database(database_path)
+    sessions = SessionStore(connection)
+    sessions.resolve_session(
+        agent_id=_AGENT,
+        channel="console",
+        target="api-user",
+        session_id="session-1",
     )
     contexts: list[object] = []
 
@@ -404,11 +415,6 @@ def test_direct_api_tool_run_keeps_security_lab_context() -> None:
                 ]
             )
 
-    sessions = SimpleNamespace(
-        get_session=lambda _session_id: session,
-        resolve_session=lambda **_kwargs: session,
-        append_event=lambda **_kwargs: None,
-    )
     runtime = SimpleNamespace(
         config=config,
         security_lab_runner=runner,
@@ -480,6 +486,7 @@ def test_direct_api_tool_run_keeps_security_lab_context() -> None:
         "security_lab_tool_not_allowed"
     )
     assert len(contexts) == 1
+    connection.close()
 
 
 class _LabRunner:
