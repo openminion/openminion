@@ -15,6 +15,20 @@ from tests.e2e.runners.run_cli_focus_e2e import suite_names
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(120)]
 
 
+def _occupied_rows(session: PtySession) -> tuple[str, ...]:
+    rows = session.screen_lines
+    last = max(index for index, row in enumerate(rows) if row)
+    return rows[: last + 1]
+
+
+def _assert_inline_composer(session: PtySession) -> tuple[str, ...]:
+    rows = _occupied_rows(session)
+    assert rows[-1].startswith("◆ "), "\n".join(rows)
+    assert rows[-2].startswith("❯ "), "\n".join(rows)
+    assert session.cursor_position[0] == len(rows) - 1
+    return rows
+
+
 def test_focus_artifact_root_isolates_pytest_runs(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("OPENMINION_CLI_FOCUS_E2E_ARTIFACT_ROOT", raising=False)
 
@@ -98,21 +112,150 @@ def test_focus_slash_completion_menu_shows_command_names_only(
 
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            if any(row.strip() == "/project" for row in session.screen_lines):
+            screen_rows = session.screen_lines
+            if "❯ /pro" in screen_rows and any(
+                row.strip() == "/project" for row in screen_rows
+            ):
                 break
             time.sleep(0.05)
         else:
             raise AssertionError("filtered slash completion did not show /project")
 
         screen_rows = session.screen_lines
-        assert screen_rows[-2] == "❯ /pro"
-        assert screen_rows[-1].startswith("◆ ")
-        assert session.cursor_state == (True, rows - 1, len("❯ /pro") + 1)
+        occupied_rows = _occupied_rows(session)
+        prompt_row = occupied_rows.index("❯ /pro") if "❯ /pro" in occupied_rows else -1
+        footer_row = next(
+            index for index, row in enumerate(occupied_rows) if row.startswith("◆ ")
+        )
+        assert 0 <= prompt_row < footer_row < rows, "\n".join(occupied_rows)
+        assert session.cursor_state == (True, prompt_row + 1, len("❯ /pro") + 1)
         assert sum(row.strip() == "/project" for row in screen_rows) == 1
         assert not any(
             "Start, inspect, or control durable project work" in row
             for row in screen_rows
         )
+
+
+def test_focus_full_slash_menu_preserves_visible_transcript(
+    focus_probe: FocusProbe,
+) -> None:
+    environment = focus_probe.environment()
+    environment["TERM_PROGRAM"] = "iTerm.app"
+    environment["TERM"] = "screen.xterm-256color"
+    with PtySession(
+        argv=focus_probe.command(),
+        cwd=focus_probe.openminion_root,
+        env=environment,
+        rows=53,
+        cols=153,
+    ) as session:
+        focus_probe.wait_ready(session)
+        startup_rows = _occupied_rows(session)
+        session.send("/")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if any(row.strip() == "/agents" for row in session.screen_lines):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("startup slash menu did not open")
+        assert startup_rows[:-2] == _occupied_rows(session)[: len(startup_rows) - 2]
+        session.send("\x15")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if _occupied_rows(session)[-2].startswith("❯ Ask anything"):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("startup slash menu did not close")
+        assert startup_rows[:-2] == _occupied_rows(session)[:-2]
+
+        focus_probe.run_slash(session, "/help", marker="Use /help")
+        session.send("/")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if any(row.strip() == "/agents" for row in session.screen_lines):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("full slash menu did not open")
+
+        assert "❯ /" in _occupied_rows(session)
+        session.send("\x1b[B" * 32)
+        time.sleep(0.2)
+        assert any(row.strip().startswith("/") for row in _occupied_rows(session))
+        session.send("\x15")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if _occupied_rows(session)[-2].startswith("❯ Ask anything"):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("full slash menu did not close")
+        assert any("Use /help <command>" in row for row in _occupied_rows(session))
+        assert "\x1b[?1049h" not in session.transcript
+
+
+def test_focus_submitted_input_remains_top_down_after_slash_menu(
+    focus_probe: FocusProbe,
+) -> None:
+    with focus_probe.session(rows=53, cols=153) as session:
+        focus_probe.wait_ready(session)
+        session.send("/")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if any(row.strip() == "/agents" for row in session.screen_lines):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("full slash menu did not open")
+        session.send("\x15")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if _occupied_rows(session)[-2].startswith("❯ Ask anything"):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("full slash menu did not close")
+
+        focus_probe._submit_composer_line(session, "hi")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if "❯ hi" in session.screen_lines:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("submitted input did not appear")
+        rows = session.screen_lines
+        tip_row = next(
+            index for index, row in enumerate(rows) if row.startswith("Tip: ")
+        )
+        assert rows.index("❯ hi") == tip_row + 2
+
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            if any("Done in" in row for row in rows):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("first reply did not complete")
+        answer_row = next(
+            index for index, row in enumerate(rows) if row.startswith("● ")
+        )
+        assert 0 < answer_row - rows.index("❯ hi") <= 4, "\n".join(rows)
+
+        focus_probe._submit_composer_line(session, "second message")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            if "❯ second message" in rows:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("second submitted input did not appear")
+        done_row = next(index for index, row in enumerate(rows) if "Done in" in row)
+        assert 0 < rows.index("❯ second message") - done_row <= 4, "\n".join(rows)
 
 
 def test_focus_pty_controls_durable_project(
@@ -441,7 +584,7 @@ def test_focus_pty_survives_resize_after_launch(
         write_transcript(artifact_root(tmp_path), "local-resize-help", transcript)
 
 
-def test_focus_pty_keeps_top_down_transcript_with_pinned_input_across_resize(
+def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
     focus_probe: FocusProbe,
 ) -> None:
     def assert_blank_row_after(
@@ -453,17 +596,14 @@ def test_focus_pty_keeps_top_down_transcript_with_pinned_input_across_resize(
         )
         assert screen_rows[row + 1] == ""
 
-    def assert_bottom_layout(session: PtySession, *, rows: int) -> None:
-        screen_rows = session.screen_lines
-        assert len(screen_rows) == rows
-        assert screen_rows[-2].startswith("❯ ")
-        assert screen_rows[-1].startswith("◆ ")
-        assert session.cursor_position[0] == rows - 1
+    def assert_flow_layout(session: PtySession, *, rows: int) -> None:
+        assert len(session.screen_lines) == rows
+        _assert_inline_composer(session)
         assert "cursor position requests" not in session.visible_transcript
 
     with focus_probe.session(rows=24, cols=100) as session:
         focus_probe.wait_ready(session)
-        assert_bottom_layout(session, rows=24)
+        assert_flow_layout(session, rows=24)
         assert_blank_row_after(
             session.screen_lines,
             "Tip: / for commands · @ to mention a file · keep typing while a turn runs",
@@ -472,13 +612,13 @@ def test_focus_pty_keeps_top_down_transcript_with_pinned_input_across_resize(
         focus_probe.run_turn(
             session,
             FocusScenario(
-                scenario_id="local_bottom_layout",
+                scenario_id="local_inline_layout",
                 prompt="Reply with exactly: footer layout check",
                 expected_markers=("footer layout check",),
                 timeout=60,
             ),
         )
-        assert_bottom_layout(session, rows=24)
+        assert_flow_layout(session, rows=24)
         screen_rows = session.screen_lines
         tip_row = screen_rows.index(
             "Tip: / for commands · @ to mention a file · keep typing while a turn runs"
@@ -496,7 +636,8 @@ def test_focus_pty_keeps_top_down_transcript_with_pinned_input_across_resize(
             f"{index}: {line!r}" for index, line in enumerate(screen_rows)
         )
         assert len(matching_rows) >= 2
-        assert matching_rows[0] < matching_rows[1] < len(screen_rows) - 2
+        assert matching_rows[1] == matching_rows[0] + 2
+        assert matching_rows[0] < matching_rows[1] < len(_occupied_rows(session)) - 2
         assert_blank_row_after(
             screen_rows,
             "❯ Reply with exactly: footer layout check",
@@ -515,7 +656,12 @@ def test_focus_pty_keeps_top_down_transcript_with_pinned_input_across_resize(
             for index, line in enumerate(screen_rows)
             if index > command_row and line.startswith("Cost")
         )
-        assert first_response_row < command_row < cost_row < len(screen_rows) - 2
+        assert (
+            first_response_row
+            < command_row
+            < cost_row
+            < len(_occupied_rows(session)) - 2
+        )
         focus_probe.run_slash(session, "/queue", marker="No queued messages.")
         screen_rows = session.screen_lines
         assert any(line.startswith("Cost") for line in screen_rows)
@@ -524,12 +670,12 @@ def test_focus_pty_keeps_top_down_transcript_with_pinned_input_across_resize(
         session.send("typed-check")
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            if session.screen_lines[-2] == "❯ typed-check":
+            if _occupied_rows(session)[-2] == "❯ typed-check":
                 break
             time.sleep(0.05)
         else:
             raise AssertionError("typed input did not remain above the footer")
-        assert_bottom_layout(session, rows=24)
+        assert_flow_layout(session, rows=24)
 
         session.send("\x7f" * len("typed-check"))
         session.send("/")
@@ -540,7 +686,8 @@ def test_focus_pty_keeps_top_down_transcript_with_pinned_input_across_resize(
             time.sleep(0.05)
         else:
             raise AssertionError("slash completion menu did not open")
-        assert_bottom_layout(session, rows=24)
+        assert "❯ /" in _occupied_rows(session)
+        assert _occupied_rows(session)[-1].startswith("◆ ")
 
         session.send("\x7f")
         deadline = time.monotonic() + 5
@@ -551,20 +698,20 @@ def test_focus_pty_keeps_top_down_transcript_with_pinned_input_across_resize(
         else:
             raise AssertionError("slash completion menu did not close cleanly")
         session.resize(rows=18, cols=72)
-        assert_bottom_layout(session, rows=18)
+        assert_flow_layout(session, rows=18)
 
         session.resize(rows=42, cols=120)
-        assert_bottom_layout(session, rows=42)
+        assert_flow_layout(session, rows=42)
         focus_probe.run_turn(
             session,
             FocusScenario(
-                scenario_id="local_bottom_layout_after_resize",
+                scenario_id="local_inline_layout_after_resize",
                 prompt="Reply with exactly: second layout check",
                 expected_markers=("second layout check",),
                 timeout=60,
             ),
         )
-        assert_bottom_layout(session, rows=42)
+        assert_flow_layout(session, rows=42)
         screen_rows = session.screen_lines
         second_prompt_row = screen_rows.index(
             "❯ Reply with exactly: second layout check"
@@ -606,7 +753,7 @@ def test_focus_pty_keeps_top_down_transcript_with_pinned_input_across_resize(
 
 
 @pytest.mark.parametrize("part_count", [18, 55])
-def test_focus_pty_long_paste_keeps_transcript_top_down_and_footer_pinned(
+def test_focus_pty_long_paste_keeps_transcript_top_down_and_composer_inline(
     focus_probe: FocusProbe,
     part_count: int,
 ) -> None:
@@ -634,15 +781,17 @@ def test_focus_pty_long_paste_keeps_transcript_top_down_and_footer_pinned(
             raise AssertionError("long draft did not render\n" + "\n".join(rows))
         if part_count == 18:
             assert tip in rows, "\n".join(rows)
-        assert rows[-1].startswith("◆ "), "\n".join(rows)
-        assert session.cursor_position[0] == 41
+        assert _occupied_rows(session)[-1].startswith("◆ "), "\n".join(rows)
+        assert session.cursor_position[0] <= 41
 
         session.send("\r")
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             rows = session.screen_lines
-            if any("long layout check" in row for row in rows) and any(
-                "Done in" in row for row in rows
+            if (
+                any("long layout check" in row for row in rows)
+                and any("Done in" in row for row in rows)
+                and _occupied_rows(session)[-2].startswith("❯ Ask anything")
             ):
                 break
             time.sleep(0.05)
@@ -653,8 +802,7 @@ def test_focus_pty_long_paste_keeps_transcript_top_down_and_footer_pinned(
             assert rows[tip_row + 2].startswith("❯ A long request"), "\n".join(rows)
         else:
             assert rows[0], "\n".join(rows)
-        assert rows[-2].startswith("❯ Ask anything"), "\n".join(rows)
-        assert rows[-1].startswith("◆ "), "\n".join(rows)
+        _assert_inline_composer(session)
 
         session.send_bracketed_paste(prompt)
         deadline = time.monotonic() + 5
@@ -666,12 +814,12 @@ def test_focus_pty_long_paste_keeps_transcript_top_down_and_footer_pinned(
             raise AssertionError("second long draft did not render")
         session.resize(rows=36, cols=72)
         rows = session.screen_lines
-        assert rows[-1].startswith("◆ "), "\n".join(rows)
-        assert session.cursor_position[0] == 35
+        assert _occupied_rows(session)[-1].startswith("◆ "), "\n".join(rows)
+        assert session.cursor_position[0] <= 35
         session.resize(rows=42, cols=100)
         rows = session.screen_lines
-        assert rows[-1].startswith("◆ "), "\n".join(rows)
-        assert session.cursor_position[0] == 41
+        assert _occupied_rows(session)[-1].startswith("◆ "), "\n".join(rows)
+        assert session.cursor_position[0] <= 41
         session.send("\x15")
 
 
@@ -694,9 +842,8 @@ def test_focus_pty_resets_inherited_terminal_viewport(
     ) as session:
         focus_probe.wait_ready(session)
 
-        assert session.screen_lines[-2].startswith("❯ Ask anything")
-        assert session.screen_lines[-1].startswith("◆ ")
-        assert session.cursor_state == (True, 41, 3)
+        _assert_inline_composer(session)
+        assert session.cursor_state[0] is True
 
 
 def test_focus_startup_notice_preserves_single_composer(
@@ -739,7 +886,7 @@ def test_focus_startup_notice_preserves_single_composer(
         assert screen.count("Ask anything") == 1
 
 
-def test_focus_cost_output_preserves_single_bottom_composer(
+def test_focus_cost_output_preserves_single_inline_composer(
     focus_probe: FocusProbe,
 ) -> None:
     with focus_probe.session(rows=42, cols=140) as session:
@@ -761,8 +908,7 @@ def test_focus_cost_output_preserves_single_bottom_composer(
 
         rows = session.screen_lines
         assert sum("Ask anything" in row for row in rows) == 1
-        assert rows[-2].startswith("❯ Ask anything")
-        assert rows[-1].startswith("◆ ")
+        _assert_inline_composer(session)
 
 
 def test_focus_runner_exposes_tracker_suite_names() -> None:

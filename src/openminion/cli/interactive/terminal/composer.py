@@ -11,9 +11,8 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.application import run_in_terminal
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
-from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
-from prompt_toolkit.filters import Condition
+from prompt_toolkit.filters import Condition, is_done
 from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -54,7 +53,6 @@ _COMPLETION_MENU_ROWS = 10
 _PLACEHOLDER_IDLE = "Ask anything · @ to mention a file · / for commands"
 _PLACEHOLDER_BUSY = "Type to queue for the next turn · Esc interrupts"
 _SLASH_NAME_CHARS = tuple("abcdefghijklmnopqrstuvwxyz0123456789-_")
-_RESET_TERMINAL_VIEWPORT = "\x1b[?6l\x1b[r"
 _PHASE_ANIMATIONS = {
     "clarifying": "focusbeam",
     "analyzing": "braillewave",
@@ -95,6 +93,12 @@ def _focus_prompt_style(*, color: bool = True) -> Style:
             "bottom-toolbar.text": toolbar,
             "busy-indicator": active_theme_color(StyleToken.SPINNER),
             "placeholder": placeholder,
+            "completion-menu": (
+                f"noreverse bg:{theme.surface_panel_bg} {theme.text_primary}"
+            ),
+            "completion-menu.completion.current": (
+                f"noreverse bg:{theme.surface_divider} {theme.text_primary}"
+            ),
         }
     )
 
@@ -183,14 +187,13 @@ def _configure_completion_menu(session: PromptSession[str]) -> None:
         return
 
 
-def _configure_bottom_input_layout(session: PromptSession[str]) -> None:
-    """Keep the live input directly above the persistent footer."""
+def _configure_flow_input_layout(session: PromptSession[str]) -> None:
+    """Keep the composer immediately after the transcript, without a spacer."""
 
     root = session.layout.container
     input_window = session.layout.current_window
     if not isinstance(root, HSplit) or not isinstance(input_window, Window):
         raise RuntimeError("prompt layout does not expose the expected input stack")
-
     main_input = root.children[0]
     if not isinstance(main_input, ConditionalContainer) or not isinstance(
         main_input.alternative_content, FloatContainer
@@ -198,24 +201,27 @@ def _configure_bottom_input_layout(session: PromptSession[str]) -> None:
         raise RuntimeError("prompt layout does not expose the expected menu stack")
     input_stack = main_input.alternative_content.content
     if not isinstance(input_stack, HSplit):
-        raise RuntimeError("prompt layout does not expose the expected menu stack")
+        raise RuntimeError("prompt layout does not expose the expected input stack")
+    toolbar = root.children[-1]
+    if not isinstance(toolbar, ConditionalContainer):
+        raise RuntimeError("prompt layout does not expose the expected footer")
 
-    root.align = VerticalAlign.JUSTIFY
+    root.align = VerticalAlign.TOP
     input_window.dont_extend_height = Condition(lambda: True)
     input_window.height = Dimension()
-    # Preserve prompt-toolkit's stretching main region so its footer remains
-    # attached to the physical last row. A flexible spacer inside that region
-    # absorbs the unused height and keeps only the prompt at the bottom.
-    input_stack.children.insert(0, Window())
-    # Leave room above the cursor so prompt-toolkit opens its completion float
-    # upward without moving the input off the penultimate terminal row.
-    input_stack.children.insert(
-        2,
-        ConditionalContainer(
-            Window(height=Dimension.exact(_COMPLETION_MENU_ROWS - 1)),
-            Condition(lambda: session.default_buffer.complete_state is not None),
-        ),
+    input_stack.children.append(
+        Window(
+            height=lambda: Dimension.exact(
+                _COMPLETION_MENU_ROWS
+                if session.default_buffer.complete_state is not None
+                else 0
+            ),
+            dont_extend_height=True,
+        )
     )
+    # prompt-toolkit normally hides its toolbar until CPR establishes the
+    # remaining terminal height. This inline layout does not need CPR.
+    toolbar.filter = Condition(lambda: session.bottom_toolbar is not None) & ~is_done
 
 
 def _use_click_only_mouse_tracking(session: PromptSession[str]) -> None:
@@ -378,13 +384,9 @@ class TerminalComposer:
         )
         output = self._session.app.output
         if isinstance(output, Vt100_Output):
-            self._session.app.renderer.cpr_not_supported_callback = None
+            self._session.app.renderer.cpr_support = CPR_Support.NOT_SUPPORTED
         _configure_completion_menu(self._session)
-        _configure_bottom_input_layout(self._session)
-        self._normalized_terminal_output: object | None = None
-        self._anchored_terminal_rows = 0
-        self._anchored_layout_rows = 0
-        self._session.app.before_render += self._ensure_prompt_anchor
+        _configure_flow_input_layout(self._session)
 
     def apply_theme(self) -> None:
         if not self._color:
@@ -559,81 +561,11 @@ class TerminalComposer:
                     placeholder=self._formatted_placeholder,
                     refresh_interval=self._prompt_refresh_interval(),
                     default=draft,
-                    pre_run=self._ensure_prompt_anchor,
                 )
                 self._next_draft = None
             finally:
                 self._multiline = False
         return str(text or "").rstrip("\n")
-
-    def active_prompt_rows(self) -> int:
-        layout_rows = 2 if self._bottom_toolbar is not None else 1
-        if self._busy and self._progress != "off":
-            status = self._active_status() if self._active_status is not None else ""
-            if status or self._busy_frame(time.monotonic()):
-                layout_rows += 2
-        return layout_rows
-
-    def _ensure_prompt_anchor(self, *_: object) -> None:
-        """Keep the prompt on the terminal edge across renderer resets."""
-
-        app = self._session.app
-        output = app.output
-        if self._normalized_terminal_output is not output:
-            # A prior terminal application can leave origin mode or a bounded
-            # scroll region active, which makes absolute rows relative to that
-            # stale viewport instead of the physical terminal.
-            output.write_raw(_RESET_TERMINAL_VIEWPORT)
-            self._normalized_terminal_output = output
-        size = output.get_size()
-        terminal_rows = max(1, size.rows)
-        preferred_rows = app.layout.container.preferred_height(
-            size.columns, terminal_rows
-        ).preferred
-        layout_rows = min(max(self.active_prompt_rows(), preferred_rows), terminal_rows)
-        renderer = app.renderer
-        renderer.cpr_support = CPR_Support.NOT_SUPPORTED
-        last_screen = renderer._last_screen
-        if (
-            last_screen is not None
-            and self._anchored_terminal_rows == terminal_rows
-            and self._anchored_layout_rows == layout_rows
-        ):
-            # Multiplexers can move the physical cursor without invalidating
-            # prompt-toolkit's cached screen. Restore its cached cursor at the
-            # same bottom-relative position before applying the next diff.
-            screen_height = min(last_screen.height, terminal_rows)
-            screen_top = terminal_rows - screen_height + 1
-            cursor = renderer._cursor_pos
-            output.cursor_goto(
-                row=min(terminal_rows, screen_top + cursor.y),
-                column=cursor.x + 1,
-            )
-            output.flush()
-            return
-        if last_screen is not None:
-            renderer._last_screen = None
-            if (
-                self._anchored_terminal_rows == terminal_rows
-                and layout_rows < self._anchored_layout_rows
-            ):
-                output.cursor_goto(
-                    row=max(1, terminal_rows - self._anchored_layout_rows + 1),
-                    column=1,
-                )
-                output.erase_down()
-        output.cursor_goto(row=terminal_rows, column=1)
-        output.cursor_up(layout_rows - 1)
-        output.flush()
-        # Prompt-toolkit normally learns this value through a cursor position
-        # response. Seed the known space after explicitly positioning the
-        # cursor so terminals without CPR render the same persistent footer.
-        # Prompt-safe output can reset the physical cursor independently, so
-        # keep the renderer's relative origin synchronized with this anchor.
-        renderer._cursor_pos = Point(x=0, y=0)
-        renderer._min_available_height = layout_rows
-        self._anchored_terminal_rows = terminal_rows
-        self._anchored_layout_rows = layout_rows
 
     def _formatted_bottom_toolbar(self):
         if self._bottom_toolbar is None:

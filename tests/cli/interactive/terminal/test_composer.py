@@ -22,6 +22,7 @@ from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.output.base import Size
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.output.vt100 import Vt100_Output
+from prompt_toolkit.renderer import CPR_Support
 
 import openminion.cli.interactive.terminal.composer as composer_module
 from openminion.cli.interactive.terminal.composer import (
@@ -36,7 +37,7 @@ from openminion.cli.presentation.animation import (
     AnimationSpec,
 )
 from openminion.cli.presentation.contracts import Composer
-from openminion.cli.theme import DARK
+from openminion.cli.theme import DARK, LIGHT
 
 
 _PROMPT_STYLE = f"fg:{DARK.text_accent}"
@@ -60,6 +61,32 @@ def test_composer_can_disable_prompt_color() -> None:
     composer = TerminalComposer(color=False)
 
     assert composer._formatted_prompt() == [("", "❯ ")]
+
+
+def test_completion_menu_uses_active_terminal_theme() -> None:
+    from openminion.cli.presentation.styles import set_active_theme
+
+    try:
+        for theme in (DARK, LIGHT):
+            set_active_theme(theme)
+            rules = dict(composer_module._focus_prompt_style()._style_rules)
+            assert theme.surface_panel_bg in rules["completion-menu"]
+            assert theme.text_primary in rules["completion-menu"]
+            assert theme.surface_divider in rules["completion-menu.completion.current"]
+            assert "noreverse" in rules["completion-menu.completion.current"]
+    finally:
+        set_active_theme(DARK)
+
+
+def test_composer_keeps_inline_layout_at_any_terminal_height() -> None:
+    composer = TerminalComposer()
+    root = composer.prompt_session.layout.container
+    for rows in (24, 53):
+        composer.prompt_session.output.get_size = lambda rows=rows: Size(
+            rows=rows, columns=100
+        )
+        assert root.align == VerticalAlign.TOP
+        assert not any(isinstance(child, Window) for child in root.children)
 
 
 def test_set_resumed_flips_prompt_prefix() -> None:
@@ -204,13 +231,14 @@ def test_input_stays_packed_when_completion_menu_opens() -> None:
     input_stack = root.children[0].alternative_content.content
     input_window = c._session.layout.current_window
 
-    assert root.align == VerticalAlign.JUSTIFY
-    assert isinstance(input_stack.children[0], Window)
+    assert root.align == VerticalAlign.TOP
     assert input_window.dont_extend_height() is True
     assert int(input_window.height.min) == 0
+    menu_space = input_stack.children[-1]
+    assert menu_space.height().preferred == 0
 
     c._session.default_buffer.complete_state = object()
-    assert int(input_window.height.min) == 0
+    assert menu_space.height().preferred > 0
 
 
 def test_mouse_capture_is_limited_to_open_completion_menu(
@@ -258,7 +286,7 @@ def test_composer_suppresses_unsupported_cursor_position_warning() -> None:
         composer = TerminalComposer()
 
     assert output.enable_cpr is True
-    assert composer._session.app.renderer.cpr_not_supported_callback is None
+    assert composer._session.app.renderer.cpr_support == CPR_Support.NOT_SUPPORTED
 
 
 def _completion_menu_controls(node: object) -> list[CompletionsMenuControl]:

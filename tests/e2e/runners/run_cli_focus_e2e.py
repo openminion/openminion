@@ -30,7 +30,7 @@ _TIMEOUT_ENV = "OPENMINION_CLI_FOCUS_E2E_RUNNER_TIMEOUT_SECONDS"
 _BASELINE_ENV = "OPENMINION_CLI_FOCUS_E2E_BASELINE"
 BASELINE_CASES = (
     "tests/e2e/cli/focus/test_live_basic.py::test_live_focus_basic_turn[exact_reply]",
-    "tests/e2e/cli/focus/test_live_basic.py::test_live_focus_typeahead_stays_at_terminal_edge_while_busy",
+    "tests/e2e/cli/focus/test_live_basic.py::test_live_focus_typeahead_stays_in_inline_composer_while_busy",
     "tests/e2e/cli/focus/test_live_tools.py::test_live_focus_tool_scenarios[time_tool]",
     "tests/e2e/cli/focus/test_live_memory_continuity.py::test_live_focus_memory_survives_distinct_session",
 )
