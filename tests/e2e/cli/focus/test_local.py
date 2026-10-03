@@ -175,7 +175,9 @@ def test_focus_full_slash_menu_preserves_visible_transcript(
             raise AssertionError("full slash menu did not close")
         assert before_menu == session.screen_lines, "\n".join(
             f"{index}: {before!r} -> {after!r}"
-            for index, (before, after) in enumerate(zip(before_menu, session.screen_lines))
+            for index, (before, after) in enumerate(
+                zip(before_menu, session.screen_lines)
+            )
             if before != after
         )
 
@@ -211,7 +213,9 @@ def test_focus_submitted_input_remains_top_down_after_slash_menu(
         else:
             raise AssertionError("submitted input did not appear")
         rows = session.screen_lines
-        tip_row = next(index for index, row in enumerate(rows) if row.startswith("Tip: "))
+        tip_row = next(
+            index for index, row in enumerate(rows) if row.startswith("Tip: ")
+        )
         assert rows.index("❯ hi") == tip_row + 2
 
         deadline = time.monotonic() + 30
@@ -222,7 +226,9 @@ def test_focus_submitted_input_remains_top_down_after_slash_menu(
             time.sleep(0.05)
         else:
             raise AssertionError("first reply did not complete")
-        answer_row = next(index for index, row in enumerate(rows) if row.startswith("● "))
+        answer_row = next(
+            index for index, row in enumerate(rows) if row.startswith("● ")
+        )
         assert 0 < answer_row - rows.index("❯ hi") <= 4, "\n".join(rows)
 
         focus_probe._submit_composer_line(session, "second message")
