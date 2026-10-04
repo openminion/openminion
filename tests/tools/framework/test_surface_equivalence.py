@@ -13,13 +13,15 @@ from openminion.modules.tool.registry import ToolRegistry
 
 pytestmark = pytest.mark.package_integration
 
+DOCS_ROOT_ENV_VAR = "OPENMINION_DOCS_ROOT"
+DOCS_ROOT = Path(
+    os.environ.get(
+        DOCS_ROOT_ENV_VAR,
+        Path(__file__).resolve().parents[4] / "docs",
+    )
+).expanduser()
 SNAPSHOT_FILE = (
-    Path(__file__).resolve().parents[4]
-    / "docs"
-    / "trackers"
-    / "artifacts"
-    / "tool-surface"
-    / "tool_surface_snapshot.json"
+    DOCS_ROOT / "trackers" / "artifacts" / "tool-surface" / "tool_surface_snapshot.json"
 )
 UPDATE_ENV_VAR = "OPENMINION_TOOL_SURFACE_UPDATE"
 
@@ -114,6 +116,7 @@ class ToolSurfaceSnapshotTests(unittest.TestCase):
         if not SNAPSHOT_FILE.exists():
             self.fail(
                 f"Tool surface snapshot is missing at {SNAPSHOT_FILE}. "
+                f"Set {DOCS_ROOT_ENV_VAR} when using an isolated worktree. "
                 f"Run with {UPDATE_ENV_VAR}=1 to create it. This is expected "
                 "only on the very first run after SCFR-03 lands; after that, "
                 "the file is the migration-safety contract."

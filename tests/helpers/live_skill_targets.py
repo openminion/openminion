@@ -32,7 +32,7 @@ def framework_root() -> Path:
 
 
 def openminion_root() -> Path:
-    return framework_root() / "openminion"
+    return Path(__file__).resolve().parents[2]
 
 
 def runtime_home_root() -> Path:

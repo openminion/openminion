@@ -229,10 +229,7 @@ def test_only_ux_module_reads_progress_env() -> None:
     import pathlib
     import subprocess
 
-    repo_root = pathlib.Path(__file__).resolve()
-    while not (repo_root / "openminion").exists() and repo_root.parent != repo_root:
-        repo_root = repo_root.parent
-    src = repo_root / "openminion" / "src" / "openminion"
+    src = pathlib.Path(__file__).resolve().parents[3] / "src" / "openminion"
     proc = subprocess.run(
         [
             "grep",

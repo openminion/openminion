@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-FRAMEWORK_ROOT = Path(__file__).resolve().parents[4]
-OPENMINION_ROOT = FRAMEWORK_ROOT / "openminion"
+OPENMINION_ROOT = Path(__file__).resolve().parents[3]
+FRAMEWORK_ROOT = OPENMINION_ROOT.parent
 if str(OPENMINION_ROOT) not in sys.path:
     sys.path.insert(0, str(OPENMINION_ROOT))
 

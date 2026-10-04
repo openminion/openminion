@@ -291,8 +291,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    framework_root = Path(__file__).resolve().parents[4]
-    openminion_dir = (framework_root / "openminion").resolve()
+    openminion_dir = Path(__file__).resolve().parents[3]
+    framework_root = openminion_dir.parent
     config_path = (
         Path(args.config)
         if args.config

@@ -50,12 +50,10 @@ class PhaseContractScenarioResult:
 
 
 def default_phase_contract_scenarios(
-    repo_root: str | Path,
+    openminion_root: str | Path,
 ) -> list[PhaseContractScenario]:
-    root = Path(repo_root).expanduser().resolve()
-    fixture_root = (
-        root / "openminion" / "tests" / "fixtures" / "rsp_phase_contract_traces"
-    )
+    root = Path(openminion_root).expanduser().resolve()
+    fixture_root = root / "tests" / "fixtures" / "rsp_phase_contract_traces"
     return [
         PhaseContractScenario(
             scenario_id="valid_respond",
@@ -152,7 +150,7 @@ def run_phase_contract_matrix(
     scenarios: Sequence[PhaseContractScenario] | None = None,
     scenario_ids: Sequence[str] | None = None,
 ) -> list[PhaseContractScenarioResult]:
-    available = list(scenarios or default_phase_contract_scenarios(repo_root))
+    available = list(scenarios or default_phase_contract_scenarios(openminion_root))
     selected_ids = {
         str(item).strip() for item in (scenario_ids or []) if str(item).strip()
     }
