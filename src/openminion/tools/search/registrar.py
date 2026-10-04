@@ -35,6 +35,7 @@ class SearchRegistrar:
             "search.firecrawl.search",
             "search.serper.search",
             "search.tinyfish.search",
+            "search.duckduckgo.search",
         )
         return ToolBindingManifest(
             module_id=self.module_id,

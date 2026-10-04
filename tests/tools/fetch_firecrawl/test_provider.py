@@ -49,16 +49,35 @@ def test_error_code_for_status_maps_documented_responses(
     assert _error_code_for_status(status) == expected
 
 
-def test_fetch_requires_api_key() -> None:
+def test_fetch_runs_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = FirecrawlFetchProvider()
+    captured: dict[str, object] = {}
+
+    def _fake_urlopen(request, timeout):
+        del timeout
+        captured["headers"] = dict(request.headers)
+        return _ResponseStub(
+            {
+                "success": True,
+                "data": {
+                    "markdown": "Keyless response",
+                    "metadata": {
+                        "statusCode": 200,
+                        "sourceURL": "https://example.com",
+                    },
+                },
+            }
+        )
+
+    monkeypatch.setattr(provider_module.urllib_request, "urlopen", _fake_urlopen)
 
     result = provider.fetch(
         {"url": "https://example.com", "method": "GET"},
         ctx=SimpleNamespace(env={"FIRECRAWL_API_KEY": ""}),
     )
 
-    assert result["ok"] is False
-    assert result["error"]["code"] == "DEPENDENCY_MISSING"
+    assert "Authorization" not in captured["headers"]
+    assert result["ok"] is True
     assert result["backend"] == "firecrawl"
 
 

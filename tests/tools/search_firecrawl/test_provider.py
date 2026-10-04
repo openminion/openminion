@@ -44,19 +44,30 @@ def test_error_code_for_status(status: int, expected: str) -> None:
     assert _error_code_for_status(status) == expected
 
 
-def test_search_requires_api_key() -> None:
+def test_search_runs_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = FirecrawlSearchProvider()
+    captured: dict[str, object] = {}
 
-    with pytest.raises(SearchProviderError) as exc_info:
-        provider.search(
-            "cats",
-            max_results=3,
-            args={},
-            ctx=SimpleNamespace(env={"FIRECRAWL_API_KEY": ""}),
-        )
+    def _fake_urlopen(request, timeout):
+        del timeout
+        captured["headers"] = dict(request.headers)
+        return _ResponseStub({"data": {"web": []}})
 
-    assert exc_info.value.code == "DEPENDENCY_MISSING"
-    assert "API key" in str(exc_info.value)
+    monkeypatch.setattr(
+        "openminion.tools.search.providers.firecrawl.provider.urllib_request.urlopen",
+        _fake_urlopen,
+    )
+
+    result = provider.search(
+        "cats",
+        max_results=3,
+        args={},
+        ctx=SimpleNamespace(env={"FIRECRAWL_API_KEY": ""}),
+    )
+
+    assert "Authorization" not in captured["headers"]
+    assert result["provider"] == "firecrawl"
+    assert result["results"] == []
 
 
 def test_search_maps_params_and_normalizes_warning(

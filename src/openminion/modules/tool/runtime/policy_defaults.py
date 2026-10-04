@@ -68,7 +68,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         "deny_prefix": [],
         "weather_openmeteo": {
             "fallback": {
-                "enabled": True,
+                "enabled": False,
             }
         },
     },

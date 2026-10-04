@@ -22,6 +22,8 @@ def test_search_family_avoids_direct_process_env_access() -> None:
         "src/openminion/tools/search/providers/tavily/search.py",
         "src/openminion/tools/search/providers/brave/provider.py",
         "src/openminion/tools/search/providers/brave/plugin.py",
+        "src/openminion/tools/search/providers/duckduckgo/provider.py",
+        "src/openminion/tools/search/providers/duckduckgo/plugin.py",
         "src/openminion/tools/search/providers/serper/provider.py",
         "src/openminion/tools/search/providers/serper/plugin.py",
         "src/openminion/tools/search/providers/tinyfish/provider.py",
@@ -49,6 +51,8 @@ def test_search_family_uses_shared_tools_env_module() -> None:
         "src/openminion/tools/search/providers/tavily/search.py",
         "src/openminion/tools/search/providers/brave/provider.py",
         "src/openminion/tools/search/providers/brave/plugin.py",
+        "src/openminion/tools/search/providers/duckduckgo/provider.py",
+        "src/openminion/tools/search/providers/duckduckgo/plugin.py",
         "src/openminion/tools/search/providers/serper/provider.py",
         "src/openminion/tools/search/providers/serper/plugin.py",
         "src/openminion/tools/search/providers/tinyfish/provider.py",
@@ -83,7 +87,7 @@ def test_serpapi_env_registry_and_provider_enum_are_registered() -> None:
     specs = {item.name: item for item in get_env_var_specs()}
 
     assert specs["OPENMINION_WEB_SEARCH_PROVIDER"].value_type == (
-        "enum(auto|brave|tavily|serpapi|firecrawl|serper|tinyfish)"
+        "enum(auto|brave|tavily|serpapi|firecrawl|serper|tinyfish|duckduckgo)"
     )
     assert specs["OPENMINION_WEB_SEARCH_PROVIDER"].owner == "tools/search"
     assert specs["SERPAPI_API_KEY"].owner == "tools/search/providers/serpapi"
@@ -115,7 +119,7 @@ def test_serper_env_registry_and_provider_enum_are_registered() -> None:
     specs = {item.name: item for item in get_env_var_specs()}
 
     assert specs["OPENMINION_WEB_SEARCH_PROVIDER"].value_type == (
-        "enum(auto|brave|tavily|serpapi|firecrawl|serper|tinyfish)"
+        "enum(auto|brave|tavily|serpapi|firecrawl|serper|tinyfish|duckduckgo)"
     )
     assert specs["SERPER_API_KEY"].owner == "tools/search/providers/serper"
     assert specs["SERPER_API_URL"].default == "https://google.serper.dev/search"
@@ -178,7 +182,7 @@ def test_tinyfish_env_registry_and_provider_enum_are_registered() -> None:
     specs = {item.name: item for item in get_env_var_specs()}
 
     assert specs["OPENMINION_WEB_SEARCH_PROVIDER"].value_type == (
-        "enum(auto|brave|tavily|serpapi|firecrawl|serper|tinyfish)"
+        "enum(auto|brave|tavily|serpapi|firecrawl|serper|tinyfish|duckduckgo)"
     )
     assert specs["TINYFISH_API_KEY"].owner == "tools/tinyfish providers"
     assert specs["TINYFISH_SEARCH_API_URL"].default == "https://api.search.tinyfish.ai"

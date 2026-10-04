@@ -202,11 +202,15 @@ def _session_provider_override(
 
 def _runtime_provider_preferences(
     self: Any, ctx: _BrowserExecutionContext
-) -> tuple[str, tuple[str, ...]]:
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
     family_cfg = resolve_runtime_tool_family_config(ctx.runtime, family_name="browser")
     if family_cfg is None:
-        return "", ()
-    return family_cfg.default_provider, tuple(family_cfg.provider_order)
+        return "", (), ()
+    return (
+        family_cfg.default_provider,
+        tuple(family_cfg.provider_order),
+        tuple(family_cfg.enabled_providers),
+    )
 
 
 def _enforce_capabilities(

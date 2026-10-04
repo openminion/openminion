@@ -537,6 +537,7 @@ def test_browser_tool_runtime_tools_default_provider_override() -> None:
                         "context_metadata": {
                             "runtime_tools": {
                                 "browser": {
+                                    "enabled_providers": ["pinchtab", "playwright"],
                                     "default_provider": "playwright",
                                     "provider_order": ["playwright", "pinchtab"],
                                 }
@@ -584,6 +585,7 @@ def test_browser_tool_runtime_tools_do_not_override_tab_affinity() -> None:
                         "context_metadata": {
                             "runtime_tools": {
                                 "browser": {
+                                    "enabled_providers": ["pinchtab", "playwright"],
                                     "default_provider": "pinchtab",
                                     "provider_order": ["pinchtab", "playwright"],
                                 }
@@ -609,6 +611,95 @@ def test_browser_tool_runtime_tools_do_not_override_tab_affinity() -> None:
     assert snapshot.ok is True
     assert snapshot.data["provider"] == "playwright"
     assert playwright.snapshot_calls == ["pw-tab-1"]
+
+
+def test_browser_tool_rejects_disabled_explicit_provider() -> None:
+    pinchtab = _Provider(provider_id="pinchtab")
+    playwright = _Provider(provider_id="playwright")
+    reg = BrowserProviderRegistry()
+    reg.register(pinchtab)
+    reg.register(playwright)
+    tool = BrowserTool(
+        router=BrowserRouter(reg, config=BrowserRoutingConfig(default_provider=""))
+    )
+    runtime = type(
+        "_RuntimePolicy",
+        (),
+        {
+            "policy": type(
+                "_Policy",
+                (),
+                {
+                    "raw": {
+                        "context_metadata": {
+                            "runtime_tools": {
+                                "browser": {
+                                    "enabled_providers": ["pinchtab"],
+                                    "default_provider": "pinchtab",
+                                    "provider_order": ["pinchtab"],
+                                }
+                            }
+                        }
+                    }
+                },
+            )()
+        },
+    )()
+
+    result = tool.execute(
+        {"op": "tab.snapshot", "provider": "playwright", "tab_id": "t1"},
+        ToolContext(runtime=runtime),
+    )
+
+    assert result.ok is False
+    assert result.data["error"]["code"] == "POLICY_DENIED"
+    assert playwright.snapshot_calls == []
+
+
+def test_browser_tool_rejects_disabled_tab_affinity_without_rerouting() -> None:
+    pinchtab = _Provider(provider_id="pinchtab")
+    playwright = _Provider(provider_id="playwright")
+    reg = BrowserProviderRegistry()
+    reg.register(pinchtab)
+    reg.register(playwright)
+    router = BrowserRouter(
+        reg, config=BrowserRoutingConfig(default_provider="pinchtab")
+    )
+    router.remember_affinity(provider_id="playwright", tab_id="pw-tab-1")
+    tool = BrowserTool(router=router)
+    runtime = type(
+        "_RuntimePolicy",
+        (),
+        {
+            "policy": type(
+                "_Policy",
+                (),
+                {
+                    "raw": {
+                        "context_metadata": {
+                            "runtime_tools": {
+                                "browser": {
+                                    "enabled_providers": ["pinchtab"],
+                                    "default_provider": "pinchtab",
+                                    "provider_order": ["pinchtab"],
+                                }
+                            }
+                        }
+                    }
+                },
+            )()
+        },
+    )()
+
+    result = tool.execute(
+        {"op": "tab.snapshot", "tab_id": "pw-tab-1"},
+        ToolContext(runtime=runtime),
+    )
+
+    assert result.ok is False
+    assert result.data["error"]["code"] == "POLICY_DENIED"
+    assert pinchtab.snapshot_calls == []
+    assert playwright.snapshot_calls == []
 
 
 def test_browser_tool_reuses_session_instance_for_tab_new() -> None:

@@ -28,6 +28,10 @@ precedence order. The first non-empty, registered candidate wins. The token
 `""` or `"auto"` is treated as "not specified" at each layer so it falls
 through to the next:
 
+`runtime.tools.browser.enabled_providers` is the hard boundary around this
+precedence chain. Explicit, profile, session, and affinity selections outside
+that set fail instead of rerouting to another provider.
+
 1. `requested_provider` — explicit `provider=...` on the tool call.
 2. `agent_profile_provider` — profile-level binding.
 3. `session_provider_override` — session-scope operator override.

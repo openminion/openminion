@@ -579,7 +579,7 @@ def test_runtime_tools_fetch_can_disable_fallback(monkeypatch) -> None:
     assert registry._core.calls == 1
 
 
-def test_explicit_backend_bypasses_runtime_tools_enabled_backend_filter(
+def test_explicit_backend_respects_runtime_tools_enabled_backend_filter(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
@@ -604,8 +604,9 @@ def test_explicit_backend_bypasses_runtime_tools_enabled_backend_filter(
         ),
     )
 
-    assert payload["ok"] is True
-    assert payload["data"]["backend"] == "scrapling:static"
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "POLICY_DENIED"
+    assert payload["error"]["details"] == {"backend": "scrapling"}
 
 
 def test_get_emits_provider_selected_and_completed_events(monkeypatch) -> None:

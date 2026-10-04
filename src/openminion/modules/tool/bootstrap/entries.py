@@ -364,12 +364,6 @@ _TOOL_BOOTSTRAP_ENTRIES: tuple[_ToolBootstrapEntry, ...] = (
     ),
     _ToolBootstrapEntry(
         kind="tool",
-        module_name="openminion.tools.search.providers.firecrawl",
-        label="Firecrawl Search",
-        required=False,
-    ),
-    _ToolBootstrapEntry(
-        kind="tool",
         module_name="openminion.tools.search.providers.serper",
         label="Serper Search",
         required=False,
@@ -378,6 +372,18 @@ _TOOL_BOOTSTRAP_ENTRIES: tuple[_ToolBootstrapEntry, ...] = (
         kind="tool",
         module_name="openminion.tools.search.providers.tinyfish",
         label="TinyFish Search",
+        required=False,
+    ),
+    _ToolBootstrapEntry(
+        kind="tool",
+        module_name="openminion.tools.search.providers.firecrawl",
+        label="Firecrawl Search",
+        required=False,
+    ),
+    _ToolBootstrapEntry(
+        kind="tool",
+        module_name="openminion.tools.search.providers.duckduckgo",
+        label="DuckDuckGo Search",
         required=False,
     ),
     _ToolBootstrapEntry(

@@ -9,6 +9,7 @@ from urllib import error as urllib_error
 import pytest
 
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.runtime.policy_defaults import DEFAULT_POLICY
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.runtime import RuntimeContext
@@ -68,6 +69,10 @@ def _deep_merge(base: dict, override: dict) -> dict:
             continue
         out[key] = value
     return out
+
+
+def test_default_policy_disables_static_weather_samples() -> None:
+    assert DEFAULT_POLICY["tools"]["weather_openmeteo"]["fallback"]["enabled"] is False
 
 
 class _Response:
@@ -512,6 +517,7 @@ def test_fallback_static_samples_when_enabled(monkeypatch, tmp_path):
     result = _h_weather_openmeteo_current({"location": "San Francisco"}, ctx)
 
     assert result["source"]["provider"] == "open-meteo"
+    assert result["verified"] is False
     assert "fallback_used" in result["warnings"]
     assert "Fallback sample used" in result["source"]["license_note"]
 

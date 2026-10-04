@@ -148,13 +148,6 @@ class FirecrawlFetchProvider(FetchProviderProtocol):
                 details={"method": method},
             )
 
-        api_key = self._api_key(ctx=ctx)
-        if not api_key:
-            return _error_result(
-                "DEPENDENCY_MISSING",
-                "Missing Firecrawl API key",
-            )
-
         url = str(request.get("url", "") or "").strip()
         if not url:
             return _error_result(
@@ -192,14 +185,17 @@ class FirecrawlFetchProvider(FetchProviderProtocol):
 
         body.update(_camel_case_options(options))
 
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        api_key = self._api_key(ctx=ctx)
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         req = urllib_request.Request(
             self._api_url(ctx=ctx),
             data=json.dumps(body).encode("utf-8"),
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             method="POST",
         )
 
