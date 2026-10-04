@@ -8814,7 +8814,6 @@ def test_engine_parallelizes_independent_reads_and_preserves_result_order() -> N
         },
     )
 
-    started = time.monotonic()
     outcome = run_adaptive_tool_loop(
         loop_ctx,
         profile=_profile(
@@ -8826,10 +8825,14 @@ def test_engine_parallelizes_independent_reads_and_preserves_result_order() -> N
         initial_messages=[Message(role="user", content="read two files")],
         tool_specs=_tool_specs("file.read"),
     )
-    elapsed = time.monotonic() - started
-
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert elapsed < 0.35
+    windows = {
+        path: (started, finished) for path, started, finished in loop_ctx.call_windows
+    }
+    slow_started, slow_finished = windows["/src/slow.py"]
+    fast_started, fast_finished = windows["/src/fast.py"]
+    assert slow_started < fast_finished
+    assert fast_started < slow_finished
     second_call_messages = runtime.calls[1]["messages"]
     tool_messages = [
         message for message in second_call_messages if message.role == "tool"
