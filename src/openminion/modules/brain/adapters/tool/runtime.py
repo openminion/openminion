@@ -4,7 +4,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Iterator, Mapping, cast
+from typing import TYPE_CHECKING, Any, Iterator, Mapping, cast
 
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.base.config.env import resolve_environment_config
@@ -44,7 +44,6 @@ from .command_metadata import (
     _orchestration_metadata_from_command,
     _runtime_workspace_from_command,
 )
-from .execution_context import ToolExecutionContextBuilder
 from .blockchain_authorization import consume_blockchain_send_authorization
 from .github_merge import execute_github_merge_pr_project_effect
 from .github_release import execute_github_release_project_effect
@@ -72,6 +71,9 @@ from .results import (
     run_tool_spec,
 )
 from .workspace_policy import workspace_context_policy
+
+if TYPE_CHECKING:
+    from .execution_context import ToolExecutionContextBuilder
 
 _WORKSPACE_OVERRIDE: ContextVar[Path | None] = ContextVar(
     "openminion_tool_workspace_override", default=None
@@ -197,7 +199,9 @@ class ToolAdapter:
 
             self.registry = build_default_tool_registry(config=runtime_config)
 
-    def _build_execution_context_builder(self) -> ToolExecutionContextBuilder:
+    def _build_execution_context_builder(self) -> "ToolExecutionContextBuilder":
+        from .execution_context import ToolExecutionContextBuilder
+
         return ToolExecutionContextBuilder(
             agent_id=self.agent_id,
             memory_service=getattr(self, "memory_service", None),

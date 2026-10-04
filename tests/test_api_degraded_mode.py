@@ -1,6 +1,9 @@
 import os
 import socket
+from http.server import BaseHTTPRequestHandler
+from threading import Event, Thread
 from unittest import mock
+from urllib.request import urlopen
 
 import pytest
 
@@ -109,6 +112,58 @@ def test_api_server_bind_failure_preserves_socket_error() -> None:
         with pytest.raises(OSError):
             _OpenMinionThreadingHTTPServer(listener.getsockname(), mock.Mock(), runtime)
     runtime.close.assert_called_once_with()
+
+
+def test_api_server_drains_requests_before_closing_runtime() -> None:
+    request_started = Event()
+    release_request = Event()
+    request_finished = Event()
+
+    def assert_request_finished() -> None:
+        assert request_finished.is_set()
+
+    class SlowHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            request_started.set()
+            release_request.wait(timeout=2)
+            self.send_response(204)
+            self.end_headers()
+            request_finished.set()
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+            return
+
+    runtime = mock.Mock()
+    runtime.runtime_manager.shutdown.side_effect = lambda **_: release_request.set()
+    runtime.close.side_effect = assert_request_finished
+    server = _OpenMinionThreadingHTTPServer(("127.0.0.1", 0), SlowHandler, runtime)
+    serve_thread = Thread(target=server.serve_forever)
+    client_thread = Thread(
+        target=lambda: urlopen(
+            f"http://127.0.0.1:{server.server_address[1]}", timeout=2
+        ).read()
+    )
+
+    serve_thread.start()
+    client_thread.start()
+    server_closed = False
+    try:
+        assert request_started.wait(timeout=1)
+        server.shutdown()
+        server.server_close()
+        server_closed = True
+    finally:
+        release_request.set()
+        if not server_closed:
+            server.shutdown()
+            server.server_close()
+        client_thread.join(timeout=1)
+        serve_thread.join(timeout=1)
+
+    assert request_finished.is_set()
+    runtime.runtime_manager.shutdown.assert_called_once_with(grace_s=2)
+    runtime.close.assert_called_once_with()
+    assert not client_thread.is_alive()
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])

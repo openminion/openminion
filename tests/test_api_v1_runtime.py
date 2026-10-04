@@ -68,15 +68,15 @@ class APIV1RuntimeTests(unittest.TestCase):
 
             run_status, run_payload = dispatch_request(
                 "POST",
-                "/v1/tools/weather/run",
+                "/v1/tools/file.list_dir/run",
                 str(config_path),
-                body={"arguments": {"city": "Tokyo"}, "session_id": "tools-session"},
+                body={"arguments": {"path": "."}, "session_id": "tools-session"},
             )
             self.assertEqual(int(run_status), 200)
             self.assertTrue(run_payload["ok"])
             self.assertTrue(run_payload["trace_id"])
             self.assertTrue(run_payload["artifact_refs"])
-            self.assertEqual(run_payload["tool"]["name"], "weather")
+            self.assertEqual(run_payload["tool"]["name"], "file.list_dir")
 
     def test_v1_tool_exposure_status_activate_and_deactivate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -230,6 +230,7 @@ def _write_echo_config(tmp_path: Path) -> Path:
     config.runtime.log_level = "ERROR"
     _csc_install_default_agent(config, provider="echo")
     config.storage.path = str(tmp_path / "state" / "api-v1.db")
+    config.runtime.tool_workspace_root = str(tmp_path)
     old_data_root = os.environ.get("OPENMINION_DATA_ROOT")
     try:
         os.environ["OPENMINION_DATA_ROOT"] = str(tmp_path / ".openminion")

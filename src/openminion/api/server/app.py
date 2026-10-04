@@ -168,12 +168,7 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         data: object,
         event_id: str | None = None,
     ) -> None:
-        write_sse_event(
-            self.wfile,
-            event=event,
-            data=data,
-            event_id=event_id,
-        )
+        write_sse_event(self.wfile, event=event, data=data, event_id=event_id)
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         self.send_response(int(status))
@@ -206,6 +201,8 @@ def _json_dumps(payload: object) -> str:
 
 
 class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = False
+
     def __init__(
         self,
         server_address: tuple[str, int],
@@ -216,11 +213,13 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
         super().__init__(server_address, handler_cls)
 
     def server_close(self) -> None:
+        if self._runtime is not None:
+            self._runtime.runtime_manager.shutdown(grace_s=2)
         try:
+            super().server_close()
+        finally:
             if self._runtime is not None:
                 self._runtime.close()
-        finally:
-            super().server_close()
 
 
 __all__ = [
