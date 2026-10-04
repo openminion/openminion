@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 from dataclasses import dataclass, field
 import fcntl
 import os
@@ -58,12 +59,14 @@ class PtySession:
     _transcript: str = field(default="", init=False)
     _screen: pyte.Screen = field(init=False)
     _stream: pyte.Stream = field(init=False)
+    _decoder: codecs.IncrementalDecoder = field(init=False)
     _screen_history: str = field(default="", init=False)
     _last_screen: str = field(default="", init=False)
 
     def __post_init__(self) -> None:
         self._screen = pyte.Screen(self.cols, self.rows)
         self._stream = pyte.Stream(self._screen)
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
     def __enter__(self) -> PtySession:
         self.start()
@@ -279,14 +282,19 @@ class PtySession:
                 return
             if not chunk:
                 return
-            decoded = chunk.decode("utf-8", errors="replace")
-            self._transcript += decoded
-            self._stream.feed(decoded)
-            self._capture_screen()
-            if self.on_transcript_update is not None:
-                self.on_transcript_update(self._transcript)
+            self._consume_output(chunk)
             if time.monotonic() >= end:
                 return
+
+    def _consume_output(self, chunk: bytes) -> None:
+        decoded = self._decoder.decode(chunk)
+        if not decoded:
+            return
+        self._transcript += decoded
+        self._stream.feed(decoded)
+        self._capture_screen()
+        if self.on_transcript_update is not None:
+            self.on_transcript_update(self._transcript)
 
     def _set_window_size(self, fd: int) -> None:
         size = struct.pack("HHHH", self.rows, self.cols, 0, 0)
