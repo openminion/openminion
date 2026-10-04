@@ -1614,12 +1614,12 @@ def test_brain_decide_merges_system_context_into_system_prompt():
     assert "Agent canonical memory (cross-session):" not in history_text
 
 
-def test_brain_bridge_profile_uses_config_defaults_and_env_overrides():
+def test_brain_bridge_context_budget_does_not_change_turn_token_default():
     config = OpenMinionConfig()
     _csc_install_default_agent(config, provider="openai")
     config.providers.openai.model = "cfg-openai-model"
     config.runtime.agent_loop_max_steps = 9
-    config.runtime.session_context_token_budget = 4321
+    config.runtime.session_context_token_budget = 150_000
     config.security.tool_policy.max_calls_per_run = 7
     plugins = PluginRegistry()
     provider = _CaptureProvider()
@@ -1711,7 +1711,7 @@ def test_brain_bridge_profile_uses_config_defaults_and_env_overrides():
     assert getattr(profile.llm_profiles, "plan_model") == "cfg-openai-model"
     assert int(getattr(profile.budgets, "max_ticks_per_user_turn")) == 9
     assert int(getattr(profile.budgets, "max_tool_calls")) == 11
-    assert int(getattr(profile.budgets, "max_total_llm_tokens")) == 4321
+    assert int(getattr(profile.budgets, "max_total_llm_tokens")) == 100_000
     assert bool(getattr(options, "reflection_enabled")) is True
     assert int(getattr(options, "plan_auto_scale_max_llm_calls")) == 33
     assert int(getattr(options, "plan_auto_scale_max_ticks")) == 44

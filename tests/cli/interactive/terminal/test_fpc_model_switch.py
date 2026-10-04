@@ -244,6 +244,21 @@ def test_turn_metadata_uses_typed_connection_for_configured_route() -> None:
     assert metadata["override_model"] == "MiniMax-M2.7"
 
 
+def test_lab_turn_metadata_does_not_restore_added_host_directories() -> None:
+    api_runtime = _StubAPIRuntime()
+    api_runtime.config.runtime.security_lab = SimpleNamespace(
+        agent_identity_id="default-agent"
+    )
+    rt = _make_runtime(api_runtime=api_runtime)
+    rt._added_workspace_roots = ("/host/private",)
+
+    metadata = rt._turn_inbound_metadata(None)
+
+    assert metadata is not None
+    assert metadata["workspace_root"] == "/workspace"
+    assert "openminion_ephemeral_workspace_roots" not in metadata
+
+
 def test_turn_metadata_keeps_legacy_route_on_existing_profile_fields() -> None:
     api_runtime = _StubAPIRuntime()
     profile = api_runtime.config.agents["default-agent"]

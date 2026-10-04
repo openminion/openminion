@@ -74,10 +74,6 @@ def resolve_agent_budgets(
     override_value: OverrideValue,
 ) -> AgentBudgets:
     default_budgets = derive_default_budgets(config)
-    runtime_session_token_budget = config.runtime.session_context_token_budget
-    floor_total_llm_tokens = default_budgets.max_total_llm_tokens
-    if runtime_session_token_budget <= 0:
-        floor_total_llm_tokens = max(floor_total_llm_tokens, 100000)
 
     return AgentBudgets(
         max_ticks_per_user_turn=max(
@@ -105,7 +101,7 @@ def resolve_agent_budgets(
             1,
             _coerce_int(
                 override_value(OPENMINION_BRAIN_MAX_TOTAL_LLM_TOKENS_ENV),
-                default=floor_total_llm_tokens,
+                default=default_budgets.max_total_llm_tokens,
             ),
         ),
         max_elapsed_ms=max(

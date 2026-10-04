@@ -38,7 +38,9 @@ scope	max_python_files	max_loc
 # AEUX (2026-10-01) adds resumable approval transport and extracts TurnHandle
 # from the over-ceiling runtime manager into one bounded lifecycle owner.
 # Its merge with concurrent dev work establishes the integrated source total.
-services	208	41362
+# OCSC (2026-10-03) threads one opt-in local-lab runner through the existing
+# runtime, agent, brain, and ingress owners without adding a service stack.
+services	208	41562
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

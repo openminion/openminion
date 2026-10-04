@@ -302,8 +302,15 @@ class RuntimeProjectMixin:
         from openminion.modules.brain.paths import resolve_brain_sessions_db_path
         from openminion.modules.brain.schemas.decisions import ProjectHandoff
         from openminion.modules.brain.state import consume_project_handoff
+        from openminion.modules.task.project import validate_project_verifier
 
         handoff = ProjectHandoff.model_validate_json(metadata["project_handoff"])
+        if not handoff.verification_commands:
+            return (
+                "Project proposal needs at least one concrete verification command. "
+                "Ask the agent to continue in the foreground or propose the project "
+                "again with a verifier."
+            )
         if handoff.max_iterations is None or handoff.max_iterations < 2:
             return (
                 "Project proposal needs an explicit multi-cycle budget of at least "
@@ -314,6 +321,14 @@ class RuntimeProjectMixin:
         if permission_profile_id not in {"readonly", "bypass"}:
             permission_profile_id = "local-safe"
         repository = resolve_project_repository(boundary, handoff.repository or "")
+        try:
+            validate_project_verifier(
+                handoff.verification_commands,
+                workspace=repository,
+                required=True,
+            )
+        except ValueError as exc:
+            return f"Project proposal has an unusable verification command: {exc}"
         request = build_project_launch_request(
             goal=handoff.goal,
             session_id=self.session_id,

@@ -31,8 +31,9 @@ def render_body(text: str, *, markdown_allowed: bool = True) -> object:
 
 
 def render_user_text(text: str) -> Text:
-    body = Text("> ", style=token_rich_style(StyleToken.USER, dim=True))
-    body.append(str(text or ""))
+    body = Text()
+    body.append("❯ ", style=token_rich_style(StyleToken.USER, dim=True))
+    body.append(str(text or ""), style=token_rich_style(StyleToken.USER_TEXT))
     return body
 
 

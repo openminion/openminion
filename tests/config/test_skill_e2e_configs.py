@@ -7,6 +7,7 @@ import pytest
 
 from openminion.base.config import ConfigManager, OpenMinionConfig
 from openminion.services.bootstrap.config import bootstrap_config_manager
+from openminion.services.brain.metadata import resolve_agent_budgets
 from tests.helpers.live_cli_chat_alibaba import (
     LIVE_CLI_CHAT_TIMEOUT_ENV,
     LIVE_CODING_PROJECT_TIMEOUT_ENV,
@@ -179,10 +180,27 @@ def test_live_skill_timeout_seconds_uses_matrix_defaults_and_overrides(
     assert timeout_seconds("coding_project") == 900
 
 
-def test_official_live_minimax_config_rebases_brain_runtime_budgets() -> None:
+def test_official_live_minimax_config_inherits_long_horizon_budgets() -> None:
     payload = json.loads(OFFICIAL_MINIMAX_CONFIG.read_text(encoding="utf-8"))
     runtime_env = payload["runtime"]["env"]
-    assert runtime_env["OPENMINION_BRAIN_MAX_ELAPSED_MS"] == "300000"
-    assert runtime_env["OPENMINION_BRAIN_MAX_TICKS"] == "16"
-    assert runtime_env["OPENMINION_BRAIN_MAX_TOTAL_LLM_TOKENS"] == "250000"
-    assert runtime_env["OPENMINION_BRAIN_MAX_TOOL_CALLS"] == "32"
+    stale_overrides = {
+        "OPENMINION_BRAIN_MAX_ELAPSED_MS",
+        "OPENMINION_BRAIN_MAX_TICKS",
+        "OPENMINION_BRAIN_MAX_TOOL_CALLS",
+    }
+    assert stale_overrides.isdisjoint(runtime_env)
+
+    config = OpenMinionConfig.from_dict(payload)
+    budgets = resolve_agent_budgets(
+        config,
+        override_value=lambda name: runtime_env.get(name, ""),
+    )
+    assert config.runtime.session_context_token_budget == 32_000
+    assert config.runtime.chat_turn_timeout_seconds == 300
+    assert budgets.max_ticks_per_user_turn == 100
+    assert budgets.max_tool_calls == 100
+    assert budgets.max_total_llm_tokens == 250_000
+    assert budgets.max_elapsed_ms == 300_000
+    assert config.security.tool_policy.max_calls_per_run == 100
+    assert config.security.tool_policy.max_calls_per_tool == 50
+    assert config.security.tool_policy.max_budget_cost_per_run == 200

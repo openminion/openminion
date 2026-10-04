@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pyte
 import pytest
 from prompt_toolkit.application.current import create_app_session
-from prompt_toolkit.data_structures import Point, Size
+from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.output.vt100 import Vt100_Output
@@ -54,14 +54,6 @@ async def _wait_for_output(raw: io.StringIO, text: str) -> None:
     raise AssertionError(f"terminal did not render {text!r}")
 
 
-async def _wait_for_renderer_height(composer: TerminalComposer) -> None:
-    for _ in range(200):
-        if composer.prompt_session.app.renderer.height_is_known:
-            return
-        await asyncio.sleep(0.005)
-    raise AssertionError("terminal did not report its cursor position")
-
-
 async def _wait_for_screen_row(
     raw: io.StringIO,
     *,
@@ -76,7 +68,7 @@ async def _wait_for_screen_row(
         if rows.get(row) == text:
             return
         await asyncio.sleep(0.005)
-    raise AssertionError(f"terminal row {row} did not render {text!r}")
+    raise AssertionError(f"terminal row {row} did not render {text!r}: {rows}")
 
 
 def _render_completed_turn(console: Console) -> None:
@@ -154,7 +146,6 @@ async def _render_composer(
 
         read_task = asyncio.create_task(composer.read_line())
         await _wait_for_output(raw, "❯")
-        await _wait_for_renderer_height(composer)
         await asyncio.sleep(0.01)
         snapshot = raw.getvalue()
         pipe.send_text("baseline-exit\n")
@@ -162,7 +153,7 @@ async def _render_composer(
     return snapshot
 
 
-async def _render_bottom_layout_checkpoints(
+async def _render_inline_layout_checkpoints(
     *,
     enable_cpr: bool,
     rows: int,
@@ -192,11 +183,6 @@ async def _render_bottom_layout_checkpoints(
             bottom_toolbar=status_line.bottom_toolbar,
             color=False,
         )
-        read_task = asyncio.create_task(composer.read_line())
-        await _wait_for_output(raw, "❯")
-        await _wait_for_renderer_height(composer)
-        await asyncio.sleep(0.01)
-
         console = Console(
             file=raw,
             force_terminal=True,
@@ -207,10 +193,12 @@ async def _render_bottom_layout_checkpoints(
             console=console,
             prompt_session=composer.prompt_session,
         )
+        read_task = asyncio.create_task(composer.read_line())
+        await _wait_for_output(raw, "❯")
+        await asyncio.sleep(0.01)
         write_task = writer(lambda: console.print("Previous response\nDone in 13s"))
         assert write_task is not None
         await write_task
-        await _wait_for_renderer_height(composer)
         await asyncio.sleep(0.01)
         placeholder = _screen_contract(raw.getvalue(), width=width, height=rows)
 
@@ -221,6 +209,50 @@ async def _render_bottom_layout_checkpoints(
         pipe.send_text("\n")
         await read_task
     return placeholder, typed
+
+
+async def _render_flow_layout_checkpoints() -> tuple[dict, dict]:
+    raw = io.StringIO()
+    output = Vt100_Output(
+        raw,
+        get_size=lambda: Size(rows=40, columns=100),
+        default_color_depth=ColorDepth.TRUE_COLOR,
+        enable_cpr=False,
+    )
+    status_line = TerminalStatusLine()
+    status_line.set_state(
+        agent="minimax-m2-7", model="MiniMax-M2.7", cwd="/repo", state="idle"
+    )
+    with (
+        patch.dict("os.environ", {"TERM": "xterm-256color"}),
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=output),
+    ):
+        composer = TerminalComposer(
+            bottom_toolbar=status_line.bottom_toolbar,
+            color=False,
+        )
+        console = Console(file=raw, force_terminal=True, color_system=None, width=100)
+        writer = build_prompt_safe_terminal_writer(
+            console=console, prompt_session=composer.prompt_session
+        )
+        console.print("Greeting\nTip")
+        read_task = asyncio.create_task(composer.read_line())
+        await _wait_for_output(raw, "❯")
+        await asyncio.sleep(0.01)
+        initial = _screen_contract(raw.getvalue(), width=100, height=40)
+
+        pipe.send_text("hi\n")
+        assert await read_task == "hi"
+        writer(lambda: console.print("❯ hi\n● Hello"))
+        read_task = asyncio.create_task(composer.read_line())
+        await _wait_for_output(raw, "● Hello")
+        await asyncio.sleep(0.01)
+        answered = _screen_contract(raw.getvalue(), width=100, height=40)
+
+        pipe.send_text("exit\n")
+        await read_task
+    return initial, answered
 
 
 async def _render_inherited_terminal_checkpoints() -> tuple[str, str]:
@@ -306,6 +338,8 @@ async def _render_completion_layout_checkpoint(
         create_pipe_input() as pipe,
         create_app_session(input=pipe, output=output),
     ):
+        output.write("Greeting\r\nTip\r\n")
+        output.flush()
         composer = TerminalComposer(
             slash_commands=slash_commands,
             bottom_toolbar=status_line.bottom_toolbar,
@@ -315,9 +349,14 @@ async def _render_completion_layout_checkpoint(
         composer.set_busy(busy)
         read_task = asyncio.create_task(composer.read_line())
         await _wait_for_output(raw, "❯")
-        await _wait_for_renderer_height(composer)
         pipe.send_text("/")
-        await _wait_for_output(raw, "/agents")
+        await _wait_for_screen_row(
+            raw,
+            width=width,
+            height=rows,
+            row=4 if busy else 2,
+            text="❯ /",
+        )
         await asyncio.sleep(0.01)
         snapshot = _screen_contract(raw.getvalue(), width=width, height=rows)
 
@@ -450,19 +489,6 @@ async def _render_terminal_resize_checkpoints() -> dict[str, object]:
             color=False,
         )
         composer.set_busy(True)
-        read_task = asyncio.create_task(composer.read_line())
-        await _wait_for_output(raw, "❯")
-
-        terminal_rows = 42
-        composer.invalidate()
-        await _wait_for_screen_row(
-            raw,
-            width=100,
-            height=42,
-            row=40,
-            text="❯ Type to queue for the next turn · Esc interrupts",
-        )
-
         console = Console(
             file=raw,
             force_terminal=True,
@@ -473,6 +499,19 @@ async def _render_terminal_resize_checkpoints() -> dict[str, object]:
             console=console,
             prompt_session=composer.prompt_session,
         )
+        read_task = asyncio.create_task(composer.read_line())
+        await _wait_for_output(raw, "❯")
+
+        terminal_rows = 42
+        composer.invalidate()
+        await _wait_for_screen_row(
+            raw,
+            width=100,
+            height=42,
+            row=2,
+            text="❯ Type to queue for the next turn · Esc interrupts",
+        )
+
         typing = []
         redraws = []
         draft = ""
@@ -483,7 +522,7 @@ async def _render_terminal_resize_checkpoints() -> dict[str, object]:
                 raw,
                 width=100,
                 height=42,
-                row=40,
+                row=2 + len(redraws),
                 text=f"❯ {draft}".rstrip(),
             )
             await asyncio.sleep(0.005)
@@ -526,13 +565,14 @@ async def _render_terminal_resize_checkpoints() -> dict[str, object]:
             include_cursor_visibility=True,
         )
 
-        renderer = composer.prompt_session.app.renderer
-        output.cursor_goto(row=15, column=1)
-        output.flush()
-        renderer._cursor_pos = Point(x=0, y=0)
-        renderer._last_screen = None
-        composer.invalidate()
-        await asyncio.sleep(0.02)
+        pipe.send_text("!")
+        await _wait_for_screen_row(
+            raw,
+            width=100,
+            height=42,
+            row=3,
+            text="❯ typing while busy!",
+        )
         reanchored = _screen_contract(
             raw.getvalue(),
             width=100,
@@ -546,7 +586,7 @@ async def _render_terminal_resize_checkpoints() -> dict[str, object]:
         "typing": typing,
         "redraws": redraws,
         "completed": completed,
-        "reanchored": reanchored,
+        "extended": reanchored,
     }
 
 
@@ -669,7 +709,7 @@ def test_screen_contract_uses_only_reviewed_surface_backgrounds(
                     assert style["bg"] in allowed_backgrounds[name]
 
 
-def test_composer_scenes_pin_input_and_footer_to_terminal_bottom(
+def test_composer_scenes_start_at_current_transcript_position(
     screen_contract: dict,
 ) -> None:
     for name, scene in screen_contract.items():
@@ -678,11 +718,27 @@ def test_composer_scenes_pin_input_and_footer_to_terminal_bottom(
         footer_rows = [
             row["row"] for row in scene["rows"] if row["text"].startswith("◆ ")
         ]
-        assert footer_rows == [23]
-        assert scene["cursor"]["y"] == 22
+        assert footer_rows
+        assert footer_rows[0] < 23
+        assert scene["cursor"]["y"] < footer_rows[0]
 
 
-def test_composer_uses_exact_terminal_edge_after_inherited_shell_output() -> None:
+def test_short_conversation_keeps_composer_next_to_transcript() -> None:
+    initial, answered = asyncio.run(_render_flow_layout_checkpoints())
+    initial_rows = {row["row"]: row["text"] for row in initial["rows"]}
+    answered_rows = {row["row"]: row["text"] for row in answered["rows"]}
+
+    assert initial_rows[0] == "Greeting"
+    assert initial_rows[1] == "Tip"
+    assert initial_rows[2].startswith("❯ Ask anything")
+    assert initial_rows[3].startswith("◆ minimax-m2-7")
+    assert answered_rows[2] == "❯ hi"
+    assert answered_rows[3] == "● Hello"
+    assert answered_rows[4].startswith("❯ Ask anything")
+    assert answered_rows[5].startswith("◆ minimax-m2-7")
+
+
+def test_composer_follows_inherited_shell_output_without_a_gap() -> None:
     checkpoints = asyncio.run(_render_inherited_terminal_checkpoints())
 
     for raw in checkpoints:
@@ -690,9 +746,10 @@ def test_composer_uses_exact_terminal_edge_after_inherited_shell_output() -> Non
         rendered_rows = {row["row"]: row["text"] for row in scene["rows"]}
 
         assert "\x1b[999;" not in raw
-        assert rendered_rows[45].startswith("❯ Ask anything")
-        assert rendered_rows[46].startswith("◆ minimax-m2-7")
-        assert scene["cursor"]["y"] == 45
+        assert rendered_rows[12] == "shell setup"
+        assert rendered_rows[13].startswith("❯ Ask anything")
+        assert rendered_rows[14].startswith("◆ minimax-m2-7")
+        assert scene["cursor"]["y"] == 13
 
 
 @pytest.mark.parametrize("enable_cpr", [False, True], ids=["no-cpr", "cpr-capable"])
@@ -701,13 +758,13 @@ def test_composer_uses_exact_terminal_edge_after_inherited_shell_output() -> Non
     [(18, 72), (24, 100), (42, 140)],
     ids=["compact", "standard", "wide"],
 )
-def test_composer_keeps_input_above_footer_after_prompt_safe_output(
+def test_composer_keeps_input_after_output_without_bottom_gap(
     enable_cpr: bool,
     rows: int,
     width: int,
 ) -> None:
     placeholder, typed = asyncio.run(
-        _render_bottom_layout_checkpoints(
+        _render_inline_layout_checkpoints(
             enable_cpr=enable_cpr,
             rows=rows,
             width=width,
@@ -718,8 +775,8 @@ def test_composer_keeps_input_above_footer_after_prompt_safe_output(
         rendered_rows = {row["row"]: row["text"] for row in scene["rows"]}
         assert "Previous response" in rendered_rows.values()
         assert "Done in 13s" in rendered_rows.values()
-        assert rendered_rows[rows - 1].startswith("◆ minimax-m2-7")
-        assert scene["cursor"]["y"] == rows - 2
+        assert rendered_rows[3].startswith("◆ minimax-m2-7")
+        assert scene["cursor"]["y"] == 2
         assert sum(text.startswith("◆ ") for text in rendered_rows.values()) == 1
         assert sum("❯" in text for text in rendered_rows.values()) == 1
         assert not any(
@@ -728,31 +785,35 @@ def test_composer_keeps_input_above_footer_after_prompt_safe_output(
 
     placeholder_rows = {row["row"]: row["text"] for row in placeholder["rows"]}
     typed_rows = {row["row"]: row["text"] for row in typed["rows"]}
-    assert placeholder_rows[rows - 2].startswith("❯ Ask anything")
-    assert typed_rows[rows - 2] == "❯ test"
+    assert placeholder_rows[2].startswith("❯ Ask anything")
+    assert typed_rows[2] == "❯ test"
 
 
-def test_bottom_layout_reanchors_when_reported_terminal_height_changes() -> None:
+def test_inline_layout_tracks_busy_typing_output_and_resize() -> None:
     checkpoints = asyncio.run(_render_terminal_resize_checkpoints())
     typing = checkpoints["typing"]
     redraws = checkpoints["redraws"]
     completed = checkpoints["completed"]
-    reanchored = checkpoints["reanchored"]
+    extended = checkpoints["extended"]
     assert isinstance(typing, list)
     assert isinstance(redraws, list)
     assert isinstance(completed, dict)
-    assert isinstance(reanchored, dict)
+    assert isinstance(extended, dict)
 
     expected_draft = ""
-    for character, scene in zip("typing while busy", typing, strict=True):
+    for index, (character, scene) in enumerate(
+        zip("typing while busy", typing, strict=True), start=1
+    ):
         expected_draft += character
         rows = {row["row"]: row["text"] for row in scene["rows"]}
-        assert rows[40] == f"❯ {expected_draft}".rstrip()
-        assert rows[41].startswith("◆ minimax-m2-7")
-        assert rows[38].startswith("Status: Reviewing request...")
+        update_count = sum(index > at for at in (4, 10, 17))
+        prompt_row = update_count + 2
+        assert rows[prompt_row] == f"❯ {expected_draft}".rstrip()
+        assert rows[prompt_row + 1].startswith("◆ minimax-m2-7")
+        assert rows[update_count].startswith("Status: Reviewing request...")
         assert scene["cursor"] == {
             "x": len(expected_draft) + 2,
-            "y": 40,
+            "y": prompt_row,
             "hidden": False,
         }
 
@@ -760,29 +821,27 @@ def test_bottom_layout_reanchors_when_reported_terminal_height_changes() -> None
         draft = checkpoint["draft"]
         scene = checkpoint["scene"]
         rows = {row["row"]: row["text"] for row in scene["rows"]}
-        assert rows[40] == f"❯ {draft}".rstrip()
-        assert rows[41].startswith("◆ minimax-m2-7")
-        assert rows[38].startswith("Status: Reviewing request...")
+        assert rows[update + 2] == f"❯ {draft}".rstrip()
+        assert rows[update + 3].startswith("◆ minimax-m2-7")
+        assert rows[update].startswith("Status: Reviewing request...")
         assert scene["cursor"] == {
             "x": len(draft) + 2,
-            "y": 40,
+            "y": update + 2,
             "hidden": False,
         }
         assert any(row["text"] == f"Response update {update}" for row in scene["rows"])
 
     completed_rows = {row["row"]: row["text"] for row in completed["rows"]}
-    assert completed_rows[40] == "❯ typing while busy"
-    assert completed_rows[41].startswith("◆ minimax-m2-7")
-    assert not any(
-        row >= 38 and text.startswith("Status:") for row, text in completed_rows.items()
-    )
-    assert completed["cursor"] == {"x": 19, "y": 40, "hidden": False}
+    assert completed_rows[3] == "❯ typing while busy"
+    assert completed_rows[4].startswith("◆ minimax-m2-7")
+    assert not any(text.startswith("Status:") for text in completed_rows.values())
+    assert completed["cursor"] == {"x": 19, "y": 3, "hidden": False}
     assert any(row["text"] == "Response update 3" for row in completed["rows"])
 
-    reanchored_rows = {row["row"]: row["text"] for row in reanchored["rows"]}
-    assert reanchored_rows[40] == "❯ typing while busy"
-    assert reanchored_rows[41].startswith("◆ minimax-m2-7")
-    assert reanchored["cursor"] == {"x": 19, "y": 40, "hidden": False}
+    extended_rows = {row["row"]: row["text"] for row in extended["rows"]}
+    assert extended_rows[3] == "❯ typing while busy!"
+    assert extended_rows[4].startswith("◆ minimax-m2-7")
+    assert extended["cursor"] == {"x": 20, "y": 3, "hidden": False}
 
 
 @pytest.mark.parametrize("busy", [False, True], ids=["idle", "busy"])
@@ -791,7 +850,7 @@ def test_bottom_layout_reanchors_when_reported_terminal_height_changes() -> None
     [(18, 72), (24, 100), (42, 140)],
     ids=["compact", "standard", "wide"],
 )
-def test_completion_menu_opens_above_anchored_input(
+def test_completion_menu_opens_below_inline_input(
     busy: bool,
     height: int,
     width: int,
@@ -807,12 +866,17 @@ def test_completion_menu_opens_above_anchored_input(
     menu_rows = [
         text.strip()
         for row, text in rendered_rows.items()
-        if row < height - 2 and text.strip().startswith("/")
+        if row > 0 and text.strip().startswith("/")
     ]
 
-    assert scene["cursor"]["y"] == height - 2
-    assert rendered_rows[height - 2] == "❯ /"
-    assert rendered_rows[height - 1].startswith("◆ minimax-m2-7")
+    assert rendered_rows[0] == "Greeting"
+    assert rendered_rows[1] == "Tip"
+    prompt_row = 4 if busy else 2
+    assert scene["cursor"]["y"] == prompt_row
+    assert rendered_rows[prompt_row] == "❯ /"
+    footer_rows = [row for row, text in rendered_rows.items() if text.startswith("◆ ")]
+    assert len(footer_rows) == 1
+    assert footer_rows[0] < height - 1
     assert "/agents" in menu_rows
     assert all(" " not in text for text in menu_rows)
     assert not any("Status:" in text and "/" in text for text in rendered_rows.values())

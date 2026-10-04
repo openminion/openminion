@@ -8,7 +8,7 @@ import pytest
 from openminion.modules.telemetry.schemas import TelemetryEvent
 from openminion.modules.telemetry.service import TelemetryService
 from tests.e2e.cli.focus.conftest import require_live_focus
-from tests.e2e.cli.focus.harness import FocusProbe
+from tests.e2e.cli.focus.harness import FocusProbe, PtySession
 from tests.e2e.cli.focus.harness.assertions import (
     assert_exact_reply,
     assert_recorded_answer,
@@ -22,6 +22,71 @@ from tests.e2e.cli.focus.harness.probe import active_turn_busy
 from tests.e2e.cli.focus.harness.scenarios import BASE_LIVE_SCENARIOS
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(300)]
+
+
+def test_live_focus_transcript_stays_top_down_during_minimax_turn(
+    focus_probe: FocusProbe,
+) -> None:
+    require_live_focus()
+    environment = focus_probe.environment()
+    environment["TERM_PROGRAM"] = "iTerm.app"
+    environment["TERM"] = "screen.xterm-256color"
+    with PtySession(
+        argv=(
+            "/usr/bin/make",
+            "run-local",
+            f"PYTHON={focus_probe.python_bin}",
+            "ARGS="
+            + " ".join(
+                (
+                    "--config",
+                    str(focus_probe.config_path),
+                    "--profile",
+                    focus_probe.agent_id,
+                    "--dir",
+                    str(focus_probe.workdir),
+                    "--no-update-check",
+                )
+            ),
+        ),
+        cwd=focus_probe.openminion_root,
+        env=environment,
+        rows=53,
+        cols=153,
+    ) as session:
+        focus_probe.wait_ready(session)
+        focus_probe._submit_composer_line(session, "hi")
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            if any(row.startswith("Status:") for row in rows) and "❯ hi" in rows:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(
+                "MiniMax turn never exposed submitted input and active footer"
+            )
+        tip_row = next(
+            index for index, row in enumerate(rows) if row.startswith("Tip: ")
+        )
+        input_row = rows.index("❯ hi")
+        assert input_row == tip_row + 2, "\n".join(
+            f"{index}: {row!r}" for index, row in enumerate(rows)
+        )
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            if any("Done in" in row for row in rows):
+                break
+            tip_row = next(
+                index for index, row in enumerate(rows) if row.startswith("Tip: ")
+            )
+            assert rows.index("❯ hi") == tip_row + 2, "\n".join(
+                f"{index}: {row!r}" for index, row in enumerate(rows)
+            )
+            time.sleep(0.1)
+        else:
+            raise AssertionError("MiniMax turn did not complete")
 
 
 def _observed_call_count(token_report: str) -> int:
@@ -257,7 +322,7 @@ def test_live_focus_contextual_help_while_busy(
         )
 
 
-def test_live_focus_typeahead_stays_at_terminal_edge_while_busy(
+def test_live_focus_typeahead_stays_in_inline_composer_while_busy(
     focus_probe: FocusProbe,
     tmp_path,
 ) -> None:
@@ -275,11 +340,13 @@ def test_live_focus_typeahead_stays_at_terminal_edge_while_busy(
             expected = f"❯ {draft[:end]}"
             deadline = time.monotonic() + 1
             while time.monotonic() < deadline:
+                rows = session.screen_lines
                 cursor_visible, cursor_row, cursor_column = session.cursor_state
                 if (
-                    session.screen_lines[-2] == expected.rstrip()
+                    expected.rstrip() in rows
                     and cursor_visible
-                    and (cursor_row, cursor_column) == (41, len(expected) + 1)
+                    and cursor_row == rows.index(expected.rstrip()) + 1
+                    and cursor_column == len(expected) + 1
                 ):
                     break
                 time.sleep(0.01)
@@ -293,35 +360,27 @@ def test_live_focus_typeahead_stays_at_terminal_edge_while_busy(
         completed = False
         while time.monotonic() < deadline:
             rows = session.screen_lines
-            assert rows[-2] == f"❯ {draft}"
-            assert rows[-1].startswith("◆ ")
             cursor_visible, cursor_row, cursor_column = session.cursor_state
-            if cursor_visible:
-                assert (cursor_row, cursor_column) == (41, len(draft) + 3)
+            prompt_row = rows.index(f"❯ {draft}") if f"❯ {draft}" in rows else -1
+            layout_ready = (
+                prompt_row >= 0
+                and rows[prompt_row + 1].startswith("◆ ")
+                and cursor_visible
+                and (cursor_row, cursor_column) == (prompt_row + 1, len(draft) + 3)
+            )
             if re.search(
                 r"Done in \d+(?:m\d{2}s|s)",
                 session.transcript[turn_offset:],
             ):
                 completed = True
-                break
+                if layout_ready:
+                    break
             time.sleep(0.05)
         assert completed, "MiniMax turn did not complete while the draft stayed open"
-
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            cursor_visible, cursor_row, cursor_column = session.cursor_state
-            if cursor_visible and (cursor_row, cursor_column) == (
-                41,
-                len(draft) + 3,
-            ):
-                break
-            time.sleep(0.01)
-        else:
-            raise AssertionError("visible cursor did not return to the active draft")
 
         session.send("\x7f" * len(draft))
         write_transcript(
             artifact_root(tmp_path),
-            "live-typeahead-terminal-edge",
+            "live-typeahead-inline-composer",
             session.transcript,
         )

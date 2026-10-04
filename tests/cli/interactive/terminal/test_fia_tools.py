@@ -31,7 +31,32 @@ class _FakeRuntime:
                     "tier": "read",
                     "active": self.active,
                 }
-            ]
+            ],
+            "security_lab": {
+                "state": "ready",
+                "activity_class": "local_lab_active",
+                "label": "Synthetic target",
+                "target": "security-target",
+                "target_container_id": "target-id",
+                "target_image_id": "target-image-id",
+                "daemon_state": "ready",
+                "daemon_id": "daemon-id",
+                "isolation_mode": "target-network-namespace",
+                "worker_image_digest": "worker@sha256:digest",
+                "allowed_tools": ["exec.run", "security.publish_report"],
+                "executable_allowlist": ["curl"],
+                "limits": {
+                    "timeout_seconds": 30,
+                    "max_output_bytes": 4096,
+                    "cpu": 0.5,
+                    "memory_bytes": 67108864,
+                    "pids": 32,
+                },
+                "approved_by": "operator-1",
+                "expires_at": "2030-01-01T00:00:00Z",
+                "activation_id": "activation-id",
+                "scope": "scope-fingerprint",
+            },
         }
 
     def activate_tool_profile(self, profile_id: str, **kwargs: Any) -> dict[str, str]:
@@ -70,6 +95,16 @@ async def _dispatch(runtime: Any, text: str = "/tools") -> str:
 
 def test_tools_in_catalog() -> None:
     assert "/tools" in _SLASH_COMMANDS
+
+
+def test_tools_status_shows_complete_security_lab_identity() -> None:
+    output = asyncio.run(_dispatch(_FakeRuntime(), "/tools status"))
+
+    assert "ready — Synthetic target → security-target" in output
+    assert "target=security-target" in output
+    assert "target_id=target-id" in output
+    assert "image=target-image-id" in output
+    assert "executables=curl" in output
 
 
 def test_render_tools_list_with_entries() -> None:
@@ -125,6 +160,14 @@ def test_slash_tools_dispatches_exposure_commands() -> None:
     )
 
     assert "hidden  security_readonly  (read)" in status
+    assert "daemon=ready" in status
+    assert "activity=local_lab_active" in status
+    assert "activation=activation-id" in status
+    assert "scope=scope-fingerprint" in status
+    assert "daemon_id=daemon-id" in status
+    assert "image=target-image-id" in status
+    assert "tools=exec.run, security.publish_report" in status
+    assert "approved_by=operator-1" in status
     assert "Activated: security_readonly (audit-1)" in activated
 
 

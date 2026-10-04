@@ -1,3 +1,6 @@
+import re
+import shlex
+import time
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -6,6 +9,11 @@ from typing import Any, Mapping, cast
 from openminion.base.runtime.sandbox import (
     ExecSpec,
     ExecutionSandboxSpec,
+)
+from openminion.modules.runtime.sandboxes.security_lab import (
+    SecurityLabConfig,
+    SecurityLabExecutionScope,
+    SecurityLabExecutionSpec,
 )
 from openminion.modules.tool.commands import normalize_cd_prefixed_command
 from openminion.modules.tool.runtime.context import RuntimeContext
@@ -24,6 +32,7 @@ from .constants import (
 )
 from .process import PROCESS_MANAGER, ShellFamily, _select_shell
 from openminion.modules.runtime.sandboxes.daytona import DaytonaClientError
+from openminion.modules.runtime.sandboxes.docker import DockerSandboxError
 from .schemas import (
     ExecRunArgs,
     ExecRunResult,
@@ -72,6 +81,15 @@ class _ExecRunPreparation:
 
 def _sandbox_runner_for_ctx(ctx: RuntimeContext) -> Any | None:
     return getattr(ctx, "sandbox_runner", None)
+
+
+def _security_lab_metadata(ctx: RuntimeContext) -> Mapping[str, Any]:
+    metadata = (getattr(ctx.policy, "raw", {}) or {}).get("context_metadata")
+    return metadata if isinstance(metadata, Mapping) else {}
+
+
+def _security_lab_required(ctx: RuntimeContext) -> bool:
+    return str(_security_lab_metadata(ctx).get("lab_required", "")).lower() == "true"
 
 
 def _sandbox_session_manager_for_ctx(ctx: RuntimeContext) -> Any | None:
@@ -136,6 +154,132 @@ def _exec_environment(
     environment = cast(dict[str, str], ctx.policy.filter_env(dict(params.env)))
     environment.pop("SSH_AUTH_SOCK", None)
     return environment
+
+
+def _security_lab_preparation(
+    *,
+    ctx: RuntimeContext,
+    params: ExecRunArgs,
+    runner: Any,
+    config: SecurityLabConfig,
+    metadata: Mapping[str, Any],
+    argv: list[str],
+) -> _ExecRunPreparation:
+    sandbox = SecurityLabExecutionSpec(
+        workspace_root="/workspace",
+        read_allow=["/workspace"],
+        write_allow=["/workspace"],
+        cmd_allowlist=[argv[0]],
+        timeout_s=float(params.timeout_s),
+        max_output_bytes=int(config.max_output_bytes),
+        session_mode="foreground",
+        security_lab=SecurityLabExecutionScope(
+            session_id=str(ctx.session_id or ""),
+            activation_id=str(metadata["activation_id"]),
+            config_fingerprint=str(metadata["config_fingerprint"]),
+            resolved_scope_fingerprint=str(metadata["resolved_scope_fingerprint"]),
+            daemon_id=str(metadata["daemon_id"]),
+            target_container_id=str(metadata["target_container_id"]),
+            target_image_id=str(metadata["target_image_id"]),
+            worker_image_digest=str(metadata["worker_image_digest"]),
+        ),
+    )
+    return _ExecRunPreparation(
+        agent_id=_agent_id(ctx),
+        params=params,
+        cwd_path=Path("/workspace"),
+        env={},
+        shell_argv=argv,
+        shell_family=ShellFamily.POSIX,
+        sandbox_spec=sandbox,
+        exec_spec=ExecSpec(cmd=argv, cwd="/workspace", env={}),
+        session_backend=PROCESS_MANAGER,
+        use_sandbox_runner=True,
+        use_sandbox_sessions=False,
+        sandbox_runner=runner,
+    )
+
+
+def _prepare_security_lab_exec(
+    *,
+    params: ExecRunArgs,
+    ctx: RuntimeContext,
+    started: float,
+    tool_name: str,
+    request_payload: dict[str, Any],
+) -> tuple[_ExecRunPreparation | None, dict[str, Any] | None]:
+    metadata = _security_lab_metadata(ctx)
+    runner = getattr(ctx, "security_lab_runner", None)
+    config = getattr(runner, "config", None)
+    reason = ""
+    if (
+        metadata.get("security_lab_state") != "ready"
+        or runner is None
+        or config is None
+    ):
+        reason = str(
+            metadata.get("security_lab_reason", "") or "security lab unavailable"
+        )
+    elif ctx.permission_mode != "ask":
+        reason = "security lab requires permission mode ask"
+    elif not ctx.confirm:
+        reason = "security lab exec requires operator approval"
+    elif params.host != "sandbox" or params.security != EXEC_SECURITY_MODE_DENY:
+        reason = "security lab requires host=sandbox and security=deny"
+    elif params.background or params.pty or params.env:
+        reason = "security lab requires foreground non-PTY execution without environment values"
+    elif params.workdir is not None or params.node is not None:
+        reason = "security lab uses its fixed worker directory and target"
+    elif not params.include_evidence_artifact:
+        reason = "security lab requires include_evidence_artifact=true"
+    else:
+        expires_at = float(metadata.get("activation_expires_at", 0) or 0)
+        remaining = expires_at - time.time()
+        if remaining <= 0 or params.timeout_s > min(
+            float(config.command_timeout_seconds), remaining
+        ):
+            reason = "security lab timeout exceeds the active approval"
+    config = cast(SecurityLabConfig, config)
+    argv: list[str] = []
+    if not reason:
+        command = params.command
+        if re.search(r"[\r\n;&|<>`$]", command):
+            reason = "security lab command must be one direct argv without shell syntax"
+        else:
+            try:
+                argv = shlex.split(command, posix=True)
+            except ValueError:
+                reason = "security lab command is not valid POSIX argv"
+        if argv and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", argv[0]):
+            reason = "security lab command cannot set environment values"
+        elif argv and argv[0] not in config.executable_allowlist:
+            reason = "security lab executable is not allowlisted"
+        elif not argv and not reason:
+            reason = "security lab command is empty"
+    if reason:
+        return None, _exec_run_error_result(
+            ctx=ctx,
+            request_payload=request_payload,
+            started=started,
+            tool_name=tool_name,
+            code="POLICY_DENIED",
+            message=reason,
+            details={"activity_class": "local_lab_active"},
+            summary=reason,
+            status=EXEC_STATUS_DENIED,
+        )
+
+    return (
+        _security_lab_preparation(
+            ctx=ctx,
+            params=params,
+            runner=runner,
+            config=config,
+            metadata=metadata,
+            argv=argv,
+        ),
+        None,
+    )
 
 
 def _prepare_exec_run(
@@ -369,7 +513,7 @@ def _start_exec_run_session(
                 prep.exec_spec,
                 prep.sandbox_spec,
             )
-        except DaytonaClientError as exc:
+        except (DaytonaClientError, DockerSandboxError) as exc:
             return _sandbox_error_result(
                 ctx=ctx,
                 request_payload=request_payload,

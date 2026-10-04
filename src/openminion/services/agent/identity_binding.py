@@ -584,10 +584,19 @@ class AgentIdentityMixin:
             getattr(self, "_identity_llm_policy_ref_enforced", False)
         )
         llm_policy_ref_warning = bool(llm_policy_ref) and (not llm_policy_ref_enforced)
+        security_lab = self._identity_security_lab_facts()
+        security_metadata = {
+            "identity_agent_id": str(security_lab.get("agent_id", "")),
+            "identity_profile_revision": str(security_lab.get("profile_revision", 0)),
+            "identity_profile_version": str(
+                security_lab.get("profile_version", "none") or "none"
+            ),
+            "lab_required": str(bool(security_lab.get("lab_required"))).lower(),
+        }
         snippet = self._last_identity_snippet
         if snippet is None:
             return {
-                "identity_profile_version": "none",
+                **security_metadata,
                 "identity_render_version": "none",
                 "identity_purpose": "none",
                 "identity_budget_used_tokens": "0",
@@ -606,6 +615,7 @@ class AgentIdentityMixin:
             }
         budget = getattr(snippet, "budget", None)
         return {
+            **security_metadata,
             "identity_profile_version": str(
                 getattr(snippet, "profile_version", "") or "none"
             ),
@@ -631,6 +641,36 @@ class AgentIdentityMixin:
             if llm_policy_ref_warning
             else "false",
         }
+
+    def _identity_security_lab_facts(self) -> dict[str, Any]:
+        config = getattr(getattr(self, "_config", None), "runtime", None)
+        lab_config = getattr(config, "security_lab", None)
+        agent_id = str(getattr(self, "_identity_agent_id", "") or "").strip()
+        facts: dict[str, Any] = {
+            "agent_id": agent_id,
+            "profile_revision": 0,
+            "profile_version": "",
+            "tool_use": "",
+            "allowed_tools": (),
+            "lab_required": bool(
+                lab_config is not None
+                and agent_id == str(lab_config.agent_identity_id).strip()
+            ),
+        }
+        identityctl = getattr(self, "_identityctl", None)
+        if identityctl is None:
+            return facts
+        profile = identityctl.get_profile(agent_id)
+        summary = identityctl.get_profile_summary(agent_id)
+        if profile is None or summary is None:
+            return facts
+        facts.update(
+            profile_revision=int(profile.profile_revision),
+            profile_version=str(summary.profile_version),
+            tool_use=str(profile.tool_posture.tool_use),
+            allowed_tools=tuple(profile.tool_posture.allowed_tools),
+        )
+        return facts
 
     def identity_snapshot(self, *, purpose: str = "act") -> dict[str, Any] | None:
         if self._identityctl is None:
@@ -781,6 +821,7 @@ _AGENT_IDENTITY_RUNTIME_API_NAMES = (
     "_refresh_identity_runtime_state",
     "_budget_value",
     "_identity_metadata",
+    "_identity_security_lab_facts",
     "identity_snapshot",
     "identity_verify",
     "identity_reload",

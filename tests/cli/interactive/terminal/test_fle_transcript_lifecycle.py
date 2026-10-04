@@ -489,6 +489,38 @@ def test_terminal_writer_overrides_direct_console_print() -> None:
     assert "hello" in rendered[0]
 
 
+def test_terminal_writer_owns_clear_expand_and_follow_up_rendering() -> None:
+    t, buf = _make("quiet")
+    rendered: list[str] = []
+
+    def _writer(render) -> None:
+        before = len(buf.getvalue())
+        render()
+        rendered.append(buf.getvalue()[before:])
+
+    t.set_terminal_writer(_writer)
+    t.render_user_input("first turn")
+    t.clear_messages()
+    t._truncated_blocks = [
+        ToolEvent(
+            tool_name="file.read",
+            args={"path": "README.md"},
+            content="expanded output",
+            full_content="expanded output",
+        )
+    ]
+    assert t.expand_block(1) is True
+    t.push_message(
+        ChatMessage(kind=MessageKind.AGENT, sender="assistant", body="next turn")
+    )
+
+    assert len(rendered) == 4
+    assert "first turn" in rendered[0]
+    assert "─" in rendered[1]
+    assert "expanded output" in rendered[2]
+    assert "next turn" in rendered[3]
+
+
 def test_terminal_writer_flows_into_active_turn_completion() -> None:
     buf = io.StringIO()
     console = Console(
@@ -565,7 +597,12 @@ def test_prompt_safe_writer_routes_rich_ansi_through_prompt_output(monkeypatch) 
 def test_prompt_safe_writer_uses_active_prompt_terminal_context(monkeypatch) -> None:
     console = Console(force_terminal=True, color_system="truecolor", width=160)
     out = io.StringIO()
-    prompt_output = create_output(stdout=out)
+    prompt_output = Vt100_Output(
+        out,
+        lambda: Size(rows=24, columns=80),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+    )
     marker = object()
     calls: list[bool] = []
 
@@ -579,6 +616,8 @@ def test_prompt_safe_writer_uses_active_prompt_terminal_context(monkeypatch) -> 
     def _fake_run_in_terminal(render, render_cli_done=False):
         assert get_app_or_none() is _Session.app
         calls.append(render_cli_done)
+        prompt_output.show_cursor()
+        prompt_output.flush()
         render()
         return marker
 
@@ -595,7 +634,10 @@ def test_prompt_safe_writer_uses_active_prompt_terminal_context(monkeypatch) -> 
 
     assert writer(lambda: console.print("Update available")) is marker
     assert calls == [False]
-    assert "Update available" in out.getvalue()
+    rendered = out.getvalue()
+    cursor_shown = rendered.index("\x1b[?25h")
+    cursor_hidden = rendered.index("\x1b[?25l", cursor_shown)
+    assert cursor_shown < cursor_hidden < rendered.index("Update available")
 
 
 def test_prompt_safe_writer_preserves_terminal_control_bytes() -> None:
@@ -608,6 +650,69 @@ def test_prompt_safe_writer_preserves_terminal_control_bytes() -> None:
     )
 
     assert out.getvalue() == "\r\033[2KWorking..."
+
+
+def test_prompt_safe_writer_writes_transcript_in_normal_terminal_flow() -> None:
+    console = Console(force_terminal=True, color_system=None, width=80)
+    out = io.StringIO()
+    prompt_output = Vt100_Output(
+        out,
+        lambda: Size(rows=24, columns=80),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+    )
+
+    class _App:
+        is_running = False
+
+    class _Session:
+        app = _App()
+        output = prompt_output
+
+    writer = build_prompt_safe_terminal_writer(
+        console=console,
+        prompt_session=_Session(),
+    )
+    writer(lambda: console.print("top-down response"))
+
+    rendered = out.getvalue()
+    assert "top-down response" in rendered
+    assert "\x1b7" not in rendered
+    assert "\x1b8" not in rendered
+
+
+def test_prompt_safe_writer_does_not_reserve_blank_composer_rows() -> None:
+    console = Console(force_terminal=True, color_system=None, width=80)
+    out = io.StringIO()
+    prompt_output = Vt100_Output(
+        out,
+        lambda: Size(rows=24, columns=80),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+    )
+
+    class _App:
+        is_running = False
+
+    class _Session:
+        app = _App()
+        output = prompt_output
+
+    writer = build_prompt_safe_terminal_writer(
+        console=console,
+        prompt_session=_Session(),
+    )
+    writer(lambda: console.print("idle response"))
+    writer(lambda: console.print("busy response"))
+    writer(lambda: console.print("small terminal response"))
+
+    rendered = out.getvalue()
+    assert "idle response" in rendered
+    assert "busy response" in rendered
+    assert "small terminal response" in rendered
+    assert "\x1b7" not in rendered
+    assert "\x1b8" not in rendered
+    assert "\x1b[2A" not in rendered
 
 
 def test_post_turn_render_skips_already_narrated_call_id() -> None:

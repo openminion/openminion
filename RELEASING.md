@@ -1,7 +1,7 @@
 # OpenMinion Releasing
 
 Status: active
-Last updated: 2026-10-01
+Last updated: 2026-10-02
 
 Purpose: give maintainers a compact package-local release smoke checklist for
 the public `openminion` package surface on the active alpha line defined by
@@ -344,47 +344,73 @@ Do not rely on workspace-root repo docs alone for package-public claims.
 
 ## Publish Sequence
 
-`openminion` uses this release path:
+`openminion` defaults to an Express Full Release for routine releases. Express
+omits only the prerelease `X.Y.Zrc1` tag and RC TestPyPI install. It retains
+final-version TestPyPI from reviewed `main`, production PyPI, GitHub Release,
+source metadata, signed/native binary publication, binary metadata, protected
+approvals, public readback, packaged Desktop acceptance and branch
+synchronization.
 
-1. prepare and validate the RC in an isolated local checkout; do not push its
-   temporary branch,
-2. push an RC tag such as `v<OPENMINION_VERSION>rc1` to publish to TestPyPI,
-3. install and smoke-test the RC artifact from TestPyPI,
-4. prepare the final non-RC version on `dev`, validate it, and merge its
+Use an RC before the sequence below only for a first public release, changed
+release workflow/trusted-publisher/build infrastructure, risky dependency or
+package-layout change, compatibility/migration-heavy release, desired public
+prerelease feedback, or an explicit maximum-assurance request. Record release
+mode `express` or `golden-rc` before publishing. When selected, the golden RC
+preflight is:
+
+1. prepare and validate `X.Y.Zrc1` in an isolated local checkout,
+2. push only `vX.Y.Zrc1` to publish to TestPyPI, and
+3. fresh-install and smoke-test the exact RC artifact.
+
+Routine releases skip that preflight and start here:
+
+1. prepare the final non-RC version on `dev`, validate it, and merge its
    reviewed PR into protected `main`,
-5. wait for the merge's build-only `Release` run, then dispatch `Release` from
-   `main` with `target=testpypi`,
-6. install and smoke-test the final TestPyPI artifact; confirm that successful
+2. after the required promotion checks pass and the merge reaches `main`,
+   dispatch `Release` from `main` with `target=testpypi`,
+3. install and smoke-test the final TestPyPI artifact; confirm that successful
    run's `headSha` is still remote `main` HEAD,
-7. push the final non-RC tag such as `v<OPENMINION_VERSION>` at that exact
+4. push the final non-RC tag such as `v<OPENMINION_VERSION>` at that exact
    reviewed commit to publish to PyPI,
-8. create the GitHub Release using the bare version title, such as
+5. create the GitHub Release using the bare version title, such as
    `<OPENMINION_VERSION>`,
-9. merge the released `main` commit back into remote `dev`, then update the
-   shared local `dev` checkout and verify it is not behind the remote branch.
+6. complete source-manifest publication and its post-publication `main` to
+   `dev` back-merge,
+7. complete the signed/native binary promotion, packaged Desktop qualification,
+   binary-manifest publication and public packaged-runtime acceptance, and
+8. perform the final `main` to `dev` back-merge and verify the public source and
+   binary feeds.
 
 Do not publish from a dirty local checkout just because the worktree happens to
 be sitting on `main`. If `main` moves after the final TestPyPI publish, or the
 final artifact needs changes, stop and use a new version; TestPyPI cannot
 replace an uploaded final filename.
 
-The package-code back-merge in step 9 may happen before runtime metadata is
-approved. After the metadata PR merges into `main`, back-merge `main` into
-`dev` again and verify identical `releases/runtime/v1/` trees. One earlier
-back-merge does not complete both stages.
+If a package-code back-merge happens after the GitHub Release but before
+runtime metadata approval, it does not complete release synchronization. After
+each source or binary metadata PR merges into `main`, back-merge `main` into
+`dev` again and verify identical `releases/runtime/v1/` trees.
+
+The `Release` workflow runs only for publication events: manual final-version
+TestPyPI dispatches and `v*` tags. Required CI owns promotion and metadata PR
+validation, so ordinary PRs and `main` pushes do not repeat the package release
+suite. Manual production PyPI dispatch is intentionally unavailable; a final
+non-prerelease tag is the only production publication event.
 
 ### Independent index acceptance
 
-For both the RC and final TestPyPI versions, use the version-specific TestPyPI
-JSON to select the exact wheel URL and SHA-256. Install that direct URL with
-dependencies from production PyPI in a fresh Python 3.11 environment; do not
-use a mixed index search that might choose the package from PyPI instead.
+For the final TestPyPI version, and for the RC when the golden path is selected,
+use the version-specific TestPyPI JSON to select the exact wheel URL and
+SHA-256. Install that direct URL with dependencies from production PyPI in a
+fresh Python 3.11 environment; do not use a mixed index search that might
+choose the package from PyPI instead.
 Install the final production version from PyPI in a separate fresh environment.
 For each, check `pip check`, `python -m openminion --version`, public imports,
 and `python -m openminion verify smoke` with isolated home/data/config paths.
 
 For example, from a scratch directory outside the package checkout, set
-`VERSION` to the exact RC or final TestPyPI version and run:
+`VERSION` to the exact final TestPyPI version, or the RC version when used, and
+run:
 
 ```bash
 VERSION=X.Y.Z
@@ -415,11 +441,12 @@ yield different wheel archive hashes; retain both index hashes and do not
 claim exact artifact promotion. The source runtime record must match the
 production PyPI wheel's filename, size, and SHA-256, not TestPyPI's.
 
-Keep an evidence row per release with RC/final TestPyPI runs, final producer
-run and tag SHA, both index hashes and install-smoke results, metadata observer
-run/attempt, metadata PR merge commit, successful `verify-main` run, and
-post-publication back-merge PR. Record a private binary candidate separately
-from a signed final runtime Release and public binary-feed verification.
+Keep an evidence row per release with the selected mode, the RC TestPyPI run
+when used, final TestPyPI run, final producer run and tag SHA, both index hashes
+and install-smoke results, metadata observer run/attempt, metadata PR merge
+commit, successful `verify-main` run, and post-publication back-merge PR. Record
+a private binary candidate separately from a signed final runtime Release and
+public binary-feed verification.
 
 Historical example (2026-09-21; not proof for later versions): RC
 TestPyPI run `35599400531`, final TestPyPI run `35599893339`, final-tag

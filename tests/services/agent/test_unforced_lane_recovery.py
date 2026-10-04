@@ -18,9 +18,11 @@ from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.services.agent.constants import TERMINATION_REASON_LOOP_NO_PROGRESS
 from openminion.services.agent.execution.dependencies import ExecutorDeps
 from openminion.services.agent.execution.unforced.followup import (
+    LoopState,
     denied_tool_recovery_hint,
 )
 from openminion.services.agent.execution.unforced.loop import (
+    _request_failure_recovery,
     handle_unforced_tool_calls,
 )
 
@@ -195,6 +197,96 @@ def test_denied_tool_recovery_hint_accepts_native_error_details_shape() -> None:
     assert "workdir" in hint
 
 
+def test_denied_tool_recovery_hint_surfaces_per_tool_budget_limit() -> None:
+    batch = ToolExecutionBatch(
+        results=[
+            ToolExecutionResult(
+                tool_name="file.list_dir",
+                ok=False,
+                content="",
+                error="tool_budget_calls_exceeded",
+                data={
+                    "error_code": "tool_budget_calls_exceeded",
+                    "error_details": {
+                        "tool_name": "file.list_dir",
+                        "tool_calls": 8,
+                        "max_calls_per_tool": 8,
+                    },
+                },
+                source="policy",
+            )
+        ]
+    )
+
+    hint = denied_tool_recovery_hint(batch)
+
+    assert hint is not None
+    assert "file.list_dir" in hint
+    assert "8/8" in hint
+    assert "another available tool" in hint
+
+
+def test_denied_tool_recovery_keeps_model_final_answer() -> None:
+    batch = ToolExecutionBatch(
+        results=[
+            ToolExecutionResult(
+                tool_name="file.list_dir",
+                ok=False,
+                content="",
+                error="tool_budget_calls_exceeded",
+                data={
+                    "error_code": "tool_budget_calls_exceeded",
+                    "error_details": {
+                        "tool_calls": 8,
+                        "max_calls_per_tool": 8,
+                    },
+                },
+            )
+        ]
+    )
+    runtime_ops = _FakeRuntimeOps(
+        execute_batches=[],
+        provider_responses=[_final_answer_response("Assessment from existing results")],
+    )
+    runner = SimpleNamespace(
+        runtime_ops=runtime_ops,
+        runtime=SimpleNamespace(
+            inbound=Message(channel="console", target="cli", body="assess repository"),
+            system_prompt="system",
+            provider_history=[],
+            user_message="assess repository",
+        ),
+        service_port=SimpleNamespace(
+            config=SimpleNamespace(runtime=SimpleNamespace(agent_loop_max_steps=4))
+        ),
+    )
+    initial = ProviderResponse(text="", model="fake-model", tool_calls=[])
+    state = LoopState(
+        initial_response=initial,
+        response=initial,
+        intent_category="coding",
+        tool_call_strategy="auto",
+        tool_budget_state=None,
+        last_batch=batch,
+        denied=True,
+    )
+
+    handled, response = asyncio.run(
+        _request_failure_recovery(
+            runner,
+            state=state,
+            deps=_deps(),
+            failure_signature=("file.list_dir", "tool_budget_calls_exceeded"),
+            failure_count=1,
+        )
+    )
+
+    assert handled is True
+    assert response is not None
+    assert response.text == "Assessment from existing results"
+    assert response.metadata["tool_loop_termination_reason"] == "model_final"
+
+
 def test_unforced_lane_retries_once_after_policy_denial_with_suggested_tool() -> None:
     denied_batch = ToolExecutionBatch(
         results=[
@@ -304,6 +396,76 @@ def test_unforced_lane_retries_once_after_policy_denial_with_suggested_tool() ->
     assert runtime_ops.provider_requests
     assert "file.write" in runtime_ops.provider_requests[0].history[-1].content
     assert "Do not repeat it" in runtime_ops.provider_requests[0].history[-1].content
+
+
+def test_policy_denial_recovery_rejects_unverified_model_completion() -> None:
+    denied_batch = ToolExecutionBatch(
+        results=[
+            ToolExecutionResult(
+                tool_name="exec.run",
+                ok=False,
+                verified=False,
+                content="",
+                error="security_deny",
+                data={
+                    "error_code": "POLICY_DENIED",
+                    "error_details": {
+                        "suggested_tool": "file.write",
+                        "suggested_fix": "Write the target file directly.",
+                    },
+                },
+                call_id="call-1",
+                source="policy",
+            )
+        ]
+    )
+    runtime_ops = _FakeRuntimeOps(
+        execute_batches=[
+            (
+                denied_batch,
+                [{"event_kind": "policy_denied", "tool_name": "exec.run"}],
+                True,
+            )
+        ],
+        provider_responses=[
+            _final_answer_response("The command completed successfully.")
+        ],
+    )
+    runner = SimpleNamespace(
+        runtime_ops=runtime_ops,
+        runtime=SimpleNamespace(
+            inbound=Message(channel="console", target="cli", body="create a file"),
+            system_prompt="system",
+            provider_history=[],
+            user_message="create a file",
+        ),
+        service_port=SimpleNamespace(
+            config=SimpleNamespace(runtime=SimpleNamespace(agent_loop_max_steps=4))
+        ),
+    )
+    initial_response = ProviderResponse(
+        text="",
+        model="fake-model",
+        tool_calls=[
+            ProviderToolCall(name="exec.run", arguments={"command": "touch unsafe"})
+        ],
+        finish_reason="tool_calls",
+    )
+
+    response = asyncio.run(
+        handle_unforced_tool_calls(
+            runner,
+            initial_response=initial_response,
+            intent_category="coding",
+            tool_call_strategy="auto",
+            tool_budget_state=None,
+            deps=_deps(),
+        )
+    )
+
+    assert response.metadata["tool_loop_termination_reason"] == "tool_no_success"
+    assert "POLICY_DENIED" in response.text
+    assert "completed successfully" not in response.text
 
 
 def test_repeated_policy_denial_after_recovery_hint_stops_as_loop_no_progress() -> None:

@@ -27,6 +27,9 @@ class TurnFlowServicePort(Protocol):
     def identity_agent_id(self) -> str: ...
 
     @property
+    def identity_security_lab_facts(self) -> dict[str, Any]: ...
+
+    @property
     def config(self) -> Any: ...
 
     @property

@@ -50,6 +50,26 @@ def test_contract_list_dir_matches_shape(tmp_path: Path, backend_kind: str):
     payload = sorted((entry.name, entry.entry_type) for entry in result.entries)
     assert payload == [("alpha.txt", "file"), ("nested", "directory")]
     assert result.count == 2
+    assert result.truncated is False
+
+
+@pytest.mark.parametrize("backend_kind", ["local", "memory"])
+def test_contract_list_dir_marks_capped_results(tmp_path: Path, backend_kind: str):
+    backend, workspace = _make_backend(
+        backend_kind,
+        tmp_path,
+        initial_files={
+            "alpha.txt": "alpha",
+            "beta.txt": "beta",
+            "gamma.txt": "gamma",
+        },
+    )
+
+    result = backend.list_dir(str(workspace), max_entries=2)
+
+    assert result.count == 2
+    assert len(result.entries) == 2
+    assert result.truncated is True
 
 
 @pytest.mark.parametrize("backend_kind", ["local", "memory"])

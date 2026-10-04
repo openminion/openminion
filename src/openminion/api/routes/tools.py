@@ -10,6 +10,7 @@ from openminion.api.core.deps import (
     v1_tool_schema,
     v1_tool_specs,
 )
+from openminion.api.core.exposure import ToolExposureError
 from openminion.api.core.validation import parse_bool_query_value, v1_tool_arguments
 from openminion.api.operations.tools import (
     execute_tool_run,
@@ -131,7 +132,7 @@ def _handle_exposure_activate(
                 approved_by=str(body.get("approved_by", "") or "").strip(),
                 policy_source=str(body.get("policy_source", "") or "").strip(),
             )
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, ToolExposureError, TypeError, ValueError) as exc:
             return exception_route_result(
                 HTTPStatus.BAD_REQUEST,
                 code="tool_exposure_activation_denied",
@@ -210,6 +211,14 @@ def _handle_tool_run(
             )
         try:
             arguments = v1_tool_arguments(body)
+            request = normalize_tool_run_request(body)
+            status, payload, session_id = execute_tool_run(
+                runtime=active_runtime,
+                tool_name=tool_name,
+                arguments=arguments,
+                request_id=ctx.request_id,
+                **request,
+            )
         except ValueError as exc:
             return exception_route_result(
                 HTTPStatus.BAD_REQUEST,
@@ -218,14 +227,6 @@ def _handle_tool_run(
                 details={"path": path},
                 retryable=False,
             )
-        request = normalize_tool_run_request(body)
-        status, payload, session_id = execute_tool_run(
-            runtime=active_runtime,
-            tool_name=tool_name,
-            arguments=arguments,
-            request_id=ctx.request_id,
-            **request,
-        )
         return RouteResult(
             status=status,
             payload=payload,

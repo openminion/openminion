@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 import shlex
@@ -677,7 +678,10 @@ def test_historical_handoff_without_multi_cycle_budget_is_not_approved(
     tmp_path, monkeypatch
 ) -> None:
     runtime, _, _ = _project_runtime(tmp_path)
-    metadata = _proposal(runtime, monkeypatch, max_iterations=None)
+    metadata = _proposal(runtime, monkeypatch)
+    handoff = json.loads(metadata["project_handoff"])
+    handoff["max_iterations"] = None
+    metadata["project_handoff"] = json.dumps(handoff)
 
     async def approve(*args):
         pytest.fail("stale proposal requested approval")
@@ -720,30 +724,52 @@ def test_focus_daemon_failure_precedes_project_launch(tmp_path, monkeypatch) -> 
     )
 
 
-def test_empty_verification_blocks_before_task_or_wake(tmp_path, monkeypatch) -> None:
+def test_historical_handoff_without_verifier_is_not_approved(
+    tmp_path, monkeypatch
+) -> None:
     runtime, _, _ = _project_runtime(tmp_path)
-    metadata = _proposal(runtime, monkeypatch, verification_commands=[])
-    cron = _CronStore()
-    monkeypatch.setattr(
-        "openminion.cli.commands.autonomy_project.configured_cron_store",
-        lambda *a, **k: cron,
+    metadata = _proposal(runtime, monkeypatch)
+    handoff = json.loads(metadata["project_handoff"])
+    handoff["verification_commands"] = []
+    metadata["project_handoff"] = json.dumps(handoff)
+
+    async def approve(*args):
+        pytest.fail("incomplete proposal requested approval")
+
+    result = asyncio.run(runtime.approve_project_handoff(metadata, approve))
+
+    assert "at least one concrete verification command" in result
+    assert (
+        AutonomyRunStore(
+            root=resolve_autonomy_state_root(runtime._rt.home_root)
+        ).list_runs()
+        == []
+    )
+
+
+def test_handoff_with_unavailable_verifier_is_not_approved(
+    tmp_path, monkeypatch
+) -> None:
+    runtime, _, _ = _project_runtime(tmp_path)
+    metadata = _proposal(
+        runtime,
+        monkeypatch,
+        verification_commands=["artifact-exists white_lotus_eco_tour.md"],
     )
 
     async def approve(*args):
-        return True
+        pytest.fail("proposal with unavailable verifier requested approval")
 
-    assert "Project blocked:" in asyncio.run(
-        runtime.approve_project_handoff(metadata, approve)
+    result = asyncio.run(runtime.approve_project_handoff(metadata, approve))
+
+    assert "unusable verification command" in result
+    assert "verification executable is unavailable" in result
+    assert (
+        AutonomyRunStore(
+            root=resolve_autonomy_state_root(runtime._rt.home_root)
+        ).list_runs()
+        == []
     )
-    run = AutonomyRunStore(
-        root=resolve_autonomy_state_root(runtime._rt.home_root)
-    ).list_runs()[0]
-    assert run.status == AutonomyRunStatus.BLOCKED
-    manager = _manager(runtime)
-    try:
-        assert manager.get_task(run.task_id) is None and cron.jobs == []
-    finally:
-        manager.close()
 
 
 def test_focus_direct_project_preserves_goal_and_success_criteria(tmp_path) -> None:

@@ -135,3 +135,31 @@ openminion skill rollback \
   --expected-active-version-hash <current-version-hash> \
   --reason "Restore the previous approved security procedure"
 ```
+
+## Authorized local lab
+
+The optional `security_lab` profile adds one active-validation path for an
+operator-owned synthetic Docker target. It is separate from the readonly
+source workflow. It does not support remote targets, credentials, browser or
+web tools, SSH, background processes, PTYs, package installation, remediation,
+or production testing.
+
+Configure one local Unix Docker socket, a hardened running target with
+`network_mode=none`, a locally present worker image pinned by digest, an exact
+executable allowlist, resource limits, and the
+`security-researcher-local-lab` identity. Follow
+[`examples/security-researcher-local-lab/README.md`](../examples/security-researcher-local-lab/README.md)
+and start Focus with `--no-context`.
+
+`/tools status` shows whether the lab is configured, unavailable, or ready.
+An identified operator must approve `security_lab` for a finite time. Every
+command then requires normal confirmation, runs as one direct argv in a
+separate non-root worker joined only to the target network namespace, and must
+request canonical evidence. Scope or identity drift invalidates approval; the
+runtime never falls back to the ordinary sandbox or host.
+
+`security.publish_report` accepts an active-only v2 request containing the
+objective, canonical exec evidence refs, candidate or rejected findings, a
+summary, and limitations. Target, activation, execution status, and container
+identities are resolved from trusted evidence. Reports remain unreviewed and
+sensitive local evidence.

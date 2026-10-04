@@ -1208,6 +1208,7 @@ class AgentServiceExecutionTests(AgentServiceTestCase):
             )
         )
         self.assertIn("Tool `weather.openmeteo.current` was blocked", response.text)
+        self.assertIn("2/3 tool cost", response.text)
         self.assertEqual(response.metadata["tool_execution_count"], "2")
         self.assertIn("tool_budget_cost_exceeded", response.metadata["tool_results"])
         self.assertIn("security_events", response.metadata)

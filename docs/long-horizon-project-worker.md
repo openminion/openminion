@@ -23,6 +23,36 @@ capability-specific proof.
    notes, and UX notes.
 9. Local and optional live E2E harnesses for project-worker scenarios.
 
+## Runtime budget configuration
+
+Long work passes through several independently enforced limits. A minimal
+profile inherits the shared defaults: 100 agent-loop steps, 100 brain tool
+calls, 100,000 total LLM tokens, and 300 seconds per brain turn. Tool policy
+also allows 100 calls per run, 50 calls per tool, and 200 weighted cost units.
+The first limit reached stops that turn or tool run.
+
+Configure the shared limits with `runtime.agent_loop_max_steps`,
+`runtime.brain_turn_timeout_seconds`, and
+`security.tool_policy.max_calls_per_run`, `max_calls_per_tool`, and
+`max_budget_cost_per_run`.
+
+Set `runtime.session_context_token_budget` to control how much prior session
+context is retained. It does not change the 100,000-token turn allowance.
+Provider profiles may set a larger `runtime.chat_turn_timeout_seconds` when
+their latency requires it.
+
+These environment values override the brain defaults for a process:
+
+- `OPENMINION_BRAIN_MAX_TICKS`
+- `OPENMINION_BRAIN_MAX_TOOL_CALLS`
+- `OPENMINION_BRAIN_MAX_A2A_CALLS`
+- `OPENMINION_BRAIN_MAX_TOTAL_LLM_TOKENS`
+- `OPENMINION_BRAIN_MAX_ELAPSED_MS`
+
+Explicit values remain authoritative, including lower limits. Security policy,
+provider retry, autonomous continuation, and project-worker budgets still
+apply separately; raising one ceiling does not bypass the others.
+
 ## Current Proof Shape
 
 The current alpha proof uses deterministic compressed pilots, a validation-only

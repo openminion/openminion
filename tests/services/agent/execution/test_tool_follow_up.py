@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -111,3 +112,53 @@ def test_follow_up_history_preserves_calls_and_linked_tool_results() -> None:
     assert request.history[1].tool_call_id == "call-1"
     assert request.history[1].tool_status == "success"
     assert not any(item.role == "user" for item in request.history)
+
+
+def test_follow_up_history_preserves_structured_tool_error_facts() -> None:
+    call = ProviderToolCall(id="call-1", name="file.list_dir", arguments={"path": "."})
+    response = ProviderResponse(text="", model="model", tool_calls=[call])
+    batch = ToolExecutionBatch(
+        results=[
+            ToolExecutionResult(
+                tool_name="file.list_dir",
+                ok=False,
+                content="",
+                error="tool_budget_calls_exceeded",
+                data={
+                    "error_code": "tool_budget_calls_exceeded",
+                    "error_details": {
+                        "tool_name": "file.list_dir",
+                        "tool_calls": 8,
+                        "max_calls_per_tool": 8,
+                    },
+                },
+                call_id="call-1",
+            )
+        ]
+    )
+    runner = SimpleNamespace(
+        runtime=SimpleNamespace(system_prompt="system", provider_history=[]),
+        service_port=SimpleNamespace(
+            provider=SimpleNamespace(name="adapter-neutral"),
+            tools=SimpleNamespace(model_provider_specs=lambda: []),
+        ),
+    )
+
+    request = build_follow_up_request(
+        runner,
+        deps=SimpleNamespace(),
+        response=response,
+        batch=batch,
+    )
+
+    tool_message = request.history[1]
+    assert tool_message.tool_error == {
+        "code": "tool_budget_calls_exceeded",
+        "message": "tool_budget_calls_exceeded",
+        "details": {
+            "tool_name": "file.list_dir",
+            "tool_calls": 8,
+            "max_calls_per_tool": 8,
+        },
+    }
+    assert json.loads(tool_message.content)["error"] == tool_message.tool_error

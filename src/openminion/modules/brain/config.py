@@ -728,9 +728,6 @@ def _default_llm_profiles(base_config: OpenMinionConfig) -> LLMProfiles:
 def _default_budgets(base_config: OpenMinionConfig) -> AgentBudgets:
     max_ticks = max(1, int(base_config.runtime.agent_loop_max_steps))
     max_tool_calls = max(0, int(base_config.security.tool_policy.max_calls_per_run))
-    max_total_tokens = int(base_config.runtime.session_context_token_budget)
-    if max_total_tokens <= 0:
-        max_total_tokens = 2000
     max_elapsed_ms = max(
         1000, int(base_config.runtime.brain_turn_timeout_seconds) * 1000
     )
@@ -740,6 +737,6 @@ def _default_budgets(base_config: OpenMinionConfig) -> AgentBudgets:
         # Allow explicit delegated execution by default without turning A2A into
         # an unbounded fallback path.
         max_a2a_calls=max(1, min(max_ticks, 2)),
-        max_total_llm_tokens=max_total_tokens,
+        max_total_llm_tokens=100_000,
         max_elapsed_ms=max_elapsed_ms,
     )
