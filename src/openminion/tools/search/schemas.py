@@ -12,7 +12,10 @@ class SearchArgs(BaseModel):
     q: str | None = Field(default=None, description="Alias for query")
     provider: str = Field(
         default=SEARCH_PROVIDER_AUTO,
-        description="Provider selection: auto, tavily, brave, serpapi, firecrawl, serper, tinyfish",
+        description=(
+            "Provider selection: auto, tavily, brave, serpapi, firecrawl, serper, "
+            "tinyfish, duckduckgo"
+        ),
     )
     max_results: int = Field(default=5, ge=1, le=20)
     count: int | None = Field(

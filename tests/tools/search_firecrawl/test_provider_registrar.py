@@ -44,7 +44,7 @@ def test_registrar_registers_firecrawl_provider_into_shared_search_map() -> None
     assert search_plugin.list_provider_ids() == ("firecrawl",)
 
 
-def test_healthcheck_is_key_based_only() -> None:
+def test_healthcheck_has_no_local_credential_dependency() -> None:
     provider = FirecrawlSearchProvider()
 
     assert (
@@ -65,5 +65,5 @@ def test_healthcheck_is_key_based_only() -> None:
                 )
             )
         )
-        is False
+        is True
     )

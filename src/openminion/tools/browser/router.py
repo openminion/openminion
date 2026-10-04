@@ -50,6 +50,7 @@ class BrowserRouter:
         tab_id: str | None = None,
         runtime_default_provider: str | None = None,
         runtime_provider_order: Iterable[str] = (),
+        runtime_enabled_providers: Iterable[str] = (),
     ) -> BrowserProvider:
         provider_id = (
             self._normalize_provider_token(requested_provider)
@@ -62,6 +63,7 @@ class BrowserRouter:
             provider_id = self._resolve_implicit_provider_id(
                 runtime_default_provider=runtime_default_provider,
                 runtime_provider_order=runtime_provider_order,
+                runtime_enabled_providers=runtime_enabled_providers,
             )
         if not provider_id:
             raise KeyError("no browser provider specified and no default configured")
@@ -105,6 +107,7 @@ class BrowserRouter:
         *,
         runtime_default_provider: str | None,
         runtime_provider_order: Iterable[str],
+        runtime_enabled_providers: Iterable[str],
     ) -> str:
         candidates = (
             [str(runtime_default_provider or "").strip()]
@@ -112,17 +115,32 @@ class BrowserRouter:
             + [self.default_provider]
             + list(self._config.provider_order)
         )
-        provider_id = self._first_available_provider(candidates)
+        provider_id = self._first_available_provider(
+            candidates,
+            allowed=runtime_enabled_providers,
+        )
         if provider_id:
             return provider_id
-        return self._auto_default_provider(preferred_order=runtime_provider_order)
+        return self._auto_default_provider(
+            preferred_order=runtime_provider_order,
+            allowed=runtime_enabled_providers,
+        )
 
-    def _auto_default_provider(self, *, preferred_order: Iterable[str] = ()) -> str:
+    def _auto_default_provider(
+        self,
+        *,
+        preferred_order: Iterable[str] = (),
+        allowed: Iterable[str] = (),
+    ) -> str:
         provider_ids = self._registry.list_provider_ids()
+        allowed_set = {str(item or "").strip() for item in allowed if str(item).strip()}
+        if allowed_set:
+            provider_ids = [item for item in provider_ids if item in allowed_set]
         if not provider_ids:
             return ""
         preferred_provider = self._first_available_provider(
-            list(preferred_order) + list(self._config.provider_order)
+            list(preferred_order) + list(self._config.provider_order),
+            allowed=allowed,
         )
         if preferred_provider:
             return preferred_provider
@@ -131,8 +149,16 @@ class BrowserRouter:
                 return preferred
         return provider_ids[0]
 
-    def _first_available_provider(self, candidates: Iterable[str]) -> str:
+    def _first_available_provider(
+        self,
+        candidates: Iterable[str],
+        *,
+        allowed: Iterable[str] = (),
+    ) -> str:
         available = set(self._registry.list_provider_ids())
+        allowed_set = {str(item or "").strip() for item in allowed if str(item).strip()}
+        if allowed_set:
+            available &= allowed_set
         for candidate in candidates:
             token = str(candidate or "").strip()
             if token and token in available:

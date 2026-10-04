@@ -7,6 +7,10 @@ Owner: `openminion-tools`
 1. The root package owns the fetch facade, artifact formatting, and provider
    selection.
 2. Provider implementations live under `fetch/providers/`.
-3. Current providers: `core_http`, `scrapling`.
+3. Current providers: `core_http`, `scrapling`, `firecrawl`, and `tinyfish`.
 4. New fetch providers should land as `fetch/providers/<provider>/` and
    register through `fetch.register_provider(...)`.
+
+`core_http` remains the no-configuration default. Firecrawl scrape also works
+without a local credential and accepts an optional API key for account-backed
+limits.

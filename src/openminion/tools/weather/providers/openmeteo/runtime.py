@@ -231,7 +231,10 @@ def build_payload(
         "warnings": list(warnings),
     }
     payload["summary"] = summary_for(payload)
-    payload["verified"] = verify_weather_result(payload, expected_query=query)
+    payload["verified"] = not fallback_used and verify_weather_result(
+        payload,
+        expected_query=query,
+    )
     return payload
 
 

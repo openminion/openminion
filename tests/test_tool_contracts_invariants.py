@@ -158,6 +158,7 @@ def test_recently_added_search_provider_candidates_normalize_correctly() -> None
         "search.serpapi.search",
         "search.firecrawl.search",
         "search.tinyfish.search",
+        "search.duckduckgo.search",
     ):
         normalized = mgr.normalize_raw_name(candidate)
         assert normalized == "web.search", (
@@ -168,6 +169,7 @@ def test_recently_added_search_provider_candidates_normalize_correctly() -> None
     assert "search.serpapi.search" in cands
     assert "search.firecrawl.search" in cands
     assert "search.tinyfish.search" in cands
+    assert "search.duckduckgo.search" in cands
 
 
 def test_runtime_candidates_do_not_collide_across_model_tool_owners() -> None:

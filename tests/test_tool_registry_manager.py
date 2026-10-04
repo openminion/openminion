@@ -36,6 +36,7 @@ def test_default_manager_resolves_model_binding_and_candidates() -> None:
         assert "search.firecrawl.search" in candidates
         assert "search.serper.search" in candidates
         assert "search.tinyfish.search" in candidates
+        assert "search.duckduckgo.search" in candidates
 
 
 def test_default_manager_normalizes_unique_runtime_candidate_name() -> None:
@@ -117,6 +118,7 @@ def test_manager_exposes_model_to_runtime_maps() -> None:
             "search.firecrawl.search",
             "search.serper.search",
             "search.tinyfish.search",
+            "search.duckduckgo.search",
             "weather",
             "time.now",
         }
@@ -136,6 +138,7 @@ def test_manager_exposes_model_to_runtime_maps() -> None:
             "search.firecrawl.search",
             "search.serper.search",
             "search.tinyfish.search",
+            "search.duckduckgo.search",
             "weather",
             "time.now",
         }
@@ -155,6 +158,10 @@ def test_manager_exposes_model_to_runtime_maps() -> None:
         )
         assert (
             "search.tinyfish.search" in dispatch_map["web.search"]["runtime_candidates"]
+        )
+        assert (
+            "search.duckduckgo.search"
+            in dispatch_map["web.search"]["runtime_candidates"]
         )
     else:
         assert dispatch_map["web.search"]["runtime_tool_name"] == ""

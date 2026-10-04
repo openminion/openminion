@@ -327,6 +327,7 @@ def test_external_provider_does_not_add_static_tool_lane() -> None:
         assert "search.firecrawl.search" in tool_names
         assert "search.serper.search" in tool_names
         assert "search.tinyfish.search" in tool_names
+        assert "search.duckduckgo.search" in tool_names
         assert "search.fake_search_provider_sep03.search" not in tool_names
     finally:
         _reset_registry(shared)

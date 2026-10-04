@@ -25,7 +25,15 @@ def test_tools_root_files_match_category_layout_contract() -> None:
 def test_multi_provider_categories_use_providers_subpackages() -> None:
     root = _tools_root()
     expected = {
-        "search": {"brave", "firecrawl", "serpapi", "serper", "tavily"},
+        "search": {
+            "brave",
+            "duckduckgo",
+            "firecrawl",
+            "serpapi",
+            "serper",
+            "tavily",
+            "tinyfish",
+        },
         "browser": {"pinchtab", "playwright"},
         "weather": {"openmeteo", "weatherapi"},
         "fetch": {"scrapling"},
@@ -46,10 +54,12 @@ def test_flat_variant_packages_are_retired_from_tools_root() -> None:
         "browser_playwright",
         "fetch_scrapling",
         "search_brave",
+        "search_duckduckgo",
         "search_firecrawl",
         "search_serpapi",
         "search_serper",
         "search_tavily",
+        "search_tinyfish",
         "weather_openmeteo",
         "weather_weatherapi",
     ):
@@ -69,6 +79,7 @@ def test_bootstrap_entries_use_nested_provider_paths() -> None:
         "openminion.tools.browser.providers.playwright",
         "openminion.tools.fetch.providers.scrapling",
         "openminion.tools.search.providers.brave",
+        "openminion.tools.search.providers.duckduckgo",
         "openminion.tools.search.providers.firecrawl",
         "openminion.tools.search.providers.serpapi",
         "openminion.tools.search.providers.serper",

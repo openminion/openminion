@@ -347,6 +347,7 @@ class ToolRegistryTests(unittest.TestCase):
             self.assertIn("search.firecrawl.search", names)
             self.assertIn("search.serper.search", names)
             self.assertIn("search.tinyfish.search", names)
+            self.assertIn("search.duckduckgo.search", names)
         importlib.reload(tools_module)
 
     def test_module_registry_contains_module_search_without_legacy_alias(self) -> None:
@@ -357,9 +358,10 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("search.firecrawl.search", names)
         self.assertIn("search.serper.search", names)
         self.assertIn("search.tinyfish.search", names)
+        self.assertIn("search.duckduckgo.search", names)
         self.assertNotIn("web.search", names)
 
-    def test_default_bootstrap_registers_serper_after_firecrawl(self) -> None:
+    def test_default_bootstrap_registers_search_providers_in_order(self) -> None:
         from openminion.tools.search import plugin as search_plugin
 
         search_plugin._PROVIDERS.clear()
@@ -368,7 +370,15 @@ class ToolRegistryTests(unittest.TestCase):
             build_default_tool_registry()
             self.assertEqual(
                 search_plugin.list_provider_ids(),
-                ("tavily", "brave", "serpapi", "firecrawl", "serper", "tinyfish"),
+                (
+                    "tavily",
+                    "brave",
+                    "serpapi",
+                    "serper",
+                    "tinyfish",
+                    "firecrawl",
+                    "duckduckgo",
+                ),
             )
         finally:
             search_plugin._PROVIDERS.clear()

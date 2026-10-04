@@ -64,6 +64,18 @@ def _normalized_tokens(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(token for token in tokens if token))
 
 
+def runtime_provider_is_allowed(
+    *,
+    family_config: ToolFamilyRuntimeConfig | None,
+    provider_id: str,
+) -> bool:
+    if family_config is None or not family_config.enabled_providers:
+        return True
+    return str(provider_id or "").strip().lower() in _normalized_tokens(
+        family_config.enabled_providers
+    )
+
+
 def resolve_runtime_provider_chain(
     *,
     available: list[str] | tuple[str, ...],
@@ -112,4 +124,5 @@ __all__ = [
     "resolve_runtime_provider_chain",
     "resolve_runtime_tool_config",
     "resolve_runtime_tool_family_config",
+    "runtime_provider_is_allowed",
 ]

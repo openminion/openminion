@@ -791,7 +791,8 @@ class OpenMeteoWeatherProvider:
         del extension_args
         return _run_weather_lookup(dict(query_args), ctx)
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, ctx: RuntimeContext | None = None) -> bool:
+        del ctx
         return True
 
 

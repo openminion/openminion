@@ -69,7 +69,8 @@ class FirecrawlSearchProvider:
         )
 
     def healthcheck(self, ctx: Any | None = None) -> bool:
-        return bool(self._api_key({}, ctx=ctx))
+        del ctx
+        return True
 
     def _build_body(
         self,
@@ -95,14 +96,16 @@ class FirecrawlSearchProvider:
         api_key: str,
         ctx: Any | None = None,
     ) -> Mapping[str, Any]:
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         request = urllib_request.Request(
             self._api_url(ctx=ctx),
             data=json.dumps(dict(body)).encode("utf-8"),
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             method="POST",
         )
         try:
@@ -188,12 +191,6 @@ class FirecrawlSearchProvider:
             raise SearchProviderError("query is required", code="INVALID_REQUEST")
 
         api_key = self._api_key(args, ctx=ctx)
-        if not api_key:
-            raise SearchProviderError(
-                "Missing Firecrawl API key",
-                code="DEPENDENCY_MISSING",
-            )
-
         payload = self._request(
             body=self._build_body(
                 query=query_text,
