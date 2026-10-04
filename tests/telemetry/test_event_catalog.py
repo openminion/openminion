@@ -83,13 +83,11 @@ def test_lifecycle_canonical_set_resolves_through_catalog() -> None:
 
 
 def test_validator_script_reports_ok_against_current_source() -> None:
-    repo_root = Path(__file__).resolve().parents[3]
-    script = (
-        repo_root / "openminion" / "scripts" / "validate/telemetry_event_catalog.py"
-    )
+    repo_root = Path(__file__).resolve().parents[2]
+    script = repo_root / "scripts" / "validate/telemetry_event_catalog.py"
     assert script.is_file(), script
 
-    env = {"PYTHONPATH": str(repo_root / "openminion" / "src")}
+    env = {"PYTHONPATH": str(repo_root / "src")}
     result = subprocess.run(
         [sys.executable, str(script)],
         capture_output=True,
@@ -105,10 +103,8 @@ def test_validator_script_reports_ok_against_current_source() -> None:
 
 
 def test_validator_script_fails_for_unregistered_literal(tmp_path: Path) -> None:
-    repo_root = Path(__file__).resolve().parents[3]
-    script = (
-        repo_root / "openminion" / "scripts" / "validate/telemetry_event_catalog.py"
-    )
+    repo_root = Path(__file__).resolve().parents[2]
+    script = repo_root / "scripts" / "validate/telemetry_event_catalog.py"
     scan_root = tmp_path / "scan-root"
     scan_root.mkdir()
     (scan_root / "bad_event.py").write_text(
@@ -116,7 +112,7 @@ def test_validator_script_fails_for_unregistered_literal(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    env = {"PYTHONPATH": str(repo_root / "openminion" / "src")}
+    env = {"PYTHONPATH": str(repo_root / "src")}
     result = subprocess.run(
         [sys.executable, str(script), "--scan-root", str(scan_root)],
         capture_output=True,

@@ -86,8 +86,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    repo_root = Path(__file__).resolve().parents[4]
-    openminion_root = repo_root / "openminion"
+    openminion_root = Path(__file__).resolve().parents[3]
     artifact_root = Path(args.root).resolve()
     home_root = artifact_root / "home"
     data_root = artifact_root / "data"

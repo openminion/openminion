@@ -40,8 +40,7 @@ class TestVectorE2E:
         import sys
         from pathlib import Path
 
-        root = Path(__file__).resolve().parents[3]
-        candidate = root / "openminion" / "src"
+        candidate = Path(__file__).resolve().parents[1] / "src"
         if candidate.exists() and str(candidate) not in sys.path:
             sys.path.insert(0, str(candidate))
 

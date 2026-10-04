@@ -8,10 +8,9 @@ from typing import Any
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 from openminion.services.agent.execution.validators import is_empty_provider_response
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 REQUIRED_LANE_FILE = (
     REPO_ROOT
-    / "openminion"
     / "src"
     / "openminion"
     / "services"
@@ -22,7 +21,6 @@ REQUIRED_LANE_FILE = (
 )
 UNFORCED_LANE_FILE = (
     REPO_ROOT
-    / "openminion"
     / "src"
     / "openminion"
     / "services"
@@ -159,7 +157,6 @@ def test_unforced_lane_uses_predicate_in_loop_body() -> None:
 def test_unforced_lane_has_empty_provider_response_builder() -> None:
     metadata_file = (
         REPO_ROOT
-        / "openminion"
         / "src"
         / "openminion"
         / "services"

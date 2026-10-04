@@ -19,7 +19,7 @@ from tests.helpers import live_cli_chat_alibaba
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[1]
 
 
 def _load_module_from_repo_path(module_name: str, *relative_parts: str):
@@ -37,7 +37,6 @@ def _load_module_from_repo_path(module_name: str, *relative_parts: str):
 def _load_cli_gate_module():
     return _load_module_from_repo_path(
         "run_cli_e2e_gate",
-        "openminion",
         "tests",
         "e2e",
         "runners",
@@ -48,7 +47,6 @@ def _load_cli_gate_module():
 def _load_chat_permutations_module():
     return _load_module_from_repo_path(
         "run_chat_permutations_e2e",
-        "openminion",
         "tests",
         "e2e",
         "runners",
@@ -59,7 +57,6 @@ def _load_chat_permutations_module():
 def _load_cli_chat_probe_module():
     return _load_module_from_repo_path(
         "run_cli_chat_probe",
-        "openminion",
         "tests",
         "e2e",
         "runners",
@@ -70,7 +67,6 @@ def _load_cli_chat_probe_module():
 def _load_live_skill_dense_probe_module():
     return _load_module_from_repo_path(
         "run_live_skill_dense_catalog_probe",
-        "openminion",
         "tests",
         "e2e",
         "runners",
@@ -81,7 +77,6 @@ def _load_live_skill_dense_probe_module():
 def _load_autonomy_smoke_module():
     return _load_module_from_repo_path(
         "run_autonomy_smoke",
-        "openminion",
         "tests",
         "e2e",
         "runners",
@@ -92,7 +87,6 @@ def _load_autonomy_smoke_module():
 def _load_cortensor_e2e_suite_module():
     return _load_module_from_repo_path(
         "run_cortensor_e2e_suite",
-        "openminion",
         "tests",
         "e2e",
         "runners",
@@ -101,14 +95,7 @@ def _load_cortensor_e2e_suite_module():
 
 
 def test_autonomy_smoke_executable_entrypoint() -> None:
-    runner_path = (
-        _repo_root()
-        / "openminion"
-        / "tests"
-        / "e2e"
-        / "runners"
-        / "run_autonomy_smoke.py"
-    )
+    runner_path = _repo_root() / "tests" / "e2e" / "runners" / "run_autonomy_smoke.py"
 
     completed = subprocess.run(
         [sys.executable, str(runner_path), "--help"],
@@ -780,32 +767,32 @@ def test_live_skill_dense_probe_runner_artifacts_use_generated_root(
 
 def test_ci_script_defaults_use_generated_runtime_tree(monkeypatch) -> None:
     repo_root = _repo_root()
-    ci_root = repo_root / ".openminion" / "runtime" / "ci"
+    ci_root = repo_root.parent / ".openminion" / "runtime" / "ci"
     cases = [
         (
             "run_migration_checks",
-            ("openminion", "scripts", "ci", "run_migration_checks.py"),
+            ("scripts", "ci", "run_migration_checks.py"),
             ["prog", "--modules-json", '["openminion-storage"]'],
             "junitxml",
             ci_root / "migrations" / "junit.xml",
         ),
         (
             "generate_bundle_manifest",
-            ("openminion", "scripts", "ci", "generate_bundle_manifest.py"),
+            ("scripts", "ci", "generate_bundle_manifest.py"),
             ["prog"],
             "output",
             ci_root / "bundle" / "bundle-manifest.json",
         ),
         (
             "build_wheels",
-            ("openminion", "scripts", "ci", "build_wheels.py"),
+            ("scripts", "ci", "build_wheels.py"),
             ["prog", "--modules-json", '["openminion"]'],
             "out_dir",
             ci_root / "wheels",
         ),
         (
             "invoke_selector_checks",
-            ("openminion", "scripts", "ci", "invoke_selector_checks.py"),
+            ("scripts", "ci", "invoke_selector_checks.py"),
             [
                 "prog",
                 "--selectors-json",
@@ -816,7 +803,7 @@ def test_ci_script_defaults_use_generated_runtime_tree(monkeypatch) -> None:
         ),
         (
             "invoke_selector_checks_cov",
-            ("openminion", "scripts", "ci", "invoke_selector_checks.py"),
+            ("scripts", "ci", "invoke_selector_checks.py"),
             [
                 "prog",
                 "--selectors-json",
@@ -835,7 +822,7 @@ def test_ci_script_defaults_use_generated_runtime_tree(monkeypatch) -> None:
 
 
 def test_shell_test_runners_use_shared_isolated_roots() -> None:
-    tests_root = _repo_root() / "openminion" / "tests"
+    tests_root = _repo_root() / "tests"
     shell_paths = sorted(tests_root.glob("**/runners/run_*.sh"))
     assert shell_paths
     for path in shell_paths:
