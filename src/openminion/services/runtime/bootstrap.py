@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 import logging
 
 from openminion.base.channel import ChannelRegistry
@@ -27,15 +27,6 @@ from openminion.modules.context.knowledge import (
     PROVIDER_GRAPHIFY,
     PROVIDER_PRAGMAGRAPH,
     PROVIDER_SOPHIAGRAPH_WORKSPACE,
-)
-from openminion.modules.context.knowledge.adapters.graphify import (
-    GraphifyKnowledgeGraphSource,
-)
-from openminion.modules.context.knowledge.adapters.pragmagraph import (
-    PragmaGraphKnowledgeGraphSource,
-)
-from openminion.modules.context.knowledge.adapters.sophiagraph_workspace import (
-    SophiagraphWorkspaceKnowledgeGraphSource,
 )
 from openminion.modules.context.knowledge.service import (
     KnowledgeGraphService,
@@ -78,15 +69,17 @@ from openminion.modules.runtime.sandboxes.daytona import (
     DaytonaRunner,
     DaytonaSdkTransport,
 )
-from openminion.modules.runtime.sandboxes.docker import DockerSandboxRunner
-from openminion.modules.runtime.sandboxes.security_lab import coerce_security_lab_config
 from openminion.services.runtime.errors import (
     PluginActivationError,
     RuntimeBootstrapError,
 )
+
 from openminion.services.runtime.memory import (
     _build_memory_v2_gateway_adapter as _build_bootstrap_memory_v2_gateway_adapter_impl,
 )
+
+if TYPE_CHECKING:
+    from openminion.modules.runtime.sandboxes.docker import DockerSandboxRunner
 
 
 def _map_action_policy_mode(mode: str) -> str:
@@ -146,7 +139,12 @@ def build_daytona_runner(
 def build_security_lab_runner(
     *,
     config: OpenMinionConfig,
-) -> DockerSandboxRunner | None:
+) -> "DockerSandboxRunner | None":
+    from openminion.modules.runtime.sandboxes.docker import DockerSandboxRunner
+    from openminion.modules.runtime.sandboxes.security_lab import (
+        coerce_security_lab_config,
+    )
+
     lab_config = coerce_security_lab_config(config.runtime.security_lab)
     if lab_config is None:
         return None
@@ -212,6 +210,12 @@ def build_knowledge_graph_source_service(
     """Build active knowledge-graph sources from OpenMinion config."""
     if not getattr(config, "module_configs", {}).get(KNOWLEDGE_GRAPHS_CONFIG_KEY):
         return empty_knowledge_graph_service()
+    from openminion.modules.context.knowledge.adapters import (
+        GraphifyKnowledgeGraphSource,
+        PragmaGraphKnowledgeGraphSource,
+        SophiagraphWorkspaceKnowledgeGraphSource,
+    )
+
     registry = KnowledgeGraphRegistry()
     registry.register(
         PROVIDER_GRAPHIFY,

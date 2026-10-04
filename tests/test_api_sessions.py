@@ -224,9 +224,9 @@ def test_session_activity_and_artifact_metadata_survive_restart(
     base_url = f"http://127.0.0.1:{server.server_address[1]}"
     try:
         tool_status, tool = _request_json(
-            f"{base_url}/v1/tools/weather/run",
+            f"{base_url}/v1/tools/file.list_dir/run",
             method="POST",
-            body={"arguments": {"city": "Tokyo"}, "session_id": session_id},
+            body={"arguments": {"path": "."}, "session_id": session_id},
         )
         assert tool_status == 200
         artifact_ref = tool["artifact_refs"][0]["ref"]
@@ -325,6 +325,7 @@ def _write_echo_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     config.runtime.log_level = "ERROR"
     _csc_install_default_agent(config, provider="echo")
     config.storage.path = str(tmp_path / "state" / "api.db")
+    config.runtime.tool_workspace_root = str(tmp_path)
     save_config(config, str(config_path))
     return config_path
 

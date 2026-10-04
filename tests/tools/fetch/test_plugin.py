@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -21,6 +22,22 @@ from openminion.tools.fetch.plugin import (
 )
 from openminion.tools.fetch.schemas import FetchGetArgs
 from openminion.tools.fetch.providers import FetchProviderRegistry, register_provider
+
+
+@pytest.fixture(autouse=True)
+def _resolve_example_com(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "openminion.tools.fetch.policy.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ],
+    )
 
 
 def test_register_adds_fetch_tools() -> None:
