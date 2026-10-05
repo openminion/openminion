@@ -340,7 +340,7 @@ class TerminalComposer:
 
         @kb.add("enter")
         def _(event):
-            self._insert_newline(event)
+            self._submit(event)
 
         @kb.add("/")
         def _(event):
@@ -486,12 +486,13 @@ class TerminalComposer:
             self._on_editor_error(message)
 
     def _insert_newline(self, event) -> None:
-        if not self._multiline:
-            if not event.app.current_buffer.text.strip():
-                return
-            event.app.current_buffer.validate_and_handle()
-            return
+        self._multiline = True
         event.app.current_buffer.insert_text("\n")
+
+    def _submit(self, event: Any) -> None:
+        if not event.app.current_buffer.text.strip():
+            return
+        event.app.current_buffer.validate_and_handle()
 
     def _insert_slash(self, event) -> None:
         buffer = event.app.current_buffer

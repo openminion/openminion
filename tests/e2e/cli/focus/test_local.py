@@ -752,6 +752,45 @@ def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
         )
 
 
+@pytest.mark.parametrize("bracketed", [False, True], ids=["plain-lf", "bracketed"])
+def test_focus_pty_multiline_paste_waits_for_enter_and_submits_once(
+    focus_probe: FocusProbe,
+    bracketed: bool,
+) -> None:
+    draft = "First pasted line\nSecond pasted line\nThird pasted line"
+    with focus_probe.session(rows=42, cols=100) as session:
+        focus_probe.wait_ready(session)
+        if bracketed:
+            session.send_bracketed_paste(draft)
+        else:
+            session.send(draft)
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            if any("Third pasted line" in row for row in rows):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("multiline draft did not render\n" + "\n".join(rows))
+
+        assert not any("Done in" in row for row in rows), "\n".join(rows)
+        assert not any("Queued for next turn" in row for row in rows), "\n".join(rows)
+        session.send("\r")
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            if any("Done in" in row for row in rows):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("pasted prompt did not complete\n" + "\n".join(rows))
+
+        assert sum("Done in" in row for row in rows) == 1, "\n".join(rows)
+        assert not any("Queued for next turn" in row for row in rows), "\n".join(rows)
+        _assert_inline_composer(session)
+
+
 @pytest.mark.parametrize("part_count", [18, 55])
 def test_focus_pty_long_paste_keeps_transcript_top_down_and_composer_inline(
     focus_probe: FocusProbe,
