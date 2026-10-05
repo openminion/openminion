@@ -79,7 +79,7 @@ def runtime_turn_request_from_payload(
     agent_profile = agent_resolution.profile
     timeout_seconds = resolve_timeout_seconds(
         payload=payload,
-        default_seconds=runtime.config.gateway.api_turn_timeout_seconds,
+        default_seconds=int(runtime.config.runtime.chat_turn_timeout_seconds),
         config=runtime.config,
         agent_id=agent_profile.name,
         run_profile_overrides=effective_run_profile_overrides,
@@ -181,7 +181,7 @@ def runtime_turn_request_from_manager_request(
         target=str(meta.get("user", "")).strip() or "api-user",
         timeout_seconds=resolve_timeout_seconds(
             payload=timeout_payload,
-            default_seconds=runtime.config.gateway.api_turn_timeout_seconds,
+            default_seconds=int(runtime.config.runtime.chat_turn_timeout_seconds),
             config=runtime.config,
             agent_id=agent_profile.name,
             run_profile_overrides=effective_run_profile_overrides,

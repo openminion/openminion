@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,6 +22,10 @@ from openminion.tools.browser.providers.playwright.config import (
 from openminion.tools.browser.providers.playwright.provider import (
     BrowserTabLockedError,
     PlaywrightProvider,
+)
+from openminion.tools.browser.constants import (
+    OPENMINION_BROWSER_PLAYWRIGHT_LOCALE_ENV,
+    OPENMINION_BROWSER_PLAYWRIGHT_TIMEZONE_ENV,
 )
 
 
@@ -494,6 +499,47 @@ def test_instance_start_does_not_pass_downloads_path_to_new_context(
 
     instance = provider.instance_start(mode="headless")
     assert instance["instance"]["id"]
+
+
+def test_instance_start_uses_runtime_locale_and_timezone(tmp_path: Path) -> None:
+    launch_options: dict[str, object] = {}
+
+    class _RecordingBrowserType(_FakeBrowserType):
+        def launch_persistent_context(self, **kwargs) -> _FakeContext:
+            launch_options.update(kwargs)
+            return _FakeContext(browser=None)
+
+    class _RecordingPlaywright(_FakePlaywright):
+        def __init__(self) -> None:
+            self.chromium = _RecordingBrowserType()
+            self.firefox = _RecordingBrowserType()
+            self.webkit = _RecordingBrowserType()
+
+    cfg = provider_config_from_mapping(
+        {
+            "workspace_root": str(tmp_path),
+            "browser": "chromium",
+            "persistent": {"enabled": True},
+            "network": {"mode": "allow_all"},
+        }
+    )
+    provider = PlaywrightProvider(
+        cfg,
+        playwright_factory=lambda: _RecordingPlaywright(),
+    )
+    ctx = BrowserProviderContext(
+        tool_context=SimpleNamespace(
+            env={
+                OPENMINION_BROWSER_PLAYWRIGHT_LOCALE_ENV: "ja-JP",
+                OPENMINION_BROWSER_PLAYWRIGHT_TIMEZONE_ENV: "Asia/Tokyo",
+            }
+        )
+    )
+
+    provider.instance_start(ctx, InstanceSpec(mode="headless"))
+
+    assert launch_options["locale"] == "ja-JP"
+    assert launch_options["timezone_id"] == "Asia/Tokyo"
 
 
 def test_provider_supports_canonical_browser_protocol_signatures(

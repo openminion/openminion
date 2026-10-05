@@ -114,7 +114,7 @@ def submit_turn_payload(
     )
     timeout_s = resolve_timeout_seconds(
         payload=payload,
-        default_seconds=runtime.config.gateway.api_turn_timeout_seconds,
+        default_seconds=int(runtime.config.runtime.chat_turn_timeout_seconds),
         config=runtime.config,
         agent_id=request.agent_id or None,
         run_profile_overrides=combine_run_profile_overrides(

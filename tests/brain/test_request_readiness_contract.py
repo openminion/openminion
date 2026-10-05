@@ -272,7 +272,7 @@ def test_llm_decision_guidance_names_request_readiness_contract() -> None:
     assert "answer_only" in guidance
     assert "current foreground tool loop" in guidance
     assert "Step count or mixed tool use alone" in guidance
-    assert "only when the user explicitly requests durable" in guidance
+    assert "only when the user explicitly requests project" in guidance
     assert "coding control with project_handoff" in guidance
     assert (
         _build_request_readiness_guidance_message(

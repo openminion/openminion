@@ -130,6 +130,20 @@ from .finalization import ActLoopFinalizationMixin  # noqa: E402
 from .seeded import ActLoopSeededMixin  # noqa: E402
 
 
+def _with_research_tool_results(
+    result: ExecutionResult,
+    outcome: AdaptiveToolLoopOutcome,
+    decision_reason_code: str,
+) -> ExecutionResult:
+    if decision_reason_code != "research_iteration_fallback":
+        return result
+    tool_results = list(outcome.state.scratchpad.get("adaptive.tool_results", []) or [])
+    action_result = getattr(result, "action_result", None)
+    if tool_results and action_result is not None:
+        action_result.outputs["tool_results"] = tool_results
+    return result
+
+
 class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
     mode_name = BRAIN_INTERNAL_MODE_ACT_ADAPTIVE
     mode_description = (
@@ -562,9 +576,8 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 model=model,
             ),
         )
-        if outcome.mode_result is not None:
-            return outcome.mode_result
-        return self._result_from_outcome(ctx, outcome=outcome)
+        result = outcome.mode_result or self._result_from_outcome(ctx, outcome=outcome)
+        return _with_research_tool_results(result, outcome, decision_reason_code)
 
 
 __all__ = [

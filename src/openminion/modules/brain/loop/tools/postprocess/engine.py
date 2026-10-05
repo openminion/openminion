@@ -10,6 +10,7 @@ from openminion.modules.llm.schemas import Message, ToolCall
 from ..budget import (
     _debit_llm_usage,
     _effective_cap,
+    _final_answer_token_reserve_reached,
     _profile_budget_exhausted,
     _remaining_budget_fraction,
     _tool_call_budget_exhausted,
@@ -297,6 +298,25 @@ class AdaptiveLoopRunnerPostprocessMixin(
             return "return", extension_result
         return "proceed", None
 
+    def _final_answer_reserve_outcome(self) -> AdaptiveToolLoopOutcome | None:
+        if (
+            self.loop_state.total_tool_calls <= 0
+            or not _final_answer_token_reserve_reached(self.loop_ctx, self.loop_state)
+        ):
+            return None
+        self.loop_state.scratchpad["final_answer_token_reserve_used"] = True
+        return _force_budget_answer_only_finalization(
+            loop_ctx=self.loop_ctx,
+            profile=self.profile,
+            loop_state=self.loop_state,
+            runtime=self.runtime,
+            model=self.model,
+            max_output_tokens=self.max_output_tokens,
+            metadata=self.metadata,
+            allowed_tools=self.allowed_tools,
+            public_mode_tag=self.public_mode_tag,
+        )
+
     def _handle_seeded_and_budget(self) -> tuple[str, AdaptiveToolLoopOutcome | None]:
         handled_seeded, seeded_outcome = _run_seeded_command_step(
             loop_ctx=self.loop_ctx,
@@ -318,6 +338,9 @@ class AdaptiveLoopRunnerPostprocessMixin(
                 if seeded_outcome is not None
                 else ("continue", None)
             )
+        reserve_outcome = self._final_answer_reserve_outcome()
+        if reserve_outcome is not None:
+            return "return", reserve_outcome
         if not (
             _token_budget_exhausted(self.loop_ctx, self.loop_state)
             or _profile_budget_exhausted(profile=self.profile, state=self.loop_state)

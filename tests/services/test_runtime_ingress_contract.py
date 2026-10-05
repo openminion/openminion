@@ -294,6 +294,32 @@ def test_runtime_turn_request_uses_runtime_level_overrides_for_timeout_floor() -
     assert request.timeout_seconds == 455.0
 
 
+def test_runtime_ingress_uses_configured_chat_turn_timeout() -> None:
+    runtime = _RuntimeStub()
+    runtime.config.gateway.api_turn_timeout_seconds = 45
+    runtime.config.runtime.chat_turn_timeout_seconds = 300
+
+    direct = runtime_turn_request_from_payload(
+        runtime=runtime,
+        payload={"message": "research", "session_id": "direct-timeout"},
+    )
+    managed = runtime_turn_request_from_manager_request(
+        runtime=runtime,
+        request=build_manager_turn_request(
+            {"message": "research", "session_id": "managed-timeout"},
+            default_agent_id="main",
+        ),
+    )
+    submitted = submit_turn_payload(
+        runtime=runtime,
+        payload={"message": "research", "session_id": "submitted-timeout"},
+    )
+
+    assert direct.timeout_seconds == 300
+    assert managed.timeout_seconds == 300
+    assert submitted.timeout_s == 300
+
+
 def test_submit_turn_payload_uses_runtime_manager_and_preserves_meta() -> None:
     runtime = _RuntimeStub()
 

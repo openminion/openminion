@@ -383,14 +383,20 @@ def maybe_resume_task_backed_direct(
 ) -> ExecutionResult | None:
     if state.plan is not None and state.cursor < len(state.plan.steps):
         return None
-    if str(user_input or "").strip() and not is_resume_like_input(user_input):
+    explicit_resume = is_resume_like_input(user_input)
+    if str(user_input or "").strip() and not explicit_resume:
         return None
     manager = getattr(runner, "task_manager", None)
     if manager is None:
         return None
     normalized_preferred_task_id = str(
-        preferred_task_id or getattr(state, "resume_task_id_hint", "") or ""
+        preferred_task_id
+        or getattr(state, "resume_task_id_hint", "")
+        or getattr(state, "task_backed_task_id", "")
+        or ""
     ).strip()
+    if not normalized_preferred_task_id and not explicit_resume:
+        return None
     records: list[Any]
     if normalized_preferred_task_id:
         preferred_record = manager.get_task(normalized_preferred_task_id)

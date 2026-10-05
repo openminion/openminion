@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from pydantic import ValidationError
@@ -124,6 +125,22 @@ def _entry_tool_calls(response: Any, tool_name: str) -> list[Any]:
         for call in list(getattr(response, "tool_calls", []) or [])
         if str(getattr(call, "name", "") or "").strip() == tool_name
     ]
+
+
+def _grounded_project_handoff(
+    arguments: dict[str, Any], *, user_input: str | None
+) -> Any | None:
+    handoff = arguments.get("project_handoff")
+    if handoff is None:
+        return None
+    handoff_payload = handoff if isinstance(handoff, dict) else {}
+    quote = " ".join(
+        str(handoff_payload.get("user_request_quote", "") or "").split()
+    ).casefold()
+    request = " ".join(str(user_input or "").split()).casefold()
+    explicit_words = {"background", "persist", "persistent", "project", "restart"}
+    quote_words = set(re.findall(r"[a-z]+", quote))
+    return handoff if quote in request and quote_words & explicit_words else None
 
 
 def _subtasks_from_decompose_payload(
@@ -304,6 +321,7 @@ def _entry_research_decision(
     logger: CanonicalEventLogger,
     state: WorkingState,
     llm_call_id: str,
+    user_input: str | None,
     respond_decision_fn: Any,
 ) -> Decision | None:
     research_calls = _entry_tool_calls(response, ENTRY_RESEARCH_TOOL_NAME)
@@ -332,7 +350,15 @@ def _entry_research_decision(
         )
 
     arguments = dict(getattr(research_calls[0], "arguments", {}) or {})
-    project_handoff = arguments.get("project_handoff")
+    requested_handoff = arguments.get("project_handoff")
+    project_handoff = _grounded_project_handoff(arguments, user_input=user_input)
+    if requested_handoff is not None and project_handoff is None:
+        logger.emit(
+            "brain.entry.project_handoff_rejected",
+            {"llm_call_id": llm_call_id, "reason": "user_request_quote_missing"},
+            trace_id=state.trace_id,
+            status="warning",
+        )
     try:
         decision = ActDecision(
             confidence=0.5,
@@ -380,6 +406,7 @@ def _entry_coding_decision(
     logger: CanonicalEventLogger,
     state: WorkingState,
     llm_call_id: str,
+    user_input: str | None,
     respond_decision_fn: Any,
 ) -> Decision | None:
     coding_calls = _entry_tool_calls(response, ENTRY_CODING_TOOL_NAME)
@@ -408,7 +435,15 @@ def _entry_coding_decision(
         )
 
     arguments = dict(getattr(coding_calls[0], "arguments", {}) or {})
-    project_handoff = arguments.get("project_handoff")
+    requested_handoff = arguments.get("project_handoff")
+    project_handoff = _grounded_project_handoff(arguments, user_input=user_input)
+    if requested_handoff is not None and project_handoff is None:
+        logger.emit(
+            "brain.entry.project_handoff_rejected",
+            {"llm_call_id": llm_call_id, "reason": "user_request_quote_missing"},
+            trace_id=state.trace_id,
+            status="warning",
+        )
     try:
         decision = ActDecision(
             confidence=0.5,

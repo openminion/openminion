@@ -93,6 +93,27 @@ def test_repeated_add_dir_parses_for_bare_interactive(tmp_path) -> None:
     assert args.add_dir == [str(first), str(second)]
 
 
+@pytest.mark.parametrize(
+    "argv",
+    (
+        ["--profile", "planner-safe", "run", "status"],
+        ["run", "--profile", "planner-safe", "status"],
+    ),
+)
+def test_run_profile_selector_accepts_root_and_subcommand_positions(
+    argv: list[str],
+) -> None:
+    args = build_parser().parse_args(argv)
+
+    assert args.agent == "planner-safe"
+
+
+def test_run_without_profile_keeps_root_default() -> None:
+    args = build_parser().parse_args(["run", "status"])
+
+    assert args.agent is None
+
+
 def test_add_dir_is_rejected_with_named_subcommand(tmp_path) -> None:
     with pytest.raises(SystemExit) as exc_info:
         main(["--add-dir", str(tmp_path), "version"])

@@ -13,6 +13,7 @@ from .contracts import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_FINAL_TEXT,
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+    ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
     AdaptiveToolLoopContext,
     AdaptiveToolLoopOutcome,
     AdaptiveToolLoopProfile,
@@ -28,13 +29,25 @@ def budget_evidence_outcome(
     allowed_tools: frozenset[str],
     reason: str,
 ) -> AdaptiveToolLoopOutcome | None:
-    return tool_evidence_closeout_outcome(
+    outcome = tool_evidence_closeout_outcome(
         profile=profile,
         loop_state=loop_state,
         allowed_tools=allowed_tools,
         reason=reason,
         scratchpad_key="budget_used_evidence_fallback",
     )
+    if outcome is None:
+        return None
+    outcome.termination_reason = ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
+    outcome.finalization_status = FinalizationStatus(
+        status="incomplete",
+        reasoning=(
+            "The provider did not return a polished closeout before the budget "
+            "ended; successful tool evidence was preserved."
+        ),
+        remaining_work="Synthesize or verify any unresolved details.",
+    ).model_dump(mode="json")
+    return outcome
 
 
 def _recover_contract_outcome(
@@ -149,6 +162,18 @@ def _missing_contract_outcome(
                 remaining_work="Confirm the answer's completion status in a later turn.",
             ).model_dump(mode="json"),
         )
+    if has_successful_tool_evidence:
+        fallback = budget_evidence_outcome(
+            profile=profile,
+            loop_state=loop_state,
+            allowed_tools=allowed_tools,
+            reason=(
+                "typed finalization recovery produced no user-facing answer, "
+                "so preserved tool evidence is returned."
+            ),
+        )
+        if fallback is not None:
+            return fallback
     loop_state.termination_reason = ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
     return AdaptiveToolLoopOutcome(
         profile_name=profile.profile_name,
