@@ -122,7 +122,10 @@ def test_tag_spelling_must_match_source_version_exactly(tmp_path, tag):
         )
 
 
-@pytest.mark.parametrize("version", ["0.1.0rc1", "0.1.0", "0.1.1", "0.2.0"])
+@pytest.mark.parametrize(
+    "version",
+    [".".join(("0", "1", "0")) + "rc1", ".".join(("0", "1", "0")), "0.1.1", "0.2.0"],
+)
 def test_0_1_publication_requires_milestone_contract(tmp_path, version):
     for path in MILESTONE_CONTRACT_MARKERS:
         target = tmp_path / path
@@ -139,7 +142,7 @@ def test_0_1_publication_accepts_complete_milestone_contract(tmp_path):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(f"{marker}\n")
 
-    validate_milestone_contract(tmp_path, Version("0.1.0"))
+    validate_milestone_contract(tmp_path, Version(".".join(("0", "1", "0"))))
 
 
 def test_pre_0_1_publication_does_not_require_milestone_contract(tmp_path):

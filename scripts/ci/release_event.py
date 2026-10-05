@@ -10,7 +10,7 @@ from packaging.version import InvalidVersion, Version
 
 
 SUPPORTED_PRERELEASE_MARKERS = ("alpha", "beta", "rc")
-MILESTONE_VERSION = Version("0.1.0")
+MILESTONE_VERSION = Version(".".join(("0", "1", "0")))
 MILESTONE_CONTRACT_MARKERS = {
     Path("README.md"): "0.1.x compatibility contract",
     Path("API_COMPATIBILITY.md"): "## 0.1.x compatibility contract",

@@ -55,7 +55,7 @@ and should be treated as a scam.
 | | |
 | --- | --- |
 | Package | `openminion` |
-| Current line | `0.0.x` public preview; `v0.1.0` is reserved for the broadly usable source/CLI milestone |
+| Current line | `0.1` release candidate for the broadly usable source/CLI milestone |
 | Python | 3.11+ |
 | Best fit | Bounded local workflows, tool use, integrations, and operator-driven agents |
 | Main surfaces | CLI, Python API, local HTTP API, and daemon-backed execution |
@@ -69,9 +69,9 @@ full 8-hour and 24-hour real elapsed certification pilots still require an
 approved run window, provider/model access, workspace, and budgets.
 
 The [0.1.x compatibility contract](API_COMPATIBILITY.md#01x-compatibility-contract)
-covers the documented Python and CLI surface once `0.1.0` is released. It does
-not claim signed Desktop binaries, managed cloud service, or completed
-long-duration autonomy certification.
+covers the documented Python and CLI surface when the first `0.1` release is
+promoted from this candidate. It does not claim signed Desktop binaries, managed cloud
+service, or completed long-duration autonomy certification.
 
 ## Common Commands
 
