@@ -39,8 +39,7 @@ def validate_milestone_contract(repository: Path, version: Version) -> None:
             missing.append(str(path))
     if missing:
         raise ValueError(
-            "0.1+ publication requires the milestone contract in: "
-            + ", ".join(missing)
+            "0.1+ publication requires the milestone contract in: " + ", ".join(missing)
         )
 
 

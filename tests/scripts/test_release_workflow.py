@@ -154,8 +154,7 @@ def test_both_indexes_keep_full_artifact_verification():
     assert "os: [ubuntu-latest, macos-latest, windows-latest]" in RELEASE_WORKFLOW
     assert "artifact: [wheel, sdist]" in RELEASE_WORKFLOW
     assert (
-        "Verify ${{ matrix.artifact }} install and bootstrap smoke"
-        in RELEASE_WORKFLOW
+        "Verify ${{ matrix.artifact }} install and bootstrap smoke" in RELEASE_WORKFLOW
     )
     assert 'if [[ "$RUNNER_OS" == "Windows" ]]' in RELEASE_WORKFLOW
     assert '"$python_bin" -m pip check' in RELEASE_WORKFLOW
