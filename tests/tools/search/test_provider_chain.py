@@ -239,6 +239,26 @@ class _FailingFirecrawlProvider:
         return True
 
 
+class _EmptyFirecrawlProvider:
+    provider_id = "firecrawl"
+    display_name = "Firecrawl"
+
+    def __init__(self) -> None:
+        self.search_calls = 0
+
+    def search(self, query, *, max_results, args, ctx):
+        del max_results, args, ctx
+        self.search_calls += 1
+        return {
+            "provider": "firecrawl",
+            "query": {"original": query, "more_results_available": False},
+            "results": [],
+        }
+
+    def healthcheck(self) -> bool:
+        return True
+
+
 class _LegacyUnhealthyProvider:
     provider_id = "brave"
     display_name = "Brave"
@@ -502,6 +522,23 @@ def test_duckduckgo_alias_and_forced_wrapper_route_through_shared_search() -> No
 
 def test_auto_search_falls_back_from_firecrawl_to_duckduckgo() -> None:
     firecrawl = _FailingFirecrawlProvider()
+    duckduckgo = _LegacyHealthyDuckDuckGoProvider()
+    search_plugin.register_provider(firecrawl)
+    search_plugin.register_provider(duckduckgo)
+
+    result = search_plugin._handle_web_search(
+        {"query": "cats", "provider": "auto", "max_results": 5},
+        _runtime_ctx(),
+    )
+
+    assert result["ok"] is True
+    assert result["source"] == "duckduckgo"
+    assert firecrawl.search_calls == 1
+    assert duckduckgo.search_calls == 1
+
+
+def test_auto_search_falls_back_when_firecrawl_returns_no_results() -> None:
+    firecrawl = _EmptyFirecrawlProvider()
     duckduckgo = _LegacyHealthyDuckDuckGoProvider()
     search_plugin.register_provider(firecrawl)
     search_plugin.register_provider(duckduckgo)

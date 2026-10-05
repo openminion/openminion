@@ -357,7 +357,7 @@ ENV_VAR_SPECS: tuple[EnvVarSpec, ...] = (
         value_type="secret",
         default="",
         owner="tools/firecrawl providers",
-        description="API key for Firecrawl-backed search/fetch providers.",
+        description="Optional API key for higher Firecrawl search/fetch limits.",
     ),
     EnvVarSpec(
         name="FIRECRAWL_API_URL",

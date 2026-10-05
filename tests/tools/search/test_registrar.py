@@ -115,3 +115,9 @@ def test_search_args_provider_description_mentions_all_recent_providers() -> Non
     assert "serper" in field.description
     assert "tinyfish" in field.description
     assert "duckduckgo" in field.description
+
+
+def test_search_args_keep_credentials_out_of_model_visible_schema() -> None:
+    schemas = importlib.import_module("openminion.tools.search.schemas")
+
+    assert "api_key" not in schemas.SearchArgs.model_json_schema()["properties"]

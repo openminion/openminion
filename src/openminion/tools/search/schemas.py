@@ -32,7 +32,6 @@ class SearchArgs(BaseModel):
     ui_lang: str | None = Field(default=None)
     safesearch: str | None = Field(default=None)
     offset: int | None = Field(default=None, ge=0, le=9)
-    api_key: str | None = Field(default=None)
 
     @field_validator(
         "query",
@@ -43,7 +42,6 @@ class SearchArgs(BaseModel):
         "search_lang",
         "ui_lang",
         "safesearch",
-        "api_key",
         mode="before",
     )
     @classmethod
