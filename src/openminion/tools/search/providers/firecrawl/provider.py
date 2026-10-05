@@ -45,10 +45,7 @@ class FirecrawlSearchProvider:
     def __init__(self, config: FirecrawlSearchProviderConfig | None = None) -> None:
         self.config = config or FirecrawlSearchProviderConfig()
 
-    def _api_key(self, args: Mapping[str, Any], *, ctx: Any | None = None) -> str:
-        raw_arg = str(args.get("api_key", "") or "").strip()
-        if raw_arg:
-            return raw_arg
+    def _api_key(self, *, ctx: Any | None = None) -> str:
         if self.config.api_key and self.config.api_key.strip():
             return self.config.api_key.strip()
         return resolve_firecrawl_api_key(ctx=ctx)
@@ -190,7 +187,7 @@ class FirecrawlSearchProvider:
         if not query_text:
             raise SearchProviderError("query is required", code="INVALID_REQUEST")
 
-        api_key = self._api_key(args, ctx=ctx)
+        api_key = self._api_key(ctx=ctx)
         payload = self._request(
             body=self._build_body(
                 query=query_text,

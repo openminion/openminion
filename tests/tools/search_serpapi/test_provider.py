@@ -11,6 +11,7 @@ import pytest
 from openminion.tools.search.providers import SearchProviderError
 from openminion.tools.search.providers.serpapi.provider import (
     SerpApiSearchProvider,
+    SerpApiSearchProviderConfig,
     _error_code_for_status,
     _normalize_safe_search,
 )
@@ -73,7 +74,9 @@ def test_search_requires_api_key() -> None:
 def test_search_maps_params_and_slices_results_without_num(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = SerpApiSearchProvider()
+    provider = SerpApiSearchProvider(
+        SerpApiSearchProviderConfig(api_key="config-serp-key")
+    )
     captured: dict[str, str] = {}
 
     def _fake_urlopen(request, timeout):
@@ -118,7 +121,6 @@ def test_search_maps_params_and_slices_results_without_num(
         "cats",
         max_results=2,
         args={
-            "api_key": "arg-serp-key",
             "country": "us",
             "search_lang": "en",
             "ui_lang": "fr",
@@ -129,7 +131,7 @@ def test_search_maps_params_and_slices_results_without_num(
 
     assert captured["engine"] == "google"
     assert captured["output"] == "json"
-    assert captured["api_key"] == "arg-serp-key"
+    assert captured["api_key"] == "config-serp-key"
     assert captured["q"] == "cats"
     assert captured["gl"] == "us"
     assert captured["hl"] == "en"
@@ -162,8 +164,8 @@ def test_success_with_top_level_error_becomes_warning(
     result = provider.search(
         "cats",
         max_results=5,
-        args={"api_key": "arg-serp-key"},
-        ctx=SimpleNamespace(env={}),
+        args={},
+        ctx=SimpleNamespace(env={"SERPAPI_API_KEY": "runtime-serp-key"}),
     )
 
     assert "partial upstream warning" in result["warnings"]
@@ -205,8 +207,8 @@ def test_http_errors_map_to_search_provider_codes(
         provider.search(
             "cats",
             max_results=3,
-            args={"api_key": "arg-serp-key"},
-            ctx=SimpleNamespace(env={}),
+            args={},
+            ctx=SimpleNamespace(env={"SERPAPI_API_KEY": "runtime-serp-key"}),
         )
 
     assert exc_info.value.code == expected
