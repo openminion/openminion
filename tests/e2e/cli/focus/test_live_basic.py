@@ -390,7 +390,7 @@ def test_live_focus_multiline_paste_queues_one_turn_while_busy(
     focus_probe: FocusProbe,
 ) -> None:
     require_live_focus()
-    draft = "Reply with one word after reading both lines.\nThe word is: pasted"
+    draft = "Reply with one word after reading both paragraphs.\n\nThe word is: pasted"
     with focus_probe.session(rows=42, cols=120) as session:
         focus_probe.wait_ready(session)
         focus_probe._submit_composer_line(session, "Reply with exactly: ready")
@@ -402,7 +402,7 @@ def test_live_focus_multiline_paste_queues_one_turn_while_busy(
         else:
             raise AssertionError("MiniMax turn did not enter the busy state")
 
-        session.send(draft)
+        session.send(draft.replace("\n", "\r"))
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             if "The word is: pasted" in session.screen_text:
