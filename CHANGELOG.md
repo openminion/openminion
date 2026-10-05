@@ -5,7 +5,7 @@ Last updated: 2026-10-05
 
 This file tracks package-facing release notes for `openminion`.
 
-## 0.1 release candidate - 2026-10-05
+## 0.1 - 2026-10-05
 
 - Establish the `0.1.x` compatibility contract for documented root Python
   exports, console scripts, and CLI command paths.
