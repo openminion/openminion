@@ -364,8 +364,9 @@ class ToolRegistryTests(unittest.TestCase):
     def test_default_bootstrap_registers_search_providers_in_order(self) -> None:
         from openminion.tools.search import plugin as search_plugin
 
-        search_plugin._PROVIDERS.clear()
-        search_plugin._PROVIDER_ORDER.clear()
+        provider_registry = search_plugin.provider_registry()
+        provider_registry._providers.clear()  # noqa: SLF001
+        provider_registry._provider_order.clear()  # noqa: SLF001
         try:
             build_default_tool_registry()
             self.assertEqual(
@@ -381,8 +382,8 @@ class ToolRegistryTests(unittest.TestCase):
                 ),
             )
         finally:
-            search_plugin._PROVIDERS.clear()
-            search_plugin._PROVIDER_ORDER.clear()
+            provider_registry._providers.clear()  # noqa: SLF001
+            provider_registry._provider_order.clear()  # noqa: SLF001
 
     def test_model_provider_specs_fails_closed_when_canonical_exposure_empty(
         self,

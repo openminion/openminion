@@ -22,3 +22,10 @@ runtime config or environment variables, not `web.search` model arguments.
 Required-key providers use `TAVILY_API_KEY`, `BRAVE_API_KEY`,
 `SERPAPI_API_KEY`, `SERPER_API_KEY`, or `TINYFISH_API_KEY`; Firecrawl also reads
 the optional `FIRECRAWL_API_KEY` for account-backed limits.
+
+Automatic selection follows the configured provider order and fallback policy.
+An explicitly requested provider is exact: failure is returned to the caller
+instead of silently switching providers. Failed automatic chains report each
+provider attempt. In search results, `verified` and
+`data.source_links_present` mean that at least one result contains a source
+URL; they do not independently verify the claims on that page.

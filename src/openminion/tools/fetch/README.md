@@ -14,3 +14,7 @@ Owner: `openminion-tools`
 `core_http` remains the no-configuration default. Firecrawl scrape also works
 without a local credential and accepts an optional API key for account-backed
 limits.
+
+Automatic selection follows the configured provider order and fallback policy.
+An explicitly requested backend is exact. If every automatic backend fails,
+the error details include the ordered backend chain and each failed attempt.

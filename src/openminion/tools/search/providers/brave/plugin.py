@@ -1,5 +1,4 @@
 from collections.abc import Mapping
-import inspect
 from typing import Any
 
 from openminion.tools.search import register_provider
@@ -19,11 +18,6 @@ class BraveSearchFacadeProvider:
 
     def __init__(self, provider: BraveSearchProvider | None = None) -> None:
         self._provider = provider or BraveSearchProvider()
-        try:
-            params = inspect.signature(self._provider.search).parameters
-            self._provider_accepts_ctx = "ctx" in params
-        except Exception:
-            self._provider_accepts_ctx = True
 
     def search(
         self,
@@ -45,10 +39,7 @@ class BraveSearchFacadeProvider:
                 request_args[key] = value.strip()
 
         try:
-            if self._provider_accepts_ctx:
-                payload, headers = self._provider.search(args=request_args, ctx=ctx)
-            else:
-                payload, headers = self._provider.search(args=request_args)
+            payload, headers = self._provider.search(args=request_args, ctx=ctx)
         except BraveSearchError as exc:
             raise SearchProviderError(
                 f"Brave search failed ({exc.code}): {exc}",

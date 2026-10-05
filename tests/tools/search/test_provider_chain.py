@@ -89,7 +89,8 @@ class _LegacyHealthyTavilyProvider:
             ],
         }
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, ctx=None) -> bool:
+        del ctx
         return True
 
 
@@ -115,7 +116,8 @@ class _LegacyHealthySerpApiProvider:
             ],
         }
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, ctx=None) -> bool:
+        del ctx
         return True
 
 
@@ -141,7 +143,8 @@ class _LegacyHealthyFirecrawlProvider:
             ],
         }
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, ctx=None) -> bool:
+        del ctx
         return True
 
 
@@ -167,7 +170,8 @@ class _LegacyHealthySerperProvider:
             ],
         }
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, ctx=None) -> bool:
+        del ctx
         return True
 
 
@@ -193,7 +197,8 @@ class _LegacyHealthyTinyFishProvider:
             ],
         }
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, ctx=None) -> bool:
+        del ctx
         return True
 
 
@@ -219,7 +224,8 @@ class _LegacyHealthyDuckDuckGoProvider:
             ],
         }
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, ctx=None) -> bool:
+        del ctx
         return True
 
 
@@ -235,8 +241,14 @@ class _FailingFirecrawlProvider:
         self.search_calls += 1
         raise SearchProviderError("rate limited", code="RATE_LIMITED")
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, ctx=None) -> bool:
+        del ctx
         return True
+
+
+class _FailingDuckDuckGoProvider(_FailingFirecrawlProvider):
+    provider_id = "duckduckgo"
+    display_name = "DuckDuckGo"
 
 
 class _EmptyFirecrawlProvider:
@@ -255,7 +267,8 @@ class _EmptyFirecrawlProvider:
             "results": [],
         }
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, ctx=None) -> bool:
+        del ctx
         return True
 
 
@@ -271,7 +284,8 @@ class _LegacyUnhealthyProvider:
         self.search_calls += 1
         raise AssertionError("unhealthy provider should be filtered before search")
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, ctx=None) -> bool:
+        del ctx
         return False
 
 
@@ -320,8 +334,9 @@ def _audit_runtime_ctx(
 
 
 def _reset_providers() -> None:
-    search_plugin._PROVIDERS.clear()
-    search_plugin._PROVIDER_ORDER.clear()
+    registry = search_plugin.provider_registry()
+    registry._providers.clear()  # noqa: SLF001
+    registry._provider_order.clear()  # noqa: SLF001
 
 
 def setup_function() -> None:
@@ -347,6 +362,7 @@ def test_explicit_provider_uses_context_aware_healthcheck_and_executes_first() -
     assert result["source"] == "brave"
     assert result["data"]["provider"] == "brave"
     assert result["data"]["retrieved_at"]
+    assert result["data"]["source_links_present"] is True
     assert brave.search_calls == 1
     assert tavily.search_calls == 0
 
@@ -367,6 +383,32 @@ def test_explicit_provider_is_preserved_even_when_healthcheck_is_false() -> None
     assert "provider 'brave' reported unhealthy" in result["data"]["warnings"]
     assert brave.search_calls == 1
     assert tavily.search_calls == 0
+
+
+def test_explicit_provider_failure_does_not_fall_back() -> None:
+    firecrawl = _FailingFirecrawlProvider()
+    duckduckgo = _LegacyHealthyDuckDuckGoProvider()
+    search_plugin.register_provider(firecrawl)
+    search_plugin.register_provider(duckduckgo)
+
+    result = search_plugin._handle_web_search(
+        {"query": "cats", "provider": "firecrawl", "max_results": 5},
+        _runtime_ctx(
+            runtime_tools={
+                "search": {
+                    "enabled_providers": ["firecrawl", "duckduckgo"],
+                    "default_provider": "firecrawl",
+                    "provider_order": ["firecrawl", "duckduckgo"],
+                    "allow_fallback": True,
+                }
+            }
+        ),
+    )
+
+    assert result["ok"] is False
+    assert result["data"]["provider_chain"] == ["firecrawl"]
+    assert firecrawl.search_calls == 1
+    assert duckduckgo.search_calls == 0
 
 
 def test_auto_provider_filters_unhealthy_candidates_but_keeps_healthy_fallback() -> (
@@ -554,6 +596,33 @@ def test_auto_search_falls_back_when_firecrawl_returns_no_results() -> None:
     assert duckduckgo.search_calls == 1
 
 
+def test_auto_search_reports_each_failed_provider_attempt() -> None:
+    firecrawl = _FailingFirecrawlProvider()
+    duckduckgo = _FailingDuckDuckGoProvider()
+    search_plugin.register_provider(firecrawl)
+    search_plugin.register_provider(duckduckgo)
+
+    result = search_plugin._handle_web_search(
+        {"query": "cats", "provider": "auto", "max_results": 5},
+        _runtime_ctx(),
+    )
+
+    assert result["ok"] is False
+    assert result["data"]["provider_chain"] == ["firecrawl", "duckduckgo"]
+    assert result["data"]["attempt_failures"] == [
+        {
+            "provider": "firecrawl",
+            "code": "RATE_LIMITED",
+            "message": "rate limited",
+        },
+        {
+            "provider": "duckduckgo",
+            "code": "RATE_LIMITED",
+            "message": "rate limited",
+        },
+    ]
+
+
 def test_provider_registration_order_keeps_duckduckgo_last() -> None:
     tavily = _LegacyHealthyTavilyProvider()
     brave = _ContextAwareBraveProvider(healthy_without_ctx=True)
@@ -622,6 +691,7 @@ def test_firecrawl_provider_alias_and_forced_wrapper_route_through_shared_search
         == "firecrawl"
     )
     assert search_plugin._provider_pref_from_token("firecrawl") == "firecrawl"
+    assert search_plugin._provider_pref_from_token("prefix.firecrawl.suffix") == ""
 
     result = search_plugin._handle_web_search_firecrawl(
         {"query": "cats", "max_results": 5},

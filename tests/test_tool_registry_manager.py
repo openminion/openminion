@@ -28,15 +28,7 @@ def test_default_manager_resolves_model_binding_and_candidates() -> None:
     manager = _get_bootstrap_manager()
     assert manager.normalize_raw_name("functions.web.search") == "web.search"
     assert manager.resolve_binding("web.search") == "runtime.web.search"
-    candidates = manager.runtime_candidates("runtime.web.search")
-    if candidates:
-        assert candidates[0] == "search.dispatch"
-        assert "search.tavily.search" in candidates
-        assert "search.serpapi.search" in candidates
-        assert "search.firecrawl.search" in candidates
-        assert "search.serper.search" in candidates
-        assert "search.tinyfish.search" in candidates
-        assert "search.duckduckgo.search" in candidates
+    assert manager.runtime_candidates("runtime.web.search") == ("search.dispatch",)
 
 
 def test_default_manager_normalizes_unique_runtime_candidate_name() -> None:
@@ -47,7 +39,7 @@ def test_default_manager_normalizes_unique_runtime_candidate_name() -> None:
 
 def test_model_provider_specs_only_exposes_available_runtime_tools() -> None:
     manager = _get_bootstrap_manager()
-    specs = manager.model_provider_specs({"file.read", "search.tavily.search"})
+    specs = manager.model_provider_specs({"file.read", "search.dispatch"})
     names = {spec.name for spec in specs}
     assert "file.read" in names
     if manager.runtime_candidates("runtime.web.search"):
@@ -113,58 +105,26 @@ def test_manager_exposes_model_to_runtime_maps() -> None:
 
     runtime_tool_map = manager.model_to_runtime_tool_map(
         {
-            "search.tavily.search",
-            "search.serpapi.search",
-            "search.firecrawl.search",
-            "search.serper.search",
-            "search.tinyfish.search",
-            "search.duckduckgo.search",
+            "search.dispatch",
             "weather",
             "time.now",
         }
     )
-    if manager.runtime_candidates("runtime.web.search"):
-        assert runtime_tool_map["web.search"] == "search.tavily.search"
-    else:
-        assert "web.search" not in runtime_tool_map
+    assert runtime_tool_map["web.search"] == "search.dispatch"
     # runtime candidates are now ("weather",) only; "weather" resolves to "weather"
     assert runtime_tool_map["weather"] == "weather"
     assert runtime_tool_map["time"] == "time.now"
 
     dispatch_map = manager.model_runtime_dispatch_map(
         {
-            "search.tavily.search",
-            "search.serpapi.search",
-            "search.firecrawl.search",
-            "search.serper.search",
-            "search.tinyfish.search",
-            "search.duckduckgo.search",
+            "search.dispatch",
             "weather",
             "time.now",
         }
     )
     assert dispatch_map["web.search"]["runtime_binding_id"] == "runtime.web.search"
-    if manager.runtime_candidates("runtime.web.search"):
-        assert dispatch_map["web.search"]["runtime_tool_name"] == "search.tavily.search"
-        assert (
-            "search.serpapi.search" in dispatch_map["web.search"]["runtime_candidates"]
-        )
-        assert (
-            "search.firecrawl.search"
-            in dispatch_map["web.search"]["runtime_candidates"]
-        )
-        assert (
-            "search.serper.search" in dispatch_map["web.search"]["runtime_candidates"]
-        )
-        assert (
-            "search.tinyfish.search" in dispatch_map["web.search"]["runtime_candidates"]
-        )
-        assert (
-            "search.duckduckgo.search"
-            in dispatch_map["web.search"]["runtime_candidates"]
-        )
-    else:
-        assert dispatch_map["web.search"]["runtime_tool_name"] == ""
+    assert dispatch_map["web.search"]["runtime_tool_name"] == "search.dispatch"
+    assert dispatch_map["web.search"]["runtime_candidates"] == ["search.dispatch"]
     assert dispatch_map["weather"]["runtime_tool_name"] == "weather"
 
 

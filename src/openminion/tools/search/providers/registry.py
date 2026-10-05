@@ -57,16 +57,7 @@ def _provider_entry_points(group: str) -> list[EntryPoint]:
 
 
 def _is_provider(candidate: Any) -> bool:
-    """Heuristic that the candidate quacks like a ``SearchProvider``.
-
-    Mirrors the fetch/browser shape: requires a ``provider_id`` attribute
-    and a callable ``search`` method.
-    """
-
-    return bool(
-        getattr(candidate, "provider_id", None)
-        and callable(getattr(candidate, "search", None))
-    )
+    return isinstance(candidate, SearchProvider)
 
 
 class SearchProviderRegistry:
@@ -83,6 +74,11 @@ class SearchProviderRegistry:
         return str(name or "").strip().lower()
 
     def register(self, provider: SearchProvider) -> None:
+        if not _is_provider(provider):
+            raise TypeError(
+                "search provider must define provider_id, display_name, search, "
+                "and healthcheck"
+            )
         provider_id = self._normalize(getattr(provider, "provider_id", ""))
         if not provider_id:
             raise ValueError("search provider must define provider_id")

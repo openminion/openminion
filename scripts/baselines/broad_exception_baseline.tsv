@@ -379,7 +379,7 @@ src/openminion/tools/browser/tool.py	3	0	current broad-handler baseline; ratchet
 src/openminion/tools/code/plugin.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/exec/process.py	7	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/exec/sessions.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/tools/fetch/plugin.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/tools/fetch/plugin.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/fetch/policy.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/fetch/providers/core_http.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/fetch/providers/firecrawl/provider.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -396,7 +396,6 @@ src/openminion/tools/mcp/transport_protocol.py	1	0	current broad-handler baselin
 src/openminion/tools/ops/change.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/reaction/plugin.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/search/plugin.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/tools/search/providers/brave/plugin.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/search/providers/brave/provider.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/search/providers/firecrawl/provider.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/search/providers/registry.py	2	0	entry-point load and registration boundaries preserve provider failure status before propagation

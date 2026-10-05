@@ -13,13 +13,15 @@ from openminion.tools.search.providers.firecrawl.registrar import (
 
 
 def setup_function() -> None:
-    search_plugin._PROVIDERS.clear()
-    search_plugin._PROVIDER_ORDER.clear()
+    registry = search_plugin.provider_registry()
+    registry._providers.clear()  # noqa: SLF001
+    registry._provider_order.clear()  # noqa: SLF001
 
 
 def teardown_function() -> None:
-    search_plugin._PROVIDERS.clear()
-    search_plugin._PROVIDER_ORDER.clear()
+    registry = search_plugin.provider_registry()
+    registry._providers.clear()  # noqa: SLF001
+    registry._provider_order.clear()  # noqa: SLF001
 
 
 def test_registrar_is_provider_only_with_empty_manifest() -> None:
