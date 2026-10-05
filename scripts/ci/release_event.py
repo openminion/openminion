@@ -10,6 +10,12 @@ from packaging.version import InvalidVersion, Version
 
 
 SUPPORTED_PRERELEASE_MARKERS = ("alpha", "beta", "rc")
+MILESTONE_VERSION = Version("0.1.0")
+MILESTONE_CONTRACT_MARKERS = {
+    Path("README.md"): "0.1.x compatibility contract",
+    Path("API_COMPATIBILITY.md"): "## 0.1.x compatibility contract",
+    Path("RELEASING.md"): "## 0.1 milestone gate",
+}
 
 
 def source_version_text(repository: Path) -> str:
@@ -21,6 +27,23 @@ def source_version(repository: Path) -> Version:
     return Version(source_version_text(repository))
 
 
+def validate_milestone_contract(repository: Path, version: Version) -> None:
+    """Require the documented compatibility boundary before 0.1+ publication."""
+    if version.release < MILESTONE_VERSION.release:
+        return
+
+    missing: list[str] = []
+    for path, marker in MILESTONE_CONTRACT_MARKERS.items():
+        target = repository / path
+        if not target.is_file() or marker not in target.read_text(encoding="utf-8"):
+            missing.append(str(path))
+    if missing:
+        raise ValueError(
+            "0.1+ publication requires the milestone contract in: "
+            + ", ".join(missing)
+        )
+
+
 def release_target(
     *,
     event_name: str,
@@ -28,6 +51,10 @@ def release_target(
     requested_target: str,
     repository: Path,
 ) -> str:
+    expected_text = source_version_text(repository)
+    expected_version = Version(expected_text)
+    validate_milestone_contract(repository, expected_version)
+
     if event_name == "workflow_dispatch":
         if ref != "refs/heads/main":
             raise ValueError("final TestPyPI publication must be dispatched from main")
@@ -46,7 +73,6 @@ def release_target(
     except InvalidVersion as exc:
         raise ValueError(f"invalid release tag version: {tag}") from exc
 
-    expected_text = source_version_text(repository)
     if tag != expected_text:
         raise ValueError(
             f"tag version {tag} does not match source version {expected_text}"
