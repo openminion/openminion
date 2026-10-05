@@ -345,11 +345,11 @@ Do not rely on workspace-root repo docs alone for package-public claims.
 
 ## 0.1 milestone gate
 
-The first `0.1.0` source/CLI release uses `golden-rc` once because it activates
+The first `0.1` source/CLI release uses `golden-rc` once because it activates
 the `0.1.x` compatibility contract and changes the release artifact matrix.
 Do not use the routine express path for this milestone.
 
-Before preparing `0.1.0rc1`:
+Before preparing the first `0.1` release candidate:
 
 1. merge or explicitly defer every release-targeted OpenMinion change and
    require green hosted checks on the exact `dev` revision,
@@ -359,10 +359,10 @@ Before preparing `0.1.0rc1`:
    regression gates,
 4. pass the bounded MiniMax live gate for the exact candidate and record any
    provider or quota limitation separately from deterministic regressions,
-5. publish `0.1.0rc1` only to TestPyPI and pass an independent clean install,
+5. publish the release candidate only to TestPyPI and pass an independent clean install,
 6. require the hosted Release workflow's wheel and sdist lanes to pass on
    Linux, macOS and Windows, and
-7. promote only the reviewed candidate source to final `0.1.0`, then complete
+7. promote only the reviewed candidate source to the final `0.1` release, then complete
    PyPI, GitHub Release, source-manifest publication and branch synchronization.
 
 The 8-hour and 24-hour autonomy pilots do not block this source/CLI milestone

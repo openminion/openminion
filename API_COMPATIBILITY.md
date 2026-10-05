@@ -140,7 +140,8 @@ surface instead of assumed from importability.
 
 ## Compatibility posture
 
-Current project stage: pre-0.1 public preview.
+Current project stage: `0.1.x` public preview. The `0.1.x` compatibility
+contract is active.
 
 Current public package line: the value of
 `openminion.base.version.OPENMINION_VERSION`.

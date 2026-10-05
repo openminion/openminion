@@ -21,7 +21,7 @@ package surface.
 | long-horizon project worker | `docs/long-horizon-project-worker.md`, project-worker E2E runner, autonomy reports | deterministic contracts and compressed pilots pass; full 8-hour and 24-hour real-elapsed certification pilots remain pending | alpha substrate, not certification-ready |
 | deep technical work | Focus, typed plans, exact tools, checkpoints, delegation, and verifier-backed project reports | deterministic mechanics pass; live model/provider readiness remains bounded to the exact campaign and evidence corpus tested | bounded supervised, claim-gated |
 | memory/context usefulness | memory records, session/context surfaces, scorecard references | deterministic persistence, retrieval, attribution, and session-continuity proof exists; live provider-backed usefulness remains separately claim-gated | alpha substrate, claim-gated |
-| `0.1.0` source/CLI milestone | documented Python and CLI compatibility contract plus release acceptance | milestone gate is documented and publication fails closed without it; exact candidate still needs golden RC, live MiniMax evidence and six hosted wheel/sdist OS lanes | gate defined, candidate not yet accepted |
+| `0.1` source/CLI milestone | documented Python and CLI compatibility contract plus release acceptance | the golden release candidate passed the bounded live MiniMax gate, independent TestPyPI wheel install, and all six hosted wheel/sdist OS lanes | source/CLI milestone accepted |
 
 ## Remaining preview caveats
 
