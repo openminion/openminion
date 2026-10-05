@@ -148,7 +148,7 @@ async def _render_composer(
         await _wait_for_output(raw, "❯")
         await asyncio.sleep(0.01)
         snapshot = raw.getvalue()
-        pipe.send_text("baseline-exit\n")
+        pipe.send_text("baseline-exit\r")
         await read_task
     return snapshot
 
@@ -206,7 +206,7 @@ async def _render_inline_layout_checkpoints(
         await _wait_for_output(raw, "test")
         typed = _screen_contract(raw.getvalue(), width=width, height=rows)
 
-        pipe.send_text("\n")
+        pipe.send_text("\r")
         await read_task
     return placeholder, typed
 
@@ -242,7 +242,7 @@ async def _render_flow_layout_checkpoints() -> tuple[dict, dict]:
         await asyncio.sleep(0.01)
         initial = _screen_contract(raw.getvalue(), width=100, height=40)
 
-        pipe.send_text("hi\n")
+        pipe.send_text("hi\r")
         assert await read_task == "hi"
         writer(lambda: console.print("❯ hi\n● Hello"))
         read_task = asyncio.create_task(composer.read_line())
@@ -250,7 +250,7 @@ async def _render_flow_layout_checkpoints() -> tuple[dict, dict]:
         await asyncio.sleep(0.01)
         answered = _screen_contract(raw.getvalue(), width=100, height=40)
 
-        pipe.send_text("exit\n")
+        pipe.send_text("exit\r")
         await read_task
     return initial, answered
 
@@ -287,13 +287,13 @@ async def _render_inherited_terminal_checkpoints() -> tuple[str, str]:
         await _wait_for_output(raw, "❯")
         await asyncio.sleep(0.01)
         initial = raw.getvalue()
-        pipe.send_text("first turn\n")
+        pipe.send_text("first turn\r")
         await read_task
 
         read_task = asyncio.create_task(composer.read_line())
         await asyncio.sleep(0.02)
         repeated = raw.getvalue()
-        pipe.send_text("baseline-exit\n")
+        pipe.send_text("baseline-exit\r")
         await read_task
     return initial, repeated
 
@@ -360,7 +360,7 @@ async def _render_completion_layout_checkpoint(
         await asyncio.sleep(0.01)
         snapshot = _screen_contract(raw.getvalue(), width=width, height=rows)
 
-        pipe.send_text("\n")
+        pipe.send_text("\r")
         await read_task
     return snapshot
 
@@ -580,7 +580,7 @@ async def _render_terminal_resize_checkpoints() -> dict[str, object]:
             include_cursor_visibility=True,
         )
 
-        pipe.send_text("\n")
+        pipe.send_text("\r")
         await read_task
     return {
         "typing": typing,
