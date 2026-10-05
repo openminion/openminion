@@ -140,7 +140,7 @@ surface instead of assumed from importability.
 
 ## Compatibility posture
 
-Current project stage: alpha.
+Current project stage: pre-0.1 public preview.
 
 Current public package line: the value of
 `openminion.base.version.OPENMINION_VERSION`.
@@ -153,3 +153,25 @@ Compatibility expectations for the documented public surface:
    silent breakage,
 4. internal tree moves do not by themselves create a public breaking change
    unless they affect a documented public symbol or command.
+
+## 0.1.x compatibility contract
+
+`0.1.0` is the first broadly usable source and CLI milestone. It is not a
+`1.0` stability promise and does not certify Desktop binary distribution.
+
+Within the `0.1.x` line:
+
+1. documented root exports under `openminion` and `openminion.api` are not
+   removed or renamed in a patch release,
+2. documented console-script names and command paths are not removed or
+   renamed in a patch release,
+3. additions should remain backward compatible and new arguments should have
+   defaults that preserve existing documented calls,
+4. unavoidable breaking changes move to a later minor line and are called out
+   in release notes and this file, and
+5. fixes may correct behavior that contradicted the documented contract; the
+   correction and migration impact must be stated in release notes.
+
+The non-promises above remain internal in `0.1.x`. Long-duration autonomy,
+provider-specific quality, signed native packaging, and public Desktop update
+acceptance remain separately certified claims.

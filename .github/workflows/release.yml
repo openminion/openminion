@@ -124,7 +124,13 @@ jobs:
 
   verify-built-artifacts:
     needs: build
-    runs-on: ubuntu-latest
+    name: Verify ${{ matrix.artifact }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        artifact: [wheel, sdist]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -136,19 +142,52 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - name: Verify wheel install and bootstrap smoke
+      - name: Verify ${{ matrix.artifact }} install and bootstrap smoke
         shell: bash
+        env:
+          ARTIFACT_KIND: ${{ matrix.artifact }}
         run: |
-          python -m venv .venv-wheel
-          .venv-wheel/bin/python -m pip install --upgrade pip
-          .venv-wheel/bin/python -m pip install dist/*.whl pytest pytest-timeout pyte
+          venv=".venv-$ARTIFACT_KIND"
+          python -m venv "$venv"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python_bin="$venv/Scripts/python.exe"
+          else
+            python_bin="$venv/bin/python"
+          fi
+          "$python_bin" -m pip install --upgrade pip
+
+          shopt -s nullglob
+          if [[ "$ARTIFACT_KIND" == "wheel" ]]; then
+            artifacts=(dist/openminion-*.whl)
+          else
+            artifacts=(dist/openminion-*.tar.gz)
+          fi
+          if [[ ${#artifacts[@]} -ne 1 ]]; then
+            echo "expected one $ARTIFACT_KIND artifact, found ${#artifacts[@]}" >&2
+            exit 1
+          fi
+          "$python_bin" -m pip install "${artifacts[0]}"
+          "$python_bin" -m pip check
+
+          expected_version="$(python - <<'PY'
+          import runpy
+
+          print(runpy.run_path("src/openminion/base/version.py")["OPENMINION_VERSION"])
+          PY
+          )"
+          actual_version="$("$python_bin" -m openminion --version)"
+          if [[ "$actual_version" != "$expected_version" ]]; then
+            echo "installed version $actual_version does not match $expected_version" >&2
+            exit 1
+          fi
+
           tmpdir="$(mktemp -d)"
           config="$tmpdir/config.json"
-          export OPENMINION_HOME="$tmpdir/home-wheel"
+          export OPENMINION_HOME="$tmpdir/home-$ARTIFACT_KIND"
           export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
           mkdir -p "$OPENMINION_HOME"
-          .venv-wheel/bin/python -m openminion --help >/dev/null
-          .venv-wheel/bin/python - <<'PY'
+          "$python_bin" -m openminion --help >/dev/null
+          "$python_bin" - <<'PY'
           import openminion
           from openminion import APIRuntime, Agent, OpenMinionConfig, tool
           from openminion.api import dispatch_request
@@ -162,17 +201,17 @@ jobs:
               callable(dispatch_request),
           )
           PY
-          .venv-wheel/bin/python -m openminion --config "$config" config init --provider echo --force
-          .venv-wheel/bin/python -m openminion --config "$config" verify smoke
-          .venv-wheel/bin/python -m openminion --config "$config" doctor --json
-          .venv-wheel/bin/python -m openminion --config "$config" agent --message "hello"
-          first_run="$(.venv-wheel/bin/python -m openminion --config "$config" run --session release-smoke "hello" 2>&1)"
-          second_run="$(.venv-wheel/bin/python -m openminion --config "$config" run --session release-smoke --resume "hello again" 2>&1)"
+          "$python_bin" -m openminion --config "$config" config init --provider echo --force
+          "$python_bin" -m openminion --config "$config" verify smoke
+          "$python_bin" -m openminion --config "$config" doctor --json
+          "$python_bin" -m openminion --config "$config" agent --message "hello"
+          first_run="$("$python_bin" -m openminion --config "$config" run --session release-smoke "hello" 2>&1)"
+          second_run="$("$python_bin" -m openminion --config "$config" run --session release-smoke --resume "hello again" 2>&1)"
           case "$first_run$second_run" in
             *" INFO "*) echo "public run output exposed internal INFO logs" >&2; exit 1 ;;
           esac
-          readiness="$(.venv-wheel/bin/python -m openminion --config "$config" status readiness --json)"
-          READINESS="$readiness" .venv-wheel/bin/python - <<'PY'
+          readiness="$("$python_bin" -m openminion --config "$config" status readiness --json)"
+          READINESS="$readiness" "$python_bin" - <<'PY'
           import json
           import os
 
@@ -182,9 +221,9 @@ jobs:
           assert checks["provider"]["status"] == "demo", payload
           PY
           blocked_config="$tmpdir/blocked-provider.json"
-          .venv-wheel/bin/python -m openminion --config "$blocked_config" config init --provider openai --force
-          blocked="$(.venv-wheel/bin/python -m openminion --config "$blocked_config" status readiness --json)"
-          BLOCKED="$blocked" .venv-wheel/bin/python - <<'PY'
+          "$python_bin" -m openminion --config "$blocked_config" config init --provider openai --force
+          blocked="$("$python_bin" -m openminion --config "$blocked_config" status readiness --json)"
+          BLOCKED="$blocked" "$python_bin" - <<'PY'
           import json
           import os
 
@@ -194,41 +233,16 @@ jobs:
           assert checks["provider"]["status"] == "blocked", payload
           assert checks["provider"]["safe_next_action"] == "openminion setup", payload
           PY
-          OPENMINION_ONBOARDING_INSTALLED_ARTIFACT=1 \
-          OPENMINION_PYTHON="$PWD/.venv-wheel/bin/python" \
-          .venv-wheel/bin/python -m pytest -q \
-            tests/e2e/cli/focus/test_onboarding.py \
-            -k test_local_ollama_check_can_verify_against_fixture_server
-      - name: Verify sdist install and bootstrap smoke
-        shell: bash
-        run: |
-          python -m venv .venv-sdist
-          .venv-sdist/bin/python -m pip install --upgrade pip
-          .venv-sdist/bin/python -m pip install dist/*.tar.gz
-          tmpdir="$(mktemp -d)"
-          config="$tmpdir/config.json"
-          export OPENMINION_HOME="$tmpdir/home-sdist"
-          export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
-          mkdir -p "$OPENMINION_HOME"
-          .venv-sdist/bin/python -m openminion --help >/dev/null
-          .venv-sdist/bin/python - <<'PY'
-          import openminion
-          from openminion import APIRuntime, Agent, OpenMinionConfig, tool
-          from openminion.api import dispatch_request
 
-          print(openminion.__version__)
-          print(
-              APIRuntime.__name__,
-              Agent.__name__,
-              OpenMinionConfig.__name__,
-              callable(tool),
-              callable(dispatch_request),
-          )
-          PY
-          .venv-sdist/bin/python -m openminion --config "$config" config init --provider echo --force
-          .venv-sdist/bin/python -m openminion --config "$config" verify smoke
-          .venv-sdist/bin/python -m openminion --config "$config" doctor --json
-          .venv-sdist/bin/python -m openminion --config "$config" agent --message "hello"
+          if [[ "$ARTIFACT_KIND" == "wheel" && "$RUNNER_OS" == "Linux" ]]; then
+            "$python_bin" -m pip install pytest pytest-timeout pyte
+            OPENMINION_ONBOARDING_INSTALLED_ARTIFACT=1 \
+            OPENMINION_PYTHON="$python_bin" \
+            "$python_bin" -m pytest -q \
+              tests/e2e/cli/focus/test_onboarding.py \
+              -k test_local_ollama_check_can_verify_against_fixture_server
+          fi
+          "$python_bin" -m openminion --config "$config" daemon stop
 
   publish-testpypi:
     name: Publish to TestPyPI (reviewed main or pre-release tags)
