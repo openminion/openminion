@@ -465,6 +465,10 @@ def _handle_web_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, A
             args=shared_args,
             ctx=ctx,
         )
+        if not payload.get("results") and not payload.get("answer"):
+            raise SearchProviderError(
+                f"search provider '{provider_id}' returned no results"
+            )
         merged_warnings = [*payload.get("warnings", []), *warnings]
         if attempt_index > 1:
             merged_warnings.append(

@@ -16,4 +16,6 @@ Owner: `openminion-tools`
 an optional API key for account-backed limits; DuckDuckGo uses its HTML search
 surface as the final best-effort fallback. The default chain tries Tavily,
 Brave, SerpAPI, Serper, and TinyFish before the keyless Firecrawl and DuckDuckGo
-fallbacks. TinyFish is free but still requires an API key.
+fallbacks. Empty provider results continue to the next configured provider.
+TinyFish is free but still requires an API key. Provider credentials belong in
+runtime config or environment variables, not `web.search` model arguments.
