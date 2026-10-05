@@ -19,3 +19,6 @@ Brave, SerpAPI, Serper, and TinyFish before the keyless Firecrawl and DuckDuckGo
 fallbacks. Empty provider results continue to the next configured provider.
 TinyFish is free but still requires an API key. Provider credentials belong in
 runtime config or environment variables, not `web.search` model arguments.
+Required-key providers use `TAVILY_API_KEY`, `BRAVE_API_KEY`,
+`SERPAPI_API_KEY`, `SERPER_API_KEY`, or `TINYFISH_API_KEY`; Firecrawl also reads
+the optional `FIRECRAWL_API_KEY` for account-backed limits.

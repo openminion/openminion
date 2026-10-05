@@ -39,7 +39,7 @@ class BraveSearchFacadeProvider:
             "offset": clamp_offset(args.get("offset", 0)),
             "extra_snippets": bool(args.get("extra_snippets", False)),
         }
-        for key in ("country", "search_lang", "ui_lang", "safesearch", "api_key"):
+        for key in ("country", "search_lang", "ui_lang", "safesearch"):
             value = args.get(key)
             if isinstance(value, str) and value.strip():
                 request_args[key] = value.strip()
@@ -110,10 +110,7 @@ class BraveSearchFacadeProvider:
         return normalized
 
     def healthcheck(self, ctx: Any | None = None) -> bool:
-        try:
-            return bool(self._provider._api_key({}, ctx=ctx))
-        except TypeError:
-            return bool(self._provider._api_key({}))
+        return bool(self._provider._api_key(ctx=ctx))
 
 
 _PROVIDER = BraveSearchFacadeProvider()

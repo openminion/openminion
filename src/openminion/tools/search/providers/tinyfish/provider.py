@@ -35,10 +35,7 @@ class TinyFishSearchProvider:
     def __init__(self, config: TinyFishSearchProviderConfig | None = None) -> None:
         self.config = config or TinyFishSearchProviderConfig()
 
-    def _api_key(self, args: Mapping[str, Any], *, ctx: Any | None = None) -> str:
-        raw_arg = str(args.get("api_key", "") or "").strip()
-        if raw_arg:
-            return raw_arg
+    def _api_key(self, *, ctx: Any | None = None) -> str:
         if config_key := (self.config.api_key or "").strip():
             return config_key
         env = resolve_tool_context_env(ctx)
@@ -60,7 +57,7 @@ class TinyFishSearchProvider:
         )
 
     def healthcheck(self, ctx: Any | None = None) -> bool:
-        return bool(self._api_key({}, ctx=ctx))
+        return bool(self._api_key(ctx=ctx))
 
     def _build_query_params(self, *, query: str, args: Mapping[str, Any]) -> str:
         params: list[tuple[str, str]] = [("query", query)]
@@ -176,7 +173,7 @@ class TinyFishSearchProvider:
         if not query_text:
             raise SearchProviderError("query is required", code="INVALID_REQUEST")
 
-        api_key = self._api_key(args, ctx=ctx)
+        api_key = self._api_key(ctx=ctx)
         if not api_key:
             raise SearchProviderError(
                 "Missing TinyFish API key",

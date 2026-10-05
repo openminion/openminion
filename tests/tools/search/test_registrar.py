@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from types import SimpleNamespace
 
+import pytest
+
 from openminion.base.config.env import resolve_environment_config
 from openminion.modules.tool.runtime.registrar import ToolRegisterContext
 from openminion.modules.tool.registry import ToolRegistry
@@ -121,3 +123,5 @@ def test_search_args_keep_credentials_out_of_model_visible_schema() -> None:
     schemas = importlib.import_module("openminion.tools.search.schemas")
 
     assert "api_key" not in schemas.SearchArgs.model_json_schema()["properties"]
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        schemas.SearchArgs.model_validate({"query": "cats", "api_key": "secret"})

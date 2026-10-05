@@ -9,6 +9,8 @@ from openminion.tools.search.providers import SearchProviderError
 from openminion.tools.search.providers.brave.plugin import BraveSearchFacadeProvider
 from openminion.tools.search.providers.brave.provider import (
     BraveSearchError,
+    BraveSearchProvider,
+    BraveSearchProviderConfig,
     clamp_count,
     clamp_offset,
 )
@@ -39,8 +41,8 @@ class _ProviderStub:
             },
         )
 
-    def _api_key(self, args, ctx=None):
-        del args, ctx
+    def _api_key(self, ctx=None):
+        del ctx
         return "brv-test"
 
 
@@ -50,8 +52,8 @@ class _ProviderFailStub:
         del args
         raise BraveSearchError("Missing Brave API key", code="DEPENDENCY_MISSING")
 
-    def _api_key(self, args, ctx=None):
-        del args, ctx
+    def _api_key(self, ctx=None):
+        del ctx
         return ""
 
 
@@ -67,8 +69,7 @@ class _ProviderContextStub:
             {},
         )
 
-    def _api_key(self, args, ctx=None):
-        del args
+    def _api_key(self, ctx=None):
         env = getattr(ctx, "env", {}) if ctx is not None else {}
         return str(
             getattr(env, "get", lambda *_args, **_kwargs: "")("BRAVE_API_KEY", "")
@@ -126,3 +127,14 @@ def test_brave_facade_healthcheck_accepts_runtime_context() -> None:
         is True
     )
     assert provider.healthcheck(SimpleNamespace(env={})) is False
+
+
+def test_brave_provider_resolves_config_then_runtime_api_key() -> None:
+    configured = BraveSearchProvider(
+        BraveSearchProviderConfig(api_key="config-brave-key")
+    )
+    runtime = BraveSearchProvider()
+    ctx = SimpleNamespace(env={"BRAVE_API_KEY": "runtime-brave-key"})
+
+    assert configured._api_key(ctx=ctx) == "config-brave-key"
+    assert runtime._api_key(ctx=ctx) == "runtime-brave-key"

@@ -6,7 +6,7 @@ from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
-from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
+from openminion.tools.config import resolve_tool_context_env
 
 from .constants import (
     BRAVE_SEARCH_API_ENDPOINT,
@@ -60,22 +60,15 @@ class BraveSearchProvider:
     def __init__(self, config: BraveSearchProviderConfig | None = None) -> None:
         self.config = config or BraveSearchProviderConfig()
 
-    def _api_key(self, args: Mapping[str, Any], *, ctx: Any | None = None) -> str:
-        if isinstance(api_key := args.get("api_key"), str) and api_key.strip():
-            return api_key.strip()
+    def _api_key(self, *, ctx: Any | None = None) -> str:
         if self.config.api_key and self.config.api_key.strip():
             return self.config.api_key.strip()
-        env = getattr(ctx, "env", None) if ctx is not None else None
-        if isinstance(env, EnvironmentConfig):
-            return env.brave_api_key.strip()
-        if isinstance(env, Mapping):
-            return resolve_environment_config(runtime_env=env).brave_api_key.strip()
-        return resolve_environment_config().brave_api_key.strip()
+        return resolve_tool_context_env(ctx).brave_api_key.strip()
 
     def search(
         self, *, args: Mapping[str, Any], ctx: Any | None = None
     ) -> tuple[dict[str, Any], dict[str, str]]:
-        api_key = self._api_key(args, ctx=ctx)
+        api_key = self._api_key(ctx=ctx)
         if not api_key:
             raise BraveSearchError("Missing Brave API key", code="DEPENDENCY_MISSING")
 
