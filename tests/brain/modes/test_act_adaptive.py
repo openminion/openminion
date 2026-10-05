@@ -423,7 +423,7 @@ def test_child_general_adaptive_does_not_expose_decompose(reason_code: str) -> N
         captured["profile"] = kwargs.get("profile")
         captured["tool_specs"] = list(kwargs.get("tool_specs") or [])
         profile = captured["profile"]
-        return AdaptiveToolLoopOutcome(
+        outcome = AdaptiveToolLoopOutcome(
             profile_name=str(getattr(profile, "profile_name", "") or ""),
             mode_name=str(getattr(profile, "mode_name", "") or ""),
             termination_reason="final_text",
@@ -433,8 +433,22 @@ def test_child_general_adaptive_does_not_expose_decompose(reason_code: str) -> N
                 status="done",
                 working_state=ctx.state,
                 message="ok",
+                action_result=ActionResult(
+                    command_id="research-child",
+                    status="success",
+                    summary="ok",
+                ),
             ),
         )
+        if reason_code == "research_iteration_fallback":
+            outcome.state.scratchpad["adaptive.tool_results"] = [
+                {
+                    "tool_name": "web.fetch",
+                    "ok": True,
+                    "content": "readable evidence",
+                }
+            ]
+        return outcome
 
     with patch(
         "openminion.modules.brain.loop.adaptive.run_adaptive_tool_loop",
@@ -455,6 +469,14 @@ def test_child_general_adaptive_does_not_expose_decompose(reason_code: str) -> N
     assert "decompose" not in tool_names
     assert "web.search" in tool_names
     assert "web.fetch" in tool_names
+    if reason_code == "research_iteration_fallback":
+        assert result.action_result.outputs["tool_results"] == [
+            {
+                "tool_name": "web.fetch",
+                "ok": True,
+                "content": "readable evidence",
+            }
+        ]
 
 
 def test_seeded_confirmation_replay_does_not_expose_plan_control_tools() -> None:

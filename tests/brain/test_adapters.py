@@ -1312,6 +1312,31 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
         self.assertIn("original_user_input", system_text)
         self.assertIn("Set question to the same user-facing", system_text)
 
+    def test_exact_date_decision_guidance_asks_for_missing_user_date(self) -> None:
+        from openminion.modules.brain.adapters.llm.request import _build_request
+
+        request = _build_request(
+            model="test",
+            purpose="decide",
+            context={
+                "messages": [{"role": "user", "content": "plan my train trip"}],
+                "hints": {
+                    "freshness_obligations": {"require_exact_date": True},
+                },
+            },
+            schema=DecisionAdapter,
+            temperature=0.0,
+        )
+
+        system_text = "\n".join(
+            str(message.content)
+            for message in request.messages
+            if str(message.role).lower() == "system"
+        )
+        self.assertIn("user-chosen date or time window", system_text)
+        self.assertIn('respond_kind="clarify"', system_text)
+        self.assertIn("Do not silently choose", system_text)
+
     def test_decision_request_includes_research_profile_guidance(self) -> None:
         from openminion.modules.brain.adapters.llm.request import _build_request
 

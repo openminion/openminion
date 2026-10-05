@@ -874,6 +874,66 @@ class TestRunnerClarify(unittest.TestCase):
     @patch("openminion.modules.brain.runner.BrainRunner._load_or_init_state")
     @patch("openminion.modules.brain.runner.BrainRunner._save_state")
     @patch("openminion.modules.brain.runner.BrainRunner._decide")
+    def test_itinerary_sources_and_timing_survive_immediate_followup(
+        self, mock_decide, mock_save, mock_load
+    ):
+        state = WorkingState(
+            session_id="route-session",
+            agent_id="test-agent",
+            budgets_remaining=self._get_test_budgets(),
+        )
+        mock_load.return_value = state
+        route_context = PendingTurnContext(
+            original_user_request="Compare Nikaido to Hakata routes.",
+            active_work_summary="Selected the Shin-Osaka route.",
+            known_context={
+                "route_id": "shin-osaka-fast",
+                "travel_date": "2026-10-04",
+                "station_arrival": "2026-10-04T09:00:00+09:00",
+                "train_departure": "2026-10-04T09:45:00+09:00",
+            },
+            artifact_refs=[
+                "https://operator.test/timetable",
+                "https://operator.test/fare",
+            ],
+        )
+        mock_decide.side_effect = [
+            self._answer_decision(
+                reason_code="route_selected",
+                answer="The Shin-Osaka route is the best fit.",
+                pending_turn_context=route_context,
+            ),
+            self._answer_decision_without_pending_turn_context(
+                reason_code="shopping_followup",
+                answer=(
+                    "After 10 minutes to walk and a 15-minute boarding buffer, "
+                    "you have 20 minutes to shop before the 09:45 departure."
+                ),
+            ),
+        ]
+
+        self.runner.step(
+            session_id="route-session",
+            user_input="Compare Nikaido to Hakata routes on October 4.",
+        )
+        result = self.runner.step(
+            session_id="route-session",
+            user_input="How much time can I shop before boarding?",
+        )
+
+        self.assertEqual(result.status, "done")
+        self.assertIn("20 minutes", result.message)
+        self.assertIsNotNone(state.pending_turn_context)
+        assert state.pending_turn_context is not None
+        self.assertEqual(
+            state.pending_turn_context.known_context["route_id"],
+            "shin-osaka-fast",
+        )
+        self.assertEqual(len(state.pending_turn_context.artifact_refs), 2)
+
+    @patch("openminion.modules.brain.runner.BrainRunner._load_or_init_state")
+    @patch("openminion.modules.brain.runner.BrainRunner._save_state")
+    @patch("openminion.modules.brain.runner.BrainRunner._decide")
     def test_max_questions_per_turn_no_effect_without_runtime_heuristics(
         self, mock_decide, mock_save, mock_load
     ):

@@ -3,6 +3,9 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
+from openminion.base.config import OpenMinionConfig, resolve_runtime_profile
+from openminion.base.config.manager import ConfigManagerError
+from openminion.cli.config import load_cli_config_from_args
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.browser import (
     browser_command_payload,
@@ -14,7 +17,24 @@ from openminion.cli.presentation.json_output import print_json_payload
 def run_browser(args: Any) -> int:
     action = str(getattr(args, "browser_command", "") or "status").strip()
     command_args = _command_args(args, action=action)
-    payload = browser_command_payload(command_args)
+    try:
+        config = load_cli_config_from_args(args)
+    except ConfigManagerError:
+        if getattr(args, "config", None):
+            raise
+        config = OpenMinionConfig()
+    browser_config = config.runtime.tools.browser
+    if config.agents:
+        profile = resolve_runtime_profile(
+            config,
+            agent_id=str(getattr(args, "agent", "") or "").strip() or None,
+        )
+        browser_config = profile.tools.browser
+    payload = browser_command_payload(
+        command_args,
+        runtime_env=config.runtime.env,
+        browser_config=browser_config,
+    )
     if bool(getattr(args, "json", False)):
         print_json_payload(payload)
     else:

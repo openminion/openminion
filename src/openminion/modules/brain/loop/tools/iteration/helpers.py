@@ -317,6 +317,10 @@ def _set_turn_progress(
     scratchpad["turn_progress_input_tokens_total"] = input_total
     scratchpad["turn_progress_output_tokens_total"] = output_total
     scratchpad["turn_progress_total_tokens_used"] = input_total + output_total
+    if input_tokens_delta or output_tokens_delta:
+        scratchpad["turn_progress_last_call_tokens_used"] = int(
+            input_tokens_delta
+        ) + int(output_tokens_delta)
     if llm_call_count is not None:
         scratchpad["turn_progress_llm_call_count"] = max(0, int(llm_call_count))
     if llm_call_limit is not None:

@@ -1,22 +1,43 @@
 from __future__ import annotations
-
 import shlex
+from collections.abc import Mapping
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
+from openminion.modules.tool.base import ToolExecutionContext
 from openminion.services.runtime.sidecars import default_sidecar_manager
-from openminion.tools.browser import default_browser_tool, provider_registry
+from openminion.tools.browser import (
+    BrowserProviderContext,
+    BrowserRouter,
+    default_browser_tool,
+    provider_registry,
+)
+from openminion.tools.browser.constants import (
+    BROWSER_PROVIDER_PINCHTAB,
+    BROWSER_PROVIDER_PLAYWRIGHT,
+    OPENMINION_BROWSER_DEFAULT_PROVIDER_ENV,
+    OPENMINION_BROWSER_PLAYWRIGHT_LOCALE_ENV,
+    OPENMINION_BROWSER_PLAYWRIGHT_TIMEZONE_ENV,
+)
+from openminion.tools.browser.providers.playwright import PlaywrightProvider
+from openminion.tools.config import resolve_tool_env
 
 
 def browser_command_payload(
-    args: str, *, working_dir: str | None = None
+    args: str,
+    *,
+    working_dir: str | None = None,
+    runtime_env: Mapping[str, object] | None = None,
+    browser_config: Any | None = None,
 ) -> dict[str, Any]:
     tokens = shlex.split(str(args or ""))
     action = tokens[0].lower() if tokens else "status"
     options = _parse_options(tokens[1:])
     if action == "status":
-        return _browser_status_payload()
+        return _browser_status_payload(
+            runtime_env=runtime_env,
+            browser_config=browser_config,
+        )
     if action == "tabs":
         return _execute_browser_tool(
             {"op": "tab.list", **_provider_args(options)}, working_dir
@@ -68,9 +89,21 @@ def render_browser_command(
     action = str(payload.get("action") or "").strip()
     if action == "status":
         providers = ", ".join(payload.get("providers", [])) or "(none)"
-        sidecar = payload.get("sidecar", {})
-        sidecar_label = _sidecar_label(sidecar if isinstance(sidecar, dict) else {})
-        return f"Browser: providers={providers} sidecar={sidecar_label}"
+        selected = str(payload.get("selected_provider") or "(none)")
+        readiness = "ready" if payload.get("selected_ready") else "not ready"
+        context = payload.get("context", {})
+        context_label = ""
+        if isinstance(context, dict) and context:
+            context_label = (
+                f" locale={context.get('locale', '')}"
+                f" timezone={context.get('timezone_id', '')}"
+            )
+        repair = str(payload.get("repair") or "").strip()
+        repair_label = f"\nRepair: {repair}" if repair else ""
+        return (
+            f"Browser: selected={selected} status={readiness}{context_label}\n"
+            f"Providers: {providers}{repair_label}"
+        )
     if action == "stop":
         result = payload.get("result", {})
         stopped = bool(result.get("stopped")) if isinstance(result, dict) else False
@@ -93,14 +126,102 @@ def render_browser_command(
     return f"Browser: {action or 'ok'}"
 
 
-def _browser_status_payload() -> dict[str, Any]:
+def _browser_status_payload(
+    *,
+    runtime_env: Mapping[str, object] | None = None,
+    browser_config: Any | None = None,
+) -> dict[str, Any]:
+    registry = provider_registry()
+    providers = registry.list_provider_ids()
     sidecar = _default_browser_sidecar_manager().status("pinchtab")
+    env = resolve_tool_env(runtime_env=runtime_env)
+    runtime_default = (
+        str(getattr(browser_config, "default_provider", "") or "").strip()
+        or env.get(OPENMINION_BROWSER_DEFAULT_PROVIDER_ENV, "").strip()
+    )
+    provider_order = tuple(getattr(browser_config, "provider_order", ()) or ())
+    enabled_providers = tuple(getattr(browser_config, "enabled_providers", ()) or ())
+    selected_provider = _selected_provider(
+        registry=registry,
+        runtime_default=runtime_default,
+        provider_order=provider_order,
+        enabled_providers=enabled_providers,
+    )
+    provider_status = {
+        BROWSER_PROVIDER_PINCHTAB: {
+            "ready": bool(sidecar.get("ready")),
+            "reason": str(sidecar.get("readiness_reason") or "").strip(),
+        }
+    }
+    if BROWSER_PROVIDER_PLAYWRIGHT in providers:
+        readiness = registry.get(BROWSER_PROVIDER_PLAYWRIGHT).ensure_ready(
+            BrowserProviderContext()
+        )
+        provider_status[BROWSER_PROVIDER_PLAYWRIGHT] = {
+            "ready": bool(readiness.get("ok")),
+            "reason": _playwright_readiness_reason(readiness),
+        }
+    selected_status = provider_status.get(
+        selected_provider,
+        {"ready": False, "reason": "provider is not registered"},
+    )
+    context: dict[str, str] = {}
+    if selected_provider == BROWSER_PROVIDER_PLAYWRIGHT:
+        provider = cast(
+            PlaywrightProvider,
+            registry.get(BROWSER_PROVIDER_PLAYWRIGHT),
+        )
+        context = {
+            "locale": env.get(
+                OPENMINION_BROWSER_PLAYWRIGHT_LOCALE_ENV,
+                provider.config.locale,
+            ),
+            "timezone_id": env.get(
+                OPENMINION_BROWSER_PLAYWRIGHT_TIMEZONE_ENV,
+                provider.config.timezone_id,
+            ),
+        }
     return {
         "ok": True,
         "action": "status",
-        "providers": provider_registry().list_provider_ids(),
+        "providers": providers,
+        "selected_provider": selected_provider,
+        "selected_ready": bool(selected_status["ready"]),
+        "provider_status": provider_status,
+        "context": context,
+        "repair": str(selected_status["reason"]),
         "sidecar": sidecar,
     }
+
+
+def _selected_provider(
+    *,
+    registry: Any,
+    runtime_default: str,
+    provider_order: tuple[str, ...],
+    enabled_providers: tuple[str, ...],
+) -> str:
+    try:
+        provider = BrowserRouter(registry).select_provider(
+            requested_provider=None,
+            agent_profile_provider=None,
+            runtime_default_provider=runtime_default,
+            runtime_provider_order=provider_order,
+            runtime_enabled_providers=enabled_providers,
+        )
+    except KeyError:
+        return runtime_default
+    return str(provider.provider_id)
+
+
+def _playwright_readiness_reason(payload: Mapping[str, Any]) -> str:
+    error = payload.get("error")
+    if not isinstance(error, Mapping):
+        return ""
+    remediation = error.get("remediation")
+    if isinstance(remediation, list):
+        return "; ".join(str(item) for item in remediation if str(item).strip())
+    return str(error.get("message") or "").strip()
 
 
 def _default_browser_sidecar_manager() -> Any:
@@ -111,11 +232,13 @@ def _execute_browser_tool(
     payload: dict[str, Any],
     working_dir: str | None,
 ) -> dict[str, Any]:
-    ctx = SimpleNamespace(
-        runtime=None,
-        trace_id="",
+    ctx = ToolExecutionContext(
+        channel="cli",
+        target="browser",
         session_id="cli-browser",
-        extras={"workspace_root": str(Path(working_dir or Path.cwd()).resolve())},
+        metadata={
+            "workspace_root": str(Path(working_dir or Path.cwd()).resolve()),
+        },
     )
     result = default_browser_tool().execute(payload, ctx)
     if not result.ok:
@@ -154,12 +277,3 @@ def _provider_args(options: dict[str, str]) -> dict[str, str]:
 
 def _is_truthy(value: str) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _sidecar_label(sidecar: dict[str, Any]) -> str:
-    if not sidecar:
-        return "unknown"
-    ready = sidecar.get("ready")
-    if ready is not None:
-        return "ready" if ready else f"not-ready:{sidecar.get('readiness_reason', '')}"
-    return "alive" if sidecar.get("pid_alive") else "stopped"

@@ -8,7 +8,10 @@ from openminion.tools.browser.constants import (
     BROWSER_DAEMON_STATUS_STOPPED,
     BROWSER_PROVIDER_PLAYWRIGHT,
     BROWSER_SNAPSHOT_MODE_A11Y,
+    OPENMINION_BROWSER_PLAYWRIGHT_LOCALE_ENV,
+    OPENMINION_BROWSER_PLAYWRIGHT_TIMEZONE_ENV,
 )
+from openminion.tools.config import get_tool_env
 from openminion.tools.browser.models import (
     ActionTarget,
     BrowserAction,
@@ -125,7 +128,6 @@ class PlaywrightProvider:
         mode: str | None = None,
         port: int | None = None,
     ) -> dict[str, Any]:
-        del ctx
         instance_spec = self._instance_spec(
             spec=spec, profile=profile, mode=mode, port=port
         )
@@ -146,8 +148,16 @@ class PlaywrightProvider:
         }
         # `downloads_path` is only accepted by `launch_persistent_context`;
         common_context: dict[str, Any] = {
-            "locale": self.config.locale,
-            "timezone_id": self.config.timezone_id,
+            "locale": get_tool_env(
+                OPENMINION_BROWSER_PLAYWRIGHT_LOCALE_ENV,
+                self.config.locale,
+                context=ctx,
+            ),
+            "timezone_id": get_tool_env(
+                OPENMINION_BROWSER_PLAYWRIGHT_TIMEZONE_ENV,
+                self.config.timezone_id,
+                context=ctx,
+            ),
             "viewport": viewport,
             "accept_downloads": self.config.downloads.accept_downloads,
         }

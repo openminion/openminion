@@ -531,3 +531,51 @@ def test_task_backed_resume_does_not_hijack_unrelated_new_input() -> None:
         assert state.task_backed_task_id is None
         assert state.task_backed_checkpoint_id is None
         assert state.task_backed_resume_state == {}
+
+
+def test_task_backed_resume_does_not_hijack_no_input_recursive_tick() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        session = LocalSessionStore(root / "sessions")
+        runner = BrainRunner(
+            profile=_profile(),
+            session_api=session,
+            context_api=LocalContextAdapter(session_store=session),
+            tool_api=LocalToolAdapter(),
+            a2a_api=LocalA2AAdapter(),
+            memory_api=LocalMemoryAdapter(root / "memory"),
+            policy_api=LocalPolicyAdapter(),
+            options=RunnerOptions(metactl_enabled=False),
+        )
+        runner.task_manager = TaskManager.for_lifecycle_db(
+            db_path=root / "task" / "tasks.db"
+        )
+        runner.task_manager.create_task(
+            session_id="s-recursive-followup",
+            mode_name=RESEARCH_MODE,
+            goal="Earlier unfinished research",
+            agent_id="router-agent",
+        )
+        state = WorkingState(
+            session_id="s-recursive-followup",
+            agent_id="router-agent",
+            goal="Current follow-up is already complete",
+            budgets_remaining=BudgetCounters(
+                ticks=10,
+                tool_calls=10,
+                a2a_calls=0,
+                tokens=5000,
+                time_ms=120000,
+            ),
+        )
+
+        resumed = maybe_resume_task_backed_direct(
+            runner,
+            state=state,
+            user_input=None,
+            logger=SimpleNamespace(events=[], emit=lambda *args, **kwargs: None),
+        )
+
+        assert resumed is None
+        assert state.goal == "Current follow-up is already complete"
+        assert state.task_backed_task_id is None

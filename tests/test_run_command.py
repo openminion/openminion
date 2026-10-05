@@ -24,15 +24,22 @@ def _run_args(*, as_json: bool = False) -> Namespace:
     )
 
 
+def _run_config(*, process_mode: str = "single-process") -> SimpleNamespace:
+    return SimpleNamespace(
+        runtime=SimpleNamespace(
+            process_mode=process_mode,
+            daemon_auto_start=True,
+            chat_turn_timeout_seconds=300,
+        ),
+        gateway=SimpleNamespace(api_turn_timeout_seconds=45),
+    )
+
+
 def test_run_openminion_json_output_single_process(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         run_command,
         "load_config",
-        lambda _cfg: SimpleNamespace(
-            runtime=SimpleNamespace(
-                process_mode="single-process", daemon_auto_start=True
-            )
-        ),
+        lambda _cfg: _run_config(),
     )
     monkeypatch.setattr(
         run_command,
@@ -61,11 +68,7 @@ def test_run_openminion_plain_output_prefers_final_text(monkeypatch, capsys) -> 
     monkeypatch.setattr(
         run_command,
         "load_config",
-        lambda _cfg: SimpleNamespace(
-            runtime=SimpleNamespace(
-                process_mode="single-process", daemon_auto_start=True
-            )
-        ),
+        lambda _cfg: _run_config(),
     )
     monkeypatch.setattr(
         run_command,
@@ -90,11 +93,7 @@ def test_run_openminion_jsonl_output_single_process(monkeypatch, capsys) -> None
     monkeypatch.setattr(
         run_command,
         "load_config",
-        lambda _cfg: SimpleNamespace(
-            runtime=SimpleNamespace(
-                process_mode="single-process", daemon_auto_start=True
-            )
-        ),
+        lambda _cfg: _run_config(),
     )
     monkeypatch.setattr(run_command, "resolve_default_agent_id", lambda _cfg: "agent")
     monkeypatch.setattr(
@@ -110,17 +109,43 @@ def test_run_openminion_jsonl_output_single_process(monkeypatch, capsys) -> None
     assert events[0]["data"]["turn"]["run_id"] == "run-jsonl"
 
 
+def test_run_openminion_daemon_transport_outlives_configured_turn(
+    monkeypatch,
+    capsys,
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        run_command, "load_config", lambda _cfg: _run_config(process_mode="daemon")
+    )
+    monkeypatch.setattr(run_command, "resolve_default_agent_id", lambda _cfg: "agent")
+    monkeypatch.setattr(
+        run_command,
+        "daemon_request",
+        lambda **kwargs: (
+            calls.append(dict(kwargs))
+            or (200, {"ok": True, "turn": {"final_text": "done"}})
+        ),
+    )
+
+    def _call_source(**kwargs):
+        _status, payload = kwargs["daemon_call"](SimpleNamespace())
+        return SimpleNamespace(payload=payload, source="daemon", fallback_reason="")
+
+    monkeypatch.setattr(run_command, "call_daemon_or_inproc", _call_source)
+
+    assert run_command.run_openminion(_run_args()) == 0
+
+    assert calls[0]["timeout_s"] == 305
+    assert capsys.readouterr().out.strip() == "done"
+
+
 def test_run_openminion_suppresses_default_info_logs_and_restores_logging(
     monkeypatch, caplog
 ) -> None:
     monkeypatch.setattr(
         run_command,
         "load_config",
-        lambda _cfg: SimpleNamespace(
-            runtime=SimpleNamespace(
-                process_mode="single-process", daemon_auto_start=True
-            )
-        ),
+        lambda _cfg: _run_config(),
     )
     monkeypatch.setattr(
         run_command,
@@ -148,11 +173,7 @@ def test_run_openminion_honors_explicit_log_level(monkeypatch, caplog) -> None:
     monkeypatch.setattr(
         run_command,
         "load_config",
-        lambda _cfg: SimpleNamespace(
-            runtime=SimpleNamespace(
-                process_mode="single-process", daemon_auto_start=True
-            )
-        ),
+        lambda _cfg: _run_config(),
     )
     monkeypatch.setattr(
         run_command,

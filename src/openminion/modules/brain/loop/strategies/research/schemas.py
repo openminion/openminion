@@ -20,6 +20,10 @@ class ResearchFinding(BaseModel):
     source_query: str
     content: str
     evidence_dates: list[str] = Field(default_factory=list)
+    source_tools: list[str] = Field(default_factory=list)
+    source_urls: list[str] = Field(default_factory=list)
+    readable_source_urls: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
 
 
 class ResearchSynthesis(BaseModel):

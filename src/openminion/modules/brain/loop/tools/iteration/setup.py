@@ -118,7 +118,8 @@ def _tool_efficiency_guidance(profile: AdaptiveToolLoopProfile) -> str:
             "8. Stop after completing the requested operations; do not add related calls the user did not request.",
             "9. If a tool reports a budget or per-tool limit error, do not call another tool; produce the best final answer from the results already available.",
             "10. Always produce a final answer before your tool budget runs out; a partial sourced answer is better than no answer.",
-            f"11. Your current budget is approximately {int(profile.max_iterations)} iterations / {tool_call_budget} tool calls.",
+            "11. On follow-up revisions, preserve the original task's named places, dates, requested fields, and constraints unless the user explicitly changes them.",
+            f"12. Your current budget is approximately {int(profile.max_iterations)} iterations / {tool_call_budget} tool calls.",
         ]
     )
 

@@ -51,6 +51,15 @@ def _tool_evidence_lines(tool_results: list[dict[str, Any]]) -> list[str]:
             data = item.get("data")
             if isinstance(data, dict):
                 summary = str(data.get("summary") or data.get("stdout") or "").strip()
+        data = item.get("data")
+        results = data.get("results") if isinstance(data, dict) else None
+        urls = [
+            str(result.get("url") or "").strip()
+            for result in list(results or [])[:3]
+            if isinstance(result, dict) and str(result.get("url") or "").strip()
+        ]
+        if urls:
+            summary = f"{summary} | sources: {', '.join(urls)}".strip()
         lines.append(f"- {tool_name}: {summary or 'success'}")
     return lines
 

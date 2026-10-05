@@ -530,6 +530,7 @@ def test_unified_entry_coding_control_preserves_project_handoff(tmp_path: Path) 
                 "success_criteria": ["Tests pass"],
                 "verification_commands": ["python -m pytest -q"],
                 "verification_domain": "coding",
+                "user_request_quote": "propose a project",
                 "max_iterations": 3,
             },
             "sub_intents": ["Inspect the failure", "Implement and verify the fix"],
@@ -561,7 +562,8 @@ def test_unified_entry_rejects_project_handoff_without_valid_sub_intents(
         "project_handoff": {
             "goal": "Fix the calculator",
             "success_criteria": ["Tests pass"],
-        }
+            "user_request_quote": "propose a project",
+        },
     }
     if sub_intents is not None:
         arguments["sub_intents"] = sub_intents
@@ -590,6 +592,7 @@ def test_coding_control_schema_exposes_optional_project_handoff() -> None:
     assert handoff["properties"]["verification_commands"]["minItems"] == 1
     assert handoff["properties"]["max_iterations"]["minimum"] == 2
     assert "verification_domain" in handoff["required"]
+    assert "user_request_quote" in handoff["required"]
     assert "max_iterations" in handoff["required"]
     assert "required" not in schema
 
@@ -603,6 +606,7 @@ def test_research_control_preserves_durable_project_handoff(tmp_path: Path) -> N
                 "success_criteria": ["Every claim has evidence"],
                 "verification_commands": ["python -m pytest -q"],
                 "verification_domain": "research",
+                "user_request_quote": "background project",
                 "max_iterations": 3,
             },
             "sub_intents": ["Collect sources", "Reconcile contradictions"],
@@ -612,13 +616,40 @@ def test_research_control_preserves_durable_project_handoff(tmp_path: Path) -> N
 
     decision = runner._decide(
         state=_state("entry-research-handoff"),
-        user_input="research this thoroughly and verify the report",
+        user_input="run this as a background project and verify the report",
         logger=fake_logger(),
     )
 
     assert decision.act_profile == "research"
     assert decision.request_readiness.project_handoff.verification_domain == "research"
     assert decision.request_readiness.project_handoff.max_iterations == 3
+
+
+def test_research_control_rejects_ungrounded_project_handoff(tmp_path: Path) -> None:
+    response = _tool_response(
+        "research",
+        {
+            "project_handoff": {
+                "goal": "Compare train routes",
+                "success_criteria": ["Every route has evidence"],
+                "verification_commands": ["test -f routes_report.md"],
+                "verification_domain": "research",
+                "user_request_quote": "current train routes",
+                "max_iterations": 3,
+            },
+            "sub_intents": ["Collect routes", "Reconcile fares"],
+        },
+    )
+    runner = _build_runner(tmp_path, llm_api=_RecordingEntryLLM(response))
+
+    decision = runner._decide(
+        state=_state("entry-research-foreground"),
+        user_input="find three current train routes and cite the sources",
+        logger=fake_logger(),
+    )
+
+    assert decision.act_profile == "research"
+    assert decision.request_readiness is None
 
 
 def test_unified_entry_file_write_seed_keeps_model_selected_general_profile(

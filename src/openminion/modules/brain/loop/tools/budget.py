@@ -73,6 +73,17 @@ def _remaining_budget_fraction(
     return max(0.0, 1.0 - used / int(max_llm))
 
 
+def _final_answer_token_reserve_reached(
+    loop_ctx: AdaptiveToolLoopContext,
+    state: AdaptiveToolLoopState,
+) -> bool:
+    remaining = int(loop_ctx.state.budgets_remaining.tokens or 0)
+    previous_call = int(
+        state.scratchpad.get("turn_progress_last_call_tokens_used", 0) or 0
+    )
+    return remaining > 0 and previous_call > 0 and remaining <= previous_call
+
+
 def _effective_cap(
     profile: AdaptiveToolLoopProfile, state: AdaptiveToolLoopState
 ) -> int:
