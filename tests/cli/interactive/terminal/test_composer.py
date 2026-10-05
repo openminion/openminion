@@ -428,8 +428,10 @@ def test_carriage_return_paste_normalizes_to_newlines() -> None:
     assert buffer.calls == ["line one\nline two\nline three"]
 
 
-def test_enter_binding_submits_in_single_line_mode() -> None:
+@pytest.mark.parametrize("multiline", [False, True])
+def test_enter_binding_submits_nonempty_draft(multiline: bool) -> None:
     c = TerminalComposer()
+    c._multiline = multiline
     calls: list[str] = []
 
     class _Buffer:
@@ -447,12 +449,12 @@ def test_enter_binding_submits_in_single_line_mode() -> None:
     class _Event:
         app = _App()
 
-    c._insert_newline(_Event())
+    c._submit(_Event())
 
     assert calls == ["submit"]
 
 
-def test_enter_binding_keeps_empty_single_line_composer_open() -> None:
+def test_enter_binding_keeps_empty_composer_open() -> None:
     c = TerminalComposer()
     calls: list[str] = []
 
@@ -468,14 +470,13 @@ def test_enter_binding_keeps_empty_single_line_composer_open() -> None:
     class _Event:
         app = _App()
 
-    c._insert_newline(_Event())
+    c._submit(_Event())
 
     assert calls == []
 
 
-def test_enter_binding_inserts_newline_in_multiline_mode() -> None:
+def test_control_j_inserts_newline_without_submitting() -> None:
     c = TerminalComposer()
-    c._multiline = True
     calls: list[str] = []
 
     class _Buffer:
@@ -494,6 +495,7 @@ def test_enter_binding_inserts_newline_in_multiline_mode() -> None:
     c._insert_newline(_Event())
 
     assert calls == ["insert:\n"]
+    assert c._multiline is True
 
 
 def test_slash_key_inserts_slash_and_opens_completion_menu() -> None:
