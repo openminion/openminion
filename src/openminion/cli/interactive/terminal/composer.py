@@ -1,8 +1,10 @@
 from collections.abc import Callable, Iterable
 import logging
+import os
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Any
@@ -70,6 +72,14 @@ _PHASE_ANIMATIONS = {
     "error": "warningpulse",
     "working": "sparkle",
 }
+
+
+def _focus_terminal_input() -> Any:
+    if os.name != "posix" or not sys.stdin.isatty():
+        return None
+    from .paste_input import FocusVt100Input
+
+    return FocusVt100Input(sys.stdin)
 
 
 def _focus_prompt_style(*, color: bool = True) -> Style:
@@ -222,6 +232,8 @@ def _configure_flow_input_layout(session: PromptSession[str]) -> None:
     # prompt-toolkit normally hides its toolbar until CPR establishes the
     # remaining terminal height. This inline layout does not need CPR.
     toolbar.filter = Condition(lambda: session.bottom_toolbar is not None) & ~is_done
+    if isinstance(session.app.output, Vt100_Output):
+        session.app.renderer.cpr_support = CPR_Support.NOT_SUPPORTED
 
 
 def _use_click_only_mouse_tracking(session: PromptSession[str]) -> None:
@@ -373,6 +385,8 @@ class TerminalComposer:
 
         kb.add("c-x", "c-e")(self._launch_editor)
 
+        terminal_input = _focus_terminal_input()
+
         self._session: PromptSession[str] = PromptSession(
             history=FileHistory(history_file) if history_file else None,
             key_bindings=kb,
@@ -381,10 +395,10 @@ class TerminalComposer:
             mouse_support=Condition(_completion_menu_is_open),
             reserve_space_for_menu=_COMPLETION_MENU_ROWS,
             style=_focus_prompt_style(color=self._color),
+            input=terminal_input,
         )
-        output = self._session.app.output
-        if isinstance(output, Vt100_Output):
-            self._session.app.renderer.cpr_support = CPR_Support.NOT_SUPPORTED
+        if terminal_input is not None:
+            self._session.app.ttimeoutlen = terminal_input.continuation_seconds
         _configure_completion_menu(self._session)
         _configure_flow_input_layout(self._session)
 
