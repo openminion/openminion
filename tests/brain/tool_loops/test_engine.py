@@ -66,6 +66,9 @@ from openminion.modules.brain.loop.tools.confirmation import (
 from openminion.modules.brain.loop.tools.response_payloads import (
     _FINALIZATION_STATUS_GUIDANCE,
 )
+from openminion.modules.brain.loop.tools.budget_answer import (
+    _missing_contract_outcome,
+)
 from openminion.modules.brain.loop.tools.snapshot import LoopSnapshot
 from openminion.modules.brain.tools.executor import CommandExecutionOutcome
 from openminion.modules.llm.schemas import (
@@ -390,6 +393,49 @@ def _profile(
         provider_parallel_tool_capacity=provider_parallel_tool_capacity,
         adaptive_budget_config=adaptive_budget_config,
     )
+
+
+def test_missing_typed_closeout_preserves_successful_web_evidence() -> None:
+    state = AdaptiveToolLoopState(
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "web.search",
+                    "ok": True,
+                    "content": "Kyoto to Hakata timetable evidence",
+                    "data": {
+                        "results": [
+                            {
+                                "url": "https://example.test/timetable",
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    )
+
+    outcome = _missing_contract_outcome(
+        loop_ctx=SimpleNamespace(),
+        profile=_profile(
+            profile_name="general_adaptive_v1",
+            allowed_tools=frozenset({"web.search"}),
+        ),
+        loop_state=state,
+        runtime=None,
+        model="fake-model",
+        max_output_tokens=None,
+        metadata=None,
+        allowed_tools=frozenset({"web.search"}),
+        public_mode_tag="[act]",
+        response=SimpleNamespace(tool_calls=[]),
+        final_text="",
+        has_successful_tool_evidence=True,
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
+    assert outcome.finalization_status["status"] == "incomplete"
+    assert "https://example.test/timetable" in outcome.final_text
 
 
 def test_engine_runs_multiple_rounds_and_appends_tool_messages() -> None:
@@ -7231,6 +7277,85 @@ def test_engine_preserves_evidence_backed_answer_when_typed_finalization_is_miss
     assert outcome.state.scratchpad["typed_finalization_status_conservative_fallback"]
 
 
+def test_engine_preserves_tool_evidence_when_typed_finalization_is_empty() -> None:
+    empty_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text="",
+        finish_reason="stop",
+    )
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="web.search",
+                        arguments={"query": "python release notes"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            *[empty_response for _ in range(12)],
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=6, llm_calls_max=20),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="search ok",
+                    outputs={
+                        "content": "release note snippets",
+                        "results": [
+                            {
+                                "title": "Python release notes",
+                                "url": "https://example.com/release-notes",
+                            }
+                        ],
+                    },
+                ),
+            )
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            profile_name="general_adaptive_v1",
+            allowed_tools=frozenset({"web.search"}),
+            max_iterations=7,
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="research and compare")],
+        tool_specs=_tool_specs("web.search"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
+    assert "https://example.com/release-notes" in outcome.final_text
+    assert outcome.finalization_status == {
+        "status": "incomplete",
+        "reasoning": (
+            "The provider did not return the required typed closeout; "
+            "successful tool evidence was preserved."
+        ),
+        "remaining_work": (
+            "Review the preserved evidence and complete the answer in a later turn."
+        ),
+        "blocking_reason": "",
+    }
+    assert outcome.state.scratchpad["typed_finalization_status_evidence_fallback"]
+
+
 def test_engine_retries_raw_tool_result_json_as_final_answer() -> None:
     raw_tool_result_answer = json.dumps(
         {
@@ -8559,8 +8684,17 @@ def test_engine_stops_on_budget_iteration_cap_and_nonrecoverable_tool_failure() 
         initial_messages=[Message(role="user", content="read once")],
         tool_specs=_tool_specs("file.read"),
     )
-    assert budget_outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert budget_outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
     assert "tool evidence:" in budget_outcome.final_text
+    assert budget_outcome.finalization_status == {
+        "status": "incomplete",
+        "reasoning": (
+            "The provider did not return a polished closeout before the budget "
+            "ended; successful tool evidence was preserved."
+        ),
+        "remaining_work": "Synthesize or verify any unresolved details.",
+        "blocking_reason": "",
+    }
     assert bool(budget_outcome.state.scratchpad.get("budget_used_evidence_fallback"))
 
     cap_runtime = _FakeRuntime(
@@ -8814,7 +8948,6 @@ def test_engine_parallelizes_independent_reads_and_preserves_result_order() -> N
         },
     )
 
-    started = time.monotonic()
     outcome = run_adaptive_tool_loop(
         loop_ctx,
         profile=_profile(
@@ -8826,10 +8959,14 @@ def test_engine_parallelizes_independent_reads_and_preserves_result_order() -> N
         initial_messages=[Message(role="user", content="read two files")],
         tool_specs=_tool_specs("file.read"),
     )
-    elapsed = time.monotonic() - started
-
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert elapsed < 0.35
+    windows = {
+        path: (started, finished) for path, started, finished in loop_ctx.call_windows
+    }
+    slow_started, slow_finished = windows["/src/slow.py"]
+    fast_started, fast_finished = windows["/src/fast.py"]
+    assert slow_started < fast_finished
+    assert fast_started < slow_finished
     second_call_messages = runtime.calls[1]["messages"]
     tool_messages = [
         message for message in second_call_messages if message.role == "tool"
@@ -9906,6 +10043,7 @@ def test_tool_efficiency_guidance_injected_for_general_profile_with_budget_numbe
     assert "Follow any operation order the user specifies" in system_text
     assert "Stop after completing the requested operations" in system_text
     assert "budget or per-tool limit error" in system_text
+    assert "preserve the original task's named places" in system_text
     assert "12 iterations / 18 tool calls" in system_text
 
 
@@ -10203,6 +10341,71 @@ def test_budget_closeout_preserves_answer_as_incomplete_when_typed_recovery_fail
     assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
     assert outcome.final_text == "files: result.txt\nvalidation: written"
     assert outcome.state.scratchpad["typed_finalization_status_conservative_fallback"]
+
+
+def test_engine_reserves_remaining_tokens_for_final_answer_after_tool_work() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="web.search",
+                        arguments={"query": "Kyoto to Hakata timetable"},
+                    )
+                ],
+                finish_reason="tool_calls",
+                usage=UsageInfo(input_tokens=60, output_tokens=1, total_tokens=61),
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Sourced itinerary delivered.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The available route evidence was synthesized.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tokens=100),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="route evidence found",
+                    outputs={"content": "Kyoto to Hakata timetable evidence"},
+                ),
+            )
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            profile_name="general_adaptive_v1",
+            allowed_tools=frozenset({"web.search"}),
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="research a train route")],
+        tool_specs=_tool_specs("web.search"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Sourced itinerary delivered."
+    assert runtime.calls[1]["tools"] == []
+    assert runtime.calls[1]["tool_choice"] == "none"
+    assert outcome.state.scratchpad["final_answer_token_reserve_used"] is True
 
 
 def test_budget_hint_injected_when_budget_below_threshold() -> None:

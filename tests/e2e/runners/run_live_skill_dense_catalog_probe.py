@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-OPENMINION_DIR = REPO_ROOT / "openminion"
+OPENMINION_DIR = Path(__file__).resolve().parents[3]
+REPO_ROOT = OPENMINION_DIR.parent
 OPENMINION_SRC = OPENMINION_DIR / "src"
 if str(OPENMINION_DIR) not in sys.path:
     sys.path.insert(0, str(OPENMINION_DIR))

@@ -1,9 +1,25 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-09-21
+Last updated: 2026-10-05
 
 This file tracks package-facing release notes for `openminion`.
+
+## 0.1 - 2026-10-05
+
+- Establish the `0.1.x` compatibility contract for documented root Python
+  exports, console scripts, and CLI command paths.
+- Add credential-free web search fallbacks while keeping configured provider
+  credentials out of model-visible request arguments.
+- Improve evidence-backed itinerary research with explicit provider readiness,
+  source preservation, same-session follow-ups, and truthful incomplete
+  outcomes.
+- Keep multiline paste in one Focus draft and make slash-command submission
+  follow the same readiness and completion checks as ordinary prompts.
+- Stabilize API shutdown ordering, optional runtime startup imports, and
+  provider-free execution in isolated checkouts.
+- Require clean wheel and source-distribution installation checks on Linux,
+  macOS, and Windows before publication.
 
 ## Current package line - 2026-09-21
 

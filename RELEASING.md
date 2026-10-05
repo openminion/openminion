@@ -315,10 +315,11 @@ Examples:
 
 ```bash
 OPENMINION_HOME=/path/to/workspace-root \
+OPENMINION_CLI_FOCUS_E2E_CONFIG=/path/to/workspace-root/test-configs/per-agent-minimax-official.json \
+OPENMINION_CLI_FOCUS_E2E_AGENT=minimax-m2-7 \
 OPENMINION_LIVE_CLI_CHAT_E2E=1 \
 OPENMINION_LIVE_TOOL_E2E=1 \
-.venv/bin/python3.11 tests/e2e/runners/run_cli_chat_e2e_gate.py \
-  --config /path/to/workspace-root/test-configs/per-agent-minimax-official.json
+.venv/bin/python3.11 tests/e2e/runners/run_cli_e2e_gate.py live
 
 OPENMINION_HOME=/path/to/workspace-root \
 OPENMINION_LIVE_CLI_CHAT_E2E=1 \
@@ -341,6 +342,34 @@ If the public package surface changes, update:
 6. `API_COMPATIBILITY.md`
 
 Do not rely on workspace-root repo docs alone for package-public claims.
+
+## 0.1 milestone gate
+
+The first `0.1` source/CLI release uses `golden-rc` once because it activates
+the `0.1.x` compatibility contract and changes the release artifact matrix.
+Do not use the routine express path for this milestone.
+
+Before preparing the first `0.1` release candidate:
+
+1. merge or explicitly defer every release-targeted OpenMinion change and
+   require green hosted checks on the exact `dev` revision,
+2. keep the documented Python exports, CLI entry points, README, changelog and
+   `API_COMPATIBILITY.md` aligned with the intended `0.1.x` contract,
+3. pass provider-free CLI, Focus, daemon, session-resume, tool and search
+   regression gates,
+4. pass the bounded MiniMax live gate for the exact candidate and record any
+   provider or quota limitation separately from deterministic regressions,
+5. publish the release candidate only to TestPyPI and pass an independent clean install,
+6. require the hosted Release workflow's wheel and sdist lanes to pass on
+   Linux, macOS and Windows, and
+7. promote only the reviewed candidate source to the final `0.1` release, then complete
+   PyPI, GitHub Release, source-manifest publication and branch synchronization.
+
+The 8-hour and 24-hour autonomy pilots do not block this source/CLI milestone
+unless the release claims that duration. Signed Desktop binaries also do not
+block it when the release record explicitly closes with **binary blocked**.
+Neither deferral permits describing the release as a completed Desktop or full
+runtime distribution.
 
 ## Publish Sequence
 

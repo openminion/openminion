@@ -10,6 +10,7 @@ from openminion.modules.tool.runtime import RuntimeContext
 from openminion.modules.tool.runtime.routing import (
     resolve_runtime_provider_chain,
     resolve_runtime_tool_family_config,
+    runtime_provider_is_allowed,
 )
 
 from .constants import DEFAULT_WEATHER_PROVIDER_ID, WEATHER_PROVIDER_AUTO
@@ -138,7 +139,8 @@ class _LegacyOpenMeteoCompatProvider:
 
         return _h_weather_openmeteo_current(dict(query_args), ctx)
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, ctx: RuntimeContext | None = None) -> bool:
+        del ctx
         return True
 
 
@@ -206,6 +208,16 @@ def _provider_chain(requested_provider: str, ctx: RuntimeContext) -> list[str]:
                 "INVALID_ARGUMENT",
                 f"Unsupported weather provider '{requested_provider}'",
                 {"supported_provider": sorted(available)},
+            )
+        family_cfg = resolve_runtime_tool_family_config(ctx, family_name="weather")
+        if not runtime_provider_is_allowed(
+            family_config=family_cfg,
+            provider_id=requested_provider,
+        ):
+            raise ToolRuntimeError(
+                "POLICY_DENIED",
+                f"weather provider '{requested_provider}' is disabled by runtime policy",
+                {"provider": requested_provider},
             )
         return [requested_provider]
 
@@ -280,7 +292,7 @@ def _execute_provider(
             continue
 
         try:
-            if not provider.healthcheck():
+            if not provider.healthcheck(ctx):
                 warnings.append(f"provider '{provider_id}' reported unhealthy")
                 continue
         except Exception as exc:
@@ -293,8 +305,13 @@ def _execute_provider(
                 extension_args=extension_args,
                 ctx=ctx,
             )
-        except ToolRuntimeError:
-            raise
+        except ToolRuntimeError as exc:
+            if exc.code in {"INVALID_ARGUMENT", "INVALID_REQUEST", "POLICY_DENIED"}:
+                raise
+            warnings.append(
+                f"provider '{provider_id}' execution failed: {exc.code}: {exc.message}"
+            )
+            continue
         except Exception as exc:
             warnings.append(f"provider '{provider_id}' execution failed: {exc}")
             continue

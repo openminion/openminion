@@ -11,6 +11,7 @@ from openminion.modules.tool.runtime.routing import (
     resolve_runtime_provider_chain,
     resolve_runtime_tool_config,
     resolve_runtime_tool_family_config,
+    runtime_provider_is_allowed,
 )
 
 
@@ -137,3 +138,29 @@ def test_resolve_runtime_provider_chain_can_disable_fallback() -> None:
     )
 
     assert ordered == ["scrapling"]
+
+
+def test_runtime_provider_allowlist_is_only_active_when_configured() -> None:
+    assert runtime_provider_is_allowed(family_config=None, provider_id="brave") is True
+    assert (
+        runtime_provider_is_allowed(
+            family_config=ToolFamilyRuntimeConfig(enabled_providers=[]),
+            provider_id="brave",
+        )
+        is True
+    )
+    family_config = ToolFamilyRuntimeConfig(enabled_providers=["tavily"])
+    assert (
+        runtime_provider_is_allowed(
+            family_config=family_config,
+            provider_id="tavily",
+        )
+        is True
+    )
+    assert (
+        runtime_provider_is_allowed(
+            family_config=family_config,
+            provider_id="brave",
+        )
+        is False
+    )

@@ -66,11 +66,17 @@ from .checkpoint import (
     normalize_checkpoint_state as _normalize_checkpoint_state,
 )
 from .findings import (
+    RESEARCH_ITERATION_EVIDENCE_GUIDANCE,
     build_pause_partial_answer as _build_pause_partial_answer,
+    build_synthesis_prompt as _build_synthesis_prompt,
     evidence_dates_from_action_result as _evidence_dates_from_action_result,
     evidence_dates_from_working_state as _evidence_dates_from_working_state,
+    ensure_source_urls as _ensure_source_urls,
     normalized_text as _normalized_text,
+    research_source_coverage as _research_source_coverage,
     render_temporal_fact_lines as _render_temporal_fact_lines,
+    tool_evidence_from_action_result as _tool_evidence_from_action_result,
+    tool_evidence_from_working_state as _tool_evidence_from_working_state,
     usable_child_action_result_text as _usable_child_action_result_text,
     usable_child_working_state_text as _usable_child_working_state_text,
 )
@@ -574,6 +580,7 @@ class ResearchMode(SimpleCheckpointMixin):
         iteration: int,
     ) -> str:
         parts = [*_render_temporal_fact_lines(findings), f"Research objective: {query}"]
+        parts.append(RESEARCH_ITERATION_EVIDENCE_GUIDANCE)
         if self._remaining_work:
             parts.append(f"Remaining work: {self._remaining_work}")
         if scope:
@@ -621,6 +628,7 @@ class ResearchMode(SimpleCheckpointMixin):
         content = ""
         mode_used = "act"
         evidence_dates: list[str] = []
+        tool_evidence: dict[str, list[str]] = {}
 
         if runner is not None:
             try:
@@ -643,9 +651,7 @@ class ResearchMode(SimpleCheckpointMixin):
                         logger=ctx.logger,
                         depth=1,
                     )
-                    result_status = (
-                        str(getattr(result, "status", "") or "").strip().lower()
-                    )
+                    result_status = _normalized_text(result.status).lower()
                     action_result = getattr(result, "action_result", None)
                     working_state = getattr(result, STATE_KEY_WORKING, None)
                     evidence_dates = _evidence_dates_from_action_result(action_result)
@@ -653,15 +659,16 @@ class ResearchMode(SimpleCheckpointMixin):
                         evidence_dates = _evidence_dates_from_working_state(
                             working_state
                         )
+                    tool_evidence = _tool_evidence_from_action_result(action_result)
+                    if not tool_evidence.get("source_tools"):
+                        tool_evidence = _tool_evidence_from_working_state(working_state)
                     candidate_content = _usable_child_action_result_text(action_result)
                     if not candidate_content:
                         candidate_content = _usable_child_working_state_text(
                             working_state
                         )
                     if not candidate_content and result_status == BRAIN_STATE_DONE:
-                        candidate_content = _normalized_text(
-                            getattr(result, "message", "") or ""
-                        )
+                        candidate_content = _normalized_text(result.message)
                     if candidate_content:
                         content = candidate_content
             except Exception as exc:
@@ -690,6 +697,10 @@ class ResearchMode(SimpleCheckpointMixin):
             source_query=child_goal,
             content=content,
             evidence_dates=evidence_dates,
+            source_tools=tool_evidence.get("source_tools", []),
+            source_urls=tool_evidence.get("source_urls", []),
+            readable_source_urls=tool_evidence.get("readable_source_urls", []),
+            evidence_refs=tool_evidence.get("evidence_refs", []),
         )
 
     def _build_child_state(
@@ -756,13 +767,7 @@ class ResearchMode(SimpleCheckpointMixin):
         del query  # structural convergence does not consult the query
 
         typed_finding_count = len(findings)
-        source_pairs: set[tuple[str, str]] = set()
-        for entry in findings:
-            source_tool = _normalized_text(entry.get("source_tool", ""))
-            source_query = _normalized_text(entry.get("source_query", ""))
-            if source_tool or source_query:
-                source_pairs.add((source_tool, source_query))
-        source_coverage = len(source_pairs)
+        source_coverage = _research_source_coverage(findings)
 
         new_evidence_delta = 1 if findings else 0
 
@@ -800,6 +805,9 @@ class ResearchMode(SimpleCheckpointMixin):
             else None
         )
         answer = _normalized_text(synthesis.answer if synthesis is not None else "")
+        answer = _ensure_source_urls(answer, findings)
+        if synthesis is not None:
+            synthesis = synthesis.model_copy(update={"answer": answer})
         if project_owned:
             if synthesis is None:
                 synthesis = ResearchSynthesis(
@@ -871,17 +879,7 @@ class ResearchMode(SimpleCheckpointMixin):
         query: str,
         findings: list[dict[str, Any]],
     ) -> ResearchSynthesis | None:
-        synthesis_prompt = (
-            "\n".join(_render_temporal_fact_lines(findings))
-            + "\n"
-            + f"Research query: {query}\n"
-            f"Accumulated findings from {len(findings)} search iterations:\n"
-            + "\n".join(
-                f"- Iteration {f.get('iteration', '?')}: {_normalized_text(f.get('content', ''))[:400]}"
-                for f in findings
-            )
-            + "\n\nSynthesize these findings into a comprehensive, coherent answer."
-        )
+        synthesis_prompt = _build_synthesis_prompt(query=query, findings=findings)
         runner = runner_from_context(ctx)
         llm_api = getattr(runner, "llm_api", None) if runner is not None else None
         profile = getattr(runner, "profile", None) if runner is not None else None

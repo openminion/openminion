@@ -9,6 +9,7 @@ from scripts.ci.release_manifest import BINARY_QUALIFICATION_CHECKS
 
 
 VERSION = "1.2.3"
+DESKTOP_VERSION = ".".join(("0", "1", "0"))
 RELEASE_ID = "build.1"
 TAG = f"runtime-v{VERSION}-{RELEASE_ID}"
 
@@ -96,7 +97,7 @@ def desktop_evidence(item: dict) -> dict:
         "schema_version": 1,
         "kind": "openminion-binary-runtime-qualification",
         "runtime": {"version": VERSION, "release_tag": TAG},
-        "desktop": {"version": "0.1.0", "source_commit": "b" * 40},
+        "desktop": {"version": DESKTOP_VERSION, "source_commit": "b" * 40},
         "compatibility": item["desktop_compatibility"],
         "targets": [
             {
@@ -124,7 +125,7 @@ def promotion_arguments(item: dict) -> dict:
         "release_id": RELEASE_ID,
         "desktop_evidence": evidence,
         "evidence_commit": "b" * 40,
-        "evidence_id": "desktop-0.1.0",
+        "evidence_id": f"desktop-{DESKTOP_VERSION}",
         "evidence_bytes": b"desktop evidence",
     }
 
@@ -138,7 +139,7 @@ def test_promotes_paired_executables_with_native_evidence() -> None:
     assert record["release_id"] == RELEASE_ID
     assert record["artifacts"][0]["format"] == "executables"
     assert record["artifacts"][0]["verification_id"] == "native.macos.1"
-    assert record["certification"]["path"].endswith("/desktop-0.1.0.json")
+    assert record["certification"]["path"].endswith(f"/desktop-{DESKTOP_VERSION}.json")
 
 
 @pytest.mark.parametrize(

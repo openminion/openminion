@@ -705,6 +705,7 @@ async def test_terminal_focus_queue_commands_work_while_turn_streams(
 @pytest.mark.asyncio
 async def test_terminal_focus_interrupt_preserves_queue_until_run_next() -> None:
     runtime = _QueueCommandRuntime()
+    queued_text = "second\nthird"
     output = io.StringIO()
     console = Console(file=output, force_terminal=False, width=120)
     transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
@@ -724,12 +725,12 @@ async def test_terminal_focus_interrupt_preserves_queue_until_run_next() -> None
 
     await loop.start_turn("first")
     await runtime.first_chunk_sent.wait()
-    await loop.handle_busy_input("second")
+    await loop.handle_busy_input(queued_text)
     loop.request_turn_interrupt()
     await loop.handle_turn_completion()
 
     assert runtime.sent_texts == ["first"]
-    assert list(loop.pending_turns) == ["second"]
+    assert list(loop.pending_turns) == [queued_text]
     assert loop.queue_auto_drain_paused is True
     assert loop.active_turn_task is None
     assert any(
@@ -741,11 +742,12 @@ async def test_terminal_focus_interrupt_preserves_queue_until_run_next() -> None
     await loop.handle_turn_completion()
     await loop.cancel_read_task()
 
-    assert runtime.sent_texts == ["first", "second"]
+    assert runtime.sent_texts == ["first", queued_text]
     assert list(loop.pending_turns) == []
     assert loop.queue_auto_drain_paused is False
     assert any(
-        msg.kind == MessageKind.SYSTEM and msg.body == "Running queued message: second"
+        msg.kind == MessageKind.SYSTEM
+        and msg.body == "Running queued message: second third"
         for msg in transcript._messages
     )
 

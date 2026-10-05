@@ -24,6 +24,7 @@ class ProjectHandoff(BaseModel):
         Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)], ...
     ] = ()
     verification_domain: Literal["coding", "research"] = "coding"
+    user_request_quote: str | None = None
     max_iterations: int | None = Field(default=None, gt=0)
     max_wall_clock_ms: int | None = Field(
         default=None,

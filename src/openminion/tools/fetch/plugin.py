@@ -16,6 +16,7 @@ from openminion.modules.tool.runtime import preferred_artifact_ref
 from openminion.modules.tool.runtime.routing import (
     resolve_runtime_provider_chain,
     resolve_runtime_tool_family_config,
+    runtime_provider_is_allowed,
 )
 
 from .constants import (
@@ -148,11 +149,20 @@ def _resolve_provider_chain(
     *,
     available: set[str],
 ) -> list[str]:
+    family_cfg = resolve_runtime_tool_family_config(ctx, family_name="fetch")
     explicit = _requested_backend_name(request, available=available)
     if explicit:
+        if not runtime_provider_is_allowed(
+            family_config=family_cfg,
+            provider_id=explicit,
+        ):
+            raise _FetchBackendError(
+                "POLICY_DENIED",
+                f"fetch backend '{explicit}' is disabled by runtime policy",
+                details={"backend": explicit},
+            )
         return [explicit]
 
-    family_cfg = resolve_runtime_tool_family_config(ctx, family_name="fetch")
     if family_cfg is None:
         return [_choose_provider_name(request, available=available)]
 
@@ -162,6 +172,32 @@ def _resolve_provider_chain(
         hinted_order=_hinted_backend_order(request, available=available),
     )
     return ordered
+
+
+def _resolve_provider_chain_for_tool(
+    request: dict[str, Any],
+    ctx: Any,
+    *,
+    available: set[str],
+    method: str,
+) -> tuple[list[str], dict[str, Any] | None]:
+    try:
+        return _resolve_provider_chain(request, ctx, available=available), None
+    except ValueError as exc:
+        missing = str(exc)
+        return [], _error(
+            "BACKEND_NOT_AVAILABLE",
+            f"Requested backend is unavailable: {missing}",
+            details={"backend": missing, "available": sorted(available)},
+            method=method,
+        )
+    except _FetchBackendError as exc:
+        return [], _error(
+            exc.code,
+            str(exc),
+            details=exc.details,
+            method=method,
+        )
 
 
 def _store_artifact(ctx: Any, *, token: str, payload: bytes, mime: str) -> str:
@@ -357,16 +393,14 @@ def _invoke_fetch(args: dict[str, Any], ctx: Any, *, method: str) -> dict[str, A
 
     registry = _ensure_provider_registry()
     available_names = set(registry.list_names())
-    try:
-        provider_chain = _resolve_provider_chain(args, ctx, available=available_names)
-    except ValueError as exc:
-        missing = str(exc)
-        return _error(
-            "BACKEND_NOT_AVAILABLE",
-            f"Requested backend is unavailable: {missing}",
-            details={"backend": missing, "available": sorted(available_names)},
-            method=f"fetch.{method.lower()}",
-        )
+    provider_chain, provider_error = _resolve_provider_chain_for_tool(
+        args,
+        ctx,
+        available=available_names,
+        method=f"fetch.{method.lower()}",
+    )
+    if provider_error is not None:
+        return provider_error
     if not provider_chain:
         return _error(
             "DEPENDENCY_MISSING",

@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from types import SimpleNamespace
 
+import pytest
+
 from openminion.base.config.env import resolve_environment_config
 from openminion.modules.tool.runtime.registrar import ToolRegisterContext
 from openminion.modules.tool.registry import ToolRegistry
@@ -31,6 +33,7 @@ def test_search_registrar_keeps_manifest_without_provider_env() -> None:
     assert "search.firecrawl.search" in manifest.runtime_bindings[0].runtime_candidates
     assert "search.serper.search" in manifest.runtime_bindings[0].runtime_candidates
     assert "search.tinyfish.search" in manifest.runtime_bindings[0].runtime_candidates
+    assert "search.duckduckgo.search" in manifest.runtime_bindings[0].runtime_candidates
 
 
 def test_search_registrar_registers_runtime_tools_without_provider_env() -> None:
@@ -47,6 +50,7 @@ def test_search_registrar_registers_runtime_tools_without_provider_env() -> None
     assert "search.firecrawl.search" in names
     assert "search.serper.search" in names
     assert "search.tinyfish.search" in names
+    assert "search.duckduckgo.search" in names
 
 
 def test_search_registrar_registers_when_provider_env_present() -> None:
@@ -61,6 +65,7 @@ def test_search_registrar_registers_when_provider_env_present() -> None:
     assert "search.firecrawl.search" in manifest.runtime_bindings[0].runtime_candidates
     assert "search.serper.search" in manifest.runtime_bindings[0].runtime_candidates
     assert "search.tinyfish.search" in manifest.runtime_bindings[0].runtime_candidates
+    assert "search.duckduckgo.search" in manifest.runtime_bindings[0].runtime_candidates
 
 
 def test_search_registrar_registers_with_environment_config_runtime_env() -> None:
@@ -80,6 +85,7 @@ def test_search_registrar_registers_with_environment_config_runtime_env() -> Non
     assert "search.firecrawl.search" in manifest.runtime_bindings[0].runtime_candidates
     assert "search.serper.search" in manifest.runtime_bindings[0].runtime_candidates
     assert "search.tinyfish.search" in manifest.runtime_bindings[0].runtime_candidates
+    assert "search.duckduckgo.search" in manifest.runtime_bindings[0].runtime_candidates
 
 
 def test_search_registrar_keeps_runtime_candidates_without_config() -> None:
@@ -93,6 +99,7 @@ def test_search_registrar_keeps_runtime_candidates_without_config() -> None:
     assert "search.firecrawl.search" in manifest.runtime_bindings[0].runtime_candidates
     assert "search.serper.search" in manifest.runtime_bindings[0].runtime_candidates
     assert "search.tinyfish.search" in manifest.runtime_bindings[0].runtime_candidates
+    assert "search.duckduckgo.search" in manifest.runtime_bindings[0].runtime_candidates
 
 
 def test_search_plugin_import_avoids_search_tavily_cycle() -> None:
@@ -101,7 +108,7 @@ def test_search_plugin_import_avoids_search_tavily_cycle() -> None:
     assert module is not None
 
 
-def test_search_args_provider_description_mentions_serper_and_tinyfish() -> None:
+def test_search_args_provider_description_mentions_all_recent_providers() -> None:
     schemas = importlib.import_module("openminion.tools.search.schemas")
 
     field = schemas.SearchArgs.model_fields["provider"]
@@ -109,3 +116,12 @@ def test_search_args_provider_description_mentions_serper_and_tinyfish() -> None
     assert "firecrawl" in field.description
     assert "serper" in field.description
     assert "tinyfish" in field.description
+    assert "duckduckgo" in field.description
+
+
+def test_search_args_keep_credentials_out_of_model_visible_schema() -> None:
+    schemas = importlib.import_module("openminion.tools.search.schemas")
+
+    assert "api_key" not in schemas.SearchArgs.model_json_schema()["properties"]
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        schemas.SearchArgs.model_validate({"query": "cats", "api_key": "secret"})

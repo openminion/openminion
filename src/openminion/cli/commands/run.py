@@ -60,6 +60,7 @@ def run_openminion(args: Any) -> int:
     stream = bool(getattr(args, "stream", False)) or jsonl
     path = "/v1/turn/stream" if stream else "/v1/turn"
     stream_event_count = 0
+    transport_timeout_seconds = int(config.runtime.chat_turn_timeout_seconds) + 5
 
     def emit_stream_event(event: DaemonStreamEvent) -> None:
         nonlocal stream_event_count
@@ -76,7 +77,7 @@ def run_openminion(args: Any) -> int:
                 method="POST",
                 path=path,
                 payload=request_payload,
-                timeout_s=60,
+                timeout_s=transport_timeout_seconds,
                 on_event=emit_stream_event if jsonl else None,
             )
         return daemon_request(
@@ -84,7 +85,7 @@ def run_openminion(args: Any) -> int:
             method="POST",
             path=path,
             payload=request_payload,
-            timeout_s=60,
+            timeout_s=transport_timeout_seconds,
         )
 
     previous_disable_level = logging.root.manager.disable
@@ -207,7 +208,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "run", help="Run one turn through daemon or in-process runtime"
     )
     run.add_argument("prompt", nargs="?", default="", help="Prompt text")
-    add_profile_selector(run, dest="agent", help_text="Configured profile id")
+    add_profile_selector(
+        run,
+        dest="agent",
+        default=argparse.SUPPRESS,
+        help_text="Configured profile id",
+    )
     run.add_argument("--session", default=None, help="Session id")
     run.add_argument(
         "--resume",

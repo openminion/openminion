@@ -10,6 +10,7 @@ import pytest
 from openminion.tools.search.providers import SearchProviderError
 from openminion.tools.search.providers.firecrawl.provider import (
     FirecrawlSearchProvider,
+    FirecrawlSearchProviderConfig,
     _error_code_for_status,
 )
 
@@ -44,25 +45,38 @@ def test_error_code_for_status(status: int, expected: str) -> None:
     assert _error_code_for_status(status) == expected
 
 
-def test_search_requires_api_key() -> None:
+def test_search_runs_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = FirecrawlSearchProvider()
+    captured: dict[str, object] = {}
 
-    with pytest.raises(SearchProviderError) as exc_info:
-        provider.search(
-            "cats",
-            max_results=3,
-            args={},
-            ctx=SimpleNamespace(env={"FIRECRAWL_API_KEY": ""}),
-        )
+    def _fake_urlopen(request, timeout):
+        del timeout
+        captured["headers"] = dict(request.headers)
+        return _ResponseStub({"data": {"web": []}})
 
-    assert exc_info.value.code == "DEPENDENCY_MISSING"
-    assert "API key" in str(exc_info.value)
+    monkeypatch.setattr(
+        "openminion.tools.search.providers.firecrawl.provider.urllib_request.urlopen",
+        _fake_urlopen,
+    )
+
+    result = provider.search(
+        "cats",
+        max_results=3,
+        args={},
+        ctx=SimpleNamespace(env={"FIRECRAWL_API_KEY": ""}),
+    )
+
+    assert "Authorization" not in captured["headers"]
+    assert result["provider"] == "firecrawl"
+    assert result["results"] == []
 
 
 def test_search_maps_params_and_normalizes_warning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = FirecrawlSearchProvider()
+    provider = FirecrawlSearchProvider(
+        FirecrawlSearchProviderConfig(api_key="config-firecrawl-key")
+    )
     captured: dict[str, object] = {}
 
     def _fake_urlopen(request, timeout):
@@ -104,7 +118,6 @@ def test_search_maps_params_and_normalizes_warning(
         "latest OpenAI news",
         max_results=2,
         args={
-            "api_key": "arg-firecrawl-key",
             "country": "us",
             "location": "San Francisco",
             "categories": ["news"],
@@ -115,7 +128,7 @@ def test_search_maps_params_and_normalizes_warning(
 
     assert captured["url"] == "https://api.firecrawl.dev/v2/search"
     assert captured["timeout"] == 20.0
-    assert captured["headers"]["Authorization"] == "Bearer arg-firecrawl-key"
+    assert captured["headers"]["Authorization"] == "Bearer config-firecrawl-key"
     assert captured["body"] == {
         "query": "latest OpenAI news",
         "limit": 2,
@@ -166,8 +179,8 @@ def test_http_errors_map_to_search_provider_codes(
         provider.search(
             "cats",
             max_results=3,
-            args={"api_key": "arg-firecrawl-key"},
-            ctx=SimpleNamespace(env={}),
+            args={},
+            ctx=SimpleNamespace(env={"FIRECRAWL_API_KEY": "runtime-firecrawl-key"}),
         )
 
     assert exc_info.value.code == expected

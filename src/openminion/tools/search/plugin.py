@@ -16,11 +16,14 @@ from openminion.tools.env import get_web_search_provider_override
 from openminion.modules.tool.runtime.routing import (
     resolve_runtime_provider_chain,
     resolve_runtime_tool_family_config,
+    runtime_provider_is_allowed,
 )
 
 from .constants import (
     SEARCH_BRAVE_PROVIDER_ALIASES,
     SEARCH_BRAVE_PROVIDER_ID,
+    SEARCH_DUCKDUCKGO_PROVIDER_ALIASES,
+    SEARCH_DUCKDUCKGO_PROVIDER_ID,
     SEARCH_FIRECRAWL_PROVIDER_ALIASES,
     SEARCH_FIRECRAWL_PROVIDER_ID,
     SEARCH_PROVIDER_AUTO,
@@ -91,6 +94,8 @@ def _provider_pref_from_token(raw: Any) -> str:
         return SEARCH_SERPER_PROVIDER_ID
     if token in SEARCH_TINYFISH_PROVIDER_ALIASES or ".tinyfish." in token:
         return SEARCH_TINYFISH_PROVIDER_ID
+    if token in SEARCH_DUCKDUCKGO_PROVIDER_ALIASES or ".duckduckgo." in token:
+        return SEARCH_DUCKDUCKGO_PROVIDER_ID
     return ""
 
 
@@ -139,6 +144,19 @@ def _resolve_provider_chain(
             chain.append(token)
 
     family_cfg = resolve_runtime_tool_family_config(ctx, family_name="search")
+    if (
+        requested
+        and requested != SEARCH_PROVIDER_AUTO
+        and not runtime_provider_is_allowed(
+            family_config=family_cfg,
+            provider_id=requested,
+        )
+    ):
+        raise SearchProviderError(
+            f"search provider '{requested}' is disabled by runtime policy",
+            code="POLICY_DENIED",
+            details={"provider": requested},
+        )
     env_provider = _provider_pref_from_token(
         get_web_search_provider_override(env=resolve_tool_context_env(ctx))
     )
@@ -197,6 +215,29 @@ def _resolve_provider_chain(
     if healthy:
         return healthy, warnings
     return existing, warnings
+
+
+def _resolve_provider_chain_for_tool(
+    validated: SearchArgs, ctx: RuntimeContext
+) -> tuple[list[str], list[str], dict[str, Any] | None]:
+    try:
+        chain, warnings = _resolve_provider_chain(validated, ctx)
+    except SearchProviderError as exc:
+        if exc.code != "POLICY_DENIED":
+            raise
+        return (
+            [],
+            [],
+            {
+                "ok": False,
+                "error": {
+                    "code": exc.code,
+                    "message": str(exc),
+                    "details": dict(exc.details or {}),
+                },
+            },
+        )
+    return chain, warnings, None
 
 
 def _provider_is_healthy(provider: SearchProvider, ctx: RuntimeContext) -> bool:
@@ -382,7 +423,11 @@ def _handle_web_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, A
             },
         }
 
-    provider_chain, warnings = _resolve_provider_chain(validated, ctx)
+    provider_chain, warnings, provider_error = _resolve_provider_chain_for_tool(
+        validated, ctx
+    )
+    if provider_error is not None:
+        return provider_error
     if not provider_chain:
         return {
             "ok": False,
@@ -420,6 +465,10 @@ def _handle_web_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, A
             args=shared_args,
             ctx=ctx,
         )
+        if not payload.get("results") and not payload.get("answer"):
+            raise SearchProviderError(
+                f"search provider '{provider_id}' returned no results"
+            )
         merged_warnings = [*payload.get("warnings", []), *warnings]
         if attempt_index > 1:
             merged_warnings.append(
@@ -500,6 +549,12 @@ def _handle_web_search_tinyfish(
     return _handle_web_search({**args, "provider": SEARCH_TINYFISH_PROVIDER_ID}, ctx)
 
 
+def _handle_web_search_duckduckgo(
+    args: dict[str, Any], ctx: RuntimeContext
+) -> dict[str, Any]:
+    return _handle_web_search({**args, "provider": SEARCH_DUCKDUCKGO_PROVIDER_ID}, ctx)
+
+
 _TOOL_HANDLERS = (
     ("search.dispatch", _handle_web_search),
     ("search.tavily.search", _handle_web_search_tavily),
@@ -508,6 +563,7 @@ _TOOL_HANDLERS = (
     ("search.firecrawl.search", _handle_web_search_firecrawl),
     ("search.serper.search", _handle_web_search_serper),
     ("search.tinyfish.search", _handle_web_search_tinyfish),
+    ("search.duckduckgo.search", _handle_web_search_duckduckgo),
 )
 
 

@@ -210,6 +210,25 @@ def test_router_runtime_provider_order_overrides_legacy_auto_default() -> None:
     assert resolved.provider_id == "playwright"
 
 
+def test_router_runtime_enabled_providers_filters_implicit_default() -> None:
+    reg = BrowserProviderRegistry()
+    reg.register(_Provider("playwright"))
+    reg.register(_Provider("pinchtab"))
+    router = BrowserRouter(
+        reg,
+        config=BrowserRoutingConfig(default_provider="playwright"),
+    )
+
+    resolved = router.select_provider(
+        requested_provider="",
+        agent_profile_provider="",
+        session_provider_override="",
+        runtime_enabled_providers=("pinchtab",),
+    )
+
+    assert resolved.provider_id == "pinchtab"
+
+
 def test_router_affinity_precedes_runtime_preferences() -> None:
     reg = BrowserProviderRegistry()
     reg.register(_Provider("pinchtab"))

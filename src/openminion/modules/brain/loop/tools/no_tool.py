@@ -144,6 +144,42 @@ def _retry_empty_typed_finalization_after_tool_results(
     )
 
 
+def _typed_finalization_fallback(
+    loop_state: Any,
+    normalized_final_text: str,
+) -> tuple[str, FinalizationStatus] | None:
+    if normalized_final_text and _successful_substantive_tool_results(loop_state):
+        loop_state.scratchpad["typed_finalization_status_conservative_fallback"] = True
+        return normalized_final_text, FinalizationStatus(
+            status="incomplete",
+            reasoning=(
+                "The model-authored answer was preserved after typed finalization "
+                "recovery was exhausted."
+            ),
+            remaining_work="Confirm the answer's completion status in a later turn.",
+        )
+    fallback_text = tool_evidence_closeout_text(
+        loop_state,
+        reason=(
+            "typed finalization recovery produced no user-facing answer, so "
+            "preserved tool evidence is returned."
+        ),
+    )
+    if not fallback_text:
+        return None
+    loop_state.scratchpad["typed_finalization_status_evidence_fallback"] = True
+    return fallback_text, FinalizationStatus(
+        status="incomplete",
+        reasoning=(
+            "The provider did not return the required typed closeout; successful "
+            "tool evidence was preserved."
+        ),
+        remaining_work=(
+            "Review the preserved evidence and complete the answer in a later turn."
+        ),
+    )
+
+
 def _argument_retry(
     runner: Any,
     finalization_status: Any,
@@ -653,22 +689,11 @@ class AdaptiveLoopRunnerNoToolMixin:
         if empty_typed_retry is not None:
             return empty_typed_retry
         if requires_finalization_status and finalization_status is None:
-            if normalized_final_text and _successful_substantive_tool_results(
-                self.loop_state
-            ):
-                finalization_status = FinalizationStatus(
-                    status="incomplete",
-                    reasoning=(
-                        "The model-authored answer was preserved after typed "
-                        "finalization recovery was exhausted."
-                    ),
-                    remaining_work=(
-                        "Confirm the answer's completion status in a later turn."
-                    ),
-                )
-                self.loop_state.scratchpad[
-                    "typed_finalization_status_conservative_fallback"
-                ] = True
+            fallback = _typed_finalization_fallback(
+                self.loop_state, normalized_final_text
+            )
+            if fallback is not None:
+                final_text, finalization_status = fallback
             else:
                 self.loop_state.termination_reason = (
                     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING

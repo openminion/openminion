@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-GUARD_PATH = REPO_ROOT / "openminion" / "scripts" / "manual" / "context_reset.py"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+GUARD_PATH = REPO_ROOT / "scripts" / "manual" / "context_reset.py"
 PY = sys.executable
 
 

@@ -336,6 +336,29 @@ def _build_clarify_context_guidance_message(*, purpose: str, schema: type) -> st
     )
 
 
+def _build_freshness_clarification_guidance_message(
+    *,
+    purpose: str,
+    schema: type,
+    hints: dict[str, Any] | None,
+) -> str:
+    if purpose != "decide":
+        return ""
+    if str(getattr(schema, "__name__", "")).strip() != "Decision":
+        return ""
+    if not isinstance(hints, dict):
+        return ""
+    obligations = hints.get("freshness_obligations")
+    if not isinstance(obligations, dict) or not obligations.get("require_exact_date"):
+        return ""
+    return (
+        "When an exact-date request depends on a user-chosen date or time window "
+        'that the user did not supply, use respond_kind="clarify" and ask for '
+        "the narrowest missing date or window before researching exact facts. "
+        "Do not silently choose a travel, booking, appointment, or event date."
+    )
+
+
 def _build_request_readiness_guidance_message(*, purpose: str, schema: type) -> str:
     if purpose != "decide":
         return ""
@@ -349,7 +372,7 @@ def _build_request_readiness_guidance_message(*, purpose: str, schema: type) -> 
             "Set state to ready only when the next step can proceed without clarification, plan review, or operation approval.",
             "Use needs_user only for blocker information; otherwise proceed with bounded reversible assumptions.",
             "Keep multi-step coding and research in the current foreground tool loop when it can finish coherently in this interactive turn, including work that searches, calculates, edits files, runs commands, or verifies outputs. Step count or mixed tool use alone does not justify a durable project.",
-            "Propose request_readiness.project_handoff only when the user explicitly requests durable or background project work, or when the work must persist across execution cycles or process restarts. Include verification_domain, goal, measurable success_criteria, at least one verification_command, max_iterations of at least 2, and any requested continuation limits; repository is optional and must stay in the active workspace.",
+            "Propose request_readiness.project_handoff only when the user explicitly requests project, background, or restart-persistent work. Include user_request_quote with the exact words that requested it, verification_domain, goal, measurable success_criteria, at least one verification_command, max_iterations of at least 2, and any requested continuation limits; repository is optional and must stay in the active workspace.",
             "Call the visible coding control with project_handoff and sub_intents for coding, or the research control with the same fields for research, matching verification_domain. Populate the equivalent Decision fields when that control is not visible. Do not perform the project work in the same turn.",
             "A project_handoff requires route=act, an act_profile matching verification_domain, posture=review_before_act, requested_outcome=execute, state=needs_plan_review, and concrete sub_intents. It proposes work only; the client must approve launch. Do not include permissions, provider settings, credentials, or release approval.",
         ]
@@ -503,6 +526,11 @@ def _build_request(
         _build_clarify_context_guidance_message(
             purpose=purpose,
             schema=schema,
+        ),
+        _build_freshness_clarification_guidance_message(
+            purpose=purpose,
+            schema=schema,
+            hints=hints,
         ),
         _build_request_readiness_guidance_message(
             purpose=purpose,

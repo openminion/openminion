@@ -183,10 +183,8 @@ ENV_VAR_SPECS: tuple[EnvVarSpec, ...] = (
         value_type="path",
         default="${OPENMINION_IDENTITY_ROOT}/identity.db",
         owner="base/config/runtime",
-        description=(
-            "Identity sqlite path override for profile-backed defaults. "
-            "Default derives from OPENMINION_IDENTITY_ROOT/identity.db."
-        ),
+        description="Identity sqlite path override for profile-backed defaults. "
+        "Default derives from OPENMINION_IDENTITY_ROOT/identity.db.",
     ),
     EnvVarSpec(
         name="OPENMINION_IDENTITY_ROOT",
@@ -207,7 +205,9 @@ ENV_VAR_SPECS: tuple[EnvVarSpec, ...] = (
     ),
     EnvVarSpec(
         name="OPENMINION_WEB_SEARCH_PROVIDER",
-        value_type="enum(auto|brave|tavily|serpapi|firecrawl|serper|tinyfish)",
+        value_type=(
+            "enum(auto|brave|tavily|serpapi|firecrawl|serper|tinyfish|duckduckgo)"
+        ),
         default="auto",
         owner="tools/search",
         description="Optional provider forcing for web_search routing.",
@@ -357,7 +357,7 @@ ENV_VAR_SPECS: tuple[EnvVarSpec, ...] = (
         value_type="secret",
         default="",
         owner="tools/firecrawl providers",
-        description="API key for Firecrawl-backed search/fetch providers.",
+        description="Optional API key for higher Firecrawl search/fetch limits.",
     ),
     EnvVarSpec(
         name="FIRECRAWL_API_URL",

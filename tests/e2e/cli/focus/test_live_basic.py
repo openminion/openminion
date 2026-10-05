@@ -384,3 +384,46 @@ def test_live_focus_typeahead_stays_in_inline_composer_while_busy(
             "live-typeahead-inline-composer",
             session.transcript,
         )
+
+
+def test_live_focus_multiline_paste_queues_one_turn_while_busy(
+    focus_probe: FocusProbe,
+) -> None:
+    require_live_focus()
+    draft = "Reply with one word after reading both paragraphs.\n\nThe word is: pasted"
+    with focus_probe.session(rows=42, cols=120) as session:
+        focus_probe.wait_ready(session)
+        focus_probe._submit_composer_line(session, "Reply with exactly: ready")
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if active_turn_busy(session.screen_text):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("MiniMax turn did not enter the busy state")
+
+        session.send(draft.replace("\n", "\r"))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if "The word is: pasted" in session.screen_text:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("multiline queue draft did not render")
+        assert "Queued for next turn" not in visible_text(session.visible_transcript)
+
+        session.send("\r")
+        session.wait_for_visible_match_after(
+            re.escape("Queued for next turn (1 pending)."), offset=0, timeout=30
+        )
+        session.wait_for_visible_match_after(
+            "Running queued message:", offset=0, timeout=300
+        )
+        focus_probe._wait_for_composer(session, timeout=300)
+        assert "Queued for next turn (2 pending)." not in visible_text(
+            session.visible_transcript
+        )
+        queue = visible_text(
+            focus_probe.run_slash(session, "/queue", marker="No queued messages.")
+        )
+        assert "No queued messages." in queue

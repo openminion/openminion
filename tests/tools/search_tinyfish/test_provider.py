@@ -10,6 +10,7 @@ import pytest
 from openminion.tools.search.providers import SearchProviderError
 from openminion.tools.search.providers.tinyfish.provider import (
     TinyFishSearchProvider,
+    TinyFishSearchProviderConfig,
     _error_code_for_status,
 )
 
@@ -63,7 +64,9 @@ def test_search_requires_api_key() -> None:
 def test_search_maps_params_and_locally_truncates_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = TinyFishSearchProvider()
+    provider = TinyFishSearchProvider(
+        TinyFishSearchProviderConfig(api_key="config-tinyfish-key")
+    )
     captured: dict[str, object] = {}
 
     def _fake_urlopen(request, timeout):
@@ -103,7 +106,6 @@ def test_search_maps_params_and_locally_truncates_results(
         "latest OpenAI news",
         max_results=1,
         args={
-            "api_key": "arg-tinyfish-key",
             "country": "us",
             "search_lang": "en",
             "ui_lang": "fr",
@@ -119,7 +121,7 @@ def test_search_maps_params_and_locally_truncates_results(
         == "https://api.search.tinyfish.ai?query=latest+OpenAI+news&location=US&language=fr"
     )
     headers = captured["headers"]
-    assert headers.get("X-api-key") == "arg-tinyfish-key"
+    assert headers.get("X-api-key") == "config-tinyfish-key"
     assert result["provider"] == "tinyfish"
     assert result["query"]["original"] == "latest OpenAI news"
     assert result["query"]["more_results_available"] is True
@@ -143,8 +145,8 @@ def test_search_normalizes_empty_success(
     result = provider.search(
         "OpenAI",
         max_results=3,
-        args={"api_key": "arg-tinyfish-key"},
-        ctx=SimpleNamespace(env={}),
+        args={},
+        ctx=SimpleNamespace(env={"TINYFISH_API_KEY": "runtime-tinyfish-key"}),
     )
 
     assert result["results"] == []
@@ -189,8 +191,8 @@ def test_http_errors_map_to_search_provider_codes(
         provider.search(
             "cats",
             max_results=3,
-            args={"api_key": "arg-tinyfish-key"},
-            ctx=SimpleNamespace(env={}),
+            args={},
+            ctx=SimpleNamespace(env={"TINYFISH_API_KEY": "runtime-tinyfish-key"}),
         )
 
     assert exc_info.value.code == expected

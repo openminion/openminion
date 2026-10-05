@@ -932,7 +932,6 @@ def decide(
             question=last_detection.clarify_question,
         )
         return decision
-
     if last_detection.path == "respond":
         decision = _respond_decision(
             confidence=0.5,
@@ -953,7 +952,6 @@ def decide(
         if recovered_decision is not None:
             return recovered_decision
         return decision
-
     if state.tier == "T0_direct":
         return _tier_0_restriction_decision(
             logger=logger,
@@ -965,6 +963,7 @@ def decide(
         logger=logger,
         state=state,
         llm_call_id=llm_call_id,
+        user_input=user_input,
         respond_decision_fn=_respond_decision,
     )
     if research_decision is not None:
@@ -974,6 +973,7 @@ def decide(
         logger=logger,
         state=state,
         llm_call_id=llm_call_id,
+        user_input=user_input,
         respond_decision_fn=_respond_decision,
     )
     if coding_decision is not None:

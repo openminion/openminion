@@ -150,7 +150,12 @@ def _project_handoff_input_schema() -> dict[str, Any]:
     properties["max_iterations"].pop("exclusiveMinimum", None)
     properties["max_iterations"]["minimum"] = 2
     handoff_schema["required"].extend(
-        ("verification_commands", "verification_domain", "max_iterations")
+        (
+            "verification_commands",
+            "verification_domain",
+            "user_request_quote",
+            "max_iterations",
+        )
     )
     return handoff_schema
 
@@ -174,10 +179,8 @@ def coding_tool_spec() -> ToolSpec:
     return ToolSpec(
         name=ENTRY_CODING_TOOL_NAME,
         description=(
-            "Enter the dedicated coding loop for iterative edits, tests, and final "
-            "verification. Use the foreground loop unless durable, background, or "
-            "restart-persistent work is explicitly needed; then include "
-            "project_handoff and sub_intents."
+            "dedicated coding loop: tests, final verification. Use foreground loop; "
+            "project_handoff and sub_intents only when user-requested."
         ),
         input_schema=_project_entry_input_schema(),
     )
@@ -187,10 +190,9 @@ def research_tool_spec() -> ToolSpec:
     return ToolSpec(
         name=ENTRY_RESEARCH_TOOL_NAME,
         description=(
-            "Enter the iterative research loop for multiple searches, evidence "
-            "gathering, and final synthesis. Mixed workflows that produce code or "
-            "files use general foreground tools. Include project_handoff only for "
-            "durable, background, or restart-persistent work."
+            "iterative research loop: multiple searches, final synthesis. Use general "
+            "foreground tools to produce code or files; project_handoff only for "
+            "user-requested restart-persistent work."
         ),
         input_schema=_project_entry_input_schema(),
     )

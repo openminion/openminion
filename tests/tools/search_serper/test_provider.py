@@ -10,6 +10,7 @@ import pytest
 from openminion.tools.search.providers import SearchProviderError
 from openminion.tools.search.providers.serper.provider import (
     SerperSearchProvider,
+    SerperSearchProviderConfig,
     _error_code_for_status,
 )
 
@@ -62,7 +63,9 @@ def test_search_requires_api_key() -> None:
 def test_search_maps_params_and_normalizes_empty_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = SerperSearchProvider()
+    provider = SerperSearchProvider(
+        SerperSearchProviderConfig(api_key="config-serper-key")
+    )
     captured: dict[str, object] = {}
 
     def _fake_urlopen(request, timeout):
@@ -81,7 +84,6 @@ def test_search_maps_params_and_normalizes_empty_success(
         "latest OpenAI news",
         max_results=3,
         args={
-            "api_key": "arg-serper-key",
             "country": "US",
             "search_lang": "en",
             "ui_lang": "fr",
@@ -100,7 +102,7 @@ def test_search_maps_params_and_normalizes_empty_success(
         "gl": "us",
         "hl": "fr",
     }
-    assert headers.get("X-api-key") == "arg-serper-key"
+    assert headers.get("X-api-key") == "config-serper-key"
     assert result["provider"] == "serper"
     assert result["query"]["original"] == "latest OpenAI news"
     assert result["query"]["more_results_available"] is False
@@ -138,8 +140,8 @@ def test_search_normalizes_organic_results_and_warning(
     result = provider.search(
         "OpenAI",
         max_results=1,
-        args={"api_key": "arg-serper-key"},
-        ctx=SimpleNamespace(env={}),
+        args={},
+        ctx=SimpleNamespace(env={"SERPER_API_KEY": "runtime-serper-key"}),
     )
 
     assert len(result["results"]) == 1
@@ -183,8 +185,8 @@ def test_http_errors_map_to_search_provider_codes(
         provider.search(
             "cats",
             max_results=3,
-            args={"api_key": "arg-serper-key"},
-            ctx=SimpleNamespace(env={}),
+            args={},
+            ctx=SimpleNamespace(env={"SERPER_API_KEY": "runtime-serper-key"}),
         )
 
     assert exc_info.value.code == expected

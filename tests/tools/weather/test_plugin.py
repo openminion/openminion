@@ -63,7 +63,7 @@ class _CustomProvider:
             "verified": True,
         }
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, _ctx=None) -> bool:
         return True
 
 
@@ -164,7 +164,7 @@ def test_weather_legacy_fallback_provider_path(monkeypatch: pytest.MonkeyPatch) 
             del extension_args
             return _fake_openmeteo_handler(dict(query_args), ctx)
 
-        def healthcheck(self) -> bool:
+        def healthcheck(self, _ctx=None) -> bool:
             return True
 
     register_provider(_PatchedOpenMeteoProvider())
@@ -217,7 +217,7 @@ class _RoutingProvider:
             "verified": True,
         }
 
-    def healthcheck(self) -> bool:
+    def healthcheck(self, _ctx=None) -> bool:
         return self.healthy
 
 
@@ -277,6 +277,31 @@ def test_weather_explicit_provider_bypasses_runtime_order() -> None:
     assert bravo.calls == 0
 
 
+def test_weather_explicit_provider_respects_enabled_provider_filter() -> None:
+    alpha = _RoutingProvider("weather-explicit-alpha")
+    bravo = _RoutingProvider("weather-explicit-bravo")
+    register_provider(alpha)
+    register_provider(bravo)
+
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_weather(
+            {"provider": "weather-explicit-alpha", "location": "Tokyo"},
+            _ctx(
+                runtime_tools={
+                    "weather": {
+                        "enabled_providers": ["weather-explicit-bravo"],
+                        "default_provider": "weather-explicit-bravo",
+                        "provider_order": ["weather-explicit-bravo"],
+                    }
+                }
+            ),
+        )
+
+    assert exc_info.value.code == "POLICY_DENIED"
+    assert alpha.calls == 0
+    assert bravo.calls == 0
+
+
 def test_weather_runtime_tools_preserve_health_aware_fallback() -> None:
     unhealthy = _RoutingProvider("weather-unhealthy", healthy=False)
     healthy = _RoutingProvider("weather-healthy")
@@ -301,6 +326,85 @@ def test_weather_runtime_tools_preserve_health_aware_fallback() -> None:
     assert "weather-unhealthy" in " ".join(result["warnings"])
     assert unhealthy.calls == 0
     assert healthy.calls == 1
+
+
+def test_weather_runtime_tools_fallback_after_retryable_provider_error() -> None:
+    class _FailingProvider(_RoutingProvider):
+        def lookup(self, *, query_args, extension_args, ctx):
+            del query_args, extension_args, ctx
+            self.calls += 1
+            raise ToolRuntimeError("UPSTREAM_ERROR", "weather service unavailable")
+
+    failing = _FailingProvider("weather-failing")
+    healthy = _RoutingProvider("weather-healthy")
+    register_provider(failing)
+    register_provider(healthy)
+
+    result = _h_weather(
+        {"location": "Osaka"},
+        _ctx(
+            runtime_tools={
+                "weather": {
+                    "enabled_providers": ["weather-failing", "weather-healthy"],
+                    "provider_order": ["weather-failing", "weather-healthy"],
+                    "allow_fallback": True,
+                }
+            }
+        ),
+    )
+
+    assert result["source"]["provider_id"] == "weather-healthy"
+    assert failing.calls == 1
+    assert healthy.calls == 1
+    assert "UPSTREAM_ERROR" in " ".join(result["warnings"])
+
+
+def test_weather_runtime_tools_do_not_fallback_after_invalid_request() -> None:
+    class _InvalidProvider(_RoutingProvider):
+        def lookup(self, *, query_args, extension_args, ctx):
+            del query_args, extension_args, ctx
+            self.calls += 1
+            raise ToolRuntimeError("INVALID_ARGUMENT", "invalid location")
+
+    invalid = _InvalidProvider("weather-invalid")
+    healthy = _RoutingProvider("weather-healthy")
+    register_provider(invalid)
+    register_provider(healthy)
+
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_weather(
+            {"location": "Osaka"},
+            _ctx(
+                runtime_tools={
+                    "weather": {
+                        "enabled_providers": ["weather-invalid", "weather-healthy"],
+                        "provider_order": ["weather-invalid", "weather-healthy"],
+                        "allow_fallback": True,
+                    }
+                }
+            ),
+        )
+
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert invalid.calls == 1
+    assert healthy.calls == 0
+
+
+def test_weather_healthcheck_receives_runtime_context() -> None:
+    class _ContextProvider(_RoutingProvider):
+        health_context = None
+
+        def healthcheck(self, ctx=None) -> bool:
+            self.health_context = ctx
+            return True
+
+    provider = _ContextProvider("weather-context")
+    register_provider(provider)
+    ctx = _ctx()
+
+    _h_weather({"provider": "weather-context", "location": "Tokyo"}, ctx)
+
+    assert provider.health_context is ctx
 
 
 def test_weather_no_config_keeps_registry_order() -> None:
@@ -351,7 +455,7 @@ def test_explicit_weatherapi_provider_selection() -> None:
                 "warnings": [],
             }
 
-        def healthcheck(self) -> bool:
+        def healthcheck(self, _ctx=None) -> bool:
             return True
 
     registry2 = provider_registry()
@@ -394,7 +498,7 @@ def test_fallback_from_unhealthy_openmeteo_to_weatherapi() -> None:
         def lookup(self, *, query_args, extension_args, ctx):
             raise AssertionError("should not be called when unhealthy")
 
-        def healthcheck(self) -> bool:
+        def healthcheck(self, _ctx=None) -> bool:
             return False
 
     class _HealthyWeatherApi:
@@ -422,7 +526,7 @@ def test_fallback_from_unhealthy_openmeteo_to_weatherapi() -> None:
                 "warnings": [],
             }
 
-        def healthcheck(self) -> bool:
+        def healthcheck(self, _ctx=None) -> bool:
             return True
 
     register_provider(_UnhealthyOpenMeteo())

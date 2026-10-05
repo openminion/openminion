@@ -497,9 +497,11 @@ class BrowserTool(Tool):
         session_provider_override = (
             self._session_provider_override(ctx) or routing_provider_id
         )
-        runtime_default_provider, runtime_provider_order = (
-            self._runtime_provider_preferences(ctx)
-        )
+        (
+            runtime_default_provider,
+            runtime_provider_order,
+            runtime_enabled_providers,
+        ) = self._runtime_provider_preferences(ctx)
         provider = self.router.select_provider(
             requested_provider=call.provider,
             agent_profile_provider=self._agent_profile_provider(ctx),
@@ -508,7 +510,17 @@ class BrowserTool(Tool):
             tab_id=routing_tab_id,
             runtime_default_provider=runtime_default_provider,
             runtime_provider_order=runtime_provider_order,
+            runtime_enabled_providers=runtime_enabled_providers,
         )
+        if (
+            runtime_enabled_providers
+            and provider.provider_id not in runtime_enabled_providers
+        ):
+            raise BrowserToolError(
+                "POLICY_DENIED",
+                f"browser provider '{provider.provider_id}' is disabled by runtime policy",
+                {"provider": provider.provider_id},
+            )
         emit_family_event(
             ctx.runtime,
             event="tool.browser.provider.selected",

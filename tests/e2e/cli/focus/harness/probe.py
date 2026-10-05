@@ -522,9 +522,7 @@ class FocusProbe:
     ) -> str:
         """Run a slash command through the same approval loop as a prompt turn."""
         turn_offset = len(session.visible_transcript)
-        session.send(command)
-        time.sleep(0.1)
-        session.send("\r")
+        self._submit_composer_line(session, command, wait_for_render=False)
         event_offset = len(session.visible_transcript)
         approvals = 0
         marker_re = re.compile(marker) if marker is not None else None
@@ -613,7 +611,13 @@ class FocusProbe:
         )
 
     @classmethod
-    def _submit_composer_line(cls, session: PtySession, text: str) -> str:
+    def _submit_composer_line(
+        cls,
+        session: PtySession,
+        text: str,
+        *,
+        wait_for_render: bool = True,
+    ) -> str:
         """Submit through the composer only after its input state is visible."""
         cls._wait_for_composer(session)
         if "\n" in text or "\r" in text:
@@ -633,6 +637,9 @@ class FocusProbe:
                 f"Focus composer did not echo submitted text {text!r}\n"
                 f"{session.screen_text[-2000:]}"
             )
+
+        if not wait_for_render:
+            return echo_probe
 
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:

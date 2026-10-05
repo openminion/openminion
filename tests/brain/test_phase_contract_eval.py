@@ -10,7 +10,7 @@ from tests.brain.diagnostics.phase_contract_eval import (
 
 
 def test_fixture_eval_scenarios_pass_expected_issue_profiles() -> None:
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = Path(__file__).resolve().parents[2]
     scenarios = {
         item.scenario_id: item for item in default_phase_contract_scenarios(repo_root)
     }
@@ -25,7 +25,7 @@ def test_fixture_eval_scenarios_pass_expected_issue_profiles() -> None:
 
 
 def test_eval_results_json_reports_pass_fail_counts() -> None:
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = Path(__file__).resolve().parents[2]
     scenarios = {
         item.scenario_id: item for item in default_phase_contract_scenarios(repo_root)
     }

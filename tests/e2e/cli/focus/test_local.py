@@ -752,6 +752,77 @@ def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
         )
 
 
+@pytest.mark.parametrize(
+    "paste_mode",
+    [
+        "plain-lf",
+        "plain-cr",
+        "plain-crlf",
+        "plain-cr-trailing",
+        "plain-cr-fragmented",
+        "plain-cr-fragmented-short",
+        "bracketed",
+    ],
+)
+def test_focus_pty_multiline_paste_waits_for_enter_and_submits_once(
+    focus_probe: FocusProbe,
+    paste_mode: str,
+) -> None:
+    short_draft = paste_mode == "plain-cr-fragmented-short"
+    draft = (
+        "Hi\n\nThere"
+        if short_draft
+        else (
+            "Find routes from Nikaido, Nara to Hakata, Fukuoka.\n\n"
+            "Compare Shin-Osaka and Kyoto Shinkansen departure times."
+        )
+    )
+    with focus_probe.session(rows=42, cols=100) as session:
+        focus_probe.wait_ready(session)
+        if paste_mode == "bracketed":
+            session.send_bracketed_paste(draft)
+        elif paste_mode == "plain-cr":
+            session.send(draft.replace("\n", "\r"))
+        elif paste_mode == "plain-crlf":
+            session.send(draft.replace("\n", "\r\n"))
+        elif paste_mode == "plain-cr-trailing":
+            session.send(draft.replace("\n", "\r") + "\r")
+        elif paste_mode in {"plain-cr-fragmented", "plain-cr-fragmented-short"}:
+            for line in draft.split("\n"):
+                session.send(line + "\r")
+                time.sleep(0.01)
+        else:
+            session.send(draft)
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            if any(
+                ("There" if short_draft else "Compare Shin-Osaka") in row
+                for row in rows
+            ):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("multiline draft did not render\n" + "\n".join(rows))
+
+        assert not any("Done in" in row for row in rows), "\n".join(rows)
+        assert not any("Queued for next turn" in row for row in rows), "\n".join(rows)
+        session.send("\r")
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            rows = session.screen_lines
+            if any("Done in" in row for row in rows):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("pasted prompt did not complete\n" + "\n".join(rows))
+
+        assert sum("Done in" in row for row in rows) == 1, "\n".join(rows)
+        assert not any("Queued for next turn" in row for row in rows), "\n".join(rows)
+        _assert_inline_composer(session)
+
+
 @pytest.mark.parametrize("part_count", [18, 55])
 def test_focus_pty_long_paste_keeps_transcript_top_down_and_composer_inline(
     focus_probe: FocusProbe,

@@ -7,6 +7,7 @@ from pathlib import Path
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.tools.search import plugin as search_plugin
+from openminion.tools.search.providers import SearchProviderError
 
 
 class _ContextAwareBraveProvider:
@@ -190,6 +191,68 @@ class _LegacyHealthyTinyFishProvider:
                     "description": "TinyFish result",
                 }
             ],
+        }
+
+    def healthcheck(self) -> bool:
+        return True
+
+
+class _LegacyHealthyDuckDuckGoProvider:
+    provider_id = "duckduckgo"
+    display_name = "DuckDuckGo"
+
+    def __init__(self) -> None:
+        self.search_calls = 0
+
+    def search(self, query, *, max_results, args, ctx):
+        del max_results, args, ctx
+        self.search_calls += 1
+        return {
+            "provider": "duckduckgo",
+            "query": {"original": query, "more_results_available": False},
+            "results": [
+                {
+                    "title": "DuckDuckGo Result",
+                    "url": "https://example.com/duckduckgo",
+                    "description": "DuckDuckGo result",
+                }
+            ],
+        }
+
+    def healthcheck(self) -> bool:
+        return True
+
+
+class _FailingFirecrawlProvider:
+    provider_id = "firecrawl"
+    display_name = "Firecrawl"
+
+    def __init__(self) -> None:
+        self.search_calls = 0
+
+    def search(self, query, *, max_results, args, ctx):
+        del query, max_results, args, ctx
+        self.search_calls += 1
+        raise SearchProviderError("rate limited", code="RATE_LIMITED")
+
+    def healthcheck(self) -> bool:
+        return True
+
+
+class _EmptyFirecrawlProvider:
+    provider_id = "firecrawl"
+    display_name = "Firecrawl"
+
+    def __init__(self) -> None:
+        self.search_calls = 0
+
+    def search(self, query, *, max_results, args, ctx):
+        del max_results, args, ctx
+        self.search_calls += 1
+        return {
+            "provider": "firecrawl",
+            "query": {"original": query, "more_results_available": False},
+            "results": [],
         }
 
     def healthcheck(self) -> bool:
@@ -434,28 +497,88 @@ def test_tinyfish_alias_and_forced_wrapper_route_through_shared_search() -> None
     assert tavily.search_calls == 0
 
 
-def test_provider_registration_order_can_append_tinyfish_after_serper() -> None:
+def test_duckduckgo_alias_and_forced_wrapper_route_through_shared_search() -> None:
+    duckduckgo = _LegacyHealthyDuckDuckGoProvider()
+    tavily = _LegacyHealthyTavilyProvider()
+    search_plugin.register_provider(tavily)
+    search_plugin.register_provider(duckduckgo)
+
+    alias_result = search_plugin._handle_web_search(
+        {"query": "cats", "provider": "ddg", "max_results": 5},
+        _runtime_ctx(),
+    )
+    forced_result = search_plugin._handle_web_search_duckduckgo(
+        {"query": "cats", "max_results": 5},
+        _runtime_ctx(),
+    )
+
+    assert alias_result["ok"] is True
+    assert alias_result["source"] == "duckduckgo"
+    assert forced_result["ok"] is True
+    assert forced_result["source"] == "duckduckgo"
+    assert duckduckgo.search_calls == 2
+    assert tavily.search_calls == 0
+
+
+def test_auto_search_falls_back_from_firecrawl_to_duckduckgo() -> None:
+    firecrawl = _FailingFirecrawlProvider()
+    duckduckgo = _LegacyHealthyDuckDuckGoProvider()
+    search_plugin.register_provider(firecrawl)
+    search_plugin.register_provider(duckduckgo)
+
+    result = search_plugin._handle_web_search(
+        {"query": "cats", "provider": "auto", "max_results": 5},
+        _runtime_ctx(),
+    )
+
+    assert result["ok"] is True
+    assert result["source"] == "duckduckgo"
+    assert firecrawl.search_calls == 1
+    assert duckduckgo.search_calls == 1
+
+
+def test_auto_search_falls_back_when_firecrawl_returns_no_results() -> None:
+    firecrawl = _EmptyFirecrawlProvider()
+    duckduckgo = _LegacyHealthyDuckDuckGoProvider()
+    search_plugin.register_provider(firecrawl)
+    search_plugin.register_provider(duckduckgo)
+
+    result = search_plugin._handle_web_search(
+        {"query": "cats", "provider": "auto", "max_results": 5},
+        _runtime_ctx(),
+    )
+
+    assert result["ok"] is True
+    assert result["source"] == "duckduckgo"
+    assert firecrawl.search_calls == 1
+    assert duckduckgo.search_calls == 1
+
+
+def test_provider_registration_order_keeps_duckduckgo_last() -> None:
     tavily = _LegacyHealthyTavilyProvider()
     brave = _ContextAwareBraveProvider(healthy_without_ctx=True)
     serpapi = _LegacyHealthySerpApiProvider()
     firecrawl = _LegacyHealthyFirecrawlProvider()
     serper = _LegacyHealthySerperProvider()
     tinyfish = _LegacyHealthyTinyFishProvider()
+    duckduckgo = _LegacyHealthyDuckDuckGoProvider()
 
     search_plugin.register_provider(tavily)
     search_plugin.register_provider(brave)
     search_plugin.register_provider(serpapi)
-    search_plugin.register_provider(firecrawl)
     search_plugin.register_provider(serper)
     search_plugin.register_provider(tinyfish)
+    search_plugin.register_provider(firecrawl)
+    search_plugin.register_provider(duckduckgo)
 
     assert search_plugin.list_provider_ids() == (
         "tavily",
         "brave",
         "serpapi",
-        "firecrawl",
         "serper",
         "tinyfish",
+        "firecrawl",
+        "duckduckgo",
     )
 
 
@@ -533,7 +656,7 @@ def test_serper_provider_alias_and_forced_wrapper_route_through_shared_search() 
     assert tavily.search_calls == 0
 
 
-def test_provider_registration_order_can_append_serper_after_firecrawl() -> None:
+def test_provider_registration_order_can_put_keyless_after_keyed_providers() -> None:
     tavily = _LegacyHealthyTavilyProvider()
     brave = _ContextAwareBraveProvider(healthy_without_ctx=True)
     serpapi = _LegacyHealthySerpApiProvider()
@@ -543,19 +666,19 @@ def test_provider_registration_order_can_append_serper_after_firecrawl() -> None
     search_plugin.register_provider(tavily)
     search_plugin.register_provider(brave)
     search_plugin.register_provider(serpapi)
-    search_plugin.register_provider(firecrawl)
     search_plugin.register_provider(serper)
+    search_plugin.register_provider(firecrawl)
 
     assert search_plugin.list_provider_ids() == (
         "tavily",
         "brave",
         "serpapi",
-        "firecrawl",
         "serper",
+        "firecrawl",
     )
 
 
-def test_explicit_provider_bypasses_runtime_tools_enabled_provider_filter() -> None:
+def test_explicit_provider_respects_runtime_tools_enabled_provider_filter() -> None:
     brave = _ContextAwareBraveProvider()
     tavily = _LegacyHealthyTavilyProvider()
     search_plugin.register_provider(brave)
@@ -576,9 +699,10 @@ def test_explicit_provider_bypasses_runtime_tools_enabled_provider_filter() -> N
         ),
     )
 
-    assert result["ok"] is True
-    assert result["source"] == "brave"
-    assert brave.search_calls == 1
+    assert result["ok"] is False
+    assert result["error"]["code"] == "POLICY_DENIED"
+    assert result["error"]["details"] == {"provider": "brave"}
+    assert brave.search_calls == 0
     assert tavily.search_calls == 0
 
 

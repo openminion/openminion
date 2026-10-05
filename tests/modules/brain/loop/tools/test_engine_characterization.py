@@ -7777,6 +7777,7 @@ def test_loop_token_budget_exhausted_terminates() -> None:
     assert outcome.termination_reason in {
         ADAPTIVE_TERM_FINAL_TEXT,
         ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+        ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
     }
 
 

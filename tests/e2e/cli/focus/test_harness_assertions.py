@@ -1419,6 +1419,18 @@ def test_pty_screen_rendering_skips_empty_cells(tmp_path) -> None:
     assert session._screen_display_lines() == ["AB"]
 
 
+def test_pty_output_preserves_utf8_split_across_reads(tmp_path) -> None:
+    session = PtySession(argv=("/bin/echo", "unused"), cwd=tmp_path, rows=1, cols=8)
+    output = "◆ · cwd".encode()
+    split = output.index("·".encode()) + 1
+
+    session._consume_output(output[:split])
+    session._consume_output(output[split:])
+
+    assert session.transcript == "◆ · cwd"
+    assert session.screen_lines == ("◆ · cwd",)
+
+
 @pytest.mark.parametrize(
     ("session_env", "expected"),
     [({}, "xterm-256color"), ({"TERM": "dumb"}, "dumb")],

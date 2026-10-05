@@ -64,13 +64,26 @@ TOOL_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         approval_reply="session",
     ),
     FocusScenario(
-        scenario_id="browser_tool_status",
+        scenario_id="browser_tool_ready",
         prompt=(
-            "Use the browser tool with the tab.list operation to list current "
-            "browser tabs. If it succeeds, reply with exactly `browser ready`; "
-            "otherwise summarize the exact browser error in one sentence."
+            "Use the browser tool with provider `playwright` and the tab.list "
+            "operation to list current browser tabs. If and only if the operation "
+            "succeeds, reply with exactly `browser ready`."
         ),
-        expected_markers=("browser ready|error|unavailable|not cached",),
+        expected_markers=("browser ready",),
+        timeout=360,
+        requires_approval=True,
+        max_auto_approvals=4,
+        approval_reply="yes",
+    ),
+    FocusScenario(
+        scenario_id="browser_tool_unavailable",
+        prompt=(
+            "Use the browser tool with provider `missing-provider` and the "
+            "tab.list operation. Report the provider error in one sentence; do "
+            "not describe this as a successful browser operation."
+        ),
+        expected_markers=("missing-provider|error|unavailable",),
         timeout=360,
         requires_approval=True,
         max_auto_approvals=4,
