@@ -7,16 +7,20 @@ from openminion.base.config.base import ConfigError
 
 from .tool_family import (
     BlockchainToolRuntimeConfig,
+    CommerceToolRuntimeConfig,
     ToolFamilyRuntimeConfig,
     blockchain_tool_runtime_config_to_dict,
     coerce_blockchain_tool_runtime_config,
+    coerce_commerce_tool_runtime_config,
     coerce_tool_family_runtime_config,
+    commerce_tool_runtime_config_to_dict,
 )
 
 _SUPPORTED_RUNTIME_TOOL_FAMILIES = ("search", "fetch", "browser", "weather")
 _SUPPORTED_RUNTIME_TOOL_CONFIG_KEYS = (
     *_SUPPORTED_RUNTIME_TOOL_FAMILIES,
     "blockchain",
+    "commerce",
     "gws",
 )
 
@@ -28,6 +32,7 @@ class ToolRuntimeConfig:
     browser: ToolFamilyRuntimeConfig | None = None
     weather: ToolFamilyRuntimeConfig | None = None
     blockchain: BlockchainToolRuntimeConfig | None = None
+    commerce: CommerceToolRuntimeConfig | None = None
     gws: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -42,6 +47,7 @@ class ToolRuntimeConfig:
             self.weather, family_name="weather"
         )
         self.blockchain = coerce_blockchain_tool_runtime_config(self.blockchain)
+        self.commerce = coerce_commerce_tool_runtime_config(self.commerce)
         if self.gws is not None:
             if not isinstance(self.gws, Mapping):
                 raise ConfigError("runtime.tools.gws must be an object.")
@@ -90,6 +96,7 @@ def coerce_tool_runtime_config(value: object) -> ToolRuntimeConfig:
     normalized["blockchain"] = coerce_blockchain_tool_runtime_config(
         value.get("blockchain")
     )
+    normalized["commerce"] = coerce_commerce_tool_runtime_config(value.get("commerce"))
     return ToolRuntimeConfig(**normalized)
 
 
@@ -115,6 +122,10 @@ def tool_runtime_config_to_dict(config: ToolRuntimeConfig | None) -> dict[str, A
         payload["blockchain"] = blockchain_tool_runtime_config_to_dict(
             normalized.blockchain
         )
+    if normalized.commerce is not None:
+        payload["commerce"] = commerce_tool_runtime_config_to_dict(
+            normalized.commerce
+        )
     return payload
 
 
@@ -136,7 +147,52 @@ def merge_tool_runtime_overrides(
     return ToolRuntimeConfig(
         **families,
         blockchain=agent.blockchain or system.blockchain,
+        commerce=_merge_commerce_runtime_overrides(
+            system_commerce=system.commerce,
+            agent_commerce=agent.commerce,
+        ),
         gws=agent.gws if agent.gws is not None else system.gws,
+    )
+
+
+def _merge_commerce_runtime_overrides(
+    *,
+    system_commerce: CommerceToolRuntimeConfig | None,
+    agent_commerce: CommerceToolRuntimeConfig | None,
+) -> CommerceToolRuntimeConfig | None:
+    if agent_commerce is None:
+        return system_commerce
+    protected_values = {
+        "provider": agent_commerce.provider,
+        "base_url": agent_commerce.base_url,
+        "merchant_id": agent_commerce.merchant_id,
+        "provider_secret_key": agent_commerce.provider_secret_key,
+        "buyer_profile_record_id": agent_commerce.buyer_profile_record_id,
+        "payment_token_record_id": agent_commerce.payment_token_record_id,
+    }
+    changed = [name for name, value in protected_values.items() if value]
+    if changed:
+        raise ConfigError(
+            "agent runtime override tools.commerce cannot set system-owned fields: "
+            f"{changed!r}."
+        )
+    if (
+        agent_commerce.enabled
+        or agent_commerce.writes_enabled
+        or agent_commerce.order_actions_enabled
+    ):
+        raise ConfigError(
+            "agent runtime override tools.commerce may only disable commerce."
+        )
+    if system_commerce is None:
+        return agent_commerce
+    return CommerceToolRuntimeConfig(
+        provider=system_commerce.provider,
+        base_url=system_commerce.base_url,
+        merchant_id=system_commerce.merchant_id,
+        provider_secret_key=system_commerce.provider_secret_key,
+        buyer_profile_record_id=system_commerce.buyer_profile_record_id,
+        payment_token_record_id=system_commerce.payment_token_record_id,
     )
 
 
@@ -186,6 +242,7 @@ def _merge_tool_family_runtime_overrides(
 
 __all__ = (
     "BlockchainToolRuntimeConfig",
+    "CommerceToolRuntimeConfig",
     "ToolFamilyRuntimeConfig",
     "ToolRuntimeConfig",
     "coerce_blockchain_tool_runtime_config",

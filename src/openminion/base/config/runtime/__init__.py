@@ -27,6 +27,7 @@ from openminion.base.config.runtime.identity import (
     resolve_identity_root_from_env,
 )
 from openminion.base.config.runtime.tools import (
+    CommerceToolRuntimeConfig,
     ToolRuntimeConfig,
     coerce_tool_runtime_config,
 )
@@ -203,6 +204,7 @@ class ContextConfig:
 
 __all__ = [
     "ContextConfig",
+    "CommerceToolRuntimeConfig",
     "IdentityBudgetCompactionConfig",
     "IdentityBudgetConfig",
     "resolve_identity_db_from_env",

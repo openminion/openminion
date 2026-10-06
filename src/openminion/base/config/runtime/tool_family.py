@@ -135,6 +135,113 @@ class BlockchainToolRuntimeConfig:
     receipt_timeout_seconds: int = 60
 
 
+_COMMERCE_CONFIG_KEYS = frozenset(
+    {
+        "enabled",
+        "provider",
+        "base_url",
+        "merchant_id",
+        "provider_secret_key",
+        "buyer_profile_record_id",
+        "payment_token_record_id",
+        "writes_enabled",
+        "order_actions_enabled",
+    }
+)
+_SUPPORTED_COMMERCE_PROVIDERS: frozenset[str] = frozenset()
+
+
+@dataclass
+class CommerceToolRuntimeConfig:
+    enabled: bool = False
+    provider: str = ""
+    base_url: str = ""
+    merchant_id: str = ""
+    provider_secret_key: str = ""
+    buyer_profile_record_id: str = ""
+    payment_token_record_id: str = ""
+    writes_enabled: bool = False
+    order_actions_enabled: bool = False
+
+
+def _validate_commerce_config(
+    config: CommerceToolRuntimeConfig,
+) -> CommerceToolRuntimeConfig:
+    flags = (config.enabled, config.writes_enabled, config.order_actions_enabled)
+    if any(not isinstance(value, bool) for value in flags):
+        raise ConfigError("runtime.tools.commerce enabled flags must be booleans.")
+    if config.writes_enabled and not config.enabled:
+        raise ConfigError(
+            "runtime.tools.commerce.writes_enabled=true requires enabled=true."
+        )
+    if config.order_actions_enabled and not config.writes_enabled:
+        raise ConfigError(
+            "runtime.tools.commerce.order_actions_enabled=true requires "
+            "writes_enabled=true."
+        )
+    if config.enabled and not config.provider:
+        raise ConfigError(
+            "runtime.tools.commerce.provider is required when enabled."
+        )
+    if config.enabled and config.provider not in _SUPPORTED_COMMERCE_PROVIDERS:
+        raise ConfigError(
+            f"runtime.tools.commerce.provider={config.provider!r} is not supported."
+        )
+    return config
+
+
+def coerce_commerce_tool_runtime_config(
+    value: object,
+) -> CommerceToolRuntimeConfig | None:
+    if value is None:
+        return None
+    if isinstance(value, CommerceToolRuntimeConfig):
+        return _validate_commerce_config(value)
+    if not isinstance(value, Mapping):
+        raise ConfigError("runtime.tools.commerce must be an object.")
+    unknown = sorted(str(key) for key in value if key not in _COMMERCE_CONFIG_KEYS)
+    if unknown:
+        raise ConfigError(
+            f"runtime.tools.commerce contains unsupported keys: {unknown!r}."
+        )
+    for field_name in ("enabled", "writes_enabled", "order_actions_enabled"):
+        if field_name in value and not isinstance(value[field_name], bool):
+            raise ConfigError(f"runtime.tools.commerce.{field_name} must be a boolean.")
+    return _validate_commerce_config(
+        CommerceToolRuntimeConfig(
+            enabled=value.get("enabled", False),
+            provider=str(value.get("provider", "")).strip().lower(),
+            base_url=str(value.get("base_url", "")).strip(),
+            merchant_id=str(value.get("merchant_id", "")).strip(),
+            provider_secret_key=str(value.get("provider_secret_key", "")).strip(),
+            buyer_profile_record_id=str(
+                value.get("buyer_profile_record_id", "")
+            ).strip(),
+            payment_token_record_id=str(
+                value.get("payment_token_record_id", "")
+            ).strip(),
+            writes_enabled=value.get("writes_enabled", False),
+            order_actions_enabled=value.get("order_actions_enabled", False),
+        )
+    )
+
+
+def commerce_tool_runtime_config_to_dict(
+    config: CommerceToolRuntimeConfig,
+) -> dict[str, Any]:
+    return {
+        "enabled": config.enabled,
+        "provider": config.provider,
+        "base_url": config.base_url,
+        "merchant_id": config.merchant_id,
+        "provider_secret_key": config.provider_secret_key,
+        "buyer_profile_record_id": config.buyer_profile_record_id,
+        "payment_token_record_id": config.payment_token_record_id,
+        "writes_enabled": config.writes_enabled,
+        "order_actions_enabled": config.order_actions_enabled,
+    }
+
+
 def _validate_blockchain_config(
     config: BlockchainToolRuntimeConfig,
 ) -> BlockchainToolRuntimeConfig:
