@@ -8648,6 +8648,42 @@ def test_action_result_to_tool_message_preserves_prepared_transaction() -> None:
     assert payload["outputs"]["transaction"] == transaction
 
 
+def test_action_result_to_tool_message_preserves_contract_call_context() -> None:
+    call_context = {
+        "function_abi": {
+            "type": "function",
+            "name": "swap",
+            "inputs": [
+                {
+                    "name": "request",
+                    "type": "tuple",
+                    "components": [
+                        {"name": "recipient", "type": "address"},
+                        {"name": "amount", "type": "uint256"},
+                    ],
+                }
+            ],
+            "outputs": [{"name": "amountOut", "type": "uint256"}],
+            "stateMutability": "nonpayable",
+        },
+        "function_args": [["0x" + "22" * 20, 7]],
+        "function_signature": "swap((address,uint256))",
+    }
+    action_result = ActionResult(
+        command_id="prepare-contract-call",
+        status="success",
+        summary="contract call prepared",
+        outputs={"call_context": call_context},
+    )
+
+    message = action_result_to_tool_message(
+        "call-prepare", "blockchain.prepare_transaction", action_result
+    )
+    payload = json.loads(message.content)
+
+    assert payload["outputs"]["call_context"] == call_context
+
+
 def test_action_result_to_tool_message_preserves_nested_record_scalars() -> None:
     action_result = ActionResult(
         command_id="memory-search",
@@ -8679,4 +8715,4 @@ def test_action_result_to_tool_message_preserves_nested_record_scalars() -> None
 
     record = payload["outputs"]["data"]["records"][0]
     assert record["content"] == "durable-memory-value"
-    assert record["tags"] == "[truncated]"
+    assert record["tags"] == ["smoke"]
