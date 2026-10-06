@@ -39,7 +39,7 @@ def requires_individual_confirmation(command: Command | dict[str, Any] | None) -
         else getattr(command, "tool_name", "")
     )
     normalized = str(tool_name or "").strip()
-    if normalized == "ops.command.run":
+    if normalized == "ops.command.run" or normalized.startswith("commerce."):
         return True
     tool, method = (
         normalized.rsplit(".", 1) if "." in normalized else (normalized, "default")

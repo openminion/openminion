@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from openminion.cli.interactive.terminal.shell.approval import (
     build_terminal_approval_callback,
 )
+from openminion.cli.presentation.tool.progress import build_tool_event_from_progress
 from openminion.modules.brain.adapters.tool.policy_context import (
     _resolve_auto_confirm,
 )
@@ -22,7 +23,10 @@ from openminion.modules.commerce.confirmation import (
     OrderActionConfirmationPreview,
     PreparationIntentConfirmationPreview,
     commerce_confirmation_payload,
+    commerce_confirmation_lines,
 )
+from openminion.modules.commerce.models import CommerceHandoff, CommerceLifecycleState
+from openminion.modules.commerce.provider import OrderPlacement
 from openminion.modules.policy.adapters.brain import PolicyCtlBrainAdapter
 from openminion.modules.policy.models import PolicyConfig, RiskSpec
 from openminion.modules.policy.runtime.action_policy import derive_tool_risk_spec
@@ -59,9 +63,11 @@ def _preparation_preview(
     )
 
 
-def test_typed_previews_bind_order_and_refund_facts() -> None:
-    order = ExactOrderConfirmationPreview(
-        merchant="Fixture Merchant",
+def _order_preview(
+    *, merchant: str = "Fixture Merchant"
+) -> ExactOrderConfirmationPreview:
+    return ExactOrderConfirmationPreview(
+        merchant=merchant,
         seller="Fixture Seller",
         preparation_ref="prep-1",
         items=(
@@ -94,6 +100,10 @@ def test_typed_previews_bind_order_and_refund_facts() -> None:
         subject_id="local",
         session_id="session-1",
     )
+
+
+def test_typed_previews_bind_order_and_refund_facts() -> None:
+    order = _order_preview()
     action = OrderActionConfirmationPreview(
         order_id="order-1",
         order_revision="order-r2",
@@ -120,6 +130,10 @@ def test_typed_previews_bind_order_and_refund_facts() -> None:
     assert order_payload["recurring"] is False
     assert action_payload["refund_method"] == "original_payment_method"
     assert action_payload["refund_destination_digest"] == _DIGEST
+    assert (
+        "Refund consent: 1200 USD minor units to original payment method at Visa ending 4242."
+        in commerce_confirmation_lines(action)
+    )
     with pytest.raises(ValidationError):
         OrderActionConfirmationPreview.model_validate(
             {**action_payload, "refund_method": "merchant_choice"}
@@ -260,6 +274,80 @@ def test_shared_confirmation_message_is_one_time_and_escapes_merchant_text() -> 
     assert "allow this tool for the session" not in rendered
 
 
+def test_preparation_and_exact_order_approvals_are_separate_snapshots() -> None:
+    hostile = "[red]Merchant\n\x1b[2J" + "x" * 400
+    prepare = confirmation_required_user_message(
+        ToolCommand(
+            kind="tool",
+            title="Prepare checkout",
+            tool_name="commerce.prepare_order",
+            args={},
+            inputs={},
+        ),
+        commerce_confirmation_payload(_preparation_preview(merchant=hostile)),
+    )
+    place = confirmation_required_user_message(
+        ToolCommand(
+            kind="tool",
+            title="Place order",
+            tool_name="commerce.place_order",
+            args={},
+            inputs={},
+        ),
+        commerce_confirmation_payload(_order_preview(merchant=hostile)),
+    )
+
+    assert "Commerce checkout preparation" in prepare
+    assert "Exact total:" not in prepare
+    assert "Exact order review" in place
+    assert "Exact total: 2800 USD minor units" in place
+    assert "\x1b" not in prepare + place
+    assert "Merchant\n" not in prepare + place
+    assert "x" * 241 not in prepare + place
+    for rendered in (prepare, place):
+        assert rendered.endswith("Reply exactly yes to allow once, or no to cancel.")
+        assert "session" not in rendered.splitlines()[-1].lower()
+        assert "always" not in rendered.lower()
+
+
+def test_receipt_unknown_outcome_and_handoff_have_clear_next_actions() -> None:
+    lifecycle = CommerceLifecycleState(
+        order="outcome_unknown",
+        fulfillment="provider_unknown",
+        payment="provider_unknown",
+    )
+    receipt = OrderPlacement(
+        idempotency_key="place-1",
+        preparation_ref="prep-1",
+        state="outcome_unknown",
+        lifecycle=lifecycle,
+    )
+    receipt_text = build_tool_event_from_progress(
+        {
+            "tool_name": "commerce.place_order",
+            "content": receipt.model_dump_json(),
+        }
+    ).content
+    handoff_text = build_tool_event_from_progress(
+        {
+            "tool_name": "commerce.place_order",
+            "content": CommerceHandoff(
+                reason_code="merchant_support_required",
+                message="Call [red]support\n\x1b[2J before continuing",
+                url="https://shop.test/support",
+            ).model_dump_json(),
+        }
+    ).content
+
+    assert "Order receipt" in receipt_text
+    assert "State: outcome_unknown" in receipt_text
+    assert "do not place it again yet" in receipt_text
+    assert "Merchant handoff required" in handoff_text
+    assert "Message: Call \\[red]support before continuing" in handoff_text
+    assert "inspect again, and request a new approval" in handoff_text
+    assert "\x1b" not in handoff_text
+
+
 @pytest.mark.asyncio
 async def test_terminal_commerce_callback_offers_allow_once_only() -> None:
     prompts: list[str] = []
@@ -279,7 +367,12 @@ async def test_terminal_commerce_callback_offers_allow_once_only() -> None:
         overlay=_Overlay(),
         session_grants=session_grants,
     )
-    assert await callback("commerce.place_order", {"preparation_ref": "prep-1"}, "a")
+    assert await callback("commerce.prepare_order", {"items": []}, "a")
     assert await callback("commerce.place_order", {"preparation_ref": "prep-1"}, "b")
     assert len(prompts) == 2
+    assert "commerce.prepare_order" in prompts[0]
+    assert "commerce.place_order" in prompts[1]
+    assert all("allow once or deny" in prompt.lower() for prompt in prompts)
+    assert all("session" not in prompt.lower() for prompt in prompts)
+    assert all("always" not in prompt.lower() for prompt in prompts)
     assert session_grants == set()

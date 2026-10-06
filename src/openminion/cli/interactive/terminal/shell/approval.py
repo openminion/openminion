@@ -33,11 +33,16 @@ def format_terminal_approval_prompt(tool_name: str, args: dict[str, Any]) -> str
         compact=not full_command,
     )
     call_line = f"{name}({args_preview})" if args_preview else f"{name}()"
+    if name.startswith("commerce."):
+        return (
+            f"Approval required: {call_line}\n"
+            "This commerce approval is for this exact action once. Allow once or deny."
+        )
     return f"Approval required: {call_line}"
 
 
 def _requires_one_time_approval(tool_name: str) -> bool:
-    if tool_name == "ops.command.run":
+    if tool_name == "ops.command.run" or tool_name.startswith("commerce."):
         return True
     tool, method = (
         tool_name.rsplit(".", 1) if "." in tool_name else (tool_name, "default")

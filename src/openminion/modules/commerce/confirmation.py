@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, Literal
+from collections.abc import Mapping
+from typing import Annotated, Any, Literal, TypeAlias
 import unicodedata
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from .models import CommerceDigest
+from .models import CommerceDigest, CommerceHandoff
+from .provider import (
+    CommerceInspection,
+    OrderActionPreparation,
+    OrderActionResult,
+    OrderInspection,
+    OrderPlacement,
+    OrderPreparation,
+    ShipmentInspection,
+)
 
 
 class CommerceConfirmationModel(BaseModel):
@@ -108,7 +118,31 @@ CommerceConfirmationPreview = Annotated[
     Field(discriminator="kind"),
 ]
 _PREVIEW_ADAPTER = TypeAdapter(CommerceConfirmationPreview)
+_INSPECTION_ADAPTER = TypeAdapter(CommerceInspection)
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_REFUND_METHOD_LABELS = {
+    "original_payment_method": "original payment method",
+    "store_credit": "store credit",
+}
+
+
+class CommerceOutcomeUnknownNotice(CommerceConfirmationModel):
+    commerce_code: Literal["OUTCOME_UNKNOWN"]
+    mutation_kind: Literal["prepare", "place", "action", "apply_action"]
+    provider_attempts: int = Field(ge=1)
+    recovery_required: Literal[True]
+
+
+CommercePresentationResult: TypeAlias = (
+    OrderPreparation
+    | OrderPlacement
+    | OrderInspection
+    | ShipmentInspection
+    | OrderActionPreparation
+    | OrderActionResult
+    | CommerceOutcomeUnknownNotice
+    | CommerceHandoff
+)
 
 
 def parse_commerce_confirmation_preview(
@@ -126,13 +160,16 @@ def commerce_confirmation_payload(
 def _display(value: object, *, limit: int = 240) -> str:
     raw = _ANSI_ESCAPE.sub(" ", str(value or ""))
     clean = "".join(
-        character
+        " " if unicodedata.category(character).startswith("C") else character
         for character in raw
-        if not unicodedata.category(character).startswith("C")
     )
     text = " ".join(clean.split())
     text = text.replace("[", r"\[")
     return text if len(text) <= limit else f"{text[: limit - 3].rstrip()}..."
+
+
+def _refund_method(value: str | None) -> str:
+    return _REFUND_METHOD_LABELS.get(value or "", "-")
 
 
 def commerce_confirmation_lines(
@@ -188,6 +225,11 @@ def commerce_confirmation_lines(
             for link in preview.policy_links
         )
     else:
+        refund_destination = (
+            _display(preview.refund_destination_label)
+            if preview.refund_destination_label
+            else "-"
+        )
         lines = [
             "Order action review",
             f"Order: {_display(preview.order_id)}",
@@ -199,9 +241,14 @@ def commerce_confirmation_lines(
             ),
             f"Fees: {preview.fees_minor} {preview.currency} minor units",
             f"Refund: {preview.refund_minor} {preview.currency} minor units",
-            f"Refund method: {preview.refund_method or '-'}",
-            f"Refund destination: {_display(preview.refund_destination_label) if preview.refund_destination_label else '-'}",
+            f"Refund method: {_refund_method(preview.refund_method)}",
+            f"Refund destination: {refund_destination}",
             f"Refund destination digest: {preview.refund_destination_digest or '-'}",
+            (
+                f"Refund consent: {preview.refund_minor} {preview.currency} minor "
+                f"units to {_refund_method(preview.refund_method)} at "
+                f"{refund_destination}."
+            ),
             f"Effect: {_display(preview.consequence)}",
             f"Action revision: {_display(preview.action_revision)}",
             f"Action digest: {preview.action_digest}",
@@ -219,9 +266,204 @@ def commerce_confirmation_lines(
     return lines
 
 
+def commerce_result_lines(value: CommercePresentationResult) -> list[str]:
+    if isinstance(value, OrderPreparation):
+        lines = [
+            "Checkout prepared",
+            f"Merchant: {_display(value.merchant.display_name)}",
+            f"Seller: {_display(value.seller.display_name)}",
+            f"Preparation: {_display(value.preparation_ref)}",
+            f"Checkout revision: {_display(value.checkout_revision)}",
+            *(
+                "Item: "
+                f"offer {_display(item.offer_id)}, variant {_display(item.variant_id)}, "
+                f"quantity {item.quantity}, unit price {item.unit_price.amount_minor} "
+                f"{item.unit_price.currency} minor units"
+                for item in value.items
+            ),
+            f"Discount: {value.totals.discount.amount_minor} {value.totals.discount.currency} minor units",
+            f"Tax: {value.totals.tax.amount_minor} {value.totals.tax.currency} minor units",
+            f"Shipping: {value.totals.shipping.amount_minor} {value.totals.shipping.currency} minor units",
+            f"Fees: {value.totals.fees.amount_minor} {value.totals.fees.currency} minor units",
+            f"Exact total: {value.totals.total.amount_minor} {value.totals.total.currency} minor units",
+            f"Destination: {_display(value.destination.label)}",
+            f"Destination digest: {value.destination.destination_digest}",
+            f"Payment: {_display(value.payment.label)}",
+            f"Payment destination digest: {value.payment.payment_destination_digest}",
+            "Recurring: no",
+            f"Expires: {_display(value.expires_at)}",
+            "Next action: Review the exact order details, then allow placement once or deny.",
+        ]
+        lines.extend(f"Warning: {_display(item)}" for item in value.warnings)
+        return lines
+    if isinstance(value, OrderPlacement):
+        lines = [
+            "Order receipt",
+            f"State: {value.state}",
+            f"Preparation: {_display(value.preparation_ref)}",
+            f"Order: {_display(value.order_ref) if value.order_ref else '-'}",
+            f"Order revision: {_display(value.order_revision) if value.order_revision else '-'}",
+            f"Fulfillment: {value.lifecycle.fulfillment}",
+            f"Payment: {value.lifecycle.payment}",
+            _placement_next_action(value),
+        ]
+        lines.extend(f"Warning: {_display(item)}" for item in value.warnings)
+        return lines
+    if isinstance(value, OrderInspection):
+        return [
+            "Order tracking",
+            f"Order: {_display(value.reference)}",
+            f"Revision: {_display(value.revision)}",
+            f"Total: {value.total.amount_minor} {value.total.currency} minor units",
+            f"Order state: {value.lifecycle.order}",
+            f"Fulfillment: {value.lifecycle.fulfillment}",
+            f"Payment: {value.lifecycle.payment}",
+            *(
+                f"Shipment {_display(shipment_id)}: {state}"
+                for shipment_id, state in sorted(value.lifecycle.shipments.items())
+            ),
+            "Next action: Continue tracking any shipment that is not yet delivered or returned.",
+        ]
+    if isinstance(value, ShipmentInspection):
+        return [
+            "Shipment tracking",
+            f"Shipment: {_display(value.reference)}",
+            f"Order: {_display(value.order_ref)}",
+            f"Revision: {_display(value.revision)}",
+            f"State: {value.state}",
+            *(
+                f"Line item: {_display(line_item_id)}"
+                for line_item_id in value.line_item_ids
+            ),
+            _shipment_next_action(value),
+        ]
+    if isinstance(value, OrderActionPreparation):
+        refund_destination = (
+            _display(value.refund_destination.label)
+            if value.refund_destination is not None
+            else "-"
+        )
+        return [
+            "Order care review",
+            f"Order: {_display(value.order_ref)}",
+            f"Order revision: {_display(value.order_revision)}",
+            f"Action: {value.kind}",
+            f"Eligible: {'yes' if value.eligible else 'no'}",
+            f"Effect: {_display(value.consequence)}",
+            f"Refund method: {_refund_method(value.refund_method)}",
+            f"Refund destination: {refund_destination}",
+            "Refund destination digest: "
+            + (
+                value.refund_destination.destination_digest
+                if value.refund_destination is not None
+                else "-"
+            ),
+            "Return destination: "
+            + (
+                _display(value.return_destination.label)
+                if value.return_destination is not None
+                else "-"
+            ),
+            f"Expires: {_display(value.expires_at)}",
+            (
+                "Next action: Review these exact care terms, then allow once or deny."
+                if value.eligible
+                else "Next action: Inspect the order or request merchant support."
+            ),
+        ]
+    if isinstance(value, OrderActionResult):
+        lines = [
+            "Order care receipt",
+            f"Order: {_display(value.order_ref)}",
+            f"Action: {_display(value.action_ref)}",
+            f"State: {value.state}",
+            f"Order state: {value.lifecycle.order}",
+            f"Payment: {value.lifecycle.payment}",
+            (
+                "Next action: Inspect the order before retrying; the action outcome is unknown."
+                if value.state == "outcome_unknown"
+                else "Next action: Track the updated order state."
+            ),
+        ]
+        lines.extend(f"Warning: {_display(item)}" for item in value.warnings)
+        return lines
+    if isinstance(value, CommerceOutcomeUnknownNotice):
+        return [
+            "Commerce outcome unknown",
+            f"Operation: {value.mutation_kind}",
+            f"Provider attempts: {value.provider_attempts}",
+            "Next action: Inspect or recover the operation before retrying; do not submit it again yet.",
+        ]
+    return [
+        "Merchant handoff required",
+        f"Reason: {value.reason_code}",
+        f"Message: {_display(value.message)}",
+        f"Open: {_display(value.url) if value.url else '-'}",
+        "Preparation invalidated: yes",
+        "Next action: Complete the merchant handoff, inspect again, and request a new approval.",
+    ]
+
+
+def _placement_next_action(value: OrderPlacement) -> str:
+    if value.state == "outcome_unknown":
+        return "Next action: Inspect or recover this order before retrying; do not place it again yet."
+    if value.state == "succeeded" and value.order_ref:
+        return f"Next action: Track order {_display(value.order_ref)}."
+    if value.state == "action_required":
+        return (
+            "Next action: Inspect the order and complete the required merchant action."
+        )
+    return "Next action: Review the receipt before preparing a new checkout."
+
+
+def _shipment_next_action(value: ShipmentInspection) -> str:
+    if value.state in {"delivered", "returned"}:
+        return "Next action: No shipment action is required."
+    if value.state in {"exception", "lost"}:
+        return "Next action: Request merchant care for this shipment."
+    return "Next action: Continue tracking this shipment."
+
+
+def commerce_tool_result_lines(
+    tool_name: str,
+    value: Mapping[str, Any],
+) -> list[str]:
+    payload = dict(value)
+    if payload.get("commerce_code") == "OUTCOME_UNKNOWN":
+        return commerce_result_lines(
+            CommerceOutcomeUnknownNotice.model_validate(payload)
+        )
+    if payload.get("state") == "handoff_required":
+        return commerce_result_lines(CommerceHandoff.model_validate(payload))
+    normalized_tool = str(tool_name or "").strip()
+    if normalized_tool == "commerce.inspect":
+        result = _INSPECTION_ADAPTER.validate_python(payload)
+    elif normalized_tool == "commerce.prepare_order":
+        result = OrderPreparation.model_validate(_without_runtime_facts(payload))
+    elif normalized_tool == "commerce.place_order":
+        result = OrderPlacement.model_validate(_without_runtime_facts(payload))
+    elif normalized_tool == "commerce.prepare_order_action":
+        result = OrderActionPreparation.model_validate(_without_runtime_facts(payload))
+    elif normalized_tool == "commerce.apply_order_action":
+        result = OrderActionResult.model_validate(_without_runtime_facts(payload))
+    else:
+        raise ValueError(f"Unsupported commerce presentation tool: {normalized_tool}")
+    return commerce_result_lines(result)
+
+
+def _without_runtime_facts(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in {"mutation_kind", "provider_attempts", "recovery_required"}
+    }
+
+
 __all__ = [
     "ActionConfirmationItem",
     "CommerceConfirmationPreview",
+    "CommerceOutcomeUnknownNotice",
+    "CommercePresentationResult",
     "ConfirmationItem",
     "ExactOrderConfirmationPreview",
     "OrderActionConfirmationPreview",
@@ -229,5 +471,7 @@ __all__ = [
     "PreparationIntentConfirmationPreview",
     "commerce_confirmation_payload",
     "commerce_confirmation_lines",
+    "commerce_result_lines",
+    "commerce_tool_result_lines",
     "parse_commerce_confirmation_preview",
 ]

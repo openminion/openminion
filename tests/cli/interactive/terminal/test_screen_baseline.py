@@ -31,6 +31,20 @@ from openminion.cli.presentation.animation.models import (
 from openminion.cli.presentation.models import ToolEvent
 from openminion.cli.presentation.styles import set_active_theme, set_color_mode
 from openminion.cli.theme import DARK, LIGHT
+from openminion.modules.commerce.confirmation import (
+    ExactOrderConfirmationPreview,
+    commerce_confirmation_lines,
+    commerce_result_lines,
+)
+from openminion.modules.commerce.models import (
+    CommerceLifecycleState,
+    Money,
+)
+from openminion.modules.commerce.provider import (
+    OrderActionPreparation,
+    OrderInspection,
+    RefundDestination,
+)
 
 
 _BASELINE_PATH = Path(__file__).with_name("baselines") / "screen_contract.json"
@@ -44,6 +58,7 @@ _DEFAULT_STYLE = (
     False,
     False,
 )
+_COMMERCE_DIGEST = "sha256:" + "a" * 64
 
 
 async def _wait_for_output(raw: io.StringIO, text: str) -> None:
@@ -445,6 +460,89 @@ def _screen_contract(
     }
 
 
+def _capture_commerce_scene(*, width: int) -> dict:
+    lifecycle = CommerceLifecycleState(
+        order="accepted",
+        fulfillment="partial",
+        payment="captured",
+        shipments={"outbound-1": "delivered", "return-1": "return_in_transit"},
+    )
+    order = ExactOrderConfirmationPreview(
+        merchant="[red]Fixture\nMerchant\x1b[2J",
+        seller="Fixture Seller",
+        preparation_ref="prep-1",
+        items=(
+            {
+                "offer_id": "offer-1",
+                "variant_id": "blue",
+                "quantity": 1,
+                "line_total_minor": 2800,
+                "returnable": True,
+                "final_sale": False,
+            },
+        ),
+        discount_minor=0,
+        tax_minor=200,
+        shipping_minor=300,
+        fees_minor=0,
+        total_minor=2800,
+        currency="USD",
+        destination_label="Home ending 42",
+        buyer_profile_digest=_COMMERCE_DIGEST,
+        destination_digest=_COMMERCE_DIGEST,
+        payment_label="Visa ending 4242",
+        payment_destination_digest=_COMMERCE_DIGEST,
+        recurring=False,
+        checkout_revision="checkout-r1",
+        expires_at="2026-10-06T20:00:00+00:00",
+        preparation_digest=_COMMERCE_DIGEST,
+        subject_id="local",
+        session_id="session-1",
+    )
+    blocks = [
+        commerce_confirmation_lines(order),
+        commerce_result_lines(
+            OrderInspection(
+                reference="order-1",
+                revision="order-r1",
+                items=(),
+                lifecycle=lifecycle,
+                total=Money(currency="USD", amount_minor=2800),
+            )
+        ),
+        commerce_result_lines(
+            OrderActionPreparation(
+                action_ref="action-1",
+                order_ref="order-1",
+                order_revision="order-r1",
+                kind="refund_request",
+                eligible=True,
+                consequence="Refund the selected item.",
+                refund_method="original_payment_method",
+                refund_destination=RefundDestination(
+                    destination_digest=_COMMERCE_DIGEST,
+                    label="Visa ending 4242",
+                ),
+                expires_at="2026-10-06T20:00:00+00:00",
+                action_digest=_COMMERCE_DIGEST,
+            )
+        ),
+    ]
+    buffer = io.StringIO()
+    console = Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        no_color=True,
+        width=width,
+        height=180,
+    )
+    for lines in blocks:
+        console.print("\n".join(lines))
+        console.print()
+    return _screen_contract(buffer.getvalue(), width=width, height=180)
+
+
 def _strict_screen_contract(raw: str, *, width: int, height: int) -> dict:
     """Model terminals that ignore CUP requests beyond the physical screen."""
 
@@ -707,6 +805,20 @@ def test_screen_contract_uses_only_reviewed_surface_backgrounds(
                 assert "reverse" not in style
                 if "bg" in style:
                     assert style["bg"] in allowed_backgrounds[name]
+
+
+@pytest.mark.parametrize("width", [48, 72, 100], ids=["narrow", "standard", "wide"])
+def test_commerce_presentations_stay_readable_across_resizes(width: int) -> None:
+    scene = _capture_commerce_scene(width=width)
+    visible = " ".join(row["text"].strip() for row in scene["rows"])
+
+    assert all(len(row["text"]) <= width for row in scene["rows"])
+    assert "Exact order review" in visible and "Order tracking" in visible
+    assert "Order care review" in visible and "Fixture Merchant" in visible
+    assert "Refund method: original payment method" in visible
+    assert "Refund destination: Visa ending 4242" in visible
+    assert visible.count("Next action:") >= 2
+    assert "\x1b" not in visible
 
 
 def test_composer_scenes_start_at_current_transcript_position(
