@@ -100,8 +100,7 @@ def inline_discriminated_branches(schema: dict[str, Any]) -> dict[str, Any]:
             continue
         field_schema = properties[name]
         requirement = (
-            f"Required when {discriminator} is "
-            f"{', '.join(variants_requiring_field)}."
+            f"Required when {discriminator} is {', '.join(variants_requiring_field)}."
         )
         description = str(field_schema.get("description", "") or "").strip()
         field_schema["description"] = f"{requirement} {description}".strip()

@@ -11,7 +11,6 @@ from .constants import (
 from openminion.modules.prompting.context_blocks import PRIOR_TURN_BLOCK_HEADER
 
 
-
 def _bounded_text(value: Any, *, limit: int) -> str:
     text = " ".join(str(value or "").strip().split())
     if len(text) <= limit:
@@ -65,8 +64,12 @@ def render_prior_turn_context_block(hint: Mapping[str, Any] | str | None) -> str
 
 
 def latest_structured_tool_result(module_state: Mapping[str, Any] | None) -> str:
-    adaptive_loop = module_state.get("adaptive_loop") if isinstance(module_state, dict) else None
-    tool_results = adaptive_loop.get("tool_results") if isinstance(adaptive_loop, dict) else None
+    adaptive_loop = (
+        module_state.get("adaptive_loop") if isinstance(module_state, dict) else None
+    )
+    tool_results = (
+        adaptive_loop.get("tool_results") if isinstance(adaptive_loop, dict) else None
+    )
     if not isinstance(tool_results, list):
         return ""
     for item in reversed(tool_results):

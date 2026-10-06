@@ -69,9 +69,7 @@ def _assert_focus_invocation_sequence(evidence: dict) -> None:
 def _assert_evidence(evidence: dict, *, profile: str, commit: str) -> None:
     recipient = "0x" + ("44" if profile == "local" else "55") * 20
     expected_args = [
-        [recipient, "7", "14"]
-        if profile == "local"
-        else [recipient, "8", "16"]
+        [recipient, "7", "14"] if profile == "local" else [recipient, "8", "16"]
     ]
     assert evidence["schema_version"] == "bdtc-e2e-v1"
     assert evidence["source_commit"] == commit

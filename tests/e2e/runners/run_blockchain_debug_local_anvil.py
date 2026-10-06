@@ -399,9 +399,7 @@ def main() -> int:
             "call_context": prepared_again["call_context"],
             "preparation_digest": prepared_again["preparation_digest"],
         }
-        send_reference = {
-            "preparation_digest": prepared_again["preparation_digest"]
-        }
+        send_reference = {"preparation_digest": prepared_again["preparation_digest"]}
         allowed_decision, grant_id, allowed_preview = _approval(
             policy_ctl, send_args, "allowed", "allow_once"
         )

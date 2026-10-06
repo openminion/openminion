@@ -566,9 +566,7 @@ def test_send_schema_rejects_non_object_json_nested_value() -> None:
 def test_model_send_schema_accepts_optional_preparation_digest() -> None:
     digest = "sha256:" + "0" * 64
 
-    parsed = SendPreparedTransactionArgs.model_validate(
-        {"preparation_digest": digest}
-    )
+    parsed = SendPreparedTransactionArgs.model_validate({"preparation_digest": digest})
 
     assert parsed.model_dump(mode="json") == {"preparation_digest": digest}
     assert SendPreparedTransactionArgs.model_validate({}).model_dump(mode="json") == {

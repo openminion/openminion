@@ -15,7 +15,7 @@ from openminion.tools.blockchain.preparations import (
 )
 
 
-def authorize_prepared_blockchain_send(
+def authorize_blockchain_send(
     args: dict[str, Any],
     context: Any,
     policy_ctl: Any | None,

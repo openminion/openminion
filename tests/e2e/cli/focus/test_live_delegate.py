@@ -204,9 +204,7 @@ def _latest_public_child_artifacts(probe: FocusProbe) -> list[dict]:
     return artifacts
 
 
-def _wait_for_a2a_delegate_success(
-    probe: FocusProbe, *, timeout: float = 60.0
-) -> None:
+def _wait_for_a2a_delegate_success(probe: FocusProbe, *, timeout: float = 60.0) -> None:
     audit_dir = probe.data_root / "a2a" / "audit"
     deadline = time.monotonic() + timeout
     last_error = ""

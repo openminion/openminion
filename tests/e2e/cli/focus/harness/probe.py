@@ -623,11 +623,7 @@ class FocusProbe:
     ) -> str:
         """Submit through the composer only after its input state is visible."""
         cls._wait_for_composer(session)
-        if (
-            "\n" in text
-            or "\r" in text
-            or len(text) >= _BRACKETED_PASTE_MIN_LENGTH
-        ):
+        if "\n" in text or "\r" in text or len(text) >= _BRACKETED_PASTE_MIN_LENGTH:
             session.send_bracketed_paste(text)
         else:
             session.send(text)

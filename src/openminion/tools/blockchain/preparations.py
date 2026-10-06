@@ -32,7 +32,9 @@ def _store_root(*, session_id: str, env: EnvironmentConfig) -> Path:
         data_root=env.openminion_data_root or None,
         env=env.values,
     )
-    return Path(data_root) / "blockchain" / "preparations" / _safe_session_id(session_id)
+    return (
+        Path(data_root) / "blockchain" / "preparations" / _safe_session_id(session_id)
+    )
 
 
 def _reference_path(
@@ -42,7 +44,9 @@ def _reference_path(
     env: EnvironmentConfig,
 ) -> Path:
     digest = str(preparation_digest).removeprefix("sha256:")
-    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+    if len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
         raise PreparationReferenceError("invalid preparation digest")
     return _store_root(session_id=session_id, env=env) / f"{digest}.json"
 

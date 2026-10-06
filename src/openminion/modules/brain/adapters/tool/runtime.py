@@ -44,7 +44,7 @@ from .command_metadata import (
     _orchestration_metadata_from_command,
     _runtime_workspace_from_command,
 )
-from .blockchain_authorization import authorize_prepared_blockchain_send
+from .blockchain_authorization import authorize_blockchain_send
 from .github_merge import execute_github_merge_pr_project_effect
 from .github_release import execute_github_release_project_effect
 from .github_update import execute_github_update_pr_project_effect
@@ -720,8 +720,8 @@ class ToolAdapter:
         tool_name = ctx.tool_name
         try:
             if tool_name == "blockchain.send_transaction":
-                validated_args, ctx.policy_authorization = (
-                    authorize_prepared_blockchain_send(validated_args, ctx, self.policy_ctl)
+                validated_args, ctx.policy_authorization = authorize_blockchain_send(
+                    validated_args, ctx, self.policy_ctl
                 )
             if tool_name == "github.open_pr" and project_task_id:
                 return execute_github_open_pr_project_effect(
