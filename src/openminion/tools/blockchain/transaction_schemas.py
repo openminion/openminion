@@ -180,8 +180,12 @@ SEND_REQUEST_ADAPTER = TypeAdapter(SendTransactionArgs)
 
 
 class SendPreparedTransactionArgs(ClosedModel):
-    preparation_digest: PreparationDigest = Field(
-        description="Use the digest returned by blockchain.prepare_transaction."
+    preparation_digest: PreparationDigest | None = Field(
+        default=None,
+        description=(
+            "Select a preparation by digest. Omit this field to use the latest "
+            "preparation in the current session."
+        ),
     )
 
 

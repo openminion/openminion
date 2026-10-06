@@ -74,6 +74,8 @@ def save_prepared_transaction(
         encoding="utf-8",
     )
     temporary.replace(path)
+    latest = path.parent / "latest"
+    latest.write_text(payload["preparation_digest"], encoding="utf-8")
 
 
 def resolve_prepared_transaction(
@@ -86,6 +88,14 @@ def resolve_prepared_transaction(
         return SEND_REQUEST_ADAPTER.validate_python(dict(args)).model_dump(mode="json")
     resolved_env = resolve_environment_config(env=env)
     digest = str(args.get("preparation_digest", "") or "")
+    if not digest:
+        store_root = _store_root(session_id=session_id, env=resolved_env)
+        try:
+            digest = (store_root / "latest").read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise PreparationReferenceError(
+                "prepared transaction is unavailable"
+            ) from exc
     path = _reference_path(digest, session_id=session_id, env=resolved_env)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))

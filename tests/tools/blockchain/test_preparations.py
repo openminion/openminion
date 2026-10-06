@@ -59,6 +59,23 @@ def test_prepared_transaction_survives_runtime_recreation(tmp_path) -> None:
     assert resolved == prepared
 
 
+def test_latest_prepared_transaction_needs_no_model_selector(tmp_path) -> None:
+    prepared = _prepared()
+    env = _env(tmp_path)
+    save_prepared_transaction(
+        prepared,
+        SimpleNamespace(session_id="session-a", env=env),
+    )
+
+    resolved = resolve_prepared_transaction(
+        {},
+        session_id="session-a",
+        env=env,
+    )
+
+    assert resolved == prepared
+
+
 def test_prepared_transaction_is_scoped_to_session(tmp_path) -> None:
     prepared = _prepared()
     env = _env(tmp_path)
