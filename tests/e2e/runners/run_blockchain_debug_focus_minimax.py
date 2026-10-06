@@ -409,11 +409,13 @@ def main() -> int:
         def compact(value: object) -> str:
             return json.dumps(value, separators=(",", ":"))
 
-        prepare_prompt = (
-            f"Prepare but do not send a call to contract {contract.address} using "
-            f"function ABI {compact(swap_abi)} and tuple arguments "
-            f"{compact([[RECIPIENT, 7, 14]])}."
-        )
+        def prepare_prompt(amount_in: int, minimum_out: int) -> str:
+            return (
+                f"Prepare but do not send a call to contract {contract.address} "
+                f"using function ABI {compact(swap_abi)} and tuple arguments "
+                f"{compact([[RECIPIENT, amount_in, minimum_out]])}."
+            )
+
         turns = [
             _scenario(
                 "turn-1",
@@ -428,7 +430,7 @@ def main() -> int:
                 f"{compact(quote_abi)} and arguments {compact([7])}. Do not prepare or "
                 "send a transaction.",
             ),
-            _scenario("turn-3", prepare_prompt),
+            _scenario("turn-3", prepare_prompt(7, 14)),
         ]
         probe = FocusProbe(
             python_bin=Path(sys.executable),
@@ -460,14 +462,14 @@ def main() -> int:
             transcript_parts.append(_reply_to_approval(probe, session, "no", 480))
             assert contract.functions.outputOf(RECIPIENT).call() == 0
             transcript_parts.append(
-                _run_turn(probe, session, _scenario("turn-6", prepare_prompt))
+                _run_turn(probe, session, _scenario("turn-6", prepare_prompt(8, 16)))
             )
             approval_transcript, allowed_approval_id = _wait_for_approval(
                 probe,
                 session,
                 "Call the blockchain send-transaction tool now for the newly "
                 "prepared transaction. Request my approval before broadcasting it.",
-                480,
+                600,
                 data_root,
                 approval_ids,
             )
@@ -517,7 +519,7 @@ def main() -> int:
         transcript_path = EVIDENCE_ROOT / "transcript.txt"
         transcript_path.write_text(transcript)
         assert "private provider text" not in transcript
-        assert contract.functions.outputOf(RECIPIENT).call() == 14
+        assert contract.functions.outputOf(RECIPIENT).call() == 16
         invocation_sequence = _requested_invocations(data_root)
         required_invocations = _required_invocations(invocation_sequence)
         assert all(item["tool_call_id"] for item in invocation_sequence)
@@ -581,7 +583,7 @@ def main() -> int:
         events_result = events_result_item["data"]
         assert quote_result["data"]["return_values"] == ["14"]
         assert receipt_result["data"]["status"] == 1
-        assert state_result["data"]["return_values"] == ["14"]
+        assert state_result["data"]["return_values"] == ["16"]
         audit = transaction_audits[0]
         evidence = {
             "schema_version": "bdtc-e2e-v1",

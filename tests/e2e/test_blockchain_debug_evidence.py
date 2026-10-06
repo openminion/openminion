@@ -68,7 +68,11 @@ def _assert_focus_invocation_sequence(evidence: dict) -> None:
 
 def _assert_evidence(evidence: dict, *, profile: str, commit: str) -> None:
     recipient = "0x" + ("44" if profile == "local" else "55") * 20
-    expected_args = [[recipient, "7", "14"]]
+    expected_args = [
+        [recipient, "7", "14"]
+        if profile == "local"
+        else [recipient, "8", "16"]
+    ]
     assert evidence["schema_version"] == "bdtc-e2e-v1"
     assert evidence["source_commit"] == commit
     assert evidence["profile"] == profile
@@ -127,12 +131,12 @@ def _assert_evidence(evidence: dict, *, profile: str, commit: str) -> None:
     assert authorized["transaction_hash"] == verified["transaction_hash"]
     assert verified["receipt_status"] == 1
     assert verified["event_signature"] == "Swap(address,address,uint256,uint256)"
-    assert verified["final_state"] == "14"
+    assert verified["final_state"] == ("14" if profile == "local" else "16")
     assert [item["value"] for item in verified["event_arguments"]] == [
         "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
         recipient,
-        "7",
-        "14",
+        "7" if profile == "local" else "8",
+        "14" if profile == "local" else "16",
     ]
 
     events_by_call: dict[str, list[str]] = defaultdict(list)
