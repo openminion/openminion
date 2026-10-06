@@ -13,6 +13,7 @@ from openminion.modules.brain.bootstrap.route_catalog import (
     available_routes,
     get_route_descriptor,
 )
+from openminion.modules.brain.bootstrap.resolve import ResolvedActRoute
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
     ExecutionResult,
@@ -1301,6 +1302,22 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
     monkeypatch,
 ) -> None:
     repo = _git_repo(tmp_path)
+    decisions = [
+        ActDecision(
+            confidence=0.8,
+            reason_code=label,
+            act_profile="general",
+            execution_target=ExecutionTargetPayload(kind="local"),
+            sub_intents=[label],
+        )
+        for label in ("patch_a", "patch_b")
+    ]
+    for decision in decisions:
+        decision._pre_resolved_act_route = ResolvedActRoute(
+            act_profile="general",
+            execution_target=ExecutionTargetPayload(kind="local"),
+            source="entry",
+        )
     ctx, runner, _services = _ctx(
         subtasks=[
             {
@@ -1316,30 +1333,17 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
                 "inputs": {"code_bearing": True, "workspace_root": str(repo)},
             },
         ],
-        decisions=[
-            ActDecision(
-                confidence=0.8,
-                reason_code="patch_a",
-                act_profile="general",
-                execution_target=ExecutionTargetPayload(kind="local"),
-                sub_intents=["patch-a"],
-            ),
-            ActDecision(
-                confidence=0.8,
-                reason_code="patch_b",
-                act_profile="general",
-                execution_target=ExecutionTargetPayload(kind="local"),
-                sub_intents=["patch-b"],
-            ),
-        ],
+        decisions=decisions,
     )
     tool_api = _WorkspaceWritingToolAPI(repo)
     runner.tool_api = tool_api
-    child_profiles: list[str] = []
+    child_profiles: list[tuple[str, str]] = []
 
     def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
         del user_input, logger, depth
-        child_profiles.append(decision.act_profile)
+        child_profiles.append(
+            (decision.act_profile, decision._pre_resolved_act_route.act_profile)
+        )
         value = 1 if getattr(decision, "reason_code", "") == "patch_a" else 2
         runner.tool_api.execute(
             command={"tool_name": "file.write", "args": {"value": value}},
@@ -1376,7 +1380,7 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
     assert all(
         call["workspace_root"] == call["metadata_cwd"] for call in tool_api.calls
     )
-    assert child_profiles == ["coding", "coding"]
+    assert child_profiles == [("coding", "coding"), ("coding", "coding")]
     assert tool_api.workspace_root == repo
     assert tool_api.policy.raw["workspace_root"] == str(repo)
     assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
@@ -1422,6 +1426,7 @@ def test_child_worktree_artifact_accept_applies_complete_change_set_after_restar
     )
     subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
     child_state = _state()
+    ctx.state.runtime_session_id = "focus-session"
     artifact_root = tmp_path / ".openminion"
     with artifact_ctl(artifact_root) as ctl:
         runner.artifactctl = ctl
@@ -1440,6 +1445,7 @@ def test_child_worktree_artifact_accept_applies_complete_change_set_after_restar
         )
 
         record = ctx.state.module_state["worktree_children"]["children"][0]
+        assert record["session_id"] == "focus-session"
         artifact = record["artifact"]
         assert artifact["status"] == "stored"
         assert artifact["bundle_ref"].startswith("artifact://sha256/")
@@ -1549,8 +1555,8 @@ def test_child_worktree_artifact_accept_applies_complete_change_set_after_restar
             artifactctl=ctl,
             policy=SimpleNamespace(raw={}),
             workspace=repo,
-            session_id=ctx.state.session_id,
-            telemetry_session_id=ctx.state.session_id,
+            session_id=ctx.state.runtime_session_id,
+            telemetry_session_id=ctx.state.runtime_session_id,
             telemetry_turn_id="turn-review",
             telemetryctl=telemetry,
         )
@@ -1639,8 +1645,8 @@ def test_child_worktree_artifact_accept_applies_complete_change_set_after_restar
             },
             SimpleNamespace(
                 artifactctl=ctl,
-                session_id=ctx.state.session_id,
-                telemetry_session_id=ctx.state.session_id,
+                session_id=ctx.state.runtime_session_id,
+                telemetry_session_id=ctx.state.runtime_session_id,
                 telemetry_turn_id="turn-accept",
                 telemetryctl=telemetry,
             ),
@@ -1674,8 +1680,8 @@ def test_child_worktree_artifact_accept_applies_complete_change_set_after_restar
                 },
                 SimpleNamespace(
                     artifactctl=ctl,
-                    session_id=ctx.state.session_id,
-                    telemetry_session_id=ctx.state.session_id,
+                    session_id=ctx.state.runtime_session_id,
+                    telemetry_session_id=ctx.state.runtime_session_id,
                     telemetry_turn_id="turn-duplicate-accept",
                     telemetryctl=telemetry,
                 ),

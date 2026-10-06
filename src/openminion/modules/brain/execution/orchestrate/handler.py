@@ -1,3 +1,4 @@
+from dataclasses import replace
 from types import SimpleNamespace
 from threading import Lock
 from typing import Any
@@ -420,10 +421,13 @@ class OrchestrateMode:
                 user_input=prompt,
                 logger=ctx.logger,
             )
-        if bool(subtask.inputs.get("code_bearing")) and hasattr(
-            decision, "act_profile"
-        ):
-            decision = decision.model_copy(update={"act_profile": "coding"})
+        if bool(subtask.inputs.get("code_bearing")):
+            decision.act_profile = "coding"
+            pre_resolved_route = getattr(decision, "_pre_resolved_act_route", None)
+            if pre_resolved_route is not None:
+                decision._pre_resolved_act_route = replace(
+                    pre_resolved_route, act_profile="coding"
+                )
         if (
             str(getattr(decision, "route", getattr(decision, "mode", "")) or "").strip()
             == ORCHESTRATE_MODE
