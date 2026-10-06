@@ -15,25 +15,12 @@ from cryptography.fernet import Fernet
 from web3 import Web3
 
 ROOT = Path(__file__).resolve().parents[3]
-
-
-def _framework_root() -> Path:
-    return min(
-        (
-            parent
-            for parent in ROOT.parents
-            if (parent / "test-configs" / "per-agent-minimax-official.json").exists()
-        ),
-        default=ROOT.parent,
-        key=lambda path: len(path.parts),
-    )
-
-
-FRAMEWORK_ROOT = _framework_root()
 sys.path.insert(0, str(ROOT))
 
+from tests.helpers.live_e2e_profiles import resolve_live_framework_root  # noqa: E402
 from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
+FRAMEWORK_ROOT = resolve_live_framework_root(ROOT)
 RUNTIME_ROOT = isolate_runtime_roots(prefix="openminion-bdtc-focus-")
 
 from openminion.modules.secret.service import SecretService  # noqa: E402

@@ -16,19 +16,12 @@ from tests.e2e.runners.run_blockchain_debug_focus_minimax import (
     _required_invocations,
     _turn_scope_groups,
 )
+from tests.helpers.live_e2e_profiles import resolve_live_framework_root
 
 pytestmark = pytest.mark.e2e
 
 ROOT = Path(__file__).resolve().parents[2]
-FRAMEWORK_ROOT = min(
-    (
-        parent
-        for parent in ROOT.parents
-        if (parent / "test-configs" / "per-agent-minimax-official.json").exists()
-    ),
-    default=ROOT.parent,
-    key=lambda path: len(path.parts),
-)
+FRAMEWORK_ROOT = resolve_live_framework_root(ROOT)
 EVIDENCE_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "bdtc-e2e"
 
 

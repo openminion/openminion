@@ -13,7 +13,11 @@ def resolve_live_framework_root(openminion_root: Path) -> Path:
     configured = str(os.getenv(LIVE_E2E_FRAMEWORK_ROOT_ENV, "")).strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    return openminion_root.resolve().parent
+    resolved_root = openminion_root.resolve()
+    for parent in resolved_root.parents:
+        if (parent / "test-configs").is_dir():
+            return parent
+    return resolved_root.parent
 
 
 @dataclass(frozen=True)
