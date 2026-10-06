@@ -17,7 +17,7 @@ from openminion.modules.tool.plugin_api import (
 )
 from .base import PolicyStore
 from .migrations import list_migrations
-from ..constants import POLICY_DURATION_ONCE
+from ..constants import EXACT_CONFIRMATION_PAIRS, POLICY_DURATION_ONCE
 from ..models import (
     PendingPolicyConfirmation,
     PolicyControlError,
@@ -409,11 +409,12 @@ class _PolicyStoreMixin(PolicyStore):
                 SELECT * FROM policy_pending_confirmations
                 WHERE subject_id = ? AND tool = ? AND method = ?
                   AND invocation_hash = ? AND state = 'pending'
+                  AND COALESCE(session_id, '') = ?
                   AND expires_at > ?
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
-                (subject_id, tool, method, invocation_hash, now),
+                (subject_id, tool, method, invocation_hash, session_id or "", now),
             )
             if rows:
                 pending = self._row_to_pending_confirmation(rows[0])
@@ -526,6 +527,7 @@ class _PolicyStoreMixin(PolicyStore):
                             tool=pending.tool,
                             method=pending.method,
                             duration_type="once",
+                            session_id=pending.session_id,
                             invocation_hash=pending.invocation_hash,
                             max_uses=1,
                             reason="created_from_pending_confirmation",
@@ -563,6 +565,10 @@ class _PolicyStoreMixin(PolicyStore):
         invocation_hash: str,
         session_id: str | None = None,
     ) -> PolicyGrant | None:
+        if (tool, method) not in EXACT_CONFIRMATION_PAIRS:
+            return None
+        if tool == "commerce" and not session_id:
+            return None
         now = utc_now_iso()
         invalid_approval_id: str | None = None
         consumed: PolicyGrant | None = None
@@ -572,6 +578,7 @@ class _PolicyStoreMixin(PolicyStore):
                 SELECT * FROM policy_grants
                 WHERE subject_id = ? AND effect = 'allow'
                   AND tool = ? AND method = ? AND invocation_hash = ?
+                  AND (? IS NULL OR COALESCE(session_id, '') = ?)
                   AND duration_type = 'once' AND approval_id IS NOT NULL
                   AND revoked_at IS NULL
                   AND (expires_at IS NULL OR expires_at > ?)
@@ -579,14 +586,22 @@ class _PolicyStoreMixin(PolicyStore):
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
-                (subject_id, tool, method, invocation_hash, now),
+                (
+                    subject_id,
+                    tool,
+                    method,
+                    invocation_hash,
+                    session_id,
+                    session_id,
+                    now,
+                ),
             )
             if not rows:
                 return None
             grant = self._row_to_grant(rows[0])
             approval_rows = self._record_store.query_dicts(
                 """
-                SELECT preview_json, state, session_id
+                SELECT preview_json, state, subject_id, session_id
                 FROM policy_pending_confirmations
                 WHERE approval_id = ? AND tool = ? AND method = ?
                   AND invocation_hash = ?
@@ -596,6 +611,7 @@ class _PolicyStoreMixin(PolicyStore):
             if (
                 not approval_rows
                 or str(approval_rows[0]["state"]) != "allowed"
+                or str(approval_rows[0]["subject_id"] or "") != subject_id
                 or (
                     session_id is not None
                     and str(approval_rows[0]["session_id"] or "") != session_id

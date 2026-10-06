@@ -7,12 +7,15 @@ from typing import Any, Literal
 from openminion.modules.tool.plugin_api import (
     BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
     BlockchainSendConfirmationPreview,
+    ToolConfirmationPreview,
+    is_policy_authorization_pair,
 )
 
 from ..constants import (
     BLOCKCHAIN_CONFIRMATION_TTL_SECONDS,
     BLOCKCHAIN_POLICY_TOOL,
     BLOCKCHAIN_SEND_METHOD,
+    COMMERCE_CONFIRMATION_TTL_SECONDS,
     OPS_COMMAND_CONFIRMATION_TTL_SECONDS,
     OPS_COMMAND_POLICY_TOOL,
     OPS_COMMAND_RUN_METHOD,
@@ -50,18 +53,26 @@ def is_exact_ops_command(tool: str, method: str) -> bool:
     return tool == OPS_COMMAND_POLICY_TOOL and method == OPS_COMMAND_RUN_METHOD
 
 
+def is_exact_commerce_action(tool: str, method: str) -> bool:
+    return tool == "commerce" and is_policy_authorization_pair(tool, method)
+
+
 def get_or_create_exact_confirmation(
     *,
     store: PolicyStore,
     invocation: InvocationSummary,
     context: ContextSummary,
     subject_id: str,
-    blockchain_preview: BlockchainSendConfirmationPreview | None,
+    confirmation_preview: ToolConfirmationPreview | None,
 ) -> PendingPolicyConfirmation:
     if is_exact_blockchain_send(invocation.tool, invocation.method):
-        assert blockchain_preview is not None
-        preview = asdict(blockchain_preview)
+        assert isinstance(confirmation_preview, BlockchainSendConfirmationPreview)
+        preview = asdict(confirmation_preview)
         ttl_seconds = BLOCKCHAIN_CONFIRMATION_TTL_SECONDS
+    elif is_exact_commerce_action(invocation.tool, invocation.method):
+        assert isinstance(confirmation_preview, dict)
+        preview = dict(confirmation_preview)
+        ttl_seconds = COMMERCE_CONFIRMATION_TTL_SECONDS
     else:
         preview = {
             "plan_id": str(invocation.args.get("plan_id", "")),

@@ -83,15 +83,44 @@ class BlockchainSendConfirmationPreview:
 
 ToolConfirmationPreview = BlockchainSendConfirmationPreview | dict[str, Any]
 
+POLICY_AUTHORIZATION_PAIRS = frozenset(
+    {
+        ("blockchain", "send_transaction"),
+        ("commerce", "prepare_order"),
+        ("commerce", "place_order"),
+        ("commerce", "apply_order_action"),
+    }
+)
+
+
+def is_policy_authorization_pair(tool: str, method: str) -> bool:
+    return (tool, method) in POLICY_AUTHORIZATION_PAIRS
+
 
 @dataclass(frozen=True)
 class PolicyAuthorization:
-    tool: Literal["blockchain"]
-    method: Literal["send_transaction"]
+    tool: Literal["blockchain", "commerce"]
+    method: Literal[
+        "send_transaction", "prepare_order", "place_order", "apply_order_action"
+    ]
     invocation_hash: str
     approval_id: str
     grant_id: str
     duration_type: Literal["once"]
+    subject_id: str = "local"
+    session_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not is_policy_authorization_pair(self.tool, self.method):
+            raise ValueError("unsupported policy authorization tool/method pair")
+        if self.duration_type != "once":
+            raise ValueError("policy authorization must be one-time")
+        if self.tool == "commerce" and (
+            self.subject_id != "local" or not self.session_id
+        ):
+            raise ValueError(
+                "commerce authorization requires local subject and session"
+            )
 
 
 @dataclass

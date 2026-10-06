@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Optional, cast
 from urllib.parse import urlparse
 
-from openminion.modules.tool.plugin_api import BlockchainSendConfirmationPreview
+from openminion.modules.tool.plugin_api import (
+    BlockchainSendConfirmationPreview,
+    ToolConfirmationPreview,
+    is_policy_authorization_pair,
+)
 
 from ..models import (
     ContextSummary,
@@ -67,6 +71,7 @@ from .confirmation import (
     build_confirm_request,
     get_or_create_exact_confirmation,
     is_exact_blockchain_send,
+    is_exact_commerce_action,
     is_exact_ops_command,
     parse_confirmation_response,
     resolve_exact_ops_decision,
@@ -178,31 +183,59 @@ class PolicyCtl:
         *,
         risk_override: Optional[RiskSpec] = None,
         config_overrides: Optional[PolicyConfig] = None,
-        confirmation_preview: BlockchainSendConfirmationPreview | None = None,
+        confirmation_preview: ToolConfirmationPreview | None = None,
         confirmation_preview_error: str | None = None,
     ) -> PolicyDecision:
         inv = self._normalize_invocation(invocation)
         csum = self._normalize_context(ctx)
         exact_blockchain_send = is_exact_blockchain_send(inv.tool, inv.method)
+        exact_policy_authorization = is_policy_authorization_pair(inv.tool, inv.method)
+        exact_commerce_action = is_exact_commerce_action(inv.tool, inv.method)
         exact_ops_command = is_exact_ops_command(inv.tool, inv.method)
         risk = (
             self._resolve_risk(inv)
-            if exact_blockchain_send
+            if exact_policy_authorization
             else risk_override or self._resolve_risk(inv)
         )
         effective_config = config_overrides or self._config
         mode = effective_config.mode if config_overrides is not None else self.mode()
+        if exact_commerce_action and (
+            csum.subject_id != "local" or not csum.session_id
+        ):
+            decision = PolicyDecision(
+                decision=POLICY_DECISION_DENY,
+                reason_code="SUBJECT_UNAVAILABLE",
+                reason="Commerce authorization requires the trusted local subject and session.",
+                risk=risk,
+                invocation_hash=inv.invocation_hash,
+            )
+            self._log_decision(inv=inv, ctx=csum, decision=decision)
+            return decision
         if exact_blockchain_send and confirmation_preview is None:
             decision = blockchain_preview_invalid_decision(
                 inv.invocation_hash, risk, confirmation_preview_error
             )
             self._log_decision(inv=inv, ctx=csum, decision=decision)
             return decision
-        if (exact_blockchain_send or exact_ops_command) and mode not in {
+        if exact_commerce_action and not isinstance(confirmation_preview, dict):
+            decision = PolicyDecision(
+                decision=POLICY_DECISION_DENY,
+                reason_code="COMMERCE_CONFIRMATION_PREVIEW_INVALID",
+                reason="Commerce approval preview could not be verified.",
+                risk=risk,
+                invocation_hash=inv.invocation_hash,
+            )
+            self._log_decision(inv=inv, ctx=csum, decision=decision)
+            return decision
+        if (exact_policy_authorization or exact_ops_command) and mode not in {
             POLICY_MODE_ENFORCE,
             POLICY_MODE_ENFORCE_SAFE,
         }:
-            action = "operations command" if exact_ops_command else "blockchain send"
+            action = (
+                "operations command"
+                if exact_ops_command
+                else f"{inv.tool} {inv.method}"
+            )
             decision = PolicyDecision(
                 decision=POLICY_DECISION_DENY,
                 reason_code="POLICY_MODE_UNSUPPORTED",
@@ -247,10 +280,16 @@ class PolicyCtl:
         return enforced
 
     def create_grant(self, grant: PolicyGrantInput) -> str:
-        if is_exact_blockchain_send(grant.tool, grant.method):
+        if is_policy_authorization_pair(grant.tool, grant.method):
+            if is_exact_blockchain_send(grant.tool, grant.method):
+                code = "BLOCKCHAIN_SEND_GRANT_REQUIRES_CONFIRMATION"
+                message = "Blockchain send grants require a pending confirmation."
+            else:
+                code = "EXACT_AUTHORIZATION_REQUIRES_CONFIRMATION"
+                message = "Commerce grants require a pending confirmation."
             raise PolicyControlError(
-                "BLOCKCHAIN_SEND_GRANT_REQUIRES_CONFIRMATION",
-                "Blockchain send grants require a pending confirmation.",
+                code,
+                message,
             )
         if grant.effect not in POLICY_GRANT_EFFECTS:
             raise ValueError("grant.effect must be allow|deny")
@@ -271,10 +310,16 @@ class PolicyCtl:
         max_uses: Optional[int] = None,
     ) -> str:
         inv = self._normalize_invocation(invocation)
-        if is_exact_blockchain_send(inv.tool, inv.method):
+        if is_policy_authorization_pair(inv.tool, inv.method):
+            if is_exact_blockchain_send(inv.tool, inv.method):
+                code = "BLOCKCHAIN_SEND_GRANT_REQUIRES_CONFIRMATION"
+                message = "Blockchain send grants require a pending confirmation."
+            else:
+                code = "EXACT_AUTHORIZATION_REQUIRES_CONFIRMATION"
+                message = "Commerce grants require a pending confirmation."
             raise PolicyControlError(
-                "BLOCKCHAIN_SEND_GRANT_REQUIRES_CONFIRMATION",
-                "Blockchain send grants require a pending confirmation.",
+                code,
+                message,
             )
         csum = self._normalize_context(ctx)
         target = self._default_target_scope(inv)
@@ -389,13 +434,13 @@ class PolicyCtl:
         consume_grants: bool,
         mode: str,
         effective_config: PolicyConfig,
-        confirmation_preview: BlockchainSendConfirmationPreview | None,
+        confirmation_preview: ToolConfirmationPreview | None,
     ) -> PolicyDecision:
         self._store.cleanup_expired()
         subject_id = csum.subject_id or effective_config.subject_id_default
         candidates = self._store.list_grants(subject_id=subject_id, active_only=True)
         matches = self._find_matching_grants(candidates, inv=inv, csum=csum, risk=risk)
-        if is_exact_blockchain_send(inv.tool, inv.method):
+        if is_policy_authorization_pair(inv.tool, inv.method):
             matches = [match for match in matches if match.grant.approval_id]
         selected = self._select_match(matches)
         if selected is not None:
@@ -410,7 +455,7 @@ class PolicyCtl:
                     details={"grant_id": grant.grant_id},
                 )
             if not is_exact_ops_command(inv.tool, inv.method):
-                if consume_grants and not is_exact_blockchain_send(
+                if consume_grants and not is_policy_authorization_pair(
                     inv.tool, inv.method
                 ):
                     self._store.consume_grant_use(grant.grant_id)
@@ -544,7 +589,7 @@ class PolicyCtl:
         risk: RiskSpec,
         reason_code: str,
         reason: str,
-        confirmation_preview: BlockchainSendConfirmationPreview | None,
+        confirmation_preview: ToolConfirmationPreview | None,
     ) -> PolicyDecision:
         confirm_request = build_confirm_request(
             invocation=inv,
@@ -553,7 +598,7 @@ class PolicyCtl:
             target_scope=self._default_target_scope(inv),
         )
         approval_id: str | None = None
-        if is_exact_blockchain_send(inv.tool, inv.method) or is_exact_ops_command(
+        if is_policy_authorization_pair(inv.tool, inv.method) or is_exact_ops_command(
             inv.tool, inv.method
         ):
             pending = get_or_create_exact_confirmation(
@@ -561,7 +606,7 @@ class PolicyCtl:
                 invocation=inv,
                 context=csum,
                 subject_id=csum.subject_id or self._config.subject_id_default,
-                blockchain_preview=confirmation_preview,
+                confirmation_preview=confirmation_preview,
             )
             approval_id = pending.approval_id
             confirm_request = {
@@ -577,7 +622,11 @@ class PolicyCtl:
             confirm_request=confirm_request,
             approval_id=approval_id,
             invocation_hash=inv.invocation_hash,
-            confirmation_preview=confirmation_preview,
+            confirmation_preview=(
+                confirmation_preview
+                if isinstance(confirmation_preview, BlockchainSendConfirmationPreview)
+                else None
+            ),
         )
 
     def _default_target_scope(self, inv: InvocationSummary) -> Dict[str, Any]:
@@ -633,11 +682,7 @@ class PolicyCtl:
             return False
         if grant.max_uses is not None and grant.uses_count >= grant.max_uses:
             return False
-        if (
-            grant.duration_type == POLICY_DURATION_SESSION
-            and grant.session_id
-            and grant.session_id != csum.session_id
-        ):
+        if grant.session_id and grant.session_id != csum.session_id:
             return False
         if (
             grant.duration_type == POLICY_DURATION_ONCE
