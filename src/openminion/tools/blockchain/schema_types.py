@@ -79,6 +79,7 @@ def inline_discriminated_branches(schema: dict[str, Any]) -> dict[str, Any]:
             branches.append(branch)
     schema["oneOf"] = branches
     schema["$defs"] = definitions
+    schema["type"] = "object"
     schema["discriminator"] = {"propertyName": schema["discriminator"]["propertyName"]}
     return schema
 

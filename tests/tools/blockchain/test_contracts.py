@@ -124,6 +124,7 @@ def test_complex_blockchain_schema_examples_are_valid() -> None:
 def test_discriminated_tool_schemas_inline_action_branches() -> None:
     for model in (InspectArgs, PrepareArgs, DebugArgs):
         schema = model.model_json_schema()
+        assert schema["type"] == "object"
         assert schema["discriminator"] == {
             "propertyName": "kind" if model is PrepareArgs else "action"
         }
