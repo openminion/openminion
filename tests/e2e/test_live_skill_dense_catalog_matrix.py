@@ -203,6 +203,9 @@ _MISSING_SKILL_PROMPT = (
     "Use the totally_missing_skill skill and give the first four adapted "
     "steps, one verification check, and one guardrail."
 )
+_READ_ONLY_RESPONSE_SCOPE = (
+    " Explain the workflow only; do not modify files or perform the task."
+)
 
 
 def _artifact_root() -> Path:
@@ -335,12 +338,15 @@ def _run_skill_chat(
     prompt: str,
     slug: str,
 ) -> tuple[str, Path, str]:
+    workspace_root = transcript_dir.parent / "workspaces" / data_root.name / slug
+    workspace_root.mkdir(parents=True, exist_ok=True)
     result = run_cli_session(
         session_id_prefix=f"live-skill-dense-{target.agent_id}-{slug}",
-        user_input=f"{prompt}\n/debug\n/exit\n",
+        user_input=f"{prompt}{_READ_ONLY_RESPONSE_SCOPE}\n/debug\n/exit\n",
         agent_id=target.agent_id,
         config_path=target.config_path,
         data_root_override=data_root,
+        workspace_root_override=workspace_root,
         matrix_type=target.matrix_type,
     )
     transcript = result.transcript
