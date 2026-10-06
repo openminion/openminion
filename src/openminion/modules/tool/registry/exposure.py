@@ -20,7 +20,7 @@ _ALLOW_MODEL_EXPOSURE_PROVIDER_FALLBACK_ENV = (
 
 
 def _provider_spec_from_tool_spec(tool: ToolSpec) -> ProviderToolSpec:
-    description = ""
+    description = str(tool.description or "").strip()
     parameters: dict[str, Any] = {}
     explicit_parameters = tool.parameters_schema
     if isinstance(explicit_parameters, Mapping) and explicit_parameters:
@@ -30,7 +30,8 @@ def _provider_spec_from_tool_spec(tool: ToolSpec) -> ProviderToolSpec:
         schema = args_model.model_json_schema()
         if isinstance(schema, Mapping):
             parameters = dict(schema)
-            description = str(parameters.get("description", "") or "").strip()
+            if not description:
+                description = str(parameters.get("description", "") or "").strip()
     elif not parameters and args_model in {dict, None}:
         parameters = {"type": "object", "additionalProperties": True}
     return ProviderToolSpec(

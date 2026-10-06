@@ -36,8 +36,8 @@ Notes:
 Use:
 
 1. `import openminion`
-2. `from openminion import APIRuntime, Agent, OpenMinionConfig, tool`
-3. `from openminion.api import APIRuntime, Agent, dispatch_request`
+2. `from openminion import Agent, ProviderError, tool`
+3. `from openminion.api import APIRuntime, Agent, ProviderError, dispatch_request`
 
 Best for:
 
@@ -45,6 +45,13 @@ Best for:
 2. direct runtime composition,
 3. explicit turn execution from code,
 4. typed tool/handoff integration.
+
+`Agent` owns an isolated session by default. Pass `session_id` to the
+constructor or to `run()` when an application already owns the continuity key.
+Pass `config_path` for a project-owned config and `agent_id` to select a
+configured profile. Agent calls return their result to Python without console
+delivery, and `AgentRunResult.session_id` exposes the resolved continuity key.
+`Agent` also supports `with Agent(...) as agent:` for deterministic cleanup.
 
 Stable exported root symbols are recorded in `API_COMPATIBILITY.md`.
 

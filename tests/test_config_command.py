@@ -28,6 +28,36 @@ from openminion.modules.llm.setup_catalog import get_setup_preset, list_setup_pr
 
 
 class ConfigCommandTests(unittest.TestCase):
+    def test_config_init_without_explicit_path_writes_reported_project_config(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            args = Namespace(
+                config=None,
+                force=False,
+                provider="echo",
+                storage_location="config",
+                storage_path=None,
+            )
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "OPENMINION_HOME": "",
+                        "OPENMINION_DATA_ROOT": "",
+                    },
+                ),
+                mock.patch("pathlib.Path.cwd", return_value=project_root),
+            ):
+                code = config_init(args)
+
+            self.assertEqual(code, 0)
+            config_path = project_root / ".openminion" / "agents.json"
+            self.assertTrue(config_path.exists())
+            self.assertTrue(json.loads(config_path.read_text())["runtime"]["demo_mode"])
+
     def test_config_init_defaults_storage_to_config_dir_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "cfg" / "config.json"
@@ -61,6 +91,38 @@ class ConfigCommandTests(unittest.TestCase):
             self.assertEqual(
                 payload["agents"]["openminion"]["default_channel"],
                 "console",
+            )
+
+    def test_canonical_project_config_does_not_duplicate_config_directory(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            config_path = project_root / ".openminion" / "agents.json"
+            args = Namespace(
+                config=str(config_path),
+                force=False,
+                provider="echo",
+                storage_location="config",
+                storage_path=None,
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "OPENMINION_HOME": "",
+                    "OPENMINION_DATA_ROOT": "",
+                },
+            ):
+                code = config_init(args)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(config_path.read_text())
+            self.assertEqual(
+                payload["storage"]["path"],
+                str(
+                    (project_root / ".openminion" / "state" / "openminion.db").resolve()
+                ),
             )
 
     def test_config_init_supports_home_storage_location(self) -> None:

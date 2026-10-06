@@ -102,6 +102,16 @@ def test_package_metadata_declares_canonical_public_urls() -> None:
     }
 
 
+def test_package_typing_classifier_matches_pep561_marker() -> None:
+    root = Path(__file__).resolve().parents[1]
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text())
+    classifiers = pyproject["project"]["classifiers"]
+
+    assert ("Typing :: Typed" in classifiers) == (
+        root / "src" / "openminion" / "py.typed"
+    ).is_file()
+
+
 def test_dev_extra_keeps_browser_viewer_smoke_dependencies() -> None:
     pyproject = tomllib.loads(
         (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
@@ -160,11 +170,11 @@ def import_without_blockchain_dependencies(name, *args, **kwargs):
 builtins.__import__ = import_without_blockchain_dependencies
 
 import openminion
-from openminion import APIRuntime, Agent, OpenMinionConfig, tool
+from openminion import APIRuntime, Agent, OpenMinionConfig, ProviderError, tool
 from openminion.api import dispatch_request
 
 assert openminion.__version__
-assert APIRuntime and Agent and OpenMinionConfig
+assert APIRuntime and Agent and OpenMinionConfig and ProviderError
 assert callable(tool) and callable(dispatch_request)
 """
 

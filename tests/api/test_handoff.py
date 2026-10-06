@@ -187,7 +187,9 @@ def test_agent_handoff_registration_does_not_leak_to_next_agent_run() -> None:
     parent.run("delegate once")
     unrelated.run("no handoff")
 
-    assert runtime.last_payload == {"message": "no handoff"}
+    assert runtime.last_payload["message"] == "no handoff"
+    assert runtime.last_payload["deliver"] is False
+    assert runtime.last_payload["session_id"] == unrelated.session_id
     assert "transfer_to_child" not in runtime.seen_tool_names_during_run
     assert "transfer_to_child" not in runtime.tools.list()
 

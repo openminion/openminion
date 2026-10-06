@@ -228,20 +228,30 @@ Inside Focus, use `/participants` to inspect the room, `/routing broadcast` or
 `@reviewer`. Room mutations require the local owner; participants can post and
 observers cannot.
 
-Embed the same runtime from Python:
+Embed an isolated agent session from Python:
 
 ```python
-from openminion import APIRuntime
+from openminion import Agent, ProviderError, tool
 
-runtime = APIRuntime.from_config_path(None)
+@tool
+def lookup_order(order_id: str) -> str:
+    return f"order {order_id}: ready"
+
 try:
-    result = runtime.run_turn(
-        payload={"message": "Say hello in one short sentence."}
-    )
-    print(result)
-finally:
-    runtime.close()
+    with Agent(
+        instructions="Answer briefly.",
+        tools=[lookup_order],
+        session_id="customer-42",
+    ) as agent:
+        result = agent.run("Check order A-104")
+        print(result.text, result.session_id)
+except ProviderError as exc:
+    print(f"provider failed: {exc}")
 ```
+
+Pass `config_path="path/to/agents.json"` to use a project-owned config and
+`agent_id="reviewer"` to select one configured profile. For advanced runtime
+composition, construct `APIRuntime` directly and pass it as `runtime=` instead.
 
 See [`examples/starter/quickstart.py`](examples/starter/quickstart.py) for the
 complete runnable example and
@@ -280,7 +290,7 @@ complete runnable example and
 
 The root package exports the supported Python facade: `APIRuntime`, `Agent`,
 `AgentOutputValidationError`, `AgentRunResult`, `Handoff`, `MemoryBundle`,
-`OpenMinionConfig`, `subagent`, `tool`, and `__version__`. See
+`OpenMinionConfig`, `ProviderError`, `subagent`, `tool`, and `__version__`. See
 [`API_COMPATIBILITY.md`](API_COMPATIBILITY.md) before depending on deeper
 package internals.
 

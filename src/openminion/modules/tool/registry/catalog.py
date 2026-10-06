@@ -45,6 +45,7 @@ class ToolSpec:
     blast_radius: ToolBlastRadius | None = None
     sandbox_kind: SandboxKind | None = None
     dependencies: tuple[ToolDependencyDecl, ...] = ()
+    description: str = ""
 
     def resolved_capabilities(self) -> tuple[str, ...]:
         return self.capabilities or self.tags

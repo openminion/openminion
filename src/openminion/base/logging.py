@@ -1,5 +1,3 @@
-"""Logging setup, filtering, and structured event formatting."""
-
 import logging
 import os
 import sys
@@ -26,6 +24,8 @@ _INTERACTIVE_LEVEL_OVERRIDES: dict[str, int] = {
     "": logging.WARNING,
     "openminion": logging.WARNING,
     "openminion.gateway": logging.ERROR,
+    # Fallback posture remains available through runtime diagnostics.
+    "openminion.modules.brain.adapters.context.bridges": logging.ERROR,
     "openminion.provider": logging.ERROR,
 }
 _DEFAULT_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -99,9 +99,9 @@ def _normalize_logger_name(name: str | None) -> str:
     normalized = (name or "").strip()
     if not normalized:
         return _LOG_NAMESPACE
-    normalized = normalized.replace("/", ".").replace("..", ".").strip(".")
-    if not normalized:
-        return _LOG_NAMESPACE
+    normalized = (
+        normalized.replace("/", ".").replace("..", ".").strip(".") or _LOG_NAMESPACE
+    )
     if normalized == _LOG_NAMESPACE or normalized.startswith(f"{_LOG_NAMESPACE}."):
         return normalized
     return f"{_LOG_NAMESPACE}.{normalized}"

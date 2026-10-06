@@ -138,6 +138,12 @@ class LoggingConfigTests(unittest.TestCase):
         self.assertEqual(logging.getLogger().level, logging.WARNING)
         self.assertEqual(logging.getLogger("openminion").level, logging.WARNING)
         self.assertEqual(logging.getLogger("openminion.gateway").level, logging.ERROR)
+        self.assertEqual(
+            logging.getLogger(
+                "openminion.modules.brain.adapters.context.bridges"
+            ).level,
+            logging.ERROR,
+        )
         self.assertEqual(logging.getLogger("openminion.provider").level, logging.ERROR)
 
     @patch.dict(os.environ, {"OPENMINION_LOG_COLOR": "0"}, clear=False)

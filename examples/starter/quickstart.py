@@ -1,10 +1,17 @@
-"""Run one APIRuntime turn with the configured agent."""
+"""Run one Agent turn with the configured OpenMinion runtime."""
 
 from __future__ import annotations
 
 import sys
 
-from openminion import APIRuntime, __version__
+from openminion import Agent, __version__, tool
+
+
+@tool
+def hello_tool(name: str = "world") -> str:
+    """Return a short greeting."""
+
+    return f"hello {name.strip() or 'world'}"
 
 
 def main() -> int:
@@ -12,13 +19,10 @@ def main() -> int:
     print(f"[openminion {__version__}] quickstart turn")
     print(f"  prompt: {prompt}")
 
-    runtime = APIRuntime.from_config_path(None)
-    try:
-        result = runtime.run_turn(payload={"message": prompt, "deliver": False})
-        print(f"  reply: {result['body']}")
+    with Agent(tools=[hello_tool]) as agent:
+        result = agent.run(prompt)
+        print(f"  reply: {result.text}")
         return 0
-    finally:
-        runtime.close()
 
 
 if __name__ == "__main__":

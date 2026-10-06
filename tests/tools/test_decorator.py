@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
+from openminion.modules.tool.framework import (
+    ToolDecl,
+    ToolFamilySpec,
+    derive_tool_specs,
+)
+from openminion.modules.tool.registry import ToolRegistry
 from openminion.tools import tool
 
 
@@ -97,6 +102,21 @@ def test_decorator_tool_family_spec_wraps_decl() -> None:
     assert spec.module_id == "openminion.tools.user.ping"
     assert len(spec.tools) == 1
     assert spec.tools[0] is ping.tool_decl
+
+
+def test_decorator_description_reaches_provider_schema() -> None:
+    @tool
+    def ping() -> str:
+        """Check whether the service is available."""
+
+        return "pong"
+
+    registry = ToolRegistry()
+    registry.add(derive_tool_specs(ping.tool_family_spec())[0])
+
+    assert registry.provider_specs()[0].description == (
+        "Check whether the service is available."
+    )
 
 
 def test_decorator_default_arguments_become_optional_fields() -> None:
