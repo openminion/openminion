@@ -10,6 +10,8 @@ Use it as the main starter surface for:
 4. identity/config examples,
 5. runnable example packages,
 6. graph viewer fixtures.
+7. Python SDK recipes.
+8. provider setup and switching recipes.
 
 ## Family Map
 
@@ -96,6 +98,25 @@ Start with:
 2. `examples/graph-viewer/agents.json`
 3. `examples/graph-viewer/repo-viewer-envelope.json`
 
+### 7. Python SDK recipes
+
+Complete, copyable programs for the public Python API live under:
+
+1. `examples/sdk/`
+
+Start with `examples/sdk/README.md`, then choose the smallest program that
+matches the behavior you need: tools, typed output, sessions, progress events,
+delegation, runtime ownership, provider switching, or explicit errors.
+
+### 8. Provider recipes
+
+Provider setup and verification commands live under:
+
+1. `examples/providers/`
+
+These recipes keep credentials in environment variables and use the same
+provider-neutral Python program after setup.
+
 ## Naming Contract
 
 1. Contract-owned uppercase bundle paths remain uppercase:
@@ -107,6 +128,8 @@ Start with:
 5. Graph viewer examples stay under `examples/graph-viewer/`.
 6. New example families should prefer folder context over `hello_*`-style flat
    filename sprawl.
+7. Python SDK programs stay under `examples/sdk/`.
+8. Provider-specific setup guidance stays under `examples/providers/`.
 
 ## Canonical Paths
 
