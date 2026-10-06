@@ -16,6 +16,7 @@ from openminion.services.runtime.plugins import discover_plugin_manifests
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = ROOT / "examples"
+SDK_EXAMPLES = EXAMPLES / "sdk"
 hello_tool = run_path(str(EXAMPLES / "starter" / "tool.py"))["hello_tool"]
 
 
@@ -130,3 +131,29 @@ def test_identity_sample_uses_canonical_model_tool_ids() -> None:
     tools = payload["profiles"]["sample"]["tool_posture"]["allowed_tools"]
 
     assert set(tools) <= ALL_MODEL_TOOL_IDS_SET
+
+
+def test_sdk_examples_expose_help_without_provider_calls() -> None:
+    scripts = sorted(SDK_EXAMPLES.glob("*.py"))
+
+    assert {script.name for script in scripts} == {
+        "application_runtime.py",
+        "delegation.py",
+        "error_handling.py",
+        "provider_switching.py",
+        "sessions.py",
+        "streaming_progress.py",
+        "structured_output.py",
+        "tool_agent.py",
+    }
+    for script in scripts:
+        result = _run([str(script), "--help"], env=_demo_env(ROOT / ".tmp-help"))
+        assert "usage:" in result.stdout
+
+
+def test_sdk_tool_example_uses_public_decorator_contract() -> None:
+    module = run_path(str(SDK_EXAMPLES / "tool_agent.py"))
+    tool_decl = module["lookup_order"].tool_decl
+
+    assert tool_decl.name == "lookup_order"
+    assert "order" in tool_decl.description.lower()
