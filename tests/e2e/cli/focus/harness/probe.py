@@ -603,7 +603,9 @@ class FocusProbe:
     def _wait_for_composer(session: PtySession, *, timeout: float = 15.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if _composer_is_ready(session.screen_text):
+            if _composer_is_ready(session.screen_text) and not active_turn_busy(
+                session.screen_text
+            ):
                 return
             time.sleep(0.05)
         raise AssertionError(

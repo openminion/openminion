@@ -297,6 +297,9 @@ def _reply_to_approval(probe: FocusProbe, session, reply: str, timeout: int) -> 
         probe._submit_sidecar_consent(session, reply)
     else:
         probe._submit_composer_line(session, reply)
+    session.wait_for_visible_match_after(
+        r"Done in \d+(?:m\d{2}s|s)", offset=offset, timeout=timeout
+    )
     probe._wait_for_composer(session, timeout=timeout)
     return session.visible_transcript[offset:]
 
@@ -411,7 +414,9 @@ def main() -> int:
 
         def prepare_prompt(amount_in: int, minimum_out: int) -> str:
             return (
-                f"Prepare but do not send a call to contract {contract.address} "
+                "Use blockchain.prepare_transaction now to create a fresh prepared "
+                "transaction. Do not reuse or describe an earlier preparation. "
+                f"Do not send it. Call contract {contract.address} "
                 f"using function ABI {compact(swap_abi)} and tuple arguments "
                 f"{compact([[RECIPIENT, amount_in, minimum_out]])}."
             )
