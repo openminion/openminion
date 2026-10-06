@@ -15,6 +15,7 @@ from openminion.modules.storage.runtime.module_store import (
 )
 
 from ..models import CommerceDigest, CommerceLifecycleState
+from ..provider import OrderPreparation
 from .migrations import list_migrations
 from .models import (
     AttemptKind,
@@ -70,6 +71,7 @@ class _CommerceOrderStoreOps:
         subject_id: str,
         preparation_id: str,
         payload: PreparationPayload,
+        prepared: OrderPreparation | None = None,
         preparation_attempt_id: str | None = None,
     ) -> PreparationRecord:
         if preparation_attempt_id is not None:
@@ -77,14 +79,19 @@ class _CommerceOrderStoreOps:
             if attempt is None or attempt.kind != "preparation":
                 raise ValueError("preparation attempt must belong to the same subject")
         payload_json = _canonical_json(payload.model_dump(mode="json"))
+        prepared_json = (
+            _canonical_json(prepared.model_dump(mode="json"))
+            if prepared is not None
+            else None
+        )
         created_at = _now_iso()
         created = self._record_store.execute_count(
             """
             INSERT INTO commerce_preparations(
                 preparation_id, subject_id, payload_digest, payload_json,
-                preparation_attempt_id, created_at
+                prepared_json, preparation_attempt_id, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(preparation_id) DO NOTHING
             """,
             (
@@ -92,6 +99,7 @@ class _CommerceOrderStoreOps:
                 subject_id,
                 _digest_json(payload_json),
                 payload_json,
+                prepared_json,
                 preparation_attempt_id,
                 created_at,
             ),
@@ -99,6 +107,7 @@ class _CommerceOrderStoreOps:
         record = self.get_preparation(subject_id, preparation_id)
         if created != 1 and (
             record is None or record.payload_digest != _digest_json(payload_json)
+            or prepared is not None and record.prepared != prepared
         ):
             raise ValueError("preparation identity is owned by different facts")
         if record is None:
@@ -111,13 +120,32 @@ class _CommerceOrderStoreOps:
         rows = self._record_store.query_dicts(
             """
             SELECT preparation_id, subject_id, payload_digest, payload_json,
-                   preparation_attempt_id, created_at
+                   prepared_json, preparation_attempt_id, created_at,
+                   invalidated_at
             FROM commerce_preparations
             WHERE subject_id = ? AND preparation_id = ?
             """,
             (subject_id, preparation_id),
         )
         return _preparation_from_row(rows[0]) if rows else None
+
+    def invalidate_preparation(
+        self, *, subject_id: str, preparation_id: str
+    ) -> PreparationRecord:
+        updated = self._record_store.execute_count(
+            """
+            UPDATE commerce_preparations
+            SET invalidated_at = COALESCE(invalidated_at, ?)
+            WHERE subject_id = ? AND preparation_id = ?
+            """,
+            (_now_iso(), subject_id, preparation_id),
+        )
+        if updated != 1:
+            raise ValueError("preparation does not belong to subject")
+        record = self.get_preparation(subject_id, preparation_id)
+        if record is None:
+            raise RuntimeError("invalidated preparation is not readable")
+        return record
 
     def save_order(
         self,
@@ -307,9 +335,13 @@ class _CommerceOrderStoreOps:
         preparation_id: str,
         idempotency_key: str,
         request_digest: CommerceDigest,
+        authorization_hash: CommerceDigest | None = None,
     ) -> AttemptReservation:
-        if self.get_preparation(subject_id, preparation_id) is None:
+        preparation = self.get_preparation(subject_id, preparation_id)
+        if preparation is None:
             raise ValueError("placement preparation must belong to the same subject")
+        if preparation.invalidated_at is not None:
+            raise ValueError("placement preparation is invalidated")
         return self._reserve_attempt(
             subject_id=subject_id,
             kind="placement",
@@ -317,6 +349,7 @@ class _CommerceOrderStoreOps:
             operation="place",
             idempotency_key=idempotency_key,
             request_digest=request_digest,
+            authorization_hash=authorization_hash,
         )
 
     def reserve_action(
@@ -349,7 +382,8 @@ class _CommerceOrderStoreOps:
         rows = self._record_store.query_dicts(
             """
             SELECT attempt_id, subject_id, kind, target_id, operation,
-                   idempotency_key, request_digest, state, response_digest,
+                   idempotency_key, request_digest, authorization_hash,
+                   attempt_count, state, response_digest,
                    provider_reference_digest, active, created_at, updated_at
             FROM commerce_attempts
             WHERE subject_id = ? AND kind = ? AND idempotency_key = ?
@@ -357,6 +391,21 @@ class _CommerceOrderStoreOps:
             (subject_id, kind, idempotency_key),
         )
         return _attempt_from_row(rows[0]) if rows else None
+
+    def begin_placement_attempt(
+        self, *, subject_id: str, attempt_id: str
+    ) -> CommerceAttempt | None:
+        updated = self._record_store.execute_count(
+            """
+            UPDATE commerce_attempts
+            SET state = 'submitted', attempt_count = attempt_count + 1,
+                updated_at = ?
+            WHERE subject_id = ? AND attempt_id = ? AND kind = 'placement'
+              AND state = 'reserved' AND attempt_count = 0
+            """,
+            (_now_iso(), subject_id, attempt_id),
+        )
+        return self._get_attempt(subject_id, attempt_id) if updated == 1 else None
 
     def finish_attempt(
         self,
@@ -411,16 +460,18 @@ class _CommerceOrderStoreOps:
         operation: str,
         idempotency_key: str,
         request_digest: CommerceDigest,
+        authorization_hash: CommerceDigest | None = None,
     ) -> AttemptReservation:
         now = _now_iso()
         created = self._record_store.execute_count(
             """
             INSERT INTO commerce_attempts(
                 attempt_id, subject_id, kind, target_id, operation,
-                idempotency_key, request_digest, state, response_digest,
+                idempotency_key, request_digest, authorization_hash,
+                attempt_count, state, response_digest,
                 provider_reference_digest, active, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', NULL, NULL, 1, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'reserved', NULL, NULL, 1, ?, ?)
             ON CONFLICT DO NOTHING
             """,
             (
@@ -431,6 +482,7 @@ class _CommerceOrderStoreOps:
                 operation,
                 idempotency_key,
                 request_digest,
+                authorization_hash,
                 now,
                 now,
             ),
@@ -448,6 +500,7 @@ class _CommerceOrderStoreOps:
             attempt.target_id != target_id
             or attempt.operation != operation
             or attempt.request_digest != request_digest
+            or attempt.authorization_hash != authorization_hash
         ):
             raise ValueError("idempotency key is bound to different request facts")
         return AttemptReservation(created=created == 1, attempt=attempt)
@@ -459,7 +512,8 @@ class _CommerceOrderStoreOps:
         rows = self._record_store.query_dicts(
             f"""
             SELECT attempt_id, subject_id, kind, target_id, operation,
-                   idempotency_key, request_digest, state, response_digest,
+                   idempotency_key, request_digest, authorization_hash,
+                   attempt_count, state, response_digest,
                    provider_reference_digest, active, created_at, updated_at
             FROM commerce_attempts
             WHERE subject_id = ? AND kind = ? AND target_id = ? {active_clause}
@@ -508,12 +562,22 @@ def _preparation_from_row(row: dict[str, object]) -> PreparationRecord:
         subject_id=str(row["subject_id"]),
         payload_digest=str(row["payload_digest"]),
         payload=PreparationPayload.model_validate_json(str(row["payload_json"])),
+        prepared=(
+            OrderPreparation.model_validate_json(str(row["prepared_json"]))
+            if row.get("prepared_json") is not None
+            else None
+        ),
         preparation_attempt_id=(
             str(row["preparation_attempt_id"])
             if row.get("preparation_attempt_id") is not None
             else None
         ),
         created_at=str(row["created_at"]),
+        invalidated_at=(
+            str(row["invalidated_at"])
+            if row.get("invalidated_at") is not None
+            else None
+        ),
     )
 
 
@@ -564,6 +628,12 @@ def _attempt_from_row(row: dict[str, object]) -> CommerceAttempt:
         operation=str(row["operation"]),
         idempotency_key=str(row["idempotency_key"]),
         request_digest=str(row["request_digest"]),
+        authorization_hash=(
+            str(row["authorization_hash"])
+            if row.get("authorization_hash") is not None
+            else None
+        ),
+        attempt_count=int(row.get("attempt_count") or 0),
         state=str(row["state"]),
         response_digest=(
             str(row["response_digest"])
@@ -591,6 +661,8 @@ _SCHEMA_DDL = (
         operation TEXT NOT NULL,
         idempotency_key TEXT NOT NULL,
         request_digest TEXT NOT NULL,
+        authorization_hash TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
         state TEXT NOT NULL,
         response_digest TEXT,
         provider_reference_digest TEXT,
@@ -606,8 +678,10 @@ _SCHEMA_DDL = (
         subject_id TEXT NOT NULL,
         payload_digest TEXT NOT NULL,
         payload_json TEXT NOT NULL,
+        prepared_json TEXT,
         preparation_attempt_id TEXT,
         created_at TEXT NOT NULL,
+        invalidated_at TEXT,
         UNIQUE(subject_id, preparation_id),
         FOREIGN KEY(preparation_attempt_id) REFERENCES commerce_attempts(attempt_id)
     )

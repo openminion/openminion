@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -16,11 +18,12 @@ from openminion.modules.commerce.provider import (
     PreparationRecoveryLocator,
     RequestedItem,
 )
+from openminion.modules.commerce.storage import SQLiteCommerceOrderStore
 from tests.helpers.commerce_runtime import build_fixture_commerce_runtime
 
 
-def _prepare(*, quantity: int = 1):
-    runtime, provider = build_fixture_commerce_runtime()
+def _prepare(*, quantity: int = 1, store_path: Path | None = None):
+    runtime, provider = build_fixture_commerce_runtime(store_path=store_path)
     request = PrepareOrderRequest(
         idempotency_key="prepare-1",
         items=(
@@ -34,8 +37,11 @@ def _prepare(*, quantity: int = 1):
     return runtime, provider, runtime.prepare_order(request)
 
 
-def _place(*, quantity: int = 1):
-    runtime, provider, preparation = _prepare(quantity=quantity)
+def _place(*, quantity: int = 1, store_path: Path | None = None):
+    runtime, provider, preparation = _prepare(
+        quantity=quantity,
+        store_path=store_path,
+    )
     request = PlaceOrderRequest(
         idempotency_key="place-1",
         preparation_ref=preparation.preparation_ref,
@@ -79,10 +85,9 @@ def test_prepare_order_requires_a_non_empty_item_list() -> None:
     [
         ("succeeded", "accepted", "authorized"),
         ("declined", "declined", "declined"),
-        ("action_required", "action_required", "pending"),
     ],
 )
-def test_fixture_places_accepted_declined_and_authorization_outcomes(
+def test_fixture_places_accepted_and_declined_outcomes(
     provider_state: str,
     order_state: str,
     payment_state: str,
@@ -95,6 +100,107 @@ def test_fixture_places_accepted_declined_and_authorization_outcomes(
     assert result.state == provider_state
     assert result.lifecycle.order == order_state
     assert result.lifecycle.payment == payment_state
+
+
+def test_action_required_handoff_invalidates_preparation(
+    tmp_path,
+) -> None:
+    runtime, provider, preparation, request = _place(
+        store_path=tmp_path / "commerce.db"
+    )
+    provider.set_next_placement_state("action_required")
+
+    handoff = runtime.place_order(request)
+
+    assert handoff.state == "handoff_required"
+    record = runtime.order_store.get_preparation(
+        "local",
+        preparation.preparation_ref,
+    )
+    assert record.invalidated_at is not None
+    with pytest.raises(CommerceProviderError, match="invalidated") as exc_info:
+        runtime.place_order(
+            request.model_copy(update={"idempotency_key": "place-after-handoff"})
+        )
+    assert exc_info.value.code == "STALE_PREPARATION"
+    assert [entry.operation for entry in provider.ledger].count("place_order") == 1
+
+
+def test_stable_placement_collision_recovers_existing_provider_attempt(
+    tmp_path,
+) -> None:
+    runtime, provider, _, request = _place(store_path=tmp_path / "commerce.db")
+    placed = runtime.place_order(request)
+
+    recovered = runtime.place_order(
+        request.model_copy(update={"idempotency_key": "place-retry"})
+    )
+
+    assert recovered == placed
+    assert [entry.operation for entry in provider.ledger].count("place_order") == 1
+
+
+def test_stable_preparation_collision_recovers_existing_provider_attempt(
+    tmp_path: Path,
+) -> None:
+    runtime, provider, preparation = _prepare(store_path=tmp_path / "commerce.db")
+
+    recovered = runtime.prepare_order(
+        PrepareOrderRequest(
+            idempotency_key="prepare-retry",
+            items=(
+                RequestedItem(
+                    offer_id="offer-1",
+                    variant_id="standard",
+                    quantity=1,
+                ),
+            ),
+        )
+    )
+
+    assert recovered == preparation
+    assert [entry.operation for entry in provider.ledger].count("prepare_order") == 1
+
+
+def test_active_action_collision_returns_typed_conflict(tmp_path: Path) -> None:
+    runtime, provider, _, request = _place(store_path=tmp_path / "commerce.db")
+    placement = runtime.place_order(request)
+    assert placement.order_ref is not None
+    runtime.order_store.reserve_action(
+        subject_id="local",
+        order_id=placement.order_ref,
+        operation="apply",
+        idempotency_key="apply-existing",
+        request_digest="sha256:" + "a" * 64,
+    )
+
+    with pytest.raises(CommerceProviderError, match="still active") as exc_info:
+        runtime.apply_action(
+            ApplyOrderActionRequest(
+                idempotency_key="apply-new",
+                action_ref="action-new",
+                order_ref=placement.order_ref,
+                action_digest="sha256:" + "b" * 64,
+            )
+        )
+
+    assert exc_info.value.code == "ACTION_ALREADY_OPEN"
+    assert [entry.operation for entry in provider.ledger].count("apply_action") == 0
+
+
+def test_preparation_snapshot_round_trips_after_store_restart(tmp_path: Path) -> None:
+    database_path = tmp_path / "commerce.db"
+    runtime, _, preparation = _prepare(store_path=database_path)
+    runtime.order_store.close()
+
+    restarted = SQLiteCommerceOrderStore(database_path)
+    record = restarted.get_preparation("local", preparation.preparation_ref)
+
+    assert record is not None
+    assert record.prepared == preparation
+    assert "fixture-provider-secret" not in database_path.read_bytes().decode(
+        errors="ignore"
+    )
 
 
 def test_fixture_rejects_stale_preparation_and_splits_shipments() -> None:

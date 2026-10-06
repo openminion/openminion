@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from openminion.modules.policy.models import PolicyControlError
 from openminion.modules.tool.errors import ToolRuntimeError
@@ -24,14 +24,16 @@ def canonical_commerce_args(args: dict[str, Any]) -> dict[str, Any]:
     return canonical(args)
 
 
-def consume_commerce_prepare_authorization(
+def _consume_commerce_authorization(
     *,
+    method: Literal["prepare_order", "place_order"],
     policy_ctl: Any | None,
     permission_mode: str,
     args: dict[str, Any],
     subject_id: str,
     session_id: str | None,
 ) -> PolicyAuthorization:
+    mutation = "preparation" if method == "prepare_order" else "placement"
     policy_mode = str(policy_ctl.mode()) if policy_ctl is not None else ""
     if (
         policy_ctl is None
@@ -42,36 +44,36 @@ def consume_commerce_prepare_authorization(
     ):
         raise ToolRuntimeError(
             "POLICY_DENIED",
-            "Commerce preparation requires enforcing policy authorization.",
+            f"Commerce {mutation} requires enforcing policy authorization.",
             {"commerce_code": "POLICY_MODE_UNSUPPORTED"},
         )
 
     invocation_hash = stable_invocation_hash(
-        tool="commerce", method="prepare_order", args=canonical_commerce_args(args)
+        tool="commerce", method=method, args=canonical_commerce_args(args)
     )
     try:
         grant = policy_ctl.resolve_matching_active_grant_for_use(
             subject_id=subject_id,
             tool="commerce",
-            method="prepare_order",
+            method=method,
             invocation_hash=invocation_hash,
             session_id=session_id,
         )
     except PolicyControlError as exc:
         raise ToolRuntimeError(
             "POLICY_DENIED",
-            "Commerce preparation authorization was rejected.",
+            f"Commerce {mutation} authorization was rejected.",
             {"commerce_code": exc.code},
         ) from exc
     if grant is None:
         raise ToolRuntimeError(
             "CONFIRM_REQUIRED",
-            "Exact one-time commerce preparation approval is required.",
+            f"Exact one-time commerce {mutation} approval is required.",
             {"commerce_code": "CONFIRM_REQUIRED"},
         )
     return PolicyAuthorization(
         tool="commerce",
-        method="prepare_order",
+        method=method,
         invocation_hash=invocation_hash,
         approval_id=str(grant.approval_id),
         grant_id=str(grant.grant_id),
@@ -81,4 +83,44 @@ def consume_commerce_prepare_authorization(
     )
 
 
-__all__ = ["canonical_commerce_args", "consume_commerce_prepare_authorization"]
+def consume_commerce_prepare_authorization(
+    *,
+    policy_ctl: Any | None,
+    permission_mode: str,
+    args: dict[str, Any],
+    subject_id: str,
+    session_id: str | None,
+) -> PolicyAuthorization:
+    return _consume_commerce_authorization(
+        method="prepare_order",
+        policy_ctl=policy_ctl,
+        permission_mode=permission_mode,
+        args=args,
+        subject_id=subject_id,
+        session_id=session_id,
+    )
+
+
+def consume_commerce_place_authorization(
+    *,
+    policy_ctl: Any | None,
+    permission_mode: str,
+    args: dict[str, Any],
+    subject_id: str,
+    session_id: str | None,
+) -> PolicyAuthorization:
+    return _consume_commerce_authorization(
+        method="place_order",
+        policy_ctl=policy_ctl,
+        permission_mode=permission_mode,
+        args=args,
+        subject_id=subject_id,
+        session_id=session_id,
+    )
+
+
+__all__ = [
+    "canonical_commerce_args",
+    "consume_commerce_place_authorization",
+    "consume_commerce_prepare_authorization",
+]

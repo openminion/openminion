@@ -9,7 +9,11 @@ MODULE_ID = "commerce"
 MODULE_APPLICATION_ID = get_module_application_id(MODULE_ID)
 TARGET_USER_VERSION = 0
 BASELINE_REVISION = "0001_baseline"
-MIGRATIONS = (BASELINE_REVISION,)
+MIGRATIONS = (
+    BASELINE_REVISION,
+    "0002_preparation_invalidation",
+    "0003_placement_attempt_authorization",
+)
 
 
 def run_migrations(db_path: str | Path) -> None:

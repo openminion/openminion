@@ -18,6 +18,7 @@ from ..models import (
     SafePaymentMethod,
     SellerIdentity,
 )
+from ..provider import OrderPreparation
 
 AttemptKind = Literal["preparation", "placement", "action"]
 AttemptState = Literal[
@@ -45,8 +46,10 @@ class PreparationRecord(CommerceModel):
     subject_id: str = Field(min_length=1)
     payload_digest: CommerceDigest
     payload: PreparationPayload
+    prepared: OrderPreparation | None = None
     preparation_attempt_id: str | None = Field(default=None, min_length=1)
     created_at: str = Field(min_length=1)
+    invalidated_at: str | None = Field(default=None, min_length=1)
 
 
 class OrderRecord(CommerceModel):
@@ -81,6 +84,10 @@ class CommerceAttempt(CommerceModel):
     operation: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1)
     request_digest: CommerceDigest
+    authorization_hash: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    attempt_count: int = Field(ge=0)
     state: AttemptState
     response_digest: CommerceDigest | None = None
     provider_reference_digest: CommerceDigest | None = None

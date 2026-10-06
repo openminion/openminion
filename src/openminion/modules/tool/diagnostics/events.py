@@ -339,3 +339,34 @@ def emit_tool_execution_event(
         status=status,
         error=dict(error) if error else None,
     )
+
+
+def emit_commerce_action_event(
+    *,
+    ctx: Any,
+    action: str,
+    outcome: str,
+    order_id: str,
+    attempt_id: str,
+) -> bool:
+    """Emit the allowlisted correlation facts for an authorized commerce action."""
+    authorization = getattr(ctx, "policy_authorization", None)
+    if authorization is None:
+        return False
+    return emit_tool_execution_event(
+        ctx=ctx,
+        event_type="tool.commerce.action",
+        status=outcome,
+        payload={
+            "tool_name": str(getattr(ctx, "tool_name", "") or "commerce"),
+            "action": action,
+            "outcome": outcome,
+            "subject_id": str(getattr(ctx, "subject_id", "") or ""),
+            "policy_approval_id": str(authorization.approval_id),
+            "policy_grant_id": str(authorization.grant_id),
+            "invocation_id": str(authorization.invocation_hash),
+            "order_id": order_id,
+            "attempt_id": attempt_id,
+            "task_id": str(getattr(ctx, "project_task_id", "") or ""),
+        },
+    )

@@ -85,6 +85,7 @@ def _set_optional_contract_omissions(
         MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
         MODEL_BLOCKCHAIN_SEND_TRANSACTION,
         MODEL_COMMERCE_INSPECT,
+        MODEL_COMMERCE_PLACE_ORDER,
         MODEL_COMMERCE_PREPARE_ORDER,
     )
     from openminion.modules.tool.contracts.runtime_ids import (
@@ -93,6 +94,7 @@ def _set_optional_contract_omissions(
         RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
         RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
         RUNTIME_COMMERCE_INSPECT,
+        RUNTIME_COMMERCE_PLACE_ORDER,
         RUNTIME_COMMERCE_PREPARE_ORDER,
     )
 
@@ -118,11 +120,22 @@ def _set_optional_contract_omissions(
     commerce_cfg = getattr(tools_cfg, "commerce", None)
     if not (commerce_cfg and getattr(commerce_cfg, "enabled", False)):
         missing_model_ids.update(
-            {MODEL_COMMERCE_INSPECT, MODEL_COMMERCE_PREPARE_ORDER}
+            {
+                MODEL_COMMERCE_INSPECT,
+                MODEL_COMMERCE_PREPARE_ORDER,
+                MODEL_COMMERCE_PLACE_ORDER,
+            }
         )
         missing_runtime_ids.update(
-            {RUNTIME_COMMERCE_INSPECT, RUNTIME_COMMERCE_PREPARE_ORDER}
+            {
+                RUNTIME_COMMERCE_INSPECT,
+                RUNTIME_COMMERCE_PREPARE_ORDER,
+                RUNTIME_COMMERCE_PLACE_ORDER,
+            }
         )
+    elif not getattr(commerce_cfg, "writes_enabled", False):
+        missing_model_ids.add(MODEL_COMMERCE_PLACE_ORDER)
+        missing_runtime_ids.add(RUNTIME_COMMERCE_PLACE_ORDER)
     registry_manager.set_expected_contract_omissions(
         model_ids=missing_model_ids,
         runtime_ids=missing_runtime_ids,
@@ -140,6 +153,7 @@ def _emit_contract_drift_report(
         MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
         MODEL_BLOCKCHAIN_SEND_TRANSACTION,
         MODEL_COMMERCE_INSPECT,
+        MODEL_COMMERCE_PLACE_ORDER,
         MODEL_COMMERCE_PREPARE_ORDER,
     )
     from openminion.modules.tool.contracts.runtime_ids import (
@@ -148,6 +162,7 @@ def _emit_contract_drift_report(
         RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
         RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
         RUNTIME_COMMERCE_INSPECT,
+        RUNTIME_COMMERCE_PLACE_ORDER,
         RUNTIME_COMMERCE_PREPARE_ORDER,
     )
 
@@ -159,6 +174,9 @@ def _emit_contract_drift_report(
     )
     commerce_cfg = getattr(tools_cfg, "commerce", None)
     commerce_enabled = bool(commerce_cfg and getattr(commerce_cfg, "enabled", False))
+    commerce_writes_enabled = bool(
+        commerce_enabled and getattr(commerce_cfg, "writes_enabled", False)
+    )
     missing_model_ids = (
         set()
         if blockchain_enabled
@@ -181,11 +199,22 @@ def _emit_contract_drift_report(
     )
     if not commerce_enabled:
         missing_model_ids.update(
-            {MODEL_COMMERCE_INSPECT, MODEL_COMMERCE_PREPARE_ORDER}
+            {
+                MODEL_COMMERCE_INSPECT,
+                MODEL_COMMERCE_PREPARE_ORDER,
+                MODEL_COMMERCE_PLACE_ORDER,
+            }
         )
         missing_runtime_ids.update(
-            {RUNTIME_COMMERCE_INSPECT, RUNTIME_COMMERCE_PREPARE_ORDER}
+            {
+                RUNTIME_COMMERCE_INSPECT,
+                RUNTIME_COMMERCE_PREPARE_ORDER,
+                RUNTIME_COMMERCE_PLACE_ORDER,
+            }
         )
+    elif not commerce_writes_enabled:
+        missing_model_ids.add(MODEL_COMMERCE_PLACE_ORDER)
+        missing_runtime_ids.add(RUNTIME_COMMERCE_PLACE_ORDER)
     report = registry_manager.contract_drift_report(
         expected_missing_model_ids=missing_model_ids,
         expected_missing_runtime_ids=missing_runtime_ids,

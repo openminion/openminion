@@ -25,6 +25,7 @@ def test_commerce_interface_contract_is_canonical_and_closed() -> None:
     assert ALL_COMMERCE_TOOLS == (
         "commerce.inspect",
         "commerce.prepare_order",
+        "commerce.place_order",
     )
 
 

@@ -124,6 +124,7 @@ def build_commerce_runtime(
 
     return CommerceRuntime(
         provider=provider,
+        base_url=config.base_url,
         merchant_id=config.merchant_id,
         provider_secret_key=config.provider_secret_key,
         buyer_profile_record_id=config.buyer_profile_record_id,

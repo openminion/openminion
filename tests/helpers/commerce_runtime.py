@@ -43,6 +43,7 @@ def build_fixture_commerce_runtime(
     provider = FixtureCommerceProvider()
     runtime = CommerceRuntime(
         provider=provider,
+        base_url="https://fixture.invalid",
         merchant_id="merchant-fixture",
         provider_secret_key="provider-secret",
         buyer_profile_record_id="buyer-profile",

@@ -50,6 +50,7 @@ from .command_metadata import (
 )
 from .blockchain_authorization import authorize_blockchain_send
 from openminion.tools.commerce.authorization import (
+    consume_commerce_place_authorization,
     consume_commerce_prepare_authorization,
 )
 from .github_merge import execute_github_merge_pr_project_effect
@@ -740,6 +741,14 @@ class ToolAdapter:
                 )
             elif tool_name == "commerce.prepare_order":
                 ctx.policy_authorization = consume_commerce_prepare_authorization(
+                    policy_ctl=self.policy_ctl,
+                    permission_mode=ctx.permission_mode,
+                    args=validated_args,
+                    subject_id=COMMERCE_LOCAL_SUBJECT_ID,
+                    session_id=ctx.session_id,
+                )
+            elif tool_name == "commerce.place_order":
+                ctx.policy_authorization = consume_commerce_place_authorization(
                     policy_ctl=self.policy_ctl,
                     permission_mode=ctx.permission_mode,
                     args=validated_args,

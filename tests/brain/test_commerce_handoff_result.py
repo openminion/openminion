@@ -14,8 +14,7 @@ def _run_handoff_result(monkeypatch, *, tool_name: str = "commerce.place_order")
     )
     handoff = build_commerce_handoff(
         reason_code="authentication_required",
-        message="Sign in with the merchant, then inspect and prepare again.",
-        configured_base_url="https://shop.example/account",
+        configured_base_url="https://shop.example/account/verify",
         candidate_url="https://shop.example/account/verify",
     )
     spec = SimpleNamespace(
@@ -37,7 +36,7 @@ def test_typed_commerce_handoff_maps_to_needs_user(monkeypatch) -> None:
 
     assert result["status"] == "needs_user"
     assert result["summary"] == (
-        "Sign in with the merchant, then inspect and prepare again."
+        "Open the configured merchant surface to authenticate, then inspect and prepare again."
     )
     assert result["outputs"]["commerce_code"] == "HANDOFF_REQUIRED"
     assert "error" not in result

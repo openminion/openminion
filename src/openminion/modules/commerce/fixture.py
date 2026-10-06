@@ -147,22 +147,37 @@ class FixtureCommerceProvider:
             )
         if request.kind == "checkout":
             self._require_reference(request.reference, self.checkout_ref)
+            preparation = next(reversed(tuple(self._preparations.values())))
             return CheckoutInspection(
                 reference=self.checkout_ref,
                 revision=self.checkout_revision,
-                items=(self.item,),
-                subtotal=self.item.unit_price,
-                total=self.item.unit_price,
+                items=preparation.items,
+                subtotal=preparation.totals.subtotal,
+                total=preparation.totals.total,
+                warnings=preparation.warnings,
                 links={"checkout": "https://fixture.invalid/checkouts/checkout-1"},
             )
         if request.kind == "order":
             placement = self._require_order(request.reference)
+            terminal_action_refs = {
+                result.action_ref
+                for result in self._action_results.values()
+                if result.state in {"completed", "rejected", "failed"}
+            }
             return OrderInspection(
                 reference=request.reference,
                 revision=placement.order_revision or "order-1:r1",
                 items=(self.item,),
                 lifecycle=placement.lifecycle,
                 total=self.item.unit_price,
+                open_action_ids=tuple(
+                    sorted(
+                        preparation.action_ref
+                        for preparation in self._action_preparations.values()
+                        if preparation.order_ref == request.reference
+                        and preparation.action_ref not in terminal_action_refs
+                    )
+                ),
                 links=placement.links,
             )
         if request.kind == "shipment":

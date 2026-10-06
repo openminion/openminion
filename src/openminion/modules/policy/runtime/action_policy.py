@@ -36,6 +36,13 @@ def derive_tool_risk_spec(*, tool_name: str, tool: Any) -> RiskSpec:
             reversibility="reversible",
             default_confirm=True,
         )
+    if tool_name == "commerce.place_order":
+        return RiskSpec(
+            risk_class="financial",
+            side_effects="external_account",
+            reversibility="irreversible",
+            default_confirm=True,
+        )
     if tool_name == "blockchain.send_transaction":
         return RiskSpec(
             risk_class="financial",

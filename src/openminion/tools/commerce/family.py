@@ -2,11 +2,17 @@
 
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
 
-from .interfaces import TOOL_COMMERCE_INSPECT, TOOL_COMMERCE_PREPARE_ORDER
+from .interfaces import (
+    TOOL_COMMERCE_INSPECT,
+    TOOL_COMMERCE_PLACE_ORDER,
+    TOOL_COMMERCE_PREPARE_ORDER,
+)
 from .plugin import (
     CommerceInspectArgs,
+    CommercePlaceOrderArgs,
     CommercePrepareOrderArgs,
     _h_inspect,
+    _h_place_order,
     _h_prepare_order,
 )
 
@@ -40,6 +46,20 @@ COMMERCE_FAMILY = ToolFamilySpec(
             idempotent=True,
             block_under_readonly=True,
             capabilities=("write_safe", "external_account"),
+        ),
+        ToolDecl(
+            name=TOOL_COMMERCE_PLACE_ORDER,
+            args_model=CommercePlaceOrderArgs,
+            handler=_h_place_order,
+            description=(
+                "After exact one-time approval, place the subject-owned prepared "
+                "order once using its exact reviewed facts."
+            ),
+            min_scope="POWER_USER",
+            dangerous=True,
+            idempotent=False,
+            block_under_readonly=True,
+            capabilities=("write", "external_account", "financial"),
         ),
     ),
 )

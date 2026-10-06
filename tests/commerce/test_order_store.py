@@ -133,7 +133,7 @@ def test_commerce_migration_bootstraps_standard_module_identity(tmp_path: Path) 
         "commerce_material_snapshots",
     } <= tables
     assert metadata["module_id"] == "commerce"
-    assert metadata["schema_head"] == "0001_baseline"
+    assert metadata["schema_head"] == "0003_placement_attempt_authorization"
     assert application_id == get_module_application_id("commerce")
     assert preserved == ("preserved",)
 
@@ -239,6 +239,31 @@ def test_concurrent_preparation_reservation_has_one_winner(tmp_path: Path) -> No
     assert sorted(results) == [False, True]
     stores[0].close()
     stores[1].close()
+
+
+def test_invalidated_preparation_cannot_be_reserved_for_placement(
+    tmp_path: Path, payload: PreparationPayload
+) -> None:
+    store = SQLiteCommerceOrderStore(tmp_path / "commerce.db")
+    store.save_preparation(
+        subject_id="subject-1",
+        preparation_id="preparation-1",
+        payload=payload,
+    )
+
+    invalidated = store.invalidate_preparation(
+        subject_id="subject-1",
+        preparation_id="preparation-1",
+    )
+
+    assert invalidated.invalidated_at is not None
+    with pytest.raises(ValueError, match="invalidated"):
+        store.reserve_placement(
+            subject_id="subject-1",
+            preparation_id="preparation-1",
+            idempotency_key="place-1",
+            request_digest=_DIGEST_A,
+        )
 
 
 def test_preparation_response_loss_recovers_by_idempotency_after_restart(

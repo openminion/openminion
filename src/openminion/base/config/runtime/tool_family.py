@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 import re
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from openminion.base.config.base import ConfigError
 from openminion.base.config.parse import _as_bool
@@ -183,6 +184,24 @@ def _validate_commerce_config(
         raise ConfigError(
             "runtime.tools.commerce.provider is required when enabled."
         )
+    if config.enabled:
+        try:
+            base_url = urlsplit(config.base_url)
+            valid_base_url = (
+                base_url.scheme.lower() == "https"
+                and bool(base_url.hostname)
+                and base_url.username is None
+                and base_url.password is None
+                and not base_url.query
+                and not base_url.fragment
+                and "%" not in base_url.path
+            )
+        except ValueError:
+            valid_base_url = False
+        if not valid_base_url:
+            raise ConfigError(
+                "runtime.tools.commerce.base_url must be a credential-free HTTPS URL."
+            )
     if config.enabled and config.provider not in _SUPPORTED_COMMERCE_PROVIDERS:
         raise ConfigError(
             f"runtime.tools.commerce.provider={config.provider!r} is not supported."

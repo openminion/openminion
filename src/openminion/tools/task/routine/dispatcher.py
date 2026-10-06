@@ -422,9 +422,20 @@ class CommerceOrderHandler:
             raise ValueError("commerce order facts are incomplete")
         changed = typed_facts.material_cursor != cursor.material_cursor
         order_terminal = lifecycle.order in {"cancelled", "completed", "declined"}
+        action_open = lifecycle.action_request in {
+            "prepared",
+            "submitting",
+            "pending",
+            "outcome_unknown",
+            "provider_unknown",
+        }
         terminal = order_terminal and (
             config.terminal_policy == "order_terminal"
-            or (not typed_facts.open_shipment_ids and not typed_facts.open_action_ids)
+            or (
+                not typed_facts.open_shipment_ids
+                and not typed_facts.open_action_ids
+                and not action_open
+            )
         )
         updated_cursor = CommerceOrderCursorV1(
             material_cursor=typed_facts.material_cursor,

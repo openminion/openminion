@@ -59,13 +59,17 @@ def _inspection(
     *,
     order: str = "accepted",
     shipments: dict[str, str] | None = None,
+    action_request: str | None = None,
     open_action_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    lifecycle = CommerceLifecycleState(
-        order=order,
-        fulfillment="unfulfilled",
-        payment="authorized",
-        shipments=shipments or {},
+    lifecycle = CommerceLifecycleState.model_validate(
+        {
+            "order": order,
+            "fulfillment": "unfulfilled",
+            "payment": "authorized",
+            "shipments": shipments or {},
+            "action_request": action_request,
+        }
     )
     return {
         "ok": True,
@@ -199,6 +203,20 @@ def test_split_outbound_and_return_shipments_continue_until_settled() -> None:
         ),
     )
     assert third.metadata["routine_terminal"] is True
+
+
+def test_completed_order_with_pending_action_remains_active() -> None:
+    result = _run(
+        CommerceOrderHandler(),
+        _routine(),
+        _inspection(
+            "revision-1",
+            order="completed",
+            action_request="pending",
+        ),
+    )
+
+    assert result.metadata["routine_terminal"] is False
 
 
 def test_failure_bound_expiry_cancellation_and_subject_denial() -> None:

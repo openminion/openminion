@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from openminion.base.config.runtime.tool_family import CommerceToolRuntimeConfig
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 from openminion.modules.commerce.provider import CommerceProviderError
+from openminion.modules.commerce.models import MerchantIdentity
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 from openminion.modules.tool.plugin_api import stable_invocation_hash
@@ -24,6 +25,7 @@ def _config(*, enabled: bool) -> SimpleNamespace:
                 commerce=CommerceToolRuntimeConfig(
                     enabled=enabled,
                     provider="fixture",
+                    base_url="https://fixture.invalid",
                     merchant_id="merchant-fixture",
                     provider_secret_key="provider-secret",
                     buyer_profile_record_id="buyer-profile",
@@ -103,7 +105,10 @@ def test_commerce_catalog_exposes_zero_disabled_and_exactly_two_enabled(
     enabled = _bootstrap(tmp_path / "enabled", enabled=True)
 
     assert _commerce_names(disabled) == set()
-    assert _commerce_names(enabled) == set(ALL_COMMERCE_TOOLS)
+    assert _commerce_names(enabled) == {
+        "commerce.inspect",
+        "commerce.prepare_order",
+    }
     assert enabled.contract_drift_report is not None
     assert enabled.contract_drift_report.has_drift is False
     manifest = REGISTRAR.get_manifest(None)
@@ -270,6 +275,41 @@ def test_prepare_reconciles_dropped_response_without_second_checkout(tmp_path) -
     assert result["status"] == "success"
     assert result["outputs"]["data"]["state"] == "prepared"
     assert [entry.operation for entry in provider.ledger] == ["prepare_order"]
+
+
+def test_prepare_rejects_configured_merchant_mismatch(tmp_path, monkeypatch) -> None:
+    args = _prepare_args()
+    runtime, provider = build_fixture_commerce_runtime(
+        store_path=tmp_path / "commerce.db"
+    )
+    original = provider.prepare_order
+
+    def mismatched(request, context):
+        preparation = original(request, context)
+        return preparation.model_copy(
+            update={
+                "merchant": MerchantIdentity(
+                    provider_id="merchant-copied",
+                    display_name="Copied merchant",
+                )
+            }
+        )
+
+    monkeypatch.setattr(provider, "prepare_order", mismatched)
+    policy = _GrantPolicy(
+        allowed_hash=stable_invocation_hash(
+            tool="commerce", method="prepare_order", args=args
+        )
+    )
+
+    result = _adapter(tmp_path, runtime, policy).execute(
+        command=_prepare_command(args),
+        session_id="session-1",
+        trace_id="trace-1",
+    )
+
+    assert result["error"]["code"] == "INVALID_RESPONSE"
+    assert result["error"]["details"]["commerce_code"] == "MERCHANT_MISMATCH"
 
 
 @pytest.mark.parametrize(

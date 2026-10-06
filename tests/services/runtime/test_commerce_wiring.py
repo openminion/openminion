@@ -140,6 +140,7 @@ def test_bootstrap_builds_and_resolves_only_explicit_commerce_runtime() -> None:
     config = CommerceToolRuntimeConfig(
         enabled=True,
         provider="fixture",
+        base_url="https://fixture.invalid",
         merchant_id="merchant-fixture",
         provider_secret_key="provider-secret",
         buyer_profile_record_id="buyer-profile",
