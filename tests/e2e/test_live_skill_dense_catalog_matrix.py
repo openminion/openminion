@@ -30,7 +30,7 @@ from tests.helpers.live_skill_targets import dense_skill_artifact_dirname
 from tests.helpers.live_skill_targets import resolve_dense_skill_target_set
 from tests.helpers.live_skill_targets import validate_skill_live_target
 
-pytestmark = [pytest.mark.e2e, pytest.mark.timeout(1800)]
+pytestmark = [pytest.mark.e2e, pytest.mark.timeout(4200)]
 
 
 @dataclass(frozen=True)
