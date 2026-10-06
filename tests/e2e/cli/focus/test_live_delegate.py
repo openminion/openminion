@@ -205,9 +205,9 @@ def _latest_public_child_artifacts(probe: FocusProbe) -> list[dict]:
 
 
 def _wait_for_a2a_delegate_success(
-    root, scenario: str, *, timeout: float = 60.0
+    probe: FocusProbe, *, timeout: float = 60.0
 ) -> None:
-    audit_dir = root / "data" / scenario / "a2a" / "audit"
+    audit_dir = probe.data_root / "a2a" / "audit"
     deadline = time.monotonic() + timeout
     last_error = ""
     while time.monotonic() < deadline:
@@ -336,8 +336,7 @@ def test_live_focus_delegate_uses_bounded_sophiagraph_context(
         focus_probe.wait_ready(session)
         transcript = focus_probe.run_slash(session, prompt, marker="Delegation:")
         _wait_for_a2a_delegate_success(
-            root,
-            "test_live_focus_delegate_uses_bounded_sophiagraph_context",
+            focus_probe,
             timeout=120,
         )
         child_answer = _latest_delegated_child_answer(focus_probe)
@@ -397,8 +396,7 @@ def test_live_focus_delegate_code_child_writes_in_scratch(
         )
         write_transcript(root, "maer-live-code-child", transcript)
         _wait_for_a2a_delegate_success(
-            root,
-            "test_live_focus_delegate_code_child_writes_in_scratch",
+            active_probe,
         )
 
     marker_file = scratch_dir / "maer_child_marker.txt"
@@ -429,8 +427,7 @@ def test_live_focus_delegate_async_lifecycle(
             session, f"/delegate status {task_id}", marker="Delegation:"
         )
         _wait_for_a2a_delegate_success(
-            root,
-            "test_live_focus_delegate_async_lifecycle",
+            focus_probe,
             timeout=120,
         )
         result = focus_probe.run_slash_turn(

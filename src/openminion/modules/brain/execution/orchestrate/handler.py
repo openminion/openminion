@@ -420,6 +420,10 @@ class OrchestrateMode:
                 user_input=prompt,
                 logger=ctx.logger,
             )
+        if bool(subtask.inputs.get("code_bearing")) and hasattr(
+            decision, "act_profile"
+        ):
+            decision = decision.model_copy(update={"act_profile": "coding"})
         if (
             str(getattr(decision, "route", getattr(decision, "mode", "")) or "").strip()
             == ORCHESTRATE_MODE

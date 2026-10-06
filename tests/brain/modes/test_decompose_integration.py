@@ -1335,9 +1335,11 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
     )
     tool_api = _WorkspaceWritingToolAPI(repo)
     runner.tool_api = tool_api
+    child_profiles: list[str] = []
 
     def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
         del user_input, logger, depth
+        child_profiles.append(decision.act_profile)
         value = 1 if getattr(decision, "reason_code", "") == "patch_a" else 2
         runner.tool_api.execute(
             command={"tool_name": "file.write", "args": {"value": value}},
@@ -1374,6 +1376,7 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
     assert all(
         call["workspace_root"] == call["metadata_cwd"] for call in tool_api.calls
     )
+    assert child_profiles == ["coding", "coding"]
     assert tool_api.workspace_root == repo
     assert tool_api.policy.raw["workspace_root"] == str(repo)
     assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
