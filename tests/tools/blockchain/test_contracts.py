@@ -43,6 +43,7 @@ from openminion.tools.blockchain.schemas import (
     EventAbi,
     FunctionAbi,
     SendTransactionArgs,
+    SendPreparedTransactionArgs,
 )
 from openminion.tools.blockchain.abi import (
     abi_selector,
@@ -553,6 +554,20 @@ def test_send_schema_rejects_non_object_json_nested_value() -> None:
                 "call_context": None,
                 "preparation_digest": "sha256:" + "0" * 64,
             }
+        )
+
+
+def test_model_send_schema_accepts_only_preparation_digest() -> None:
+    digest = "sha256:" + "0" * 64
+
+    parsed = SendPreparedTransactionArgs.model_validate(
+        {"preparation_digest": digest}
+    )
+
+    assert parsed.model_dump(mode="json") == {"preparation_digest": digest}
+    with pytest.raises(ValidationError):
+        SendPreparedTransactionArgs.model_validate(
+            {"preparation_digest": digest, "transaction": {}}
         )
     with pytest.raises(ValidationError):
         SendTransactionArgs.model_validate(

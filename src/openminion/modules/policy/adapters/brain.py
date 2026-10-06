@@ -147,6 +147,7 @@ class PolicyCtlBrainAdapter:
             )
 
         try:
+            invocation = self._resolve_blockchain_preparation(invocation, ctx)
             decision = self._check_policy_decision(
                 invocation=invocation,
                 ctx=ctx,
@@ -246,6 +247,27 @@ class PolicyCtlBrainAdapter:
             check_kwargs["config_overrides"] = config_overrides
         return self._ctl.check(**check_kwargs)
 
+    @staticmethod
+    def _resolve_blockchain_preparation(
+        invocation: dict[str, Any], ctx: dict[str, Any]
+    ) -> dict[str, Any]:
+        if (invocation.get("tool"), invocation.get("method")) != (
+            "blockchain",
+            "send_transaction",
+        ):
+            return invocation
+        from openminion.tools.blockchain.preparations import (
+            resolve_prepared_transaction,
+        )
+
+        return {
+            **invocation,
+            "args": resolve_prepared_transaction(
+                invocation.get("args", {}),
+                session_id=str(ctx.get("session_id", "") or ""),
+            ),
+        }
+
     def _policy_decision_from_raw(self, decision: Any) -> Any:
         from openminion.modules.brain.schemas import PolicyDecision
 
@@ -333,6 +355,7 @@ class PolicyCtlBrainAdapter:
         )
         if invocation is None:
             raise ValueError("Tool command is missing tool_name.")
+        invocation = self._resolve_blockchain_preparation(invocation, ctx)
         return self._ctl.create_grant_from_confirmation(
             invocation=invocation,
             ctx=ctx,

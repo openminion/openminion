@@ -62,6 +62,7 @@ from .transaction_schemas import (
     PrepareRequest,
     PreparedTransactionResult,
     RawCallArgs,
+    SendPreparedTransactionArgs,
     SendTransactionArgs,
 )
 
@@ -112,6 +113,7 @@ __all__ = [
     "RawCallArgs",
     "ReceiptArgs",
     "SEND_REQUEST_ADAPTER",
+    "SendPreparedTransactionArgs",
     "SendTransactionArgs",
     "SimulateCallArgs",
     "SimulateCallResult",

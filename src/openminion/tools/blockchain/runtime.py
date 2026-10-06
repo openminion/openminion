@@ -24,6 +24,7 @@ from .schemas import (
     CallContext,
     PreparedTransactionResult,
 )
+from .preparations import save_prepared_transaction
 
 
 class _RpcFailure(RuntimeError):
@@ -458,7 +459,7 @@ def prepare_transaction(
             {"field": "", "reason": "transaction_encoding"},
         )
 
-    return _simulate_prepared_transaction(
+    result = _simulate_prepared_transaction(
         config,
         request,
         client,
@@ -468,6 +469,9 @@ def prepare_transaction(
         gas_limit,
         max_total_fee,
     )
+    if result.get("ok") is True:
+        save_prepared_transaction(result, context)
+    return result
 
 
 def _signer_unavailable() -> dict[str, Any]:

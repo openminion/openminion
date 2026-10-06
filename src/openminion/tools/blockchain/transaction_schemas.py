@@ -179,6 +179,12 @@ class SendTransactionArgs(ClosedModel):
 SEND_REQUEST_ADAPTER = TypeAdapter(SendTransactionArgs)
 
 
+class SendPreparedTransactionArgs(ClosedModel):
+    preparation_digest: PreparationDigest = Field(
+        description="Use the digest returned by blockchain.prepare_transaction."
+    )
+
+
 class SimulationResult(ClosedModel):
     state: Literal["succeeded"]
     chain_id: DecimalString

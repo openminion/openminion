@@ -196,8 +196,7 @@ def main() -> int:
                 prompt=(
                     f"Prepare a fresh 1 wei transfer to {RECIPIENT}, then send it "
                     "with the canonical blockchain tools and wait for approval. "
-                    "Copy the prepared transaction and digest exactly; use null "
-                    "call_context for this native transfer."
+                    "Use the preparation digest returned by the prepare step."
                 ),
                 expected_markers=(),
                 requires_approval=True,
@@ -209,8 +208,7 @@ def main() -> int:
                 prompt=(
                     f"Prepare a fresh 1 wei transfer to {RECIPIENT}, then send it "
                     "with the canonical blockchain tools and wait for approval. "
-                    "Copy the prepared transaction and digest exactly; use null "
-                    "call_context for this native transfer."
+                    "Use the preparation digest returned by the prepare step."
                 ),
                 expected_markers=(),
                 requires_approval=True,
