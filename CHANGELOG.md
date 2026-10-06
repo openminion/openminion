@@ -1,9 +1,14 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-10-05
+Last updated: 2026-10-06
 
 This file tracks package-facing release notes for `openminion`.
+
+## Unreleased
+
+- Keep scheduled-task creation and task inventory on the same canonical task
+  manager so newly created schedules remain visible to CLI and Desktop users.
 
 ## 0.1 - 2026-10-05
 

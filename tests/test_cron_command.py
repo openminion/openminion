@@ -35,7 +35,13 @@ class CronCommandTests(unittest.TestCase):
                 tool_selection=SimpleNamespace(),
             )
         )
-        return SimpleNamespace(config=config, tools=tools)
+        task_manager = mock.Mock(spec=["get_task", "list_scheduled_jobs"])
+        return SimpleNamespace(
+            config=config,
+            tools=tools,
+            task_manager=task_manager,
+            scheduler_readiness=mock.Mock(return_value={"state": "ready"}),
+        )
 
     def test_build_schedule_payload_every_ms(self) -> None:
         args = Namespace(every_ms=60_000, cron_expr="", at_iso="", timezone="")
@@ -116,6 +122,8 @@ class CronCommandTests(unittest.TestCase):
         )
         self.assertEqual(context.session_id, "cron-cli")
         self.assertEqual(context.metadata["agent_id"], "ops")
+        self.assertIs(context.task_manager, app.task_manager)
+        self.assertIs(context.scheduler_readiness, app.scheduler_readiness)
 
     def test_run_cron_pause_dispatches_task_pause(self) -> None:
         app = self._mock_app(ok=True, data={"task_id": "job-123", "enabled": False})

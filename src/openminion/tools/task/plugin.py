@@ -193,6 +193,8 @@ def _resolve_cron_store(ctx: RuntimeContext) -> Any:
 
 
 def _resolve_task_manager(ctx: RuntimeContext) -> TaskManager:
+    if isinstance(ctx.task_manager, TaskManager):
+        return ctx.task_manager
     store = _resolve_cron_store(ctx)
     try:
         return TaskManager.from_cron_repository(
