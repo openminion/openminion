@@ -18,6 +18,7 @@ from openminion.modules.policy.adapters.composition import (
 from openminion.modules.tool.selection import ToolSelectionService
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
 from openminion.modules.task.constants import DEFAULT_TASK_MIN_EVERY_MS
+from openminion.modules.task.surface import resolve_task_surface_source
 
 
 def run_cron(args, app: APIRuntime) -> int:
@@ -142,6 +143,8 @@ def _execute_task_tool(
             target="cli-cron",
             session_id=session_id,
             metadata=metadata,
+            task_manager=resolve_task_surface_source(app),
+            scheduler_readiness=app.scheduler_readiness,
             blast_radius_adapter=build_default_composition_boundary_adapter(
                 seam_id=SEAM_CLI_CRON,
             ),
