@@ -45,6 +45,7 @@ from .command_metadata import (
     _runtime_workspace_from_command,
 )
 from .blockchain_authorization import consume_blockchain_send_authorization
+from .blockchain_authorization import resolve_blockchain_send_args
 from .github_merge import execute_github_merge_pr_project_effect
 from .github_release import execute_github_release_project_effect
 from .github_update import execute_github_update_pr_project_effect
@@ -635,26 +636,6 @@ class ToolAdapter:
         ctx.tool_name = tool_name
         ctx.tool_call_id = str(command.get("command_id", "") or "")
         ctx.invocation_id = str(command.get("idempotency_key", "") or "")
-        if tool_name == "blockchain.send_transaction":
-            from openminion.tools.blockchain.preparations import (
-                PreparationReferenceError,
-                resolve_prepared_transaction,
-            )
-
-            try:
-                validated_args = resolve_prepared_transaction(
-                    validated_args,
-                    session_id=session_id,
-                    env=env_owner,
-                )
-            except PreparationReferenceError as exc:
-                return _error_envelope(
-                    status=BRAIN_STATE_ERROR,
-                    summary="Prepared transaction is unavailable",
-                    code="PREPARATION_NOT_FOUND",
-                    message=str(exc),
-                    latency_ms=int((time.monotonic() - start_time) * 1000),
-                )
         if runtime_message_ref is not None:
             ctx.message_ref = dict(runtime_message_ref)
         if ctx.policy_adapter is not None:
@@ -740,6 +721,9 @@ class ToolAdapter:
         tool_name = ctx.tool_name
         try:
             if tool_name == "blockchain.send_transaction":
+                validated_args = resolve_blockchain_send_args(
+                    validated_args, str(ctx.session_id or ""), ctx.env
+                )
                 ctx.policy_authorization = consume_blockchain_send_authorization(
                     policy_ctl=self.policy_ctl,
                     permission_mode=ctx.permission_mode,

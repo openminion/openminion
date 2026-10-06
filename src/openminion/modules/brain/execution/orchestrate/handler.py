@@ -1,4 +1,3 @@
-from dataclasses import replace
 from types import SimpleNamespace
 from threading import Lock
 from typing import Any
@@ -66,6 +65,7 @@ from openminion.modules.brain.execution.child_tasks import (
 from .strategies import (
     AbortOnNewMessagePolicy,
     AcceptOrPlanResolver,
+    apply_subtask_act_profile,
     AllInlinePromoter,
     BlockingWait,
     build_child_state,
@@ -421,13 +421,7 @@ class OrchestrateMode:
                 user_input=prompt,
                 logger=ctx.logger,
             )
-        if bool(subtask.inputs.get("code_bearing")):
-            decision.act_profile = "coding"
-            pre_resolved_route = getattr(decision, "_pre_resolved_act_route", None)
-            if pre_resolved_route is not None:
-                decision._pre_resolved_act_route = replace(
-                    pre_resolved_route, act_profile="coding"
-                )
+        apply_subtask_act_profile(decision, subtask)
         if (
             str(getattr(decision, "route", getattr(decision, "mode", "")) or "").strip()
             == ORCHESTRATE_MODE
