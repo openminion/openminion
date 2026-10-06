@@ -15,15 +15,24 @@ from openminion.tools.blockchain.preparations import (
 )
 
 
-def resolve_blockchain_send_args(
+def authorize_prepared_blockchain_send(
     args: dict[str, Any],
-    session_id: str,
-    env: dict[str, str],
-) -> dict[str, Any]:
+    context: Any,
+    policy_ctl: Any | None,
+) -> tuple[dict[str, Any], PolicyAuthorization]:
     try:
-        return resolve_prepared_transaction(args, session_id=session_id, env=env)
+        resolved = resolve_prepared_transaction(
+            args,
+            session_id=str(context.session_id or ""),
+            env=context.env,
+        )
     except PreparationReferenceError as exc:
         raise ToolRuntimeError("PREPARATION_NOT_FOUND", str(exc)) from exc
+    return resolved, consume_blockchain_send_authorization(
+        policy_ctl=policy_ctl,
+        permission_mode=context.permission_mode,
+        args=resolved,
+    )
 
 
 def consume_blockchain_send_authorization(
