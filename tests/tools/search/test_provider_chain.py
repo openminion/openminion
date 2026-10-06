@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
+from openminion.base.config.runtime.tools import ToolFamilyRuntimeConfig
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.tools.search import plugin as search_plugin
@@ -229,6 +230,29 @@ class _LegacyHealthyDuckDuckGoProvider:
         return True
 
 
+class _HealthyResultWithoutLinkProvider:
+    provider_id = "duckduckgo"
+    display_name = "DuckDuckGo"
+
+    def search(self, query, *, max_results, args, ctx):
+        del max_results, args, ctx
+        return {
+            "provider": self.provider_id,
+            "query": {"original": query, "more_results_available": False},
+            "results": [
+                {
+                    "title": "Result without a link",
+                    "url": "",
+                    "description": "The provider returned a valid result.",
+                }
+            ],
+        }
+
+    def healthcheck(self, ctx=None) -> bool:
+        del ctx
+        return True
+
+
 class _FailingFirecrawlProvider:
     provider_id = "firecrawl"
     display_name = "Firecrawl"
@@ -429,6 +453,86 @@ def test_auto_provider_filters_unhealthy_candidates_but_keeps_healthy_fallback()
     assert "provider 'brave' reported unhealthy" in result["data"]["warnings"]
     assert brave.search_calls == 0
     assert tavily.search_calls == 1
+
+
+def test_code_default_order_does_not_depend_on_registration_order() -> None:
+    brave = _ContextAwareBraveProvider(healthy_without_ctx=True)
+    tavily = _LegacyHealthyTavilyProvider()
+    search_plugin.register_provider(brave)
+    search_plugin.register_provider(tavily)
+
+    result = search_plugin._handle_web_search(
+        {"query": "cats", "provider": "auto", "max_results": 5},
+        _runtime_ctx(),
+    )
+
+    assert result["ok"] is True
+    assert result["source"] == "tavily"
+    assert tavily.search_calls == 1
+    assert brave.search_calls == 0
+
+
+def test_successful_search_is_verified_separately_from_source_links() -> None:
+    search_plugin.register_provider(_HealthyResultWithoutLinkProvider())
+
+    result = search_plugin._handle_web_search(
+        {"query": "cats", "provider": "duckduckgo", "max_results": 5},
+        _runtime_ctx(),
+    )
+
+    assert result["ok"] is True
+    assert result["verified"] is True
+    assert result["data"]["source_links_present"] is False
+
+
+def test_provider_diagnostics_exposes_code_default_and_readiness() -> None:
+    brave = _ContextAwareBraveProvider(healthy_without_ctx=False)
+    tavily = _LegacyHealthyTavilyProvider()
+    search_plugin.register_provider(brave)
+    search_plugin.register_provider(tavily)
+
+    diagnostics = search_plugin.build_provider_diagnostics()
+
+    assert diagnostics["available_providers"] == ["brave", "tavily"]
+    assert diagnostics["effective_provider_order"] == ["tavily", "brave"]
+    assert diagnostics["effective_default_provider"] == "tavily"
+    assert diagnostics["providers"] == [
+        {
+            "name": "brave",
+            "enabled": True,
+            "ready": False,
+            "blocked_reason": "provider requirements are not satisfied",
+        },
+        {
+            "name": "tavily",
+            "enabled": True,
+            "ready": True,
+            "blocked_reason": "",
+        },
+    ]
+
+
+def test_provider_diagnostics_marks_policy_disabled_providers() -> None:
+    brave = _ContextAwareBraveProvider(healthy_without_ctx=True)
+    tavily = _LegacyHealthyTavilyProvider()
+    search_plugin.register_provider(brave)
+    search_plugin.register_provider(tavily)
+
+    diagnostics = search_plugin.build_provider_diagnostics(
+        family_config=ToolFamilyRuntimeConfig(
+            enabled_providers=["tavily"],
+            default_provider="tavily",
+            provider_order=["tavily"],
+        )
+    )
+
+    assert diagnostics["effective_provider_order"] == ["tavily"]
+    assert diagnostics["providers"][0] == {
+        "name": "brave",
+        "enabled": False,
+        "ready": False,
+        "blocked_reason": "disabled by runtime policy",
+    }
 
 
 def test_runtime_tools_provider_order_overrides_legacy_policy_and_env() -> None:

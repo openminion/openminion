@@ -4,6 +4,7 @@ import hashlib
 import logging
 from typing import Any
 
+from openminion.base.config.runtime.tools import ToolFamilyRuntimeConfig
 from openminion.modules.context.input_boundaries import (
     emit_boundary_event as _pidf_emit_boundary_event,
 )
@@ -20,6 +21,7 @@ from openminion.modules.tool.runtime.routing import (
 )
 
 from .constants import (
+    DEFAULT_SEARCH_PROVIDER_ORDER,
     SEARCH_BRAVE_PROVIDER_ID,
     SEARCH_DUCKDUCKGO_PROVIDER_ID,
     SEARCH_FIRECRAWL_PROVIDER_ID,
@@ -54,6 +56,47 @@ def register_provider(provider: SearchProvider) -> None:
 
 def list_provider_ids() -> tuple[str, ...]:
     return tuple(provider_registry().list_provider_ids())
+
+
+def build_provider_diagnostics(
+    *, family_config: ToolFamilyRuntimeConfig | None = None
+) -> dict[str, Any]:
+    available = _registered_provider_ids()
+    order = resolve_runtime_provider_chain(
+        available=available,
+        family_config=family_config,
+        hinted_order=DEFAULT_SEARCH_PROVIDER_ORDER,
+    )
+    allowed = set(order)
+    providers: list[dict[str, Any]] = []
+    for provider_id in available:
+        provider = _registered_provider(provider_id)
+        if provider_id not in allowed:
+            providers.append(
+                {
+                    "name": provider_id,
+                    "enabled": False,
+                    "ready": False,
+                    "blocked_reason": "disabled by runtime policy",
+                }
+            )
+            continue
+        ready = bool(provider and provider.healthcheck(None))
+        blocked_reason = "" if ready else "provider requirements are not satisfied"
+        providers.append(
+            {
+                "name": provider_id,
+                "enabled": provider_id in allowed,
+                "ready": ready,
+                "blocked_reason": blocked_reason,
+            }
+        )
+    return {
+        "available_providers": available,
+        "effective_provider_order": order,
+        "effective_default_provider": order[0] if order else "",
+        "providers": providers,
+    }
 
 
 def _registered_provider(provider_id: str) -> SearchProvider | None:
@@ -149,7 +192,7 @@ def _resolve_provider_chain(
         for provider_id in resolve_runtime_provider_chain(
             available=_registered_provider_ids(),
             family_config=family_cfg,
-            hinted_order=hinted_order,
+            hinted_order=[*hinted_order, *DEFAULT_SEARCH_PROVIDER_ORDER],
         ):
             _add(provider_id)
 
@@ -463,7 +506,7 @@ def _handle_web_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, A
         return {
             "ok": True,
             "content": _render_content(payload),
-            "verified": source_links_present,
+            "verified": True,
             "data": payload,
             "source": provider_id,
         }
@@ -554,4 +597,9 @@ def register(registry: ToolRegistry) -> None:
         _LOG.warning("search provider entry-point loading failed: %s", exc)
 
 
-__all__ = ["register", "register_provider", "list_provider_ids"]
+__all__ = [
+    "build_provider_diagnostics",
+    "list_provider_ids",
+    "register",
+    "register_provider",
+]

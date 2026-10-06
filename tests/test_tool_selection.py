@@ -65,6 +65,16 @@ class MockTool(Tool):
 def basic_registry() -> ToolRegistry:
     tools = [
         MockTool(
+            name="search.dispatch",
+            description="Search the web through the configured provider chain",
+            primary_category="web.search",
+            parameters={
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        ),
+        MockTool(
             name="search.tavily.search",
             description="Search the web for current information",
             primary_category="web.search",
@@ -73,6 +83,16 @@ def basic_registry() -> ToolRegistry:
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
                 "required": ["query"],
+            },
+        ),
+        MockTool(
+            name="weather",
+            description="Get current weather through the configured provider chain",
+            primary_category="weather",
+            parameters={
+                "type": "object",
+                "properties": {"location": {"type": "string"}},
+                "required": ["location"],
             },
         ),
         MockTool(
@@ -303,9 +323,19 @@ class TestCategoryRouting:
         registry = ToolRegistry(
             [
                 MockTool(
+                    name="weather",
+                    description="Get current weather",
+                    primary_category="weather",
+                ),
+                MockTool(
                     name="weather.openmeteo.current",
                     description="Get current weather",
                     primary_category="weather",
+                ),
+                MockTool(
+                    name="search.dispatch",
+                    description="Search the web",
+                    primary_category="web.search",
                 ),
                 MockTool(
                     name="search.tavily.search",
@@ -330,7 +360,7 @@ class TestCategoryRouting:
                 intent_categories=["weather"],
                 identity_tool_filter={
                     "tool_use": "restricted",
-                    "allowed_tools": ["weather.openmeteo.current"],
+                    "allowed_tools": ["weather"],
                 },
             )
 
@@ -340,7 +370,7 @@ class TestCategoryRouting:
                 intent_categories=["web.search"],
                 identity_tool_filter={
                     "tool_use": "restricted",
-                    "allowed_tools": ["search.tavily.search"],
+                    "allowed_tools": ["web.search"],
                 },
             )
 
@@ -348,7 +378,7 @@ class TestCategoryRouting:
             with ThreadPoolExecutor(max_workers=2) as pool:
                 weather_result = pool.submit(_select_weather).result()
                 web_result = pool.submit(_select_web).result()
-            assert weather_result.shortlist == ["weather.openmeteo.current"]
+            assert weather_result.shortlist == ["weather"]
             assert web_result.shortlist == ["web.search"]
             assert id(service._registry) == baseline_registry_id
 
