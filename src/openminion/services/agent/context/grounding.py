@@ -4,7 +4,10 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Mapping, Sequence
 
-from openminion.modules.context.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
+from openminion.modules.context.constants import (
+    PRIOR_TURN_CONTEXT_CHAR_LIMIT,
+    PRIOR_TURN_TOOL_RESULT_CHAR_LIMIT,
+)
 from openminion.modules.tool.exposure import get_allowed_model_tool_names
 from openminion.services.config import resolve_services_roots
 from openminion.modules.prompting.context_blocks import (
@@ -244,7 +247,16 @@ def _render_prior_turn_context_block(
             prior_turn_hint.get("tool_events"),
             limit=PRIOR_TURN_CONTEXT_CHAR_LIMIT,
         )
-        if not user_text and not assistant_text and not tool_events:
+        latest_tool_result = _bounded_text(
+            prior_turn_hint.get("latest_tool_result"),
+            limit=PRIOR_TURN_TOOL_RESULT_CHAR_LIMIT,
+        )
+        if (
+            not user_text
+            and not assistant_text
+            and not tool_events
+            and not latest_tool_result
+        ):
             return ""
         lines = [
             _PRIOR_TURN_BLOCK_HEADER,
@@ -256,6 +268,8 @@ def _render_prior_turn_context_block(
             lines.append(f"- assistant: {json.dumps(assistant_text)}")
         for event in tool_events[:3]:
             lines.append(f"- tool_event: {json.dumps(event)}")
+        if latest_tool_result:
+            lines.append(f"- latest_tool_result: {latest_tool_result}")
         return "\n".join(lines).strip()
     text = _bounded_text(prior_turn_hint, limit=PRIOR_TURN_CONTEXT_CHAR_LIMIT)
     if not text:
