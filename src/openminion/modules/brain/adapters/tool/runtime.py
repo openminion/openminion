@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Iterator, Mapping, cast
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.base.config.env import resolve_environment_config
 from openminion.modules.artifact.refs import create_default_artifactctl
+from openminion.modules.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
 from openminion.modules.policy.models import PolicyControlError
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_NEEDS_USER,
@@ -31,7 +32,10 @@ from openminion.modules.tool import (
 )
 from openminion.modules.tool.adapters import AllowAllSafetyAdapter, LocalPolicyAdapter
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.plugin_api import PolicyAdapter
+from openminion.modules.tool.plugin_api import (
+    PolicyAdapter,
+    is_policy_authorization_pair,
+)
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.runtime.routing import (
     build_runtime_tool_routing_metadata,
@@ -117,6 +121,7 @@ class ToolAdapter:
         reactions_enabled: bool = True,
         skill_api: Any | None = None,
         secret_service: Any | None = None,
+        commerce_runtime: Any | None = None,
         memory_service: Any | None = None,
         knowledge_graph_service: Any | None = None,
         ops_service: Any | None = None,
@@ -142,6 +147,7 @@ class ToolAdapter:
         self.reactions_enabled = reactions_enabled
         self.skill_api = skill_api
         self.secret_service = secret_service
+        self.commerce_runtime = commerce_runtime
         self.memory_service = memory_service
         self.knowledge_graph_service = knowledge_graph_service
         self.ops_service = ops_service
@@ -204,6 +210,7 @@ class ToolAdapter:
 
         return ToolExecutionContextBuilder(
             agent_id=self.agent_id,
+            commerce_runtime=self.commerce_runtime,
             memory_service=getattr(self, "memory_service", None),
             sandbox_runner=getattr(self, "sandbox_runner", None),
             security_lab_runner=getattr(self, "security_lab_runner", None),
@@ -323,7 +330,10 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
                 details={"reason": "approval_callback_failed"},
             )
-        if tool_name == "ops.command.run":
+        tool, method = (
+            tool_name.rsplit(".", 1) if "." in tool_name else (tool_name, "default")
+        )
+        if tool_name == "ops.command.run" or is_policy_authorization_pair(tool, method):
             if self.policy_ctl is None:
                 return _error_envelope(
                     status=BRAIN_STATE_ERROR,
@@ -612,6 +622,8 @@ class ToolAdapter:
             policy_adapter=policy_adapter,
             skill_api=self.skill_api,
             secret_service=self.secret_service,
+            commerce_runtime=self.commerce_runtime,
+            subject_id=COMMERCE_LOCAL_SUBJECT_ID,
             telemetryctl=self.telemetryctl,
             artifactctl=self.artifactctl,
             memory_service=self.memory_service,

@@ -9,7 +9,6 @@ from typing import Any, Dict, Iterable, Literal, Optional, cast
 from urllib.parse import urlparse
 
 from openminion.modules.tool.plugin_api import (
-    BlockchainSendConfirmationPreview,
     ToolConfirmationPreview,
     is_policy_authorization_pair,
 )
@@ -622,11 +621,7 @@ class PolicyCtl:
             confirm_request=confirm_request,
             approval_id=approval_id,
             invocation_hash=inv.invocation_hash,
-            confirmation_preview=(
-                confirmation_preview
-                if isinstance(confirmation_preview, BlockchainSendConfirmationPreview)
-                else None
-            ),
+            confirmation_preview=confirmation_preview,
         )
 
     def _default_target_scope(self, inv: InvocationSummary) -> Dict[str, Any]:

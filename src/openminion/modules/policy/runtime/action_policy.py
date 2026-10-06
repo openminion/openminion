@@ -29,6 +29,13 @@ def build_action_policy_service(
 
 
 def derive_tool_risk_spec(*, tool_name: str, tool: Any) -> RiskSpec:
+    if tool_name == "commerce.prepare_order":
+        return RiskSpec(
+            risk_class="state_change",
+            side_effects="external_account",
+            reversibility="reversible",
+            default_confirm=True,
+        )
     if tool_name == "blockchain.send_transaction":
         return RiskSpec(
             risk_class="financial",

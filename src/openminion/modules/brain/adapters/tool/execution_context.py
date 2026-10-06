@@ -13,6 +13,7 @@ from openminion.modules.tool.exposure.service import (
     project_security_lab_metadata,
     resolve_security_lab_metadata,
 )
+from openminion.modules.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
 
 from .policy_context import _runtime_env_from_policy
 
@@ -20,6 +21,7 @@ from .policy_context import _runtime_env_from_policy
 @dataclass(frozen=True)
 class ToolExecutionContextBuilder:
     agent_id: str
+    commerce_runtime: Any
     memory_service: Any
     sandbox_runner: Any
     security_lab_runner: Any
@@ -88,7 +90,9 @@ class ToolExecutionContextBuilder:
             channel="console",
             target=session_id or "session",
             session_id=session_id,
+            subject_id=COMMERCE_LOCAL_SUBJECT_ID,
             metadata=metadata,
+            commerce_runtime=self.commerce_runtime,
             memory_service=self.memory_service,
             sandbox_runner=self.sandbox_runner,
             security_lab_runner=self.security_lab_runner,

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 import logging
@@ -79,6 +81,9 @@ from openminion.services.runtime.memory import (
 )
 
 if TYPE_CHECKING:
+    from openminion.base.config.runtime.tool_family import CommerceToolRuntimeConfig
+    from openminion.modules.commerce.provider import CommerceProvider
+    from openminion.modules.commerce.runtime import CommerceRuntime
     from openminion.modules.runtime.sandboxes.docker import DockerSandboxRunner
 
 
@@ -104,6 +109,35 @@ def _runtime_secret_service(service: Any, config: OpenMinionConfig) -> Any | Non
         config=config,
         data_root=service._context.home_paths.data_root,
     )
+
+
+def build_commerce_runtime(
+    *,
+    provider: CommerceProvider | None,
+    config: CommerceToolRuntimeConfig | None,
+    order_store: Any | None = None,
+    secret_service: Any | None = None,
+) -> CommerceRuntime | None:
+    if provider is None or config is None or not config.enabled:
+        return None
+    from openminion.modules.commerce.runtime import CommerceRuntime
+
+    return CommerceRuntime(
+        provider=provider,
+        merchant_id=config.merchant_id,
+        provider_secret_key=config.provider_secret_key,
+        buyer_profile_record_id=config.buyer_profile_record_id,
+        payment_token_record_id=config.payment_token_record_id,
+        order_store=order_store,
+        secret_service=secret_service,
+    )
+
+
+def resolve_commerce_runtime(runtime_handle: Any) -> CommerceRuntime | None:
+    from openminion.modules.commerce.runtime import CommerceRuntime
+
+    runtime = getattr(runtime_handle, "commerce_runtime", None)
+    return runtime if isinstance(runtime, CommerceRuntime) else None
 
 
 def build_daytona_runner(
@@ -777,6 +811,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         agent_name=default_profile.name or default_agent_id,
         skill_api=skill_api,
         secret_service=_runtime_secret_service(service, config),
+        commerce_runtime=resolve_commerce_runtime(runtime_handle),
         memory_service=memory_api,
         knowledge_graph_service=getattr(runtime_handle, "knowledge_graphs", None),
         ops_service=getattr(runtime_handle, "ops_service", None),

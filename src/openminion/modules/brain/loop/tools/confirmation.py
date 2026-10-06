@@ -14,6 +14,7 @@ from openminion.modules.brain.schemas import Command, WorkingState
 from openminion.modules.tool.plugin_api import (
     BlockchainSendConfirmationPreview,
     ToolConfirmationPreview,
+    is_policy_authorization_pair,
 )
 
 _COMMAND_ADAPTER = TypeAdapter(Command)
@@ -37,10 +38,13 @@ def requires_individual_confirmation(command: Command | dict[str, Any] | None) -
         if isinstance(command, dict)
         else getattr(command, "tool_name", "")
     )
-    return str(tool_name or "").strip() in {
-        "blockchain.send_transaction",
-        "ops.command.run",
-    }
+    normalized = str(tool_name or "").strip()
+    if normalized == "ops.command.run":
+        return True
+    tool, method = (
+        normalized.rsplit(".", 1) if "." in normalized else (normalized, "default")
+    )
+    return is_policy_authorization_pair(tool, method)
 
 
 def _bounded_confirmation_arg_value(value: Any) -> str:
@@ -208,6 +212,12 @@ def confirmation_required_user_message(
                 ensure_ascii=True,
             )
         )
+    elif tool_name.startswith("commerce.") and isinstance(confirmation_preview, dict):
+        from openminion.modules.commerce.confirmation import (
+            commerce_confirmation_lines,
+        )
+
+        lines.extend(commerce_confirmation_lines(confirmation_preview))
     additional_count = max(0, confirmation_replay_batch_size(command) - 1)
     if additional_count:
         noun = "command" if additional_count == 1 else "commands"

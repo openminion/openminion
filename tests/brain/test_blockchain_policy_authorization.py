@@ -552,6 +552,7 @@ def test_tool_adapter_consumes_grant_for_canonical_invocation(tmp_path) -> None:
         "tool": "blockchain",
         "method": "send_transaction",
         "invocation_hash": expected_hash,
+        "session_id": "session",
     }
     assert captured["authorization"] == PolicyAuthorization(
         tool="blockchain",
@@ -560,6 +561,8 @@ def test_tool_adapter_consumes_grant_for_canonical_invocation(tmp_path) -> None:
         approval_id="approval",
         grant_id="grant",
         duration_type="once",
+        subject_id="local",
+        session_id="session",
     )
 
 

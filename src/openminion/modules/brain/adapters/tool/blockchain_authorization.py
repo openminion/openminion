@@ -32,6 +32,8 @@ def authorize_blockchain_send(
         policy_ctl=policy_ctl,
         permission_mode=context.permission_mode,
         args=resolved,
+        subject_id="local",
+        session_id=str(context.session_id or "") or None,
     )
 
 
