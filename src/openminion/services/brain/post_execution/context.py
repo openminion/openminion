@@ -573,8 +573,9 @@ def _prior_turn_context_hint(
         payload["assistant_message"] = assistant_message[:PRIOR_TURN_CONTEXT_CHAR_LIMIT]
     if tool_events:
         payload["tool_events"] = tool_events
+    state_inline = _latest_working_state_inline(runner=runner, session_id=session_id)
     latest_tool_result = latest_structured_tool_result(
-        _latest_working_state_inline(runner=runner, session_id=session_id)
+        state_inline.get(STATE_KEY_MODULE_STATE) if state_inline else None
     )
     if latest_tool_result:
         payload["latest_tool_result"] = latest_tool_result

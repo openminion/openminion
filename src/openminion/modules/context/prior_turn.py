@@ -8,8 +8,8 @@ from .constants import (
     PRIOR_TURN_CONTEXT_CHAR_LIMIT,
     PRIOR_TURN_TOOL_RESULT_CHAR_LIMIT,
 )
+from openminion.modules.prompting.context_blocks import PRIOR_TURN_BLOCK_HEADER
 
-_BLOCK_HEADER = "## Prior Turn Context"
 
 
 def _bounded_text(value: Any, *, limit: int) -> str:
@@ -32,7 +32,11 @@ def _bounded_items(value: Any) -> list[str]:
 def render_prior_turn_context_block(hint: Mapping[str, Any] | str | None) -> str:
     if not isinstance(hint, Mapping):
         text = _bounded_text(hint, limit=PRIOR_TURN_CONTEXT_CHAR_LIMIT)
-        return "\n".join([_BLOCK_HEADER, f"- assistant: {json.dumps(text)}"]) if text else ""
+        return (
+            "\n".join([PRIOR_TURN_BLOCK_HEADER, f"- assistant: {json.dumps(text)}"])
+            if text
+            else ""
+        )
 
     user_text = _bounded_text(
         hint.get("user_message"), limit=PRIOR_TURN_CONTEXT_CHAR_LIMIT
@@ -47,7 +51,7 @@ def render_prior_turn_context_block(hint: Mapping[str, Any] | str | None) -> str
     if not any((user_text, assistant_text, tool_events, latest_tool_result)):
         return ""
     lines = [
-        _BLOCK_HEADER,
+        PRIOR_TURN_BLOCK_HEADER,
         "Verbatim transcript from the immediately preceding turn. Use it as context only.",
     ]
     if user_text:
@@ -60,8 +64,7 @@ def render_prior_turn_context_block(hint: Mapping[str, Any] | str | None) -> str
     return "\n".join(lines).strip()
 
 
-def latest_structured_tool_result(state_inline: Mapping[str, Any] | None) -> str:
-    module_state = state_inline.get("module_state") if state_inline else None
+def latest_structured_tool_result(module_state: Mapping[str, Any] | None) -> str:
     adaptive_loop = module_state.get("adaptive_loop") if isinstance(module_state, dict) else None
     tool_results = adaptive_loop.get("tool_results") if isinstance(adaptive_loop, dict) else None
     if not isinstance(tool_results, list):
