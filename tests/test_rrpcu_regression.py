@@ -33,6 +33,15 @@ class TestHomeRootResolution:
             result = resolve_home_root(config_path="/tmp/config/openminion.json")
         assert result == Path("/tmp/config").resolve()
 
+    def test_canonical_config_directory_resolves_to_project_home(self) -> None:
+        from openminion.base.config import resolve_home_root
+
+        with patch.dict(os.environ, {}, clear=True):
+            result = resolve_home_root(
+                config_path="/tmp/project/.openminion/agents.json"
+            )
+        assert result == Path("/tmp/project").resolve()
+
     def test_resolve_home_root_env_overrides_config_path(self) -> None:
         from openminion.base.config import resolve_home_root
 

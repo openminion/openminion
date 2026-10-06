@@ -246,7 +246,7 @@ try:
         result = agent.run("Check order A-104")
         print(result.text, result.session_id)
 except ProviderError as exc:
-    print(f"provider failed: {exc.code}")
+    print(f"provider failed: {exc}")
 ```
 
 Pass `config_path="path/to/agents.json"` to use a project-owned config and
