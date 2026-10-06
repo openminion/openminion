@@ -27,6 +27,7 @@ from openminion.base.config.runtime.tools import (  # noqa: E402
     BlockchainToolRuntimeConfig,
     ToolRuntimeConfig,
 )
+from openminion.base.config.env import resolve_environment_config  # noqa: E402
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter  # noqa: E402
 from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
 from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
@@ -265,7 +266,10 @@ def main() -> int:
             agent_id="bdtc-local",
         )
         runtime_context = SimpleNamespace(
-            policy=_policy(DATA_ROOT), secret_service=secret
+            policy=_policy(DATA_ROOT),
+            secret_service=secret,
+            session_id="bdtc-local",
+            env=resolve_environment_config(),
         )
         telemetry = _Telemetry()
 
@@ -364,6 +368,7 @@ def main() -> int:
             "call_context": prepared["call_context"],
             "preparation_digest": prepared["preparation_digest"],
         }
+        send_reference = {"preparation_digest": prepared["preparation_digest"]}
         denied_decision, denied_grant, preview = _approval(
             policy_ctl, send_args, "denied", "deny"
         )
@@ -371,7 +376,7 @@ def main() -> int:
         denied = adapter.execute(
             command={
                 "tool_name": "blockchain.send_transaction",
-                "args": send_args,
+                "args": send_reference,
                 "idempotency_key": "denied",
             },
             session_id="bdtc-local",
@@ -394,6 +399,9 @@ def main() -> int:
             "call_context": prepared_again["call_context"],
             "preparation_digest": prepared_again["preparation_digest"],
         }
+        send_reference = {
+            "preparation_digest": prepared_again["preparation_digest"]
+        }
         allowed_decision, grant_id, allowed_preview = _approval(
             policy_ctl, send_args, "allowed", "allow_once"
         )
@@ -402,7 +410,7 @@ def main() -> int:
         allowed = adapter.execute(
             command={
                 "tool_name": "blockchain.send_transaction",
-                "args": send_args,
+                "args": send_reference,
                 "idempotency_key": "allowed",
             },
             session_id="bdtc-local",
