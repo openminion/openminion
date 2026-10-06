@@ -1,4 +1,3 @@
-import json
 import re
 from typing import Any
 
@@ -6,7 +5,7 @@ from openminion.base.types import Message
 from openminion.modules.context.input_boundaries import (
     emit_boundary_event as _pidf_emit_boundary_event,
 )
-from openminion.modules.context.constants import PRIOR_TURN_TOOL_RESULT_CHAR_LIMIT
+from openminion.modules.context.prior_turn import latest_structured_tool_result
 from openminion.modules.brain.loop.context.pending_turn import (
     pending_turn_context_for_prompt,
 )
@@ -574,42 +573,12 @@ def _prior_turn_context_hint(
         payload["assistant_message"] = assistant_message[:PRIOR_TURN_CONTEXT_CHAR_LIMIT]
     if tool_events:
         payload["tool_events"] = tool_events
-    latest_tool_result = _latest_structured_tool_result(
-        runner=runner,
-        session_id=session_id,
+    latest_tool_result = latest_structured_tool_result(
+        _latest_working_state_inline(runner=runner, session_id=session_id)
     )
     if latest_tool_result:
         payload["latest_tool_result"] = latest_tool_result
     return payload or None
-
-
-def _latest_structured_tool_result(*, runner: BrainRunner, session_id: str) -> str:
-    state_inline = _latest_working_state_inline(runner=runner, session_id=session_id)
-    if state_inline is None:
-        return ""
-    module_state = state_inline.get("module_state")
-    if not isinstance(module_state, dict):
-        return ""
-    adaptive_loop = module_state.get("adaptive_loop")
-    if not isinstance(adaptive_loop, dict):
-        return ""
-    tool_results = adaptive_loop.get("tool_results")
-    if not isinstance(tool_results, list):
-        return ""
-    for item in reversed(tool_results):
-        if not isinstance(item, dict) or item.get("ok") is not True:
-            continue
-        tool_name = str(item.get("tool_name", "") or "").strip()
-        data = item.get("data")
-        if not tool_name or not isinstance(data, (dict, list)):
-            continue
-        return json.dumps(
-            {"tool_name": tool_name, "data": data},
-            ensure_ascii=True,
-            sort_keys=True,
-            separators=(",", ":"),
-        )[:PRIOR_TURN_TOOL_RESULT_CHAR_LIMIT]
-    return ""
 
 
 def _append_prior_tool_event(events: list[str], event: str) -> None:
