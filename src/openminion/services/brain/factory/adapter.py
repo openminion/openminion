@@ -150,6 +150,7 @@ def create_policy_api(
     db_dir: Path,
     policy_service: Any | None = None,
     action_policy_config: ActionPolicyConfig | None = None,
+    commerce_runtime: Any | None = None,
 ) -> Any:
     if policy_service is not None and mode != "local":
         from openminion.modules.brain.adapters.policy import PolicyCtlBrainAdapter
@@ -157,6 +158,11 @@ def create_policy_api(
         return PolicyCtlBrainAdapter(
             policy_service,
             action_policy_config=action_policy_config,
+            commerce_confirmation_resolver=(
+                commerce_runtime.resolve_confirmation_preview
+                if commerce_runtime is not None
+                else None
+            ),
         )
     return create_policy_adapter(mode=mode, db_path=db_dir)
 

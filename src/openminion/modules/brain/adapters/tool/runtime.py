@@ -49,6 +49,9 @@ from .command_metadata import (
     _runtime_workspace_from_command,
 )
 from .blockchain_authorization import authorize_blockchain_send
+from openminion.tools.commerce.authorization import (
+    consume_commerce_prepare_authorization,
+)
 from .github_merge import execute_github_merge_pr_project_effect
 from .github_release import execute_github_release_project_effect
 from .github_update import execute_github_update_pr_project_effect
@@ -734,6 +737,14 @@ class ToolAdapter:
             if tool_name == "blockchain.send_transaction":
                 validated_args, ctx.policy_authorization = authorize_blockchain_send(
                     validated_args, ctx, self.policy_ctl
+                )
+            elif tool_name == "commerce.prepare_order":
+                ctx.policy_authorization = consume_commerce_prepare_authorization(
+                    policy_ctl=self.policy_ctl,
+                    permission_mode=ctx.permission_mode,
+                    args=validated_args,
+                    subject_id=COMMERCE_LOCAL_SUBJECT_ID,
+                    session_id=ctx.session_id,
                 )
             if tool_name == "github.open_pr" and project_task_id:
                 return execute_github_open_pr_project_effect(

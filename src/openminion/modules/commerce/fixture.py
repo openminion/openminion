@@ -106,6 +106,7 @@ class FixtureCommerceProvider:
         self.checkout_ref = "checkout-1"
         self.checkout_revision = "checkout-1:r1"
         self.ledger: list[FixtureLedgerEntry] = []
+        self.inspect_calls: list[InspectRequest] = []
         self._preparations: dict[str, OrderPreparation] = {}
         self._placements: dict[str, OrderPlacement] = {}
         self._action_preparations: dict[str, OrderActionPreparation] = {}
@@ -130,6 +131,11 @@ class FixtureCommerceProvider:
         self._drop_next.add(operation)
 
     def inspect(self, request: InspectRequest) -> CommerceInspection:
+        self.inspect_calls.append(request)
+        if request.merchant_id != self.merchant.provider_id:
+            raise CommerceProviderError(
+                "MERCHANT_MISMATCH", "Configured merchant does not match fixture."
+            )
         if request.kind == "product":
             return ProductInspection(
                 reference=request.reference,

@@ -45,6 +45,9 @@ RUNTIME_BLOCKCHAIN_DEBUG = "runtime.blockchain.debug"
 RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION = "runtime.blockchain.prepare_transaction"
 RUNTIME_BLOCKCHAIN_SEND_TRANSACTION = "runtime.blockchain.send_transaction"
 
+RUNTIME_COMMERCE_INSPECT = "runtime.commerce.inspect"
+RUNTIME_COMMERCE_PREPARE_ORDER = "runtime.commerce.prepare_order"
+
 OPS_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     "runtime.ops.target.list",
     "runtime.ops.target.inspect",
@@ -204,6 +207,8 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_BLOCKCHAIN_DEBUG,
     RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
     RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
+    RUNTIME_COMMERCE_INSPECT,
+    RUNTIME_COMMERCE_PREPARE_ORDER,
     *OPS_RUNTIME_BINDING_IDS,
     *SPECIALIZED_OPS_RUNTIME_BINDING_IDS,
     *SECURITY_RUNTIME_BINDING_IDS,

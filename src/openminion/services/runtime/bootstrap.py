@@ -759,11 +759,14 @@ def build_brain_runner_bundle(service: Any) -> Any:
         if default_profile.action_policy is not None
         else config.action_policy
     )
+    runtime_handle = service._runtime_handle
+    commerce_runtime = resolve_commerce_runtime(runtime_handle)
     policy_api = bridge_module.create_policy_api(
         mode=service.mode,
         db_dir=db_dir,
         policy_service=service._action_policy_service,
         action_policy_config=resolved_action_policy,
+        commerce_runtime=commerce_runtime,
     )
     safety_api = bridge_module.create_safety_api(mode=service.mode)
 
@@ -802,7 +805,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
     )
     cron_repository = create_sqlite_cron_repository(db_path=service.db_path)
     task_manager = _build_brain_task_manager(service, cron_repository)
-    runtime_handle = service._runtime_handle
     tool_api = bridge_module.create_tool_api(
         mode=service.mode,
         workspace_root=service._context.workspace_root,
@@ -811,7 +813,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         agent_name=default_profile.name or default_agent_id,
         skill_api=skill_api,
         secret_service=_runtime_secret_service(service, config),
-        commerce_runtime=resolve_commerce_runtime(runtime_handle),
+        commerce_runtime=commerce_runtime,
         memory_service=memory_api,
         knowledge_graph_service=getattr(runtime_handle, "knowledge_graphs", None),
         ops_service=getattr(runtime_handle, "ops_service", None),

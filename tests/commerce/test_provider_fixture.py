@@ -48,10 +48,16 @@ def test_fixture_inspects_product_and_checkout_and_recovers_preparation() -> Non
     runtime, _, preparation = _prepare()
 
     product = runtime.inspect(
-        InspectRequest(kind="product", product_ref="product-1")
+        InspectRequest(
+            kind="product", merchant_id="merchant-fixture", product_ref="product-1"
+        )
     )
     checkout = runtime.inspect(
-        InspectRequest(kind="checkout", checkout_ref=preparation.checkout_ref)
+        InspectRequest(
+            kind="checkout",
+            merchant_id="merchant-fixture",
+            checkout_ref=preparation.checkout_ref,
+        )
     )
 
     assert product.kind == "product"

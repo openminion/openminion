@@ -261,11 +261,18 @@ class PolicyCtlBrainAdapter:
                 from openminion.modules.commerce.confirmation import (
                     commerce_confirmation_payload,
                 )
+                from openminion.tools.commerce.authorization import (
+                    canonical_commerce_args,
+                )
 
+                check_kwargs["invocation"] = {
+                    **invocation,
+                    "args": canonical_commerce_args(dict(invocation["args"])),
+                }
                 check_kwargs["confirmation_preview"] = commerce_confirmation_payload(
                     resolver(
                         tool_name=tool_name,
-                        args=dict(invocation["args"]),
+                        args=dict(check_kwargs["invocation"]["args"]),
                         subject_id=str(ctx.get("subject_id", "") or ""),
                         session_id=str(ctx.get("session_id", "") or ""),
                     )
