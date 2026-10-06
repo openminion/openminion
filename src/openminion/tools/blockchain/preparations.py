@@ -32,7 +32,7 @@ def _store_root(*, session_id: str, env: EnvironmentConfig) -> Path:
         data_root=env.openminion_data_root or None,
         env=env.values,
     )
-    return data_root / "blockchain" / "preparations" / _safe_session_id(session_id)
+    return Path(data_root) / "blockchain" / "preparations" / _safe_session_id(session_id)
 
 
 def _reference_path(
