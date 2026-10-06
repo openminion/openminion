@@ -29,6 +29,7 @@ def test_live_framework_root_finds_workspace_around_nested_worktree(
     package_root = workspace_root / "workspace-tmp" / "run" / "openminion"
     package_root.mkdir(parents=True)
     (workspace_root / "test-configs").mkdir()
+    (workspace_root / "workspace-tmp" / "test-configs").mkdir()
     monkeypatch.delenv("OPENMINION_LIVE_E2E_FRAMEWORK_ROOT", raising=False)
 
     assert resolve_live_framework_root(package_root) == workspace_root

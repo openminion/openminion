@@ -14,9 +14,11 @@ def resolve_live_framework_root(openminion_root: Path) -> Path:
     if configured:
         return Path(configured).expanduser().resolve()
     resolved_root = openminion_root.resolve()
-    for parent in resolved_root.parents:
-        if (parent / "test-configs").is_dir():
-            return parent
+    candidates = [
+        parent for parent in resolved_root.parents if (parent / "test-configs").is_dir()
+    ]
+    if candidates:
+        return min(candidates, key=lambda path: len(path.parts))
     return resolved_root.parent
 
 
