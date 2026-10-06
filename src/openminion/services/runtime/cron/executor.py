@@ -5,6 +5,7 @@ from typing import Any, Callable
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.logging import format_structured_event, get_logger
 from openminion.modules.artifact.refs import create_default_artifactctl
+from openminion.modules.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
 from openminion.services.runtime.routine_context import (
     build_routine_pre_turn_context,
     write_routine_artifact,
@@ -20,6 +21,7 @@ from openminion.tools.task.routine.dispatcher import (
     build_routine_run_result,
 )
 from openminion.tools.task.routine.schemas import RoutinePayloadV1
+from openminion.tools.task.routine.schemas import ROUTINE_KIND_COMMERCE_ORDER
 from openminion.services.runtime.cron.audit import watch_write_audit_entries
 from openminion.modules.task.cron_payloads import (
     build_cron_turn_result,
@@ -338,12 +340,19 @@ class CronTurnExecutor:
         if handler is None:
             return {"summary": "routine handler is not registered", "error": True}
         routine_id = str(job.get("job_id", "") or "").strip() or "<unknown>"
+        commerce_routine = routine.routine_kind == ROUTINE_KIND_COMMERCE_ORDER
         pre_turn_ctx = build_routine_pre_turn_context(
             runtime=self._runtime,
             routine_id=routine_id,
             session_id=str(payload.get("session_id") or "").strip(),
             agent_id=self._resolve_agent_id(job) or "",
             allowed_tools=handler.pre_turn_tools_for(routine),
+            subject_id=COMMERCE_LOCAL_SUBJECT_ID if commerce_routine else "",
+            commerce_runtime=(
+                getattr(self._runtime, "commerce_runtime", None)
+                if commerce_routine
+                else None
+            ),
         )
         if pre_turn_ctx is None:
             return {
@@ -362,29 +371,53 @@ class CronTurnExecutor:
         routine_watch = dict(watch)
         routine_watch["allowed_tools"] = list(handler.model_turn_tools)
         routine_watch.update(handler.finalizer_watch_overrides)
-        routine_payload = dict(payload)
-        routine_payload[WATCH_PAYLOAD_KEY] = routine_watch
-        routine_payload["message"] = handler.render_turn(
-            check_instruction=str(watch.get("check_instruction", "")).strip(),
-            facts=facts,
-        )
-        turn_result = self._execute_agent_turn(
-            job=job, run=run, payload=routine_payload
-        )
-        if turn_result.get("error"):
-            return turn_result
+        turn_result: dict[str, Any] = {}
+        outcome_text = ""
+        if bool(getattr(handler, "requires_model_turn", True)):
+            routine_payload = dict(payload)
+            routine_payload[WATCH_PAYLOAD_KEY] = routine_watch
+            routine_payload["message"] = handler.render_turn(
+                check_instruction=str(watch.get("check_instruction", "")).strip(),
+                facts=facts,
+            )
+            turn_result = self._execute_agent_turn(
+                job=job, run=run, payload=routine_payload
+            )
+            if turn_result.get("error"):
+                return turn_result
+            outcome_text = str(turn_result.get("summary", "") or "")
         try:
             post = handler.post_turn(
                 routine=routine,
                 routine_id=routine_id,
                 facts=facts,
-                outcome_text=str(turn_result.get("summary", "") or ""),
+                outcome_text=outcome_text,
             )
         except Exception as exc:  # noqa: BLE001
             return {
                 "summary": f"routine post-turn failed: {exc}",
                 "error": True,
             }
+        if bool((post.metadata or {}).get("routine_paused", False)):
+            return {
+                "summary": "",
+                "artifact_refs": [],
+                "metadata": {
+                    "routine_kind": routine.routine_kind,
+                    "routine_paused": True,
+                },
+                "output": watch_output(
+                    condition_met=False,
+                    condition_valid=False,
+                    terminal=False,
+                    deliver=False,
+                    checks_completed=int(watch.get("checks_completed", 0) or 0),
+                    terminal_reason="",
+                    summary="",
+                ),
+            }
+        if bool((post.metadata or {}).get("routine_terminal", False)):
+            routine_watch["stop_on_condition"] = True
         artifact_id = ""
         if post.artifact_body is not None:
             try:
