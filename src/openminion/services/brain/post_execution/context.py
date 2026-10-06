@@ -5,6 +5,7 @@ from openminion.base.types import Message
 from openminion.modules.context.input_boundaries import (
     emit_boundary_event as _pidf_emit_boundary_event,
 )
+from openminion.modules.context.prior_turn import latest_structured_tool_result
 from openminion.modules.brain.loop.context.pending_turn import (
     pending_turn_context_for_prompt,
 )
@@ -26,6 +27,7 @@ from openminion.services.brain.post_execution.constants import (
     PRIOR_TURN_TOOL_EVENT_CHAR_LIMIT,
     PRIOR_TURN_TOOL_EVENT_LIMIT,
 )
+from openminion.services.brain.post_execution.reset import _latest_working_state_inline
 
 _HYDRATION_METADATA_KEYS = frozenset(
     {
@@ -571,6 +573,12 @@ def _prior_turn_context_hint(
         payload["assistant_message"] = assistant_message[:PRIOR_TURN_CONTEXT_CHAR_LIMIT]
     if tool_events:
         payload["tool_events"] = tool_events
+    state_inline = _latest_working_state_inline(runner=runner, session_id=session_id)
+    latest_tool_result = latest_structured_tool_result(
+        state_inline.get(STATE_KEY_MODULE_STATE) if state_inline else None
+    )
+    if latest_tool_result:
+        payload["latest_tool_result"] = latest_tool_result
     return payload or None
 
 

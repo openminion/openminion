@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -356,6 +357,17 @@ def decision_mode_name(decision: Any) -> str:
         str(getattr(decision, "route", getattr(decision, "mode", "")) or "act").strip()
         or "act"
     )
+
+
+def apply_subtask_act_profile(decision: Any, subtask: SubtaskSpec) -> None:
+    if not subtask.inputs.get("code_bearing"):
+        return
+    decision.act_profile = "coding"
+    pre_resolved_route = getattr(decision, "_pre_resolved_act_route", None)
+    if pre_resolved_route is not None:
+        decision._pre_resolved_act_route = replace(
+            pre_resolved_route, act_profile="coding"
+        )
 
 
 def debit_parent_budget(

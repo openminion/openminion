@@ -14,11 +14,12 @@ from cryptography.fernet import Fernet
 from web3 import Web3
 
 ROOT = Path(__file__).resolve().parents[3]
-FRAMEWORK_ROOT = ROOT.parent
 sys.path.insert(0, str(ROOT))
 
+from tests.helpers.live_e2e_profiles import resolve_live_framework_root  # noqa: E402
 from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
+FRAMEWORK_ROOT = resolve_live_framework_root(ROOT)
 RUNTIME_GENERATED_ROOT = isolate_runtime_roots(prefix="openminion-bttl-focus-")
 
 from openminion.modules.secret.service import SecretService  # noqa: E402
@@ -195,8 +196,7 @@ def main() -> int:
                 prompt=(
                     f"Prepare a fresh 1 wei transfer to {RECIPIENT}, then send it "
                     "with the canonical blockchain tools and wait for approval. "
-                    "Copy the prepared transaction and digest exactly; use null "
-                    "call_context for this native transfer."
+                    "Use the preparation digest returned by the prepare step."
                 ),
                 expected_markers=(),
                 requires_approval=True,
@@ -208,8 +208,7 @@ def main() -> int:
                 prompt=(
                     f"Prepare a fresh 1 wei transfer to {RECIPIENT}, then send it "
                     "with the canonical blockchain tools and wait for approval. "
-                    "Copy the prepared transaction and digest exactly; use null "
-                    "call_context for this native transfer."
+                    "Use the preparation digest returned by the prepare step."
                 ),
                 expected_markers=(),
                 requires_approval=True,

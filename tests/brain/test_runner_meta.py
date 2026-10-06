@@ -574,6 +574,11 @@ class RunnerMetaTests(unittest.TestCase):
 
                 def call_structured(self, **kwargs):
                     schema_name = kwargs["schema"].__name__
+                    if schema_name == "SkillSubsetSelection":
+                        return {
+                            "skill_ids": ["docker_restart_safe"],
+                            "intent": "restart docker safely",
+                        }
                     if schema_name == "Decision":
                         return {
                             "route": "respond",
@@ -626,7 +631,7 @@ class RunnerMetaTests(unittest.TestCase):
 
             shortlisted = next(e for e in events if e["type"] == "skill.shortlisted")
             self.assertIn("docker_restart_safe", shortlisted["payload"]["skill_ids"])
-            self.assertEqual(shortlisted["payload"]["strategy"], "direct")
+            self.assertEqual(shortlisted["payload"]["strategy"], "llm-llm")
 
             selected = next(e for e in events if e["type"] == "skill.selected")
             self.assertIn("skill_ref", selected["payload"])
@@ -634,7 +639,7 @@ class RunnerMetaTests(unittest.TestCase):
                 selected["payload"]["skill_ref"]["id"], "docker_restart_safe"
             )
             self.assertAlmostEqual(selected["payload"]["confidence"], 1.0)
-            self.assertEqual(selected["payload"]["selection_mode"], "direct")
+            self.assertEqual(selected["payload"]["selection_mode"], "llm-select")
 
     def test_prerouting_event_includes_context_budget_metadata_when_enabled(
         self,
@@ -652,6 +657,11 @@ class RunnerMetaTests(unittest.TestCase):
 
                 def call_structured(self, **kwargs):
                     schema_name = kwargs["schema"].__name__
+                    if schema_name == "SkillSubsetSelection":
+                        return {
+                            "skill_ids": ["docker_restart_safe"],
+                            "intent": "restart docker safely",
+                        }
                     if schema_name == "Decision":
                         return {
                             "route": "respond",
@@ -700,7 +710,7 @@ class RunnerMetaTests(unittest.TestCase):
             events = session.list_events("s-prerouting-budget")
             prerouting = next(e for e in events if e["type"] == "skill.prerouting")
             self.assertEqual(prerouting["payload"]["context_budget"], "full")
-            self.assertEqual(prerouting["payload"]["strategy"], "direct")
+            self.assertEqual(prerouting["payload"]["strategy"], "llm-select")
 
     def test_canonical_logger_used_by_runner(self) -> None:
         from openminion.modules.brain.runner.tick import run_step

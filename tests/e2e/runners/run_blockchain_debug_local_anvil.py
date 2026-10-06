@@ -14,25 +14,12 @@ from cryptography.fernet import Fernet
 from web3 import Web3
 
 ROOT = Path(__file__).resolve().parents[3]
-
-
-def _framework_root() -> Path:
-    return min(
-        (
-            parent
-            for parent in ROOT.parents
-            if (parent / "test-configs" / "per-agent-minimax-official.json").exists()
-        ),
-        default=ROOT.parent,
-        key=lambda path: len(path.parts),
-    )
-
-
-FRAMEWORK_ROOT = _framework_root()
 sys.path.insert(0, str(ROOT))
 
+from tests.helpers.live_e2e_profiles import resolve_live_framework_root  # noqa: E402
 from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
+FRAMEWORK_ROOT = resolve_live_framework_root(ROOT)
 RUNTIME_ROOT = isolate_runtime_roots(prefix="openminion-bdtc-local-")
 DATA_ROOT = RUNTIME_ROOT.parent
 
@@ -40,6 +27,7 @@ from openminion.base.config.runtime.tools import (  # noqa: E402
     BlockchainToolRuntimeConfig,
     ToolRuntimeConfig,
 )
+from openminion.base.config.env import resolve_environment_config  # noqa: E402
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter  # noqa: E402
 from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
 from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
@@ -278,7 +266,10 @@ def main() -> int:
             agent_id="bdtc-local",
         )
         runtime_context = SimpleNamespace(
-            policy=_policy(DATA_ROOT), secret_service=secret
+            policy=_policy(DATA_ROOT),
+            secret_service=secret,
+            session_id="bdtc-local",
+            env=resolve_environment_config(),
         )
         telemetry = _Telemetry()
 
@@ -377,6 +368,7 @@ def main() -> int:
             "call_context": prepared["call_context"],
             "preparation_digest": prepared["preparation_digest"],
         }
+        send_reference = {"preparation_digest": prepared["preparation_digest"]}
         denied_decision, denied_grant, preview = _approval(
             policy_ctl, send_args, "denied", "deny"
         )
@@ -384,7 +376,7 @@ def main() -> int:
         denied = adapter.execute(
             command={
                 "tool_name": "blockchain.send_transaction",
-                "args": send_args,
+                "args": send_reference,
                 "idempotency_key": "denied",
             },
             session_id="bdtc-local",
@@ -407,6 +399,7 @@ def main() -> int:
             "call_context": prepared_again["call_context"],
             "preparation_digest": prepared_again["preparation_digest"],
         }
+        send_reference = {"preparation_digest": prepared_again["preparation_digest"]}
         allowed_decision, grant_id, allowed_preview = _approval(
             policy_ctl, send_args, "allowed", "allow_once"
         )
@@ -415,7 +408,7 @@ def main() -> int:
         allowed = adapter.execute(
             command={
                 "tool_name": "blockchain.send_transaction",
-                "args": send_args,
+                "args": send_reference,
                 "idempotency_key": "allowed",
             },
             session_id="bdtc-local",

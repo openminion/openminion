@@ -9,6 +9,30 @@ from openminion.modules.tool.plugin_api import (
 )
 from openminion.modules.policy.models import PolicyControlError
 from openminion.tools.blockchain.confirmation import canonical_blockchain_send_args
+from openminion.tools.blockchain.preparations import (
+    PreparationReferenceError,
+    resolve_prepared_transaction,
+)
+
+
+def authorize_blockchain_send(
+    args: dict[str, Any],
+    context: Any,
+    policy_ctl: Any | None,
+) -> tuple[dict[str, Any], PolicyAuthorization]:
+    try:
+        resolved = resolve_prepared_transaction(
+            args,
+            session_id=str(context.session_id or ""),
+            env=context.env,
+        )
+    except PreparationReferenceError as exc:
+        raise ToolRuntimeError("PREPARATION_NOT_FOUND", str(exc)) from exc
+    return resolved, consume_blockchain_send_authorization(
+        policy_ctl=policy_ctl,
+        permission_mode=context.permission_mode,
+        args=resolved,
+    )
 
 
 def consume_blockchain_send_authorization(

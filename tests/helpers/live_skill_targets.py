@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from openminion.base.config import configured_agent_ids, load_config
-from tests.helpers.live_e2e_profiles import resolve_live_config_path
+from tests.helpers.live_e2e_profiles import (
+    resolve_live_config_path,
+    resolve_live_framework_root,
+)
 
 MATRIX_TYPE_SIMPLE = "skill_simple"
 MATRIX_TYPE_DENSE = "skill_dense"
@@ -28,7 +31,7 @@ class SkillLiveTarget:
 
 
 def framework_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return resolve_live_framework_root(openminion_root())
 
 
 def openminion_root() -> Path:

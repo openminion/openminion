@@ -44,7 +44,7 @@ from .command_metadata import (
     _orchestration_metadata_from_command,
     _runtime_workspace_from_command,
 )
-from .blockchain_authorization import consume_blockchain_send_authorization
+from .blockchain_authorization import authorize_blockchain_send
 from .github_merge import execute_github_merge_pr_project_effect
 from .github_release import execute_github_release_project_effect
 from .github_update import execute_github_update_pr_project_effect
@@ -602,6 +602,7 @@ class ToolAdapter:
             policy=policy_for_run,
             workspace=effective_workspace_root,
             run_root=run_root,
+            env=env_owner,
             scope=policy_for_run.max_scope(),
             confirm=auto_confirm,
             repositories=build_runtime_repositories(context_metadata=context_metadata),
@@ -695,7 +696,6 @@ class ToolAdapter:
 
         return self._invoke_validated_tool(
             command=command,
-            args=args,
             validated_args=validated_args,
             ctx=ctx,
             spec=spec,
@@ -709,7 +709,6 @@ class ToolAdapter:
         self,
         *,
         command: dict[str, Any],
-        args: dict[str, Any],
         validated_args: dict[str, Any],
         ctx: RuntimeContext,
         spec: ToolSpec,
@@ -721,10 +720,8 @@ class ToolAdapter:
         tool_name = ctx.tool_name
         try:
             if tool_name == "blockchain.send_transaction":
-                ctx.policy_authorization = consume_blockchain_send_authorization(
-                    policy_ctl=self.policy_ctl,
-                    permission_mode=ctx.permission_mode,
-                    args=args,
+                validated_args, ctx.policy_authorization = authorize_blockchain_send(
+                    validated_args, ctx, self.policy_ctl
                 )
             if tool_name == "github.open_pr" and project_task_id:
                 return execute_github_open_pr_project_effect(

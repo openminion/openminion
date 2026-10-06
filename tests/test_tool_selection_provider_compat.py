@@ -18,12 +18,12 @@ from openminion.services.tool.selection import (
 )
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.llm.schemas import LLMRequest
+from tests.helpers.live_e2e_profiles import resolve_live_framework_root
 
 pytestmark = pytest.mark.package_integration
 
-_TEST_CONFIGS_DIR = (
-    pathlib.Path(__file__).resolve().parent.parent.parent / "test-configs"
-)
+_OPENMINION_ROOT = pathlib.Path(__file__).resolve().parent.parent
+_TEST_CONFIGS_DIR = resolve_live_framework_root(_OPENMINION_ROOT) / "test-configs"
 
 
 def _search_stub() -> ToolStub:

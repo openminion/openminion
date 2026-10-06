@@ -670,9 +670,7 @@ def _can_use_direct_catalog(
 ) -> bool:
     if not catalog or len(catalog) > capacity:
         return False
-    if not auto_enabled:
-        return True
-    return len(catalog) == 1
+    return not auto_enabled
 
 
 def _slice_value(raw_slice: Any, key: str, default: Any) -> Any:

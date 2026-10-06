@@ -179,6 +179,16 @@ class SendTransactionArgs(ClosedModel):
 SEND_REQUEST_ADAPTER = TypeAdapter(SendTransactionArgs)
 
 
+class SendPreparedTransactionArgs(ClosedModel):
+    preparation_digest: PreparationDigest | None = Field(
+        default=None,
+        description=(
+            "Select a preparation by digest. Omit this field to use the latest "
+            "preparation in the current session."
+        ),
+    )
+
+
 class SimulationResult(ClosedModel):
     state: Literal["succeeded"]
     chain_id: DecimalString

@@ -15,25 +15,12 @@ from cryptography.fernet import Fernet
 from web3 import Web3
 
 ROOT = Path(__file__).resolve().parents[3]
-
-
-def _framework_root() -> Path:
-    return min(
-        (
-            parent
-            for parent in ROOT.parents
-            if (parent / "test-configs" / "per-agent-minimax-official.json").exists()
-        ),
-        default=ROOT.parent,
-        key=lambda path: len(path.parts),
-    )
-
-
-FRAMEWORK_ROOT = _framework_root()
 sys.path.insert(0, str(ROOT))
 
+from tests.helpers.live_e2e_profiles import resolve_live_framework_root  # noqa: E402
 from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
+FRAMEWORK_ROOT = resolve_live_framework_root(ROOT)
 RUNTIME_ROOT = isolate_runtime_roots(prefix="openminion-bdtc-focus-")
 
 from openminion.modules.secret.service import SecretService  # noqa: E402
@@ -310,6 +297,9 @@ def _reply_to_approval(probe: FocusProbe, session, reply: str, timeout: int) -> 
         probe._submit_sidecar_consent(session, reply)
     else:
         probe._submit_composer_line(session, reply)
+    session.wait_for_visible_match_after(
+        r"Done in \d+(?:m\d{2}s|s)", offset=offset, timeout=timeout
+    )
     probe._wait_for_composer(session, timeout=timeout)
     return session.visible_transcript[offset:]
 
@@ -422,11 +412,15 @@ def main() -> int:
         def compact(value: object) -> str:
             return json.dumps(value, separators=(",", ":"))
 
-        prepare_prompt = (
-            f"Prepare but do not send a call to contract {contract.address} using "
-            f"function ABI {compact(swap_abi)} and tuple arguments "
-            f"{compact([[RECIPIENT, 7, 14]])}."
-        )
+        def prepare_prompt(amount_in: int, minimum_out: int) -> str:
+            return (
+                "Use blockchain.prepare_transaction now to create a fresh prepared "
+                "transaction. Do not reuse or describe an earlier preparation. "
+                f"Do not send it. Call contract {contract.address} "
+                f"using function ABI {compact(swap_abi)} and tuple arguments "
+                f"{compact([[RECIPIENT, amount_in, minimum_out]])}."
+            )
+
         turns = [
             _scenario(
                 "turn-1",
@@ -441,7 +435,7 @@ def main() -> int:
                 f"{compact(quote_abi)} and arguments {compact([7])}. Do not prepare or "
                 "send a transaction.",
             ),
-            _scenario("turn-3", prepare_prompt),
+            _scenario("turn-3", prepare_prompt(7, 14)),
         ]
         probe = FocusProbe(
             python_bin=Path(sys.executable),
@@ -473,14 +467,15 @@ def main() -> int:
             transcript_parts.append(_reply_to_approval(probe, session, "no", 480))
             assert contract.functions.outputOf(RECIPIENT).call() == 0
             transcript_parts.append(
-                _run_turn(probe, session, _scenario("turn-6", prepare_prompt))
+                _run_turn(probe, session, _scenario("turn-6", prepare_prompt(8, 16)))
             )
             approval_transcript, allowed_approval_id = _wait_for_approval(
                 probe,
                 session,
-                "Call the blockchain send-transaction tool now for the newly "
-                "prepared transaction. Request my approval before broadcasting it.",
-                480,
+                "Call blockchain.send_transaction with no arguments now so it uses "
+                "the latest preparation. Do not analyze, modify, or substitute it. "
+                "Request my approval before broadcasting it.",
+                600,
                 data_root,
                 approval_ids,
             )
@@ -530,7 +525,7 @@ def main() -> int:
         transcript_path = EVIDENCE_ROOT / "transcript.txt"
         transcript_path.write_text(transcript)
         assert "private provider text" not in transcript
-        assert contract.functions.outputOf(RECIPIENT).call() == 14
+        assert contract.functions.outputOf(RECIPIENT).call() == 16
         invocation_sequence = _requested_invocations(data_root)
         required_invocations = _required_invocations(invocation_sequence)
         assert all(item["tool_call_id"] for item in invocation_sequence)
@@ -594,7 +589,7 @@ def main() -> int:
         events_result = events_result_item["data"]
         assert quote_result["data"]["return_values"] == ["14"]
         assert receipt_result["data"]["status"] == 1
-        assert state_result["data"]["return_values"] == ["14"]
+        assert state_result["data"]["return_values"] == ["16"]
         audit = transaction_audits[0]
         evidence = {
             "schema_version": "bdtc-e2e-v1",

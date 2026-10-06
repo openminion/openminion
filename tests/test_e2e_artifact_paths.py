@@ -235,6 +235,9 @@ def test_live_cli_chat_helper_requires_explicit_unsandboxed_exec_opt_in(
     python_path = tmp_path / "python"
     python_path.touch()
     captured_command: list[str] = []
+    captured_env: dict[str, str] = {}
+    captured_prompts: list[str] = []
+    captured_approval_limits: list[int] = []
 
     monkeypatch.setattr(live_cli_chat_alibaba, "require_live_flag", lambda: None)
     monkeypatch.setattr(live_cli_chat_alibaba, "python_bin", lambda: python_path)
@@ -243,11 +246,34 @@ def test_live_cli_chat_helper_requires_explicit_unsandboxed_exec_opt_in(
         live_cli_chat_alibaba, "artifact_dir", lambda: tmp_path / "artifacts"
     )
 
-    def _capture_command(**kwargs):
-        captured_command.extend(kwargs["cmd"])
-        return 0, "completed"
+    class _Session:
+        visible_transcript = "completed"
 
-    monkeypatch.setattr(live_cli_chat_alibaba, "_run_probe_session", _capture_command)
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    def _capture_session(**kwargs):
+        captured_command.extend(kwargs["argv"])
+        captured_env.update(kwargs["env"])
+        return _Session()
+
+    monkeypatch.setattr(live_cli_chat_alibaba, "PtySession", _capture_session)
+    monkeypatch.setattr(
+        live_cli_chat_alibaba.FocusProbe,
+        "wait_ready",
+        lambda _probe, _session: None,
+    )
+    monkeypatch.setattr(
+        live_cli_chat_alibaba.FocusProbe,
+        "run_turn",
+        lambda _probe, _session, scenario: (
+            captured_prompts.append(scenario.prompt),
+            captured_approval_limits.append(scenario.max_auto_approvals),
+        ),
+    )
     monkeypatch.setattr(
         live_cli_chat_alibaba,
         "_append_structured_probe_debug",
@@ -256,7 +282,7 @@ def test_live_cli_chat_helper_requires_explicit_unsandboxed_exec_opt_in(
 
     live_cli_chat_alibaba.run_cli_session(
         session_id_prefix="exec-opt-in",
-        user_input="run tests",
+        user_input="run tests\n/debug\n/exit\n",
         agent_id="test-agent",
         config_path=config_path,
         allow_unsandboxed_exec=allow_unsandboxed_exec,
@@ -264,134 +290,9 @@ def test_live_cli_chat_helper_requires_explicit_unsandboxed_exec_opt_in(
 
     assert ("--allow-unsandboxed-exec" in captured_command) is expected_flag
     assert captured_command[captured_command.index("--dir") + 1] == str(tmp_path)
-
-
-def test_live_cli_chat_helper_counts_probe_input_turns() -> None:
-    assert live_cli_chat_alibaba._probe_input_turn_count("hello\n/debug\n/exit\n") == 1
-    assert (
-        live_cli_chat_alibaba._probe_input_turn_count(
-            "tool time {}\n/debug\ntool location {}\n/debug\n/exit\n"
-        )
-        == 2
-    )
-
-
-def test_live_cli_chat_helper_detects_completed_durable_outbound_turn(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "state" / "openminion.db"
-    db_path.parent.mkdir(parents=True)
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            "create table messages (role text, body text, metadata_json text, created_at integer)"
-        )
-        conn.execute(
-            "insert into messages values (?, ?, ?, ?)",
-            (
-                "outbound",
-                "agent: final answer",
-                json.dumps(
-                    {
-                        "brain_status": "done",
-                        "run_state": "completed",
-                        "session_id": "session-a",
-                    }
-                ),
-                1,
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    assert live_cli_chat_alibaba._durable_outbound_turn_completed(
-        data_root=tmp_path,
-        agent_id="agent",
-    )
-    assert live_cli_chat_alibaba._durable_outbound_turn_completed(
-        data_root=tmp_path,
-        agent_id="agent",
-        session_id="session-a",
-    )
-
-
-def test_live_cli_chat_helper_rejects_incomplete_durable_outbound_turn(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "state" / "openminion.db"
-    db_path.parent.mkdir(parents=True)
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            "create table messages (role text, body text, metadata_json text, created_at integer)"
-        )
-        conn.execute(
-            "insert into messages values (?, ?, ?, ?)",
-            (
-                "outbound",
-                "agent: still thinking",
-                json.dumps({"run_state": "running"}),
-                1,
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    assert not live_cli_chat_alibaba._durable_outbound_turn_completed(
-        data_root=tmp_path,
-        agent_id="agent",
-    )
-
-
-def test_live_cli_chat_helper_durable_completion_matches_current_session(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "state" / "openminion.db"
-    db_path.parent.mkdir(parents=True)
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            "create table messages (role text, body text, metadata_json text, created_at integer)"
-        )
-        conn.execute(
-            "insert into messages values (?, ?, ?, ?)",
-            (
-                "outbound",
-                "agent: old final answer",
-                json.dumps(
-                    {
-                        "brain_status": "done",
-                        "run_state": "completed",
-                        "session_id": "old-session",
-                    }
-                ),
-                1,
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    assert live_cli_chat_alibaba._durable_outbound_turn_completed(
-        data_root=tmp_path,
-        agent_id="agent",
-        session_id="old-session",
-    )
-    assert not live_cli_chat_alibaba._durable_outbound_turn_completed(
-        data_root=tmp_path,
-        agent_id="agent",
-        session_id="new-session",
-    )
-
-    transcript = live_cli_chat_alibaba._append_structured_probe_debug(
-        transcript="probe text",
-        data_root=tmp_path,
-        agent_id="agent",
-        session_id="new-session",
-    )
-    assert transcript == "probe text"
+    assert captured_env["TERM"] == "xterm-256color"
+    assert captured_prompts == ["run tests"]
+    assert captured_approval_limits == [32]
 
 
 def test_live_cli_chat_helper_reads_session_outbound_debug_payloads(

@@ -4,18 +4,16 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Mapping, Sequence
 
-from openminion.modules.context.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
+from openminion.modules.context.prior_turn import render_prior_turn_context_block
 from openminion.modules.tool.exposure import get_allowed_model_tool_names
 from openminion.services.config import resolve_services_roots
 from openminion.modules.prompting.context_blocks import (
     GROUNDING_BLOCK_HEADER,
     PENDING_TURN_BLOCK_HEADER,
-    PRIOR_TURN_BLOCK_HEADER,
 )
 
 _GROUNDING_BLOCK_HEADER = GROUNDING_BLOCK_HEADER
 _PENDING_TURN_BLOCK_HEADER = PENDING_TURN_BLOCK_HEADER
-_PRIOR_TURN_BLOCK_HEADER = PRIOR_TURN_BLOCK_HEADER
 _GROUNDING_BLOCK_BUDGET_TOKENS = 320
 
 
@@ -96,7 +94,7 @@ def append_grounding_blocks(
     )
     if pending_block:
         sections.append(pending_block)
-    prior_turn_block = _render_prior_turn_context_block(prior_turn_hint=prior_turn_hint)
+    prior_turn_block = render_prior_turn_context_block(prior_turn_hint)
     if prior_turn_block:
         sections.append(prior_turn_block)
     return "\n\n".join(section for section in sections if section).strip()
@@ -226,46 +224,6 @@ def _render_pending_turn_context_block(
             )
         )
     return "\n".join(lines).strip()
-
-
-def _render_prior_turn_context_block(
-    *, prior_turn_hint: Mapping[str, Any] | str | None
-) -> str:
-    if isinstance(prior_turn_hint, Mapping):
-        user_text = _bounded_text(
-            prior_turn_hint.get("user_message"),
-            limit=PRIOR_TURN_CONTEXT_CHAR_LIMIT,
-        )
-        assistant_text = _bounded_text(
-            prior_turn_hint.get("assistant_message"),
-            limit=PRIOR_TURN_CONTEXT_CHAR_LIMIT,
-        )
-        tool_events = _normalize_list(
-            prior_turn_hint.get("tool_events"),
-            limit=PRIOR_TURN_CONTEXT_CHAR_LIMIT,
-        )
-        if not user_text and not assistant_text and not tool_events:
-            return ""
-        lines = [
-            _PRIOR_TURN_BLOCK_HEADER,
-            "Verbatim transcript from the immediately preceding turn. Use it as context only.",
-        ]
-        if user_text:
-            lines.append(f"- user: {json.dumps(user_text)}")
-        if assistant_text:
-            lines.append(f"- assistant: {json.dumps(assistant_text)}")
-        for event in tool_events[:3]:
-            lines.append(f"- tool_event: {json.dumps(event)}")
-        return "\n".join(lines).strip()
-    text = _bounded_text(prior_turn_hint, limit=PRIOR_TURN_CONTEXT_CHAR_LIMIT)
-    if not text:
-        return ""
-    return "\n".join(
-        [
-            _PRIOR_TURN_BLOCK_HEADER,
-            f"- assistant: {json.dumps(text)}",
-        ]
-    ).strip()
 
 
 def _resolve_path_text(value: Any, *, fallback: str) -> str:
