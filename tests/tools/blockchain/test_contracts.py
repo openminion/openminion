@@ -121,15 +121,20 @@ def test_complex_blockchain_schema_examples_are_valid() -> None:
             adapter.validate_python(example)
 
 
-def test_discriminated_tool_schemas_inline_action_branches() -> None:
+def test_discriminated_tool_schemas_expose_flat_provider_objects() -> None:
     for model in (InspectArgs, PrepareArgs, DebugArgs):
         schema = model.model_json_schema()
+        discriminator = "kind" if model is PrepareArgs else "action"
         assert schema["type"] == "object"
-        assert schema["discriminator"] == {
-            "propertyName": "kind" if model is PrepareArgs else "action"
-        }
-        assert all("$ref" not in branch for branch in schema["oneOf"])
-        assert all("title" not in branch for branch in schema["oneOf"])
+        assert "oneOf" not in schema
+        assert "discriminator" not in schema
+        assert schema["required"] == [discriminator]
+        assert len(schema["properties"][discriminator]["enum"]) >= 3
+        assert any(
+            "Required when" in str(field.get("description", ""))
+            for name, field in schema["properties"].items()
+            if name != discriminator
+        )
         assert not any(name.endswith("Args") for name in schema["$defs"])
 
 
