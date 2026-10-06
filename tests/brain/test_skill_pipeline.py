@@ -186,10 +186,9 @@ def test_describe_skill_catalog_applies_session_loads_unloads() -> None:
     assert catalog_state.auto_enabled is False
 
 
-def test_resolve_skill_pipeline_direct_selects_single_catalog_skill_without_llm() -> (
-    None
-):
-    runner = _runner(catalog=_catalog("deploy-checker"), llm=MagicMock())
+def test_resolve_skill_pipeline_auto_single_catalog_uses_llm() -> None:
+    llm = _LLM({"skill_ids": ["deploy-checker"], "intent": "deployment health"})
+    runner = _runner(catalog=_catalog("deploy-checker"), llm=llm)
     state = _state()
     logger = _Logger()
 
@@ -201,10 +200,10 @@ def test_resolve_skill_pipeline_direct_selects_single_catalog_skill_without_llm(
         logger=logger,
     )
 
-    assert result.selection_mode == "direct"
+    assert result.selection_mode == "llm-select"
     assert [ref.skill_id for ref in result.selected_refs] == ["deploy-checker"]
     assert result.context_budget == "medium"
-    runner.llm_api.call_structured.assert_not_called()
+    assert len(llm.calls) == 1
     assert any(event["type"] == "skill.selected" for event in logger.events)
 
 
@@ -1080,32 +1079,26 @@ def test_resolve_skill_pipeline_direct_named_emits_direct_named_selection_reason
     )
 
 
-def test_resolve_skill_pipeline_direct_single_catalog_emits_direct_single_catalog_reason() -> (
-    None
-):
+def test_resolve_skill_pipeline_auto_single_catalog_can_select_no_skill() -> None:
     runner = _runner(
         catalog=_catalog("deploy-checker"),
-        llm=_LLM({"skill_ids": [], "intent": "ignored"}),
+        llm=_LLM({"skill_ids": [], "intent": "missing skill"}),
     )
     state = _state(mode=SKILL_SELECTION_AUTO)
     logger = _Logger()
 
     result = resolve_skill_pipeline(
         runner,
-        intent="please help me with something general",
+        intent="Use the totally_missing_skill skill.",
         purpose="plan",
         state=state,
         logger=logger,
     )
 
-    assert result.selection_mode == "direct", (
-        f"expected direct path, got {result.selection_mode}; "
-        f"selection_reason={result.selection_reason}"
-    )
-    assert (
-        result.selection_reason
-        == skill_pipeline._SKILL_SELECTION_REASON_DIRECT_SINGLE_CATALOG
-    )
+    assert result.selection_mode == "llm-select"
+    assert result.selected_refs == []
+    assert result.selection_reason == skill_pipeline._SKILL_SELECTION_REASON_LLM
+    assert not any(event["type"] == "skill.selected" for event in logger.events)
 
 
 def test_prerouting_payload_includes_llm_pick_details_on_llm_select() -> None:

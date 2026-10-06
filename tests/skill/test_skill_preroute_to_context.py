@@ -155,7 +155,7 @@ def test_catalog_loads_ingested_skills(tmp_path: Path) -> None:
         ctl.close()
 
 
-def test_resolve_skill_hints_direct_selects_single_catalog_skill_without_llm(
+def test_resolve_skill_hints_auto_single_catalog_uses_llm_selection(
     tmp_path: Path,
 ) -> None:
     ctl = Skill(_cfg(tmp_path))
@@ -169,6 +169,11 @@ def test_resolve_skill_hints_direct_selects_single_catalog_skill_without_llm(
         mock_runner = MagicMock()
         mock_runner.skill_api = ctl
         mock_runner.llm_api = MagicMock()
+        mock_runner.llm_api.estimate_tokens.return_value = 24
+        mock_runner.llm_api.call_structured.return_value = {
+            "skill_ids": ["deploy_checker"],
+            "intent": "check the deploy status",
+        }
         mock_runner.profile = SimpleNamespace(
             skill=None,
             skill_catalog=[],
@@ -206,13 +211,13 @@ def test_resolve_skill_hints_direct_selects_single_catalog_skill_without_llm(
         assert hints["skill_id"] == "deploy_checker"
         assert hints["primary_skill_id"] == "deploy_checker"
         assert hints["skill_version_hash"] == version_hash
-        assert hints["skill_selection_mode"] == "direct"
+        assert hints["skill_selection_mode"] == "llm-select"
         assert hints["skill_effective_count"] == 1
         assert hints["resolved_skill_ids"] == ["deploy_checker"]
         assert state.active_skill_id == "deploy_checker"
         assert state.active_skill_version_hash == version_hash
         assert state.resolved_skill_ids == ["deploy_checker"]
-        mock_runner.llm_api.call_structured.assert_not_called()
+        mock_runner.llm_api.call_structured.assert_called_once()
     finally:
         ctl.close()
 
