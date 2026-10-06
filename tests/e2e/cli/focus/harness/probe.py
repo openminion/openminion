@@ -65,6 +65,7 @@ _ACTIVE_TURN_STATUS_RE = re.compile(
     re.IGNORECASE,
 )
 _COMPOSER_ECHO_PROBE_LENGTH = 48
+_BRACKETED_PASTE_MIN_LENGTH = 1024
 _TRAILING_PUNCTUATION = ".,;:!?"
 
 
@@ -620,7 +621,11 @@ class FocusProbe:
     ) -> str:
         """Submit through the composer only after its input state is visible."""
         cls._wait_for_composer(session)
-        if "\n" in text or "\r" in text:
+        if (
+            "\n" in text
+            or "\r" in text
+            or len(text) >= _BRACKETED_PASTE_MIN_LENGTH
+        ):
             session.send_bracketed_paste(text)
         else:
             session.send(text)
