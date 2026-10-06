@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, TypeVar, cast
+
+from pydantic import BaseModel
 
 from openminion.modules.runtime.credentials import (
     CredentialAuditLog,
@@ -15,6 +17,8 @@ from openminion.modules.runtime.credentials import (
 )
 
 from .constants import COMMERCE_LOCAL_SUBJECT_ID
+from .config import CommerceToolRuntimeConfig, coerce_commerce_tool_runtime_config
+from .contracts import InspectionKind
 from .provider import (
     ActionRecoveryLocator,
     ApplyOrderActionRequest,
@@ -39,6 +43,8 @@ from .provider import (
     build_commerce_handoff,
     safe_commerce_links,
 )
+
+_CommerceModelT = TypeVar("_CommerceModelT", bound=BaseModel)
 
 
 class CommerceOrderStore(Protocol):
@@ -94,9 +100,7 @@ class CommerceRuntime:
         self.payment_token_record_id = payment_token_record_id
         self.order_store = order_store
         self.secret_service = secret_service
-        self.credential_audit_log = (
-            credential_audit_log or InMemoryCredentialAuditLog()
-        )
+        self.credential_audit_log = credential_audit_log or InMemoryCredentialAuditLog()
         self._checkout_refs: dict[str, str] = {}
 
     def inspect(self, request: InspectRequest) -> CommerceInspection:
@@ -144,7 +148,7 @@ class CommerceRuntime:
             order_ref = str(args["local_order_ref"])
             order = self._require_owned_order(order_ref)
             request = InspectRequest(
-                kind=kind,
+                kind=cast(InspectionKind, kind),
                 merchant_id=self.merchant_id,
                 order_ref=order.order_id,
             )
@@ -174,7 +178,9 @@ class CommerceRuntime:
         session_id: str,
     ) -> Any:
         if subject_id != COMMERCE_LOCAL_SUBJECT_ID or not session_id:
-            raise ValueError("Commerce confirmation requires the local subject/session.")
+            raise ValueError(
+                "Commerce confirmation requires the local subject/session."
+            )
         if tool_name == "commerce.place_order":
             return self._placement_confirmation(
                 self._validated_place_preparation(args),
@@ -206,9 +212,9 @@ class CommerceRuntime:
             payment_label=self._safe_label(payment, "payment_label"),
             subject_id="local",
             session_id=session_id,
-            expires_at=(
-                datetime.now(timezone.utc) + timedelta(minutes=5)
-            ).replace(microsecond=0).isoformat(),
+            expires_at=(datetime.now(timezone.utc) + timedelta(minutes=5))
+            .replace(microsecond=0)
+            .isoformat(),
             consequence=(
                 "Create or refresh one merchant checkout without placing an order "
                 "or capturing payment."
@@ -258,12 +264,13 @@ class CommerceRuntime:
         try:
             preparation = self.provider.prepare_order(request, self._provider_context())
         except CommerceOutcomeUnknown:
-            preparation = self.recover_preparation(
+            recovered = self.recover_preparation(
                 PreparationRecoveryLocator(idempotency_key=request.idempotency_key)
             )
-            if preparation is None:
+            if recovered is None:
                 self._finish_attempt(attempt, state="outcome_unknown")
                 raise
+            preparation = recovered
         return self._validated_preparation(preparation, attempt)
 
     def recover_preparation(
@@ -282,8 +289,9 @@ class CommerceRuntime:
         attempt = self._reserve_placement(
             request, request_digest, authorization_hash=authorization_hash
         )
-        if attempt is not None:
-            submitting = self.order_store.begin_placement_attempt(
+        order_store = self.order_store
+        if attempt is not None and order_store is not None:
+            submitting = order_store.begin_placement_attempt(
                 subject_id=COMMERCE_LOCAL_SUBJECT_ID,
                 attempt_id=attempt.attempt.attempt_id,
             )
@@ -302,10 +310,11 @@ class CommerceRuntime:
         try:
             placement = self.provider.place_order(request)
         except CommerceOutcomeUnknown:
-            placement = self._recover_placement(request)
-            if placement is None:
+            recovered = self._recover_placement(request)
+            if recovered is None:
                 self._finish_attempt(attempt, state="outcome_unknown")
                 raise
+            placement = recovered
         return self._placement_result(placement, attempt)
 
     def recover_placement(
@@ -335,10 +344,11 @@ class CommerceRuntime:
         try:
             result = self.provider.apply_action(request)
         except CommerceOutcomeUnknown:
-            result = self._recover_action(request)
-            if result is None:
+            recovered = self._recover_action(request)
+            if recovered is None:
                 self._finish_attempt(attempt, state="outcome_unknown")
                 raise
+            result = recovered
         result = self._sanitize_links(result)
         if self.order_store is not None:
             self.order_store.update_order_lifecycle(
@@ -372,9 +382,7 @@ class CommerceRuntime:
             payment_token_record=self._secret_record(self.payment_token_record_id),
         )
 
-    def _validated_place_preparation(
-        self, args: dict[str, Any]
-    ) -> OrderPreparation:
+    def _validated_place_preparation(self, args: dict[str, Any]) -> OrderPreparation:
         preparation_ref = str(args["preparation_ref"])
         record = self._require_owned_preparation(preparation_ref)
         supplied = OrderPreparation.model_validate(args["preparation"])
@@ -431,7 +439,10 @@ class CommerceRuntime:
         )
 
         policy_links = tuple(
-            PolicyLink(kind=kind, url=url)
+            PolicyLink(
+                kind=cast(Literal["terms", "privacy", "shipping", "returns"], kind),
+                url=url,
+            )
             for kind in ("terms", "privacy", "shipping", "returns")
             if (url := preparation.links.get(kind))
         )
@@ -444,9 +455,7 @@ class CommerceRuntime:
                     offer_id=item.offer_id,
                     variant_id=item.variant_id,
                     quantity=item.quantity,
-                    line_total_minor=(
-                        item.unit_price.amount_minor * item.quantity
-                    ),
+                    line_total_minor=(item.unit_price.amount_minor * item.quantity),
                     returnable=item.returnable,
                 )
                 for item in preparation.items
@@ -461,9 +470,7 @@ class CommerceRuntime:
             buyer_profile_digest=preparation.buyer.profile_digest,
             destination_digest=preparation.destination.destination_digest,
             payment_label=preparation.payment.label,
-            payment_destination_digest=(
-                preparation.payment.payment_destination_digest
-            ),
+            payment_destination_digest=(preparation.payment.payment_destination_digest),
             recurring=preparation.recurring,
             warnings=preparation.warnings,
             policy_links=policy_links,
@@ -533,6 +540,8 @@ class CommerceRuntime:
             )
 
     def _secret_record(self, record_id: str) -> dict[str, Any]:
+        if self.secret_service is None:
+            raise RuntimeError("Commerce secret service is not available.")
         raw = self.secret_service.get_secret_sync(record_id, namespace="commerce")
         decoded = json.loads(raw)
         if not isinstance(decoded, dict):
@@ -700,7 +709,7 @@ class CommerceRuntime:
             candidate_url=placement.links.get("order"),
         )
 
-    def _sanitize_links(self, value: Any) -> Any:
+    def _sanitize_links(self, value: _CommerceModelT) -> _CommerceModelT:
         links = getattr(value, "links", None)
         if not isinstance(links, dict):
             return value
@@ -742,4 +751,36 @@ class CommerceRuntime:
         )
 
 
-__all__ = ["CommerceOrderStore", "CommerceRuntime"]
+def build_commerce_runtime(
+    *,
+    provider: CommerceProvider | None,
+    config: CommerceToolRuntimeConfig | dict[str, Any] | None,
+    order_store: Any | None = None,
+    secret_service: Any | None = None,
+) -> CommerceRuntime | None:
+    resolved = coerce_commerce_tool_runtime_config(config)
+    if provider is None or resolved is None or not resolved.enabled:
+        return None
+    return CommerceRuntime(
+        provider=provider,
+        base_url=resolved.base_url,
+        merchant_id=resolved.merchant_id,
+        provider_secret_key=resolved.provider_secret_key,
+        buyer_profile_record_id=resolved.buyer_profile_record_id,
+        payment_token_record_id=resolved.payment_token_record_id,
+        order_store=order_store,
+        secret_service=secret_service,
+    )
+
+
+def resolve_injected_commerce_runtime(runtime_handle: Any) -> CommerceRuntime | None:
+    runtime = getattr(runtime_handle, "commerce_runtime", None)
+    return runtime if isinstance(runtime, CommerceRuntime) else None
+
+
+__all__ = [
+    "CommerceOrderStore",
+    "CommerceRuntime",
+    "build_commerce_runtime",
+    "resolve_injected_commerce_runtime",
+]

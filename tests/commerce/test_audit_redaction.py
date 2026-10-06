@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from openminion.base.config.runtime.tool_family import CommerceToolRuntimeConfig
+from openminion.modules.commerce.config import CommerceToolRuntimeConfig
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 from openminion.modules.commerce.provider import (
     CommerceOutcomeUnknown,

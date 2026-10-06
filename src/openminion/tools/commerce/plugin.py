@@ -15,11 +15,14 @@ from openminion.modules.commerce.provider import (
     RequestedItem,
 )
 from openminion.modules.tool import RuntimeContext
-from openminion.modules.tool.contracts.schemas import ErrorCode
+from openminion.modules.tool.contracts.schemas import (
+    TOOL_ERROR_CONFIRM_REQUIRED,
+    ErrorCode,
+)
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.diagnostics.events import emit_commerce_action_event
 from openminion.modules.tool.plugin_api import stable_invocation_hash
-from openminion.modules.tool.runtime.dependencies import resolve_commerce_runtime
+from openminion.modules.tool import resolve_commerce_runtime
 
 from .authorization import canonical_commerce_args
 
@@ -178,13 +181,11 @@ def _require_authorization(
         or authorization.invocation_hash != expected_hash
     ):
         raise ToolRuntimeError(
-            "CONFIRM_REQUIRED",
+            TOOL_ERROR_CONFIRM_REQUIRED,
             f"Exact one-time commerce {mutation} approval is required.",
             {
-                "commerce_code": "CONFIRM_REQUIRED",
-                "mutation_kind": (
-                    "place" if method == "place_order" else "prepare"
-                ),
+                "commerce_code": TOOL_ERROR_CONFIRM_REQUIRED,
+                "mutation_kind": ("place" if method == "place_order" else "prepare"),
                 "provider_attempts": 0,
                 "recovery_required": False,
             },

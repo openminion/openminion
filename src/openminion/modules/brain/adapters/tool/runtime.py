@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Iterator, Mapping, cast
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.base.config.env import resolve_environment_config
 from openminion.modules.artifact.refs import create_default_artifactctl
-from openminion.modules.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
 from openminion.modules.policy.models import PolicyControlError
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_NEEDS_USER,
@@ -32,10 +31,7 @@ from openminion.modules.tool import (
 )
 from openminion.modules.tool.adapters import AllowAllSafetyAdapter, LocalPolicyAdapter
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.plugin_api import (
-    PolicyAdapter,
-    is_policy_authorization_pair,
-)
+from openminion.modules.tool.plugin_api import PolicyAdapter
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.runtime.routing import (
     build_runtime_tool_routing_metadata,
@@ -48,10 +44,10 @@ from .command_metadata import (
     _orchestration_metadata_from_command,
     _runtime_workspace_from_command,
 )
-from .blockchain_authorization import authorize_blockchain_send
-from openminion.tools.commerce.authorization import (
-    consume_commerce_place_authorization,
-    consume_commerce_prepare_authorization,
+from .policy_authorization import (
+    authorize_exact_tool_call,
+    requires_canonical_policy,
+    requires_policy_confirmation,
 )
 from .github_merge import execute_github_merge_pr_project_effect
 from .github_release import execute_github_release_project_effect
@@ -334,10 +330,7 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
                 details={"reason": "approval_callback_failed"},
             )
-        tool, method = (
-            tool_name.rsplit(".", 1) if "." in tool_name else (tool_name, "default")
-        )
-        if tool_name == "ops.command.run" or is_policy_authorization_pair(tool, method):
+        if requires_canonical_policy(tool_name):
             if self.policy_ctl is None:
                 return _error_envelope(
                     status=BRAIN_STATE_ERROR,
@@ -627,7 +620,7 @@ class ToolAdapter:
             skill_api=self.skill_api,
             secret_service=self.secret_service,
             commerce_runtime=self.commerce_runtime,
-            subject_id=COMMERCE_LOCAL_SUBJECT_ID,
+            subject_id="local",
             telemetryctl=self.telemetryctl,
             artifactctl=self.artifactctl,
             memory_service=self.memory_service,
@@ -665,9 +658,7 @@ class ToolAdapter:
                     "requires_confirm",
                     bool(policy_decision.requires_confirm),
                 )
-                requires_confirm = bool(policy_decision.requires_confirm) or str(
-                    policy_decision.code or ""
-                ).lower() in {"require_approval", "confirm_required"}
+                requires_confirm = requires_policy_confirmation(policy_decision)
                 status = (
                     BRAIN_ACTION_STATUS_NEEDS_USER
                     if requires_confirm
@@ -735,26 +726,9 @@ class ToolAdapter:
     ) -> dict[str, Any]:
         tool_name = ctx.tool_name
         try:
-            if tool_name == "blockchain.send_transaction":
-                validated_args, ctx.policy_authorization = authorize_blockchain_send(
-                    validated_args, ctx, self.policy_ctl
-                )
-            elif tool_name == "commerce.prepare_order":
-                ctx.policy_authorization = consume_commerce_prepare_authorization(
-                    policy_ctl=self.policy_ctl,
-                    permission_mode=ctx.permission_mode,
-                    args=validated_args,
-                    subject_id=COMMERCE_LOCAL_SUBJECT_ID,
-                    session_id=ctx.session_id,
-                )
-            elif tool_name == "commerce.place_order":
-                ctx.policy_authorization = consume_commerce_place_authorization(
-                    policy_ctl=self.policy_ctl,
-                    permission_mode=ctx.permission_mode,
-                    args=validated_args,
-                    subject_id=COMMERCE_LOCAL_SUBJECT_ID,
-                    session_id=ctx.session_id,
-                )
+            validated_args = authorize_exact_tool_call(
+                validated_args, ctx, self.policy_ctl
+            )
             if tool_name == "github.open_pr" and project_task_id:
                 return execute_github_open_pr_project_effect(
                     task_manager=self.task_manager,

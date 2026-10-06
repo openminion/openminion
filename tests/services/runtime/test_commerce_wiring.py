@@ -4,21 +4,21 @@ from types import SimpleNamespace
 
 import pytest
 
-from openminion.base.config.runtime.tool_family import CommerceToolRuntimeConfig
+from openminion.modules.commerce.config import CommerceToolRuntimeConfig
 from openminion.modules.brain.adapters.tool.execution_context import (
     ToolExecutionContextBuilder,
 )
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 from openminion.modules.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
+from openminion.modules.commerce.runtime import (
+    build_commerce_runtime,
+    resolve_injected_commerce_runtime,
+)
 from openminion.modules.tool import Policy, ToolRegistry, ToolSpec
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.runtime.dependencies import resolve_commerce_runtime
 from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
-from openminion.services.runtime.bootstrap import (
-    build_commerce_runtime,
-    resolve_commerce_runtime as resolve_bootstrap_commerce_runtime,
-)
 from tests.helpers.commerce_runtime import (
     FixtureSecretService,
     build_fixture_commerce_runtime,
@@ -89,7 +89,9 @@ def test_tool_execution_paths_share_commerce_runtime_and_trusted_subject(
     ]
 
 
-def test_commerce_dependency_resolver_fails_before_handler_or_provider(tmp_path) -> None:
+def test_commerce_dependency_resolver_fails_before_handler_or_provider(
+    tmp_path,
+) -> None:
     called = False
 
     def handler(_args, context):
@@ -153,10 +155,11 @@ def test_bootstrap_builds_and_resolves_only_explicit_commerce_runtime() -> None:
     )
 
     assert runtime is not None
-    assert resolve_bootstrap_commerce_runtime(
-        SimpleNamespace(commerce_runtime=runtime)
-    ) is runtime
-    assert resolve_bootstrap_commerce_runtime(SimpleNamespace()) is None
+    assert (
+        resolve_injected_commerce_runtime(SimpleNamespace(commerce_runtime=runtime))
+        is runtime
+    )
+    assert resolve_injected_commerce_runtime(SimpleNamespace()) is None
 
 
 def test_subject_resolver_rejects_nonlocal_subject() -> None:

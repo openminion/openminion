@@ -7,10 +7,13 @@ from openminion.base.config.runtime.capability_resolution import (
     merge_tool_runtime_overrides,
 )
 from openminion.base.config.runtime.tools import (
-    CommerceToolRuntimeConfig,
     ToolRuntimeConfig,
     coerce_tool_runtime_config,
     tool_runtime_config_to_dict,
+)
+from openminion.modules.commerce.config import (
+    CommerceToolRuntimeConfig,
+    coerce_commerce_tool_runtime_config,
 )
 
 
@@ -31,7 +34,9 @@ def test_disabled_commerce_config_round_trips() -> None:
         }
     )
 
-    assert config.commerce == CommerceToolRuntimeConfig(
+    assert coerce_commerce_tool_runtime_config(
+        config.commerce
+    ) == CommerceToolRuntimeConfig(
         provider="future-provider",
         base_url="https://merchant.example",
         merchant_id="merchant-1",
@@ -64,56 +69,59 @@ def test_invalid_or_unavailable_commerce_config_is_rejected(
     payload: dict[str, object],
 ) -> None:
     with pytest.raises(ConfigError):
-        coerce_tool_runtime_config({"commerce": payload})
+        coerce_commerce_tool_runtime_config(payload)
 
 
 def test_agent_override_may_disable_without_replacing_system_values() -> None:
     system = ToolRuntimeConfig(
-        commerce=CommerceToolRuntimeConfig(
-            provider="selected-provider",
-            base_url="https://merchant.example",
-            merchant_id="merchant-1",
-            provider_secret_key="merchant-token",
-            buyer_profile_record_id="buyer-1",
-            payment_token_record_id="payment-1",
-        )
+        commerce={
+            "provider": "selected-provider",
+            "base_url": "https://merchant.example",
+            "merchant_id": "merchant-1",
+            "provider_secret_key": "merchant-token",
+            "buyer_profile_record_id": "buyer-1",
+            "payment_token_record_id": "payment-1",
+        }
     )
-    agent = ToolRuntimeConfig(commerce=CommerceToolRuntimeConfig(enabled=False))
+    agent = ToolRuntimeConfig(commerce={"enabled": False})
 
     effective = merge_tool_runtime_overrides(
         system_tools=system,
         agent_tools=agent,
     )
 
-    assert effective.commerce == CommerceToolRuntimeConfig(
-        provider="selected-provider",
-        base_url="https://merchant.example",
-        merchant_id="merchant-1",
-        provider_secret_key="merchant-token",
-        buyer_profile_record_id="buyer-1",
-        payment_token_record_id="payment-1",
-    )
+    assert effective.commerce == {
+        "enabled": False,
+        "writes_enabled": False,
+        "order_actions_enabled": False,
+        "provider": "selected-provider",
+        "base_url": "https://merchant.example",
+        "merchant_id": "merchant-1",
+        "provider_secret_key": "merchant-token",
+        "buyer_profile_record_id": "buyer-1",
+        "payment_token_record_id": "payment-1",
+    }
 
 
 @pytest.mark.parametrize(
     "agent_commerce",
     [
-        CommerceToolRuntimeConfig(provider="other"),
-        CommerceToolRuntimeConfig(merchant_id="other"),
-        CommerceToolRuntimeConfig(buyer_profile_record_id="other"),
-        CommerceToolRuntimeConfig(payment_token_record_id="other"),
+        {"provider": "other"},
+        {"merchant_id": "other"},
+        {"buyer_profile_record_id": "other"},
+        {"payment_token_record_id": "other"},
     ],
 )
 def test_agent_override_cannot_replace_system_owned_values(
-    agent_commerce: CommerceToolRuntimeConfig,
+    agent_commerce: dict[str, object],
 ) -> None:
     system = ToolRuntimeConfig(
-        commerce=CommerceToolRuntimeConfig(
-            provider="selected-provider",
-            merchant_id="merchant-1",
-            buyer_profile_record_id="buyer-1",
-            payment_token_record_id="payment-1",
-        )
+        commerce={
+            "provider": "selected-provider",
+            "merchant_id": "merchant-1",
+            "buyer_profile_record_id": "buyer-1",
+            "payment_token_record_id": "payment-1",
+        }
     )
 
     with pytest.raises(ConfigError):

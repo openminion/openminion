@@ -84,9 +84,7 @@ class CommerceAttempt(CommerceModel):
     operation: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1)
     request_digest: CommerceDigest
-    authorization_hash: str | None = Field(
-        default=None, pattern=r"^[0-9a-f]{64}$"
-    )
+    authorization_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     attempt_count: int = Field(ge=0)
     state: AttemptState
     response_digest: CommerceDigest | None = None

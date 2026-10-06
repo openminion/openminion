@@ -70,9 +70,12 @@ def test_fixture_inspects_product_and_checkout_and_recovers_preparation() -> Non
     assert checkout.kind == "checkout"
     assert preparation.recurring is False
     assert preparation.fulfillment.kind == "shipping"
-    assert runtime.recover_preparation(
-        PreparationRecoveryLocator(idempotency_key="prepare-1")
-    ) == preparation
+    assert (
+        runtime.recover_preparation(
+            PreparationRecoveryLocator(idempotency_key="prepare-1")
+        )
+        == preparation
+    )
 
 
 def test_prepare_order_requires_a_non_empty_item_list() -> None:

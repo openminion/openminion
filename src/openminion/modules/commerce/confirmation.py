@@ -9,12 +9,15 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from .models import CommerceDigest, CommerceHandoff
 from .provider import (
+    CheckoutInspection,
     CommerceInspection,
     OrderActionPreparation,
     OrderActionResult,
     OrderInspection,
     OrderPlacement,
     OrderPreparation,
+    OrderActionsInspection,
+    ProductInspection,
     ShipmentInspection,
 )
 
@@ -117,8 +120,10 @@ CommerceConfirmationPreview = Annotated[
     | OrderActionConfirmationPreview,
     Field(discriminator="kind"),
 ]
-_PREVIEW_ADAPTER = TypeAdapter(CommerceConfirmationPreview)
-_INSPECTION_ADAPTER = TypeAdapter(CommerceInspection)
+_PREVIEW_ADAPTER: TypeAdapter[CommerceConfirmationPreview] = TypeAdapter(
+    CommerceConfirmationPreview
+)
+_INSPECTION_ADAPTER: TypeAdapter[CommerceInspection] = TypeAdapter(CommerceInspection)
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _REFUND_METHOD_LABELS = {
     "original_payment_method": "original payment method",
@@ -134,7 +139,10 @@ class CommerceOutcomeUnknownNotice(CommerceConfirmationModel):
 
 
 CommercePresentationResult: TypeAlias = (
-    OrderPreparation
+    ProductInspection
+    | CheckoutInspection
+    | OrderActionsInspection
+    | OrderPreparation
     | OrderPlacement
     | OrderInspection
     | ShipmentInspection
@@ -266,49 +274,136 @@ def commerce_confirmation_lines(
     return lines
 
 
+def _order_preparation_lines(value: OrderPreparation) -> list[str]:
+    lines = [
+        "Checkout prepared",
+        f"Merchant: {_display(value.merchant.display_name)}",
+        f"Seller: {_display(value.seller.display_name)}",
+        f"Preparation: {_display(value.preparation_ref)}",
+        f"Checkout revision: {_display(value.checkout_revision)}",
+        *(
+            "Item: "
+            f"offer {_display(item.offer_id)}, variant {_display(item.variant_id)}, "
+            f"quantity {item.quantity}, unit price {item.unit_price.amount_minor} "
+            f"{item.unit_price.currency} minor units"
+            for item in value.items
+        ),
+        f"Discount: {value.totals.discount.amount_minor} {value.totals.discount.currency} minor units",
+        f"Tax: {value.totals.tax.amount_minor} {value.totals.tax.currency} minor units",
+        f"Shipping: {value.totals.shipping.amount_minor} {value.totals.shipping.currency} minor units",
+        f"Fees: {value.totals.fees.amount_minor} {value.totals.fees.currency} minor units",
+        f"Exact total: {value.totals.total.amount_minor} {value.totals.total.currency} minor units",
+        f"Destination: {_display(value.destination.label)}",
+        f"Destination digest: {value.destination.destination_digest}",
+        f"Payment: {_display(value.payment.label)}",
+        f"Payment destination digest: {value.payment.payment_destination_digest}",
+        "Recurring: no",
+        f"Expires: {_display(value.expires_at)}",
+        "Next action: Review the exact order details, then allow placement once or deny.",
+    ]
+    lines.extend(f"Warning: {_display(item)}" for item in value.warnings)
+    return lines
+
+
+def _order_placement_lines(value: OrderPlacement) -> list[str]:
+    lines = [
+        "Order receipt",
+        f"State: {value.state}",
+        f"Preparation: {_display(value.preparation_ref)}",
+        f"Order: {_display(value.order_ref) if value.order_ref else '-'}",
+        f"Order revision: {_display(value.order_revision) if value.order_revision else '-'}",
+        f"Fulfillment: {value.lifecycle.fulfillment}",
+        f"Payment: {value.lifecycle.payment}",
+        _placement_next_action(value),
+    ]
+    lines.extend(f"Warning: {_display(item)}" for item in value.warnings)
+    return lines
+
+
+def _product_inspection_lines(value: ProductInspection) -> list[str]:
+    return [
+        "Product details",
+        f"Merchant: {_display(value.merchant.display_name)}",
+        f"Seller: {_display(value.seller.display_name)}",
+        f"Product: {_display(value.reference)}",
+        f"Revision: {_display(value.revision)}",
+        f"Offer: {_display(value.item.offer_id)}",
+        f"Variant: {_display(value.item.variant_id)}",
+        f"Availability: {value.item.availability}",
+        f"Unit price: {value.item.unit_price.amount_minor} {value.item.unit_price.currency} minor units",
+    ]
+
+
+def _checkout_inspection_lines(value: CheckoutInspection) -> list[str]:
+    return [
+        "Checkout details",
+        f"Checkout: {_display(value.reference)}",
+        f"Revision: {_display(value.revision)}",
+        f"Items: {len(value.items)}",
+        f"Subtotal: {value.subtotal.amount_minor} {value.subtotal.currency} minor units",
+        f"Total: {value.total.amount_minor} {value.total.currency} minor units",
+        *(f"Warning: {_display(item)}" for item in value.warnings),
+    ]
+
+
+def _order_actions_inspection_lines(value: OrderActionsInspection) -> list[str]:
+    return [
+        "Available order actions",
+        f"Order: {_display(value.reference)}",
+        f"Revision: {_display(value.revision)}",
+        *(f"Action: {action}" for action in value.actions),
+    ]
+
+
+def _order_action_preparation_lines(
+    value: OrderActionPreparation,
+) -> list[str]:
+    refund_destination = (
+        _display(value.refund_destination.label)
+        if value.refund_destination is not None
+        else "-"
+    )
+    return [
+        "Order care review",
+        f"Order: {_display(value.order_ref)}",
+        f"Order revision: {_display(value.order_revision)}",
+        f"Action: {value.kind}",
+        f"Eligible: {'yes' if value.eligible else 'no'}",
+        f"Effect: {_display(value.consequence)}",
+        f"Refund method: {_refund_method(value.refund_method)}",
+        f"Refund destination: {refund_destination}",
+        "Refund destination digest: "
+        + (
+            value.refund_destination.destination_digest
+            if value.refund_destination is not None
+            else "-"
+        ),
+        "Return destination: "
+        + (
+            _display(value.return_destination.label)
+            if value.return_destination is not None
+            else "-"
+        ),
+        f"Expires: {_display(value.expires_at)}",
+        (
+            "Next action: Review these exact care terms, then allow once or deny."
+            if value.eligible
+            else "Next action: Inspect the order or request merchant support."
+        ),
+    ]
+
+
 def commerce_result_lines(value: CommercePresentationResult) -> list[str]:
+    if isinstance(value, ProductInspection):
+        return _product_inspection_lines(value)
+    if isinstance(value, CheckoutInspection):
+        return _checkout_inspection_lines(value)
+    if isinstance(value, OrderActionsInspection):
+        return _order_actions_inspection_lines(value)
     if isinstance(value, OrderPreparation):
-        lines = [
-            "Checkout prepared",
-            f"Merchant: {_display(value.merchant.display_name)}",
-            f"Seller: {_display(value.seller.display_name)}",
-            f"Preparation: {_display(value.preparation_ref)}",
-            f"Checkout revision: {_display(value.checkout_revision)}",
-            *(
-                "Item: "
-                f"offer {_display(item.offer_id)}, variant {_display(item.variant_id)}, "
-                f"quantity {item.quantity}, unit price {item.unit_price.amount_minor} "
-                f"{item.unit_price.currency} minor units"
-                for item in value.items
-            ),
-            f"Discount: {value.totals.discount.amount_minor} {value.totals.discount.currency} minor units",
-            f"Tax: {value.totals.tax.amount_minor} {value.totals.tax.currency} minor units",
-            f"Shipping: {value.totals.shipping.amount_minor} {value.totals.shipping.currency} minor units",
-            f"Fees: {value.totals.fees.amount_minor} {value.totals.fees.currency} minor units",
-            f"Exact total: {value.totals.total.amount_minor} {value.totals.total.currency} minor units",
-            f"Destination: {_display(value.destination.label)}",
-            f"Destination digest: {value.destination.destination_digest}",
-            f"Payment: {_display(value.payment.label)}",
-            f"Payment destination digest: {value.payment.payment_destination_digest}",
-            "Recurring: no",
-            f"Expires: {_display(value.expires_at)}",
-            "Next action: Review the exact order details, then allow placement once or deny.",
-        ]
-        lines.extend(f"Warning: {_display(item)}" for item in value.warnings)
-        return lines
+        return _order_preparation_lines(value)
     if isinstance(value, OrderPlacement):
-        lines = [
-            "Order receipt",
-            f"State: {value.state}",
-            f"Preparation: {_display(value.preparation_ref)}",
-            f"Order: {_display(value.order_ref) if value.order_ref else '-'}",
-            f"Order revision: {_display(value.order_revision) if value.order_revision else '-'}",
-            f"Fulfillment: {value.lifecycle.fulfillment}",
-            f"Payment: {value.lifecycle.payment}",
-            _placement_next_action(value),
-        ]
-        lines.extend(f"Warning: {_display(item)}" for item in value.warnings)
-        return lines
+        return _order_placement_lines(value)
     if isinstance(value, OrderInspection):
         return [
             "Order tracking",
@@ -338,39 +433,7 @@ def commerce_result_lines(value: CommercePresentationResult) -> list[str]:
             _shipment_next_action(value),
         ]
     if isinstance(value, OrderActionPreparation):
-        refund_destination = (
-            _display(value.refund_destination.label)
-            if value.refund_destination is not None
-            else "-"
-        )
-        return [
-            "Order care review",
-            f"Order: {_display(value.order_ref)}",
-            f"Order revision: {_display(value.order_revision)}",
-            f"Action: {value.kind}",
-            f"Eligible: {'yes' if value.eligible else 'no'}",
-            f"Effect: {_display(value.consequence)}",
-            f"Refund method: {_refund_method(value.refund_method)}",
-            f"Refund destination: {refund_destination}",
-            "Refund destination digest: "
-            + (
-                value.refund_destination.destination_digest
-                if value.refund_destination is not None
-                else "-"
-            ),
-            "Return destination: "
-            + (
-                _display(value.return_destination.label)
-                if value.return_destination is not None
-                else "-"
-            ),
-            f"Expires: {_display(value.expires_at)}",
-            (
-                "Next action: Review these exact care terms, then allow once or deny."
-                if value.eligible
-                else "Next action: Inspect the order or request merchant support."
-            ),
-        ]
+        return _order_action_preparation_lines(value)
     if isinstance(value, OrderActionResult):
         lines = [
             "Order care receipt",
@@ -436,6 +499,7 @@ def commerce_tool_result_lines(
     if payload.get("state") == "handoff_required":
         return commerce_result_lines(CommerceHandoff.model_validate(payload))
     normalized_tool = str(tool_name or "").strip()
+    result: CommercePresentationResult
     if normalized_tool == "commerce.inspect":
         result = _INSPECTION_ADAPTER.validate_python(payload)
     elif normalized_tool == "commerce.prepare_order":

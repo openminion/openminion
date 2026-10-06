@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from types import SimpleNamespace
 
-from openminion.base.config.runtime.tool_family import CommerceToolRuntimeConfig
+from openminion.modules.commerce.config import CommerceToolRuntimeConfig
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 from openminion.modules.commerce.confirmation import ExactOrderConfirmationPreview
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
@@ -44,9 +44,7 @@ def _bootstrap(tmp_path, *, enabled: bool, writes_enabled: bool):
 
 
 def _commerce_names(bootstrap) -> set[str]:
-    return {
-        name for name in bootstrap.registry.list() if name.startswith("commerce.")
-    }
+    return {name for name in bootstrap.registry.list() if name.startswith("commerce.")}
 
 
 class _GrantPolicy:
@@ -58,7 +56,10 @@ class _GrantPolicy:
         return "enforce"
 
     def resolve_matching_active_grant_for_use(self, **criteria):
-        if not self.allowed_hashes or criteria["invocation_hash"] != self.allowed_hashes[0]:
+        if (
+            not self.allowed_hashes
+            or criteria["invocation_hash"] != self.allowed_hashes[0]
+        ):
             return None
         self.allowed_hashes.pop(0)
         self.consumed += 1
@@ -70,11 +71,7 @@ class _GrantPolicy:
 
 def _prepare(runtime) -> object:
     return runtime.prepare_public(
-        {
-            "items": [
-                {"offer_id": "offer-1", "variant_id": "standard", "quantity": 1}
-            ]
-        }
+        {"items": [{"offer_id": "offer-1", "variant_id": "standard", "quantity": 1}]}
     )
 
 
@@ -181,9 +178,10 @@ def test_exact_preview_and_two_approvals_produce_one_durable_order(tmp_path) -> 
     assert isinstance(preview, ExactOrderConfirmationPreview)
     assert preview.preparation_digest == preparation.preparation_digest
     assert first["outputs"]["data"]["state"] == "succeeded"
-    assert recovered["outputs"]["data"]["order_ref"] == first["outputs"]["data"][
-        "order_ref"
-    ]
+    assert (
+        recovered["outputs"]["data"]["order_ref"]
+        == first["outputs"]["data"]["order_ref"]
+    )
     assert policy.consumed == 2
     assert [entry.operation for entry in provider.ledger].count("place_order") == 1
     order_ref = first["outputs"]["data"]["order_ref"]
@@ -218,9 +216,7 @@ def test_placement_credential_events_are_typed_and_redacted(tmp_path) -> None:
         "buyer-profile",
         "payment-token",
     }
-    assert {event.access_site for event in events} == {
-        "tools.commerce.place_order"
-    }
+    assert {event.access_site for event in events} == {"tools.commerce.place_order"}
     observable = repr((events, result, runtime.order_store))
     assert "fixture-provider-secret" not in observable
     assert "fixture-payment-token" not in observable
@@ -384,7 +380,9 @@ def test_outcome_unknown_is_recovered_without_blind_retry(tmp_path) -> None:
     assert [entry.operation for entry in provider.ledger].count("place_order") == 1
 
 
-def test_concurrent_approvals_allow_one_provider_mutation(tmp_path, monkeypatch) -> None:
+def test_concurrent_approvals_allow_one_provider_mutation(
+    tmp_path, monkeypatch
+) -> None:
     runtime, provider = build_fixture_commerce_runtime(
         store_path=tmp_path / "commerce.db"
     )

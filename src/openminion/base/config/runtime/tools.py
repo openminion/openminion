@@ -7,18 +7,14 @@ from openminion.base.config.base import ConfigError
 
 from .tool_family import (
     BlockchainToolRuntimeConfig,
-    CommerceToolRuntimeConfig,
     ToolFamilyRuntimeConfig,
     blockchain_tool_runtime_config_to_dict,
     coerce_blockchain_tool_runtime_config,
-    coerce_commerce_tool_runtime_config,
     coerce_tool_family_runtime_config,
-    commerce_tool_runtime_config_to_dict,
 )
 
 _SUPPORTED_RUNTIME_TOOL_FAMILIES = ("search", "fetch", "browser", "weather")
-_SUPPORTED_RUNTIME_TOOL_CONFIG_KEYS = (
-    *_SUPPORTED_RUNTIME_TOOL_FAMILIES,
+_SUPPORTED_RUNTIME_TOOL_CONFIG_KEYS = _SUPPORTED_RUNTIME_TOOL_FAMILIES + (
     "blockchain",
     "commerce",
     "gws",
@@ -32,7 +28,7 @@ class ToolRuntimeConfig:
     browser: ToolFamilyRuntimeConfig | None = None
     weather: ToolFamilyRuntimeConfig | None = None
     blockchain: BlockchainToolRuntimeConfig | None = None
-    commerce: CommerceToolRuntimeConfig | None = None
+    commerce: dict[str, Any] | None = None
     gws: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -47,19 +43,11 @@ class ToolRuntimeConfig:
             self.weather, family_name="weather"
         )
         self.blockchain = coerce_blockchain_tool_runtime_config(self.blockchain)
-        self.commerce = coerce_commerce_tool_runtime_config(self.commerce)
-        if self.gws is not None:
-            if not isinstance(self.gws, Mapping):
-                raise ConfigError("runtime.tools.gws must be an object.")
-            self.gws = dict(self.gws)
-
-    def configured_families(self) -> dict[str, ToolFamilyRuntimeConfig]:
-        configured: dict[str, ToolFamilyRuntimeConfig] = {}
-        for family_name in _SUPPORTED_RUNTIME_TOOL_FAMILIES:
-            family_cfg = getattr(self, family_name)
-            if family_cfg is not None:
-                configured[family_name] = family_cfg
-        return configured
+        for family_name in ("commerce", "gws"):
+            value = getattr(self, family_name)
+            if value is not None and not isinstance(value, Mapping):
+                raise ConfigError(f"runtime.tools.{family_name} must be an object.")
+            setattr(self, family_name, dict(value) if value is not None else None)
 
 
 def coerce_tool_runtime_config(value: object) -> ToolRuntimeConfig:
@@ -72,7 +60,7 @@ def coerce_tool_runtime_config(value: object) -> ToolRuntimeConfig:
 
     unknown_families = sorted(
         str(key)
-        for key in value.keys()
+        for key in value
         if str(key).strip().lower() not in _SUPPORTED_RUNTIME_TOOL_CONFIG_KEYS
     )
     if unknown_families:
@@ -89,42 +77,42 @@ def coerce_tool_runtime_config(value: object) -> ToolRuntimeConfig:
         )
         for family_name in _SUPPORTED_RUNTIME_TOOL_FAMILIES
     }
-    raw_gws = value.get("gws")
-    if raw_gws is not None and not isinstance(raw_gws, Mapping):
-        raise ConfigError("runtime.tools.gws must be an object.")
-    normalized["gws"] = dict(raw_gws) if raw_gws is not None else None
+    for family_name in ("commerce", "gws"):
+        raw = value.get(family_name)
+        if raw is not None and not isinstance(raw, Mapping):
+            raise ConfigError(f"runtime.tools.{family_name} must be an object.")
+        normalized[family_name] = dict(raw) if raw is not None else None
     normalized["blockchain"] = coerce_blockchain_tool_runtime_config(
         value.get("blockchain")
     )
-    normalized["commerce"] = coerce_commerce_tool_runtime_config(value.get("commerce"))
     return ToolRuntimeConfig(**normalized)
 
 
 def tool_runtime_config_to_dict(config: ToolRuntimeConfig | None) -> dict[str, Any]:
-    if config is None:
-        return {}
     normalized = coerce_tool_runtime_config(config)
     payload: dict[str, Any] = {}
-    for family_name, family_cfg in normalized.configured_families().items():
-        family_payload: dict[str, Any] = {}
-        if family_cfg.enabled_providers:
-            family_payload["enabled_providers"] = list(family_cfg.enabled_providers)
-        if family_cfg.default_provider:
-            family_payload["default_provider"] = family_cfg.default_provider
-        if family_cfg.provider_order:
-            family_payload["provider_order"] = list(family_cfg.provider_order)
-        if family_cfg.allow_fallback is not None:
-            family_payload["allow_fallback"] = family_cfg.allow_fallback
+    for family_name in _SUPPORTED_RUNTIME_TOOL_FAMILIES:
+        family_cfg = getattr(normalized, family_name)
+        if family_cfg is None:
+            continue
+        family_payload = {
+            key: list(value) if isinstance(value, list) else value
+            for key in (
+                "enabled_providers",
+                "default_provider",
+                "provider_order",
+                "allow_fallback",
+            )
+            if (value := getattr(family_cfg, key)) not in (None, "", [])
+        }
         payload[family_name] = family_payload
-    if normalized.gws is not None:
-        payload["gws"] = dict(normalized.gws)
+    for family_name in ("commerce", "gws"):
+        value = getattr(normalized, family_name)
+        if value is not None:
+            payload[family_name] = dict(value)
     if normalized.blockchain is not None:
         payload["blockchain"] = blockchain_tool_runtime_config_to_dict(
             normalized.blockchain
-        )
-    if normalized.commerce is not None:
-        payload["commerce"] = commerce_tool_runtime_config_to_dict(
-            normalized.commerce
         )
     return payload
 
@@ -144,55 +132,17 @@ def merge_tool_runtime_overrides(
         )
         for name in _SUPPORTED_RUNTIME_TOOL_FAMILIES
     }
+    commerce = dict(system.commerce or {})
+    if agent.commerce is not None:
+        if agent.commerce != {"enabled": False}:
+            raise ConfigError("agent tools.commerce may only disable commerce.")
+        for key in ("enabled", "writes_enabled", "order_actions_enabled"):
+            commerce[key] = False
     return ToolRuntimeConfig(
         **families,
         blockchain=agent.blockchain or system.blockchain,
-        commerce=_merge_commerce_runtime_overrides(
-            system_commerce=system.commerce,
-            agent_commerce=agent.commerce,
-        ),
+        commerce=commerce or None,
         gws=agent.gws if agent.gws is not None else system.gws,
-    )
-
-
-def _merge_commerce_runtime_overrides(
-    *,
-    system_commerce: CommerceToolRuntimeConfig | None,
-    agent_commerce: CommerceToolRuntimeConfig | None,
-) -> CommerceToolRuntimeConfig | None:
-    if agent_commerce is None:
-        return system_commerce
-    protected_values = {
-        "provider": agent_commerce.provider,
-        "base_url": agent_commerce.base_url,
-        "merchant_id": agent_commerce.merchant_id,
-        "provider_secret_key": agent_commerce.provider_secret_key,
-        "buyer_profile_record_id": agent_commerce.buyer_profile_record_id,
-        "payment_token_record_id": agent_commerce.payment_token_record_id,
-    }
-    changed = [name for name, value in protected_values.items() if value]
-    if changed:
-        raise ConfigError(
-            "agent runtime override tools.commerce cannot set system-owned fields: "
-            f"{changed!r}."
-        )
-    if (
-        agent_commerce.enabled
-        or agent_commerce.writes_enabled
-        or agent_commerce.order_actions_enabled
-    ):
-        raise ConfigError(
-            "agent runtime override tools.commerce may only disable commerce."
-        )
-    if system_commerce is None:
-        return agent_commerce
-    return CommerceToolRuntimeConfig(
-        provider=system_commerce.provider,
-        base_url=system_commerce.base_url,
-        merchant_id=system_commerce.merchant_id,
-        provider_secret_key=system_commerce.provider_secret_key,
-        buyer_profile_record_id=system_commerce.buyer_profile_record_id,
-        payment_token_record_id=system_commerce.payment_token_record_id,
     )
 
 
@@ -206,26 +156,20 @@ def _merge_tool_family_runtime_overrides(
         return agent_family or system_family
     system_enabled = list(system_family.enabled_providers)
     agent_enabled = list(agent_family.enabled_providers)
-    if system_enabled and agent_enabled:
-        extra = [item for item in agent_enabled if item not in system_enabled]
-        if extra:
-            raise ConfigError(
-                f"agent runtime override tools.{family_name}.enabled_providers cannot "
-                f"exceed runtime.tools.{family_name}.enabled_providers: {extra!r}."
-            )
+    extra = [item for item in agent_enabled if item not in system_enabled]
+    if system_enabled and extra:
+        raise ConfigError(
+            f"agent tools.{family_name}.enabled_providers exceed system config: {extra!r}."
+        )
     enabled = agent_enabled or system_enabled
     default = agent_family.default_provider or system_family.default_provider
     if enabled and default and default not in enabled:
-        raise ConfigError(
-            f"agent runtime override tools.{family_name}.default_provider={default!r} "
-            f"is blocked by the effective enabled_providers {enabled!r}."
-        )
+        raise ConfigError(f"tools.{family_name}.default_provider is disabled.")
     order = list(agent_family.provider_order or system_family.provider_order)
     extra = [item for item in order if enabled and item not in enabled]
     if extra:
         raise ConfigError(
-            f"agent runtime override tools.{family_name}.provider_order cannot exceed "
-            f"the effective enabled_providers: {extra!r}."
+            f"tools.{family_name}.provider_order is not enabled: {extra!r}."
         )
     fallback = (
         agent_family.allow_fallback
@@ -234,15 +178,13 @@ def _merge_tool_family_runtime_overrides(
     )
     if system_family.allow_fallback is False and agent_family.allow_fallback is True:
         raise ConfigError(
-            f"agent runtime override tools.{family_name}.allow_fallback=true cannot "
-            f"override runtime.tools.{family_name}.allow_fallback=false."
+            f"tools.{family_name}.allow_fallback cannot widen system policy."
         )
     return ToolFamilyRuntimeConfig(enabled, default, order, fallback)
 
 
 __all__ = (
     "BlockchainToolRuntimeConfig",
-    "CommerceToolRuntimeConfig",
     "ToolFamilyRuntimeConfig",
     "ToolRuntimeConfig",
     "coerce_blockchain_tool_runtime_config",

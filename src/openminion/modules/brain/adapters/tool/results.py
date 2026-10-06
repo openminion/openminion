@@ -1,7 +1,7 @@
 import json
 import time
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.logging import get_logger
@@ -109,6 +109,14 @@ def _is_commerce_handoff_result(payload: Any, *, tool_name: str) -> bool:
     )
 
 
+def _tool_result_status(inner_status: str, *, handoff_required: bool) -> str:
+    if handoff_required:
+        return cast(str, BRAIN_ACTION_STATUS_NEEDS_USER)
+    if inner_status in ("ok", BRAIN_ACTION_STATUS_SUCCESS, BRAIN_JOB_STATUS_RUNNING):
+        return cast(str, BRAIN_ACTION_STATUS_SUCCESS)
+    return cast(str, BRAIN_STATE_ERROR)
+
+
 def _error_envelope(
     *,
     status: str,
@@ -205,16 +213,7 @@ def run_tool_spec(
     else:
         inner_status = "ok"
     handoff_required = _is_commerce_handoff_result(data, tool_name=tool_name)
-    status = (
-        BRAIN_ACTION_STATUS_NEEDS_USER
-        if handoff_required
-        else (
-            BRAIN_ACTION_STATUS_SUCCESS
-            if inner_status
-            in ("ok", BRAIN_ACTION_STATUS_SUCCESS, BRAIN_JOB_STATUS_RUNNING)
-            else BRAIN_STATE_ERROR
-        )
-    )
+    status = _tool_result_status(inner_status, handoff_required=handoff_required)
     summary = _derive_toolspec_summary(data, status=status, tool_name=spec.name)
     result = {
         "status": status,

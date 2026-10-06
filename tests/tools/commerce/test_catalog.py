@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from openminion.base.config.runtime.tool_family import CommerceToolRuntimeConfig
+from openminion.modules.commerce.config import CommerceToolRuntimeConfig
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 from openminion.modules.commerce.provider import CommerceProviderError
 from openminion.modules.commerce.models import MerchantIdentity
@@ -48,17 +48,11 @@ def _bootstrap(tmp_path, *, enabled: bool):
 
 
 def _commerce_names(bootstrap) -> set[str]:
-    return {
-        name for name in bootstrap.registry.list() if name.startswith("commerce.")
-    }
+    return {name for name in bootstrap.registry.list() if name.startswith("commerce.")}
 
 
 def _prepare_args() -> dict[str, object]:
-    return {
-        "items": [
-            {"offer_id": "offer-1", "variant_id": "standard", "quantity": 1}
-        ]
-    }
+    return {"items": [{"offer_id": "offer-1", "variant_id": "standard", "quantity": 1}]}
 
 
 def _prepare_command(args: dict[str, object]) -> dict[str, object]:
@@ -134,9 +128,9 @@ def test_commerce_catalog_exposes_zero_disabled_and_exactly_two_enabled(
     ],
 )
 def test_inspect_contract_accepts_each_closed_kind(payload) -> None:
-    assert CommerceInspectArgs.model_validate(payload).model_dump(exclude_none=True) == (
-        payload
-    )
+    assert CommerceInspectArgs.model_validate(payload).model_dump(
+        exclude_none=True
+    ) == (payload)
 
 
 def test_inspect_rejects_wrong_kind_reference_without_provider_access(tmp_path) -> None:
@@ -214,7 +208,9 @@ def test_prepare_denied_or_mismatched_approval_never_reaches_provider(
     runtime, provider = build_fixture_commerce_runtime(
         store_path=tmp_path / "commerce.db"
     )
-    result = _adapter(tmp_path, runtime, _GrantPolicy(allowed_hash=allowed_hash)).execute(
+    result = _adapter(
+        tmp_path, runtime, _GrantPolicy(allowed_hash=allowed_hash)
+    ).execute(
         command=_prepare_command(_prepare_args()),
         session_id="session-1",
         trace_id="trace-1",

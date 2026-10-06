@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from openminion.modules.policy.models import PolicyControlError
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.plugin_api import PolicyAuthorization, stable_invocation_hash
+from openminion.modules.tool.plugin_api import (
+    PolicyAuthorization,
+    stable_invocation_hash,
+)
 
 
 def canonical_commerce_args(args: dict[str, Any]) -> dict[str, Any]:
@@ -21,7 +25,7 @@ def canonical_commerce_args(args: dict[str, Any]) -> dict[str, Any]:
             return [canonical(item) for item in value]
         return value
 
-    return canonical(args)
+    return cast(dict[str, Any], canonical(args))
 
 
 def _consume_commerce_authorization(
@@ -67,9 +71,9 @@ def _consume_commerce_authorization(
         ) from exc
     if grant is None:
         raise ToolRuntimeError(
-            "CONFIRM_REQUIRED",
+            TOOL_ERROR_CONFIRM_REQUIRED,
             f"Exact one-time commerce {mutation} approval is required.",
-            {"commerce_code": "CONFIRM_REQUIRED"},
+            {"commerce_code": TOOL_ERROR_CONFIRM_REQUIRED},
         )
     return PolicyAuthorization(
         tool="commerce",

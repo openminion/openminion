@@ -47,7 +47,7 @@ def _requires_one_time_approval(tool_name: str) -> bool:
     tool, method = (
         tool_name.rsplit(".", 1) if "." in tool_name else (tool_name, "default")
     )
-    return is_policy_authorization_pair(tool, method)
+    return bool(is_policy_authorization_pair(tool, method))
 
 
 def build_terminal_approval_callback(

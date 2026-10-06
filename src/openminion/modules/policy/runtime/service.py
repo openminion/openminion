@@ -66,11 +66,10 @@ from ..constants import (
 from ..storage import PolicyStore
 from ..storage.store import SQLitePolicyStore
 from .confirmation import (
-    blockchain_preview_invalid_decision,
+    authorization_preflight_decision,
     build_confirm_request,
     get_or_create_exact_confirmation,
     is_exact_blockchain_send,
-    is_exact_commerce_action,
     is_exact_ops_command,
     parse_confirmation_response,
     resolve_exact_ops_decision,
@@ -187,10 +186,7 @@ class PolicyCtl:
     ) -> PolicyDecision:
         inv = self._normalize_invocation(invocation)
         csum = self._normalize_context(ctx)
-        exact_blockchain_send = is_exact_blockchain_send(inv.tool, inv.method)
         exact_policy_authorization = is_policy_authorization_pair(inv.tool, inv.method)
-        exact_commerce_action = is_exact_commerce_action(inv.tool, inv.method)
-        exact_ops_command = is_exact_ops_command(inv.tool, inv.method)
         risk = (
             self._resolve_risk(inv)
             if exact_policy_authorization
@@ -198,51 +194,15 @@ class PolicyCtl:
         )
         effective_config = config_overrides or self._config
         mode = effective_config.mode if config_overrides is not None else self.mode()
-        if exact_commerce_action and (
-            csum.subject_id != "local" or not csum.session_id
-        ):
-            decision = PolicyDecision(
-                decision=POLICY_DECISION_DENY,
-                reason_code="SUBJECT_UNAVAILABLE",
-                reason="Commerce authorization requires the trusted local subject and session.",
-                risk=risk,
-                invocation_hash=inv.invocation_hash,
-            )
-            self._log_decision(inv=inv, ctx=csum, decision=decision)
-            return decision
-        if exact_blockchain_send and confirmation_preview is None:
-            decision = blockchain_preview_invalid_decision(
-                inv.invocation_hash, risk, confirmation_preview_error
-            )
-            self._log_decision(inv=inv, ctx=csum, decision=decision)
-            return decision
-        if exact_commerce_action and not isinstance(confirmation_preview, dict):
-            decision = PolicyDecision(
-                decision=POLICY_DECISION_DENY,
-                reason_code="COMMERCE_CONFIRMATION_PREVIEW_INVALID",
-                reason="Commerce approval preview could not be verified.",
-                risk=risk,
-                invocation_hash=inv.invocation_hash,
-            )
-            self._log_decision(inv=inv, ctx=csum, decision=decision)
-            return decision
-        if (exact_policy_authorization or exact_ops_command) and mode not in {
-            POLICY_MODE_ENFORCE,
-            POLICY_MODE_ENFORCE_SAFE,
-        }:
-            action = (
-                "operations command"
-                if exact_ops_command
-                else f"{inv.tool} {inv.method}"
-            )
-            decision = PolicyDecision(
-                decision=POLICY_DECISION_DENY,
-                reason_code="POLICY_MODE_UNSUPPORTED",
-                reason=f"Enforcing policy is required for {action}.",
-                risk=risk,
-                invocation_hash=inv.invocation_hash,
-                details={"mode": mode},
-            )
+        decision = authorization_preflight_decision(
+            invocation=inv,
+            context=csum,
+            risk=risk,
+            mode=mode,
+            confirmation_preview=confirmation_preview,
+            confirmation_preview_error=confirmation_preview_error,
+        )
+        if decision is not None:
             self._log_decision(inv=inv, ctx=csum, decision=decision)
             return decision
         if mode == POLICY_MODE_DISABLED:

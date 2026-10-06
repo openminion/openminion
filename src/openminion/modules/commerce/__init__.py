@@ -11,6 +11,7 @@ from .models import (
     SafePaymentMethod,
     SellerIdentity,
 )
+from .runtime import resolve_injected_commerce_runtime
 
 __all__ = [
     "COMMERCE_SCHEMA_VERSION",
@@ -19,6 +20,7 @@ __all__ = [
     "LineItem",
     "MerchantIdentity",
     "Money",
+    "resolve_injected_commerce_runtime",
     "SafeBuyerProfile",
     "SafeDestination",
     "SafePaymentMethod",

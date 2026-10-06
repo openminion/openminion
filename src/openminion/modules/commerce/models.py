@@ -4,15 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .constants import (
-    ACTION_REQUEST_STATE_VALUES,
-    AVAILABILITY_STATE_VALUES,
-    COMMERCE_SCHEMA_VERSION,
-    FULFILLMENT_STATE_VALUES,
-    ORDER_STATE_VALUES,
-    PAYMENT_STATE_VALUES,
-    SHIPMENT_STATE_VALUES,
-)
+from .contracts import COMMERCE_SCHEMA_VERSION
 
 CommerceDigest = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 CommerceHandoffReason = Literal[
@@ -25,12 +17,54 @@ CommerceHandoffReason = Literal[
     "delivery_exception",
     "provider_unknown",
 ]
-OrderState = Literal[*ORDER_STATE_VALUES]
-FulfillmentState = Literal[*FULFILLMENT_STATE_VALUES]
-ShipmentState = Literal[*SHIPMENT_STATE_VALUES]
-PaymentState = Literal[*PAYMENT_STATE_VALUES]
-ActionRequestState = Literal[*ACTION_REQUEST_STATE_VALUES]
-AvailabilityState = Literal[*AVAILABILITY_STATE_VALUES]
+OrderState = Literal[
+    "prepared",
+    "submitted",
+    "accepted",
+    "cancel_pending",
+    "cancelled",
+    "completed",
+    "declined",
+    "action_required",
+    "outcome_unknown",
+    "provider_unknown",
+]
+FulfillmentState = Literal[
+    "unfulfilled", "partial", "fulfilled", "cancelled", "returned", "provider_unknown"
+]
+ShipmentState = Literal[
+    "label_created",
+    "in_transit",
+    "delayed",
+    "exception",
+    "out_for_delivery",
+    "delivered",
+    "return_in_transit",
+    "returned",
+    "lost",
+    "provider_unknown",
+]
+PaymentState = Literal[
+    "pending",
+    "authorized",
+    "captured",
+    "declined",
+    "refund_pending",
+    "partially_refunded",
+    "refunded",
+    "provider_unknown",
+]
+ActionRequestState = Literal[
+    "prepared",
+    "submitting",
+    "pending",
+    "completed",
+    "rejected",
+    "failed",
+    "outcome_unknown",
+    "provider_unknown",
+]
+AvailabilityState = Literal["available", "unavailable", "limited", "provider_unknown"]
 
 
 class CommerceModel(BaseModel):

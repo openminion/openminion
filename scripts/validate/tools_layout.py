@@ -37,6 +37,7 @@ ALLOWED_TOP_LEVEL_DIRS = {
     "blockchain",
     "code",
     "cloud_ops",
+    "commerce",
     "config_mgmt",
     "exec",
     "fetch",

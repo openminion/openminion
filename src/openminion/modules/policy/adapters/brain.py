@@ -115,7 +115,10 @@ class PolicyCtlBrainAdapter:
 
     @staticmethod
     def _tool_method(tool_name: str) -> tuple[str, str]:
-        return tool_name.rsplit(".", 1) if "." in tool_name else (tool_name, "default")
+        if "." not in tool_name:
+            return tool_name, "default"
+        tool, method = tool_name.rsplit(".", 1)
+        return tool, method
 
     def evaluate(
         self,

@@ -37,9 +37,7 @@ class FixtureSecretService:
 
 def build_fixture_commerce_runtime(
     *, store_path: Path | None = None
-) -> tuple[
-    CommerceRuntime, FixtureCommerceProvider
-]:
+) -> tuple[CommerceRuntime, FixtureCommerceProvider]:
     provider = FixtureCommerceProvider()
     runtime = CommerceRuntime(
         provider=provider,

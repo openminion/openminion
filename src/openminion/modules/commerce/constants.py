@@ -1,5 +1,8 @@
-COMMERCE_SCHEMA_VERSION = "commerce-v1"
-COMMERCE_LOCAL_SUBJECT_ID = "local"
+from typing import Literal
+
+from .contracts import COMMERCE_SCHEMA_VERSION
+
+COMMERCE_LOCAL_SUBJECT_ID: Literal["local"] = "local"
 PROVIDER_UNKNOWN_STATE = "provider_unknown"
 
 ORDER_STATE_VALUES = (

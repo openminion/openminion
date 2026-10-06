@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from openminion.base.config.env import resolve_environment_config
+from openminion.modules.commerce.config import coerce_commerce_tool_runtime_config
 from openminion.modules.tool.constants import (
     TOOL_BOOTSTRAP_GATE_ALWAYS,
     TOOL_BOOTSTRAP_GATE_NEVER,
@@ -66,8 +67,10 @@ def _entry_enabled_for_runtime_config(
     if entry.module_name == "openminion.tools.commerce":
         runtime_cfg = getattr(config, "runtime", config)
         tools_cfg = getattr(runtime_cfg, "tools", None)
-        commerce_cfg = getattr(tools_cfg, "commerce", None)
-        return bool(commerce_cfg and getattr(commerce_cfg, "enabled", False))
+        commerce_cfg = coerce_commerce_tool_runtime_config(
+            getattr(tools_cfg, "commerce", None)
+        )
+        return bool(commerce_cfg and commerce_cfg.enabled)
     if entry.module_name != "openminion.tools.reaction":
         return True
     runtime_cfg = getattr(config, "runtime", config)

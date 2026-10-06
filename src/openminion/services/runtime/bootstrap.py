@@ -63,6 +63,7 @@ from openminion.services.config import resolve_services_env
 from openminion.base.config.action_policy import map_action_policy_mode
 from openminion.modules.policy.runtime.action_policy import (
     build_action_policy_service as build_action_policy_service,
+    resolve_profile_action_policy,
 )
 from openminion.modules.memory import memory_runtime_configuration
 from openminion.modules.runtime.sandboxes.daytona import (
@@ -79,11 +80,9 @@ from openminion.services.runtime.errors import (
 from openminion.services.runtime.memory import (
     _build_memory_v2_gateway_adapter as _build_bootstrap_memory_v2_gateway_adapter_impl,
 )
+from openminion.modules.commerce import resolve_injected_commerce_runtime
 
 if TYPE_CHECKING:
-    from openminion.base.config.runtime.tool_family import CommerceToolRuntimeConfig
-    from openminion.modules.commerce.provider import CommerceProvider
-    from openminion.modules.commerce.runtime import CommerceRuntime
     from openminion.modules.runtime.sandboxes.docker import DockerSandboxRunner
 
 
@@ -109,36 +108,6 @@ def _runtime_secret_service(service: Any, config: OpenMinionConfig) -> Any | Non
         config=config,
         data_root=service._context.home_paths.data_root,
     )
-
-
-def build_commerce_runtime(
-    *,
-    provider: CommerceProvider | None,
-    config: CommerceToolRuntimeConfig | None,
-    order_store: Any | None = None,
-    secret_service: Any | None = None,
-) -> CommerceRuntime | None:
-    if provider is None or config is None or not config.enabled:
-        return None
-    from openminion.modules.commerce.runtime import CommerceRuntime
-
-    return CommerceRuntime(
-        provider=provider,
-        base_url=config.base_url,
-        merchant_id=config.merchant_id,
-        provider_secret_key=config.provider_secret_key,
-        buyer_profile_record_id=config.buyer_profile_record_id,
-        payment_token_record_id=config.payment_token_record_id,
-        order_store=order_store,
-        secret_service=secret_service,
-    )
-
-
-def resolve_commerce_runtime(runtime_handle: Any) -> CommerceRuntime | None:
-    from openminion.modules.commerce.runtime import CommerceRuntime
-
-    runtime = getattr(runtime_handle, "commerce_runtime", None)
-    return runtime if isinstance(runtime, CommerceRuntime) else None
 
 
 def build_daytona_runner(
@@ -755,13 +724,9 @@ def build_brain_runner_bundle(service: Any) -> Any:
         owns_artifactctl=artifactctl is not None,
     )
     memory_api = getattr(memory_assembly, "memctl", None)
-    resolved_action_policy = (
-        default_profile.action_policy
-        if default_profile.action_policy is not None
-        else config.action_policy
-    )
+    resolved_action_policy = resolve_profile_action_policy(config, default_profile)
     runtime_handle = service._runtime_handle
-    commerce_runtime = resolve_commerce_runtime(runtime_handle)
+    commerce_runtime = resolve_injected_commerce_runtime(runtime_handle)
     policy_api = bridge_module.create_policy_api(
         mode=service.mode,
         db_dir=db_dir,

@@ -6,6 +6,12 @@ from openminion.base.config import OpenMinionConfig
 from ..models import RiskSpec, policy_config_from_action_policy
 
 
+def resolve_profile_action_policy(config: OpenMinionConfig, profile: Any) -> Any:
+    if profile.action_policy is not None:
+        return profile.action_policy
+    return config.action_policy
+
+
 def build_action_policy_service(
     *,
     config: OpenMinionConfig,
@@ -100,4 +106,5 @@ __all__ = (
     "build_action_policy_service",
     "derive_tool_risk_spec",
     "policy_config_from_action_policy",
+    "resolve_profile_action_policy",
 )

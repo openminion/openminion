@@ -44,7 +44,7 @@ def requires_individual_confirmation(command: Command | dict[str, Any] | None) -
     tool, method = (
         normalized.rsplit(".", 1) if "." in normalized else (normalized, "default")
     )
-    return is_policy_authorization_pair(tool, method)
+    return bool(is_policy_authorization_pair(tool, method))
 
 
 def _bounded_confirmation_arg_value(value: Any) -> str:

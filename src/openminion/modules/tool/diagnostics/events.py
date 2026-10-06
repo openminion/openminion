@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from openminion.modules.tool.contracts.model_ids import SECURITY_MODEL_TOOL_IDS
+from openminion.modules.telemetry.events.catalog import TOOL_COMMERCE_ACTION
 from openminion.modules.telemetry.events.module import (
     emit_module_operation as _emit_module_operation_impl,
     emit_module_telemetry as _emit_module_telemetry_impl,
@@ -355,7 +356,7 @@ def emit_commerce_action_event(
         return False
     return emit_tool_execution_event(
         ctx=ctx,
-        event_type="tool.commerce.action",
+        event_type=TOOL_COMMERCE_ACTION,
         status=outcome,
         payload={
             "tool_name": str(getattr(ctx, "tool_name", "") or "commerce"),

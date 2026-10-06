@@ -196,6 +196,7 @@ TOOL_RUN = "tool.run"
 TOOL_EXECUTION_STARTED = "tool.execution.started"
 TOOL_EXECUTION_COMPLETED = "tool.execution.completed"
 TOOL_EXECUTION_FAILED = "tool.execution.failed"
+TOOL_COMMERCE_ACTION = "tool.commerce.action"
 TOOL_CALL_LEGACY = "tool_call"
 TOOL_ENVELOPE_REPAIR_RETRY = "tool_envelope.repair_retry"
 TOOL_ENVELOPE_REPAIR_EXHAUSTED = "tool_envelope.repair_exhausted"
@@ -418,6 +419,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         TOOL_EXECUTION_STARTED,
         TOOL_EXECUTION_COMPLETED,
         TOOL_EXECUTION_FAILED,
+        TOOL_COMMERCE_ACTION,
         TOOL_CALL_LEGACY,
         TOOL_ENVELOPE_REPAIR_RETRY,
         TOOL_ENVELOPE_REPAIR_EXHAUSTED,
@@ -671,6 +673,7 @@ __all__ = [
     "TOOL_EXECUTION_STARTED",
     "TOOL_EXECUTION_COMPLETED",
     "TOOL_EXECUTION_FAILED",
+    "TOOL_COMMERCE_ACTION",
     "TOOL_CALL_LEGACY",
     "TOOL_ENVELOPE_REPAIR_RETRY",
     "TOOL_ENVELOPE_REPAIR_EXHAUSTED",

@@ -5,10 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
+from .contracts import OrderActionResultState, PlacementState
 from .models import (
+    ActionRequestState,
     CommerceLifecycleState,
+    OrderState,
+    PaymentState,
+    ShipmentState,
     LineItem,
     MerchantIdentity,
     Money,
@@ -30,14 +35,12 @@ from .provider import (
     OrderActionKind,
     OrderActionPreparation,
     OrderActionResult,
-    OrderActionResultState,
     OrderActionsInspection,
     OrderInspection,
     OrderPlacement,
     OrderPreparation,
     PlaceOrderRequest,
     PlacementRecoveryLocator,
-    PlacementState,
     PrepareOrderActionRequest,
     PrepareOrderRequest,
     PreparationRecoveryLocator,
@@ -64,7 +67,7 @@ class FixtureLedgerEntry:
     accepted_ref: str
 
 
-def _digest(payload: object) -> str:
+def _fixture_digest(payload: object) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
@@ -236,7 +239,7 @@ class FixtureCommerceProvider:
                 currency="USD", amount_minor=subtotal_minor + tax.amount_minor + 500
             ),
         )
-        digest = _digest(
+        digest = _fixture_digest(
             {
                 "checkout_ref": self.checkout_ref,
                 "checkout_revision": self.checkout_revision,
@@ -307,22 +310,28 @@ class FixtureCommerceProvider:
             else {}
         )
         lifecycle = CommerceLifecycleState(
-            order={
-                "succeeded": "accepted",
-                "declined": "declined",
-                "action_required": "action_required",
-                "failed": "provider_unknown",
-                "outcome_unknown": "outcome_unknown",
-            }[state],
+            order=cast(
+                OrderState,
+                {
+                    "succeeded": "accepted",
+                    "declined": "declined",
+                    "action_required": "action_required",
+                    "failed": "provider_unknown",
+                    "outcome_unknown": "outcome_unknown",
+                }[state],
+            ),
             fulfillment="unfulfilled" if state == "succeeded" else "provider_unknown",
-            payment={
-                "succeeded": "authorized",
-                "declined": "declined",
-                "action_required": "pending",
-                "failed": "provider_unknown",
-                "outcome_unknown": "provider_unknown",
-            }[state],
-            shipments=shipments,
+            payment=cast(
+                PaymentState,
+                {
+                    "succeeded": "authorized",
+                    "declined": "declined",
+                    "action_required": "pending",
+                    "failed": "provider_unknown",
+                    "outcome_unknown": "provider_unknown",
+                }[state],
+            ),
+            shipments=cast(dict[str, ShipmentState], shipments),
             action_request="pending" if state == "action_required" else None,
         )
         placement = OrderPlacement(
@@ -375,7 +384,7 @@ class FixtureCommerceProvider:
             raise CommerceProviderError(
                 "ACTION_INELIGIBLE", "Partial actions require line item ids."
             )
-        digest = _digest(request.model_dump(mode="json"))
+        digest = _fixture_digest(request.model_dump(mode="json"))
         preparation = OrderActionPreparation(
             action_ref=f"action-{len(self._action_preparations) + 1}",
             order_ref=request.order_ref,
@@ -434,9 +443,7 @@ class FixtureCommerceProvider:
             order_ref=preparation.order_ref,
             state=state,
             lifecycle=lifecycle,
-            links={
-                "order": f"https://fixture.invalid/orders/{preparation.order_ref}"
-            },
+            links={"order": f"https://fixture.invalid/orders/{preparation.order_ref}"},
         )
         self._action_results[request.idempotency_key] = result
         self.ledger.append(
@@ -479,12 +486,15 @@ class FixtureCommerceProvider:
                 order="accepted",
                 fulfillment="unfulfilled",
                 payment="authorized",
-                action_request={
-                    "pending": "pending",
-                    "rejected": "rejected",
-                    "failed": "failed",
-                    "outcome_unknown": "outcome_unknown",
-                }[state],
+                action_request=cast(
+                    ActionRequestState,
+                    {
+                        "pending": "pending",
+                        "rejected": "rejected",
+                        "failed": "failed",
+                        "outcome_unknown": "outcome_unknown",
+                    }[state],
+                ),
             )
         if preparation.kind in {"cancel", "partial_cancel"}:
             return CommerceLifecycleState(
@@ -521,9 +531,7 @@ class FixtureCommerceProvider:
                 return preparation
         raise CommerceProviderError("NOT_FOUND", "Preparation was not found.")
 
-    def _action_preparation_for_ref(
-        self, reference: str
-    ) -> OrderActionPreparation:
+    def _action_preparation_for_ref(self, reference: str) -> OrderActionPreparation:
         for preparation in self._action_preparations.values():
             if preparation.action_ref == reference:
                 return preparation
@@ -544,7 +552,9 @@ class FixtureCommerceProvider:
     @staticmethod
     def _require_reference(actual: str, expected: str) -> None:
         if actual != expected:
-            raise CommerceProviderError("NOT_FOUND", "Commerce reference was not found.")
+            raise CommerceProviderError(
+                "NOT_FOUND", "Commerce reference was not found."
+            )
 
     @staticmethod
     def _require_digest(actual: str, expected: str) -> None:

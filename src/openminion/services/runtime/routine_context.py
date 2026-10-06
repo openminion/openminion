@@ -64,6 +64,8 @@ class ToolRegistryPreTurnContext(PreTurnContext):
         config = getattr(resolve_runtime_tool_config(context), family, None)
         if config is None:
             return False
+        if isinstance(config, Mapping):
+            return bool(config.get("enabled", False))
         enabled = getattr(config, "enabled", None)
         if isinstance(enabled, bool):
             return enabled

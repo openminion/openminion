@@ -6,13 +6,14 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 from uuid import uuid4
 
-from openminion.modules.storage.record_store import RecordStore
-from openminion.modules.storage.runtime.module_store import (
+from openminion.modules.storage import (
     BaseModuleSQLiteStore,
     BaseModuleStore,
 )
+from openminion.modules.storage.record_store import RecordStore
 
 from ..models import CommerceDigest, CommerceLifecycleState
 from ..provider import OrderPreparation
@@ -51,6 +52,7 @@ def _create_schema(record_store: RecordStore) -> None:
 
 class _CommerceOrderStoreOps:
     _record_store: RecordStore
+    _lock: Any
 
     def _list_migrations(self) -> list[str]:
         return list_migrations()
@@ -106,8 +108,10 @@ class _CommerceOrderStoreOps:
         )
         record = self.get_preparation(subject_id, preparation_id)
         if created != 1 and (
-            record is None or record.payload_digest != _digest_json(payload_json)
-            or prepared is not None and record.prepared != prepared
+            record is None
+            or record.payload_digest != _digest_json(payload_json)
+            or prepared is not None
+            and record.prepared != prepared
         ):
             raise ValueError("preparation identity is owned by different facts")
         if record is None:
@@ -527,6 +531,7 @@ class _CommerceOrderStoreOps:
     def _require_owned_target(
         self, subject_id: str, target_type: SnapshotTarget, target_id: str
     ) -> None:
+        owned: PreparationRecord | OrderRecord | None
         if target_type == "preparation":
             owned = self.get_preparation(subject_id, target_id)
         else:
@@ -535,7 +540,10 @@ class _CommerceOrderStoreOps:
             raise ValueError("snapshot target must belong to the same subject")
 
 
-class SQLiteCommerceOrderStore(_CommerceOrderStoreOps, BaseModuleSQLiteStore):
+class SQLiteCommerceOrderStore(
+    _CommerceOrderStoreOps,
+    BaseModuleSQLiteStore,  # type: ignore[misc]
+):
     def __init__(
         self,
         database_path: str | Path,
@@ -551,7 +559,10 @@ class SQLiteCommerceOrderStore(_CommerceOrderStoreOps, BaseModuleSQLiteStore):
         )
 
 
-class PostgresCommerceOrderStore(_CommerceOrderStoreOps, BaseModuleStore):
+class PostgresCommerceOrderStore(
+    _CommerceOrderStoreOps,
+    BaseModuleStore,  # type: ignore[misc]
+):
     def __init__(self, *, record_store: RecordStore) -> None:
         BaseModuleStore.__init__(self, record_store=record_store)
 
@@ -606,7 +617,7 @@ def _snapshot_from_row(row: dict[str, object]) -> MaterialSnapshot:
     return MaterialSnapshot(
         snapshot_id=str(row["snapshot_id"]),
         subject_id=str(row["subject_id"]),
-        target_type=str(row["target_type"]),
+        target_type=cast(SnapshotTarget, str(row["target_type"])),
         target_id=str(row["target_id"]),
         payload_digest=str(row["payload_digest"]),
         lifecycle=CommerceLifecycleState.model_validate_json(
@@ -623,7 +634,7 @@ def _attempt_from_row(row: dict[str, object]) -> CommerceAttempt:
     return CommerceAttempt(
         attempt_id=str(row["attempt_id"]),
         subject_id=str(row["subject_id"]),
-        kind=str(row["kind"]),
+        kind=cast(AttemptKind, str(row["kind"])),
         target_id=str(row["target_id"]),
         operation=str(row["operation"]),
         idempotency_key=str(row["idempotency_key"]),
@@ -633,8 +644,8 @@ def _attempt_from_row(row: dict[str, object]) -> CommerceAttempt:
             if row.get("authorization_hash") is not None
             else None
         ),
-        attempt_count=int(row.get("attempt_count") or 0),
-        state=str(row["state"]),
+        attempt_count=int(str(row.get("attempt_count") or 0)),
+        state=cast(AttemptState, str(row["state"])),
         response_digest=(
             str(row["response_digest"])
             if row.get("response_digest") is not None

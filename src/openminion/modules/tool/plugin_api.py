@@ -112,13 +112,17 @@ class PolicyAuthorization:
 
     def __post_init__(self) -> None:
         if not is_policy_authorization_pair(self.tool, self.method):
-            raise ValueError("unsupported policy authorization tool/method pair")
+            raise ValueError(  # allow-bare-raise: immutable value contract validation
+                "unsupported policy authorization tool/method pair"
+            )
         if self.duration_type != "once":
-            raise ValueError("policy authorization must be one-time")
+            raise ValueError(  # allow-bare-raise: immutable value contract validation
+                "policy authorization must be one-time"
+            )
         if self.tool == "commerce" and (
             self.subject_id != "local" or not self.session_id
         ):
-            raise ValueError(
+            raise ValueError(  # allow-bare-raise: immutable value contract validation
                 "commerce authorization requires local subject and session"
             )
 

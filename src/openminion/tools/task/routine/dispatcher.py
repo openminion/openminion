@@ -1,6 +1,6 @@
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol, cast
@@ -156,6 +156,82 @@ def build_routine_run_result(
             **dict(post.metadata or {}),
         },
     }
+
+
+def build_paused_routine_result(
+    routine: RoutinePayloadV1,
+    watch: Mapping[str, Any],
+    *,
+    output_builder: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "summary": "",
+        "artifact_refs": [],
+        "metadata": {
+            "routine_kind": routine.routine_kind,
+            "routine_paused": True,
+        },
+        "output": output_builder(
+            condition_met=False,
+            condition_valid=False,
+            terminal=False,
+            deliver=False,
+            checks_completed=int(watch.get("checks_completed", 0) or 0),
+            terminal_reason="",
+            summary="",
+        ),
+    }
+
+
+def run_routine_pre_turn(
+    *,
+    handler: RoutineHandler,
+    routine: RoutinePayloadV1,
+    routine_id: str,
+    context: PreTurnContext | None,
+) -> tuple[Any, dict[str, Any] | None]:
+    if context is None:
+        return None, {
+            "summary": "routine pre-turn aborted: tool registry unavailable",
+            "error": True,
+        }
+    try:
+        return handler.pre_turn(
+            routine=routine, routine_id=routine_id, ctx=context
+        ), None
+    except Exception as exc:  # noqa: BLE001 - routine boundary
+        return None, {
+            "summary": f"routine pre-turn failed: {exc}",
+            "error": True,
+        }
+
+
+def write_routine_artifact_result(
+    *,
+    writer: Callable[..., str],
+    artifactctl_factory: Callable[[], Any],
+    routine_id: str,
+    post: PostTurnResult,
+    session_id: str,
+    agent_id: str,
+) -> tuple[str, dict[str, Any] | None]:
+    if post.artifact_body is None:
+        return "", None
+    try:
+        artifact_id = writer(
+            artifactctl_factory=artifactctl_factory,
+            routine_id=routine_id,
+            body=post.artifact_body,
+            mime=post.artifact_mime,
+            session_id=session_id,
+            agent_id=agent_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - artifact boundary
+        return "", {
+            "summary": f"routine artifact write failed: {exc}",
+            "error": True,
+        }
+    return artifact_id, None
 
 
 class GitHubPrReviewHandler:
@@ -593,7 +669,7 @@ def _advance_cursor(
     current = cast(GitHubPrReviewCursorV1, routine.cursor)
     last_review_per_pr = dict(current.last_review_per_pr)
     for entry in kept:
-        last_review_per_pr[str(entry.number)] = {  # type: ignore[assignment]
+        last_review_per_pr[str(entry.number)] = {
             "head_sha": entry.head_sha_reviewed,
             "reviewed_at": checked_at,
         }
@@ -677,7 +753,10 @@ __all__ = [
     "PostTurnResult",
     "RoutineHandler",
     "RoutineDispatcher",
+    "build_paused_routine_result",
     "build_routine_run_result",
+    "run_routine_pre_turn",
+    "write_routine_artifact_result",
     "GitHubPrReviewHandler",
     "CommerceOrderHandler",
     "TrailerParseResult",
