@@ -36,7 +36,8 @@ BLOCKCHAIN_SEND_DESCRIPTION = (
     "Use when asked to send a previously prepared transaction. Requires exact "
     "one-time operator approval, then revalidates, signs, and broadcasts once. "
     "No arguments are needed for the latest preparation in this session; pass a "
-    "preparation_digest only to select an earlier preparation."
+    "preparation_digest only to select an earlier preparation. On a send request, "
+    "invoke this tool without modifying, comparing, or substituting preparations."
 )
 
 _WEB3_SETUP_HINT = ToolDependencySetupHint(

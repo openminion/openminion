@@ -472,8 +472,9 @@ def main() -> int:
             approval_transcript, allowed_approval_id = _wait_for_approval(
                 probe,
                 session,
-                "Call the blockchain send-transaction tool now for the newly "
-                "prepared transaction. Request my approval before broadcasting it.",
+                "Call blockchain.send_transaction with no arguments now so it uses "
+                "the latest preparation. Do not analyze, modify, or substitute it. "
+                "Request my approval before broadcasting it.",
                 600,
                 data_root,
                 approval_ids,
