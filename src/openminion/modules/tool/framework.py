@@ -104,6 +104,7 @@ def derive_tool_specs(family: ToolFamilySpec) -> list[ToolSpec]:
                 args_model=tool.args_model,
                 min_scope=scope,
                 handler=tool.handler,
+                description=tool.description,
                 dangerous=tool.dangerous,
                 idempotent=tool.idempotent,
                 tags=merged_tags,

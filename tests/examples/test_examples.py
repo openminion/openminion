@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from runpy import run_path
+import shutil
 import subprocess
 import sys
 
@@ -15,7 +16,7 @@ from openminion.services.runtime.plugins import discover_plugin_manifests
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = ROOT / "examples"
-HelloTool = run_path(str(EXAMPLES / "starter" / "tool.py"))["HelloTool"]
+hello_tool = run_path(str(EXAMPLES / "starter" / "tool.py"))["hello_tool"]
 
 
 def _demo_env(home: Path) -> dict[str, str]:
@@ -26,10 +27,15 @@ def _demo_env(home: Path) -> dict[str, str]:
     return env
 
 
-def _run(args: list[str], *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run(
+    args: list[str],
+    *,
+    env: dict[str, str],
+    cwd: Path = ROOT,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, *args],
-        cwd=ROOT,
+        cwd=cwd,
         env=env,
         check=True,
         capture_output=True,
@@ -53,22 +59,24 @@ def test_starter_plugin_is_discoverable() -> None:
 
 
 def test_starter_tool_uses_current_execution_contract() -> None:
-    result = HelloTool().execute(
+    result = hello_tool.tool_decl.handler(
         {"name": "developer"},
         ToolExecutionContext(channel="console", target="test"),
     )
 
-    assert result.ok
-    assert result.content == "hello developer"
-    assert result.data == {"name": "developer"}
+    assert hello_tool.tool_decl.name == "hello_tool"
+    assert result == "hello developer"
 
 
 def test_quickstart_runs_with_fresh_demo_config(tmp_path: Path) -> None:
     env = _init_demo(tmp_path / "quickstart-home")
+    script = tmp_path / "quickstart.py"
+    shutil.copy(EXAMPLES / "starter" / "quickstart.py", script)
 
     result = _run(
-        [str(EXAMPLES / "starter" / "quickstart.py"), "hello", "example"],
+        [str(script), "hello", "example"],
         env=env,
+        cwd=tmp_path,
     )
 
     assert "reply:" in result.stdout

@@ -1,6 +1,6 @@
 import inspect
 from typing import Any, Optional, overload
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from pydantic import BaseModel, ConfigDict, create_model
 
@@ -94,8 +94,13 @@ def _decorate(
     ).strip()
     args_model = _build_args_model(func, f"{resolved_name.replace('.', '_')}Args")
 
-    def _handler(args: BaseModel) -> Any:
-        return func(**args.model_dump())
+    def _handler(
+        args: BaseModel | Mapping[str, Any],
+        context: Any = None,
+    ) -> Any:
+        del context
+        values = args.model_dump() if isinstance(args, BaseModel) else dict(args)
+        return func(**values)
 
     decl = ToolDecl(
         name=resolved_name,

@@ -4,7 +4,6 @@ from typing import Any
 
 from openminion.base.version import OPENMINION_VERSION
 
-# Bind __version__ before public re-exports to avoid circular import reads.
 __version__ = OPENMINION_VERSION
 
 __all__ = [
@@ -15,6 +14,7 @@ __all__ = [
     "Handoff",
     "MemoryBundle",
     "OpenMinionConfig",
+    "ProviderError",
     "__version__",
     "subagent",
     "tool",
@@ -28,6 +28,7 @@ _LAZY_EXPORTS = {
     "Handoff": ("openminion.api", "Handoff"),
     "MemoryBundle": ("openminion.modules.memory.portability", "MemoryBundle"),
     "OpenMinionConfig": ("openminion.base.config", "OpenMinionConfig"),
+    "ProviderError": ("openminion.modules.llm", "ProviderError"),
     "subagent": ("openminion.api", "subagent"),
     "tool": ("openminion.tools", "tool"),
 }
@@ -46,5 +47,4 @@ def __getattr__(name: str) -> Any:
     return value
 
 
-# Per-symbol public-surface version metadata.
 __since__: dict[str, str] = {name: OPENMINION_VERSION for name in __all__}
