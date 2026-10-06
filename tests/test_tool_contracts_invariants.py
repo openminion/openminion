@@ -152,24 +152,10 @@ def test_all_runtime_binding_ids_have_at_least_one_candidate() -> None:
     assert not empty, f"runtime binding IDs with no candidates after bootstrap: {empty}"
 
 
-def test_recently_added_search_provider_candidates_normalize_correctly() -> None:
+def test_search_binding_uses_shared_family_dispatcher() -> None:
     mgr = _get_bootstrap_manager()
-    for candidate in (
-        "search.serpapi.search",
-        "search.firecrawl.search",
-        "search.tinyfish.search",
-        "search.duckduckgo.search",
-    ):
-        normalized = mgr.normalize_raw_name(candidate)
-        assert normalized == "web.search", (
-            f"{candidate!r} should normalize to 'web.search', got {normalized!r}"
-        )
-    # Confirm both are present in the binding's candidate list
-    cands = mgr.runtime_candidates("runtime.web.search")
-    assert "search.serpapi.search" in cands
-    assert "search.firecrawl.search" in cands
-    assert "search.tinyfish.search" in cands
-    assert "search.duckduckgo.search" in cands
+
+    assert mgr.runtime_candidates("runtime.web.search") == ("search.dispatch",)
 
 
 def test_runtime_candidates_do_not_collide_across_model_tool_owners() -> None:

@@ -26,14 +26,7 @@ def test_search_registrar_keeps_manifest_without_provider_env() -> None:
     manifest = registrar.get_manifest(_ctx({"DASHSCOPE_API_KEY": "x"}))
 
     assert manifest is not None
-    assert "search.dispatch" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.tavily.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.brave.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.serpapi.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.firecrawl.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.serper.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.tinyfish.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.duckduckgo.search" in manifest.runtime_bindings[0].runtime_candidates
+    assert manifest.runtime_bindings[0].runtime_candidates == ("search.dispatch",)
 
 
 def test_search_registrar_registers_runtime_tools_without_provider_env() -> None:
@@ -61,11 +54,7 @@ def test_search_registrar_registers_when_provider_env_present() -> None:
     )
 
     assert manifest is not None
-    assert "search.dispatch" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.firecrawl.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.serper.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.tinyfish.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.duckduckgo.search" in manifest.runtime_bindings[0].runtime_candidates
+    assert manifest.runtime_bindings[0].runtime_candidates == ("search.dispatch",)
 
 
 def test_search_registrar_registers_with_environment_config_runtime_env() -> None:
@@ -81,11 +70,7 @@ def test_search_registrar_registers_with_environment_config_runtime_env() -> Non
     manifest = registrar.get_manifest(ctx)
 
     assert manifest is not None
-    assert "search.dispatch" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.firecrawl.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.serper.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.tinyfish.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.duckduckgo.search" in manifest.runtime_bindings[0].runtime_candidates
+    assert manifest.runtime_bindings[0].runtime_candidates == ("search.dispatch",)
 
 
 def test_search_registrar_keeps_runtime_candidates_without_config() -> None:
@@ -94,12 +79,7 @@ def test_search_registrar_keeps_runtime_candidates_without_config() -> None:
     manifest = registrar.get_manifest(None)
 
     assert manifest is not None
-    assert "search.dispatch" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.serpapi.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.firecrawl.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.serper.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.tinyfish.search" in manifest.runtime_bindings[0].runtime_candidates
-    assert "search.duckduckgo.search" in manifest.runtime_bindings[0].runtime_candidates
+    assert manifest.runtime_bindings[0].runtime_candidates == ("search.dispatch",)
 
 
 def test_search_plugin_import_avoids_search_tavily_cycle() -> None:

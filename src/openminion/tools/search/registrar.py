@@ -27,16 +27,7 @@ class SearchRegistrar:
 
     def get_manifest(self, ctx: ToolRegisterContext) -> Any:
         del ctx
-        runtime_candidates = (
-            "search.dispatch",
-            "search.tavily.search",
-            "search.brave.search",
-            "search.serpapi.search",
-            "search.firecrawl.search",
-            "search.serper.search",
-            "search.tinyfish.search",
-            "search.duckduckgo.search",
-        )
+        runtime_candidates = ("search.dispatch",)
         return ToolBindingManifest(
             module_id=self.module_id,
             model_tools=(

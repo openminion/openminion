@@ -89,7 +89,7 @@ def test_normalize_raw_model_tool_name_permutations(
         (
             "tool.web.search",
             ("search.tavily.search",),
-            "search.tavily.search",
+            "",
             "web.search",
             "runtime.web.search",
         ),

@@ -3,6 +3,7 @@
 from typing import Any
 
 from openminion.api.queries.mcp_reports import build_mcp_section as _build_mcp_section
+from openminion.api.queries.tool_families import build_tool_family_items
 from openminion.modules.brain.bootstrap.route_catalog import (
     available_routes as available_brain_routes,
     get_route_descriptor,
@@ -13,8 +14,6 @@ from openminion.tools.mcp.exposure import (
     build_mcp_exposure_report,
     scoped_mcp_registry_view,
 )
-
-_TOOL_FAMILY_NAMES = ("search", "fetch", "browser", "weather")
 
 
 def build_tool_inventory_report(
@@ -204,29 +203,6 @@ def _build_plugin_items(runtime: Any, diagnostics: dict[str, Any]) -> dict[str, 
     }
 
 
-def _build_tool_family_items(tool_policy: dict[str, Any]) -> list[dict[str, Any]]:
-    items = []
-    for family_name in _TOOL_FAMILY_NAMES:
-        family_payload = tool_policy.get(family_name, {})
-        if not isinstance(family_payload, dict):
-            family_payload = {}
-        items.append(
-            {
-                "name": family_name,
-                "configured": bool(family_payload),
-                "enabled_providers": list(
-                    family_payload.get("enabled_providers", []) or []
-                ),
-                "default_provider": str(
-                    family_payload.get("default_provider", "") or ""
-                ).strip(),
-                "provider_order": list(family_payload.get("provider_order", []) or []),
-                "allow_fallback": family_payload.get("allow_fallback"),
-            }
-        )
-    return items
-
-
 def _build_tools_section(
     runtime: Any,
     diagnostics: dict[str, Any],
@@ -248,7 +224,11 @@ def _build_tools_section(
     plugin_origin_count = sum(1 for item in tool_inventory if item.get("plugin_origin"))
     return {
         "policy": tool_policy,
-        "families": _build_tool_family_items(tool_policy),
+        "families": build_tool_family_items(
+            runtime,
+            profile=profile,
+            tool_policy=tool_policy,
+        ),
         "inventory": tool_inventory,
         "counts": {
             "total": len(tool_inventory),

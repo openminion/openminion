@@ -88,6 +88,23 @@ def test_failed_provider_entry_point_is_attempted_once() -> None:
     assert registry.entry_point_statuses()[0]["loaded"] is False
 
 
+def test_provider_entry_point_loading_failure_is_visible(monkeypatch, caplog) -> None:
+    from openminion.tools.fetch import plugin as fetch_plugin
+
+    class _FailingRegistry:
+        def load_entry_points(self) -> None:
+            raise RuntimeError("entry point failed")
+
+    registry = _FailingRegistry()
+    monkeypatch.setattr(fetch_plugin, "register_provider", lambda _provider: None)
+    monkeypatch.setattr(fetch_plugin, "provider_registry", lambda: registry)
+
+    with caplog.at_level("WARNING"):
+        assert fetch_plugin._ensure_provider_registry() is registry
+
+    assert "fetch provider entry-point loading failed" in caplog.text
+
+
 def test_provider_entry_point_collision_preserves_original_provider() -> None:
     registry = FetchProviderRegistry()
     original = _FakeProvider()
@@ -594,6 +611,46 @@ def test_runtime_tools_fetch_can_disable_fallback(monkeypatch) -> None:
     assert payload["ok"] is False
     assert payload["error"]["code"] == "UPSTREAM_ERROR"
     assert registry._core.calls == 1
+
+
+def test_runtime_tools_fetch_reports_each_failed_backend(monkeypatch) -> None:
+    registry = _FallbackRegistry(allow_scrapling_success=False)
+    monkeypatch.setattr(
+        "openminion.tools.fetch.plugin._ensure_provider_registry",
+        lambda: registry,
+    )
+
+    payload = _h_get(
+        {"url": "https://example.com"},
+        _runtime_ctx(
+            runtime_tools={
+                "fetch": {
+                    "enabled_providers": ["core-http", "scrapling"],
+                    "default_provider": "core-http",
+                    "provider_order": ["core-http", "scrapling"],
+                    "allow_fallback": True,
+                }
+            }
+        ),
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"]["details"]["provider_chain"] == [
+        "core-http",
+        "scrapling",
+    ]
+    assert payload["error"]["details"]["attempt_failures"] == [
+        {
+            "provider": "core-http",
+            "code": "UPSTREAM_ERROR",
+            "message": "core-http failed",
+        },
+        {
+            "provider": "scrapling",
+            "code": "UPSTREAM_ERROR",
+            "message": "scrapling failed",
+        },
+    ]
 
 
 def test_explicit_backend_respects_runtime_tools_enabled_backend_filter(

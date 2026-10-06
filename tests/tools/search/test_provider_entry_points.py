@@ -42,14 +42,32 @@ def test_is_provider_helper_accepts_search_shape() -> None:
 
     class _NoSearch:
         provider_id = "x"
+        display_name = "X"
+
+        def healthcheck(self, ctx: Any | None = None) -> bool:
+            return True
 
     assert _is_provider(_NoSearch()) is False
 
     class _NoId:
+        display_name = "X"
+
         def search(self, *a: Any, **k: Any) -> Mapping[str, Any]:  # noqa: D401
             return {}
 
+        def healthcheck(self, ctx: Any | None = None) -> bool:
+            return True
+
     assert _is_provider(_NoId()) is False
+
+    class _NoHealthcheck:
+        provider_id = "x"
+        display_name = "X"
+
+        def search(self, *a: Any, **k: Any) -> Mapping[str, Any]:
+            return {}
+
+    assert _is_provider(_NoHealthcheck()) is False
     assert _is_provider(None) is False
 
 
@@ -87,12 +105,30 @@ def test_register_provider_rejects_missing_provider_id() -> None:
 
     class _Bad:
         provider_id = ""
+        display_name = "Bad"
 
         def search(self, *a: Any, **k: Any) -> Mapping[str, Any]:
             return {}
 
+        def healthcheck(self, ctx: Any | None = None) -> bool:
+            return True
+
     with pytest.raises(ValueError):
         registry.register(_Bad())  # type: ignore[arg-type]
+
+
+def test_register_provider_rejects_incomplete_provider() -> None:
+    registry = SearchProviderRegistry()
+
+    class _MissingHealthcheck:
+        provider_id = "incomplete"
+        display_name = "Incomplete"
+
+        def search(self, *a: Any, **k: Any) -> Mapping[str, Any]:
+            return {}
+
+    with pytest.raises(TypeError, match="must define"):
+        registry.register(_MissingHealthcheck())  # type: ignore[arg-type]
 
 
 def test_entry_point_collision_fails_and_preserves_original_provider() -> None:

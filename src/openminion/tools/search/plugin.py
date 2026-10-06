@@ -1,9 +1,10 @@
 from collections.abc import Mapping
 from datetime import datetime, timezone
 import hashlib
-import inspect
+import logging
 from typing import Any
 
+from openminion.base.config.runtime.tools import ToolFamilyRuntimeConfig
 from openminion.modules.context.input_boundaries import (
     emit_boundary_event as _pidf_emit_boundary_event,
 )
@@ -20,20 +21,15 @@ from openminion.modules.tool.runtime.routing import (
 )
 
 from .constants import (
-    SEARCH_BRAVE_PROVIDER_ALIASES,
+    DEFAULT_SEARCH_PROVIDER_ORDER,
     SEARCH_BRAVE_PROVIDER_ID,
-    SEARCH_DUCKDUCKGO_PROVIDER_ALIASES,
     SEARCH_DUCKDUCKGO_PROVIDER_ID,
-    SEARCH_FIRECRAWL_PROVIDER_ALIASES,
     SEARCH_FIRECRAWL_PROVIDER_ID,
     SEARCH_PROVIDER_AUTO,
-    SEARCH_SERPAPI_PROVIDER_ALIASES,
+    SEARCH_PROVIDER_BY_ALIAS,
     SEARCH_SERPAPI_PROVIDER_ID,
-    SEARCH_SERPER_PROVIDER_ALIASES,
     SEARCH_SERPER_PROVIDER_ID,
-    SEARCH_TINYFISH_PROVIDER_ALIASES,
     SEARCH_TINYFISH_PROVIDER_ID,
-    SEARCH_TAVILY_PROVIDER_ALIASES,
     SEARCH_TAVILY_PROVIDER_ID,
 )
 from .providers import (
@@ -44,8 +40,7 @@ from .providers import (
 )
 from .schemas import SearchArgs
 
-_PROVIDERS: dict[str, SearchProvider] = provider_registry()._providers  # noqa: SLF001
-_PROVIDER_ORDER: list[str] = provider_registry()._provider_order  # noqa: SLF001
+_LOG = logging.getLogger(__name__)
 
 
 def _normalize_provider_id(raw: Any) -> str:
@@ -61,6 +56,47 @@ def register_provider(provider: SearchProvider) -> None:
 
 def list_provider_ids() -> tuple[str, ...]:
     return tuple(provider_registry().list_provider_ids())
+
+
+def build_provider_diagnostics(
+    *, family_config: ToolFamilyRuntimeConfig | None = None
+) -> dict[str, Any]:
+    available = _registered_provider_ids()
+    order = resolve_runtime_provider_chain(
+        available=available,
+        family_config=family_config,
+        hinted_order=DEFAULT_SEARCH_PROVIDER_ORDER,
+    )
+    allowed = set(order)
+    providers: list[dict[str, Any]] = []
+    for provider_id in available:
+        provider = _registered_provider(provider_id)
+        if provider_id not in allowed:
+            providers.append(
+                {
+                    "name": provider_id,
+                    "enabled": False,
+                    "ready": False,
+                    "blocked_reason": "disabled by runtime policy",
+                }
+            )
+            continue
+        ready = bool(provider and provider.healthcheck(None))
+        blocked_reason = "" if ready else "provider requirements are not satisfied"
+        providers.append(
+            {
+                "name": provider_id,
+                "enabled": provider_id in allowed,
+                "ready": ready,
+                "blocked_reason": blocked_reason,
+            }
+        )
+    return {
+        "available_providers": available,
+        "effective_provider_order": order,
+        "effective_default_provider": order[0] if order else "",
+        "providers": providers,
+    }
 
 
 def _registered_provider(provider_id: str) -> SearchProvider | None:
@@ -82,21 +118,7 @@ def _provider_pref_from_token(raw: Any) -> str:
         return token
     if token in {SEARCH_PROVIDER_AUTO, ""}:
         return SEARCH_PROVIDER_AUTO
-    if token in SEARCH_TAVILY_PROVIDER_ALIASES or ".tavily." in token:
-        return SEARCH_TAVILY_PROVIDER_ID
-    if token in SEARCH_BRAVE_PROVIDER_ALIASES or ".brave." in token:
-        return SEARCH_BRAVE_PROVIDER_ID
-    if token in SEARCH_SERPAPI_PROVIDER_ALIASES or ".serpapi." in token:
-        return SEARCH_SERPAPI_PROVIDER_ID
-    if token in SEARCH_FIRECRAWL_PROVIDER_ALIASES or ".firecrawl." in token:
-        return SEARCH_FIRECRAWL_PROVIDER_ID
-    if token in SEARCH_SERPER_PROVIDER_ALIASES or ".serper." in token:
-        return SEARCH_SERPER_PROVIDER_ID
-    if token in SEARCH_TINYFISH_PROVIDER_ALIASES or ".tinyfish." in token:
-        return SEARCH_TINYFISH_PROVIDER_ID
-    if token in SEARCH_DUCKDUCKGO_PROVIDER_ALIASES or ".duckduckgo." in token:
-        return SEARCH_DUCKDUCKGO_PROVIDER_ID
-    return ""
+    return SEARCH_PROVIDER_BY_ALIAS.get(token, "")
 
 
 def _policy_provider_order(ctx: RuntimeContext) -> list[str]:
@@ -166,15 +188,13 @@ def _resolve_provider_chain(
 
     if requested and requested != SEARCH_PROVIDER_AUTO:
         _add(requested)
-        if getattr(family_cfg, "allow_fallback", None) is False:
-            return chain, warnings
-
-    for provider_id in resolve_runtime_provider_chain(
-        available=_registered_provider_ids(),
-        family_config=family_cfg,
-        hinted_order=hinted_order,
-    ):
-        _add(provider_id)
+    else:
+        for provider_id in resolve_runtime_provider_chain(
+            available=_registered_provider_ids(),
+            family_config=family_cfg,
+            hinted_order=[*hinted_order, *DEFAULT_SEARCH_PROVIDER_ORDER],
+        ):
+            _add(provider_id)
 
     if not chain:
         return [], warnings
@@ -241,32 +261,7 @@ def _resolve_provider_chain_for_tool(
 
 
 def _provider_is_healthy(provider: SearchProvider, ctx: RuntimeContext) -> bool:
-    healthcheck = getattr(provider, "healthcheck", None)
-    if not callable(healthcheck):
-        return False
-    try:
-        parameters = inspect.signature(healthcheck).parameters
-    except (TypeError, ValueError):
-        parameters = {}
-    accepts_ctx_keyword = "ctx" in parameters
-    accepts_kwargs = any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters.values()
-    )
-    if accepts_ctx_keyword or accepts_kwargs:
-        return bool(healthcheck(ctx=ctx))
-    positional = [
-        parameter
-        for parameter in parameters.values()
-        if parameter.kind
-        in (
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        )
-    ]
-    if positional:
-        return bool(healthcheck(ctx))
-    return bool(healthcheck())
+    return bool(provider.healthcheck(ctx))
 
 
 def _normalize_results(rows: Any, *, max_results: int) -> list[dict[str, Any]]:
@@ -333,7 +328,7 @@ def _normalize_provider_payload(
     return normalized
 
 
-def _is_verified(payload: Mapping[str, Any]) -> bool:
+def _has_source_links(payload: Mapping[str, Any]) -> bool:
     rows = payload.get("results", [])
     if not isinstance(rows, list):
         return False
@@ -411,6 +406,34 @@ def _execute_provider(
     )
 
 
+def _search_failure_result(
+    chain: list[str],
+    failures: list[tuple[str, Exception]],
+    warnings: list[str],
+) -> dict[str, Any]:
+    last_exc = failures[-1][1] if failures else None
+    return {
+        "ok": False,
+        "error": {
+            "code": getattr(last_exc, "code", "UPSTREAM_ERROR"),
+            "message": str(last_exc or "web search failed"),
+            "details": dict(getattr(last_exc, "details", {}) or {}),
+        },
+        "data": {
+            "provider_chain": chain,
+            "attempt_failures": [
+                {
+                    "provider": provider_id,
+                    "code": str(getattr(exc, "code", "UPSTREAM_ERROR")),
+                    "message": str(exc),
+                }
+                for provider_id, exc in failures
+            ],
+            "warnings": warnings,
+        },
+    }
+
+
 def _handle_web_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     try:
         validated = SearchArgs.model_validate(args)
@@ -478,10 +501,12 @@ def _handle_web_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, A
         payload["warnings"] = [
             str(item) for item in merged_warnings if str(item).strip()
         ]
+        source_links_present = _has_source_links(payload)
+        payload["source_links_present"] = source_links_present
         return {
             "ok": True,
             "content": _render_content(payload),
-            "verified": _is_verified(payload),
+            "verified": True,
             "data": payload,
             "source": provider_id,
         }
@@ -489,19 +514,7 @@ def _handle_web_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, A
     def _fallback(
         chain: list[str], failures: list[tuple[str, Exception]]
     ) -> dict[str, Any]:
-        last_exc = failures[-1][1] if failures else None
-        return {
-            "ok": False,
-            "error": {
-                "code": getattr(last_exc, "code", "UPSTREAM_ERROR"),
-                "message": str(last_exc or "web search failed"),
-                "details": dict(getattr(last_exc, "details", {}) or {}),
-            },
-            "data": {
-                "provider_chain": chain,
-                "warnings": warnings,
-            },
-        }
+        return _search_failure_result(chain, failures, warnings)
 
     return run_provider_chain(
         ctx,
@@ -581,11 +594,12 @@ def register(registry: ToolRegistry) -> None:
     try:
         provider_registry().load_entry_points()
     except Exception as exc:  # noqa: BLE001
-        import logging as _logging
-
-        _logging.getLogger(__name__).warning(
-            "search provider entry-point loading failed: %s", exc
-        )
+        _LOG.warning("search provider entry-point loading failed: %s", exc)
 
 
-__all__ = ["register", "register_provider", "list_provider_ids"]
+__all__ = [
+    "build_provider_diagnostics",
+    "list_provider_ids",
+    "register",
+    "register_provider",
+]

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -36,6 +37,9 @@ from .policy import (
 from .providers.core_http import provider as _core_http_provider
 from .schemas import FetchGetArgs, FetchHeadArgs, FetchProvidersArgs
 from .providers import provider_registry, register_provider
+
+
+_LOG = logging.getLogger(__name__)
 
 
 class _FetchBackendError(RuntimeError):
@@ -75,8 +79,8 @@ def _ensure_provider_registry() -> Any:
     registry = provider_registry()
     try:
         registry.load_entry_points()
-    except Exception:
-        pass
+    except Exception as exc:
+        _LOG.warning("fetch provider entry-point loading failed: %s", exc)
     return registry
 
 
@@ -361,6 +365,37 @@ def _fetch_request_context(
     return request, preferred, url_hash[:16]
 
 
+def _fetch_failure_result(
+    chain: list[str],
+    failures: list[tuple[str, Exception]],
+    *,
+    method: str,
+) -> dict[str, Any]:
+    last_exc = failures[-1][1] if failures else None
+    if isinstance(last_exc, _FetchBackendError):
+        code = last_exc.code
+        message = str(last_exc)
+        details = dict(last_exc.details)
+    else:
+        code = "UPSTREAM_ERROR"
+        message = str(last_exc or "No fetch backend could satisfy this request")
+        details = {}
+    details.setdefault("provider_chain", chain)
+    details["attempt_failures"] = [
+        {
+            "provider": provider_name,
+            "code": (
+                failure.code
+                if isinstance(failure, _FetchBackendError)
+                else "UPSTREAM_ERROR"
+            ),
+            "message": str(failure),
+        }
+        for provider_name, failure in failures
+    ]
+    return _error(code, message, details=details, method=method)
+
+
 def _invoke_fetch(args: dict[str, Any], ctx: Any, *, method: str) -> dict[str, Any]:
     if is_tool_disabled_by_policy(ctx, "fetch"):
         payload = _error(
@@ -565,20 +600,9 @@ def _invoke_fetch(args: dict[str, Any], ctx: Any, *, method: str) -> dict[str, A
     def _fallback(
         chain: list[str], failures: list[tuple[str, Exception]]
     ) -> dict[str, Any]:
-        last_exc = failures[-1][1] if failures else None
-        if isinstance(last_exc, _FetchBackendError):
-            code = last_exc.code
-            message = str(last_exc)
-            details = dict(last_exc.details)
-        else:
-            code = "UPSTREAM_ERROR"
-            message = str(last_exc or "No fetch backend could satisfy this request")
-            details = {}
-        details.setdefault("provider_chain", chain)
-        return _error(
-            code,
-            message,
-            details=details,
+        return _fetch_failure_result(
+            chain,
+            failures,
             method=f"fetch.{method.lower()}",
         )
 

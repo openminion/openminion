@@ -205,6 +205,7 @@ class ToolBindingPolicyManager:
         default_items = [
             str(item).strip() for item in default_chain if str(item).strip()
         ]
+        declared = set(default_items)
         if available_tool_names is not None:
             available = {
                 str(item).strip() for item in available_tool_names if str(item).strip()
@@ -222,6 +223,8 @@ class ToolBindingPolicyManager:
         for candidate in preferred:
             token = str(candidate or "").strip()
             if not token or token in seen:
+                continue
+            if token not in declared:
                 continue
             if available is not None and token not in available:
                 continue

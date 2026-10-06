@@ -98,6 +98,25 @@ def test_policy_manager_from_payload_supports_dispatch_path() -> None:
     assert ordered == ("fetch.get", "gws.call")
 
 
+def test_policy_manager_cannot_inject_undeclared_runtime_tools() -> None:
+    manager = ToolBindingPolicyManager.from_runtime_binding_policy_payload(
+        {
+            "runtime.web.search": {
+                "primary": "search.serpapi.search",
+                "fallback_tools": ["search.dispatch"],
+            }
+        }
+    )
+
+    ordered = manager.reorder_runtime_chain(
+        runtime_binding_id="runtime.web.search",
+        default_chain=("search.dispatch",),
+        available_tool_names=("search.dispatch", "search.serpapi.search"),
+    )
+
+    assert ordered == ("search.dispatch",)
+
+
 def test_policy_manager_should_fallback_respects_deny_precedence() -> None:
     manager = ToolBindingPolicyManager.from_runtime_binding_policy_payload(
         {
