@@ -49,6 +49,7 @@ _TIMEOUT_DEFAULTS = {
     "coding_project": 1200,
 }
 _PROBE_TIMEOUT_MARGIN_SECONDS = 30
+_LIVE_SESSION_MAX_AUTO_APPROVALS = 32
 _MATRIX_TIMEOUT_ENVS = {
     "skill_simple": LIVE_SKILL_SIMPLE_TIMEOUT_ENV,
     "skill_dense": LIVE_SKILL_DENSE_TIMEOUT_ENV,
@@ -633,6 +634,7 @@ def run_cli_session(
                         timeout=_probe_timeout_seconds(matrix_type),
                         requires_approval=True,
                         approval_reply="yes" if auto_confirm else "no",
+                        max_auto_approvals=_LIVE_SESSION_MAX_AUTO_APPROVALS,
                     ),
                 )
             transcript = session.visible_transcript

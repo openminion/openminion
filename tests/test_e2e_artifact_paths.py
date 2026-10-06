@@ -237,6 +237,7 @@ def test_live_cli_chat_helper_requires_explicit_unsandboxed_exec_opt_in(
     captured_command: list[str] = []
     captured_env: dict[str, str] = {}
     captured_prompts: list[str] = []
+    captured_approval_limits: list[int] = []
 
     monkeypatch.setattr(live_cli_chat_alibaba, "require_live_flag", lambda: None)
     monkeypatch.setattr(live_cli_chat_alibaba, "python_bin", lambda: python_path)
@@ -268,7 +269,10 @@ def test_live_cli_chat_helper_requires_explicit_unsandboxed_exec_opt_in(
     monkeypatch.setattr(
         live_cli_chat_alibaba.FocusProbe,
         "run_turn",
-        lambda _probe, _session, scenario: captured_prompts.append(scenario.prompt),
+        lambda _probe, _session, scenario: (
+            captured_prompts.append(scenario.prompt),
+            captured_approval_limits.append(scenario.max_auto_approvals),
+        ),
     )
     monkeypatch.setattr(
         live_cli_chat_alibaba,
@@ -288,6 +292,7 @@ def test_live_cli_chat_helper_requires_explicit_unsandboxed_exec_opt_in(
     assert captured_command[captured_command.index("--dir") + 1] == str(tmp_path)
     assert captured_env["TERM"] == "xterm-256color"
     assert captured_prompts == ["run tests"]
+    assert captured_approval_limits == [32]
 
 
 def test_live_cli_chat_helper_reads_session_outbound_debug_payloads(
