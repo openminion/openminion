@@ -15,6 +15,16 @@ from .constants import (
 )
 
 CommerceDigest = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
+CommerceHandoffReason = Literal[
+    "authentication_required",
+    "unsupported_order",
+    "unsupported_action",
+    "ambiguous_refund",
+    "return_label_required",
+    "merchant_support_required",
+    "delivery_exception",
+    "provider_unknown",
+]
 OrderState = Literal[*ORDER_STATE_VALUES]
 FulfillmentState = Literal[*FULFILLMENT_STATE_VALUES]
 ShipmentState = Literal[*SHIPMENT_STATE_VALUES]
@@ -80,11 +90,25 @@ class CommerceLifecycleState(CommerceModel):
     action_request: ActionRequestState | None = None
 
 
+class CommerceHandoff(CommerceModel):
+    state: Literal["handoff_required"] = "handoff_required"
+    commerce_code: Literal["HANDOFF_REQUIRED"] = "HANDOFF_REQUIRED"
+    requires_user_takeover: Literal[True] = True
+    reason_code: CommerceHandoffReason
+    message: str = Field(min_length=1)
+    url: str | None = Field(default=None, min_length=1)
+    preparation_invalidated: Literal[True] = True
+    requires_fresh_inspection: Literal[True] = True
+    requires_new_approval: Literal[True] = True
+
+
 __all__ = [
     "ActionRequestState",
     "AvailabilityState",
     "COMMERCE_SCHEMA_VERSION",
     "CommerceDigest",
+    "CommerceHandoff",
+    "CommerceHandoffReason",
     "CommerceLifecycleState",
     "CommerceModel",
     "FulfillmentState",

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol, TypeAlias
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from pydantic import Field, model_validator
 
 from .models import (
     CommerceDigest,
+    CommerceHandoff,
+    CommerceHandoffReason,
     CommerceLifecycleState,
     CommerceModel,
     LineItem,
@@ -20,9 +23,71 @@ from .models import (
     SellerIdentity,
 )
 
-InspectionKind = Literal[
-    "product", "checkout", "order", "shipment", "order_actions"
-]
+
+def safe_handoff_url(
+    candidate_url: str | None,
+    *,
+    configured_base_url: str,
+) -> str | None:
+    """Return a credential-free handoff URL under the configured HTTPS path."""
+
+    base = urlsplit(configured_base_url)
+    if (
+        base.scheme.lower() != "https"
+        or not base.hostname
+        or base.username is not None
+        or base.password is not None
+        or base.query
+        or base.fragment
+    ):
+        raise ValueError("commerce base URL must be a credential-free HTTPS URL")
+    if not candidate_url:
+        return None
+    try:
+        candidate = urlsplit(candidate_url)
+        same_origin = (
+            candidate.scheme.lower() == "https"
+            and candidate.hostname == base.hostname
+            and (candidate.port or 443) == (base.port or 443)
+        )
+    except ValueError:
+        return None
+    decoded_path = unquote(candidate.path)
+    if (
+        not same_origin
+        or candidate.username is not None
+        or candidate.password is not None
+        or candidate.query
+        or candidate.fragment
+        or "\\" in decoded_path
+        or any(part in {".", ".."} for part in decoded_path.split("/"))
+    ):
+        return None
+    base_path = base.path.rstrip("/") or "/"
+    path = candidate.path or "/"
+    if base_path != "/" and path != base_path and not path.startswith(f"{base_path}/"):
+        return None
+    return urlunsplit(("https", candidate.netloc, path, "", ""))
+
+
+def build_commerce_handoff(
+    *,
+    reason_code: CommerceHandoffReason,
+    message: str,
+    configured_base_url: str,
+    candidate_url: str | None = None,
+) -> CommerceHandoff:
+    return CommerceHandoff(
+        reason_code=reason_code,
+        message=message,
+        url=safe_handoff_url(
+            candidate_url,
+            configured_base_url=configured_base_url,
+        ),
+    )
+
+
+InspectionKind = Literal["product", "checkout", "order", "shipment", "order_actions"]
 PlacementState = Literal[
     "succeeded", "declined", "action_required", "failed", "outcome_unknown"
 ]
@@ -117,6 +182,7 @@ CommerceInspection: TypeAlias = Annotated[
 
 class InspectRequest(CommerceModel):
     kind: InspectionKind
+    merchant_id: str = Field(min_length=1)
     product_ref: str | None = Field(default=None, min_length=1)
     checkout_ref: str | None = Field(default=None, min_length=1)
     order_ref: str | None = Field(default=None, min_length=1)
@@ -148,10 +214,7 @@ class InspectRequest(CommerceModel):
     @property
     def reference(self) -> str:
         return str(
-            self.product_ref
-            or self.checkout_ref
-            or self.order_ref
-            or self.shipment_ref
+            self.product_ref or self.checkout_ref or self.order_ref or self.shipment_ref
         )
 
 
@@ -252,7 +315,10 @@ class PrepareOrderActionRequest(CommerceModel):
             not self.line_item_ids or self.quantity is None
         ):
             raise ValueError("partial actions require line_item_ids and quantity")
-        if self.kind in {"return", "partial_return", "refund_request"} and not self.reason:
+        if (
+            self.kind in {"return", "partial_return", "refund_request"}
+            and not self.reason
+        ):
             raise ValueError("return and refund actions require a reason")
         if self.kind == "refund_request" and self.refund_method is None:
             raise ValueError("refund requests require a refund method")
@@ -336,6 +402,7 @@ __all__ = [
     "ApplyOrderActionRequest",
     "CheckoutInspection",
     "CommerceInspection",
+    "CommerceHandoff",
     "CommerceProvider",
     "CommerceProviderError",
     "CommerceOutcomeUnknown",
@@ -359,4 +426,6 @@ __all__ = [
     "RefundDestination",
     "RequestedItem",
     "ShipmentInspection",
+    "build_commerce_handoff",
+    "safe_handoff_url",
 ]
