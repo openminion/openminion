@@ -9,6 +9,7 @@ from openminion.api.agent import (
 )
 from openminion.api.handoff import Handoff, subagent
 from openminion.api.runtime import APIRuntime
+from openminion.modules.llm import ProviderError
 
 
 def __getattr__(name: str) -> Any:
@@ -25,6 +26,7 @@ __all__ = [
     "AgentOutputValidationError",
     "AgentRunResult",
     "Handoff",
+    "ProviderError",
     "dispatch_request",
     "subagent",
 ]

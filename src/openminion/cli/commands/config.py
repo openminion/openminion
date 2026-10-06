@@ -51,7 +51,7 @@ def config_init(args) -> int:
         config.storage.path = str(
             (roots.data_root / "state" / "openminion.db").resolve()
         )
-    save_config(config, args.config)
+    save_config(config, args.config, home_root=roots.home_root)
     print(f"Initialized config at {path} (storage: {config.storage.path})")
     return 0
 

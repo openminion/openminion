@@ -54,6 +54,24 @@ class _EchoWorkspaceTool:
         }
 
 
+class _EchoTaskOwnerTool:
+    name = "test.echo_task_owner"
+    args_model = dict
+
+    def __init__(self, expected):
+        self.expected = expected
+
+    def handler(self, arguments, ctx):
+        del arguments
+        return {
+            "ok": True,
+            "data": {
+                "task_manager": ctx.task_manager is self.expected,
+                "scheduler": ctx.scheduler_readiness(),
+            },
+        }
+
+
 def _context(tmp_path, runtime_env):
     return ToolExecutionContext(
         channel="console",
@@ -106,6 +124,31 @@ def test_execute_tool_spec_call_normalizes_working_dir_metadata(tmp_path, monkey
     expected = str(Path(working_dir).resolve())
     assert result.data["workspace_root"] == expected
     assert result.data["cwd"] == str(working_dir)
+
+
+def test_execute_tool_spec_call_preserves_task_runtime_owners(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+    task_manager = object()
+
+    def scheduler_readiness():
+        return {"state": "ready"}
+
+    result = execute_tool_spec_call(
+        tool=_EchoTaskOwnerTool(task_manager),
+        arguments={},
+        context=ToolExecutionContext(
+            channel="console",
+            target="tests",
+            session_id="session-task-owner",
+            metadata={"workspace_root": str(tmp_path)},
+            task_manager=task_manager,
+            scheduler_readiness=scheduler_readiness,
+        ),
+    )
+
+    assert result.ok is True
+    assert result.data == {"task_manager": True, "scheduler": {"state": "ready"}}
 
 
 def test_execute_tool_spec_call_runtime_env_allows_json_metadata_payload(

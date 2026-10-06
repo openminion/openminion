@@ -5,7 +5,9 @@ from __future__ import annotations
 from contextlib import nullcontext
 from dataclasses import dataclass
 import json
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
+from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
@@ -21,6 +23,7 @@ if TYPE_CHECKING:  # pragma: no cover
 InputT = TypeVar("InputT")
 OutputT = TypeVar("OutputT")
 MessageInput = str | BaseModel | dict[str, Any] | list[Any] | None
+ToolInput = str | Callable[..., Any]
 
 
 class AgentOutputValidationError(ValueError):
@@ -47,6 +50,7 @@ class AgentRunResult(Generic[OutputT]):
     raw: dict[str, Any]
     run_id: str | None = None
     run_state: str | None = None
+    session_id: str | None = None
 
 
 class Agent(Generic[InputT, OutputT]):
@@ -58,24 +62,52 @@ class Agent(Generic[InputT, OutputT]):
         instructions: str | None = None,
         output_type: type | None = None,
         runtime: APIRuntime | None = None,
+        config_path: str | None = None,
+        agent_id: str | None = None,
         model: str | None = None,
-        tools: list[str] | None = None,
+        tools: list[ToolInput] | None = None,
         forced_tools: list[str] | None = None,
         handoffs: list["Handoff"] | None = None,
         name: str | None = None,
+        session_id: str | None = None,
         subagent_context: "SubagentRunContext | None" = None,
         delegated_memory_request: "DelegatedMemoryReadRequest | None" = None,
     ) -> None:
+        if runtime is not None and config_path is not None:
+            raise ValueError("runtime and config_path cannot be used together")
         self.instructions = instructions
         self.output_type = output_type
+        self.agent_id = (agent_id or "").strip() or None
         self.model = model
-        self.tools = list(tools) if tools else []
+        self.tools: list[str] = []
+        self._tool_family_builders: list[Callable[[], Any]] = []
+        for configured_tool in tools or []:
+            if isinstance(configured_tool, str):
+                self.tools.append(configured_tool)
+                continue
+            family_builder = getattr(configured_tool, "tool_family_spec", None)
+            tool_decl = getattr(configured_tool, "tool_decl", None)
+            tool_name = str(getattr(tool_decl, "name", "") or "").strip()
+            if (
+                not callable(configured_tool)
+                or not callable(family_builder)
+                or not tool_name
+            ):
+                raise TypeError(
+                    "Agent tools must be registered tool names or functions decorated "
+                    "with openminion.tool"
+                )
+            self._tool_family_builders.append(family_builder)
+            if tool_name not in self.tools:
+                self.tools.append(tool_name)
         self.forced_tools = list(forced_tools) if forced_tools else []
         self.handoffs: list["Handoff"] = list(handoffs) if handoffs else []
         self.name = name or "agent"
+        self.session_id = (session_id or "").strip() or uuid4().hex
         self.subagent_context = subagent_context
         self.delegated_memory_request = delegated_memory_request
         self._runtime: APIRuntime | None = runtime
+        self._config_path = config_path
         self._owns_runtime = runtime is None
 
         if self.handoffs:
@@ -92,7 +124,9 @@ class Agent(Generic[InputT, OutputT]):
 
     def _ensure_runtime(self) -> APIRuntime:
         if self._runtime is None:
-            self._runtime = APIRuntime.from_config_path(None)
+            self._runtime = APIRuntime.from_config_path(
+                self._config_path, logging_mode="interactive"
+            )
         return self._runtime
 
     def _serialize_input(self, value: Any) -> str:
@@ -106,8 +140,19 @@ class Agent(Generic[InputT, OutputT]):
             return json.dumps(value, ensure_ascii=True, sort_keys=True)
         return str(value)
 
-    def _build_payload(self, message: str) -> dict[str, Any]:
-        payload: dict[str, Any] = {"message": message}
+    def _build_payload(
+        self,
+        message: str,
+        *,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "message": message,
+            "session_id": (session_id or "").strip() or self.session_id,
+            "deliver": False,
+        }
+        if self.agent_id:
+            payload["agent_id"] = self.agent_id
         if self.instructions:
             payload["override_system_prompt"] = self.instructions
         if self.model:
@@ -123,8 +168,8 @@ class Agent(Generic[InputT, OutputT]):
             payload["timeout_seconds"] = self.subagent_context.timeout_seconds
         return payload
 
-    def _register_handoff_tools_for_run(self, runtime: APIRuntime) -> list[str]:
-        if not self.handoffs:
+    def _register_tools_for_run(self, runtime: APIRuntime) -> list[str]:
+        if not self.handoffs and not self._tool_family_builders:
             return []
         registry = getattr(runtime, "tools", None)
         add_tool = getattr(registry, "add", None)
@@ -136,16 +181,18 @@ class Agent(Generic[InputT, OutputT]):
         from openminion.modules.tool.errors import ToolRuntimeError
         from openminion.modules.tool.framework import derive_tool_specs
 
-        family = build_delegate_family_spec(self.handoffs)
-        if family is None:
-            return []
+        families = [builder() for builder in self._tool_family_builders]
+        handoff_family = build_delegate_family_spec(self.handoffs)
+        if handoff_family is not None:
+            families.append(handoff_family)
 
         registered: list[str] = []
         try:
-            for spec in derive_tool_specs(family):
-                spec.prompt_visible_runtime_name = True
-                add_tool(spec)
-                registered.append(spec.name)
+            for family in families:
+                for spec in derive_tool_specs(family):
+                    spec.prompt_visible_runtime_name = True
+                    add_tool(spec)
+                    registered.append(spec.name)
         except (ToolRuntimeError, TypeError, ValueError, AttributeError):
             for name in reversed(registered):
                 unregister_tool(name)
@@ -153,7 +200,7 @@ class Agent(Generic[InputT, OutputT]):
         return registered
 
     @staticmethod
-    def _unregister_handoff_tools(runtime: APIRuntime, tool_names: list[str]) -> None:
+    def _unregister_tools(runtime: APIRuntime, tool_names: list[str]) -> None:
         if not tool_names:
             return
         registry = getattr(runtime, "tools", None)
@@ -202,10 +249,14 @@ class Agent(Generic[InputT, OutputT]):
         self,
         message: MessageInput,
         *,
+        session_id: str | None = None,
         on_delta: Callable[[dict[str, Any]], None] | None = None,
     ) -> AgentRunResult[Any]:
         runtime = self._ensure_runtime()
-        payload = self._build_payload(self._serialize_input(message))
+        payload = self._build_payload(
+            self._serialize_input(message),
+            session_id=session_id,
+        )
         run_context = None
         delegated_grant_id = None
         if self.subagent_context is not None:
@@ -222,7 +273,7 @@ class Agent(Generic[InputT, OutputT]):
         registration_lock = getattr(registry, "temporary_registration_lock", None)
         with registration_lock or nullcontext():
             try:
-                registered_handoffs = self._register_handoff_tools_for_run(runtime)
+                registered_tools = self._register_tools_for_run(runtime)
                 try:
                     raw = runtime.run_turn(
                         payload=payload,
@@ -230,7 +281,7 @@ class Agent(Generic[InputT, OutputT]):
                         trusted_subagent_context=run_context,
                     )
                 finally:
-                    self._unregister_handoff_tools(runtime, registered_handoffs)
+                    self._unregister_tools(runtime, registered_tools)
             finally:
                 if delegated_grant_id is not None:
                     runtime.action_policy.revoke_grant(delegated_grant_id)
@@ -241,21 +292,28 @@ class Agent(Generic[InputT, OutputT]):
             output=output,
             text=reply_text,
             raw=raw_payload,
+            session_id=str(raw_payload.get("session_id") or "").strip() or None,
             run_id=str(raw_payload.get("run_id") or "").strip() or None,
             run_state=str(raw_payload.get("run_state") or "").strip() or None,
         )
 
-    def run(self, message: MessageInput) -> AgentRunResult[Any]:
-        return self._run_once(message)
+    def run(
+        self,
+        message: MessageInput,
+        *,
+        session_id: str | None = None,
+    ) -> AgentRunResult[Any]:
+        return self._run_once(message, session_id=session_id)
 
     def run_stream(
         self,
         message: MessageInput,
         *,
+        session_id: str | None = None,
         on_delta: Callable[[dict[str, Any]], None] | None = None,
     ) -> AgentRunResult[Any]:
         """Run one turn while forwarding progress events to ``on_delta``."""
-        return self._run_once(message, on_delta=on_delta)
+        return self._run_once(message, session_id=session_id, on_delta=on_delta)
 
     def close(self) -> None:
         if self._runtime is not None and self._owns_runtime:
@@ -264,22 +322,30 @@ class Agent(Generic[InputT, OutputT]):
                 close()
             self._runtime = None
 
+    def __enter__(self) -> Agent[InputT, OutputT]:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        del exc_type, exc_value, traceback
+        self.close()
+
 
 def _extract_json_object(text: str) -> str | None:
-    """Return the first balanced ``{...}`` span from ``text`` when present."""
+    """Return the first decodable JSON object span from ``text``."""
 
-    if not text:
-        return None
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    for idx in range(start, len(text)):
-        ch = text[idx]
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : idx + 1]
+    decoder = json.JSONDecoder()
+    for start, character in enumerate(text):
+        if character != "{":
+            continue
+        try:
+            value, end = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return text[start : start + end]
     return None

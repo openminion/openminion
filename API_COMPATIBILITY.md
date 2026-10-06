@@ -21,9 +21,10 @@ Current documented root exports:
 5. `Handoff`
 6. `MemoryBundle`
 7. `OpenMinionConfig`
-8. `subagent`
-9. `tool`
-10. `__version__`
+8. `ProviderError`
+9. `subagent`
+10. `tool`
+11. `__version__`
 
 These are defined in `src/openminion/__init__.py`.
 
@@ -38,8 +39,9 @@ Current documented exports:
 3. `AgentOutputValidationError`
 4. `AgentRunResult`
 5. `Handoff`
-6. `dispatch_request`
-7. `subagent`
+6. `ProviderError`
+7. `dispatch_request`
+8. `subagent`
 
 These are defined in `src/openminion/api/__init__.py`.
 

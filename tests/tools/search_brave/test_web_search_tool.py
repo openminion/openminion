@@ -18,8 +18,8 @@ from openminion.tools.search.providers.brave.provider import (
 
 @dataclass
 class _ProviderStub:
-    def search(self, *, args):
-        del args
+    def search(self, *, args, ctx=None):
+        del args, ctx
         return (
             {
                 "query": {"original": "cats", "more_results_available": True},
@@ -48,8 +48,8 @@ class _ProviderStub:
 
 @dataclass
 class _ProviderFailStub:
-    def search(self, *, args):
-        del args
+    def search(self, *, args, ctx=None):
+        del args, ctx
         raise BraveSearchError("Missing Brave API key", code="DEPENDENCY_MISSING")
 
     def _api_key(self, ctx=None):
@@ -59,8 +59,8 @@ class _ProviderFailStub:
 
 @dataclass
 class _ProviderContextStub:
-    def search(self, *, args):
-        del args
+    def search(self, *, args, ctx=None):
+        del args, ctx
         return (
             {
                 "query": {"original": "cats", "more_results_available": False},

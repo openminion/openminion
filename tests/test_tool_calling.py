@@ -903,8 +903,41 @@ def _toolspec(*, name: str, fail_with: str | None = None):
     )
 
 
-def test_tool_result_metadata_contract_for_runtime_fallback_chain() -> None:
+def test_tool_result_metadata_contract_for_runtime_fallback_chain(monkeypatch) -> None:
+    from openminion.modules.tool.contracts import (
+        ModelToolDef,
+        RuntimeBindingDef,
+        ToolBindingManifest,
+    )
+    from openminion.modules.tool import dispatch as runtime_dispatch
+    from openminion.modules.tool.runtime.manager import ToolRegistryManager
     from openminion.modules.tool.registry import ToolRegistry
+
+    manager = ToolRegistryManager()
+    manager.register_module_manifest(
+        ToolBindingManifest(
+            module_id="test.search",
+            model_tools=(
+                ModelToolDef(
+                    model_tool_id="web.search",
+                    description="Search",
+                    parameters={},
+                ),
+            ),
+            runtime_bindings=(
+                RuntimeBindingDef(
+                    runtime_binding_id="runtime.web.search",
+                    model_tool_id="web.search",
+                    runtime_candidates=(
+                        "search.tavily.search",
+                        "search.fallback",
+                    ),
+                ),
+            ),
+        ),
+        source_module="test.search",
+    )
+    monkeypatch.setattr(runtime_dispatch, "_REGISTRY_MANAGER", manager)
 
     registry = ToolRegistry()
     registry._tools["search.tavily.search"] = _toolspec(

@@ -159,6 +159,8 @@ def _build_tool_runtime_context(
         or None,
         ops_service=context.ops_service,
         tool_registry=context.tool_registry,
+        task_manager=context.task_manager,
+        scheduler_readiness=context.scheduler_readiness,
     )
     runtime_ctx.session_id = str(context.session_id or "").strip() or None
     runtime_ctx.trace_id = str(metadata.get("trace_id", "")).strip()

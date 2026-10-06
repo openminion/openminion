@@ -30,9 +30,7 @@ def resolve_data_root_enforcement_mode(
         raw = env.get(env_var, "hard").strip().lower()
     else:
         raw = str((env or os.environ).get(env_var, "hard")).strip().lower()
-    if raw in {"soft", "warn"}:
-        return "soft"
-    return "hard"
+    return "soft" if raw in {"soft", "warn"} else "hard"
 
 
 def ensure_under_data_root(
@@ -49,11 +47,10 @@ def ensure_under_data_root(
     try:
         resolved_path.relative_to(resolved_root)
     except ValueError:
-        mode = resolve_data_root_enforcement_mode()
         message = (
             f"{label} must be under data_root ({resolved_root}), got {resolved_path}"
         )
-        if mode == "soft":
+        if resolve_data_root_enforcement_mode() == "soft":
             warnings.warn(message, RuntimeWarning)
             return resolved_path
         raise ConfigError(message)
@@ -75,10 +72,13 @@ def resolve_home_root(
     if env_home:
         return Path(env_home).expanduser().resolve()
 
-    if config_path:
-        config_p = Path(config_path)
-        if config_p.is_absolute():
-            return config_p.parent.resolve()
+    if config_path and Path(config_path).is_absolute():
+        config_parent = Path(config_path).parent.resolve()
+        return (
+            config_parent.parent
+            if config_parent.name == BASE_DEFAULT_CONFIG_DIRNAME
+            else config_parent
+        )
 
     return Path(fallback).resolve()
 

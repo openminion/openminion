@@ -6,12 +6,14 @@ from unittest.mock import patch
 import pytest
 from pydantic import BaseModel
 
+from openminion import tool
 from openminion.api.agent import (
     Agent,
     AgentOutputValidationError,
     AgentRunResult,
     _extract_json_object,
 )
+from openminion.modules.tool.registry import ToolRegistry
 
 
 class _FakeRuntime:
@@ -21,18 +23,32 @@ class _FakeRuntime:
         *,
         run_id: str | None = None,
         run_state: str | None = None,
+        tools: ToolRegistry | None = None,
     ) -> None:
         self.reply_body = reply_body
         self.run_id = run_id
         self.run_state = run_state
+        self.tools = tools
         self.last_payload: dict[str, Any] | None = None
         self.last_progress_callback: Any = None
         self.closed = False
+        self.tool_result: Any = None
 
     def run_turn(self, *, payload, progress_callback=None, **kwargs):
         self.last_payload = payload
         self.last_progress_callback = progress_callback
-        result = {"body": self.reply_body, "request_id": "fake-req-1"}
+        if self.tools is not None:
+            for name in payload.get("allowed_tools", ()):
+                if name in self.tools.list():
+                    self.tool_result = self.tools.get(name).handler(
+                        {"left": 2, "right": 3}, None
+                    )
+                    break
+        result = {
+            "body": self.reply_body,
+            "request_id": "fake-req-1",
+            "session_id": payload.get("session_id"),
+        }
         if self.run_id:
             result["run_id"] = self.run_id
         if self.run_state:
@@ -45,15 +61,66 @@ class _FakeRuntime:
 
 def test_agent_run_returns_raw_text_when_no_output_type() -> None:
     runtime = _FakeRuntime("just a string")
-    agent = Agent(instructions="be brief", runtime=runtime)
+    agent = Agent(
+        instructions="be brief",
+        runtime=runtime,
+        session_id="sdk-session",
+    )
     result = agent.run("hi there")
     assert isinstance(result, AgentRunResult)
     assert result.output == "just a string"
     assert result.text == "just a string"
+    assert result.session_id == "sdk-session"
     assert runtime.last_payload == {
         "message": "hi there",
+        "session_id": "sdk-session",
+        "deliver": False,
         "override_system_prompt": "be brief",
     }
+
+
+def test_agent_owns_an_isolated_default_session() -> None:
+    first = Agent(runtime=_FakeRuntime())
+    second = Agent(runtime=_FakeRuntime())
+
+    assert first.session_id
+    assert second.session_id
+    assert first.session_id != second.session_id
+
+
+def test_agent_run_accepts_a_session_override() -> None:
+    runtime = _FakeRuntime()
+    agent = Agent(runtime=runtime, session_id="default-session")
+
+    agent.run("hello", session_id="request-session")
+
+    assert runtime.last_payload["session_id"] == "request-session"
+    assert runtime.last_payload["deliver"] is False
+
+
+def test_agent_profile_id_propagates_to_payload() -> None:
+    runtime = _FakeRuntime()
+
+    Agent(runtime=runtime, agent_id="reviewer").run("hello")
+
+    assert runtime.last_payload["agent_id"] == "reviewer"
+
+
+def test_agent_uses_explicit_config_path() -> None:
+    with patch("openminion.api.agent.APIRuntime.from_config_path") as factory:
+        fake = _FakeRuntime()
+        factory.return_value = fake
+
+        Agent(config_path="project-agents.json").run("hello")
+
+        factory.assert_called_once_with(
+            "project-agents.json", logging_mode="interactive"
+        )
+
+
+def test_agent_rejects_runtime_and_config_path_together() -> None:
+    with pytest.raises(ValueError, match="runtime and config_path"):
+        Agent(runtime=_FakeRuntime(), config_path="agents.json")
 
 
 class _ReplyModel(BaseModel):
@@ -87,6 +154,13 @@ def test_agent_extracts_json_when_reply_has_prose_wrapper() -> None:
     assert result.output.sentiment == "neutral"
 
 
+def test_agent_extracts_json_when_string_contains_a_closing_brace() -> None:
+    reply = '{"sentiment": "neutral", "summary": "keep } as text"}'
+    result = Agent(output_type=_ReplyModel, runtime=_FakeRuntime(reply)).run("evaluate")
+
+    assert result.output.summary == "keep } as text"
+
+
 def test_agent_raises_validation_error_on_unparseable_reply() -> None:
     runtime = _FakeRuntime("not json at all")
     agent = Agent(output_type=_ReplyModel, runtime=runtime)
@@ -108,6 +182,32 @@ def test_agent_tools_param_propagates_to_payload() -> None:
     agent = Agent(tools=["search", "fetch"], runtime=runtime)
     agent.run("hello")
     assert runtime.last_payload["allowed_tools"] == ["search", "fetch"]
+
+
+def test_agent_registers_decorated_tool_only_for_the_run() -> None:
+    registry = ToolRegistry()
+    runtime = _FakeRuntime(tools=registry)
+
+    @tool
+    def add(left: int, right: int) -> int:
+        """Add two integers."""
+
+        return left + right
+
+    agent = Agent(tools=[add], runtime=runtime)
+    agent.run("add two numbers")
+
+    assert runtime.last_payload["allowed_tools"] == ["add"]
+    assert runtime.tool_result == 5
+    assert "add" not in registry.list()
+
+
+def test_agent_rejects_undecorated_callable_tool() -> None:
+    def add(left: int, right: int) -> int:
+        return left + right
+
+    with pytest.raises(TypeError, match="openminion.tool"):
+        Agent(tools=[add], runtime=_FakeRuntime())
 
 
 def test_agent_forced_tools_param_propagates_to_runtime_owner() -> None:
@@ -161,7 +261,19 @@ def test_agent_close_releases_default_runtime_when_constructed() -> None:
         factory.return_value = fake
         agent = Agent()  # no runtime supplied; agent will construct one lazily
         agent.run("hi")
+        factory.assert_called_once_with(None, logging_mode="interactive")
         agent.close()
+        assert fake.closed is True
+
+
+def test_agent_context_manager_closes_owned_runtime() -> None:
+    with patch("openminion.api.agent.APIRuntime.from_config_path") as factory:
+        fake = _FakeRuntime()
+        factory.return_value = fake
+
+        with Agent() as agent:
+            agent.run("hello")
+
         assert fake.closed is True
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from runpy import run_path
+import shutil
 import subprocess
 import sys
 
@@ -15,7 +16,8 @@ from openminion.services.runtime.plugins import discover_plugin_manifests
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = ROOT / "examples"
-HelloTool = run_path(str(EXAMPLES / "starter" / "tool.py"))["HelloTool"]
+SDK_EXAMPLES = EXAMPLES / "sdk"
+hello_tool = run_path(str(EXAMPLES / "starter" / "tool.py"))["hello_tool"]
 
 
 def _demo_env(home: Path) -> dict[str, str]:
@@ -26,10 +28,15 @@ def _demo_env(home: Path) -> dict[str, str]:
     return env
 
 
-def _run(args: list[str], *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run(
+    args: list[str],
+    *,
+    env: dict[str, str],
+    cwd: Path = ROOT,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, *args],
-        cwd=ROOT,
+        cwd=cwd,
         env=env,
         check=True,
         capture_output=True,
@@ -53,22 +60,24 @@ def test_starter_plugin_is_discoverable() -> None:
 
 
 def test_starter_tool_uses_current_execution_contract() -> None:
-    result = HelloTool().execute(
+    result = hello_tool.tool_decl.handler(
         {"name": "developer"},
         ToolExecutionContext(channel="console", target="test"),
     )
 
-    assert result.ok
-    assert result.content == "hello developer"
-    assert result.data == {"name": "developer"}
+    assert hello_tool.tool_decl.name == "hello_tool"
+    assert result == "hello developer"
 
 
 def test_quickstart_runs_with_fresh_demo_config(tmp_path: Path) -> None:
     env = _init_demo(tmp_path / "quickstart-home")
+    script = tmp_path / "quickstart.py"
+    shutil.copy(EXAMPLES / "starter" / "quickstart.py", script)
 
     result = _run(
-        [str(EXAMPLES / "starter" / "quickstart.py"), "hello", "example"],
+        [str(script), "hello", "example"],
         env=env,
+        cwd=tmp_path,
     )
 
     assert "reply:" in result.stdout
@@ -122,3 +131,29 @@ def test_identity_sample_uses_canonical_model_tool_ids() -> None:
     tools = payload["profiles"]["sample"]["tool_posture"]["allowed_tools"]
 
     assert set(tools) <= ALL_MODEL_TOOL_IDS_SET
+
+
+def test_sdk_examples_expose_help_without_provider_calls() -> None:
+    scripts = sorted(SDK_EXAMPLES.glob("*.py"))
+
+    assert {script.name for script in scripts} == {
+        "application_runtime.py",
+        "delegation.py",
+        "error_handling.py",
+        "provider_switching.py",
+        "sessions.py",
+        "streaming_progress.py",
+        "structured_output.py",
+        "tool_agent.py",
+    }
+    for script in scripts:
+        result = _run([str(script), "--help"], env=_demo_env(ROOT / ".tmp-help"))
+        assert "usage:" in result.stdout
+
+
+def test_sdk_tool_example_uses_public_decorator_contract() -> None:
+    module = run_path(str(SDK_EXAMPLES / "tool_agent.py"))
+    tool_decl = module["lookup_order"].tool_decl
+
+    assert tool_decl.name == "lookup_order"
+    assert "order" in tool_decl.description.lower()

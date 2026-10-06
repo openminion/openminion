@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from openminion.modules.brain.adapters.tool import ToolAdapter
+from openminion.modules.session.storage.repository import create_sqlite_cron_repository
 from openminion.modules.task import TaskManager
 from openminion.modules.task.constants import (
     DEFAULT_TASK_MIN_EVERY_MS,
@@ -1299,6 +1300,31 @@ def test_task_handlers_route_through_task_manager_lifecycle_table(
     assert cancelled_row is not None
     assert str(cancelled_row[0]) == "cancelled"
     assert cancelled_row[1] is not None
+
+
+def test_task_schedule_reuses_runtime_task_manager(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path / "fallback-home"))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "cron.db"),
+        db_path=tmp_path / "task.db",
+    )
+    ctx = _ctx(tmp_path, agent_id="agent-owner")
+    ctx.task_manager = manager
+
+    created = _h_task_schedule(
+        {
+            "instruction": "reuse canonical task owner",
+            "schedule": {"kind": "at", "at": "2030-01-01T00:00:00Z"},
+            "name": "canonical-owner",
+        },
+        ctx,
+    )
+
+    assert manager.get_task(created["task_id"]) is not None
 
 
 class _GoalPolicyProfile:

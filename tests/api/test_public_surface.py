@@ -11,6 +11,7 @@ EXPECTED_OPENMINION_PUBLIC = {
     "Handoff",
     "MemoryBundle",
     "OpenMinionConfig",
+    "ProviderError",
     "__version__",
     "subagent",  # ISAP-15
     "tool",  # ISAP-11
@@ -22,6 +23,7 @@ EXPECTED_OPENMINION_API_PUBLIC = {
     "AgentOutputValidationError",
     "AgentRunResult",
     "Handoff",
+    "ProviderError",
     "dispatch_request",
     "subagent",
 }
@@ -60,6 +62,7 @@ def test_openminion_apiruntime_importable_from_root() -> None:
 
     assert openminion.APIRuntime is not None
     assert openminion.OpenMinionConfig is not None
+    assert openminion.ProviderError is not None
 
 
 def test_openminion_since_metadata_covers_public_surface() -> None:

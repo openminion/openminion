@@ -1,9 +1,21 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-10-05
+Last updated: 2026-10-06
 
 This file tracks package-facing release notes for `openminion`.
+
+## Unreleased
+
+## Current package line - 2026-10-06
+
+- Harden the public Agent SDK with decorated-tool support, isolated sessions,
+  project and profile configuration, typed provider failures, deterministic
+  cleanup, and reliable structured-output decoding.
+- Unify web search and fetch provider defaults, fallback ordering, and runtime
+  readiness reporting while preserving explicit provider requests.
+- Keep scheduled-task creation and task inventory on the same canonical task
+  manager so newly created schedules remain visible to CLI and Desktop users.
 
 ## 0.1 - 2026-10-05
 

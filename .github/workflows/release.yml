@@ -189,7 +189,13 @@ jobs:
           "$python_bin" -m openminion --help >/dev/null
           "$python_bin" - <<'PY'
           import openminion
-          from openminion import APIRuntime, Agent, OpenMinionConfig, tool
+          from openminion import (
+              APIRuntime,
+              Agent,
+              OpenMinionConfig,
+              ProviderError,
+              tool,
+          )
           from openminion.api import dispatch_request
 
           print(openminion.__version__)
@@ -197,11 +203,40 @@ jobs:
               APIRuntime.__name__,
               Agent.__name__,
               OpenMinionConfig.__name__,
+              ProviderError.__name__,
               callable(tool),
               callable(dispatch_request),
           )
           PY
           "$python_bin" -m openminion --config "$config" config init --provider echo --force
+          sdk_stdout="$("$python_bin" - "$config" <<'PY'
+          import contextlib
+          import io
+          import sys
+
+          from openminion import Agent, tool
+
+          @tool
+          def add(left: int, right: int) -> int:
+              return left + right
+
+          stderr = io.StringIO()
+          with contextlib.redirect_stderr(stderr):
+              with Agent(
+                  config_path=sys.argv[1],
+                  tools=[add],
+                  session_id="release-sdk-smoke",
+              ) as agent:
+                  result = agent.run("hello from the installed package")
+                  assert result.text
+                  assert result.session_id == "release-sdk-smoke"
+          assert stderr.getvalue() == ""
+          PY
+          )"
+          if [[ -n "$sdk_stdout" ]]; then
+            echo "Agent SDK unexpectedly wrote to stdout: $sdk_stdout" >&2
+            exit 1
+          fi
           "$python_bin" -m openminion --config "$config" verify smoke
           "$python_bin" -m openminion --config "$config" doctor --json
           "$python_bin" -m openminion --config "$config" agent --message "hello"
