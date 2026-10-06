@@ -12,8 +12,12 @@ from typing import Literal
 import pytest
 
 from openminion.base.generated_paths import resolve_generated_root
-from tests.e2e.runners.run_cli_chat_probe import _TIMEOUT_EXIT_CODE, _run_probe_session
-from tests.helpers.live_e2e_profiles import resolve_live_config_path
+from tests.e2e.cli.focus.harness import FocusProbe, FocusScenario, PtySession
+from tests.e2e.runners.run_cli_chat_probe import _expand_probe_messages
+from tests.helpers.live_e2e_profiles import (
+    resolve_live_config_path,
+    resolve_live_framework_root,
+)
 
 RAW_TOOL_MARKUP_RE = re.compile(
     r"<minimax:tool_call>|<tool_call>|<functioncall>|<invoke\s+name=|\[tool_call\]",
@@ -66,7 +70,7 @@ def openminion_root() -> Path:
 
 
 def framework_root() -> Path:
-    return openminion_root().parent
+    return resolve_live_framework_root(openminion_root())
 
 
 def runtime_home_root() -> Path:
@@ -144,24 +148,6 @@ def _probe_timeout_seconds(matrix_type: str = "generic") -> int:
     if configured_timeout <= _PROBE_TIMEOUT_MARGIN_SECONDS * 2:
         return configured_timeout
     return configured_timeout - _PROBE_TIMEOUT_MARGIN_SECONDS
-
-
-def _probe_input_turn_count(user_input: str) -> int:
-    count = 0
-    buffered_turn = False
-    for line in str(user_input or "").splitlines():
-        token = line.strip()
-        if not token:
-            continue
-        if token.startswith("/"):
-            if buffered_turn:
-                count += 1
-                buffered_turn = False
-            continue
-        buffered_turn = True
-    if buffered_turn:
-        count += 1
-    return count
 
 
 def artifact_dir() -> Path:
@@ -538,35 +524,6 @@ def _append_structured_probe_debug(
     )
 
 
-def _durable_outbound_turn_completed(
-    *, data_root: Path, agent_id: str, session_id: str | None = None
-) -> bool:
-    payload = _latest_outbound_debug_payload(
-        data_root=data_root,
-        agent_id=agent_id,
-        session_id=session_id,
-    )
-    if payload is None:
-        return False
-    last_turn = payload.get("last_turn")
-    if not isinstance(last_turn, dict):
-        return False
-    body = str(last_turn.get("body") or last_turn.get("body_preview") or "").strip()
-    if not body:
-        return False
-    metadata = last_turn.get("metadata")
-    if not isinstance(metadata, dict):
-        return False
-    brain_status = str(metadata.get("brain_status", "") or "").strip().lower()
-    run_state = str(metadata.get("run_state", "") or "").strip().lower()
-    finish_reason = str(metadata.get("finish_reason", "") or "").strip().lower()
-    return (
-        brain_status in {"done", "completed"}
-        or run_state == "completed"
-        or finish_reason == "stop"
-    )
-
-
 def run_cli_session(
     *,
     session_id_prefix: str,
@@ -636,66 +593,59 @@ def run_cli_session(
         else f"{src_root}{os.pathsep}{current_pythonpath}"
     )
     resolved_agent_id = agent_id or default_agent_id()
-    durable_completion_predicate = None
-    if _probe_input_turn_count(user_input) <= 1:
-
-        def _current_session_completed() -> bool:
-            return _durable_outbound_turn_completed(
-                data_root=data_root,
-                agent_id=resolved_agent_id,
-                session_id=session_id,
-            )
-
-        durable_completion_predicate = _current_session_completed
-
-    command = [
-        str(resolved_python),
-        "-m",
-        "openminion",
-        "--config",
-        str(resolved_config),
-        "--agent",
-        resolved_agent_id,
-        "--session",
-        session_id,
-        "--dir",
-        str(workspace_root_override or openminion_root()),
-        "--verbosity",
-        "quiet",
-        "--progress",
-        "off",
-    ]
-    if allow_unsandboxed_exec:
-        command.append("--allow-unsandboxed-exec")
-    exit_code, transcript = _run_probe_session(
-        cmd=command,
-        cwd=str(workspace_root_override or openminion_root()),
-        env=env,
-        messages=[user_input.rstrip("\n")],
-        timeout_seconds=float(_probe_timeout_seconds(matrix_type)),
-        auto_confirm=auto_confirm,
-        durable_completion_predicate=durable_completion_predicate,
+    env["OPENMINION_SHOW_RESPONSE_TIME"] = "1"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["TERM"] = "xterm-256color"
+    workdir = workspace_root_override or openminion_root()
+    probe = FocusProbe(
+        python_bin=resolved_python,
+        openminion_root=openminion_root(),
+        framework_root=framework_root(),
+        data_root=data_root,
+        config_path=resolved_config,
+        agent_id=resolved_agent_id,
+        workdir=workdir,
+        session_id=session_id,
+        allow_unsandboxed_exec=allow_unsandboxed_exec,
     )
+    session = PtySession(
+        argv=probe.command(),
+        cwd=openminion_root(),
+        env=env,
+    )
+    failure: Exception | None = None
+    transcript = ""
+    try:
+        with session:
+            probe.wait_ready(session)
+            for index, message in enumerate(
+                _expand_probe_messages([user_input.rstrip("\n")])
+            ):
+                if message in {"/exit", "/quit"}:
+                    break
+                if message == "/debug":
+                    continue
+                probe.run_turn(
+                    session,
+                    FocusScenario(
+                        scenario_id=f"{session_id}-{index}",
+                        prompt=message,
+                        timeout=_probe_timeout_seconds(matrix_type),
+                        requires_approval=True,
+                        approval_reply="yes" if auto_confirm else "no",
+                    ),
+                )
+            transcript = session.visible_transcript
+    except Exception as exc:
+        failure = exc
+        transcript = session.visible_transcript
+
     transcript = _append_structured_probe_debug(
         transcript=transcript,
         data_root=data_root,
         agent_id=resolved_agent_id,
         session_id=session_id,
     )
-    if (
-        exit_code == _TIMEOUT_EXIT_CODE
-        and durable_completion_predicate is not None
-        and _durable_outbound_turn_completed(
-            data_root=data_root,
-            agent_id=resolved_agent_id,
-            session_id=session_id,
-        )
-    ):
-        exit_code = 0
-        transcript = (
-            f"{transcript.rstrip()}\n"
-            "[probe-status] phase=durable_turn_recovered exit_code=0\n"
-        )
     transcript_path.write_text(transcript, encoding="utf-8")
     skip_if_provider_auth_rejected(
         transcript=transcript,
@@ -707,11 +657,11 @@ def run_cli_session(
         transcript_path=transcript_path,
         context=f"live CLI chat E2E agent={resolved_agent_id}",
     )
-    assert exit_code == 0, (
-        f"cli chat failed for session={session_id} exit={exit_code}\n"
-        f"transcript={transcript_path}\n"
-        f"{transcript}"
-    )
+    if failure is not None:
+        raise AssertionError(
+            f"Focus session failed for session={session_id}: {failure}\n"
+            f"transcript={transcript_path}"
+        ) from failure
     return CLISessionResult(
         session_id=session_id,
         transcript=transcript,

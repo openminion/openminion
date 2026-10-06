@@ -6,6 +6,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+LIVE_E2E_FRAMEWORK_ROOT_ENV = "OPENMINION_LIVE_E2E_FRAMEWORK_ROOT"
+
+
+def resolve_live_framework_root(openminion_root: Path) -> Path:
+    configured = str(os.getenv(LIVE_E2E_FRAMEWORK_ROOT_ENV, "")).strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return openminion_root.resolve().parent
+
+
 @dataclass(frozen=True)
 class LiveAgentProfile:
     profile_id: str
