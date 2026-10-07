@@ -46,6 +46,18 @@ def _successful_substantive_tool_results(
     ]
 
 
+def successful_substantive_tool_names(
+    loop_state: AdaptiveToolLoopState,
+) -> list[str]:
+    return sorted(
+        {
+            name
+            for item in _successful_substantive_tool_results(loop_state)
+            if (name := _normalized_tool_name(item.get("tool_name")))
+        }
+    )
+
+
 def _count_substantive_non_control_tool_results(
     loop_state: AdaptiveToolLoopState,
 ) -> int:

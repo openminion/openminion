@@ -165,6 +165,7 @@ class LLMResponse(BaseModel):
     confident_complete: Optional[dict[str, Any]] = None
     finalization_status: Optional[dict[str, Any]] = None
     meta_rule_preference: Optional[dict[str, Any]] = None
+    workflow_learning: Optional[dict[str, Any]] = None
     memory_consolidation: Optional[dict[str, Any]] = None
     watch_outcome: Optional[dict[str, Any]] = None
     session_work_summary: Optional[dict[str, Any]] = None

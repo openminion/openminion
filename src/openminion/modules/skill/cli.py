@@ -39,6 +39,8 @@ _LEARNING_COMMANDS = frozenset(
         "learning-scan",
         "learning-inspect",
         "learning-save-workflow",
+        "learning-observation-list",
+        "learning-shape-list",
         "learning-propose",
         "learning-replay-proof",
         "learning-apply-proved",
@@ -83,12 +85,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "storage":
         cfg = load_config(args.config, home_root=home_root_path, env=dict(os.environ))
         db_path = Path(cfg.sqlite_path).expanduser().resolve(strict=False)
-        return run_module_storage_command(
-            args=args,
-            module_id="skill",
-            db_path=db_path,
-            home_root=home_root,
-            data_root=data_root,
+        return int(
+            run_module_storage_command(
+                args=args,
+                module_id="skill",
+                db_path=db_path,
+                home_root=home_root,
+                data_root=data_root,
+            )
         )
 
     ctl = Skill(args.config, home_root=home_root_path)
@@ -361,6 +365,18 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
 
 
 def _add_learning_subcommands(sub: Any) -> None:
+    observation_list = sub.add_parser(
+        "learning-observation-list",
+        help="List retained runtime workflow observations for one agent.",
+    )
+    observation_list.add_argument("--agent-id", required=True)
+
+    shape_list = sub.add_parser(
+        "learning-shape-list",
+        help="List derived workflow shapes for one agent.",
+    )
+    shape_list.add_argument("--agent-id", required=True)
+
     learning_scan = sub.add_parser(
         "learning-scan",
         help="Mine workflow shapes from a JSON list of evidence bundles.",
@@ -782,6 +798,45 @@ def _dispatch_proposal_cmd(ctl: Skill, args: argparse.Namespace) -> None:
     raise SkillError("INVALID_ARGUMENT", "Unsupported proposal command")
 
 
+def _dispatch_runtime_observation_cmd(ctl: Skill, args: argparse.Namespace) -> bool:
+    from openminion.modules.skill.learning.runtime import WorkflowObservationError
+
+    if args.cmd == "learning-observation-list":
+        try:
+            observations = ctl.list_workflow_observations(agent_id=args.agent_id)
+        except WorkflowObservationError as exc:
+            raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
+        _print_json({"ok": True, "observations": observations})
+        return True
+
+    if args.cmd == "learning-shape-list":
+        from openminion.modules.skill.learning import WorkflowShapeMiner
+
+        try:
+            shapes = ctl.list_workflow_shapes(agent_id=args.agent_id)
+        except WorkflowObservationError as exc:
+            raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
+        miner = WorkflowShapeMiner()
+        _print_json(
+            {
+                "ok": True,
+                "shapes": [
+                    {
+                        **shape.model_dump(mode="json"),
+                        "state": (
+                            "authoring_ready"
+                            if miner.is_skill_ready(shape)
+                            else "observed"
+                        ),
+                    }
+                    for shape in shapes
+                ],
+            }
+        )
+        return True
+    return False
+
+
 def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
     from openminion.modules.skill.learning import (
         execution_trust_diagnostic,
@@ -790,6 +845,9 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
         WorkflowShapeMiner,
         stage_shape_as_skill_proposal,
     )
+
+    if _dispatch_runtime_observation_cmd(ctl, args):
+        return
 
     if args.cmd == "learning-scan":
         raw = _read_json_path(args.bundle_json)

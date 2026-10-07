@@ -16,6 +16,7 @@ _MIGRATIONS = (
     "0004_active_version_admission",
     "0005_verification_evidence",
     "0006_proposal_replay_proof",
+    "0007_workflow_observations",
 )
 
 

@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+if TYPE_CHECKING:
+    from .learning.runtime import WorkflowObservationResult
 
 from .models import (
     SkillPackage,
@@ -102,6 +107,9 @@ class SkillVerificationEvidence:
 
 
 class SkillContract(Protocol):
+    @property
+    def runtime_workflow_observation_enabled(self) -> bool: ...
+
     def __init__(
         self,
         config: Any = ...,
@@ -114,6 +122,16 @@ class SkillContract(Protocol):
     ) -> None: ...
 
     def close(self) -> None: ...
+
+    def observe_workflow(
+        self,
+        *,
+        agent_id: str,
+        source_run_ref: str,
+        intent_category: str,
+        capability_category: str,
+        tool_names: list[str],
+    ) -> WorkflowObservationResult: ...
 
     def ingest_text(
         self,

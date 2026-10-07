@@ -7,6 +7,10 @@ import pytest
 
 from openminion.modules.skill.storage import build_skill_store
 from openminion.modules.skill.storage.store import PostgresSkillStore, SQLiteSkillStore
+from openminion.modules.skill.learning.runtime import (
+    list_runtime_workflow_observations,
+    observe_runtime_workflow,
+)
 from openminion.modules.storage.engine import StorageEngineConfig
 from tests.storage.postgres_test_utils import (
     build_postgres_storage_config,
@@ -133,6 +137,70 @@ def test_skill_admission_backend_parity(skill_store_case) -> None:
     admission = store.get_skill_admission(skill_id="skill.deploy", version_hash="v1")
     assert admission["verification_evidence_ref"] == "review://deploy/v1"
     assert admission["verification_reviewer_id"] == "local:test"
+
+
+def test_workflow_observation_backend_parity(skill_store_case) -> None:
+    _backend, store = skill_store_case
+    created = store.insert_workflow_observation(
+        agent_id="agent-a",
+        source_run_ref="run-1",
+        bundle_id="wlev-1",
+        provenance_checksum="checksum-1",
+        bundle_json='{"bundle_id":"wlev-1"}',
+        created_at="2026-10-06T00:00:00+00:00",
+    )
+    duplicate = store.insert_workflow_observation(
+        agent_id="agent-a",
+        source_run_ref="run-1",
+        bundle_id="wlev-2",
+        provenance_checksum="checksum-2",
+        bundle_json='{"bundle_id":"wlev-2"}',
+        created_at="2026-10-06T00:01:00+00:00",
+    )
+
+    assert created is True
+    assert duplicate is False
+    assert (
+        store.get_workflow_observation(agent_id="agent-a", source_run_ref="run-1")[
+            "bundle_id"
+        ]
+        == "wlev-1"
+    )
+    assert [
+        row["bundle_id"] for row in store.list_workflow_observations(agent_id="agent-a")
+    ] == ["wlev-1"]
+
+
+def test_runtime_workflow_observation_backend_parity(skill_store_case) -> None:
+    _backend, store = skill_store_case
+
+    def observe(*, agent_id: str, source_run_ref: str, intent_category: str = "modify"):
+        return observe_runtime_workflow(
+            store,
+            agent_id=agent_id,
+            source_run_ref=source_run_ref,
+            intent_category=intent_category,
+            capability_category="code",
+            tool_names=["file.write", "exec.run"],
+        )
+
+    first = observe(agent_id="agent-a", source_run_ref="run-1")
+    duplicate = observe(agent_id="agent-a", source_run_ref="run-1")
+    second = observe(agent_id="agent-a", source_run_ref="run-2")
+    conflict = observe(
+        agent_id="agent-a",
+        source_run_ref="run-1",
+        intent_category="verify",
+    )
+    other_agent = observe(agent_id="agent-b", source_run_ref="run-1")
+
+    assert first.status == "observed"
+    assert duplicate.status == "duplicate"
+    assert second.status == "authoring_ready"
+    assert conflict.status == "conflict"
+    assert other_agent.status == "observed"
+    assert len(list_runtime_workflow_observations(store, agent_id="agent-a")) == 2
+    assert len(list_runtime_workflow_observations(store, agent_id="agent-b")) == 1
 
 
 def test_build_skill_store_returns_sqlite_store(tmp_path: Path) -> None:

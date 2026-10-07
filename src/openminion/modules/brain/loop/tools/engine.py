@@ -66,6 +66,7 @@ from .response_payloads import (  # noqa: F401
     _TASK_PLAN_PROGRESS_GUIDANCE,
     _WATCH_ACTION_GUIDANCE,
     _WATCH_OUTCOME_GUIDANCE,
+    _WORKFLOW_LEARNING_GUIDANCE,
     _confident_complete_payload,
     _delegation_context_payload,
     _delegation_result_summary_payload,
@@ -84,6 +85,7 @@ from .response_payloads import (  # noqa: F401
     _task_plan_step_blocked_payload,
     _task_plan_step_completed_payload,
     _watch_outcome_payload,
+    _workflow_learning_payload,
 )
 from .budget_control import (  # noqa: F401
     _active_work_summary_from_state,

@@ -98,6 +98,7 @@ class WorkflowEvidenceBundle(BaseModel):
     outcome: WorkflowOutcome
     redaction_status: WorkflowRedactionStatus = "redacted"
     risk_flags: list[str] = Field(default_factory=list)
+    risk_level: WorkflowRisk = "low"
     evidence_refs: list[str] = Field(default_factory=list)
     provenance_checksum: str = ""
     intent_category: str
@@ -145,6 +146,8 @@ class WorkflowEvidenceBundle(BaseModel):
             "strategy_id": self.strategy_id,
             "explicit_save": self.explicit_save,
         }
+        if self.risk_level != "low":
+            checksum_payload["risk_level"] = self.risk_level
         checksum = stable_hash(checksum_payload)
         bundle_id = self.bundle_id or f"wlev-{checksum[:16]}"
         evidence_refs = self.evidence_refs or [bundle_id]

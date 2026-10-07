@@ -21,6 +21,7 @@ from openminion.modules.brain.schemas.decisions import (
     GoalDeclaration,
     GoalRevision,
 )
+from openminion.modules.brain.schemas.workflow_learning import WorkflowLearningSignal
 from openminion.modules.llm.schemas import LLMRequest, LLMResponse, Message, ToolSpec
 from openminion.modules.telemetry.trace.phase_timing import (
     record_active_chat_provider_call,
@@ -30,6 +31,7 @@ from openminion.modules.brain.runtime.reasoning import (
     ThinkingRequest,
     ThinkingResolutionInput,
 )
+from openminion.modules.brain.loop.constants import WORKFLOW_OBSERVATION_ENABLED_KEY
 
 from openminion.modules.brain.bootstrap.route_catalog import get_route_descriptor
 from openminion.modules.brain.tools.schema import collect_runtime_tool_schemas
@@ -62,6 +64,9 @@ _PENDING_TURN_CONTEXT_RE = re.compile(
 )
 _META_RULE_PREFERENCE_RE = re.compile(
     r"(?s)(?P<body>.*?)(?:\n\s*)?<meta_rule_preference>\s*(?P<payload>\{.*\})\s*</meta_rule_preference>\s*$"
+)
+_WORKFLOW_LEARNING_RE = re.compile(
+    r"(?s)(?P<body>.*?)(?:\n\s*)?<workflow_learning>\s*(?P<payload>.*?)\s*</workflow_learning>\s*$"
 )
 _WATCH_OUTCOME_RE = re.compile(
     r"(?s)(?P<body>.*?)(?:\n\s*)?<watch_outcome>\s*(?P<payload>\{.*\})\s*</watch_outcome>\s*$"
@@ -437,6 +442,57 @@ def _normalize_meta_rule_preference_response(response: LLMResponse) -> LLMRespon
     )
 
 
+def _normalize_workflow_learning_response(
+    response: LLMResponse, *, enabled: bool
+) -> LLMResponse:
+    if not enabled:
+        return response
+    structured_payload = getattr(response, "workflow_learning", None)
+    raw_text = str(getattr(response, "output_text", "") or "")
+    match = _WORKFLOW_LEARNING_RE.match(raw_text)
+    if match is not None:
+        stripped_text = str(match.group("body") or "").rstrip()
+        response = response.model_copy(
+            update={
+                "output_text": stripped_text,
+                "assistant_messages": _updated_assistant_messages(
+                    response,
+                    content=stripped_text,
+                ),
+            }
+        )
+    normalized = _normalize_structured_signal_response(
+        response,
+        field_name="workflow_learning",
+        model=WorkflowLearningSignal,
+    )
+    if normalized is not None:
+        return normalized
+    if structured_payload is not None:
+        response = response.model_copy(update={"workflow_learning": None})
+    if match is None:
+        return response
+    update: dict[str, Any] = {"workflow_learning": None}
+    try:
+        payload = json.loads(match.group("payload"))
+    except json.JSONDecodeError:
+        payload = None
+    structured = _validated_model(
+        payload,
+        field_name="workflow_learning",
+        model=WorkflowLearningSignal,
+    )
+    if structured is None:
+        return response.model_copy(update=update)
+    update["workflow_learning"] = structured.model_dump(mode="json")
+    return _with_typed_signal_source(
+        response,
+        field_name="workflow_learning",
+        source=TYPED_SIGNAL_SOURCE_TRAILER,
+        update=update,
+    )
+
+
 def _normalize_memory_consolidation_response(response: LLMResponse) -> LLMResponse:
     return _normalize_signal_response(
         response,
@@ -491,7 +547,9 @@ def _normalize_delegation_result_summary_response(response: LLMResponse) -> LLMR
     )
 
 
-def _normalize_runtime_response(response: LLMResponse) -> LLMResponse:
+def _normalize_runtime_response(
+    response: LLMResponse, *, workflow_learning_enabled: bool = False
+) -> LLMResponse:
     normalizers = (
         _normalize_confident_complete_response,
         _normalize_finalization_status_response,
@@ -508,7 +566,10 @@ def _normalize_runtime_response(response: LLMResponse) -> LLMResponse:
     )
     for normalize in normalizers:
         response = normalize(response)
-    return response
+    return _normalize_workflow_learning_response(
+        response,
+        enabled=workflow_learning_enabled,
+    )
 
 
 class DefaultAdaptiveToolLoopLLMRuntime:
@@ -556,7 +617,12 @@ class DefaultAdaptiveToolLoopLLMRuntime:
                 response=response,
             )
             response = _normalize_goal_declaration_response(response)
-            return _normalize_runtime_response(response)
+            return _normalize_runtime_response(
+                response,
+                workflow_learning_enabled=bool(
+                    (metadata or {}).get(WORKFLOW_OBSERVATION_ENABLED_KEY, False)
+                ),
+            )
 
         overrides: dict[str, Any] = {
             "model": model,
@@ -576,7 +642,12 @@ class DefaultAdaptiveToolLoopLLMRuntime:
             response=response,
         )
         response = _normalize_goal_declaration_response(response)
-        return _normalize_runtime_response(response)
+        return _normalize_runtime_response(
+            response,
+            workflow_learning_enabled=bool(
+                (metadata or {}).get(WORKFLOW_OBSERVATION_ENABLED_KEY, False)
+            ),
+        )
 
 
 def resolve_loop_model(ctx: Any) -> str:

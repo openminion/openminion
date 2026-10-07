@@ -17,6 +17,7 @@ from openminion.modules.brain.schemas import (
     SessionWorkSummary,
     WatchOutcome,
 )
+from openminion.modules.brain.schemas.workflow_learning import WorkflowLearningSignal
 from openminion.modules.context.schemas import (
     TaskPlan,
     TaskPlanRevision,
@@ -80,6 +81,17 @@ _META_RULE_PREFERENCE_GUIDANCE = (
     "future sessions, populate the structured meta_rule_preference signal with "
     "rule, preferred_value, and reasoning. Use only thresholds or bounded policy "
     "preferences you want recalled later. Do not set it if you still need tools."
+)
+_WORKFLOW_LEARNING_GUIDANCE = (
+    "When this successful tool-backed workflow is materially reusable, populate "
+    "the structured workflow_learning signal. Choose intent_category from "
+    "analyze, create, modify, verify, operate, research, or communicate, and "
+    "capability_category from code, files, shell, web, browser, data, system, or "
+    "collaboration. Do not include user data, paths, commands, credentials, or "
+    "free text. For text-only output, append exactly "
+    '<workflow_learning>{"intent_category":"modify",'
+    '"capability_category":"code"}</workflow_learning> immediately before '
+    "the finalization_status trailer. Do not set it if you still need tools."
 )
 _GOAL_DECLARATION_GUIDANCE = (
     "When observed context (recalled memory, tool-outcome patterns, conversation "
@@ -207,6 +219,14 @@ def _meta_rule_preference_payload(response: Any) -> MetaRulePreference | None:
         response,
         field_name="meta_rule_preference",
         model=MetaRulePreference,
+    )
+
+
+def _workflow_learning_payload(response: Any) -> WorkflowLearningSignal | None:
+    return _validated_payload(
+        response,
+        field_name="workflow_learning",
+        model=WorkflowLearningSignal,
     )
 
 

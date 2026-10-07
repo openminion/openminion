@@ -194,6 +194,25 @@ def finalize_iteration_cap_exit(
     )
 
 
+def _termination_reason(
+    finalization_status: Any,
+    confident_complete: Any,
+    final_text: str,
+) -> str:
+    if finalization_status is not None:
+        return {
+            "blocked": ADAPTIVE_TERM_FINALIZATION_BLOCKED,
+            "incomplete": ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
+        }.get(finalization_status.status, ADAPTIVE_TERM_FINAL_TEXT)
+    if (
+        confident_complete is not None
+        and confident_complete.complete
+        and final_text.strip()
+    ):
+        return ADAPTIVE_TERM_CONFIDENT_COMPLETE
+    return ADAPTIVE_TERM_FINAL_TEXT
+
+
 def build_no_tool_outcome(
     loop_ctx: Any,
     *,
@@ -205,6 +224,7 @@ def build_no_tool_outcome(
     finalization_status: Any,
     pending_turn_context: Any,
     meta_rule_preference: Any,
+    workflow_learning: Any,
     memory_consolidation: Any,
     session_work_summary: Any,
     goal_declaration: Any,
@@ -222,21 +242,9 @@ def build_no_tool_outcome(
     tokens_used: int,
     finalizer: Any,
 ) -> AdaptiveToolLoopOutcome:
-    if finalization_status is None:
-        termination_reason = (
-            ADAPTIVE_TERM_CONFIDENT_COMPLETE
-            if (
-                confident_complete is not None
-                and confident_complete.complete
-                and str(final_text or "").strip()
-            )
-            else ADAPTIVE_TERM_FINAL_TEXT
-        )
-    else:
-        termination_reason = {
-            "blocked": ADAPTIVE_TERM_FINALIZATION_BLOCKED,
-            "incomplete": ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
-        }.get(finalization_status.status, ADAPTIVE_TERM_FINAL_TEXT)
+    termination_reason = _termination_reason(
+        finalization_status, confident_complete, final_text
+    )
     loop_state.termination_reason = termination_reason
     _emit_iteration_event(
         loop_ctx=loop_ctx,
@@ -261,6 +269,7 @@ def build_no_tool_outcome(
         ),
         finalization_status=_model_payload(finalization_status),
         meta_rule_preference=_model_payload(meta_rule_preference),
+        workflow_learning=_model_payload(workflow_learning),
         memory_consolidation_decisions=(
             [item.model_dump(mode="json") for item in memory_consolidation.decisions]
             if memory_consolidation is not None

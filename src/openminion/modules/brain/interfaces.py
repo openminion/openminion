@@ -1,4 +1,9 @@
-from typing import Any, Literal, Protocol, runtime_checkable
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from openminion.modules.skill.learning.runtime import WorkflowObservationResult
 
 from pydantic import BaseModel
 
@@ -249,6 +254,19 @@ class MemoryAPI(Protocol):
 @runtime_checkable
 class SkillAPI(Protocol):
     contract_version: str
+
+    @property
+    def runtime_workflow_observation_enabled(self) -> bool: ...
+
+    def observe_workflow(
+        self,
+        *,
+        agent_id: str,
+        source_run_ref: str,
+        intent_category: str,
+        capability_category: str,
+        tool_names: list[str],
+    ) -> WorkflowObservationResult: ...
 
     def catalog_summaries(
         self,

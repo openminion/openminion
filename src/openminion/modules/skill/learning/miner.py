@@ -7,6 +7,8 @@ from collections.abc import Iterable
 
 from .shapes import WorkflowEvidenceBundle, WorkflowShape
 
+_RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
+
 
 class WorkflowShapeMiner:
     """Group evidence by structural fields, not prose similarity."""
@@ -67,7 +69,7 @@ class WorkflowShapeMiner:
 
     @classmethod
     def _observation_facts(cls, bundle: WorkflowEvidenceBundle) -> tuple[object, ...]:
-        return (*cls._key(bundle), bundle.outcome)
+        return (*cls._key(bundle), bundle.outcome, bundle.risk_level)
 
     def skill_ready_shapes(
         self, bundles: Iterable[WorkflowEvidenceBundle]
@@ -123,6 +125,10 @@ class WorkflowShapeMiner:
                 for ref in item.evidence_refs
             }
         )
+        risk_level = max(
+            (item.risk_level for item in items),
+            key=lambda value: _RISK_ORDER[value],
+        )
         return WorkflowShape(
             intent_category=first.intent_category,
             capability_category=first.capability_category,
@@ -138,6 +144,7 @@ class WorkflowShapeMiner:
             performance_entry_refs=evidence_refs,
             failure_pattern_refs=failure_refs,
             knowledge_record_refs=evidence_refs,
+            risk_level=risk_level,
             first_seen_at=seen[0] if seen else "",
             last_seen_at=seen[-1] if seen else "",
             explicit_save_count=explicit_save,
