@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable, Mapping
 from typing import Annotated, Any, Literal
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -34,6 +35,8 @@ from .schema_types import (
 _EIP1967_IMPLEMENTATION_SLOT = (
     "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
 )
+_GENESIS_PARENT_HASH = "0x" + "00" * 32
+_DECIMAL_STRING_RE = re.compile(r"^(?:0|[1-9][0-9]*)$")
 _MAX_BODY_BYTES = 2 * 1024 * 1024
 _TIMEOUT_SECONDS = 15.0
 _USER_AGENT = (
@@ -178,6 +181,7 @@ ResolutionErrorCode = Literal[
     "RPC_UNAVAILABLE",
     "CHAIN_IDENTITY_MISMATCH",
     "STALE_BLOCK",
+    "STALE_RESOLUTION",
     "EMPTY_CONTRACT_CODE",
     "UNSUPPORTED_PROXY",
     "METADATA_UNAVAILABLE",
@@ -356,16 +360,31 @@ def _block(value: Any, *, operation: str) -> tuple[int, str]:
             {"operation": operation},
         )
     number = _quantity(value.get("number"), operation=operation)
-    block_hash = str(value.get("hash", "")).lower()
-    if len(block_hash) != 66 or any(
-        character not in "0123456789abcdef" for character in block_hash[2:]
-    ) or not block_hash.startswith("0x"):
+    block_hash = _transaction_hash(value.get("hash"), operation=operation)
+    return number, block_hash
+
+
+def _transaction_hash(value: Any, *, operation: str) -> str:
+    if not isinstance(value, str):
         raise ResolutionFailure(
             "RPC_UNAVAILABLE",
-            "Blockchain RPC returned an invalid block.",
+            "Blockchain RPC returned an invalid transaction hash.",
             {"operation": operation},
         )
-    return number, block_hash
+    normalized = value.lower()
+    if (
+        len(normalized) != 66
+        or not normalized.startswith("0x")
+        or any(
+            character not in "0123456789abcdef" for character in normalized[2:]
+        )
+    ):
+        raise ResolutionFailure(
+            "RPC_UNAVAILABLE",
+            "Blockchain RPC returned an invalid transaction hash.",
+            {"operation": operation},
+        )
+    return normalized
 
 
 def _hex_data(value: Any, *, operation: str, exact_bytes: int | None = None) -> str:
@@ -495,13 +514,23 @@ def _sourcify_contract(
             "Verified contract metadata is invalid.",
         )
     runtime = payload.get("runtimeBytecode")
+    metadata_chain_id = payload.get("chainId")
+    metadata_address = payload.get("address")
+    if (
+        not isinstance(metadata_chain_id, str)
+        or _DECIMAL_STRING_RE.fullmatch(metadata_chain_id) is None
+        or not isinstance(metadata_address, str)
+        or not Web3.is_checksum_address(metadata_address)
+    ):
+        raise ResolutionFailure(
+            "METADATA_UNAVAILABLE",
+            "Verified contract metadata is invalid.",
+        )
     try:
         metadata_code = _hex_data(
             runtime["onchainBytecode"],
             operation="sourcify_runtime_bytecode",
         )
-        metadata_address = Web3.to_checksum_address(payload["address"])
-        metadata_chain_id = int(payload["chainId"])
     except (KeyError, TypeError, ValueError, ResolutionFailure) as exc:
         raise ResolutionFailure(
             "METADATA_UNAVAILABLE",
@@ -509,7 +538,7 @@ def _sourcify_contract(
         ) from exc
     if (
         payload.get("match") not in {"match", "exact_match"}
-        or metadata_chain_id != chain_id
+        or metadata_chain_id != str(chain_id)
         or metadata_address != address
         or _code_hash(metadata_code) != _code_hash(rpc_code)
     ):
@@ -582,41 +611,67 @@ def function_by_signature(
     return matches[0]
 
 
-def revalidate_resolution(
-    record: Mapping[str, Any],
+def _observe_chain_and_lineage(
+    rpc: _RpcClient,
     *,
-    https_request: _HttpsRequest = request_public_https,
-) -> dict[str, str]:
-    normalized = validate_resolution_record(record)
-    rpc = _RpcClient(normalized["rpc_url"], https_request)
+    expected_chain_id: int,
+    expected_genesis_hash: str,
+    expected_checkpoint: Mapping[str, Any] | None,
+    contract_address: str,
+    revalidation: bool,
+) -> dict[str, Any]:
     observed_chain_id = _quantity(rpc.call("eth_chainId", []), operation="eth_chainId")
+    genesis_value = rpc.call("eth_getBlockByNumber", ["0x0", False])
     genesis_number, genesis_hash = _block(
-        rpc.call("eth_getBlockByNumber", ["0x0", False]),
+        genesis_value,
+        operation="eth_getBlockByNumber:genesis",
+    )
+    genesis_parent_hash = _transaction_hash(
+        genesis_value.get("parentHash") if isinstance(genesis_value, Mapping) else None,
         operation="eth_getBlockByNumber:genesis",
     )
     if (
-        observed_chain_id != normalized["expected_chain_id"]
+        observed_chain_id != expected_chain_id
         or genesis_number != 0
-        or genesis_hash != normalized["expected_genesis_hash"]
+        or genesis_hash != expected_genesis_hash.lower()
+        or genesis_parent_hash != _GENESIS_PARENT_HASH
     ):
         raise ResolutionFailure(
             "CHAIN_IDENTITY_MISMATCH",
-            "Observed chain identity does not match the resolved chain.",
+            "Observed chain identity does not match the expected chain.",
+            {
+                "expected_chain_id": expected_chain_id,
+                "observed_chain_id": observed_chain_id,
+                "expected_genesis_hash": expected_genesis_hash.lower(),
+                "observed_genesis_hash": genesis_hash,
+            },
         )
-    checkpoint = normalized["expected_checkpoint"]
-    if checkpoint is not None:
-        checkpoint_number = int(checkpoint["block_number"])
+
+    observed_checkpoint: dict[str, str] | None = None
+    if expected_checkpoint is not None:
+        checkpoint_number = int(expected_checkpoint["block_number"])
         observed_number, observed_hash = _block(
             rpc.call("eth_getBlockByNumber", [hex(checkpoint_number), False]),
             operation="eth_getBlockByNumber:checkpoint",
         )
+        observed_checkpoint = {
+            "block_number": str(observed_number),
+            "block_hash": observed_hash,
+        }
         if (
             observed_number != checkpoint_number
-            or observed_hash != checkpoint["block_hash"].lower()
+            or observed_hash != str(expected_checkpoint["block_hash"]).lower()
         ):
             raise ResolutionFailure(
                 "CHAIN_IDENTITY_MISMATCH",
-                "Observed checkpoint does not match the resolved chain.",
+                "Observed checkpoint does not match the expected chain.",
+                {
+                    "checkpoint_block_number": str(checkpoint_number),
+                    "expected_checkpoint_hash": str(
+                        expected_checkpoint["block_hash"]
+                    ).lower(),
+                    "observed_checkpoint_hash": observed_hash,
+                },
             )
 
     block_number, block_hash = _block(
@@ -631,149 +686,26 @@ def revalidate_resolution(
     if pinned_number != block_number or pinned_hash != block_hash:
         raise ResolutionFailure(
             "STALE_BLOCK",
-            "Pinned block changed before resolution revalidation.",
+            "Pinned block changed before contract inspection.",
         )
 
     target_code = _hex_data(
-        rpc.call("eth_getCode", [normalized["contract_address"], block_tag]),
-        operation="eth_getCode:target",
-    )
-    storage = _hex_data(
-        rpc.call(
-            "eth_getStorageAt",
-            [
-                normalized["contract_address"],
-                _EIP1967_IMPLEMENTATION_SLOT,
-                block_tag,
-            ],
-        ),
-        operation="eth_getStorageAt:eip1967",
-        exact_bytes=32,
-    )
-    if int(storage, 16) == 0:
-        current_implementation = None
-    elif int(storage[2:26], 16) == 0:
-        current_implementation = Web3.to_checksum_address(f"0x{storage[-40:]}")
-    else:
-        raise ResolutionFailure(
-            "STALE_BLOCK",
-            "Resolved proxy lineage changed.",
-        )
-    if (
-        _code_hash(target_code) != normalized["target_code_hash"]
-        or current_implementation != normalized["implementation_address"]
-    ):
-        raise ResolutionFailure(
-            "STALE_BLOCK",
-            "Resolved contract lineage changed.",
-        )
-    if current_implementation is not None:
-        implementation_code = _hex_data(
-            rpc.call("eth_getCode", [current_implementation, block_tag]),
-            operation="eth_getCode:implementation",
-        )
-        if _code_hash(implementation_code) != normalized["implementation_code_hash"]:
-            raise ResolutionFailure(
-                "STALE_BLOCK",
-                "Resolved implementation code changed.",
-            )
-
-    repeated_number, repeated_hash = _block(
-        rpc.call("eth_getBlockByNumber", [block_tag, False]),
-        operation="eth_getBlockByNumber:recheck",
-    )
-    if repeated_number != block_number or repeated_hash != block_hash:
-        raise ResolutionFailure(
-            "STALE_BLOCK",
-            "Pinned block changed during resolution revalidation.",
-        )
-    return {"block_number": str(block_number), "block_hash": block_hash}
-
-
-def _resolve(
-    request: ResolveContractArgs,
-    *,
-    https_request: _HttpsRequest,
-) -> dict[str, Any]:
-    rpc_url = _normalized_rpc_url(request.rpc_url)
-    rpc = _RpcClient(rpc_url, https_request)
-    observed_chain_id = _quantity(rpc.call("eth_chainId", []), operation="eth_chainId")
-    genesis_number, genesis_hash = _block(
-        rpc.call("eth_getBlockByNumber", ["0x0", False]),
-        operation="eth_getBlockByNumber:genesis",
-    )
-    if (
-        observed_chain_id != request.expected_chain_id
-        or genesis_number != 0
-        or genesis_hash != request.expected_genesis_hash.lower()
-    ):
-        raise ResolutionFailure(
-            "CHAIN_IDENTITY_MISMATCH",
-            "Observed chain identity does not match the expected chain.",
-            {
-                "expected_chain_id": request.expected_chain_id,
-                "observed_chain_id": observed_chain_id,
-                "expected_genesis_hash": request.expected_genesis_hash.lower(),
-                "observed_genesis_hash": genesis_hash,
-            },
-        )
-
-    observed_checkpoint: dict[str, str] | None = None
-    if request.expected_checkpoint is not None:
-        checkpoint_number = int(request.expected_checkpoint.block_number)
-        observed_number, observed_hash = _block(
-            rpc.call("eth_getBlockByNumber", [hex(checkpoint_number), False]),
-            operation="eth_getBlockByNumber:checkpoint",
-        )
-        observed_checkpoint = {
-            "block_number": str(observed_number),
-            "block_hash": observed_hash,
-        }
-        if (
-            observed_number != checkpoint_number
-            or observed_hash != request.expected_checkpoint.block_hash.lower()
-        ):
-            raise ResolutionFailure(
-                "CHAIN_IDENTITY_MISMATCH",
-                "Observed checkpoint does not match the expected chain.",
-                {
-                    "checkpoint_block_number": str(checkpoint_number),
-                    "expected_checkpoint_hash": (
-                        request.expected_checkpoint.block_hash.lower()
-                    ),
-                    "observed_checkpoint_hash": observed_hash,
-                },
-            )
-
-    verification_number, verification_hash = _block(
-        rpc.call("eth_getBlockByNumber", ["latest", False]),
-        operation="eth_getBlockByNumber:latest",
-    )
-    pinned_number, pinned_hash = _block(
-        rpc.call("eth_getBlockByNumber", [hex(verification_number), False]),
-        operation="eth_getBlockByNumber:pinned",
-    )
-    if pinned_number != verification_number or pinned_hash != verification_hash:
-        raise ResolutionFailure(
-            "STALE_BLOCK",
-            "Verification block changed before contract inspection.",
-        )
-
-    target_address = Web3.to_checksum_address(request.contract_address)
-    block_tag = hex(verification_number)
-    target_code = _hex_data(
-        rpc.call("eth_getCode", [target_address, block_tag]),
+        rpc.call("eth_getCode", [contract_address, block_tag]),
         operation="eth_getCode:target",
     )
     if target_code == "0x":
         raise ResolutionFailure(
-            "EMPTY_CONTRACT_CODE",
-            "Target address has no contract code at the verification block.",
+            "STALE_RESOLUTION" if revalidation else "EMPTY_CONTRACT_CODE",
+            (
+                "Resolved contract lineage changed."
+                if revalidation
+                else "Target address has no contract code at the verification block."
+            ),
         )
     storage = _hex_data(
         rpc.call(
             "eth_getStorageAt",
-            [target_address, _EIP1967_IMPLEMENTATION_SLOT, block_tag],
+            [contract_address, _EIP1967_IMPLEMENTATION_SLOT, block_tag],
         ),
         operation="eth_getStorageAt:eip1967",
         exact_bytes=32,
@@ -783,8 +715,12 @@ def _resolve(
     if int(storage, 16) != 0:
         if int(storage[2:26], 16) != 0:
             raise ResolutionFailure(
-                "UNSUPPORTED_PROXY",
-                "EIP-1967 implementation storage is not a canonical address.",
+                "STALE_RESOLUTION" if revalidation else "UNSUPPORTED_PROXY",
+                (
+                    "Resolved proxy lineage changed."
+                    if revalidation
+                    else "EIP-1967 implementation storage is not a canonical address."
+                ),
             )
         implementation_address = Web3.to_checksum_address(f"0x{storage[-40:]}")
         implementation_code = _hex_data(
@@ -793,24 +729,97 @@ def _resolve(
         )
         if implementation_code == "0x":
             raise ResolutionFailure(
-                "UNSUPPORTED_PROXY",
-                "EIP-1967 implementation address has no contract code.",
+                "STALE_RESOLUTION" if revalidation else "UNSUPPORTED_PROXY",
+                (
+                    "Resolved implementation code changed."
+                    if revalidation
+                    else "EIP-1967 implementation address has no contract code."
+                ),
             )
 
     repeated_number, repeated_hash = _block(
         rpc.call("eth_getBlockByNumber", [block_tag, False]),
         operation="eth_getBlockByNumber:recheck",
     )
-    if repeated_number != verification_number or repeated_hash != verification_hash:
+    if repeated_number != block_number or repeated_hash != block_hash:
         raise ResolutionFailure(
             "STALE_BLOCK",
-            "Verification block changed during contract inspection.",
+            "Pinned block changed during contract inspection.",
         )
+    return {
+        "observed_chain_id": observed_chain_id,
+        "observed_genesis_hash": genesis_hash,
+        "observed_checkpoint": observed_checkpoint,
+        "block_number": block_number,
+        "block_hash": block_hash,
+        "target_code": target_code,
+        "implementation_address": implementation_address,
+        "implementation_code": implementation_code,
+    }
+
+
+def revalidate_resolution(
+    record: Mapping[str, Any],
+    *,
+    https_request: _HttpsRequest = request_public_https,
+) -> dict[str, str]:
+    normalized = validate_resolution_record(record)
+    facts = _observe_chain_and_lineage(
+        _RpcClient(normalized["rpc_url"], https_request),
+        expected_chain_id=normalized["expected_chain_id"],
+        expected_genesis_hash=normalized["expected_genesis_hash"],
+        expected_checkpoint=normalized["expected_checkpoint"],
+        contract_address=normalized["contract_address"],
+        revalidation=True,
+    )
+    if (
+        _code_hash(facts["target_code"]) != normalized["target_code_hash"]
+        or facts["implementation_address"] != normalized["implementation_address"]
+        or (
+            _code_hash(facts["implementation_code"])
+            if facts["implementation_code"] is not None
+            else None
+        )
+        != normalized["implementation_code_hash"]
+    ):
+        raise ResolutionFailure(
+            "STALE_RESOLUTION",
+            "Resolved contract lineage changed.",
+        )
+    return {
+        "block_number": str(facts["block_number"]),
+        "block_hash": facts["block_hash"],
+    }
+
+
+def _resolve(
+    request: ResolveContractArgs,
+    *,
+    https_request: _HttpsRequest,
+) -> dict[str, Any]:
+    rpc_url = _normalized_rpc_url(request.rpc_url)
+    target_address = Web3.to_checksum_address(request.contract_address)
+    expected_checkpoint = (
+        request.expected_checkpoint.model_dump(mode="json")
+        if request.expected_checkpoint is not None
+        else None
+    )
+    facts = _observe_chain_and_lineage(
+        _RpcClient(rpc_url, https_request),
+        expected_chain_id=request.expected_chain_id,
+        expected_genesis_hash=request.expected_genesis_hash,
+        expected_checkpoint=expected_checkpoint,
+        contract_address=target_address,
+        revalidation=False,
+    )
+    observed_chain_id = facts["observed_chain_id"]
+    implementation_address = facts["implementation_address"]
+    implementation_code = facts["implementation_code"]
 
     target_url, target_abi = _sourcify_contract(
         observed_chain_id,
         target_address,
-        target_code,
+        facts["target_code"],
         https_request,
     )
     implementation_url: str | None = None
@@ -833,20 +842,16 @@ def _resolve(
         "expected_chain_id": request.expected_chain_id,
         "observed_chain_id": observed_chain_id,
         "expected_genesis_hash": request.expected_genesis_hash.lower(),
-        "observed_genesis_hash": genesis_hash,
-        "expected_checkpoint": (
-            request.expected_checkpoint.model_dump(mode="json")
-            if request.expected_checkpoint is not None
-            else None
-        ),
-        "observed_checkpoint": observed_checkpoint,
-        "verification_block_number": str(verification_number),
-        "verification_block_hash": verification_hash,
+        "observed_genesis_hash": facts["observed_genesis_hash"],
+        "expected_checkpoint": expected_checkpoint,
+        "observed_checkpoint": facts["observed_checkpoint"],
+        "verification_block_number": str(facts["block_number"]),
+        "verification_block_hash": facts["block_hash"],
         "contract_address": target_address,
         "proxy_kind": "eip1967" if implementation_address else "direct",
         "implementation_address": implementation_address,
         "abi_address": abi_address,
-        "target_code_hash": _code_hash(target_code),
+        "target_code_hash": _code_hash(facts["target_code"]),
         "implementation_code_hash": (
             _code_hash(implementation_code) if implementation_code else None
         ),
@@ -854,8 +859,9 @@ def _resolve(
         "explorer_contract_url": request.explorer_contract_url,
         "research_source_urls": request.research_source_urls,
         "verification_statement": (
-            "Chain identity, pinned-block code, and Sourcify metadata were "
-            "verified for this contract candidate."
+            "Chain identity, pinned-block code, and Sourcify metadata were internally "
+            "consistent for this contract candidate. This does not establish that "
+            "the deployment or network is official."
         ),
     }
     record["resolution_digest"] = resolution_digest(record)
@@ -912,7 +918,7 @@ def resolve_contract(
     except SessionRecordError as exc:
         reason = (
             "result_too_large"
-            if "size limit" in str(exc)
+            if exc.reason == "size_limit"
             else "session_persistence_unavailable"
         )
         code: ResolutionErrorCode = (

@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
+import openminion.modules.tool.runtime.public_https as public_https
+
 from openminion.modules.tool.runtime.public_https import (
     PublicHttpsError,
     _PinnedHttpsConnection,
@@ -91,7 +93,7 @@ def _request(
     def connection_factory(host: str, port: int, address: tuple, timeout: float):
         assert host == "example.com"
         assert port == 443
-        assert timeout == 15.0
+        assert 0 < timeout <= 15.0
         selected.append(address)
         return active_connection
 
@@ -175,11 +177,13 @@ def test_public_https_rejects_public_private_dns_mix() -> None:
     assert excinfo.value.code == "FORBIDDEN_DESTINATION"
 
 
-def test_public_https_rejects_mixed_address_families() -> None:
-    with pytest.raises(PublicHttpsError) as excinfo:
-        _request(answers=[_answer("93.184.216.34"), _answer("2606:2800:220:1::")])
+def test_public_https_accepts_public_dual_stack_and_pins_first_address() -> None:
+    answers = [_answer("93.184.216.34"), _answer("2606:2800:220:1::")]
 
-    assert excinfo.value.code == "MIXED_DESTINATIONS"
+    result, _, _, selected = _request(answers=answers)
+
+    assert result.status == 200
+    assert selected == [answers[0]]
 
 
 def test_public_https_fails_closed_on_resolution_error() -> None:
@@ -234,6 +238,39 @@ def test_public_https_enforces_response_body_bound() -> None:
         _request(connection=connection, max_body_bytes=4)
 
     assert excinfo.value.code == "RESPONSE_TOO_LARGE"
+    assert connection.closed is True
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class _SlowResponse(_Response):
+    def __init__(self, clock: _Clock) -> None:
+        super().__init__(body=b"")
+        self.clock = clock
+
+    def read1(self, size: int) -> bytes:
+        del size
+        self.clock.now += 6.0
+        return b"x"
+
+
+def test_public_https_enforces_one_deadline_across_response_reads(
+    monkeypatch,
+) -> None:
+    clock = _Clock()
+    monkeypatch.setattr(public_https.time, "monotonic", clock)
+    connection = _Connection(_SlowResponse(clock))
+
+    with pytest.raises(PublicHttpsError) as excinfo:
+        _request(connection=connection, timeout=10.0)
+
+    assert excinfo.value.code == "TIMEOUT"
     assert connection.closed is True
 
 

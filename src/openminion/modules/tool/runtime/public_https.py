@@ -6,6 +6,7 @@ import http.client
 import ipaddress
 import socket
 import ssl
+import time
 from typing import Any
 import urllib.parse
 
@@ -105,7 +106,6 @@ def _resolve_public_address(
     if not answers:
         raise PublicHttpsError("RESOLUTION_FAILED")
 
-    families: set[int] = set()
     for answer in answers:
         try:
             family, _, _, _, sockaddr = answer
@@ -117,10 +117,49 @@ def _resolve_public_address(
             and candidate.ipv4_mapped is not None
         ) or is_forbidden_ip(candidate):
             raise PublicHttpsError("FORBIDDEN_DESTINATION")
-        families.add(family)
-    if len(families) != 1:
-        raise PublicHttpsError("MIXED_DESTINATIONS")
     return answers[0]
+
+
+def _remaining_seconds(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise PublicHttpsError("TIMEOUT")
+    return remaining
+
+
+def _set_connection_timeout(
+    connection: http.client.HTTPSConnection,
+    timeout: float,
+) -> None:
+    connection.timeout = timeout
+    sock = getattr(connection, "sock", None)
+    if sock is not None:
+        sock.settimeout(timeout)
+
+
+def _read_bounded_body(
+    response: http.client.HTTPResponse,
+    connection: http.client.HTTPSConnection,
+    *,
+    deadline: float,
+    max_body_bytes: int,
+) -> bytes:
+    read1 = getattr(response, "read1", None)
+    if not callable(read1):
+        _set_connection_timeout(connection, _remaining_seconds(deadline))
+        body = response.read(max_body_bytes + 1)
+        _remaining_seconds(deadline)
+        return body
+
+    body = bytearray()
+    while len(body) <= max_body_bytes:
+        _set_connection_timeout(connection, _remaining_seconds(deadline))
+        chunk = read1(min(64 * 1024, max_body_bytes + 1 - len(body)))
+        _remaining_seconds(deadline)
+        if not chunk:
+            break
+        body.extend(chunk)
+    return bytes(body)
 
 
 def _default_connection_factory(
@@ -143,6 +182,7 @@ def request_public_https(
     resolver: _Resolver = socket.getaddrinfo,
     connection_factory: _ConnectionFactory = _default_connection_factory,
 ) -> PublicHttpsResponse:
+    deadline = time.monotonic() + float(timeout)
     normalized_method = str(method).strip().upper()
     if normalized_method not in {"GET", "POST"}:
         raise PublicHttpsError("METHOD_NOT_ALLOWED")
@@ -168,18 +208,31 @@ def request_public_https(
         raise PublicHttpsError("INVALID_URL")
 
     address = _resolve_public_address(host, port, resolver=resolver)
-    connection = connection_factory(host, port, address, float(timeout))
+    connection = connection_factory(
+        host,
+        port,
+        address,
+        _remaining_seconds(deadline),
+    )
     target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
     try:
+        _set_connection_timeout(connection, _remaining_seconds(deadline))
         connection.connect()
+        _set_connection_timeout(connection, _remaining_seconds(deadline))
         connection.request(
             normalized_method,
             target,
             body=body,
             headers=dict(headers or {}),
         )
+        _set_connection_timeout(connection, _remaining_seconds(deadline))
         response = connection.getresponse()
-        response_body = response.read(max_body_bytes + 1)
+        response_body = _read_bounded_body(
+            response,
+            connection,
+            deadline=deadline,
+            max_body_bytes=max_body_bytes,
+        )
         if len(response_body) > max_body_bytes:
             raise PublicHttpsError("RESPONSE_TOO_LARGE")
         return PublicHttpsResponse(

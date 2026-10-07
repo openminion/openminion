@@ -8,10 +8,15 @@ import pytest
 from pydantic import ValidationError
 from web3 import Web3
 
+import openminion.tools.blockchain.resolution as resolution_module
 from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.tool.runtime.public_https import PublicHttpsResponse
-from openminion.tools.blockchain.preparations import load_resolution_record
+from openminion.tools.blockchain.preparations import (
+    SessionRecordError,
+    load_resolution_record,
+)
 from openminion.tools.blockchain.resolution import (
+    ResolutionFailure,
     ResolveContractArgs,
     function_by_signature,
     load_resolution,
@@ -39,7 +44,13 @@ def _env(tmp_path) -> EnvironmentConfig:
     )
 
 
-def _metadata(address: str, code: str, *, duplicate: bool = False) -> dict[str, Any]:
+def _metadata(
+    address: str,
+    code: str,
+    *,
+    chain_id: Any = "1",
+    duplicate: bool = False,
+) -> dict[str, Any]:
     function = {
         "type": "function",
         "name": "balanceOf",
@@ -53,7 +64,7 @@ def _metadata(address: str, code: str, *, duplicate: bool = False) -> dict[str, 
         "ignored": "provider-field",
     }
     return {
-        "chainId": "1",
+        "chainId": chain_id,
         "address": address,
         "match": "exact_match",
         "abi": [function, dict(function)] if duplicate else [function],
@@ -69,11 +80,19 @@ class FakeHttps:
         duplicate_abi: bool = False,
         stale_recheck: bool = False,
         sourcify_status: int = 200,
+        metadata_chain_id: Any = "1",
+        metadata_address: str | None = None,
+        genesis_parent_hash: str = "0x" + "00" * 32,
+        target_code: str = _TARGET_CODE,
     ) -> None:
         self.implementation = implementation
         self.duplicate_abi = duplicate_abi
         self.stale_recheck = stale_recheck
         self.sourcify_status = sourcify_status
+        self.metadata_chain_id = metadata_chain_id
+        self.metadata_address = metadata_address
+        self.genesis_parent_hash = genesis_parent_hash
+        self.target_code = target_code
         self.calls: list[dict[str, Any]] = []
         self.block_calls = 0
 
@@ -87,8 +106,9 @@ class FakeHttps:
                 headers={},
                 body=json.dumps(
                     _metadata(
-                        address,
+                        self.metadata_address or address,
                         code,
+                        chain_id=self.metadata_chain_id,
                         duplicate=self.duplicate_abi,
                     )
                 ).encode(),
@@ -100,7 +120,11 @@ class FakeHttps:
         if method == "eth_chainId":
             result: Any = "0x1"
         elif method == "eth_getBlockByNumber" and params[0] == "0x0":
-            result = {"number": "0x0", "hash": _GENESIS_HASH}
+            result = {
+                "number": "0x0",
+                "hash": _GENESIS_HASH,
+                "parentHash": self.genesis_parent_hash,
+            }
         elif method == "eth_getBlockByNumber":
             self.block_calls += 1
             block_hash = (
@@ -113,7 +137,7 @@ class FakeHttps:
             result = (
                 _IMPLEMENTATION_CODE
                 if params[0] == _IMPLEMENTATION
-                else _TARGET_CODE
+                else self.target_code
             )
         elif method == "eth_getStorageAt":
             result = (
@@ -172,6 +196,11 @@ def test_resolve_contract_verifies_and_persists_canonical_facts(tmp_path) -> Non
     assert "rpc_url" not in record
     assert "sourcify_target_url" not in record
     assert record["abi_address"] == _TARGET
+    assert record["verification_statement"] == (
+        "Chain identity, pinned-block code, and Sourcify metadata were internally "
+        "consistent for this contract candidate. This does not establish that the "
+        "deployment or network is official."
+    )
     assert record["function_abi"] == [
         {
             "type": "function",
@@ -233,6 +262,24 @@ def test_resolution_digest_excludes_display_only_sources(tmp_path) -> None:
     assert resolution_digest(changed) == record["resolution_digest"]
 
 
+def test_resolver_uses_typed_persistence_failure_reason(
+    tmp_path, monkeypatch
+) -> None:
+    def fail_save(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        raise SessionRecordError("changed wording", reason="size_limit")
+
+    monkeypatch.setattr(resolution_module, "save_resolution_record", fail_save)
+
+    result = resolve_contract(
+        _args(),
+        SimpleNamespace(session_id="session-a", env=_env(tmp_path)),
+        https_request=FakeHttps(),
+    )
+
+    assert result["error"]["code"] == "RESULT_TOO_LARGE"
+
+
 def test_runtime_helpers_load_call_select_and_revalidate(tmp_path) -> None:
     context = SimpleNamespace(session_id="session-a", env=_env(tmp_path))
     result = resolve_contract(_args(), context, https_request=FakeHttps())
@@ -244,6 +291,20 @@ def test_runtime_helpers_load_call_select_and_revalidate(tmp_path) -> None:
         "block_number": "16",
         "block_hash": _LATEST_HASH,
     }
+
+    with pytest.raises(ResolutionFailure) as lineage_error:
+        revalidate_resolution(
+            record,
+            https_request=FakeHttps(target_code="0x6002"),
+        )
+    assert lineage_error.value.code == "STALE_RESOLUTION"
+
+    with pytest.raises(ResolutionFailure) as block_error:
+        revalidate_resolution(
+            record,
+            https_request=FakeHttps(stale_recheck=True),
+        )
+    assert block_error.value.code == "STALE_BLOCK"
 
 
 def test_resolve_contract_records_eip1967_implementation(tmp_path) -> None:
@@ -265,6 +326,17 @@ def test_resolve_contract_records_eip1967_implementation(tmp_path) -> None:
         (FakeHttps(duplicate_abi=True), "ABI_INVALID"),
         (FakeHttps(stale_recheck=True), "STALE_BLOCK"),
         (FakeHttps(sourcify_status=404), "CONTRACT_NOT_VERIFIED"),
+        (FakeHttps(metadata_chain_id=1), "METADATA_UNAVAILABLE"),
+        (FakeHttps(metadata_chain_id="01"), "METADATA_UNAVAILABLE"),
+        (
+            FakeHttps(metadata_address="0x" + "ab" * 20),
+            "METADATA_UNAVAILABLE",
+        ),
+        (FakeHttps(genesis_parent_hash="0x00"), "RPC_UNAVAILABLE"),
+        (
+            FakeHttps(genesis_parent_hash="0x" + "11" * 32),
+            "CHAIN_IDENTITY_MISMATCH",
+        ),
     ],
 )
 def test_resolve_contract_rejects_invalid_verification(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from dataclasses import asdict
 
 import pytest
 from eth_account import Account
@@ -9,6 +10,11 @@ from web3 import Web3
 from web3.exceptions import ContractLogicError, Web3Exception
 
 from openminion.tools.blockchain.runtime import prepare_transaction
+from openminion.tools.blockchain.confirmation import (
+    build_blockchain_send_confirmation_preview,
+    parse_blockchain_send_confirmation_preview,
+)
+from openminion.tools.blockchain.schema_types import FunctionAbi
 
 PRIVATE_KEY = "0x" + "11" * 32
 SENDER = Account.from_key(PRIVATE_KEY).address
@@ -332,3 +338,113 @@ def test_prepare_rejects_chain_mismatch() -> None:
         "expected_chain_id": 31337,
         "observed_chain_id": 1,
     }
+
+
+def test_resolved_prepare_persists_digest_bound_v2_approval(
+    monkeypatch,
+) -> None:
+    from openminion.tools.blockchain import runtime
+
+    context = _context(secret_service=_SecretService())
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain.pop("rpc_url")
+    blockchain.pop("chain_id")
+    blockchain["confirmation_depth"] = 2
+    context.session_id = "session"
+    context.env = {}
+    resolution_digest = "sha256:" + "12" * 32
+    block_hash = "0x" + "34" * 32
+    setter = FunctionAbi.model_validate(
+        {
+            "type": "function",
+            "name": "setApr",
+            "inputs": [{"name": "value", "type": "uint256"}],
+            "outputs": [],
+            "stateMutability": "nonpayable",
+        }
+    )
+    reader = FunctionAbi.model_validate(
+        {
+            "type": "function",
+            "name": "apr",
+            "inputs": [],
+            "outputs": [{"name": "", "type": "uint256"}],
+            "stateMutability": "view",
+        }
+    )
+    record = {
+        "resolution_digest": resolution_digest,
+        "rpc_url": "https://rpc.example/",
+        "sourcify_target_url": "https://sourcify.dev/target",
+        "sourcify_implementation_url": None,
+        "expected_chain_id": 31337,
+        "observed_chain_id": 31337,
+        "expected_genesis_hash": "0x" + "01" * 32,
+        "observed_genesis_hash": "0x" + "01" * 32,
+        "expected_checkpoint": None,
+        "observed_checkpoint": None,
+        "verification_block_number": "40",
+        "verification_block_hash": "0x" + "02" * 32,
+        "contract_address": RECIPIENT,
+        "proxy_kind": "direct",
+        "implementation_address": None,
+        "abi_address": RECIPIENT,
+        "target_code_hash": "0x" + "03" * 32,
+        "implementation_code_hash": None,
+    }
+    saved: dict[str, Any] = {}
+
+    monkeypatch.setattr(runtime, "load_resolution", lambda digest, ctx: record)
+    monkeypatch.setattr(
+        runtime,
+        "revalidate_resolution",
+        lambda value: {"block_number": "42", "block_hash": block_hash},
+    )
+    monkeypatch.setattr(
+        runtime,
+        "function_by_signature",
+        lambda value, signature: setter if signature.startswith("setApr") else reader,
+    )
+
+    def rpc_call(_record, method, params):
+        return {
+            "eth_getBalance": "0xde0b6b3a7640000",
+            "eth_getTransactionCount": "0x9",
+            "eth_call": "0x",
+            "eth_estimateGas": "0x5208",
+            "eth_maxPriorityFeePerGas": "0x3",
+        }.get(method) or {"number": "0x2a", "hash": block_hash, "baseFeePerGas": "0xa"}
+
+    monkeypatch.setattr(runtime, "rpc_call", rpc_call)
+    monkeypatch.setattr(
+        runtime,
+        "save_resolved_preparation_record",
+        lambda record, context, **kwargs: saved.update(record),
+    )
+
+    result = prepare_transaction(
+        {
+            "kind": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "setApr(uint256)",
+            "arguments": [5],
+            "postconditions": [
+                {
+                    "function_signature": "apr()",
+                    "arguments": [],
+                    "expected_result": ["5"],
+                }
+            ],
+        },
+        context,
+    )
+
+    assert result["ok"] is True
+    assert result["preparation_digest"] == saved["preparation_digest"]
+    assert saved["resolved_context"]["rpc_origin"] == "https://rpc.example"
+    assert saved["signer_address"] == SENDER
+    preview = build_blockchain_send_confirmation_preview(saved)
+    assert preview.schema_version == "blockchain-send-preview-v2"
+    assert preview.signer_address == SENDER
+    assert preview.postconditions[0]["expected_result"] == ["5"]
+    assert parse_blockchain_send_confirmation_preview(asdict(preview)) == preview

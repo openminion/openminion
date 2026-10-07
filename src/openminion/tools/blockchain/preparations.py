@@ -11,7 +11,12 @@ from typing import Any, Callable
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 
-from .transaction_schemas import SEND_REQUEST_ADAPTER
+from .transaction_schemas import (
+    RESOLVED_PREPARATION_ADAPTER,
+    SEND_REQUEST_ADAPTER,
+    resolved_preparation_digest,
+    validate_resolved_preparation_record,
+)
 
 
 class PreparationReferenceError(ValueError):
@@ -19,7 +24,9 @@ class PreparationReferenceError(ValueError):
 
 
 class SessionRecordError(ValueError):
-    pass
+    def __init__(self, message: str, *, reason: str = "invalid") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 RecordValidator = Callable[[Mapping[str, Any]], Mapping[str, Any]]
@@ -54,7 +61,7 @@ def _store_root(*, session_id: str, env: EnvironmentConfig) -> Path:
 
 def _session_store_root(*, session_id: str, env: EnvironmentConfig) -> Path:
     if not session_id:
-        raise SessionRecordError("session id is required")
+        raise SessionRecordError("session id is required", reason="session_required")
     home_root = resolve_home_root(env=env)
     data_root = resolve_data_root(
         home_root,
@@ -130,7 +137,10 @@ def _serialized_record(record: Mapping[str, Any], *, max_bytes: int) -> bytes:
     except (TypeError, ValueError) as exc:
         raise SessionRecordError("session record is invalid") from exc
     if len(encoded) > max_bytes:
-        raise SessionRecordError("session record exceeds size limit")
+        raise SessionRecordError(
+            "session record exceeds size limit",
+            reason="size_limit",
+        )
     return encoded
 
 
@@ -235,13 +245,22 @@ def _load_session_record(
     )
     try:
         if path.stat().st_size > max_bytes:
-            raise SessionRecordError("session record exceeds size limit")
+            raise SessionRecordError(
+                "session record exceeds size limit",
+                reason="size_limit",
+            )
         with path.open("rb") as stream:
             content = stream.read(max_bytes + 1)
     except OSError as exc:
-        raise SessionRecordError("session record is unavailable") from exc
+        raise SessionRecordError(
+            "session record is unavailable",
+            reason="unavailable",
+        ) from exc
     if len(content) > max_bytes:
-        raise SessionRecordError("session record exceeds size limit")
+        raise SessionRecordError(
+            "session record exceeds size limit",
+            reason="size_limit",
+        )
     try:
         raw = json.loads(content)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -406,7 +425,10 @@ def replace_operation_record(
         env=env,
     )
     if not path.is_file():
-        raise SessionRecordError("operation record is unavailable")
+        raise SessionRecordError(
+            "operation record is unavailable",
+            reason="unavailable",
+        )
     normalized = _validated_record(
         record,
         path_digest=preparation_digest,
@@ -471,6 +493,8 @@ def resolve_prepared_transaction(
     session_id: str,
     env: EnvironmentConfig | Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
+    if args.get("kind") == "resolved_contract_call":
+        return RESOLVED_PREPARATION_ADAPTER.validate_python(args).model_dump(mode="json")
     if "transaction" in args:
         return SEND_REQUEST_ADAPTER.validate_python(dict(args)).model_dump(mode="json")
     resolved_env = resolve_environment_config(env=env)
@@ -486,6 +510,19 @@ def resolve_prepared_transaction(
     path = _reference_path(digest, session_id=session_id, env=resolved_env)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        try:
+            return load_resolved_preparation_record(
+                digest,
+                session_id=session_id,
+                env=resolved_env,
+                validator=validate_resolved_preparation_record,
+                digester=resolved_preparation_digest,
+            )
+        except SessionRecordError as exc:
+            raise PreparationReferenceError(
+                "prepared transaction is unavailable"
+            ) from exc
     except (OSError, json.JSONDecodeError) as exc:
         raise PreparationReferenceError("prepared transaction is unavailable") from exc
     try:

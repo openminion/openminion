@@ -83,7 +83,57 @@ class BlockchainSendConfirmationPreview:
     opaque_calldata: bool
 
 
-ToolConfirmationPreview = BlockchainSendConfirmationPreview | dict[str, Any]
+@dataclass(frozen=True)
+class ResolvedBlockchainSendConfirmationPreview:
+    schema_version: Literal["blockchain-send-preview-v2"]
+    resolution_digest: str
+    preparation_digest: str
+    expected_chain_id: str
+    observed_chain_id: str
+    expected_genesis_hash: str
+    observed_genesis_hash: str
+    expected_checkpoint: dict[str, Any] | None
+    observed_checkpoint: dict[str, Any] | None
+    resolution_block_number: str
+    resolution_block_hash: str
+    preparation_block_number: str
+    preparation_block_hash: str
+    rpc_origin: str
+    sourcify_target_origin: str
+    sourcify_implementation_origin: str | None
+    contract_address: str
+    proxy_kind: str
+    implementation_address: str | None
+    abi_address: str
+    target_code_hash: str
+    implementation_code_hash: str | None
+    signer_address: str
+    to_address: str
+    value_wei: str
+    transaction_type: str
+    nonce: str
+    gas_limit: str
+    gas_price_wei: str | None
+    max_fee_per_gas_wei: str | None
+    max_priority_fee_per_gas_wei: str | None
+    max_total_fee_wei: str
+    calldata_bytes: str
+    calldata_sha256: str
+    call: BlockchainCallPreview
+    simulation_block_number: str
+    simulation_block_hash: str
+    simulation_return_data: str
+    simulation_decoded_returns: list[Any] | None
+    postconditions: list[dict[str, Any]]
+    fee_note: str
+    evidence_note: str
+
+
+ToolConfirmationPreview = (
+    BlockchainSendConfirmationPreview
+    | ResolvedBlockchainSendConfirmationPreview
+    | dict[str, Any]
+)
 
 
 @dataclass(frozen=True)

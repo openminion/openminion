@@ -8,6 +8,7 @@ from openminion.modules.tool.plugin_api import (
     BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
     POLICY_AUTHORIZATION_DESCRIPTORS,
     BlockchainSendConfirmationPreview,
+    ResolvedBlockchainSendConfirmationPreview,
     ToolConfirmationPreview,
     is_policy_authorization_pair,
 )
@@ -42,6 +43,7 @@ _BLOCKCHAIN_PREVIEW_ERROR_REASONS = {
     "request_schema",
     "preparation_digest",
     "call_context",
+    "signer_address",
     "calldata_limit",
     "preview_limit",
 }
@@ -67,7 +69,13 @@ def get_or_create_exact_confirmation(
         (invocation.tool, invocation.method)
     )
     if is_exact_blockchain_send(invocation.tool, invocation.method):
-        assert isinstance(confirmation_preview, BlockchainSendConfirmationPreview)
+        assert isinstance(
+            confirmation_preview,
+            (
+                BlockchainSendConfirmationPreview,
+                ResolvedBlockchainSendConfirmationPreview,
+            ),
+        )
         preview = asdict(confirmation_preview)
     elif descriptor is not None:
         assert isinstance(confirmation_preview, dict)

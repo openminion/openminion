@@ -297,13 +297,14 @@ def test_session_record_save_enforces_serialized_size_limit(tmp_path) -> None:
     record["padding"] = "x" * MAX_RESOLUTION_RECORD_BYTES
     record["resolution_digest"] = _record_digester(record)
 
-    with pytest.raises(SessionRecordError, match="size limit"):
+    with pytest.raises(SessionRecordError, match="size limit") as excinfo:
         save_resolution_record(
             record,
             SimpleNamespace(session_id="session-a", env=_env(tmp_path)),
             validator=_validate_record,
             digester=_record_digester,
         )
+    assert excinfo.value.reason == "size_limit"
 
 
 def test_session_record_load_enforces_serialized_size_limit(tmp_path) -> None:
@@ -318,7 +319,7 @@ def test_session_record_load_enforces_serialized_size_limit(tmp_path) -> None:
     path = next((tmp_path / ".openminion" / "blockchain" / "sessions").rglob("*.json"))
     path.write_bytes(b"x" * (MAX_RESOLUTION_RECORD_BYTES + 1))
 
-    with pytest.raises(SessionRecordError, match="size limit"):
+    with pytest.raises(SessionRecordError, match="size limit") as excinfo:
         load_resolution_record(
             record["resolution_digest"],
             session_id="session-a",
@@ -326,6 +327,7 @@ def test_session_record_load_enforces_serialized_size_limit(tmp_path) -> None:
             validator=_validate_record,
             digester=_record_digester,
         )
+    assert excinfo.value.reason == "size_limit"
 
 
 def test_operation_claim_has_one_winner_and_writes_complete_record(tmp_path) -> None:

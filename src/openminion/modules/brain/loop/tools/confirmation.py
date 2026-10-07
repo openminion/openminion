@@ -14,6 +14,7 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.schemas import Command
 from openminion.modules.tool.plugin_api import (
     BlockchainSendConfirmationPreview,
+    ResolvedBlockchainSendConfirmationPreview,
     ToolConfirmationPreview,
 )
 from openminion.modules.policy.grants import requires_once_duration
@@ -171,6 +172,44 @@ def confirmation_required_user_message(
     if facts.get("duration_options"):
         lines.append(f"Choices: {', '.join(facts['duration_options'])}")
     if tool_name == "blockchain.send_transaction" and isinstance(
+        confirmation_preview, ResolvedBlockchainSendConfirmationPreview
+    ):
+        preview = confirmation_preview
+        lines.extend(
+            [
+                f"Chain ID: {preview.observed_chain_id}",
+                f"Genesis hash: {preview.observed_genesis_hash}",
+                f"RPC: {preview.rpc_origin}",
+                f"Contract: {preview.contract_address}",
+                f"Implementation: {preview.implementation_address or '-'}",
+                f"Signer: {preview.signer_address}",
+                f"Function: {preview.call.function_signature}",
+                "Arguments: "
+                + json.dumps(
+                    preview.call.function_args,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ),
+                f"Value (wei): {preview.value_wei}",
+                f"Nonce: {preview.nonce}",
+                f"Gas limit: {preview.gas_limit}",
+                f"Maximum total fee (wei): {preview.max_total_fee_wei}",
+                f"Calldata SHA-256: {preview.calldata_sha256}",
+                f"Preparation block: {preview.preparation_block_number}",
+                f"Simulation result: {preview.simulation_return_data}",
+                "Postconditions: "
+                + json.dumps(
+                    preview.postconditions,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ),
+                f"Resolution digest: {preview.resolution_digest}",
+                f"Preparation digest: {preview.preparation_digest}",
+                preview.fee_note,
+                preview.evidence_note,
+            ]
+        )
+    elif tool_name == "blockchain.send_transaction" and isinstance(
         confirmation_preview, BlockchainSendConfirmationPreview
     ):
         preview = confirmation_preview

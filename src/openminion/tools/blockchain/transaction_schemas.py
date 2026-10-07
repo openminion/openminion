@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+import hashlib
+import json
 from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Field, RootModel, TypeAdapter, field_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    RootModel,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 from .schema_types import (
     Address,
@@ -11,6 +21,7 @@ from .schema_types import (
     FunctionAbi,
     HexData,
     PreparationDigest,
+    TransactionHash,
     inline_discriminated_branches,
     parse_json_container,
 )
@@ -60,8 +71,38 @@ class ContractCallArgs(ClosedModel):
         return parse_json_container(value, list)
 
 
+class EqualityPostcondition(ClosedModel):
+    function_signature: str = Field(min_length=1)
+    arguments: list[Any]
+    expected_result: list[Any]
+
+    @field_validator("arguments", "expected_result", mode="before")
+    @classmethod
+    def parse_json_array(cls, value: Any) -> Any:
+        return parse_json_container(value, list)
+
+
+class ResolvedContractCallArgs(ClosedModel):
+    kind: Literal["resolved_contract_call"] = Field(
+        description="Required discriminator; use exactly resolved_contract_call."
+    )
+    resolution_digest: PreparationDigest
+    function_signature: str = Field(min_length=1)
+    arguments: list[Any]
+    value_wei: DecimalString = "0"
+    postconditions: list[EqualityPostcondition] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+
+    @field_validator("arguments", "postconditions", mode="before")
+    @classmethod
+    def parse_json_array(cls, value: Any) -> Any:
+        return parse_json_container(value, list)
+
+
 PrepareRequest = Annotated[
-    NativeTransferArgs | RawCallArgs | ContractCallArgs,
+    NativeTransferArgs | RawCallArgs | ContractCallArgs | ResolvedContractCallArgs,
     Field(discriminator="kind"),
 ]
 PREPARE_REQUEST_ADAPTER: TypeAdapter[PrepareRequest] = TypeAdapter(PrepareRequest)
@@ -200,6 +241,111 @@ class SimulationResult(ClosedModel):
     decoded_returns: list[Any] | None
 
 
+class ResolvedCheckpoint(ClosedModel):
+    block_number: DecimalString
+    block_hash: HexData
+
+
+class ResolvedContext(ClosedModel):
+    resolution_digest: PreparationDigest
+    rpc_origin: str
+    sourcify_target_origin: str
+    sourcify_implementation_origin: str | None
+    expected_chain_id: int = Field(ge=1)
+    observed_chain_id: int = Field(ge=1)
+    expected_genesis_hash: HexData
+    observed_genesis_hash: HexData
+    expected_checkpoint: ResolvedCheckpoint | None
+    observed_checkpoint: ResolvedCheckpoint | None
+    resolution_block_number: DecimalString
+    resolution_block_hash: HexData
+    preparation_block_number: DecimalString
+    preparation_block_hash: HexData
+    contract_address: Address
+    proxy_kind: Literal["direct", "eip1967"]
+    implementation_address: Address | None
+    abi_address: Address
+    target_code_hash: HexData
+    implementation_code_hash: HexData | None
+    function_abi: FunctionAbi
+
+
+class ResolvedPreparedTransaction(ClosedModel):
+    schema_version: Literal[2]
+    kind: Literal["resolved_contract_call"]
+    resolution_digest: PreparationDigest
+    resolved_context: ResolvedContext
+    transaction: NormalizedTransaction
+    call_context: CallContext
+    simulation: SimulationResult
+    signer_address: Address
+    postconditions: list[EqualityPostcondition] = Field(max_length=5)
+    preparation_digest: PreparationDigest
+
+    @model_validator(mode="after")
+    def validate_bound_facts(self) -> ResolvedPreparedTransaction:
+        if (
+            self.resolution_digest != self.resolved_context.resolution_digest
+            or self.signer_address != self.transaction.from_address
+            or self.transaction.to_address != self.resolved_context.contract_address
+            or self.call_context.function_abi != self.resolved_context.function_abi
+            or self.simulation.chain_id != str(self.transaction.chain_id)
+            or self.simulation.resolved_block_number
+            != self.resolved_context.preparation_block_number
+            or self.simulation.resolved_block_hash
+            != self.resolved_context.preparation_block_hash
+        ):
+            raise ValueError("resolved preparation facts do not match")
+        return self
+
+
+RESOLVED_PREPARATION_ADAPTER = TypeAdapter(ResolvedPreparedTransaction)
+
+
+class PostconditionResult(EqualityPostcondition):
+    actual_result: list[Any] | None
+    matched: bool
+    error_code: str | None
+
+
+OperationState = Literal[
+    "broadcast_unknown",
+    "pending",
+    "confirming",
+    "succeeded",
+    "reverted",
+    "reorged",
+    "postcondition_failed",
+]
+
+
+class OperationRecord(ClosedModel):
+    schema_version: Literal[1]
+    preparation_digest: PreparationDigest
+    resolution_digest: PreparationDigest
+    operation_digest: PreparationDigest
+    transaction_hash: TransactionHash
+    submission_started: Literal[True]
+    broadcast_attempts: Literal[1]
+    state: OperationState
+    receipt_block_number: DecimalString | None
+    receipt_block_hash: HexData | None
+    receipt_status: Literal[0, 1] | None
+    confirmations: int = Field(ge=0)
+    confirmation_depth: int = Field(ge=1, le=64)
+    gas_used: DecimalString | None = None
+    effective_gas_price_wei: DecimalString | None = None
+    postconditions: list[EqualityPostcondition] = Field(max_length=5)
+    postcondition_results: list[PostconditionResult] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+    last_error_code: str | None
+
+
+OPERATION_RECORD_ADAPTER = TypeAdapter(OperationRecord)
+
+
 class PreparedTransactionResult(ClosedModel):
     ok: Literal[True]
     state: Literal["prepared"]
@@ -207,3 +353,51 @@ class PreparedTransactionResult(ClosedModel):
     call_context: CallContext | None
     simulation: SimulationResult
     preparation_digest: PreparationDigest
+
+
+class ResolvedPreparedTransactionResult(ResolvedPreparedTransaction):
+    ok: Literal[True]
+    state: Literal["prepared"]
+
+
+def _canonical_digest(value: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def resolved_preparation_digest(record: Mapping[str, Any]) -> str:
+    normalized = dict(record)
+    normalized.pop("preparation_digest", None)
+    return _canonical_digest(normalized)
+
+
+def validate_resolved_preparation_record(
+    record: Mapping[str, Any],
+) -> dict[str, Any]:
+    return RESOLVED_PREPARATION_ADAPTER.validate_python(record).model_dump(mode="json")
+
+
+def operation_digest(record: Mapping[str, Any]) -> str:
+    immutable_fields = {
+        key: record[key]
+        for key in (
+            "schema_version",
+            "preparation_digest",
+            "resolution_digest",
+            "transaction_hash",
+            "submission_started",
+            "broadcast_attempts",
+            "confirmation_depth",
+            "postconditions",
+        )
+    }
+    return _canonical_digest(immutable_fields)
+
+
+def validate_operation_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    return OPERATION_RECORD_ADAPTER.validate_python(record).model_dump(mode="json")
