@@ -44,7 +44,11 @@ from .command_metadata import (
     _orchestration_metadata_from_command,
     _runtime_workspace_from_command,
 )
-from .blockchain_authorization import authorize_blockchain_send
+from .policy_authorization import (
+    authorize_exact_tool_call,
+    requires_canonical_policy,
+    requires_policy_confirmation,
+)
 from .github_merge import execute_github_merge_pr_project_effect
 from .github_release import execute_github_release_project_effect
 from .github_update import execute_github_update_pr_project_effect
@@ -117,6 +121,7 @@ class ToolAdapter:
         reactions_enabled: bool = True,
         skill_api: Any | None = None,
         secret_service: Any | None = None,
+        commerce_runtime: Any | None = None,
         memory_service: Any | None = None,
         knowledge_graph_service: Any | None = None,
         ops_service: Any | None = None,
@@ -142,6 +147,7 @@ class ToolAdapter:
         self.reactions_enabled = reactions_enabled
         self.skill_api = skill_api
         self.secret_service = secret_service
+        self.commerce_runtime = commerce_runtime
         self.memory_service = memory_service
         self.knowledge_graph_service = knowledge_graph_service
         self.ops_service = ops_service
@@ -204,6 +210,7 @@ class ToolAdapter:
 
         return ToolExecutionContextBuilder(
             agent_id=self.agent_id,
+            commerce_runtime=getattr(self, "commerce_runtime", None),
             memory_service=getattr(self, "memory_service", None),
             sandbox_runner=getattr(self, "sandbox_runner", None),
             security_lab_runner=getattr(self, "security_lab_runner", None),
@@ -323,7 +330,7 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
                 details={"reason": "approval_callback_failed"},
             )
-        if tool_name == "ops.command.run":
+        if requires_canonical_policy(tool_name):
             if self.policy_ctl is None:
                 return _error_envelope(
                     status=BRAIN_STATE_ERROR,
@@ -612,6 +619,8 @@ class ToolAdapter:
             policy_adapter=policy_adapter,
             skill_api=self.skill_api,
             secret_service=self.secret_service,
+            commerce_runtime=self.commerce_runtime,
+            subject_id="local",
             telemetryctl=self.telemetryctl,
             artifactctl=self.artifactctl,
             memory_service=self.memory_service,
@@ -649,9 +658,7 @@ class ToolAdapter:
                     "requires_confirm",
                     bool(policy_decision.requires_confirm),
                 )
-                requires_confirm = bool(policy_decision.requires_confirm) or str(
-                    policy_decision.code or ""
-                ).lower() in {"require_approval", "confirm_required"}
+                requires_confirm = requires_policy_confirmation(policy_decision)
                 status = (
                     BRAIN_ACTION_STATUS_NEEDS_USER
                     if requires_confirm
@@ -719,10 +726,9 @@ class ToolAdapter:
     ) -> dict[str, Any]:
         tool_name = ctx.tool_name
         try:
-            if tool_name == "blockchain.send_transaction":
-                validated_args, ctx.policy_authorization = authorize_blockchain_send(
-                    validated_args, ctx, self.policy_ctl
-                )
+            validated_args = authorize_exact_tool_call(
+                validated_args, ctx, self.policy_ctl
+            )
             if tool_name == "github.open_pr" and project_task_id:
                 return execute_github_open_pr_project_effect(
                     task_manager=self.task_manager,

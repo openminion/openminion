@@ -143,6 +143,8 @@ def _build_tool_runtime_context(
         ),
         repositories=build_runtime_repositories(context_metadata=metadata),
         artifactctl=resolve_artifactctl(),
+        commerce_runtime=context.commerce_runtime,
+        subject_id=context.subject_id,
         memory_service=context.memory_service,
         knowledge_graph_service=context.knowledge_graph_service,
         sandbox_runner=context.sandbox_runner,

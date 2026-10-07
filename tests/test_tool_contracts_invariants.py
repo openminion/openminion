@@ -6,6 +6,7 @@ from openminion.base.config import OpenMinionConfig
 from openminion.base.config.runtime.tools import (
     BlockchainToolRuntimeConfig,
 )
+from openminion.modules.commerce.config import CommerceToolRuntimeConfig
 from openminion.modules.tool.contracts import (
     ALL_MODEL_TOOL_IDS,
     ALL_MODEL_TOOL_IDS_SET,
@@ -31,6 +32,16 @@ def _get_complete_bootstrap_manager():
         enabled=True,
         rpc_url="http://127.0.0.1:8545",
         chain_id=31337,
+    )
+    config.runtime.tools.commerce = CommerceToolRuntimeConfig(
+        enabled=True,
+        provider="fixture",
+        base_url="https://fixture.invalid",
+        merchant_id="merchant-fixture",
+        provider_secret_key="provider-secret",
+        buyer_profile_record_id="buyer-profile",
+        payment_token_record_id="payment-token",
+        writes_enabled=True,
     )
     return build_runtime_bootstrap(
         config=config,

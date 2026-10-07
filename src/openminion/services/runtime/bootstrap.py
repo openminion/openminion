@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 import logging
@@ -61,6 +63,7 @@ from openminion.services.config import resolve_services_env
 from openminion.base.config.action_policy import map_action_policy_mode
 from openminion.modules.policy.runtime.action_policy import (
     build_action_policy_service as build_action_policy_service,
+    resolve_profile_action_policy,
 )
 from openminion.modules.memory import memory_runtime_configuration
 from openminion.modules.runtime.sandboxes.daytona import (
@@ -77,6 +80,7 @@ from openminion.services.runtime.errors import (
 from openminion.services.runtime.memory import (
     _build_memory_v2_gateway_adapter as _build_bootstrap_memory_v2_gateway_adapter_impl,
 )
+from openminion.modules.commerce import resolve_injected_commerce_runtime
 
 if TYPE_CHECKING:
     from openminion.modules.runtime.sandboxes.docker import DockerSandboxRunner
@@ -720,16 +724,15 @@ def build_brain_runner_bundle(service: Any) -> Any:
         owns_artifactctl=artifactctl is not None,
     )
     memory_api = getattr(memory_assembly, "memctl", None)
-    resolved_action_policy = (
-        default_profile.action_policy
-        if default_profile.action_policy is not None
-        else config.action_policy
-    )
+    resolved_action_policy = resolve_profile_action_policy(config, default_profile)
+    runtime_handle = service._runtime_handle
+    commerce_runtime = resolve_injected_commerce_runtime(runtime_handle)
     policy_api = bridge_module.create_policy_api(
         mode=service.mode,
         db_dir=db_dir,
         policy_service=service._action_policy_service,
         action_policy_config=resolved_action_policy,
+        commerce_runtime=commerce_runtime,
     )
     safety_api = bridge_module.create_safety_api(mode=service.mode)
 
@@ -768,7 +771,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
     )
     cron_repository = create_sqlite_cron_repository(db_path=service.db_path)
     task_manager = _build_brain_task_manager(service, cron_repository)
-    runtime_handle = service._runtime_handle
     tool_api = bridge_module.create_tool_api(
         mode=service.mode,
         workspace_root=service._context.workspace_root,
@@ -777,6 +779,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         agent_name=default_profile.name or default_agent_id,
         skill_api=skill_api,
         secret_service=_runtime_secret_service(service, config),
+        commerce_runtime=commerce_runtime,
         memory_service=memory_api,
         knowledge_graph_service=getattr(runtime_handle, "knowledge_graphs", None),
         ops_service=getattr(runtime_handle, "ops_service", None),

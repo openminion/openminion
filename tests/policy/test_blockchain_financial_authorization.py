@@ -208,6 +208,7 @@ def test_allow_once_resolution_is_idempotent_and_consumed_once(tmp_path: Path) -
             "tool": "blockchain",
             "method": "send_transaction",
             "invocation_hash": pending.invocation_hash or "",
+            "session_id": "session-1",
         }
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(
@@ -272,6 +273,7 @@ def test_generic_grant_paths_cannot_authorize_exact_send(tmp_path: Path) -> None
                 tool="blockchain",
                 method="send_transaction",
                 invocation_hash=grant.invocation_hash or "",
+                session_id="session-1",
             )
             is None
         )
@@ -477,6 +479,7 @@ def test_legacy_grant_preview_is_revoked_before_consumption(tmp_path: Path) -> N
                 tool="blockchain",
                 method="send_transaction",
                 invocation_hash=pending.invocation_hash or "",
+                session_id="session-1",
             )
 
         assert captured.value.code == "BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID"

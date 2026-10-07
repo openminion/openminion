@@ -3,6 +3,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from openminion.modules.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
+from openminion.modules.commerce.models import CommerceLifecycleState
+
 from .social import (
     ROUTINE_KIND_SOCIAL_SIGNAL,
     SocialSignalConfigV1,
@@ -10,6 +13,7 @@ from .social import (
 )
 
 ROUTINE_KIND_GITHUB_PR_REVIEW: Literal["github_pr_review"] = "github_pr_review"
+ROUTINE_KIND_COMMERCE_ORDER: Literal["commerce_order"] = "commerce_order"
 
 ROUTINE_VERSION_V1 = 1
 
@@ -42,17 +46,49 @@ class GitHubPrReviewCursorV1(BaseModel):
     consecutive_failures: int = Field(default=0, ge=0)
 
 
+class CommerceOrderConfigV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subject_id: Literal["local"] = COMMERCE_LOCAL_SUBJECT_ID
+    local_order_ref: str = Field(min_length=1)
+    expires_at: str = Field(min_length=1)
+    terminal_policy: Literal["order_terminal", "fully_settled"] = "fully_settled"
+    max_failures: int = Field(default=3, ge=1, le=8)
+
+
+class CommerceOrderCursorV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    material_cursor: str | None = Field(default=None, min_length=1)
+    open_shipment_ids: tuple[str, ...] = ()
+    open_action_ids: tuple[str, ...] = ()
+    failure_count: int = Field(default=0, ge=0, le=8)
+
+
+class CommerceOrderFactsV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["ok", "paused", "expired", "denied", "failed"]
+    material_cursor: str | None = Field(default=None, min_length=1)
+    lifecycle: CommerceLifecycleState | None = None
+    open_shipment_ids: tuple[str, ...] = ()
+    open_action_ids: tuple[str, ...] = ()
+    detail: str = ""
+
+
 class RoutinePayloadV1(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    routine_kind: Literal["github_pr_review", "social_signal"] = Field(
-        default=ROUTINE_KIND_GITHUB_PR_REVIEW,
-        description="Discriminator for the routine kind.",
+    routine_kind: Literal["github_pr_review", "social_signal", "commerce_order"] = (
+        Field(
+            default=ROUTINE_KIND_GITHUB_PR_REVIEW,
+            description="Discriminator for the routine kind.",
+        )
     )
     routine_version: int = Field(default=ROUTINE_VERSION_V1, ge=1)
-    config: GitHubPrReviewConfigV1 | SocialSignalConfigV1
-    cursor: GitHubPrReviewCursorV1 | SocialSignalCursorV1 = Field(
-        default_factory=GitHubPrReviewCursorV1
+    config: GitHubPrReviewConfigV1 | SocialSignalConfigV1 | CommerceOrderConfigV1
+    cursor: GitHubPrReviewCursorV1 | SocialSignalCursorV1 | CommerceOrderCursorV1 = (
+        Field(default_factory=GitHubPrReviewCursorV1)
     )
 
     @model_validator(mode="before")
@@ -66,7 +102,16 @@ class RoutinePayloadV1(BaseModel):
         if not isinstance(value, dict):
             return value
         payload = dict(value)
-        if payload.get("routine_kind") != ROUTINE_KIND_SOCIAL_SIGNAL:
+        routine_kind = payload.get("routine_kind")
+        if routine_kind == ROUTINE_KIND_COMMERCE_ORDER:
+            payload["config"] = CommerceOrderConfigV1.model_validate(
+                payload.get("config")
+            )
+            payload["cursor"] = CommerceOrderCursorV1.model_validate(
+                payload.get("cursor") or {}
+            )
+            return payload
+        if routine_kind != ROUTINE_KIND_SOCIAL_SIGNAL:
             return payload
         payload["config"] = SocialSignalConfigV1.model_validate(payload.get("config"))
         payload["cursor"] = SocialSignalCursorV1.model_validate(
@@ -82,6 +127,12 @@ class RoutinePayloadV1(BaseModel):
             ):
                 raise ValueError("github_pr_review config and cursor do not match")
             return self
+        if self.routine_kind == ROUTINE_KIND_COMMERCE_ORDER:
+            if not isinstance(self.config, CommerceOrderConfigV1) or not isinstance(
+                self.cursor, CommerceOrderCursorV1
+            ):
+                raise ValueError("commerce_order config and cursor do not match")
+            return self
         if not isinstance(self.config, SocialSignalConfigV1) or not isinstance(
             self.cursor, SocialSignalCursorV1
         ):
@@ -90,10 +141,14 @@ class RoutinePayloadV1(BaseModel):
 
 
 __all__ = [
+    "CommerceOrderConfigV1",
+    "CommerceOrderCursorV1",
+    "CommerceOrderFactsV1",
+    "GitHubPrReviewConfigV1",
+    "GitHubPrReviewCursorV1",
+    "ROUTINE_KIND_COMMERCE_ORDER",
     "ROUTINE_KIND_GITHUB_PR_REVIEW",
     "ROUTINE_KIND_SOCIAL_SIGNAL",
     "ROUTINE_VERSION_V1",
-    "GitHubPrReviewConfigV1",
-    "GitHubPrReviewCursorV1",
     "RoutinePayloadV1",
 ]

@@ -2,7 +2,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from openminion.modules.tool import Policy, ToolSpec, canonical_tool_name
-from openminion.modules.tool.plugin_api import PolicyAdapter, PolicyDecision
+from openminion.modules.tool.plugin_api import (
+    PolicyAdapter,
+    PolicyDecision,
+    is_policy_authorization_pair,
+)
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_FILE_WRITE,
     MODEL_TASK_WATCH,
@@ -201,6 +205,11 @@ def _resolve_auto_confirm(
     replay_confirmed: bool,
     background_write_authorized: bool,
 ) -> bool:
+    tool, method = (
+        tool_name.rsplit(".", 1) if "." in tool_name else (tool_name, "default")
+    )
+    if tool == "commerce" and is_policy_authorization_pair(tool, method):
+        return replay_confirmed
     if permission_mode == "bypass":
         return True
     if permission_mode == "auto":

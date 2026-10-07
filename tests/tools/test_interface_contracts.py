@@ -9,11 +9,41 @@ from openminion.modules.tool.interfaces import (
     ToolErrorEnvelope,
     validate_plugin_contract,
 )
+from openminion.tools.commerce.interfaces import (
+    ALL_COMMERCE_TOOLS,
+    COMMERCE_PLUGIN_INTERFACE_VERSION,
+)
 
 
 def test_plugin_contract_version_defined():
     assert isinstance(PLUGIN_CONTRACT_VERSION, str)
     assert PLUGIN_CONTRACT_VERSION == "v1"
+
+
+def test_commerce_interface_contract_is_canonical_and_closed() -> None:
+    assert COMMERCE_PLUGIN_INTERFACE_VERSION == PLUGIN_CONTRACT_VERSION
+    assert ALL_COMMERCE_TOOLS == (
+        "commerce.inspect",
+        "commerce.prepare_order",
+        "commerce.place_order",
+    )
+
+
+def test_policy_factory_wires_commerce_runtime_confirmation_resolver(tmp_path) -> None:
+    from openminion.services.brain.factory.adapter import create_policy_api
+    from tests.helpers.commerce_runtime import build_fixture_commerce_runtime
+
+    runtime, _ = build_fixture_commerce_runtime()
+    adapter = create_policy_api(
+        mode="service",
+        db_dir=tmp_path,
+        policy_service=object(),
+        commerce_runtime=runtime,
+    )
+
+    assert adapter._commerce_confirmation_resolver == (
+        runtime.resolve_confirmation_preview
+    )
 
 
 def test_contract_version_pattern():

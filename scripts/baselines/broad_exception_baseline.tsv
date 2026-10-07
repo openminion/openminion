@@ -350,7 +350,7 @@ src/openminion/services/runtime/bootstrap.py	5	0	current broad-handler baseline;
 src/openminion/services/runtime/catalog.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/channel_supervisor.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/cli.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/runtime/cron/executor.py	15	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/services/runtime/cron/executor.py	13	2	routine boundary handling moved to the routine dispatcher owner
 src/openminion/services/runtime/daemon.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/engine.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/ingress/payloads.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -406,6 +406,7 @@ src/openminion/tools/search/providers/tinyfish/provider.py	1	0	current broad-han
 src/openminion/tools/skill/plugin.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/skill/url_ingest.py	5	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/task/plugin.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/tools/task/routine/dispatcher.py	2	0	routine pre-turn and artifact boundaries preserve scheduled-run error results
 src/openminion/tools/task/scheduled_task/views.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/time/plugin.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/weather/plugin.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

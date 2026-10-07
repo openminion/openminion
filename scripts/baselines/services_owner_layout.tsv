@@ -40,7 +40,9 @@ scope	max_python_files	max_loc
 # Its merge with concurrent dev work establishes the integrated source total.
 # OCSC (2026-10-03) threads one opt-in local-lab runner through the existing
 # runtime, agent, brain, and ingress owners without adding a service stack.
-services	208	41562
+# COLR (2026-10-06) threads commerce runtime and read-only order care through
+# the existing brain, cron, delivery, and routine-context owners.
+services	208	41618
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

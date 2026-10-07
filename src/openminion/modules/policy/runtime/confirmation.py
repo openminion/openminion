@@ -7,12 +7,15 @@ from typing import Any, Literal
 from openminion.modules.tool.plugin_api import (
     BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
     BlockchainSendConfirmationPreview,
+    ToolConfirmationPreview,
+    is_policy_authorization_pair,
 )
 
 from ..constants import (
     BLOCKCHAIN_CONFIRMATION_TTL_SECONDS,
     BLOCKCHAIN_POLICY_TOOL,
     BLOCKCHAIN_SEND_METHOD,
+    COMMERCE_CONFIRMATION_TTL_SECONDS,
     OPS_COMMAND_CONFIRMATION_TTL_SECONDS,
     OPS_COMMAND_POLICY_TOOL,
     OPS_COMMAND_RUN_METHOD,
@@ -21,6 +24,8 @@ from ..constants import (
     POLICY_CONFIRM_RESPONSE_UNCLEAR,
     POLICY_DECISION_ALLOW,
     POLICY_DECISION_DENY,
+    POLICY_MODE_ENFORCE,
+    POLICY_MODE_ENFORCE_SAFE,
 )
 from ..models import (
     ContextSummary,
@@ -50,18 +55,26 @@ def is_exact_ops_command(tool: str, method: str) -> bool:
     return tool == OPS_COMMAND_POLICY_TOOL and method == OPS_COMMAND_RUN_METHOD
 
 
+def is_exact_commerce_action(tool: str, method: str) -> bool:
+    return tool == "commerce" and is_policy_authorization_pair(tool, method)
+
+
 def get_or_create_exact_confirmation(
     *,
     store: PolicyStore,
     invocation: InvocationSummary,
     context: ContextSummary,
     subject_id: str,
-    blockchain_preview: BlockchainSendConfirmationPreview | None,
+    confirmation_preview: ToolConfirmationPreview | None,
 ) -> PendingPolicyConfirmation:
     if is_exact_blockchain_send(invocation.tool, invocation.method):
-        assert blockchain_preview is not None
-        preview = asdict(blockchain_preview)
+        assert isinstance(confirmation_preview, BlockchainSendConfirmationPreview)
+        preview = asdict(confirmation_preview)
         ttl_seconds = BLOCKCHAIN_CONFIRMATION_TTL_SECONDS
+    elif is_exact_commerce_action(invocation.tool, invocation.method):
+        assert isinstance(confirmation_preview, dict)
+        preview = dict(confirmation_preview)
+        ttl_seconds = COMMERCE_CONFIRMATION_TTL_SECONDS
     else:
         preview = {
             "plan_id": str(invocation.args.get("plan_id", "")),
@@ -134,6 +147,59 @@ def blockchain_preview_invalid_decision(
             else "request_schema"
         },
     )
+
+
+def authorization_preflight_decision(
+    *,
+    invocation: InvocationSummary,
+    context: ContextSummary,
+    risk: RiskSpec,
+    mode: str,
+    confirmation_preview: ToolConfirmationPreview | None,
+    confirmation_preview_error: str | None,
+) -> PolicyDecision | None:
+    if is_exact_blockchain_send(invocation.tool, invocation.method):
+        if confirmation_preview is None:
+            return blockchain_preview_invalid_decision(
+                invocation.invocation_hash,
+                risk,
+                confirmation_preview_error,
+            )
+    elif is_exact_commerce_action(invocation.tool, invocation.method):
+        if context.subject_id != "local" or not context.session_id:
+            return PolicyDecision(
+                decision=POLICY_DECISION_DENY,
+                reason_code="SUBJECT_UNAVAILABLE",
+                reason="Commerce authorization requires the trusted local subject and session.",
+                risk=risk,
+                invocation_hash=invocation.invocation_hash,
+            )
+        if not isinstance(confirmation_preview, dict):
+            return PolicyDecision(
+                decision=POLICY_DECISION_DENY,
+                reason_code="COMMERCE_CONFIRMATION_PREVIEW_INVALID",
+                reason="Commerce approval preview could not be verified.",
+                risk=risk,
+                invocation_hash=invocation.invocation_hash,
+            )
+    if (
+        is_policy_authorization_pair(invocation.tool, invocation.method)
+        or is_exact_ops_command(invocation.tool, invocation.method)
+    ) and mode not in {POLICY_MODE_ENFORCE, POLICY_MODE_ENFORCE_SAFE}:
+        action = (
+            "operations command"
+            if is_exact_ops_command(invocation.tool, invocation.method)
+            else f"{invocation.tool} {invocation.method}"
+        )
+        return PolicyDecision(
+            decision=POLICY_DECISION_DENY,
+            reason_code="POLICY_MODE_UNSUPPORTED",
+            reason=f"Enforcing policy is required for {action}.",
+            risk=risk,
+            invocation_hash=invocation.invocation_hash,
+            details={"mode": mode},
+        )
+    return None
 
 
 def _normalize_confirmation_token(value: str) -> str:
