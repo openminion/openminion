@@ -99,6 +99,7 @@ def test_researcher_profile_and_identity_require_explicit_selection() -> None:
     assert resolve_agent_config(config).name == "default-agent"
     researcher = resolve_agent_config(config, "security-researcher-readonly")
     assert researcher.skill == "security-researcher-readonly"
+    assert researcher.structural_tool_results is True
 
     identity = IdentityCtl(store=InMemoryIdentityStore())
     loaded = identity.load_profiles_from_path(IDENTITY_PATH)

@@ -250,6 +250,7 @@ def run_step(
         session_id=session_id,
         agent_id=runner.profile.agent_id,
         llm_api=runner.llm_api,
+        structural_tool_results=runner.profile.structural_tool_results,
     )
     tick_ctx = build_tick_run_context(
         session_id=session_id,

@@ -49,7 +49,14 @@ from openminion.tools.blockchain.confirmation import (
 )
 from openminion.tools.blockchain.runtime import preparation_digest
 from openminion.tools.blockchain.preparations import save_prepared_transaction
+from openminion.tools.blockchain.plugin import register as register_blockchain_tools
 from openminion.base.config.env import EnvironmentConfig
+
+
+def _policy_adapter(ctl: PolicyCtl) -> PolicyCtlBrainAdapter:
+    registry = ToolRegistry()
+    register_blockchain_tools(registry)
+    return PolicyCtlBrainAdapter(ctl, tool_registry=registry)
 
 
 def _command(*, recipient_byte: str = "22", nonce: int = 0) -> ToolCommand:
@@ -188,7 +195,7 @@ def test_brain_adapter_copies_server_owned_approval_id(tmp_path) -> None:
             reversibility="irreversible",
         ),
     )
-    adapter = PolicyCtlBrainAdapter(ctl)
+    adapter = _policy_adapter(ctl)
     state = SimpleNamespace(
         session_id="session",
         agent_id="agent",
@@ -205,7 +212,7 @@ def test_brain_adapter_copies_server_owned_approval_id(tmp_path) -> None:
     assert decision.outcome == "REQUIRE_CONFIRMATION"
     assert decision.approval_id
     assert decision.confirmation_preview is not None
-    assert decision.confirmation_preview.to_address.endswith("22" * 20)
+    assert decision.confirmation_preview["to_address"].endswith("22" * 20)
 
 
 def test_brain_adapter_denies_invalid_preview_without_pending_confirmation(
@@ -219,7 +226,7 @@ def test_brain_adapter_denies_invalid_preview_without_pending_confirmation(
         "blockchain.send_transaction",
         RiskSpec(risk_class="financial", side_effects="external_account"),
     )
-    adapter = PolicyCtlBrainAdapter(ctl)
+    adapter = _policy_adapter(ctl)
     command = _command().model_copy(deep=True)
     command.args["preparation_digest"] = "sha256:" + "0" * 64
     state = SimpleNamespace(
@@ -257,7 +264,7 @@ def test_authorization_adapter_translates_invalid_preview_lineage(tmp_path) -> N
         "blockchain.send_transaction",
         RiskSpec(risk_class="financial", side_effects="external_account"),
     )
-    adapter = PolicyCtlBrainAdapter(ctl)
+    adapter = _policy_adapter(ctl)
     command = _command()
     state = SimpleNamespace(
         session_id="session",
@@ -387,7 +394,7 @@ def test_two_blockchain_sends_bind_only_first_pending_approval(tmp_path) -> None
     )
 
     runner = SimpleNamespace(
-        policy_api=PolicyCtlBrainAdapter(ctl),
+        policy_api=_policy_adapter(ctl),
         memory_api=None,
     )
     runner._approve = lambda *, state, command, logger: _approve_delegate(
@@ -454,7 +461,7 @@ def test_two_blockchain_sends_bind_only_first_pending_approval(tmp_path) -> None
         == first_address
     )
     assert state.pending_policy_confirmation_preview is not None
-    assert state.pending_policy_confirmation_preview.to_address == first_address
+    assert state.pending_policy_confirmation_preview["to_address"] == first_address
     assert state.pending_policy_approval_id == first_outcome.policy_approval_id
     assert confirmation_replay_batch_size(state.pending_confirmation_command) == 1
     assert second_outcome.policy_approval_id is None

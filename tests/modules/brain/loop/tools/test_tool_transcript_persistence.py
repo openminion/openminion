@@ -321,15 +321,16 @@ def test_security_tool_transcript_persists_only_structural_facts(
         artifactctl.close()
 
 
-def test_security_profile_persists_file_reads_as_structural_facts(
+def test_structural_profile_persists_file_reads_as_structural_facts(
     tmp_path: Path,
 ) -> None:
     session_api = LocalSessionStore(tmp_path / "security-profile")
     loop_ctx = SimpleNamespace(
         session_api=session_api,
+        structural_tool_results=True,
         state=SimpleNamespace(
             session_id="security-session",
-            agent_id="security-researcher-readonly",
+            agent_id="renamed-security-reviewer",
         ),
     )
     loop_state = SimpleNamespace(scratchpad={})
@@ -368,12 +369,13 @@ def test_security_profile_persists_file_reads_as_structural_facts(
     assert "eval(user_input)" not in str(events)
 
 
-def test_security_profile_tool_event_omits_summary(tmp_path: Path) -> None:
+def test_structural_profile_tool_event_omits_summary(tmp_path: Path) -> None:
     session_api = LocalSessionStore(tmp_path / "security-events")
     logger = CanonicalEventLogger(
         session_api=session_api,
         session_id="security-session",
-        agent_id="security-researcher-readonly",
+        agent_id="renamed-security-reviewer",
+        structural_tool_results=True,
     )
 
     logger.emit(
@@ -384,6 +386,12 @@ def test_security_profile_tool_event_omits_summary(tmp_path: Path) -> None:
             "tool_name": "file.read",
         },
     )
+    logger.emit("brain.execution_status", {"goal": "private goal"})
 
-    payload = session_api.list_events("security-session")[0]["payload"]
-    assert payload == {"status": "success", "tool_name": "file.read"}
+    events = session_api.list_events("security-session")
+    assert events[0]["payload"] == {
+        "status": "success",
+        "structural_only": True,
+        "tool_name": "file.read",
+    }
+    assert events[1]["payload"]["structural_only"] is True

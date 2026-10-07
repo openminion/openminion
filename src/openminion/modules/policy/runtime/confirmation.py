@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import asdict
 from typing import Any, Callable, Literal
 
 from openminion.modules.tool.plugin_api import (
-    BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
     POLICY_AUTHORIZATION_DESCRIPTORS,
-    BlockchainSendConfirmationPreview,
     ToolConfirmationPreview,
+    confirmation_preview_payload,
     is_policy_authorization_pair,
 )
 
 from ..constants import (
+    BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
     BLOCKCHAIN_POLICY_TOOL,
     BLOCKCHAIN_SEND_METHOD,
     OPS_COMMAND_CONFIRMATION_TTL_SECONDS,
@@ -66,12 +65,10 @@ def get_or_create_exact_confirmation(
     descriptor = POLICY_AUTHORIZATION_DESCRIPTORS.get(
         (invocation.tool, invocation.method)
     )
-    if is_exact_blockchain_send(invocation.tool, invocation.method):
-        assert isinstance(confirmation_preview, BlockchainSendConfirmationPreview)
-        preview = asdict(confirmation_preview)
-    elif descriptor is not None:
-        assert isinstance(confirmation_preview, dict)
-        preview = dict(confirmation_preview)
+    if descriptor is not None:
+        assert confirmation_preview is not None
+        preview = confirmation_preview_payload(confirmation_preview)
+        preview.pop("display_lines", None)
     else:
         preview = {
             "plan_id": str(invocation.args.get("plan_id", "")),

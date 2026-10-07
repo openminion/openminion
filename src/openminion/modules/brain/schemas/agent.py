@@ -141,6 +141,7 @@ class AgentProfile(BaseModel):
     skill_catalog: list[str] = Field(default_factory=list)
     max_skills_per_session: int = Field(default=4, ge=1)
     tool_policy: str | dict[str, Any] | None = None
+    structural_tool_results: bool = False
     memory_read_scopes: list[str] = Field(default_factory=list)
     memory_write_scopes: dict[str, Any] = Field(default_factory=dict)
     model_capability_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)

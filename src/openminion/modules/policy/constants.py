@@ -143,3 +143,6 @@ EXACT_CONFIRMATION_PAIRS = POLICY_AUTHORIZATION_PAIRS | frozenset(
 
 DEFAULT_STANDALONE_SQLITE_SUBPATH = Path(".openminion") / "policy" / "policy.db"
 DEFAULT_INTEGRATED_SQLITE_SUBPATH = Path("policy") / "policy.db"
+BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE = (
+    "Blockchain transaction approval preview could not be verified."
+)

@@ -831,7 +831,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
     )
 
     from openminion.services.brain.service import _runtime_mode_config_from_agent
-
     profile_kwargs: dict[str, Any] = dict(
         agent_id=default_profile.name or default_agent_id,
         role="general",
@@ -841,6 +840,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         skill=default_profile.skill,
         skill_catalog=list(default_profile.skill_catalog or []),
         budgets=budgets,
+        structural_tool_results=bool(default_profile.structural_tool_results),
         model_capability_overrides=dict(
             getattr(default_profile, "model_capability_overrides", {}) or {}
         ),
