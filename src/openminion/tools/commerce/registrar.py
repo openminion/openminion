@@ -15,21 +15,34 @@ from openminion.modules.tool import ToolRegisterContext
 from .family import COMMERCE_FAMILY
 
 
-def _writes_enabled(ctx: ToolRegisterContext | None) -> bool:
+def _commerce_config(ctx: ToolRegisterContext | None) -> Any:
     if ctx is None:
-        return True
+        return None
     runtime_config = getattr(ctx.config, "runtime", ctx.config)
     tools_config = getattr(runtime_config, "tools", None)
     commerce_config = coerce_commerce_tool_runtime_config(
         getattr(tools_config, "commerce", None)
     )
-    return bool(commerce_config and commerce_config.writes_enabled)
+    return commerce_config
 
 
 def _active_family(ctx: ToolRegisterContext | None) -> ToolFamilySpec:
-    if _writes_enabled(ctx):
-        return COMMERCE_FAMILY
-    return replace(COMMERCE_FAMILY, tools=COMMERCE_FAMILY.tools[:2])
+    config = _commerce_config(ctx)
+    if ctx is None or config and config.order_actions_enabled:
+        count = 5
+    elif config and config.writes_enabled:
+        count = 3
+    else:
+        count = 2
+    tools = COMMERCE_FAMILY.tools[:count]
+    profiles = tuple(
+        replace(
+            profile,
+            tool_names=frozenset(tool.name for tool in tools),
+        )
+        for profile in COMMERCE_FAMILY.exposure_profiles
+    )
+    return replace(COMMERCE_FAMILY, tools=tools, exposure_profiles=profiles)
 
 
 @dataclass(frozen=True)
