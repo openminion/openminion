@@ -180,6 +180,13 @@ def test_resolver_schema_is_closed_and_rpc_url_has_no_query() -> None:
         ResolveContractArgs.model_validate(
             _args(research_source_urls=[f"https://source.example/{index}" for index in range(6)])
         )
+    resolved = ResolveContractArgs.model_validate(
+        _args(
+            explorer_contract_url="https://explorer.example/address#code",
+            research_source_urls=["https://source.example/contracts?q=staking#main"],
+        )
+    )
+    assert resolved.explorer_contract_url.endswith("#code")
 
 
 def test_resolve_contract_verifies_and_persists_canonical_facts(tmp_path) -> None:

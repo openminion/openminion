@@ -60,8 +60,7 @@ def _validate_https_url(value: str, *, query_allowed: bool) -> str:
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
-        or parsed.fragment
-        or (not query_allowed and parsed.query)
+        or (not query_allowed and (parsed.query or parsed.fragment))
     ):
         raise ValueError("URL must be a valid HTTPS URL")
     return normalized
