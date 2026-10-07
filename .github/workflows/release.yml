@@ -196,7 +196,12 @@ jobs:
               ProviderError,
               tool,
           )
-          from openminion.api import dispatch_request
+          from openminion.api import (
+              RuntimeTurnHandle,
+              TurnChunk,
+              TurnResponse,
+              dispatch_request,
+          )
 
           print(openminion.__version__)
           print(
@@ -204,6 +209,9 @@ jobs:
               Agent.__name__,
               OpenMinionConfig.__name__,
               ProviderError.__name__,
+              RuntimeTurnHandle.__name__,
+              TurnChunk.__name__,
+              TurnResponse.__name__,
               callable(tool),
               callable(dispatch_request),
           )

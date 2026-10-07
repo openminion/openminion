@@ -294,6 +294,11 @@ The root package exports the supported Python facade: `APIRuntime`, `Agent`,
 [`API_COMPATIBILITY.md`](API_COMPATIBILITY.md) before depending on deeper
 package internals.
 
+`Agent.run_stream()` is the synchronous callback-progress convenience API.
+For typed iterator streaming, cancellation, or streamed approval resolution,
+use `APIRuntime.submit_turn()` and the advanced contracts exported from
+`openminion.api`. See [`examples/sdk/`](examples/sdk/) for both flows.
+
 ## Repository Map
 
 ```text

@@ -1,25 +1,20 @@
 """OpenMinion's stable package-level public API."""
 
-from typing import Any
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
 
-from openminion.base.version import OPENMINION_VERSION
+from .base.version import OPENMINION_VERSION, PROVIDER_ERROR_PUBLIC_VERSION
+
+if TYPE_CHECKING:
+    from .api import APIRuntime as APIRuntime, Agent as Agent
+    from .api import AgentOutputValidationError as AgentOutputValidationError
+    from .api import AgentRunResult as AgentRunResult, Handoff as Handoff
+    from .api import ProviderError as ProviderError, subagent as subagent
+    from .base.config import OpenMinionConfig as OpenMinionConfig
+    from .modules.memory.portability import MemoryBundle as MemoryBundle
+    from .tools import tool as tool
 
 __version__ = OPENMINION_VERSION
-
-__all__ = [
-    "APIRuntime",
-    "Agent",
-    "AgentOutputValidationError",
-    "AgentRunResult",
-    "Handoff",
-    "MemoryBundle",
-    "OpenMinionConfig",
-    "ProviderError",
-    "__version__",
-    "subagent",
-    "tool",
-]
-
 _LAZY_EXPORTS = {
     "APIRuntime": ("openminion.api", "APIRuntime"),
     "Agent": ("openminion.api", "Agent"),
@@ -32,6 +27,14 @@ _LAZY_EXPORTS = {
     "subagent": ("openminion.api", "subagent"),
     "tool": ("openminion.tools", "tool"),
 }
+__all__ = [*_LAZY_EXPORTS, "__version__"]
+_INITIAL_PUBLIC_EXPORTS = (
+    ("APIRuntime", "Agent", "AgentOutputValidationError", "AgentRunResult")
+    + ("Handoff", "MemoryBundle", "OpenMinionConfig", "__version__")
+    + ("subagent", "tool")
+)
+__since__ = dict.fromkeys(_INITIAL_PUBLIC_EXPORTS, "0.0.1")
+__since__["ProviderError"] = PROVIDER_ERROR_PUBLIC_VERSION
 
 
 def __getattr__(name: str) -> Any:
@@ -40,11 +43,6 @@ def __getattr__(name: str) -> Any:
     except KeyError as exc:
         raise AttributeError(f"module 'openminion' has no attribute {name!r}") from exc
 
-    from importlib import import_module
-
     value = getattr(import_module(module_name), attribute_name)
     globals()[name] = value
     return value
-
-
-__since__: dict[str, str] = {name: OPENMINION_VERSION for name in __all__}

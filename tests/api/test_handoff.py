@@ -126,7 +126,7 @@ def test_handoff_explicit_name_and_description_override() -> None:
 
 
 def test_agent_handoffs_param_registers_handoff_tool_names() -> None:
-    runtime_a = _FakeRuntime()
+    runtime_a = _FakeRuntime(tools=ToolRegistry())
     runtime_b = _FakeRuntime("from B")
     agent_b = Agent(runtime=runtime_b, name="agent_b", instructions="B's job")
     agent_a = Agent(
@@ -419,6 +419,37 @@ def test_subagent_issues_and_revokes_fresh_memory_grant_per_run(tmp_path) -> Non
         assert second_context.memory_grant_id != first_context.memory_grant_id
         assert runtime.active_grant_during_run is not None
         assert all(grant.revoked_at is not None for grant in policy.list_grants())
+    finally:
+        policy.close()
+
+
+def test_delegated_memory_is_not_granted_before_tool_registry_validation(
+    tmp_path,
+) -> None:
+    policy = PolicyCtl.with_sqlite(
+        tmp_path / "policy.db",
+        config=PolicyConfig(mode="enforce"),
+    )
+    try:
+        runtime = _FakeRuntime(action_policy=policy)
+        parent = Agent(runtime=runtime, name="parent")
+        request = DelegatedMemoryReadRequest(
+            namespaces=(MemoryNamespace(agent_id="parent"),),
+            record_types=("fact",),
+        )
+        child = subagent(parent, name="child", memory=request)
+        child_with_handoff = Agent(
+            runtime=runtime,
+            name="child",
+            handoffs=[Handoff(target=Agent(runtime=runtime, name="peer"))],
+            subagent_context=child.subagent_context,
+            delegated_memory_request=request,
+        )
+
+        with pytest.raises(TypeError, match="require APIRuntime.tools"):
+            child_with_handoff.run("delegate")
+
+        assert policy.list_grants() == []
     finally:
         policy.close()
 

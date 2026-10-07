@@ -77,6 +77,7 @@ class _GatewayStub:
 class _ManagerStub:
     def __init__(self) -> None:
         self.requests = []
+        self.approval_resolutions: list[tuple[str, str]] = []
 
     def submit_turn(self, request):  # noqa: ANN001
         self.requests.append(request)
@@ -85,6 +86,9 @@ class _ManagerStub:
             result=lambda timeout_s=None: None,
             stream=lambda timeout_s=None: iter(()),
             cancel=lambda: True,
+            resolve_approval=lambda *, approval_id, decision: (
+                self.approval_resolutions.append((approval_id, decision)) or True
+            ),
         )
 
 
@@ -344,6 +348,13 @@ def test_submit_turn_payload_uses_runtime_manager_and_preserves_meta() -> None:
     assert request.meta["idempotency_key"] == "idem-submit"
     assert request.meta["forced_tools"] == ["web.search"]
     assert request.meta["capability_category"] == "search"
+    assert handle.resolve_approval(
+        approval_id="approval-1",
+        decision="allow_once",
+    )
+    assert runtime.runtime_manager.approval_resolutions == [
+        ("approval-1", "allow_once")
+    ]
 
 
 def test_direct_turn_preserves_top_level_permission_mode_with_precedence() -> None:
