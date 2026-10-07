@@ -99,8 +99,7 @@ def resolve_security_lab_metadata(
     )
     matches = (
         activation.agent_id == str(identity.get("agent_id", ""))
-        and activation.profile_revision
-        == int(identity.get("profile_revision", 0) or 0)
+        and activation.profile_revision == int(identity.get("profile_revision", 0) or 0)
         and activation.profile_version == str(identity.get("profile_version", ""))
         and activation.config_fingerprint == scope.config_fingerprint
         and activation.daemon_id == scope.daemon_id

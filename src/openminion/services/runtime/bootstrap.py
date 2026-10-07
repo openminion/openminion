@@ -815,7 +815,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         config,
         override_value=service._resolve_override_value,
     )
-
     pre_resolved_brain_config = service._resolve_brain_config()
     profile_pae_config = _copy_optional_config_section(
         pre_resolved_brain_config,
@@ -831,6 +830,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
     )
 
     from openminion.services.brain.service import _runtime_mode_config_from_agent
+
     profile_kwargs: dict[str, Any] = dict(
         agent_id=default_profile.name or default_agent_id,
         role="general",
