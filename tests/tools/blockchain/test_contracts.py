@@ -13,6 +13,7 @@ from openminion.modules.tool.contracts.model_ids import (
     DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET,
     MODEL_BLOCKCHAIN_DEBUG,
     MODEL_BLOCKCHAIN_INSPECT,
+    MODEL_BLOCKCHAIN_RESOLVE_CONTRACT,
     MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
     MODEL_BLOCKCHAIN_SEND_TRANSACTION,
 )
@@ -20,6 +21,7 @@ from openminion.modules.tool.contracts.runtime_ids import (
     ALL_RUNTIME_BINDING_IDS_SET,
     RUNTIME_BLOCKCHAIN_DEBUG,
     RUNTIME_BLOCKCHAIN_INSPECT,
+    RUNTIME_BLOCKCHAIN_RESOLVE_CONTRACT,
     RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
     RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
 )
@@ -29,6 +31,7 @@ from openminion.base.config.env import EnvironmentConfig
 from openminion.tools.blockchain.plugin import (
     BLOCKCHAIN_DEBUG_DESCRIPTION,
     BLOCKCHAIN_INSPECT_DESCRIPTION,
+    BLOCKCHAIN_RESOLVE_DESCRIPTION,
     WEB3_DEPENDENCY,
 )
 from openminion.tools.blockchain.schemas import (
@@ -57,12 +60,14 @@ from openminion.tools.blockchain.abi import (
 MODEL_IDS = {
     MODEL_BLOCKCHAIN_DEBUG,
     MODEL_BLOCKCHAIN_INSPECT,
+    MODEL_BLOCKCHAIN_RESOLVE_CONTRACT,
     MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
     MODEL_BLOCKCHAIN_SEND_TRANSACTION,
 }
 RUNTIME_IDS = {
     RUNTIME_BLOCKCHAIN_DEBUG,
     RUNTIME_BLOCKCHAIN_INSPECT,
+    RUNTIME_BLOCKCHAIN_RESOLVE_CONTRACT,
     RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
     RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
 }
@@ -91,6 +96,11 @@ def test_manifest_distinguishes_inspect_from_debug() -> None:
         for item in manifest.model_tools
         if item.model_tool_id == MODEL_BLOCKCHAIN_DEBUG
     )
+    resolve = next(
+        item
+        for item in manifest.model_tools
+        if item.model_tool_id == MODEL_BLOCKCHAIN_RESOLVE_CONTRACT
+    )
 
     assert inspect.description == BLOCKCHAIN_INSPECT_DESCRIPTION
     assert inspect.description == (
@@ -106,6 +116,15 @@ def test_manifest_distinguishes_inspect_from_debug() -> None:
         "Simulate EVM calls and decode calldata, revert data, or events from one "
         "transaction receipt on the configured blockchain. Read-only; never signs "
         "or sends. Not for receipt status; use blockchain.inspect with action receipt."
+    )
+    assert resolve.description == BLOCKCHAIN_RESOLVE_DESCRIPTION
+    assert resolve.description == (
+        "Validate one EVM contract candidate that you already researched. Supply "
+        "its public RPC, expected chain identity, address, and source URLs. This "
+        "tool uses the fixed official Sourcify v2 lookup to verify ABI and runtime "
+        "bytecode. This tool verifies and stores facts; it does not search, choose "
+        "candidates, retry, send a transaction, or prove that a deployment is "
+        "official."
     )
 
 
@@ -160,6 +179,11 @@ def test_blockchain_manifest_maps_each_model_id_to_its_runtime_candidate() -> No
             MODEL_BLOCKCHAIN_INSPECT,
             RUNTIME_BLOCKCHAIN_INSPECT,
             (MODEL_BLOCKCHAIN_INSPECT,),
+        ),
+        (
+            MODEL_BLOCKCHAIN_RESOLVE_CONTRACT,
+            RUNTIME_BLOCKCHAIN_RESOLVE_CONTRACT,
+            (MODEL_BLOCKCHAIN_RESOLVE_CONTRACT,),
         ),
         (
             MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,

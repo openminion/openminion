@@ -78,12 +78,14 @@ def _optional_contract_omissions(
     from openminion.modules.tool.contracts.model_ids import (
         MODEL_BLOCKCHAIN_DEBUG,
         MODEL_BLOCKCHAIN_INSPECT,
+        MODEL_BLOCKCHAIN_RESOLVE_CONTRACT,
         MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
         MODEL_BLOCKCHAIN_SEND_TRANSACTION,
     )
     from openminion.modules.tool.contracts.runtime_ids import (
         RUNTIME_BLOCKCHAIN_DEBUG,
         RUNTIME_BLOCKCHAIN_INSPECT,
+        RUNTIME_BLOCKCHAIN_RESOLVE_CONTRACT,
         RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
         RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
     )
@@ -98,6 +100,7 @@ def _optional_contract_omissions(
             {
                 MODEL_BLOCKCHAIN_DEBUG,
                 MODEL_BLOCKCHAIN_INSPECT,
+                MODEL_BLOCKCHAIN_RESOLVE_CONTRACT,
                 MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
                 MODEL_BLOCKCHAIN_SEND_TRANSACTION,
             }
@@ -106,6 +109,7 @@ def _optional_contract_omissions(
             {
                 RUNTIME_BLOCKCHAIN_DEBUG,
                 RUNTIME_BLOCKCHAIN_INSPECT,
+                RUNTIME_BLOCKCHAIN_RESOLVE_CONTRACT,
                 RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
                 RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
             }

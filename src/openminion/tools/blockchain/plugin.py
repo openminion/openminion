@@ -13,6 +13,7 @@ from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from .debug import debug_blockchain
 from .debug_schemas import DebugArgs
 from .runtime import inspect_blockchain, prepare_transaction, send_transaction
+from .resolution import ResolveContractArgs, resolve_contract
 from .schemas import InspectArgs, PrepareArgs, SendPreparedTransactionArgs
 
 BLOCKCHAIN_INSPECT_DESCRIPTION = (
@@ -38,6 +39,13 @@ BLOCKCHAIN_SEND_DESCRIPTION = (
     "No arguments are needed for the latest preparation in this session; pass a "
     "preparation_digest only to select an earlier preparation. On a send request, "
     "invoke this tool without modifying, comparing, or substituting preparations."
+)
+BLOCKCHAIN_RESOLVE_DESCRIPTION = (
+    "Validate one EVM contract candidate that you already researched. Supply its "
+    "public RPC, expected chain identity, address, and source URLs. This tool uses "
+    "the fixed official Sourcify v2 lookup to verify ABI and runtime bytecode. This "
+    "tool verifies and stores facts; it does not search, choose candidates, retry, "
+    "send a transaction, or prove that a deployment is official."
 )
 
 _WEB3_SETUP_HINT = ToolDependencySetupHint(
@@ -79,6 +87,19 @@ WEB3_DEPENDENCY = ToolDependencyDecl(
 
 
 def register(registry: ToolRegistry) -> None:
+    registry.register(
+        ToolSpec(
+            name="blockchain.resolve_contract",
+            args_model=ResolveContractArgs,
+            min_scope="READ_ONLY",
+            handler=resolve_contract,
+            dangerous=False,
+            idempotent=True,
+            tags=("blockchain", "read_only", "resolve"),
+            capabilities=("blockchain", "read_only", "resolve"),
+            dependencies=(WEB3_DEPENDENCY,),
+        )
+    )
     registry.register(
         ToolSpec(
             name="blockchain.debug",
@@ -137,6 +158,7 @@ __all__ = [
     "BLOCKCHAIN_DEBUG_DESCRIPTION",
     "BLOCKCHAIN_INSPECT_DESCRIPTION",
     "BLOCKCHAIN_PREPARE_DESCRIPTION",
+    "BLOCKCHAIN_RESOLVE_DESCRIPTION",
     "BLOCKCHAIN_SEND_DESCRIPTION",
     "WEB3_DEPENDENCY",
     "register",
