@@ -96,7 +96,6 @@ class CommerceRuntime(CommerceRuntimePersistenceMixin):
         self.order_store = order_store
         self.secret_service = secret_service
         self.credential_audit_log = credential_audit_log or InMemoryCredentialAuditLog()
-        self._checkout_refs: dict[str, str] = {}
 
     def inspect(self, request: InspectRequest) -> CommerceInspection:
         inspection = self.provider.inspect(
@@ -122,11 +121,15 @@ class CommerceRuntime(CommerceRuntimePersistenceMixin):
             )
         elif kind == "checkout":
             reference = str(args["preparation_ref"])
-            self._require_owned_preparation(reference)
+            preparation = self._require_owned_preparation(reference).prepared
+            if preparation is None:
+                raise CommerceProviderError(
+                    "STALE_PREPARATION", "Stored checkout reference is unavailable."
+                )
             request = InspectRequest(
                 kind="checkout",
                 merchant_id=self.merchant_id,
-                checkout_ref=self._checkout_refs.get(reference, reference),
+                checkout_ref=preparation.checkout_ref,
             )
         elif kind == "shipment":
             order_ref = str(args["local_order_ref"])
@@ -368,17 +371,16 @@ class CommerceRuntime(CommerceRuntimePersistenceMixin):
                 attempt_id=attempt.attempt.attempt_id,
             )
             if submitting is None:
-                recovered = self.provider.recover_placement(
-                    PlacementRecoveryLocator(
-                        idempotency_key=attempt.attempt.idempotency_key,
-                        preparation_digest=request.preparation_digest,
-                    )
+                recovery_request = request.model_copy(
+                    update={"idempotency_key": attempt.attempt.idempotency_key}
                 )
+                recovered = self._recover_placement(recovery_request)
                 if recovered is None:
                     raise CommerceOutcomeUnknown(
                         "Commerce placement is reserved or submitted and requires recovery."
                     )
-                return self._placement_result(recovered)
+                self._validate_placement_result(recovery_request, recovered, attempt)
+                return self._placement_result(recovered, attempt)
         try:
             placement = self.provider.place_order(request)
         except CommerceOutcomeUnknown:
@@ -387,6 +389,7 @@ class CommerceRuntime(CommerceRuntimePersistenceMixin):
                 self._finish_attempt(attempt, state="outcome_unknown")
                 raise
             placement = recovered
+        self._validate_placement_result(request, placement, attempt)
         return self._placement_result(placement, attempt)
 
     def recover_placement(
@@ -429,7 +432,7 @@ class CommerceRuntime(CommerceRuntimePersistenceMixin):
                     raise CommerceOutcomeUnknown(
                         "Commerce action is reserved or submitted and requires recovery."
                     )
-                self._validate_action_result(request, recovered)
+                self._validate_action_result(request, recovered, attempt)
                 return self._action_result(recovered, attempt)
         try:
             result = self.provider.apply_action(request)
@@ -439,7 +442,7 @@ class CommerceRuntime(CommerceRuntimePersistenceMixin):
                 self._finish_attempt(attempt, state="outcome_unknown")
                 raise
             result = recovered
-        self._validate_action_result(request, result)
+        self._validate_action_result(request, result, attempt)
         return self._action_result(result, attempt)
 
     def recover_action(
@@ -830,14 +833,8 @@ def build_commerce_runtime(
     )
 
 
-def resolve_injected_commerce_runtime(runtime_handle: Any) -> CommerceRuntime | None:
-    runtime = getattr(runtime_handle, "commerce_runtime", None)
-    return runtime if isinstance(runtime, CommerceRuntime) else None
-
-
 __all__ = [
     "CommerceOrderStore",
     "CommerceRuntime",
     "build_commerce_runtime",
-    "resolve_injected_commerce_runtime",
 ]

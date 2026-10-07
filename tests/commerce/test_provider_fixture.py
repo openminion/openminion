@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from openminion.modules.commerce.fixture import DroppedCommerceResponse
-from openminion.modules.commerce.provider import (
+from openminion.tools.commerce.fixture import DroppedCommerceResponse
+from openminion.tools.commerce.provider import (
     ActionRecoveryLocator,
     ApplyOrderActionRequest,
     CommerceProviderError,
@@ -18,7 +18,7 @@ from openminion.modules.commerce.provider import (
     PreparationRecoveryLocator,
     RequestedItem,
 )
-from openminion.modules.commerce.storage import SQLiteCommerceOrderStore
+from openminion.tools.commerce.storage import SQLiteCommerceOrderStore
 from tests.helpers.commerce_runtime import build_fixture_commerce_runtime
 
 

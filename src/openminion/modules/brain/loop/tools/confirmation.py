@@ -39,7 +39,7 @@ def requires_individual_confirmation(command: Command | dict[str, Any] | None) -
         else getattr(command, "tool_name", "")
     )
     normalized = str(tool_name or "").strip()
-    if normalized == "ops.command.run" or normalized.startswith("commerce."):
+    if normalized == "ops.command.run":
         return True
     tool, method = (
         normalized.rsplit(".", 1) if "." in normalized else (normalized, "default")
@@ -212,12 +212,12 @@ def confirmation_required_user_message(
                 ensure_ascii=True,
             )
         )
-    elif tool_name.startswith("commerce.") and isinstance(confirmation_preview, dict):
-        from openminion.modules.commerce.confirmation import (
-            commerce_confirmation_lines,
-        )
-
-        lines.extend(commerce_confirmation_lines(confirmation_preview))
+    elif isinstance(confirmation_preview, dict):
+        display_lines = confirmation_preview.get("display_lines", [])
+        if isinstance(display_lines, list) and all(
+            isinstance(line, str) for line in display_lines
+        ):
+            lines.extend(display_lines)
     additional_count = max(0, confirmation_replay_batch_size(command) - 1)
     if additional_count:
         noun = "command" if additional_count == 1 else "commands"

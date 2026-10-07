@@ -31,16 +31,16 @@ from openminion.cli.presentation.animation.models import (
 from openminion.cli.presentation.models import ToolEvent
 from openminion.cli.presentation.styles import set_active_theme, set_color_mode
 from openminion.cli.theme import DARK, LIGHT
-from openminion.modules.commerce.confirmation import (
+from openminion.tools.commerce.confirmation import (
     ExactOrderConfirmationPreview,
     commerce_confirmation_lines,
     commerce_result_lines,
 )
-from openminion.modules.commerce.models import (
+from openminion.tools.commerce.models import (
     CommerceLifecycleState,
     Money,
 )
-from openminion.modules.commerce.provider import (
+from openminion.tools.commerce.provider import (
     OrderActionPreparation,
     OrderInspection,
     RefundDestination,

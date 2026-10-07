@@ -11,7 +11,7 @@ from openminion.base.config.runtime.tools import (
     coerce_tool_runtime_config,
     tool_runtime_config_to_dict,
 )
-from openminion.modules.commerce.config import (
+from openminion.tools.commerce.config import (
     CommerceToolRuntimeConfig,
     coerce_commerce_tool_runtime_config,
 )

@@ -2,7 +2,6 @@ from collections.abc import Callable
 from typing import Any, Mapping
 
 from ..models import ToolEvent
-from .formatting import format_tool_result_content
 
 
 def coerce_optional_int(value: Any) -> int | None:
@@ -22,10 +21,7 @@ def build_tool_event_from_progress(
     tool_name = str(payload.get("tool_name", "") or "").strip() or "tool"
     raw_args = dict(payload.get("args", {}) or {})
     args = normalize_args(raw_args) if normalize_args is not None else raw_args
-    content = format_tool_result_content(
-        tool_name,
-        str(payload.get("content", "") or ""),
-    )
+    content = str(payload.get("content", "") or "")
     fallback_chain_raw = payload.get("runtime_fallback_chain")
     fallback_chain = (
         list(fallback_chain_raw)

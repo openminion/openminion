@@ -5,7 +5,6 @@ from typing import Any, Callable, cast
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.logging import format_structured_event, get_logger
 from openminion.modules.artifact.refs import create_default_artifactctl
-from openminion.modules.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
 from openminion.services.runtime.routine_context import (
     build_routine_pre_turn_context,
     write_routine_artifact,
@@ -24,7 +23,6 @@ from openminion.tools.task.routine.dispatcher import (
     write_routine_artifact_result,
 )
 from openminion.tools.task.routine.schemas import RoutinePayloadV1
-from openminion.tools.task.routine.schemas import ROUTINE_KIND_COMMERCE_ORDER
 from openminion.services.runtime.cron.audit import watch_write_audit_entries
 from openminion.modules.task.cron_payloads import (
     build_cron_turn_result,
@@ -367,19 +365,14 @@ class CronTurnExecutor:
         if handler is None:
             return {"summary": "routine handler is not registered", "error": True}
         routine_id = str(job.get("job_id", "") or "").strip() or "<unknown>"
-        commerce_routine = routine.routine_kind == ROUTINE_KIND_COMMERCE_ORDER
         pre_turn_ctx = build_routine_pre_turn_context(
             runtime=self._runtime,
             routine_id=routine_id,
             session_id=str(payload.get("session_id") or "").strip(),
             agent_id=self._resolve_agent_id(job) or "",
             allowed_tools=handler.pre_turn_tools_for(routine),
-            subject_id=COMMERCE_LOCAL_SUBJECT_ID if commerce_routine else "",
-            commerce_runtime=(
-                getattr(self._runtime, "commerce_runtime", None)
-                if commerce_routine
-                else None
-            ),
+            subject_id=getattr(routine.config, "subject_id", ""),
+            tool_resources=getattr(self._runtime, "tool_resources", {}),
         )
         facts, pre_turn_error = run_routine_pre_turn(
             handler=handler,

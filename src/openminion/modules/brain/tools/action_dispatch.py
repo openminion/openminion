@@ -402,7 +402,7 @@ def execute_action_dispatch(
                         call_id=str(getattr(command, "command_id", "") or ""),
                         duration_ms=_tool_duration_ms,
                         ok=(normalized.status == BRAIN_ACTION_STATUS_SUCCESS),
-                        content=str(getattr(normalized, "summary", "") or ""),
+                        content=normalized.outputs.get("content", normalized.summary),
                     )
                 except Exception as exc:
                     _record_dispatch_observer_failure(

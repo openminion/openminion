@@ -14,6 +14,7 @@ from openminion.modules.storage.runtime.module_store import (
 from openminion.modules.storage.record_store import RecordStore
 from openminion.modules.tool.plugin_api import (
     BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
+    POLICY_AUTHORIZATION_DESCRIPTORS,
 )
 from .base import PolicyStore
 from .migrations import list_migrations
@@ -567,7 +568,11 @@ class _PolicyStoreMixin(PolicyStore):
     ) -> PolicyGrant | None:
         if (tool, method) not in EXACT_CONFIRMATION_PAIRS:
             return None
-        if tool == "commerce" and not session_id:
+        descriptor = POLICY_AUTHORIZATION_DESCRIPTORS.get((tool, method))
+        if descriptor is not None and (
+            (descriptor.requires_session and not session_id)
+            or descriptor.required_subject_id not in (None, subject_id)
+        ):
             return None
         now = utc_now_iso()
         invalid_approval_id: str | None = None

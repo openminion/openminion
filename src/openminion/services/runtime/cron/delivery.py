@@ -22,16 +22,8 @@ class CronDeliveryBridge:
         result: Any,
     ) -> None:
         result_dict = self._result_dict(result)
-        payload = job.get("payload", {})
         output = result_dict.get("output", {})
-        watch = payload.get("_openminion_watch") if isinstance(payload, dict) else None
-        routine = watch.get("routine") if isinstance(watch, dict) else None
-        if (
-            isinstance(routine, dict)
-            and routine.get("routine_kind") == "commerce_order"
-            and isinstance(output, dict)
-            and not bool(output.get("watch_delivery_requested", False))
-        ):
+        if isinstance(output, dict) and output.get("watch_delivery_requested") is False:
             return
         origin = self._origin_from_job(job)
         resolved_to_value = to_value.strip()

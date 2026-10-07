@@ -8,11 +8,24 @@ from openminion.modules.tool.framework import (
     derive_manifest,
     derive_tool_specs,
 )
-from openminion.modules.commerce.config import coerce_commerce_tool_runtime_config
+from openminion.tools.commerce.config import coerce_commerce_tool_runtime_config
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool import ToolRegisterContext
 
 from .family import COMMERCE_FAMILY
+from .interfaces import ALL_COMMERCE_TOOLS
+
+
+def optional_contract_omissions(config: Any) -> tuple[set[str], set[str]]:
+    context = ToolRegisterContext(module_id="commerce", config=config)
+    settings = _commerce_config(context)
+    active = (
+        {tool.name for tool in _active_family(context).tools}
+        if settings and settings.enabled
+        else set()
+    )
+    omitted = set(ALL_COMMERCE_TOOLS) - active
+    return omitted, {f"runtime.{name}" for name in omitted}
 
 
 def _commerce_config(ctx: ToolRegisterContext | None) -> Any:

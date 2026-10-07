@@ -817,16 +817,6 @@ def _normalize_submit_output_arguments(
 ) -> dict[str, Any]:
     normalized_name = str(tool_name or "").strip()
     args = dict(arguments or {})
-    if normalized_name == "commerce.prepare_order" and "items" in args:
-        raw_items = args["items"]
-        if isinstance(raw_items, str):
-            try:
-                decoded_items = json.loads(raw_items)
-            except json.JSONDecodeError:
-                pass
-            else:
-                if isinstance(decoded_items, list):
-                    args["items"] = decoded_items
     if normalized_name != "submit_output":
         return args
     for key in ("decision", "Decision", "output", "result", "payload", "inputs"):

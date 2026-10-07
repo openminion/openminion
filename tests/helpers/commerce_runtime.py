@@ -7,9 +7,9 @@ from pathlib import Path
 from dataclasses import replace
 from typing import Any
 
-from openminion.modules.commerce.fixture import FixtureCommerceProvider
-from openminion.modules.commerce.runtime import CommerceRuntime
-from openminion.modules.commerce.storage import SQLiteCommerceOrderStore
+from openminion.tools.commerce.fixture import FixtureCommerceProvider
+from openminion.tools.commerce.runtime import CommerceRuntime
+from openminion.tools.commerce.storage import SQLiteCommerceOrderStore
 
 
 def build_fixture_api_runtime(
@@ -39,7 +39,7 @@ def build_fixture_api_runtime(
     commerce_runtime, provider = build_fixture_commerce_runtime(
         store_path=data_path / "commerce" / "commerce.db"
     )
-    runtime.commerce_runtime = commerce_runtime
+    runtime.tool_resources = {"commerce": commerce_runtime}
     runtime._commerce_fixture_provider = provider
     family = replace(
         COMMERCE_FAMILY,

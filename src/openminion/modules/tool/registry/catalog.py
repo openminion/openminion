@@ -7,6 +7,10 @@ from pydantic import BaseModel
 from openminion.modules.tool.base import Tool, ToolCategoryInfo
 from openminion.modules.tool.contracts.dependencies import ToolDependencyDecl
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.plugin_api import (
+    ConfirmationPreviewBuilder,
+    PolicyAuthorizer,
+)
 from openminion.modules.tool.runtime.blast_radius import (
     SandboxKind,
     ToolBlastRadius,
@@ -46,6 +50,9 @@ class ToolSpec:
     sandbox_kind: SandboxKind | None = None
     dependencies: tuple[ToolDependencyDecl, ...] = ()
     description: str = ""
+    canonical_args: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    confirmation_preview: ConfirmationPreviewBuilder | None = None
+    policy_authorizer: PolicyAuthorizer | None = None
 
     def resolved_capabilities(self) -> tuple[str, ...]:
         return self.capabilities or self.tags

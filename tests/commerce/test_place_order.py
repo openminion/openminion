@@ -4,9 +4,9 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from types import SimpleNamespace
 
-from openminion.modules.commerce.config import CommerceToolRuntimeConfig
+from openminion.tools.commerce.config import CommerceToolRuntimeConfig
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-from openminion.modules.commerce.confirmation import ExactOrderConfirmationPreview
+from openminion.tools.commerce.confirmation import ExactOrderConfirmationPreview
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 from openminion.modules.tool.plugin_api import stable_invocation_hash
 from openminion.tools.commerce import ALL_COMMERCE_TOOLS
@@ -112,7 +112,7 @@ def _adapter(tmp_path, runtime, policy_ctl) -> ToolAdapter:
     return ToolAdapter(
         workspace_root=tmp_path,
         runtime_registry=bootstrap.registry,
-        commerce_runtime=runtime,
+        tool_resources={"commerce": runtime},
         policy_ctl=policy_ctl,
         policy={"tools": {"allow_exact": list(ALL_COMMERCE_TOOLS)}},
     )

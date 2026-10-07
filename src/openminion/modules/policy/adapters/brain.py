@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from openminion.base.config import ActionPolicyConfig
 from openminion.base.config.action_policy import (
@@ -15,6 +16,7 @@ from openminion.base.config.action_policy import (
     overlay_action_policy_mode,
 )
 from openminion.modules.tool.plugin_api import is_policy_authorization_pair
+from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from ..runtime.action_policy import policy_config_from_action_policy
 from ..constants import (
     POLICY_DECISION_ALLOW,
@@ -88,11 +90,13 @@ class PolicyCtlBrainAdapter:
         policyctl: PolicyCtl,
         *,
         action_policy_config: ActionPolicyConfig | None = None,
-        commerce_confirmation_resolver: Callable[..., Any] | None = None,
+        tool_registry: ToolRegistry | None = None,
+        tool_resources: Mapping[str, Any] | None = None,
     ) -> None:
         self._ctl = policyctl
         self._action_policy_config = action_policy_config
-        self._commerce_confirmation_resolver = commerce_confirmation_resolver
+        self._tool_registry = tool_registry
+        self._tool_resources = tool_resources if tool_resources is not None else {}
 
     @classmethod
     def with_sqlite(
@@ -101,13 +105,15 @@ class PolicyCtlBrainAdapter:
         *,
         config: PolicyConfig | None = None,
         action_policy_config: ActionPolicyConfig | None = None,
-        commerce_confirmation_resolver: Callable[..., Any] | None = None,
+        tool_registry: ToolRegistry | None = None,
+        tool_resources: Mapping[str, Any] | None = None,
     ) -> "PolicyCtlBrainAdapter":
         ctl = PolicyCtl.with_sqlite(database_path, config=config)
         return cls(
             ctl,
             action_policy_config=action_policy_config,
-            commerce_confirmation_resolver=commerce_confirmation_resolver,
+            tool_registry=tool_registry,
+            tool_resources=tool_resources,
         )
 
     def close(self) -> None:
@@ -258,27 +264,26 @@ class PolicyCtlBrainAdapter:
                 check_kwargs["confirmation_preview_error"] = exc.reason
         tool_name = str(getattr(command, "tool_name", "") or "").strip()
         tool, method = self._tool_method(tool_name)
-        if tool == "commerce" and is_policy_authorization_pair(tool, method):
-            resolver = self._commerce_confirmation_resolver
-            if callable(resolver):
-                from openminion.modules.commerce.confirmation import (
-                    commerce_confirmation_payload,
-                )
-                from openminion.tools.commerce.authorization import (
-                    canonical_commerce_args,
-                )
-
+        if tool_name != "blockchain.send_transaction" and is_policy_authorization_pair(
+            tool, method
+        ):
+            spec = (
+                self._tool_registry.get(tool_name)
+                if self._tool_registry is not None
+                else None
+            )
+            if isinstance(spec, ToolSpec) and spec.confirmation_preview is not None:
                 check_kwargs["invocation"] = {
                     **invocation,
-                    "args": canonical_commerce_args(dict(invocation["args"])),
+                    "args": spec.canonical_args(dict(invocation["args"]))
+                    if spec.canonical_args is not None
+                    else dict(invocation["args"]),
                 }
-                check_kwargs["confirmation_preview"] = commerce_confirmation_payload(
-                    resolver(
-                        tool_name=tool_name,
-                        args=dict(check_kwargs["invocation"]["args"]),
-                        subject_id=str(ctx.get("subject_id", "") or ""),
-                        session_id=str(ctx.get("session_id", "") or ""),
-                    )
+                check_kwargs["confirmation_preview"] = spec.confirmation_preview(
+                    dict(check_kwargs["invocation"]["args"]),
+                    subject_id=str(ctx.get("subject_id", "") or ""),
+                    session_id=str(ctx.get("session_id", "") or ""),
+                    tool_resources=self._tool_resources,
                 )
         if config_overrides is not None:
             check_kwargs["config_overrides"] = config_overrides

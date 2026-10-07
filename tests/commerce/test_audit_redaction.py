@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from openminion.modules.commerce.config import CommerceToolRuntimeConfig
+from openminion.tools.commerce.config import CommerceToolRuntimeConfig
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-from openminion.modules.commerce.provider import (
+from openminion.tools.commerce.provider import (
     CommerceOutcomeUnknown,
     CommerceProviderError,
 )
@@ -69,7 +69,7 @@ def _adapter(tmp_path, runtime, policy, telemetry):
     return ToolAdapter(
         workspace_root=tmp_path,
         runtime_registry=bootstrap.registry,
-        commerce_runtime=runtime,
+        tool_resources={"commerce": runtime},
         policy_ctl=policy,
         telemetryctl=telemetry,
         policy={"tools": {"allow_exact": list(ALL_COMMERCE_TOOLS)}},

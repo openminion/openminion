@@ -245,7 +245,7 @@ class PolicyCtl:
                 message = "Blockchain send grants require a pending confirmation."
             else:
                 code = "EXACT_AUTHORIZATION_REQUIRES_CONFIRMATION"
-                message = "Commerce grants require a pending confirmation."
+                message = "Exact action grants require a pending confirmation."
             raise PolicyControlError(
                 code,
                 message,
@@ -275,7 +275,7 @@ class PolicyCtl:
                 message = "Blockchain send grants require a pending confirmation."
             else:
                 code = "EXACT_AUTHORIZATION_REQUIRES_CONFIRMATION"
-                message = "Commerce grants require a pending confirmation."
+                message = "Exact action grants require a pending confirmation."
             raise PolicyControlError(
                 code,
                 message,

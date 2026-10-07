@@ -429,6 +429,45 @@ def test_tool_progress_observer_failure_is_logged_and_counted() -> None:
     }
 
 
+@pytest.mark.parametrize("content", [None, "Plugin-owned detail\n" * 100])
+def test_tool_progress_preserves_plugin_content(content) -> None:
+    from openminion.modules.brain.execution.validation import normalize_execution_result
+
+    command = ToolCommand(
+        kind=BRAIN_COMMAND_KIND_TOOL,
+        command_id="content-call",
+        title="Read",
+        tool_name="file.read",
+        args={"path": "README.md"},
+    )
+    progress = []
+    runner = _make_runner()
+    runner.tool_api = SimpleNamespace(
+        execute=lambda **kwargs: {
+            "status": "success",
+            "summary": "Short summary",
+            "outputs": {"content": content} if content is not None else {},
+        }
+    )
+    runner._normalize_execution_result = normalize_execution_result
+    runner._emit_tool_progress_event = lambda **kwargs: progress.append(kwargs)
+    result, job = execute_action_dispatch(
+        runner,
+        state=_make_state(),
+        command=command,
+        logger=SimpleNamespace(emit=lambda *args, **kwargs: None),
+        sanitize_tool_command_args=lambda runner, command: (dict(command.args), []),
+        execute_action_fn=None,
+    )
+    assert job is None
+    assert result.summary == "Short summary"
+    completed = [item for item in progress if item["kind"] == "tool_completed"]
+    assert len(completed) == 1
+    assert completed[0]["content"] == (
+        content if content is not None else "Short summary"
+    )
+
+
 def test_subagent_stop_lifecycle_event_fires_after_a2a_completion() -> None:
     reset_default_lifecycle_registry()
     events = []
