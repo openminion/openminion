@@ -158,6 +158,7 @@ def test_workspace_trust_fresh_project(
         )
         with probe.session(rows=50, cols=160) as session:
             probe.wait_ready(session)
+            probe.run_slash(session, "/permissions auto", marker="permissions → auto")
             transcript = probe.run_turn(session, scenario)
 
     assert (project / "created.txt").read_text(encoding="utf-8") == "verified"

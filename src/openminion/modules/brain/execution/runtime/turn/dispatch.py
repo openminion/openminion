@@ -811,19 +811,6 @@ def _normalize_confirmation_replay_result(
             status=BRAIN_STATE_DONE,
             action_result=action_result,
         )
-    if not completed_intent_ids and not remaining_intent_ids:
-        return _runner_delegate(
-            "_respond_with_meta",
-            runner,
-            state=state,
-            logger=logger,
-            message=(
-                "The confirmed command finished, but I could not safely determine "
-                "the next step from the replay metadata. Please tell me how to continue."
-            ),
-            status=BRAIN_STATE_WAITING_USER,
-            action_result=action_result,
-        )
     return None
 
 

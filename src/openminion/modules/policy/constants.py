@@ -62,6 +62,20 @@ POLICY_RISK_CHOICES: tuple[str, ...] = (
     POLICY_RISK_FINANCIAL,
     POLICY_RISK_SECURITY,
 )
+POLICY_RISK_ORDER: dict[str, int] = {
+    risk: index
+    for index, risk in enumerate(
+        (
+            POLICY_RISK_READ,
+            POLICY_RISK_WRITE,
+            POLICY_RISK_STATE_CHANGE,
+            POLICY_RISK_EXEC,
+            POLICY_RISK_SECURITY,
+            POLICY_RISK_FINANCIAL,
+            POLICY_RISK_DESTRUCTIVE,
+        )
+    )
+}
 POLICY_HIGH_CONFIRM_RISKS: frozenset[str] = frozenset(
     (
         POLICY_RISK_DESTRUCTIVE,

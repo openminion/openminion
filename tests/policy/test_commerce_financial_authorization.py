@@ -194,14 +194,21 @@ def test_generic_grant_paths_cannot_authorize_commerce(
         ctl.close()
 
 
-@pytest.mark.parametrize("mode", ["disabled", "log_only"])
-def test_non_enforcing_modes_deny_commerce(mode: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("mode", "decision_name", "reason_code"),
+    [
+        ("disabled", "REQUIRE_CONFIRM", "EXACT_AUTHORIZATION_REQUIRED"),
+        ("log_only", "DENY", "POLICY_MODE_UNSUPPORTED"),
+    ],
+)
+def test_non_enforcing_modes_keep_commerce_floor(
+    mode: str, decision_name: str, reason_code: str, tmp_path: Path
+) -> None:
     ctl = _ctl(tmp_path / f"{mode}.db", mode=mode)
     try:
         decision = _check(ctl, "place_order")
-        assert decision.decision == "DENY"
-        assert decision.reason_code == "POLICY_MODE_UNSUPPORTED"
-        assert decision.details == {"mode": mode}
+        assert decision.decision == decision_name
+        assert decision.reason_code == reason_code
     finally:
         ctl.close()
 

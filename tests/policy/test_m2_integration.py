@@ -183,7 +183,7 @@ def test_brain_adapter_result_to_dict_is_serialisable(tmp_path):
         adapter.close()
 
 
-def test_brain_adapter_accepts_dict_risk_override(tmp_path):
+def test_brain_adapter_does_not_lower_registered_risk(tmp_path):
     adapter = PolicyCtlBrainAdapter.with_sqlite(tmp_path / "p.db")
     try:
         result = adapter.check_command(
@@ -196,8 +196,8 @@ def test_brain_adapter_accepts_dict_risk_override(tmp_path):
                 "default_confirm": False,
             },
         )
-        assert result.is_allowed()
-        assert result.code == "READ_ONLY_ALLOW"
+        assert result.requires_confirmation()
+        assert result.code == "HIGH_RISK"
     finally:
         adapter.close()
 

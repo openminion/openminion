@@ -149,7 +149,6 @@ def test_idle_editor_save_prefills_next_read_without_starting_turn(monkeypatch) 
         overlay=object(),
         working_dir=".",
         custom_commands={},
-        approval_grants=set(),
     )
     reads: list[bool] = []
     monkeypatch.setattr(loop, "start_read_task", lambda: reads.append(True))

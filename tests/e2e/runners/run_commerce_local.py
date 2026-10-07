@@ -724,7 +724,7 @@ def _run() -> dict[str, object]:
     finally:
         channel_policy.close()
     assert cross_subject_code == "SUBJECT_UNAVAILABLE"
-    assert channel_ingress_code == "POLICY_MODE_UNSUPPORTED"
+    assert channel_ingress_code == "CONFIRM_REQUIRED"
     assert len(provider.inspect_calls) == inspect_calls_before
     assert len(provider.ledger) == ledger_before
     scenarios.append(

@@ -6,16 +6,17 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
+from openminion.base.redaction import redact_mapping, redact_sensitive_text
 from openminion.modules.brain.constants import (
     CONFIRMATION_MESSAGE_ARG_LIMIT,
     CONFIRMATION_MESSAGE_ARG_VALUE_LIMIT,
 )
-from openminion.modules.brain.schemas import Command, WorkingState
+from openminion.modules.brain.schemas import Command
 from openminion.modules.tool.plugin_api import (
     BlockchainSendConfirmationPreview,
     ToolConfirmationPreview,
-    is_policy_authorization_pair,
 )
+from openminion.modules.policy.grants import requires_once_duration
 
 _COMMAND_ADAPTER = TypeAdapter(Command)
 _CONFIRMATION_REPLAY_QUEUE_KEY = "_confirmation_replay_queue"
@@ -23,6 +24,8 @@ _CONFIRMATION_REPLAY_QUEUE_KEY = "_confirmation_replay_queue"
 _CONFIRMATION_MESSAGE_ARG_KEYS = ("path", "file_path", "command", "cwd", "url")
 _SESSION_CONFIRMATION_TOKENS = frozenset(
     {
+        "a",
+        "always",
         "s",
         "session",
         "allow session",
@@ -44,11 +47,13 @@ def requires_individual_confirmation(command: Command | dict[str, Any] | None) -
     tool, method = (
         normalized.rsplit(".", 1) if "." in normalized else (normalized, "default")
     )
-    return bool(is_policy_authorization_pair(tool, method))
+    return bool(requires_once_duration(tool=tool, method=method))
 
 
 def _bounded_confirmation_arg_value(value: Any) -> str:
     text = " ".join(str(value if value is not None else "").split())
+    text, _ = redact_sensitive_text(text)
+    text = str(text)
     if len(text) <= CONFIRMATION_MESSAGE_ARG_VALUE_LIMIT:
         return text
     return f"{text[: CONFIRMATION_MESSAGE_ARG_VALUE_LIMIT - 3].rstrip()}..."
@@ -141,21 +146,10 @@ def is_session_confirmation_response(text: str) -> bool:
     return token in _SESSION_CONFIRMATION_TOKENS
 
 
-def apply_session_confirmation_grant(state: WorkingState, command: Command) -> bool:
-    tool_name = str(command.tool_name or "").strip().lower()
-    if not tool_name:
-        return False
-    overrides = dict(state.permission_overrides)
-    # "session" means future calls for this tool should stop re-prompting within
-    # the current session, not merely widen to the narrower "auto" allowlist.
-    overrides[tool_name] = "bypass"
-    state.permission_overrides = overrides
-    return True
-
-
 def confirmation_required_user_message(
     command: Command,
     confirmation_preview: ToolConfirmationPreview | None = None,
+    policy_facts: dict[str, Any] | None = None,
 ) -> str:
     tool_name = str(command.tool_name or "tool").strip() or "tool"
     title = str(command.title or "").strip()
@@ -166,6 +160,16 @@ def confirmation_required_user_message(
     if arg_preview:
         subject = f"{subject} ({arg_preview})"
     lines = ["Policy confirmation required.", subject]
+    facts = policy_facts or {}
+    risk = facts.get("risk") if isinstance(facts.get("risk"), dict) else {}
+    if risk:
+        lines.append(f"Risk: {risk.get('risk_class', 'unknown')}")
+        lines.append(f"Side effects: {risk.get('side_effects', 'unknown')}")
+        lines.append(f"Reversibility: {risk.get('reversibility', 'unknown')}")
+    if facts.get("reason_code"):
+        lines.append(f"Reason: {facts['reason_code']}")
+    if facts.get("duration_options"):
+        lines.append(f"Choices: {', '.join(facts['duration_options'])}")
     if tool_name == "blockchain.send_transaction" and isinstance(
         confirmation_preview, BlockchainSendConfirmationPreview
     ):
@@ -204,10 +208,11 @@ def confirmation_required_user_message(
                 ]
             )
     elif tool_name == "ops.command.run" and isinstance(confirmation_preview, dict):
+        redacted_preview, _ = redact_mapping(confirmation_preview)
         lines.append(
             "Effect: "
             + json.dumps(
-                confirmation_preview,
+                redacted_preview,
                 separators=(",", ":"),
                 ensure_ascii=True,
             )
@@ -231,4 +236,4 @@ def confirmation_required_user_message(
             "Reply exactly yes to allow once, session to allow this tool for the "
             "session, or no to cancel."
         )
-    return "\n".join(lines)
+    return "\n".join(str(redact_sensitive_text(line)[0]) for line in lines)

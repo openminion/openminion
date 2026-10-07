@@ -13,6 +13,9 @@ _PLAN_CONTROL_TOOL_NAMES: Final[frozenset[str]] = frozenset(
         "plan.clear",
     }
 )
+WORKSPACE_AUTO_TOOL_NAMES: Final[frozenset[str]] = frozenset(
+    {"file.write", "file.edit"}
+)
 
 
 PERMISSION_MODE_ALIASES: Final[dict[str, str]] = {
@@ -73,14 +76,17 @@ def effective_permission_mode_for_tool(
     global_mode: str,
     permission_overrides: object,
     tool_name: str,
-) -> str:
+) -> tuple[str, str]:
     normalized_tool_name = str(tool_name or "").strip().lower()
+    normalized_global_mode = canonical_permission_mode(global_mode)
+    if normalized_global_mode == "readonly":
+        return "readonly", "global"
     overrides = canonical_permission_overrides(permission_overrides)
     if normalized_tool_name:
         for override_tool_name, override_mode in overrides.items():
             if _matches_tool_name(normalized_tool_name, override_tool_name):
-                return override_mode
-    return canonical_permission_mode(global_mode)
+                return override_mode, "tool_override"
+    return normalized_global_mode, "global"
 
 
 @lru_cache(maxsize=1)
@@ -112,10 +118,7 @@ def is_tool_blocked_by_readonly(tool_name: str) -> bool:
     normalized = str(tool_name or "").strip().lower()
     if not normalized:
         return False
-    for pattern in readonly_blocked_tool_names():
-        if _matches_tool_name(normalized, pattern):
-            return True
-    return False
+    return normalized not in registered_readonly_tool_names()
 
 
 def request_outcome_allows_tool(
@@ -136,6 +139,7 @@ def request_outcome_allows_tool(
 
 __all__ = [
     "PERMISSION_MODE_ALIASES",
+    "WORKSPACE_AUTO_TOOL_NAMES",
     "canonical_permission_overrides",
     "canonical_permission_mode",
     "effective_permission_mode_for_tool",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from openminion.base.config.runtime.profile import (
+    PERMISSION_MODE_AUTO,
     PERMISSION_MODE_BYPASS,
     PERMISSION_MODE_CYCLE,
     PERMISSION_MODE_DEFAULT,
@@ -22,20 +23,25 @@ from openminion.modules.brain.adapters.tool.permission_mode import (
 from openminion.modules.tool import build_default_tool_registry
 
 
-def test_three_permission_modes_exposed() -> None:
+def test_four_permission_modes_exposed() -> None:
     assert PERMISSION_MODE_VALUES == frozenset(
-        {PERMISSION_MODE_DEFAULT, PERMISSION_MODE_READONLY, PERMISSION_MODE_BYPASS}
+        {
+            PERMISSION_MODE_DEFAULT,
+            PERMISSION_MODE_READONLY,
+            PERMISSION_MODE_AUTO,
+            PERMISSION_MODE_BYPASS,
+        }
     )
     assert PERMISSION_MODE_DEFAULT == "default"
     assert PERMISSION_MODE_READONLY == "readonly"
     assert PERMISSION_MODE_BYPASS == "bypass"
 
 
-def test_cycle_order_matches_codex() -> None:
+def test_cycle_excludes_full_access() -> None:
     assert PERMISSION_MODE_CYCLE == (
         PERMISSION_MODE_DEFAULT,
         PERMISSION_MODE_READONLY,
-        PERMISSION_MODE_BYPASS,
+        PERMISSION_MODE_AUTO,
     )
 
 
@@ -43,13 +49,14 @@ def test_cycle_order_matches_codex() -> None:
     ("raw_mode", "expected"),
     [
         (PERMISSION_MODE_DEFAULT, PERMISSION_MODE_READONLY),
-        (PERMISSION_MODE_READONLY, PERMISSION_MODE_BYPASS),
+        (PERMISSION_MODE_READONLY, PERMISSION_MODE_AUTO),
+        (PERMISSION_MODE_AUTO, PERMISSION_MODE_DEFAULT),
         (PERMISSION_MODE_BYPASS, PERMISSION_MODE_DEFAULT),
         ("", PERMISSION_MODE_DEFAULT),
         ("garbage", PERMISSION_MODE_DEFAULT),
         (None, PERMISSION_MODE_DEFAULT),
         ("DEFAULT", PERMISSION_MODE_READONLY),
-        ("ReadOnly", PERMISSION_MODE_BYPASS),
+        ("ReadOnly", PERMISSION_MODE_AUTO),
     ],
 )
 def test_next_permission_mode_cases(raw_mode: str | None, expected: str) -> None:
@@ -169,10 +176,13 @@ def test_readonly_does_not_block_read_tools() -> None:
     assert not is_tool_blocked_by_readonly("code.grep")
     assert not is_tool_blocked_by_readonly("code.repo_map")
     assert not is_tool_blocked_by_readonly("code.symbol_find")
-    assert not is_tool_blocked_by_readonly("web.search")
-    assert not is_tool_blocked_by_readonly("web.fetch")
+    assert is_tool_blocked_by_readonly("web.search")
+    assert is_tool_blocked_by_readonly("web.fetch")
+    assert not is_tool_blocked_by_readonly("search.dispatch")
+    assert not is_tool_blocked_by_readonly("fetch.get")
     assert not is_tool_blocked_by_readonly("weather")
-    assert not is_tool_blocked_by_readonly("time")
+    assert is_tool_blocked_by_readonly("time")
+    assert not is_tool_blocked_by_readonly("time.now")
     assert not is_tool_blocked_by_readonly("git.status")
     assert not is_tool_blocked_by_readonly("git.diff")
     assert not is_tool_blocked_by_readonly("git.log")
@@ -185,11 +195,12 @@ def test_readonly_does_not_block_read_tools() -> None:
     assert not is_tool_blocked_by_readonly("skill.inspect")
 
 
-def test_readonly_match_is_exact_or_dot_prefix() -> None:
+def test_readonly_unknown_tool_fails_closed() -> None:
     assert is_tool_blocked_by_readonly("file.write")
     assert is_tool_blocked_by_readonly("file.write.batch")
-    assert not is_tool_blocked_by_readonly("file.writeable_check")
-    assert not is_tool_blocked_by_readonly("xfile.write")
+    assert is_tool_blocked_by_readonly("file.writeable_check")
+    assert is_tool_blocked_by_readonly("xfile.write")
+    assert is_tool_blocked_by_readonly("file.read.mutate")
 
 
 def test_readonly_empty_input_does_not_block() -> None:

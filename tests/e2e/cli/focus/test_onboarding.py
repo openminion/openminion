@@ -107,7 +107,9 @@ def _run_first_task(
         FocusScenario(
             scenario_id="onboarding-first-task",
             prompt="List this workspace using the file tools.",
+            expected_markers=("ONBOARDING_OK",),
             timeout=timeout,
+            requires_approval=True,
         ),
     )
     probe.wait_ready(session)
@@ -148,19 +150,6 @@ def _persisted_tool_results(metadata: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 _ONBOARDING_TURN_RESPONSES: tuple[dict[str, Any], ...] = (
-    {
-        "role": "assistant",
-        "content": "",
-        "tool_calls": [
-            {
-                "id": "call-exec",
-                "function": {
-                    "name": "exec.run",
-                    "arguments": {"command": "ls"},
-                },
-            }
-        ],
-    },
     {
         "role": "assistant",
         "content": "",
@@ -781,24 +770,11 @@ def test_local_ollama_check_can_verify_against_fixture_server(
         and request["messages"][-1].get("content")
         != "Reply with exactly: openminion provider check ok"
     ]
-    request_tool_messages = [
-        json.loads(message["content"])
-        for message in turn_requests[1]["messages"]
-        if message.get("role") == "tool"
-    ]
-    denial = next(
-        message
-        for message in request_tool_messages
-        if message.get("error", {}).get("code") == "POLICY_DENIED"
-    )
-    denied_exec = next(
-        result for result in tool_results if result["tool_name"] == "exec.run"
-    )
     list_dir_result = next(
         result for result in tool_results if result["tool_name"] == "file.list_dir"
     )
 
-    assert len(requests) == 8
+    assert len(requests) == 7
     assert (
         sum(
             request.get("format", {}).get("title") == "ClosureJudgment"
@@ -806,29 +782,26 @@ def test_local_ollama_check_can_verify_against_fixture_server(
         )
         == 1
     )
-    assert len(turn_requests) == 4
+    assert len(turn_requests) == 3
     assert turn_requests[0]["messages"][-1]["role"] == "user"
-    assert denial["error"]["details"]["suggested_tool"] == "file.list_dir"
     assert any(
         tool_call["function"]["name"] == "tool.request"
-        for message in turn_requests[2]["messages"]
+        for message in turn_requests[1]["messages"]
         for tool_call in message.get("tool_calls", [])
     )
     assert any(
         tool_call["function"]["name"] == "file.list_dir"
-        for message in turn_requests[3]["messages"]
+        for message in turn_requests[2]["messages"]
         for tool_call in message.get("tool_calls", [])
     )
     assert any(
         message.get("role") == "tool"
         and message.get("tool_call_id") == "call-list-dir"
         and json.loads(message["content"])["status"] == "success"
-        for message in turn_requests[3]["messages"]
+        for message in turn_requests[2]["messages"]
     )
-    assert denied_exec["error_code"] == "POLICY_DENIED"
-    assert denied_exec["data"]["error_details"]["suggested_tool"] == "file.list_dir"
     assert list_dir_result["ok"] is True
-    assert metadata["tool_loop_termination_reason"] == "final_text"
+    assert metadata["tool_loop_termination_reason"] == "model_final"
     assert "Connection verified." in transcript
     assert "Checking provider connection; press Ctrl-C to cancel." in transcript
     assert re.search(r"Connection check completed in \d+\.\d+s", transcript)

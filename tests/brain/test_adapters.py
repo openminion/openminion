@@ -49,6 +49,44 @@ def _find_retry_message(messages: list[object]) -> str:
     raise AssertionError("missing retry system message")
 
 
+def test_satisfied_approval_keeps_hard_policy_denials() -> None:
+    from openminion.modules.brain.adapters.tool.policy_context import (
+        _compose_policy_adapter,
+    )
+    from openminion.modules.tool.plugin_api import PolicyDecision
+
+    class _Adapter:
+        def __init__(self, decision: PolicyDecision) -> None:
+            self.decision = decision
+
+        def evaluate(self, **_kwargs: object) -> PolicyDecision:
+            return self.decision
+
+    allowed = PolicyDecision(allowed=True, reason="allowed", code="OK")
+    approval = PolicyDecision(
+        allowed=False,
+        reason="approval required",
+        code="require_approval",
+        requires_confirm=True,
+    )
+    denied = PolicyDecision(allowed=False, reason="denied", code="POLICY_DENIED")
+
+    approved = _compose_policy_adapter(
+        base_adapter=_Adapter(allowed),
+        extra_adapter=_Adapter(approval),
+        approval_satisfied=True,
+    ).evaluate(tool_name="file.write", tool_spec=object(), args={})
+    blocked = _compose_policy_adapter(
+        base_adapter=_Adapter(allowed),
+        extra_adapter=_Adapter(denied),
+        approval_satisfied=True,
+    ).evaluate(tool_name="file.write", tool_spec=object(), args={})
+
+    assert approved.allowed is True
+    assert blocked.allowed is False
+    assert blocked.code == "POLICY_DENIED"
+
+
 class LocalSessionStoreTests(unittest.TestCase):
     def test_working_state_serialization_and_versioning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3858,7 +3896,7 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
         from openminion.modules.tool.base import Tool, ToolExecutionResult
 
         calls: list[dict[str, str]] = []
-        approvals: list[str] = []
+        approvals: list[tuple[str, dict[str, object]]] = []
 
         class _SidecarTool(Tool):
             name = "browser"
@@ -3894,8 +3932,8 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
                 runtime_registry=_RuntimeRegistry(),
             )
             adapter.set_approval_callback(
-                lambda tool_name, _args, _approval_id: (
-                    approvals.append(tool_name) or True
+                lambda tool_name, _args, _approval_id, policy_facts: (
+                    approvals.append((tool_name, policy_facts)) or True
                 )
             )
             res = adapter.execute(
@@ -3905,7 +3943,18 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
             )
 
         self.assertEqual(res["status"], "success")
-        self.assertEqual(approvals, ["sidecar.pinchtab.autostart"])
+        self.assertEqual(
+            approvals,
+            [
+                (
+                    "sidecar.pinchtab.autostart",
+                    {
+                        "canonical_tool": "sidecar.pinchtab.autostart",
+                        "reason_code": "sidecar_autostart_required",
+                    },
+                )
+            ],
+        )
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0]["OPENMINION_PINCHTAB_ALLOW_EXTERNAL"], "1")
         self.assertEqual(calls[1]["PINCHTAB_AUTOSTART"], "1")

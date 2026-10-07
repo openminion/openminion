@@ -82,13 +82,17 @@ class _GrantingPolicyAPI(_DummyPolicyAPI):
 
 class _DummyRunner:
     def __init__(self, state: dict[str, Any], *, policy_api: Any | None = None) -> None:
+        self._meta_overrides = None
         self.session_api = _DummySessionAPI(state)
         self.policy_api = policy_api or _DummyPolicyAPI()
         self.options = SimpleNamespace(
             adaptive_replan_retained_step_outputs=0,
             max_replans=0,
             max_retries_per_step=0,
+            metactl_enabled=False,
         )
+        self.meta_api = None
+        self.meta_engine = None
         self.profile = SimpleNamespace(
             agent_id="test-agent",
             budgets=SimpleNamespace(
@@ -99,6 +103,9 @@ class _DummyRunner:
                 max_elapsed_ms=45000,
             ),
         )
+
+    def _respond(self, **kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(**kwargs)
 
 
 class _CapturingLogger:
@@ -176,7 +183,8 @@ def test_bridge_reset_yes_preserves_state_then_runner_replays_seeded_command() -
     assert state.pending_confirmation_command.tool_name == "file.write"
 
     # --- Step 3: runner sees the preserved command and replays it ---
-    runner_for_process = _DummyRunner(written)  # fresh runner with same state
+    policy_api = _GrantingPolicyAPI(["unexpected-grant"])
+    runner_for_process = _DummyRunner(written, policy_api=policy_api)
     logger = _CapturingLogger()
     tick_ctx = TickRunContext(session_id="sess-bbpc-int", user_input="yes")
 
@@ -210,6 +218,8 @@ def test_bridge_reset_yes_preserves_state_then_runner_replays_seeded_command() -
     seeded = seeded_commands[0]
     assert seeded.tool_name == "file.write"
     assert seeded.inputs.get("path") == "./tmp-bbpc/README.md"
+    assert seeded.inputs["confirmation_grant_id"].startswith("local-confirmation-")
+    assert policy_api._grant_ids == ["unexpected-grant"]
     # 4. emitted the canonical replay telemetry event
     confirm_events = [
         event for event in logger.events if event[0] == "brain.confirm_replay"
@@ -218,7 +228,7 @@ def test_bridge_reset_yes_preserves_state_then_runner_replays_seeded_command() -
     assert confirm_events[0][1]["kind"] == "tool"
 
 
-def test_confirmation_replay_session_reply_grants_pending_tool_for_session() -> None:
+def test_session_reply_without_policy_grant_support_stays_pending() -> None:
     inline_state, _ = _build_inline_state_with_pending_file_write()
     state = WorkingState.model_validate(inline_state)
     runner = _DummyRunner(inline_state)
@@ -232,14 +242,9 @@ def test_confirmation_replay_session_reply_grants_pending_tool_for_session() -> 
         tick_ctx=tick_ctx,
     )
 
-    assert state.pending_confirmation_command is None
-    assert state.permission_overrides["file.write"] == "bypass"
-    assert tick_ctx.skip_decide is True
-    assert tick_ctx.consume_user_input_for_command is True
-    assert tick_ctx.decision is not None
-    seeded_commands = list(getattr(tick_ctx.decision, "_seeded_commands", []) or [])
-    assert len(seeded_commands) == 1
-    assert seeded_commands[0].tool_name == "file.write"
+    assert state.pending_confirmation_command is not None
+    assert state.permission_overrides == {}
+    assert tick_ctx.decision is None
 
 
 def test_blockchain_session_reply_does_not_replay_or_grant_session() -> None:
@@ -263,7 +268,7 @@ def test_blockchain_session_reply_does_not_replay_or_grant_session() -> None:
         },
         pending_confirmation_command=pending,
     )
-    policy_api = _GrantingPolicyAPI(["grant-first"])
+    policy_api = _DummyPolicyAPI()
     runner = _DummyRunner({}, policy_api=policy_api)
     tick_ctx = TickRunContext(session_id=state.session_id, user_input="session")
 
@@ -276,7 +281,6 @@ def test_blockchain_session_reply_does_not_replay_or_grant_session() -> None:
 
     assert state.pending_confirmation_command is None
     assert "blockchain.send_transaction" not in state.permission_overrides
-    assert policy_api._grant_ids == ["grant-first"]
     assert tick_ctx.decision is None
 
 
@@ -426,13 +430,13 @@ def test_confirmation_replay_replays_full_confirmed_batch() -> None:
         "./tmp-bbpc/README.md",
         "./tmp-bbpc/app.py",
     ]
-    assert [
-        command.inputs.get("confirmation_grant_id") for command in seeded_commands
-    ] == [
-        "grant-1",
-        "grant-2",
-        "grant-3",
-    ]
+    assert all(
+        str(command.inputs.get("confirmation_grant_id", "")).startswith(
+            "local-confirmation-"
+        )
+        for command in seeded_commands
+    )
+    assert runner.policy_api._grant_ids == ["grant-1", "grant-2", "grant-3"]
     assert all(
         command.inputs.get("confirmation_source") == "policy_replay"
         for command in seeded_commands
@@ -470,6 +474,7 @@ def test_blockchain_confirmation_replays_only_the_approved_send() -> None:
         pending_confirmation_command=attach_confirmation_replay_queue(
             pending, [sibling]
         ),
+        pending_policy_approval_id="approval-first",
         pending_confirmation_sub_intents=[],
         pending_confirmation_sub_intent_refs=[],
         pending_confirmation_rationale="one send approval",

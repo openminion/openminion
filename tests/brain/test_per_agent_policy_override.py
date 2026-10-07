@@ -14,7 +14,12 @@ from openminion.services.brain.service import BrainBridgeService
 from openminion.services.runtime.plugins import PluginRegistry
 
 
-def _working_state(*, session_mode_override: str | None = None) -> WorkingState:
+def _working_state(
+    *,
+    session_mode_override: str | None = None,
+    permission_mode: str = "default",
+    permission_overrides: dict[str, str] | None = None,
+) -> WorkingState:
     return WorkingState(
         session_id="sess-1",
         agent_id="agent-1",
@@ -26,6 +31,8 @@ def _working_state(*, session_mode_override: str | None = None) -> WorkingState:
             time_ms=60000,
         ),
         session_action_policy_mode_override=session_mode_override,
+        permission_mode=permission_mode,
+        permission_overrides=permission_overrides or {},
     )
 
 
@@ -338,8 +345,9 @@ def test_bridge_profile_preserves_brain_config_profile_fields() -> None:
         assert actual == expected, field_name
 
 
-def test_adapter_bypass_short_circuits_without_policyctl_call(caplog) -> None:
+def test_adapter_bypass_still_calls_policyctl() -> None:
     ctl = Mock()
+    ctl.check.return_value = _allow_decision()
     adapter = PolicyCtlBrainAdapter(
         ctl,
         action_policy_config=ActionPolicyConfig(
@@ -352,16 +360,30 @@ def test_adapter_bypass_short_circuits_without_policyctl_call(caplog) -> None:
         ),
     )
 
-    with caplog.at_level(logging.INFO):
-        decision = adapter.evaluate(
-            command=_tool_command(),
-            working_state=_working_state(),
-            session_context={},
-        )
+    decision = adapter.evaluate(
+        command=_tool_command(),
+        working_state=_working_state(),
+        session_context={},
+    )
 
     assert decision.outcome == "ALLOW"
-    ctl.check.assert_not_called()
-    assert "policy.adapter.bypass" in caplog.text
+    assert ctl.check.call_count == 1
+    assert ctl.check.call_args.kwargs["config_overrides"].mode == "disabled"
+
+
+def test_adapter_command_risk_raises_registered_risk_without_losing_facts() -> None:
+    ctl = Mock()
+    ctl.check.return_value = _allow_decision()
+    adapter = PolicyCtlBrainAdapter(ctl)
+
+    adapter.evaluate(
+        command=_tool_command(tool_name="file.write", risk_level="med"),
+        working_state=_working_state(),
+        session_context={},
+    )
+
+    risk = ctl.check.call_args.kwargs["risk_override"]
+    assert risk.risk_class == "write"
 
 
 def test_adapter_passes_per_agent_policy_overrides_to_policyctl() -> None:
@@ -417,6 +439,49 @@ def test_adapter_session_override_preserves_non_mode_fields() -> None:
     assert config_overrides.mode == "enforce_safe"
     assert config_overrides.default_action == "allow"
     assert config_overrides.allow_read_only_without_prompt is False
+
+
+def test_adapter_workspace_auto_adds_only_reviewed_edit_rules() -> None:
+    ctl = Mock()
+    ctl.check.return_value = _allow_decision()
+    adapter = PolicyCtlBrainAdapter(ctl)
+
+    adapter.evaluate(
+        command=_tool_command(tool_name="file.write", risk_level="med"),
+        working_state=_working_state(
+            session_mode_override="auto",
+            permission_mode="auto",
+        ),
+        session_context={},
+    )
+
+    config_overrides = ctl.check.call_args.kwargs["config_overrides"]
+    assert {(rule.tool_name, rule.mode) for rule in config_overrides.rules} == {
+        ("file.edit", "auto"),
+        ("file.write", "auto"),
+    }
+
+
+def test_adapter_readonly_and_tool_overrides_become_exact_rules() -> None:
+    ctl = Mock()
+    ctl.check.return_value = _allow_decision()
+    adapter = PolicyCtlBrainAdapter(ctl)
+
+    adapter.evaluate(
+        command=_tool_command(tool_name="file.write", risk_level="med"),
+        working_state=_working_state(
+            session_mode_override="ask",
+            permission_mode="readonly",
+            permission_overrides={"file.read": "auto"},
+        ),
+        session_context={},
+    )
+
+    config_overrides = ctl.check.call_args.kwargs["config_overrides"]
+    rules = {(rule.tool_name, rule.mode) for rule in config_overrides.rules}
+    assert ("file.write", "block") in rules
+    assert ("exec.run", "block") in rules
+    assert ("file.read", "auto") in rules
 
 
 def test_adapter_with_no_override_keeps_existing_behavior() -> None:

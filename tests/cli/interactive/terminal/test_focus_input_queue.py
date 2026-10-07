@@ -16,6 +16,18 @@ from openminion.cli.interactive.terminal.transcript import (
     TerminalTranscript as _BaseTranscript,
 )
 from openminion.modules.llm import ProviderError
+from openminion.modules.policy.models import PolicyConfig, PolicyGrantInput, PolicyRule
+from openminion.modules.policy.runtime.service import PolicyCtl
+
+
+@pytest.fixture
+def policy_ctl(tmp_path):
+    ctl = PolicyCtl.with_sqlite(
+        tmp_path / "policy.db",
+        config=PolicyConfig(mode="enforce", default_action="require_confirm"),
+    )
+    yield ctl
+    ctl.close()
 
 
 class _RuntimeUsage:
@@ -641,7 +653,6 @@ async def test_read_completion_only_normalizes_exact_question_mark(
         overlay=object(),
         working_dir="/tmp/focus-terminal-help-alias",
         custom_commands={},
-        approval_grants=set(),
     )
     captured: list[str] = []
 
@@ -720,7 +731,6 @@ async def test_terminal_focus_interrupt_preserves_queue_until_run_next() -> None
         overlay=object(),
         working_dir="/tmp/focus-terminal-interrupt",
         custom_commands={},
-        approval_grants=set(),
     )
 
     await loop.start_turn("first")
@@ -767,7 +777,6 @@ async def test_terminal_focus_typeahead_prompt_does_not_add_turn_spacing() -> No
         overlay=object(),
         working_dir="/tmp/focus-terminal-prompt-gap",
         custom_commands={},
-        approval_grants=set(),
     )
 
     loop.start_read_task(delay_seconds=0.001)
@@ -794,7 +803,6 @@ async def test_terminal_focus_frames_idle_answer_with_one_gap() -> None:
         overlay=object(),
         working_dir="/tmp/focus-terminal-question-gap",
         custom_commands={},
-        approval_grants=set(),
     )
 
     await loop.handle_idle_input("question?")
@@ -821,7 +829,6 @@ async def test_terminal_focus_renders_idle_shell_escape_once() -> None:
         overlay=object(),
         working_dir="/tmp",
         custom_commands={},
-        approval_grants=set(),
     )
 
     await loop.handle_idle_input("!printf shell-output")
@@ -852,7 +859,6 @@ async def test_terminal_focus_releases_prompt_after_typed_failure_and_resumes() 
         overlay=object(),
         working_dir="/tmp/focus-terminal-provider-recovery",
         custom_commands={},
-        approval_grants=set(),
     )
 
     await loop.start_turn("continue")
@@ -919,7 +925,9 @@ async def test_terminal_focus_ignores_immediate_prompt_replay_duplicate(
 
 
 @pytest.mark.asyncio
-async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() -> None:
+async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward(
+    policy_ctl,
+) -> None:
     events: list[str] = []
 
     class _Overlay:
@@ -936,7 +944,8 @@ async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() 
 
     callback = build_terminal_approval_callback(
         overlay=_Overlay(),
-        session_grants=set(),
+        policy_ctl=policy_ctl,
+        session_id="session-1",
         pause_prompt=_pause_prompt,
         resume_prompt=_resume_prompt,
     )
@@ -968,10 +977,8 @@ async def test_ops_command_approval_is_allow_once_without_session_grant() -> Non
         ) -> str:
             raise AssertionError("ops commands must not offer session approval")
 
-    session_grants = {"ops.command.run"}
     callback = build_terminal_approval_callback(
         overlay=_Overlay(),
-        session_grants=session_grants,
     )
     args = {
         "target_id": "staging",
@@ -984,7 +991,6 @@ async def test_ops_command_approval_is_allow_once_without_session_grant() -> Non
     assert await callback("ops.command.run", args, "approval-2") is True
     assert len(prompts) == 2
     assert "demo.service" in prompts[0]
-    assert session_grants == {"ops.command.run"}
 
 
 def test_terminal_approval_prompt_preserves_full_exec_command() -> None:
@@ -999,12 +1005,69 @@ def test_terminal_approval_prompt_preserves_full_exec_command() -> None:
     assert "…" not in prompt
 
 
+def test_terminal_approval_prompt_renders_typed_facts_and_redacts_secrets() -> None:
+    prompt = format_terminal_approval_prompt(
+        "custom.send",
+        {"api_key": "supersecret", "message": "hello"},
+        {
+            "canonical_tool": "custom.send",
+            "reason_code": "DEFAULT_CONFIRM",
+            "risk": {
+                "risk_class": "write",
+                "side_effects": "remote",
+                "reversibility": "unknown",
+            },
+            "duration_options": ["allow_once", "deny"],
+        },
+    )
+
+    assert "supersecret" not in prompt
+    assert "[REDACTED]" in prompt
+    assert "Risk: write" in prompt
+    assert "Side effects: remote" in prompt
+    assert "Reversibility: unknown" in prompt
+    assert "Reason: DEFAULT_CONFIRM" in prompt
+    assert "Choices: allow_once, deny" in prompt
+
+
+def test_terminal_approval_prompt_redacts_bearer_token_in_exec_command() -> None:
+    prompt = format_terminal_approval_prompt(
+        "exec.run",
+        {"command": "curl -H 'Authorization: Bearer abcdefghijklmnop' /private"},
+    )
+
+    assert "abcdefghijklmnop" not in prompt
+    assert "Bearer [REDACTED]" in prompt
+
+
 def test_terminal_approval_prompt_explains_managed_sidecar_start() -> None:
     prompt = format_terminal_approval_prompt(
         "sidecar.pinchtab.autostart", {"sidecar": "pinchtab"}
     )
 
     assert prompt == "Approval required: start local pinchtab service and continue"
+
+
+def test_terminal_sidecar_approval_prompt_includes_policy_facts() -> None:
+    prompt = format_terminal_approval_prompt(
+        "sidecar.pinchtab.autostart",
+        {"sidecar": "pinchtab", "api_key": "supersecret"},
+        {
+            "reason_code": "DEFAULT_CONFIRM",
+            "risk": {
+                "risk_class": "exec",
+                "side_effects": "local_process",
+                "reversibility": "reversible",
+            },
+            "duration_options": ["allow_once", "deny"],
+        },
+    )
+
+    assert prompt.startswith("Approval required: start local pinchtab service")
+    assert "Risk: exec" in prompt
+    assert "Reason: DEFAULT_CONFIRM" in prompt
+    assert "Choices: allow_once, deny" in prompt
+    assert "supersecret" not in prompt
 
 
 def test_terminal_approval_prompt_explains_browser_upload() -> None:
@@ -1020,6 +1083,40 @@ def test_terminal_approval_prompt_explains_browser_upload() -> None:
     assert prompt == (
         "Approval required: upload reports/final.pdf to browser tab tab-7"
     )
+
+
+def test_terminal_browser_upload_prompt_redacts_secret_bearing_filename() -> None:
+    prompt = format_terminal_approval_prompt(
+        "browser",
+        {
+            "op": "tab.upload",
+            "files": ["Authorization: Bearer abcdefghijklmnop"],
+        },
+    )
+
+    assert "abcdefghijklmnop" not in prompt
+    assert "Bearer [REDACTED]" in prompt
+
+
+def test_terminal_browser_upload_prompt_includes_policy_facts() -> None:
+    prompt = format_terminal_approval_prompt(
+        "browser",
+        {"op": "tab.upload", "tab_id": "tab-7", "files": ["final.pdf"]},
+        {
+            "reason_code": "DEFAULT_CONFIRM",
+            "risk": {
+                "risk_class": "write",
+                "side_effects": "remote",
+                "reversibility": "unknown",
+            },
+            "duration_options": ["allow_once", "allow_session_exact", "deny"],
+        },
+    )
+
+    assert prompt.startswith("Approval required: upload final.pdf to browser tab tab-7")
+    assert "Risk: write" in prompt
+    assert "Reason: DEFAULT_CONFIRM" in prompt
+    assert "Choices: allow_once, allow_session_exact, deny" in prompt
 
 
 @pytest.mark.asyncio
@@ -1049,7 +1146,6 @@ async def test_terminal_slash_approval_resumes_after_command(
         overlay=object(),
         working_dir="/tmp/focus-terminal-slash-approval",
         custom_commands={},
-        approval_grants=set(),
     )
 
     await loop.handle_idle_input("/delegate worker write file")
@@ -1061,7 +1157,9 @@ async def test_terminal_slash_approval_resumes_after_command(
 
 
 @pytest.mark.asyncio
-async def test_terminal_approval_callback_serializes_bursty_session_grants() -> None:
+async def test_terminal_approval_callback_serializes_bursty_session_grants(
+    policy_ctl,
+) -> None:
     prompts: list[str] = []
     first_prompt_entered = asyncio.Event()
     release_first_prompt = asyncio.Event()
@@ -1075,7 +1173,8 @@ async def test_terminal_approval_callback_serializes_bursty_session_grants() -> 
 
     callback = build_terminal_approval_callback(
         overlay=_Overlay(),
-        session_grants=set(),
+        policy_ctl=policy_ctl,
+        session_id="session-1",
     )
 
     first = asyncio.create_task(callback("file.write", {"path": "one.py"}, "call-1"))
@@ -1091,9 +1190,9 @@ async def test_terminal_approval_callback_serializes_bursty_session_grants() -> 
 
 
 @pytest.mark.asyncio
-async def test_terminal_approval_grant_is_exact_invocation_scoped_and_session_local() -> (
-    None
-):
+async def test_terminal_approval_grant_is_exact_invocation_scoped_and_session_local(
+    policy_ctl,
+) -> None:
     prompts: list[str] = []
 
     class _Overlay:
@@ -1106,7 +1205,8 @@ async def test_terminal_approval_grant_is_exact_invocation_scoped_and_session_lo
 
     callback = build_terminal_approval_callback(
         overlay=_Overlay(["always", "deny", "deny"]),
-        session_grants=set(),
+        policy_ctl=policy_ctl,
+        session_id="session-1",
     )
 
     assert (
@@ -1138,7 +1238,8 @@ async def test_terminal_approval_grant_is_exact_invocation_scoped_and_session_lo
 
     new_session_callback = build_terminal_approval_callback(
         overlay=_Overlay(["deny"]),
-        session_grants=set(),
+        policy_ctl=policy_ctl,
+        session_id="session-2",
     )
     assert (
         await new_session_callback(
@@ -1152,7 +1253,7 @@ async def test_terminal_approval_grant_is_exact_invocation_scoped_and_session_lo
 
 
 @pytest.mark.asyncio
-async def test_browser_approval_grant_is_exact_invocation_scoped() -> None:
+async def test_browser_approval_grant_is_exact_invocation_scoped(policy_ctl) -> None:
     prompts: list[str] = []
 
     class _Overlay:
@@ -1160,17 +1261,115 @@ async def test_browser_approval_grant_is_exact_invocation_scoped() -> None:
             prompts.append(prompt)
             return "always"
 
-    grants: set[str] = set()
     callback = build_terminal_approval_callback(
         overlay=_Overlay(),
-        session_grants=grants,
+        policy_ctl=policy_ctl,
+        session_id="session-1",
     )
     upload_one = {"op": "tab.upload", "files": ["one.txt"]}
     upload_two = {"op": "tab.upload", "files": ["two.txt"]}
 
     assert await callback("browser", upload_one, "call-1") is True
+    restored = policy_ctl.check(
+        {"tool": "browser", "method": "default", "args": upload_one},
+        {"session_id": "session-1"},
+    )
+    assert restored.decision == "ALLOW"
+    assert restored.matched_grant_id
     assert await callback("browser", upload_one, "call-2") is True
     assert await callback("browser", upload_two, "call-3") is True
+    grants = policy_ctl.list_grants(active_only=True)
     assert len(grants) == 2
-    assert all(len(grant) == 64 for grant in grants)
+    assert all(grant.invocation_hash for grant in grants)
+    assert all(grant.method == "default" for grant in grants)
     assert len(prompts) == 2
+
+
+@pytest.mark.asyncio
+async def test_terminal_approval_cannot_override_configured_block(tmp_path) -> None:
+    class _Overlay:
+        async def present_approval_async(
+            self, *_args: object, **_kwargs: object
+        ) -> str:
+            raise AssertionError("configured block must not prompt")
+
+    ctl = PolicyCtl.with_sqlite(
+        tmp_path / "blocked.db",
+        config=PolicyConfig(
+            mode="enforce",
+            rules=(
+                PolicyRule(
+                    tool_name="sidecar.pinchtab.autostart",
+                    mode="block",
+                ),
+            ),
+        ),
+    )
+    try:
+        callback = build_terminal_approval_callback(
+            overlay=_Overlay(), policy_ctl=ctl, session_id="session-1"
+        )
+        assert (
+            await callback(
+                "sidecar.pinchtab.autostart",
+                {"sidecar": "pinchtab"},
+                "call-1",
+            )
+            is False
+        )
+    finally:
+        ctl.close()
+
+
+@pytest.mark.asyncio
+async def test_one_time_project_approval_cannot_override_configured_block(
+    tmp_path,
+) -> None:
+    class _Overlay:
+        async def present_confirm_async(self, _prompt: str) -> bool:
+            raise AssertionError("configured project block must not prompt")
+
+    ctl = PolicyCtl.with_sqlite(
+        tmp_path / "project-blocked.db",
+        config=PolicyConfig(
+            mode="enforce",
+            rules=(PolicyRule(tool_name="project.start", mode="block"),),
+        ),
+    )
+    try:
+        callback = build_terminal_approval_callback(
+            overlay=_Overlay(), policy_ctl=ctl, session_id="session-1"
+        )
+        assert (
+            await callback(
+                "project.start",
+                {"goal": "prove configured project block"},
+                "call-1",
+            )
+            is False
+        )
+    finally:
+        ctl.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_approval_cannot_override_selected_deny(policy_ctl) -> None:
+    class _Overlay:
+        async def present_approval_async(
+            self, *_args: object, **_kwargs: object
+        ) -> str:
+            raise AssertionError("selected deny must not prompt")
+
+    policy_ctl.create_grant(
+        PolicyGrantInput(
+            effect="deny",
+            tool="browser",
+            method="default",
+            duration_type="forever",
+        )
+    )
+    callback = build_terminal_approval_callback(
+        overlay=_Overlay(), policy_ctl=policy_ctl, session_id="session-1"
+    )
+
+    assert await callback("browser", {"op": "tab.list"}, "call-1") is False

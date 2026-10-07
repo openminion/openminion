@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from openminion.base.config.action_policy import normalize_action_policy_mode_override
 from openminion.base.config.runtime.profile import (
+    PERMISSION_MODE_AUTO,
     PERMISSION_MODE_BYPASS,
     PERMISSION_MODE_DEFAULT,
     PERMISSION_MODE_READONLY,
@@ -62,15 +63,19 @@ PERMISSION_MENU_CHOICES: tuple[PermissionMenuChoice, ...] = (
     PermissionMenuChoice(
         choice_id=PERMISSION_CHOICE_AUTO,
         label="Approve for me",
-        description="Auto-approve actions considered safe by policy.",
-        permission_mode=PERMISSION_MODE_DEFAULT,
+        description="Auto-approve file.write and file.edit inside the workspace.",
+        permission_mode=PERMISSION_MODE_AUTO,
         action_policy_mode="auto",
         status_label="auto",
     ),
     PermissionMenuChoice(
         choice_id=PERMISSION_CHOICE_FULL_ACCESS,
         label="Full access",
-        description="Do not prompt for tool/action approval in this session.",
+        description=(
+            "Skip ordinary prompts; configured block/ask rules, explicit denials, "
+            "tool exposure, paths, host execution, secret/credential boundaries, "
+            "exact authorization, and project starts still apply."
+        ),
         permission_mode=PERMISSION_MODE_BYPASS,
         action_policy_mode="bypass",
         status_label="full access",
@@ -137,12 +142,14 @@ def format_permission_status_label(
         return " + ".join(parts)
     if mode == PERMISSION_MODE_BYPASS or action == "bypass":
         return "full access"
-    parts: list[str] = []
+    if mode == PERMISSION_MODE_AUTO and action == "auto":
+        return "auto"
+    labels: list[str] = []
     if mode and mode != PERMISSION_MODE_DEFAULT:
-        parts.append(mode)
+        labels.append(mode)
     if action in {"ask", "auto"}:
-        parts.append(action)
-    return " + ".join(parts) or "default"
+        labels.append(action)
+    return " + ".join(labels) or "default"
 
 
 def format_permission_overrides_label(overrides: object) -> str:
@@ -165,12 +172,19 @@ def apply_permission_menu_choice(
     choice = permission_choice_for_id(choice_id)
     if choice.requires_confirmation and not confirmed:
         raise PermissionError("Full access requires explicit confirmation.")
-    mode = _set_runtime_permission_mode(runtime, choice.permission_mode)
-    action_mode = None
-    if choice.action_policy_mode is not None:
-        action_mode = _set_runtime_action_policy_mode(
-            runtime, choice.action_policy_mode
+    posture_setter = getattr(runtime, "set_permission_posture", None)
+    if callable(posture_setter) and choice.action_policy_mode is not None:
+        mode, action_mode = posture_setter(
+            permission_mode=choice.permission_mode,
+            action_policy_mode=choice.action_policy_mode,
         )
+    else:
+        mode = _set_runtime_permission_mode(runtime, choice.permission_mode)
+        action_mode = None
+        if choice.action_policy_mode is not None:
+            action_mode = _set_runtime_action_policy_mode(
+                runtime, choice.action_policy_mode
+            )
     status = format_permission_status_label(
         permission_mode=mode,
         action_policy_mode=(

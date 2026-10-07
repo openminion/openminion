@@ -12,6 +12,9 @@ from openminion.modules.brain.loop.adaptive import (
     ACT_ADAPTIVE_ALLOWED_TOOLS,
     ActLoopMode,
 )
+from openminion.modules.brain.loop.adaptive.context import (
+    _AdaptiveLoopContextAdapter,
+)
 from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_CIRCULAR_PATTERN,
     ADAPTIVE_TERM_CORRECTION_BUDGET_EXHAUSTED,
@@ -36,6 +39,7 @@ from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.schemas import (
     ActionError,
     ActionResult,
+    AskUserCommand,
     BudgetCounters,
     IntentExecutionState,
     ToolCommand,
@@ -1978,6 +1982,72 @@ def test_act_adaptive_seeded_confirmation_replay_continue_stays_autonomous() -> 
     assert "Continue the original task: inspect workspace and summarize" in str(
         ctx.state.post_action_user_message
     )
+
+
+def test_seeded_continuation_preserves_new_confirmation_wait() -> None:
+    ctx, _ = _ctx(_FakeLLMClient(), _FakeCommandExecutor())
+    pending = ToolCommand(
+        title="edit file",
+        tool_name="file.edit",
+        args={"path": "demo.py"},
+    )
+    ctx.state.pending_confirmation_command = pending
+    ctx.state.post_action_user_message = "Policy confirmation required."
+    outcome = AdaptiveToolLoopOutcome(
+        profile_name="general_adaptive_v1",
+        mode_name=BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
+        termination_reason="needs_user",
+        state=AdaptiveToolLoopState(),
+        allowed_tools=frozenset({"file.edit"}),
+        action_result=ActionResult(
+            command_id=pending.command_id,
+            status="needs_user",
+            summary="Policy confirmation required.",
+        ),
+    )
+
+    result = ActLoopMode()._finalize_seeded_success(ctx, loop_outcome=outcome)
+
+    assert result.status == "waiting_user"
+    assert result.working_state.status == "waiting_user"
+    assert result.message == "Policy confirmation required."
+
+
+def test_adaptive_context_replaces_stale_guidance_with_confirmation_prompt() -> None:
+    state = WorkingState(
+        session_id="s1",
+        agent_id="a1",
+        goal="edit the file",
+        budgets_remaining=BudgetCounters(
+            ticks=1,
+            tokens=1,
+            tool_calls=1,
+            a2a_calls=1,
+            time_ms=1,
+        ),
+        post_action_user_message="Continue the original task.",
+    )
+    state.pending_policy_facts = {"reason_code": "UNKNOWN_REVERSIBILITY"}
+    pending = ToolCommand(
+        title="edit file",
+        tool_name="file.edit",
+        args={"path": "demo.py"},
+    )
+    adapter = object.__new__(_AdaptiveLoopContextAdapter)
+    adapter.state = state
+
+    adapter._postprocess_outcome(
+        CommandExecutionOutcome(
+            approved_command=AskUserCommand(
+                title="approval required",
+                question="Approve the edit?",
+            ),
+        ),
+        original_command=pending,
+    )
+
+    assert state.pending_confirmation_command == pending
+    assert state.post_action_user_message == "Approve the edit?"
 
 
 def test_act_adaptive_seeded_confirmation_replay_preserves_autonomous_budget() -> None:

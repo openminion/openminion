@@ -22,7 +22,7 @@ async def run_room_turn_if_bound(
     text: str,
     *,
     progress_callback: Callable[[dict[str, Any]], None],
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None,
+    approval_callback: Callable[..., Any] | None,
     transcript: TerminalTranscript,
     handle: Any,
 ) -> str | None:
@@ -66,7 +66,7 @@ def runtime_message_stream(
     runtime: Any,
     text: str,
     progress_callback: Callable[[dict[str, Any]], None],
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None,
+    approval_callback: Callable[..., Any] | None,
 ) -> Any:
     kwargs: dict[str, Any] = {"progress_callback": progress_callback}
     if approval_callback is not None:
@@ -82,7 +82,7 @@ async def handle_room_slash(
     console: Console,
     transcript: TerminalTranscript,
     overlay: TerminalOverlayPresenter,
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
+    approval_callback: Callable[..., Any] | None = None,
 ) -> None:
     parts = str(args or "").split()
     try:

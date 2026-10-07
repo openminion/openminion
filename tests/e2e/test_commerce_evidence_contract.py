@@ -174,7 +174,7 @@ def validate_commerce_evidence(payload: object) -> None:
     access_facts = access.get("facts", {})
     if (
         access_facts.get("cross_subject_code") != "SUBJECT_UNAVAILABLE"
-        or access_facts.get("channel_ingress_code") != "POLICY_MODE_UNSUPPORTED"
+        or access_facts.get("channel_ingress_code") != "CONFIRM_REQUIRED"
         or access_facts.get("provider_calls_unchanged") is not True
     ):
         raise ValueError("subject and channel boundary evidence is missing")

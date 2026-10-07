@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import asdict
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from openminion.modules.tool.plugin_api import (
     BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
@@ -23,6 +23,7 @@ from ..constants import (
     POLICY_CONFIRM_RESPONSE_UNCLEAR,
     POLICY_DECISION_ALLOW,
     POLICY_DECISION_DENY,
+    POLICY_MODE_DISABLED,
     POLICY_MODE_ENFORCE,
     POLICY_MODE_ENFORCE_SAFE,
 )
@@ -129,6 +130,44 @@ def resolve_exact_ops_decision(
     )
 
 
+def resolve_exact_authorization_decision(
+    *,
+    store: PolicyStore,
+    invocation: InvocationSummary,
+    context: ContextSummary,
+    subject_id: str,
+    risk: RiskSpec,
+    confirmation_preview: ToolConfirmationPreview | None,
+    confirm: Callable[..., PolicyDecision],
+) -> PolicyDecision | None:
+    if is_policy_authorization_pair(invocation.tool, invocation.method):
+        return confirm(
+            inv=invocation,
+            csum=context,
+            risk=risk,
+            reason_code="EXACT_AUTHORIZATION_REQUIRED",
+            reason="Exact authorization is required for this action",
+            confirmation_preview=confirmation_preview,
+        )
+    if not is_exact_ops_command(invocation.tool, invocation.method):
+        return None
+    decision = resolve_exact_ops_decision(
+        store=store,
+        invocation=invocation,
+        context=context,
+        subject_id=subject_id,
+        risk=risk,
+    )
+    return decision or confirm(
+        inv=invocation,
+        csum=context,
+        risk=risk,
+        reason_code="EXACT_AUTHORIZATION_REQUIRED",
+        reason="Policy confirmation is required for this exact operations command",
+        confirmation_preview=confirmation_preview,
+    )
+
+
 def blockchain_preview_invalid_decision(
     invocation_hash: str, risk: RiskSpec, reason: str | None
 ) -> PolicyDecision:
@@ -189,7 +228,11 @@ def authorization_preflight_decision(
     if (
         is_policy_authorization_pair(invocation.tool, invocation.method)
         or is_exact_ops_command(invocation.tool, invocation.method)
-    ) and mode not in {POLICY_MODE_ENFORCE, POLICY_MODE_ENFORCE_SAFE}:
+    ) and mode not in {
+        POLICY_MODE_DISABLED,
+        POLICY_MODE_ENFORCE,
+        POLICY_MODE_ENFORCE_SAFE,
+    }:
         action = (
             "operations command"
             if is_exact_ops_command(invocation.tool, invocation.method)

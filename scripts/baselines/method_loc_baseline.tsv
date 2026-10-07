@@ -7,8 +7,7 @@ src/openminion/modules/brain/adapters/llm/request.py	_messages_from_context	121	
 src/openminion/modules/brain/adapters/llm/runtime.py	_extract_structured_output	150	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/adapters/tool/github_merge.py	_begin_github_merge_pr_project_effect	103	OREL keeps merge approval and effect setup in the existing action owner
 src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter._execute_openminion_runtime_tool	102	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter._invoke_validated_tool	106	OREL keeps direct project effect routing in the existing tool adapter owner
-src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter.execute	316	OCSC extracts execution-context projection while adding trusted lab propagation
+src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter.execute	307	OPPC extracts tool-run policy preparation while preserving execution ownership
 src/openminion/modules/brain/bootstrap/budget.py	trim_decide_context_to_budget	162	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/bootstrap/skill/pipeline.py	resolve_skill_pipeline	248	concurrent entry-selection growth; ratchet downward in its owning skill lane
 src/openminion/modules/brain/bootstrap/skill/selection.py	_select_skills_with_llm	138	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
@@ -17,7 +16,7 @@ src/openminion/modules/brain/loop/adaptive/finalization.py	ActLoopFinalizationMi
 src/openminion/modules/brain/loop/adaptive/finalization.py	ActLoopFinalizationMixin._result_from_outcome	290	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/adaptive/modes.py	ActLoopMode.execute	256	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/adaptive/seeded.py	ActLoopSeededMixin._execute_seeded_commands	109	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/loop/adaptive/seeded.py	ActLoopSeededMixin._finalize_seeded_success	148	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/loop/adaptive/seeded.py	ActLoopSeededMixin._finalize_seeded_success	146	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/orchestration.py	decide	627	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/recursive/generation.py	generate	414	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/strategies/coding/results.py	_result_from_outcome	192	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
@@ -39,7 +38,7 @@ src/openminion/modules/brain/retry.py	build_structured_retry_message	186	current
 src/openminion/modules/brain/retry.py	call_structured_with_retry	145	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/runner/lifecycle.py	run_until_idle	126	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/runner/tick/confirmation.py	_process_adaptive_budget_extension_reply	115	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/runner/tick/confirmation.py	process	269	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/runner/tick/confirmation.py	process	255	OPPC extracts confirmed replay preparation while preserving tick ownership
 src/openminion/modules/brain/runner/tick/input_processing.py	handle_pending_replay	181	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/runner/tick/input_processing.py	process_user_input	152	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/runner/tick/mission_routing.py	handle	234	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

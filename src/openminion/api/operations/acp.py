@@ -302,9 +302,12 @@ class OpenMinionACPAgent:
 
     def _approval_callback(
         self, session_id: str, client_loop: asyncio.AbstractEventLoop
-    ) -> Callable[[str, dict[str, Any], Any], Awaitable[bool]]:
+    ) -> Callable[[str, dict[str, Any], Any, dict[str, Any]], Awaitable[bool]]:
         async def approve(
-            tool_name: str, args: dict[str, Any], approval_id: Any
+            tool_name: str,
+            args: dict[str, Any],
+            approval_id: Any,
+            _policy_facts: dict[str, Any],
         ) -> bool:
             request = asyncio.run_coroutine_threadsafe(
                 self._request_permission(

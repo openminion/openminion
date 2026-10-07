@@ -123,6 +123,7 @@ class CommandExecutionOutcome:
     tool_budget_debited: bool = False
     policy_approval_id: str | None = None
     policy_confirmation_preview: ToolConfirmationPreview | None = None
+    policy_facts: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +162,7 @@ class PrepareOutcome:
     tool_budget_debited: bool = False
     policy_approval_id: str | None = None
     policy_confirmation_preview: ToolConfirmationPreview | None = None
+    policy_facts: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

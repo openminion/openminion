@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from threading import Event
 from typing import Any
 from unittest.mock import patch
@@ -180,7 +181,9 @@ def test_agent_run_passes_existing_turn_controls_to_runtime() -> None:
     )
 
     assert runtime.last_payload["timeout_seconds"] == 17
-    assert runtime.last_run_kwargs["approval_callback"] is approve
+    internal_callback = runtime.last_run_kwargs["approval_callback"]
+    assert internal_callback is not approve
+    assert asyncio.run(internal_callback("file.write", {}, "approval-1", {})) is True
     assert runtime.last_run_kwargs["cancel_event"] is cancel_event
 
 

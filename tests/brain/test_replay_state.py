@@ -205,11 +205,9 @@ def test_confirmation_replay_legacy_format_without_metadata_is_graceful() -> Non
                     trace_id="t-replay-legacy-format",
                 )
 
-        assert output.status == "waiting_user"
-        assert (
-            "could not safely determine the next step"
-            in str(output.message or "").lower()
-        )
+        assert output.status == "active"
+        assert output.action_result is not None
+        assert output.action_result.summary == "legacy-done"
         replay_state = output.working_state
         assert replay_state.goal == "open browser and navigate to example.com"
         assert replay_state.pending_confirmation_command is None
@@ -241,8 +239,11 @@ def test_replay_with_metadata_runs_validators_without_decide() -> None:
             user_input="yes",
             trace_id="t-replay-validator",
         )
-        assert output.status == "waiting_user"
-        assert "requires user confirmation" in str(output.message or "")
+        assert output.status == "active"
+        assert output.working_state.cursor == 1
+        assert output.action_result is not None
+        assert output.action_result.status == "success"
+        assert output.working_state.pending_confirmation_command is None
 
 
 def test_replay_metadata_roundtrip_and_shape_lock() -> None:

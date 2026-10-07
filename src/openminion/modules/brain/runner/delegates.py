@@ -189,30 +189,28 @@ def _build_confirmation_question(*, command: Command, fallback: str) -> str:
     return f"{prefix}\n\n{header}\n" + "\n".join(details)
 
 
-def _approve_delegate(
+def _evaluate_policy_decision(
     runner: Any,
     *,
     state: WorkingState,
     command: Command,
     logger: Any,
-) -> Command:
-    session_context: dict[str, Any] = {
-        "session_id": state.session_id,
-        "trace_id": state.trace_id,
-        "constraints": state.constraints,
-        "mode_name": state.active_mode_name,
-    }
+) -> PolicyDecision:
     if runner.policy_api is None:
-        decision: PolicyDecision = PolicyDecision(
+        decision = PolicyDecision(
             outcome="ALLOW", explanation="No policy engine configured."
         )
     else:
         decision = runner.policy_api.evaluate(
             command=command,
             working_state=state,
-            session_context=session_context,
+            session_context={
+                "session_id": state.session_id,
+                "trace_id": state.trace_id,
+                "constraints": state.constraints,
+                "mode_name": state.active_mode_name,
+            },
         )
-
     payload: dict[str, Any] = {
         "outcome": decision.outcome,
         "explanation": decision.explanation,
@@ -223,6 +221,29 @@ def _approve_delegate(
     if decision.patched_command is not None:
         payload["patched_command"] = decision.patched_command.model_dump(mode="json")
     logger.emit("policy.applied", payload, trace_id=state.trace_id)
+    return decision
+
+
+def _approve_delegate(
+    runner: Any,
+    *,
+    state: WorkingState,
+    command: Command,
+    logger: Any,
+) -> Command:
+    decision = _evaluate_policy_decision(
+        runner, state=state, command=command, logger=logger
+    )
+    inputs = dict(command.inputs)
+    local_replay = (
+        inputs.get("confirmation_source") == "policy_replay"
+        and str(inputs.get("confirmation_grant_id", "")).startswith(
+            "local-confirmation-"
+        )
+        and command.command_id in state.local_confirmation_command_ids
+    )
+    if local_replay:
+        state.local_confirmation_command_ids.remove(command.command_id)
 
     if decision.outcome == "REQUIRE_CLARIFICATION" or decision.require_clarification:
         return AskUserCommand(
@@ -241,16 +262,37 @@ def _approve_delegate(
             success_criteria={"user_acknowledged": True},
         )
     if decision.outcome == "ALLOW":
+        if decision.matched_grant_id:
+            command = command.model_copy(deep=True)
+            command.inputs = {
+                **dict(command.inputs),
+                "confirmation_source": "policy_replay",
+                "confirmation_grant_id": decision.matched_grant_id,
+            }
+        elif not local_replay and (
+            "confirmation_source" in command.inputs
+            or "confirmation_grant_id" in command.inputs
+        ):
+            command = command.model_copy(deep=True)
+            command.inputs = dict(command.inputs)
+            command.inputs.pop("confirmation_source", None)
+            command.inputs.pop("confirmation_grant_id", None)
         return command
     if decision.outcome == "MODIFY":
-        return decision.patched_command or command
+        modified = (decision.patched_command or command).model_copy(deep=True)
+        modified.inputs = dict(modified.inputs)
+        modified.inputs.pop("confirmation_source", None)
+        modified.inputs.pop("confirmation_grant_id", None)
+        return modified
+    if decision.outcome == "REQUIRE_CONFIRMATION" and local_replay:
+        return command
     fallback_question = (
         decision.explanation
         or "Policy requires confirmation before proceeding. Proceed?"
     )
-    if decision.confirmation_preview is not None:
+    if decision.confirmation_preview is not None or decision.policy_facts:
         confirmation_question = confirmation_required_user_message(
-            command, decision.confirmation_preview
+            command, decision.confirmation_preview, decision.policy_facts
         )
     else:
         confirmation_question = _build_confirmation_question(
@@ -259,6 +301,7 @@ def _approve_delegate(
         )
     state.pending_policy_approval_id = decision.approval_id
     state.pending_policy_confirmation_preview = decision.confirmation_preview
+    state.pending_policy_facts = dict(decision.policy_facts)
     return AskUserCommand(
         kind=BRAIN_COMMAND_KIND_ASK_USER,
         title="Policy confirmation required",

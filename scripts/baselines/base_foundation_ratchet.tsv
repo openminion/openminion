@@ -21,7 +21,7 @@ config/manager.py	110	6	34	4
 config/mcp.py	696	32	50	2
 config/parse.py	216	19	13	2
 config/parser/__init__.py	18	0	0	0
-config/parser/action.py	99	6	41	2
+config/parser/action.py	97	5	24	2
 config/parser/budget.py	122	3	76	2
 config/parser/channels.py	52	1	46	1
 config/parser/identity.py	68	3	31	1
@@ -39,8 +39,8 @@ config/usage_display.py	10	1	5	2
 config/runtime/capability.py	386	11	45	4
 config/runtime/capability_resolution.py	194	6	64	5
 config/runtime/identity.py	100	3	45	7
-config/runtime/profile.py	388	14	98	4
-config/runtime/profile_overrides.py	173	9	33	2
+config/runtime/profile.py	388	14	97	4
+config/runtime/profile_overrides.py	172	9	33	2
 config/runtime/reasoning.py	113	4	34	6
 config/runtime/telemetry.py	19	0	0	0
 config/runtime/tool_family.py	236	6	59	2

@@ -35,6 +35,7 @@ def _grant_once_from_confirmation(
     state,
     command,
     logger: CanonicalEventLogger,
+    action: str = "allow_once",
 ) -> tuple[str | None, bool]:
     policy_api = getattr(runner, "policy_api", None)
     if policy_api is None:
@@ -54,6 +55,7 @@ def _grant_once_from_confirmation(
                 command=command,
                 working_state=state,
                 session_context=session_context,
+                action=action,
             )
             or ""
         ).strip()
@@ -129,6 +131,7 @@ def _parse_confirmation_control_response(
 def _clear_pending_confirmation_metadata(state: Any) -> None:
     state.pending_policy_approval_id = None
     state.pending_policy_confirmation_preview = None
+    state.pending_policy_facts = {}
     state.pending_confirmation_sub_intents = []
     state.pending_confirmation_sub_intent_refs = []
     state.pending_confirmation_goal = None

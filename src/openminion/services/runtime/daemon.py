@@ -458,9 +458,7 @@ def _approval_callback_for_turn(
             )
 
     async def _approval_callback(
-        tool_name: str,
-        args: dict[str, Any],
-        source_callback_id: Any,
+        tool_name: str, args: dict[str, Any], callback_id: Any, _: dict[str, Any]
     ) -> bool:
         remaining_turn_seconds = max(0.0, turn_deadline_mono - monotonic())
         if remaining_turn_seconds <= 0:
@@ -469,7 +467,7 @@ def _approval_callback_for_turn(
             handle.request_approval,
             tool_name=tool_name,
             consent_preview=build_consent_preview(tool_name, args),
-            source_callback_id=str(source_callback_id or ""),
+            source_callback_id=str(callback_id or ""),
             timeout_s=min(55.0, remaining_turn_seconds * 0.9),
             on_event=_record_event,
         )
