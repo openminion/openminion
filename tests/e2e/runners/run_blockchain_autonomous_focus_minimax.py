@@ -4,14 +4,15 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from tests.e2e.cli.focus.harness import FocusProbe  # noqa: E402
+from tests.e2e.cli.focus.harness.assertions import read_focus_evidence  # noqa: E402
 from tests.e2e.cli.focus.harness.scenarios import FocusScenario  # noqa: E402
-from tests.e2e.runners.run_blockchain_autonomous_local import PROMPT  # noqa: E402
 from tests.helpers.live_e2e_profiles import resolve_live_framework_root  # noqa: E402
 from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
@@ -19,6 +20,32 @@ FRAMEWORK_ROOT = resolve_live_framework_root(ROOT)
 EVIDENCE_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "abo-e2e" / "focus"
 OPT_IN = "OPENMINION_LIVE_CLI_FOCUS_E2E"
 CONFIG_ENV = "OPENMINION_BLOCKCHAIN_AUTONOMOUS_FOCUS_CONFIG"
+PROMPT = (
+    "Research a currently deployed public Uniswap smart contract, verify it from "
+    "public sources, and report one read-only protocol value. Discover the network, "
+    "RPC, contract address, ABI, function, and arguments yourself."
+)
+
+
+def validate_evidence(evidence: object) -> None:
+    if not isinstance(evidence, dict):
+        raise ValueError("Focus evidence must be an object")
+    if evidence.get("protocol") != "general_loop_focus_cli":
+        raise ValueError("Focus evidence protocol is missing")
+    if not evidence.get("source_commit"):
+        raise ValueError("Focus source commit is missing")
+    if evidence.get("persisted_event_count", 0) < 1:
+        raise ValueError("Focus current-session events are missing")
+    requested = set(evidence.get("requested_tools", ()))
+    if not {"web.search", "blockchain.resolve_contract", "blockchain.inspect"}.issubset(
+        requested
+    ):
+        raise ValueError("Focus research, resolution, and read evidence is incomplete")
+    transcript = str(evidence.get("transcript", "")).lower()
+    if not all(marker in transcript for marker in ("contract", "block")):
+        raise ValueError("Focus answer lacks meaningful contract and block evidence")
+    if any(marker in transcript for marker in ("cannot help", "unable to", "refuse")):
+        raise ValueError("Focus refusal is not successful evidence")
 
 
 def _required_config() -> Path:
@@ -73,6 +100,7 @@ def main() -> int:
         expected_markers=(),
         timeout=480,
         include_project_context=False,
+        max_auto_continuations=3,
     )
     with probe.session(rows=48, cols=160) as session:
         probe.wait_ready(session)
@@ -80,14 +108,36 @@ def main() -> int:
     EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
     transcript_path = EVIDENCE_ROOT / "transcript.txt"
     transcript_path.write_text(transcript, encoding="utf-8")
+    events, _messages, brain_session_id = read_focus_evidence(
+        probe.environment(), probe.session_id
+    )
+    current_events = [event for event in events if event.session_id == brain_session_id]
+    requested_tools = sorted(
+        {
+            str(event.payload.get("tool_name") or event.payload.get("name") or "")
+            for event in current_events
+            if event.event_type == "tool.call.requested"
+        }
+        - {""}
+    )
     evidence = {
         "schema_version": "blockchain-autonomous-focus-evidence-v1",
+        "protocol": "general_loop_focus_cli",
+        "source_commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip(),
         "prompt": PROMPT,
         "hidden_context": {},
         "config_path": str(config_path),
         "transcript_path": str(transcript_path),
         "transcript_sha256": hashlib.sha256(transcript.encode("utf-8")).hexdigest(),
+        "transcript": transcript,
+        "brain_session_id": brain_session_id,
+        "persisted_event_count": len(current_events),
+        "persisted_event_types": sorted({event.event_type for event in current_events}),
+        "requested_tools": requested_tools,
     }
+    validate_evidence(evidence)
     (EVIDENCE_ROOT / "evidence.json").write_text(
         json.dumps(evidence, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",

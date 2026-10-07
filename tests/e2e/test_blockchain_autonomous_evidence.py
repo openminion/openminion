@@ -211,6 +211,36 @@ def validate_blockchain_autonomous_evidence(payload: object) -> None:
         "broadcasts_after_restart"
     ) != 1:
         _fail("restart reconstruction resubmitted the transaction")
+    owners = payload.get("execution_owners")
+    if owners != {
+        "command_executor": "RunnerCommandExecutor",
+        "tool_adapter": "ToolAdapter",
+        "policy_adapter": "PolicyCtlBrainAdapter",
+        "send_scope": "POWER_USER",
+    }:
+        _fail("production command, policy, registry, and tool owners were bypassed")
+    approved = payload.get("approved_policy")
+    if not isinstance(approved, dict) or approved.get("action") != "allow_once":
+        _fail("approved session lacks explicit one-time authorization")
+    if not approved.get("grant_id"):
+        _fail("approved session lacks a consumed policy grant")
+    approved_preview = approved.get("preview", {})
+    if approved_preview.get("preparation_digest") != preparation_digest:
+        _fail("approved preview does not bind the exact preparation")
+    denied = payload.get("denied_policy")
+    if not isinstance(denied, dict) or denied.get("session_id") == payload.get(
+        "session_id"
+    ):
+        _fail("denied proof must use a separate policy session")
+    denied_approval = denied.get("approval", {})
+    if denied_approval.get("action") != "deny" or denied_approval.get("grant_id") is not None:
+        _fail("denied session lacks an exact denial")
+    if not denied_approval.get("preview", {}).get("preparation_digest"):
+        _fail("denied session lacks the exact send preview")
+    if denied.get("broadcasts_before") != denied.get("broadcasts_after"):
+        _fail("denied session attempted a broadcast")
+    if denied.get("result_status") != "needs_user":
+        _fail("denied policy result was not surfaced")
     audit_events = payload.get("audit_events")
     if not isinstance(audit_events, list) or len(audit_events) != 1:
         _fail("single authorized mutation audit evidence is missing")
@@ -239,6 +269,83 @@ def test_validator_rejects_broken_digest_join(evidence) -> None:
     mutated["send"]["data"]["preparation_digest"] = "sha256:" + "0" * 64
     with pytest.raises(ValueError, match="submission does not join"):
         validate_blockchain_autonomous_evidence(mutated)
+
+
+def test_validator_rejects_denied_broadcast(evidence) -> None:
+    mutated = deepcopy(evidence)
+    mutated["denied_policy"]["broadcasts_after"] += 1
+    with pytest.raises(ValueError, match="denied session attempted a broadcast"):
+        validate_blockchain_autonomous_evidence(mutated)
+
+
+def test_focus_validator_requires_persisted_tool_evidence() -> None:
+    payload = {
+        "protocol": "general_loop_focus_cli",
+        "source_commit": "a" * 40,
+        "persisted_event_count": 4,
+        "requested_tools": [
+            "web.search",
+            "blockchain.resolve_contract",
+            "blockchain.inspect",
+        ],
+        "transcript": "Verified contract at a confirmed block.",
+    }
+    focus_runner.validate_evidence(payload)
+    payload["requested_tools"] = ["web.search"]
+    with pytest.raises(ValueError, match="resolution, and read"):
+        focus_runner.validate_evidence(payload)
+
+
+def test_public_read_validator_joins_resolution_and_read() -> None:
+    digest = "sha256:" + "1" * 64
+    payload = {
+        "protocol": "direct_runtime_protocol",
+        "source_commit": "a" * 40,
+        "write_attempts": 0,
+        "resolution": {"ok": True, "data": {"resolution_digest": digest}},
+        "read": {"ok": True, "data": {"resolution_digest": digest}},
+    }
+    public_read_runner.validate_evidence(payload)
+    payload["read"]["data"]["resolution_digest"] = "sha256:" + "2" * 64
+    with pytest.raises(ValueError, match="does not join"):
+        public_read_runner.validate_evidence(payload)
+
+
+def test_testnet_validator_joins_full_lifecycle() -> None:
+    resolution_digest = "sha256:" + "1" * 64
+    preparation_digest = "sha256:" + "2" * 64
+    status = {
+        "ok": True,
+        "data": {
+            "state": "succeeded",
+            "preparation_digest": preparation_digest,
+            "postcondition_results": [{"matched": True}],
+        },
+    }
+    payload = {
+        "protocol": "direct_runtime_protocol",
+        "source_commit": "a" * 40,
+        "confirmation_depth": 1,
+        "resolution": {"ok": True, "data": {"resolution_digest": resolution_digest}},
+        "preparation": {
+            "resolution_digest": resolution_digest,
+            "preparation_digest": preparation_digest,
+        },
+        "send": {
+            "ok": True,
+            "data": {
+                "preparation_digest": preparation_digest,
+                "broadcast_attempts": 1,
+            },
+        },
+        "operation_status": deepcopy(status),
+        "restart_status": deepcopy(status),
+        "audit_events": [{"preparation_digest": preparation_digest}],
+    }
+    testnet_runner.validate_evidence(payload)
+    payload["restart_status"]["data"]["state"] = "pending"
+    with pytest.raises(ValueError, match="restart_status is not succeeded"):
+        testnet_runner.validate_evidence(payload)
 
 
 @pytest.mark.parametrize(

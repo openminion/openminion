@@ -25,6 +25,22 @@ from openminion.tools.blockchain.runtime import inspect_blockchain  # noqa: E402
 from openminion.tools.blockchain.resolution import resolve_contract  # noqa: E402
 
 
+def validate_evidence(evidence: object) -> None:
+    if not isinstance(evidence, dict):
+        raise ValueError("public-read evidence must be an object")
+    if evidence.get("protocol") != "direct_runtime_protocol":
+        raise ValueError("public-read protocol is missing")
+    if not evidence.get("source_commit") or evidence.get("write_attempts") != 0:
+        raise ValueError("public-read provenance or write boundary is missing")
+    resolution = evidence.get("resolution", {})
+    read = evidence.get("read", {})
+    digest = resolution.get("data", {}).get("resolution_digest")
+    if resolution.get("ok") is not True or not digest:
+        raise ValueError("public resolution evidence is incomplete")
+    if read.get("ok") is not True or read.get("data", {}).get("resolution_digest") != digest:
+        raise ValueError("public read does not join to resolution")
+
+
 def _required_config() -> tuple[Path, dict, dict]:
     raw = str(os.getenv(CONFIG_ENV, "") or "").strip()
     if not raw:
@@ -74,6 +90,7 @@ def main() -> int:
             raise RuntimeError(f"public contract read failed: {result}")
     evidence = {
         "schema_version": "blockchain-autonomous-public-read-evidence-v1",
+        "protocol": "direct_runtime_protocol",
         "source_commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip(),
@@ -82,6 +99,7 @@ def main() -> int:
         "read": result,
         "write_attempts": 0,
     }
+    validate_evidence(evidence)
     EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
     (EVIDENCE_ROOT / "evidence.json").write_text(
         json.dumps(evidence, indent=2, sort_keys=True) + "\n",

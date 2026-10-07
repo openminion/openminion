@@ -8,7 +8,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -31,12 +30,22 @@ PUBLIC_RPC_URL = "https://rpc.fixture.test/"
 RESEARCH_URL = "https://research.fixture.test/acme-staking"
 PRIVATE_KEY = "0x" + "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 PROMPT = (
-    "Find the Acme staking contract, verify the deployment, and report what its "
-    "public quote function returns for 7 units."
+    "Research the protocol deployment described by public sources, verify it, and "
+    "report its quote for 7 units. Then prepare the documented test update for a "
+    "fresh test recipient, show me the exact approval facts, and ask before sending. "
+    "Only if I approve, send once and verify the confirmed postcondition."
 )
 _SHA256_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
-from openminion.base.config.env import EnvironmentConfig  # noqa: E402
+from openminion.base.config.runtime.tools import (  # noqa: E402
+    BlockchainToolRuntimeConfig,
+    ToolRuntimeConfig,
+)
+from openminion.modules.brain.adapters.tool.runtime import ToolAdapter  # noqa: E402
+from openminion.modules.brain.execution.validation import (  # noqa: E402
+    normalize_execution_result,
+)
+from openminion.modules.brain.runner.delegates import _approve_delegate  # noqa: E402
 from openminion.modules.brain.bootstrap.resolve import (  # noqa: E402
     apply_resolved_act_route,
     build_internal_dispatch,
@@ -50,28 +59,27 @@ from openminion.modules.brain.schemas import (  # noqa: E402
     ActDecision,
     BudgetCounters,
     WorkingState,
-    new_uuid,
 )
+from openminion.modules.brain.schemas.commands import ToolCommand  # noqa: E402
 from openminion.modules.brain.schemas.closure import ClosureJudgment  # noqa: E402
-from openminion.modules.brain.tools.executor import (  # noqa: E402
-    CommandExecutionOutcome,
-)
+from openminion.modules.brain.tools.executor import RunnerCommandExecutor  # noqa: E402
 from openminion.modules.llm.schemas import LLMResponse, ToolCall  # noqa: E402
+from openminion.modules.policy.adapters.brain import PolicyCtlBrainAdapter  # noqa: E402
+from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
+from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec  # noqa: E402
+from openminion.modules.tool.runtime.policy import DEFAULT_POLICY, Policy  # noqa: E402
 from openminion.modules.tool.runtime.public_https import (  # noqa: E402
     PublicHttpsResponse,
 )
 from openminion.tools.blockchain.resolution import (  # noqa: E402
-    ResolveContractArgs,
     resolve_contract,
 )
-from openminion.tools.blockchain.schemas import (  # noqa: E402
-    InspectArgs,
-    PrepareArgs,
-    SendPreparedTransactionArgs,
-)
 from openminion.tools.blockchain import resolution as resolution_runtime  # noqa: E402
-from openminion.tools.blockchain import runtime as blockchain_runtime  # noqa: E402
+from openminion.tools.blockchain import resolved_operations  # noqa: E402
+from openminion.tools.blockchain import resolved_calls  # noqa: E402
+from openminion.tools.blockchain import plugin as blockchain_plugin  # noqa: E402
+from openminion.tools.blockchain.confirmation import preview_to_dict  # noqa: E402
 
 
 class _FixtureArgs(BaseModel):
@@ -236,18 +244,55 @@ class _AnvilHttpsFixture:
         raise AssertionError(f"unexpected fixture HTTPS request: {method} {url}")
 
 
-class _CommandExecutor:
+class _ProductionExecution:
     def __init__(
         self,
         *,
-        context: Any,
+        adapter: ToolAdapter,
+        policy_ctl: PolicyCtl,
         transport: _AnvilHttpsFixture,
-        research_payload: dict[str, Any],
+        approval_action: str,
     ) -> None:
-        self.context = context
+        self.adapter = adapter
+        self.policy_ctl = policy_ctl
         self.transport = transport
-        self.research_payload = research_payload
+        self.approval_action = approval_action
+        self.approval: dict[str, Any] | None = None
         self.calls: list[dict[str, Any]] = []
+        self.runner = SimpleNamespace(
+            tool_api=adapter,
+            policy_api=PolicyCtlBrainAdapter(
+                policy_ctl, tool_registry=adapter.registry
+            ),
+            memory_api=None,
+        )
+        self.runner._approve = lambda *, state, command, logger: _approve_delegate(
+            self.runner, state=state, command=command, logger=logger
+        )
+        self.runner._act = self._act
+        self.runner._advance_after_action = lambda **_kwargs: None
+        self.executor = RunnerCommandExecutor(self.runner)
+
+    def execute_command(self, **kwargs: Any) -> Any:
+        outcome = self.executor.execute_command(**kwargs)
+        state = kwargs["state"]
+        approval_id = state.pending_policy_approval_id
+        if approval_id and outcome.action_result.status == "needs_user":
+            preview = state.pending_policy_confirmation_preview
+            self.approval = {
+                "approval_id": approval_id,
+                "action": self.approval_action,
+                "preview": preview_to_dict(preview) if preview else None,
+            }
+            grant_id = self.policy_ctl.resolve_confirmation(
+                approval_id, self.approval_action
+            )
+            self.approval["grant_id"] = grant_id
+            return self.executor.execute_command(**kwargs)
+        return outcome
+
+    def advance_after_action(self, **kwargs: Any) -> None:
+        self.executor.advance_after_action(**kwargs)
 
     def _rpc_call(self, record: dict[str, Any], method: str, params: list[Any]) -> Any:
         return resolution_runtime.rpc_call(
@@ -263,86 +308,80 @@ class _CommandExecutor:
             https_request=self.transport,
         )
 
-    def _resolved_runtime_call(self, name: str, arguments: dict[str, Any]) -> Any:
+    def _act(self, *, state: WorkingState, command: Any, logger: Any) -> Any:
+        del logger
+        name = str(command.tool_name)
+        arguments = dict(command.args)
+        self.calls.append({"tool_name": name, "arguments": arguments})
+        raw = self.execute_raw(
+            name=name,
+            arguments=arguments,
+            session_id=state.session_id,
+            trace_id=state.trace_id,
+            inputs=dict(command.inputs),
+            invocation_id=command.command_id,
+        )
+        return normalize_execution_result(
+            command_id=command.command_id,
+            raw=raw,
+            provider="tool",
+            tool_name=name,
+        )
+
+    def execute_raw(
+        self,
+        *,
+        name: str,
+        arguments: dict[str, Any],
+        session_id: str,
+        trace_id: str,
+        inputs: dict[str, Any] | None = None,
+        invocation_id: str,
+    ) -> dict[str, Any]:
         with (
-            patch.object(blockchain_runtime, "rpc_call", self._rpc_call),
+            patch.object(resolved_calls, "rpc_call", self._rpc_call),
             patch.object(
-                blockchain_runtime,
+                resolved_calls,
+                "revalidate_resolution",
+                self._revalidate,
+            ),
+            patch.object(resolved_operations, "rpc_call", self._rpc_call),
+            patch.object(
+                resolved_operations,
                 "revalidate_resolution",
                 self._revalidate,
             ),
         ):
-            if name == "blockchain.inspect":
-                return blockchain_runtime.inspect_blockchain(arguments, self.context)
-            if name == "blockchain.prepare_transaction":
-                return blockchain_runtime.prepare_transaction(arguments, self.context)
-            if name == "blockchain.send_transaction":
-                prepared = blockchain_runtime._load_resolved_preparation(
-                    arguments["preparation_digest"], self.context
-                )
-                return blockchain_runtime.send_transaction(prepared, self.context)
-        raise AssertionError(f"unexpected resolved runtime call: {name}")
-
-    def execute_command(
-        self,
-        *,
-        state: WorkingState,
-        command: Any,
-        logger: Any,
-        include_reflect: bool = False,
-        **_kwargs: Any,
-    ) -> CommandExecutionOutcome:
-        del state, logger, include_reflect
-        name = str(command.tool_name)
-        arguments = dict(command.args)
-        self.calls.append({"tool_name": name, "arguments": arguments})
-        if name == "web.search":
-            summary = "Found the Acme staking deployment guide."
-            outputs = {
-                "results": [{"title": "Acme staking", "url": RESEARCH_URL, "rank": 1}]
-            }
-        elif name == "web.fetch":
-            summary = "Fetched the Acme staking deployment facts."
-            outputs = {"url": RESEARCH_URL, "content": self.research_payload}
-        elif name == "blockchain.resolve_contract":
-            outputs = resolve_contract(
-                arguments,
-                self.context,
-                https_request=self.transport,
+            raw = self.adapter.execute(
+                command={
+                    "tool_name": name,
+                    "args": arguments,
+                    "inputs": dict(inputs or {}),
+                    "idempotency_key": invocation_id,
+                },
+                session_id=session_id,
+                trace_id=trace_id,
             )
-            if outputs.get("ok") is not True:
-                raise AssertionError(outputs)
-            summary = "Verified and stored the researched contract candidate."
-        elif name in {
-            "blockchain.inspect",
-            "blockchain.prepare_transaction",
-            "blockchain.send_transaction",
-        }:
-            outputs = self._resolved_runtime_call(name, arguments)
-            if outputs.get("ok") is not True:
-                raise AssertionError(outputs)
-            summary = f"Completed {name}."
-        else:
-            raise AssertionError(f"unexpected tool call: {name}")
-        return CommandExecutionOutcome(
-            approved_command=command,
-            action_result=ActionResult(
-                command_id=new_uuid(),
-                status="success",
-                summary=summary,
-                outputs=outputs,
-            ),
-        )
+        return raw
 
-    def advance_after_action(self, **_kwargs: Any) -> None:
-        return None
+    def close(self) -> None:
+        self.adapter.close()
+        self.policy_ctl.close()
 
 
-def _registry() -> ToolRegistry:
+def _registry(
+    research_payload: dict[str, Any], transport: _AnvilHttpsFixture
+) -> ToolRegistry:
     registry = ToolRegistry()
 
+    def _search(_args: dict[str, Any], _context: Any) -> dict[str, Any]:
+        return {"results": [{"title": "Protocol deployment", "url": RESEARCH_URL, "rank": 1}]}
+
+    def _fetch(_args: dict[str, Any], _context: Any) -> dict[str, Any]:
+        return {"url": RESEARCH_URL, "content": research_payload}
+
     def _unused_handler(_args: dict[str, Any], _context: Any) -> dict[str, Any]:
-        raise AssertionError("fixture execution is owned by _CommandExecutor")
+        raise AssertionError("unexpected deterministic fixture tool")
 
     for name in (
         "web.search",
@@ -360,48 +399,21 @@ def _registry() -> ToolRegistry:
                 name=name,
                 args_model=_FixtureArgs,
                 min_scope="READ_ONLY",
-                handler=_unused_handler,
+                handler=(
+                    _search
+                    if name == "web.search"
+                    else _fetch
+                    if name == "web.fetch"
+                    else _unused_handler
+                ),
                 prompt_visible_runtime_name=True,
                 description=f"Deterministic E2E fixture for {name}.",
             )
         )
-    registry.register(
-        ToolSpec(
-            name="blockchain.resolve_contract",
-            args_model=ResolveContractArgs,
-            min_scope="READ_ONLY",
-            handler=_unused_handler,
-            prompt_visible_runtime_name=True,
-            description="Validate one already-researched EVM contract candidate.",
-        )
+    blockchain_plugin.register(registry)
+    registry.get("blockchain.resolve_contract").handler = lambda args, context: resolve_contract(
+        args, context, https_request=transport
     )
-    for name, args_model, description in (
-        (
-            "blockchain.inspect",
-            InspectArgs,
-            "Inspect configured or digest-bound blockchain state.",
-        ),
-        (
-            "blockchain.prepare_transaction",
-            PrepareArgs,
-            "Prepare and simulate one exact blockchain transaction.",
-        ),
-        (
-            "blockchain.send_transaction",
-            SendPreparedTransactionArgs,
-            "Submit one earlier approved preparation by digest.",
-        ),
-    ):
-        registry.register(
-            ToolSpec(
-                name=name,
-                args_model=args_model,
-                min_scope="READ_ONLY",
-                handler=_unused_handler,
-                prompt_visible_runtime_name=True,
-                description=description,
-            )
-        )
     return registry
 
 
@@ -458,6 +470,70 @@ def _wait_for_anvil(web3: Web3, process: subprocess.Popen) -> None:
     raise RuntimeError("Anvil did not become ready")
 
 
+def _policy(workspace: Path, runtime_metadata: dict[str, Any]) -> Policy:
+    raw = json.loads(json.dumps(DEFAULT_POLICY))
+    raw["scope"] = "POWER_USER"
+    raw["workspace_root"] = str(workspace)
+    raw["tools"]["allow_prefix"].extend(("web.", "blockchain."))
+    raw["audit"] = {"write_mode": "jsonl_only"}
+    raw["context_metadata"] = runtime_metadata
+    return Policy(raw=raw)
+
+
+def _production_execution(
+    *,
+    session_id: str,
+    registry: ToolRegistry,
+    runtime_metadata: dict[str, Any],
+    transport: _AnvilHttpsFixture,
+    approval_action: str,
+) -> _ProductionExecution:
+    EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
+    policy_path = EVIDENCE_ROOT / f"{session_id}-policy.sqlite"
+    policy_path.unlink(missing_ok=True)
+    ctl = PolicyCtl.with_sqlite(policy_path, config=PolicyConfig(mode="enforce"))
+    ctl.register_risk(
+        "blockchain.send_transaction",
+        RiskSpec(
+            risk_class="financial",
+            side_effects="external_account",
+            reversibility="irreversible",
+            default_confirm=True,
+        ),
+    )
+    runtime_config = SimpleNamespace(
+        tools=ToolRuntimeConfig(
+            blockchain=BlockchainToolRuntimeConfig(
+                enabled=True,
+                writes_enabled=True,
+                signer_secret_key="abo-local-signer",
+                signer_secret_namespace="blockchain",
+                max_total_fee_wei="10000000000000000",
+                receipt_timeout_seconds=10,
+                confirmation_depth=1,
+            )
+        )
+    )
+    adapter = ToolAdapter(
+        workspace_root=EVIDENCE_ROOT,
+        runtime_config=runtime_config,
+        runtime_registry=registry,
+        policy=_policy(EVIDENCE_ROOT, runtime_metadata),
+        policy_ctl=ctl,
+        secret_service=SimpleNamespace(
+            get_secret_sync=lambda _key, *, namespace: PRIVATE_KEY,
+            close_sync=lambda: None,
+        ),
+        agent_id="abo-local-agent",
+    )
+    return _ProductionExecution(
+        adapter=adapter,
+        policy_ctl=ctl,
+        transport=transport,
+        approval_action=approval_action,
+    )
+
+
 def _run() -> dict[str, Any]:
     anvil = shutil.which("anvil")
     if not anvil:
@@ -492,356 +568,420 @@ def _run() -> dict[str, Any]:
         transport = _AnvilHttpsFixture(web3, address, artifact["abi"])
 
         RUNTIME_ROOT.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(
-            prefix="run-", dir=RUNTIME_ROOT.parent
-        ) as temporary:
-            data_root = Path(temporary)
-            env = EnvironmentConfig(
-                values={
-                    "OPENMINION_HOME": str(data_root),
-                    "OPENMINION_DATA_ROOT": str(data_root),
-                }
-            )
-            session_id = "abo-local-autonomous"
-            session_records = data_root / "blockchain" / "sessions"
-            records_before = list(session_records.rglob("*.json"))
-            audit_events: list[dict[str, Any]] = []
-            runtime_metadata = {
-                "runtime_tools": {
-                    "blockchain": {
-                        "enabled": True,
-                        "writes_enabled": True,
-                        "signer_secret_key": "abo-local-signer",
-                        "signer_secret_namespace": "blockchain",
-                        "max_total_fee_wei": "10000000000000000",
-                        "receipt_timeout_seconds": 10,
-                        "confirmation_depth": 1,
-                    }
+        data_root = RUNTIME_ROOT.parent
+        session_id = "abo-local-autonomous"
+        session_records = data_root / "blockchain" / "sessions"
+        records_before = list(session_records.rglob("*.json"))
+        runtime_metadata = {
+            "runtime_tools": {
+                "blockchain": {
+                    "enabled": True,
+                    "writes_enabled": True,
+                    "signer_secret_key": "abo-local-signer",
+                    "signer_secret_namespace": "blockchain",
+                    "max_total_fee_wei": "10000000000000000",
+                    "receipt_timeout_seconds": 10,
+                    "confirmation_depth": 1,
                 }
             }
-            context = SimpleNamespace(
-                session_id=session_id,
-                env=env,
-                metadata=runtime_metadata,
-                secret_service=SimpleNamespace(
-                    get_secret_sync=lambda _key, *, namespace: PRIVATE_KEY
-                ),
-                policy_authorization=SimpleNamespace(
-                    invocation_hash="a" * 64,
-                    approval_id="approval-abo-local",
-                    grant_id="grant-abo-local",
-                    duration_type="allow_once",
-                ),
-                invocation_id="abo-local-send",
-                write_audit_event=lambda payload: audit_events.append(payload) or True,
-            )
-            executor = _CommandExecutor(
-                context=context,
-                transport=transport,
-                research_payload=research_payload,
-            )
-            recipient = Web3.to_checksum_address("0x" + "66" * 20)
-            inspect_read = _request_then_call(
-                call_id="inspect-read",
-                tool_name="blockchain.inspect",
-                arguments=lambda messages: {
-                    "action": "resolved_contract_call",
-                    "resolution_digest": _tool_output(messages, "resolve")["data"][
-                        "resolution_digest"
-                    ],
-                    "function_signature": "quote(uint256)",
-                    "arguments": [7],
-                },
-            )
-            prepare = _request_then_call(
-                call_id="prepare",
-                tool_name="blockchain.prepare_transaction",
-                arguments=lambda messages: {
-                    "kind": "resolved_contract_call",
-                    "resolution_digest": _tool_output(messages, "resolve")["data"][
-                        "resolution_digest"
-                    ],
-                    "function_signature": "swap((address,uint256,uint256))",
-                    "arguments": [[recipient, 7, 14]],
-                    "value_wei": "0",
-                    "postconditions": [
-                        {
-                            "function_signature": "outputOf(address)",
-                            "arguments": [recipient],
-                            "expected_result": ["14"],
-                        }
-                    ],
-                },
-            )
-            send = _request_then_call(
-                call_id="send",
-                tool_name="blockchain.send_transaction",
-                arguments=lambda messages: {
-                    "preparation_digest": _tool_output(messages, "prepare")[
-                        "preparation_digest"
-                    ]
-                },
-            )
-            model = _ScriptedModel(
-                [
-                    LLMResponse(
-                        ok=True,
-                        provider="scripted",
-                        model="scripted-e2e",
-                        output_text='{"tool_ids":["web.search","web.fetch"]}',
-                    ),
-                    _tool_response(
-                        "search",
-                        "web.search",
-                        {"query": "Acme staking deployment public quote"},
-                    ),
-                    _tool_response("fetch", "web.fetch", {"url": RESEARCH_URL}),
-                    _tool_response(
-                        "request-resolver",
-                        "tool.request",
-                        {"name": "blockchain.resolve_contract"},
-                    ),
-                    lambda messages: _tool_response(
-                        "resolve",
-                        "blockchain.resolve_contract",
-                        dict(_tool_output(messages, "fetch")["content"]),
-                    ),
-                    *inspect_read,
-                    *prepare,
-                    *send,
-                    lambda messages: _tool_response(
-                        "operation-status",
-                        "blockchain.inspect",
-                        {
-                            "action": "operation_status",
-                            "preparation_digest": _tool_output(messages, "prepare")[
-                                "preparation_digest"
-                            ],
-                        },
-                    ),
-                    LLMResponse(
-                        ok=True,
-                        provider="scripted",
-                        model="scripted-e2e",
-                        output_text=(
-                            "The researched contract was verified, read, updated once, "
-                            "and the confirmed result was checked."
-                        ),
-                        finalization_status={
-                            "status": "final_answer",
-                            "reasoning": "Research and the typed operation completed.",
-                        },
-                        finish_reason="stop",
-                    ),
+        }
+        registry = _registry(research_payload, transport)
+        executor = _production_execution(
+            session_id=session_id,
+            registry=registry,
+            runtime_metadata=runtime_metadata,
+            transport=transport,
+            approval_action="allow_once",
+        )
+        recipient = Web3.to_checksum_address("0x" + "66" * 20)
+        inspect_read = _request_then_call(
+            call_id="inspect-read",
+            tool_name="blockchain.inspect",
+            arguments=lambda messages: {
+                "action": "resolved_contract_call",
+                "resolution_digest": _tool_output(messages, "resolve")["data"][
+                    "resolution_digest"
+                ],
+                "function_signature": "quote(uint256)",
+                "arguments": [7],
+            },
+        )
+        prepare = _request_then_call(
+            call_id="prepare",
+            tool_name="blockchain.prepare_transaction",
+            arguments=lambda messages: {
+                "kind": "resolved_contract_call",
+                "resolution_digest": _tool_output(messages, "resolve")["data"][
+                    "resolution_digest"
+                ],
+                "function_signature": "swap((address,uint256,uint256))",
+                "arguments": [[recipient, 7, 14]],
+                "value_wei": "0",
+                "postconditions": [
+                    {
+                        "function_signature": "outputOf(address)",
+                        "arguments": [recipient],
+                        "expected_result": ["14"],
+                    }
+                ],
+            },
+        )
+        send = _request_then_call(
+            call_id="send",
+            tool_name="blockchain.send_transaction",
+            arguments=lambda messages: {
+                "preparation_digest": _tool_output(messages, "prepare")[
+                    "preparation_digest"
                 ]
-            )
-            registry = _registry()
-            allowed = frozenset({*registry.list(), "tool.request"})
-            session_api = _SessionEvents()
-            runner = SimpleNamespace(
-                tool_api=SimpleNamespace(
-                    registry=registry,
-                    is_tool_allowed=lambda name: name in allowed,
+            },
+        )
+        model = _ScriptedModel(
+            [
+                LLMResponse(
+                    ok=True,
+                    provider="scripted",
+                    model="scripted-e2e",
+                    output_text='{"tool_ids":["web.search","web.fetch"]}',
                 ),
-                session_api=session_api,
-                options=SimpleNamespace(
-                    failure_strategy="halt",
-                    tool_schema_shortlisting_enabled=True,
+                _tool_response(
+                    "search",
+                    "web.search",
+                    {"query": "Acme staking deployment public quote"},
                 ),
-                turn_input_queue=None,
-                llm_api=None,
-                skill_api=None,
-            )
-            services = _Services(runner)
-            state = WorkingState(
-                session_id=session_id,
-                agent_id="abo-local-agent",
-                trace_id="abo-local-turn",
-                goal=PROMPT,
-                budgets_remaining=BudgetCounters(
-                    ticks=20,
-                    tool_calls=10,
-                    a2a_calls=0,
-                    tokens=20_000,
-                    time_ms=120_000,
+                _tool_response("fetch", "web.fetch", {"url": RESEARCH_URL}),
+                _tool_response(
+                    "request-resolver",
+                    "tool.request",
+                    {"name": "blockchain.resolve_contract"},
                 ),
-                llm_calls_max=20,
-            )
-            decision = ActDecision(route="act")
-            route = resolve_working_act_route(
-                decision=decision,
-                state=state,
-                default_act_profile=None,
-                has_new_user_input=True,
-            )
-            apply_resolved_act_route(decision=decision, route=route)
-            dispatch = build_internal_dispatch(
-                SimpleNamespace(state=state, decision=decision, user_input=PROMPT)
-            )
-            dispatch.handler.apply_mode_config(
-                config={"tool_schema_shortlisting_enabled": True},
-                runner=runner,
-                profile=None,
-            )
-            result = dispatch.handler.execute(
-                ExecutionContext(
-                    state=state,
-                    decision=dispatch.decision,
-                    user_input=PROMPT,
-                    logger=SimpleNamespace(info=lambda *_a, **_k: None),
-                    options=SimpleNamespace(
-                        profile=None,
-                        agent_profile=None,
-                        adaptive_budget_config=None,
-                    ),
-                    llm_adapter=SimpleNamespace(client=model),
-                    command_executor=executor,
-                    _services=services,
-                )
-            )
-            records_after = sorted(session_records.rglob("*.json"))
-            resolution_result = next(
-                (
-                    event["payload"]["output"]["outputs"]
-                    for event in session_api.events
-                    if event["event_type"] == "tool.call.completed"
-                    and event["payload"]["call_id"] == "resolve"
+                lambda messages: _tool_response(
+                    "resolve",
+                    "blockchain.resolve_contract",
+                    dict(_tool_output(messages, "fetch")["content"]),
                 ),
-                None,
-            )
-            if resolution_result is None:
-                raise AssertionError(
+                *inspect_read,
+                *prepare,
+                *send,
+                lambda messages: _tool_response(
+                    "operation-status",
+                    "blockchain.inspect",
                     {
-                        "result": {"status": result.status, "message": result.message},
-                        "model_calls": len(model.calls),
-                        "executed_tools": executor.calls,
-                        "events": session_api.events,
-                    }
-                )
-            digest = resolution_result["data"]["resolution_digest"]
-            read_result = next(
-                event["payload"]["output"]["outputs"]
-                for event in session_api.events
-                if event["event_type"] == "tool.call.completed"
-                and event["payload"]["call_id"] == "inspect-read"
-            )
-            preparation_result = next(
-                event["payload"]["output"]["outputs"]
-                for event in session_api.events
-                if event["event_type"] == "tool.call.completed"
-                and event["payload"]["call_id"] == "prepare"
-            )
-            send_result = next(
-                event["payload"]["output"]["outputs"]
-                for event in session_api.events
-                if event["event_type"] == "tool.call.completed"
-                and event["payload"]["call_id"] == "send"
-            )
-            operation_status = next(
-                event["payload"]["output"]["outputs"]
-                for event in session_api.events
-                if event["event_type"] == "tool.call.completed"
-                and event["payload"]["call_id"] == "operation-status"
-            )
-            preparation_digest_value = preparation_result["preparation_digest"]
-            restart_context = SimpleNamespace(
-                session_id=session_id,
-                env=env,
-                metadata=runtime_metadata,
-            )
-            restart_executor = _CommandExecutor(
-                context=restart_context,
-                transport=transport,
-                research_payload=research_payload,
-            )
-            broadcasts_before_restart = sum(
-                call.get("rpc_method") == "eth_sendRawTransaction"
-                for call in transport.calls
-            )
-            restart_status = restart_executor._resolved_runtime_call(
-                "blockchain.inspect",
-                {
-                    "action": "operation_status",
-                    "preparation_digest": preparation_digest_value,
-                },
-            )
-            broadcasts_after_restart = sum(
-                call.get("rpc_method") == "eth_sendRawTransaction"
-                for call in transport.calls
-            )
-            evidence = {
-                "schema_version": "blockchain-autonomous-local-evidence-v1",
-                "source_commit": subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
-                ).strip(),
-                "prompt": PROMPT,
-                "hidden_context": {},
-                "route": {
-                    "act_profile": route.act_profile,
-                    "execution_target": route.execution_target.kind,
-                    "handler": dispatch.handler.__class__.__name__,
-                },
-                "model_calls": [
-                    {
-                        "tool_choice": call["tool_choice"],
-                        "tools": [spec.name for spec in call["tools"]],
-                        "tool_result_call_ids": [
-                            str(message.tool_call_id)
-                            for message in call["messages"]
-                            if message.role == "tool" and message.tool_call_id
+                        "action": "operation_status",
+                        "preparation_digest": _tool_output(messages, "prepare")[
+                            "preparation_digest"
                         ],
-                        "observed_digests": sorted(
-                            {
-                                digest
-                                for message in call["messages"]
-                                if message.role == "tool"
-                                for digest in _SHA256_DIGEST.findall(
-                                    str(message.content or "")
-                                )
-                            }
-                        ),
-                    }
-                    for call in model.calls
-                ],
-                "executed_tools": executor.calls,
-                "events": session_api.events,
-                "iteration_events": [
-                    status["payload"]
-                    for status in services.statuses
-                    if status.get("source_event") == "adaptive_loop_iteration"
-                ],
-                "session_records": {
-                    "before": len(records_before),
-                    "after": len(records_after),
-                    "files": [path.name for path in records_after],
-                },
-                "resolution": resolution_result,
-                "resolution_digest": digest,
-                "read": read_result,
-                "preparation": preparation_result,
-                "preparation_digest": preparation_digest_value,
-                "send": send_result,
-                "operation_status": operation_status,
-                "restart_status": restart_status,
-                "broadcasts_before_restart": broadcasts_before_restart,
-                "broadcasts_after_restart": broadcasts_after_restart,
-                "audit_events": audit_events,
-                "transport_calls": transport.calls,
-                "chain": {
-                    "chain_id": web3.eth.chain_id,
-                    "contract_address": address,
-                    "contract_code_sha256": hashlib.sha256(
-                        bytes(web3.eth.get_code(address))
-                    ).hexdigest(),
-                },
-                "result": {"status": result.status, "message": result.message},
-            }
-            EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
-            (EVIDENCE_ROOT / "evidence.json").write_text(
-                json.dumps(evidence, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
+                    },
+                ),
+                LLMResponse(
+                    ok=True,
+                    provider="scripted",
+                    model="scripted-e2e",
+                    output_text=(
+                        "The researched contract was verified, read, updated once, "
+                        "and the confirmed result was checked."
+                    ),
+                    finalization_status={
+                        "status": "final_answer",
+                        "reasoning": "Research and the typed operation completed.",
+                    },
+                    finish_reason="stop",
+                ),
+            ]
+        )
+        session_api = _SessionEvents()
+        runner = executor.runner
+        runner.session_api = session_api
+        runner.options = SimpleNamespace(
+            failure_strategy="halt",
+            tool_schema_shortlisting_enabled=True,
+        )
+        runner.turn_input_queue = None
+        runner.llm_api = None
+        runner.skill_api = None
+        services = _Services(runner)
+        state = WorkingState(
+            session_id=session_id,
+            agent_id="abo-local-agent",
+            trace_id="abo-local-turn",
+            goal=PROMPT,
+            budgets_remaining=BudgetCounters(
+                ticks=20,
+                tool_calls=10,
+                a2a_calls=0,
+                tokens=20_000,
+                time_ms=120_000,
+            ),
+            llm_calls_max=20,
+        )
+        decision = ActDecision(route="act")
+        route = resolve_working_act_route(
+            decision=decision,
+            state=state,
+            default_act_profile=None,
+            has_new_user_input=True,
+        )
+        apply_resolved_act_route(decision=decision, route=route)
+        dispatch = build_internal_dispatch(
+            SimpleNamespace(state=state, decision=decision, user_input=PROMPT)
+        )
+        dispatch.handler.apply_mode_config(
+            config={"tool_schema_shortlisting_enabled": True},
+            runner=runner,
+            profile=None,
+        )
+        result = dispatch.handler.execute(
+            ExecutionContext(
+                state=state,
+                decision=dispatch.decision,
+                user_input=PROMPT,
+                logger=SimpleNamespace(
+                    info=lambda *_a, **_k: None,
+                    emit=lambda *_a, **_k: None,
+                ),
+                options=SimpleNamespace(
+                    profile=None,
+                    agent_profile=None,
+                    adaptive_budget_config=None,
+                ),
+                llm_adapter=SimpleNamespace(client=model),
+                command_executor=executor,
+                _services=services,
             )
-            return evidence
+        )
+        records_after = sorted(session_records.rglob("*.json"))
+        resolution_result = next(
+            (
+                event["payload"]["output"]["outputs"]
+                for event in session_api.events
+                if event["event_type"] == "tool.call.completed"
+                and event["payload"]["call_id"] == "resolve"
+            ),
+            None,
+        )
+        if resolution_result is None:
+            raise AssertionError(
+                {
+                    "result": {"status": result.status, "message": result.message},
+                    "model_calls": len(model.calls),
+                    "executed_tools": executor.calls,
+                    "events": session_api.events,
+                }
+            )
+        digest = resolution_result["data"]["resolution_digest"]
+        read_result = next(
+            event["payload"]["output"]["outputs"]
+            for event in session_api.events
+            if event["event_type"] == "tool.call.completed"
+            and event["payload"]["call_id"] == "inspect-read"
+        )
+        preparation_result = next(
+            event["payload"]["output"]["outputs"]
+            for event in session_api.events
+            if event["event_type"] == "tool.call.completed"
+            and event["payload"]["call_id"] == "prepare"
+        )
+        send_result = next(
+            event["payload"]["output"]["outputs"]
+            for event in session_api.events
+            if event["event_type"] == "tool.call.completed"
+            and event["payload"]["call_id"] == "send"
+        )
+        operation_status = next(
+            event["payload"]["output"]["outputs"]
+            for event in session_api.events
+            if event["event_type"] == "tool.call.completed"
+            and event["payload"]["call_id"] == "operation-status"
+        )
+        preparation_digest_value = preparation_result["preparation_digest"]
+        broadcasts_before_restart = sum(
+            call.get("rpc_method") == "eth_sendRawTransaction"
+            for call in transport.calls
+        )
+        restart_raw = executor.execute_raw(
+            name="blockchain.inspect",
+            arguments={
+                "action": "operation_status",
+                "preparation_digest": preparation_digest_value,
+            },
+            session_id=session_id,
+            trace_id="abo-local-restart",
+            invocation_id="abo-local-restart-status",
+        )
+        restart_status = restart_raw["outputs"]
+        broadcasts_after_restart = sum(
+            call.get("rpc_method") == "eth_sendRawTransaction"
+            for call in transport.calls
+        )
+        denied_session_id = "abo-local-denied"
+        denied = _production_execution(
+            session_id=denied_session_id,
+            registry=registry,
+            runtime_metadata=runtime_metadata,
+            transport=transport,
+            approval_action="deny",
+        )
+        denied_resolution = denied.execute_raw(
+            name="blockchain.resolve_contract",
+            arguments=research_payload,
+            session_id=denied_session_id,
+            trace_id="abo-local-denied",
+            invocation_id="denied-resolve",
+        )["outputs"]
+        denied_recipient = Web3.to_checksum_address("0x" + "77" * 20)
+        denied_preparation = denied.execute_raw(
+            name="blockchain.prepare_transaction",
+            arguments={
+                "kind": "resolved_contract_call",
+                "resolution_digest": denied_resolution["data"]["resolution_digest"],
+                "function_signature": "swap((address,uint256,uint256))",
+                "arguments": [[denied_recipient, 7, 14]],
+                "value_wei": "0",
+                "postconditions": [
+                    {
+                        "function_signature": "outputOf(address)",
+                        "arguments": [denied_recipient],
+                        "expected_result": ["14"],
+                    }
+                ],
+            },
+            session_id=denied_session_id,
+            trace_id="abo-local-denied",
+            invocation_id="denied-prepare",
+        )["outputs"]
+        denied_state = WorkingState(
+            session_id=denied_session_id,
+            agent_id="abo-local-agent",
+            trace_id="abo-local-denied",
+            goal=PROMPT,
+            budgets_remaining=BudgetCounters(
+                ticks=4,
+                tool_calls=4,
+                a2a_calls=0,
+                tokens=4_000,
+                time_ms=30_000,
+            ),
+        )
+        denied_before = sum(
+            call.get("rpc_method") == "eth_sendRawTransaction"
+            for call in transport.calls
+        )
+        denied_outcome = denied.execute_command(
+            state=denied_state,
+            command=ToolCommand(
+                kind="tool",
+                title="blockchain.send_transaction",
+                tool_name="blockchain.send_transaction",
+                args={
+                    "preparation_digest": denied_preparation["preparation_digest"]
+                },
+                inputs={},
+                idempotency_key="denied-send",
+            ),
+            logger=SimpleNamespace(emit=lambda *_a, **_k: None),
+            include_reflect=False,
+        )
+        denied_after = sum(
+            call.get("rpc_method") == "eth_sendRawTransaction"
+            for call in transport.calls
+        )
+        audit_events = []
+        for audit_path in sorted((data_root / "tool-runs").rglob("audit.jsonl")):
+            for line in audit_path.read_text(encoding="utf-8").splitlines():
+                audit = json.loads(line)
+                if audit.get("preparation_digest") == preparation_digest_value:
+                    audit_events.append(audit)
+        evidence = {
+            "schema_version": "blockchain-autonomous-local-evidence-v1",
+            "source_commit": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip(),
+            "session_id": session_id,
+            "prompt": PROMPT,
+            "hidden_context": {},
+            "route": {
+                "act_profile": route.act_profile,
+                "execution_target": route.execution_target.kind,
+                "handler": dispatch.handler.__class__.__name__,
+            },
+            "model_calls": [
+                {
+                    "tool_choice": call["tool_choice"],
+                    "tools": [spec.name for spec in call["tools"]],
+                    "tool_result_call_ids": [
+                        str(message.tool_call_id)
+                        for message in call["messages"]
+                        if message.role == "tool" and message.tool_call_id
+                    ],
+                    "observed_digests": sorted(
+                        {
+                            digest
+                            for message in call["messages"]
+                            if message.role == "tool"
+                            for digest in _SHA256_DIGEST.findall(
+                                str(message.content or "")
+                            )
+                        }
+                    ),
+                }
+                for call in model.calls
+            ],
+            "executed_tools": executor.calls,
+            "events": session_api.events,
+            "iteration_events": [
+                status["payload"]
+                for status in services.statuses
+                if status.get("source_event") == "adaptive_loop_iteration"
+            ],
+            "session_records": {
+                "before": len(records_before),
+                "after": len(records_after),
+                "files": [path.name for path in records_after],
+            },
+            "resolution": resolution_result,
+            "resolution_digest": digest,
+            "read": read_result,
+            "preparation": preparation_result,
+            "preparation_digest": preparation_digest_value,
+            "send": send_result,
+            "operation_status": operation_status,
+            "restart_status": restart_status,
+            "broadcasts_before_restart": broadcasts_before_restart,
+            "broadcasts_after_restart": broadcasts_after_restart,
+            "audit_events": audit_events,
+            "approved_policy": executor.approval,
+            "execution_owners": {
+                "command_executor": executor.executor.__class__.__name__,
+                "tool_adapter": executor.adapter.__class__.__name__,
+                "policy_adapter": executor.runner.policy_api.__class__.__name__,
+                "send_scope": registry.get(
+                    "blockchain.send_transaction"
+                ).min_scope,
+            },
+            "denied_policy": {
+                "session_id": denied_session_id,
+                "approval": denied.approval,
+                "result_status": denied_outcome.action_result.status,
+                "broadcasts_before": denied_before,
+                "broadcasts_after": denied_after,
+            },
+            "transport_calls": transport.calls,
+            "chain": {
+                "chain_id": web3.eth.chain_id,
+                "contract_address": address,
+                "contract_code_sha256": hashlib.sha256(
+                    bytes(web3.eth.get_code(address))
+                ).hexdigest(),
+            },
+            "result": {"status": result.status, "message": result.message},
+        }
+        denied.close()
+        executor.close()
+        EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
+        (EVIDENCE_ROOT / "evidence.json").write_text(
+            json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return evidence
     finally:
         process.terminate()
         process.wait(timeout=10)
