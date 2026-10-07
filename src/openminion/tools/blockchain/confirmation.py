@@ -71,7 +71,9 @@ def preview_to_dict(
 def canonical_blockchain_send_args(args: Mapping[str, Any]) -> dict[str, Any]:
     """Return the validated JSON form used by approval and execution."""
     if args.get("kind") == "resolved_contract_call":
-        return RESOLVED_PREPARATION_ADAPTER.validate_python(args).model_dump(mode="json")
+        return RESOLVED_PREPARATION_ADAPTER.validate_python(args).model_dump(
+            mode="json"
+        )
     return SEND_REQUEST_ADAPTER.validate_python(dict(args)).model_dump(mode="json")
 
 
@@ -176,9 +178,9 @@ def _build_configured_confirmation_preview(
     return preview
 
 
-def _build_resolved_confirmation_preview(
+def _validated_resolved_preview_request(
     args: Mapping[str, Any],
-) -> ResolvedBlockchainSendConfirmationPreview:
+) -> tuple[Any, dict[str, Any], bytes]:
     from web3 import Web3
 
     try:
@@ -196,10 +198,8 @@ def _build_resolved_confirmation_preview(
         raise BlockchainConfirmationPreviewError("signer_address")
     if (
         request.resolution_digest != context.resolution_digest
-        or call_context.function_signature
-        != abi_signature(call_context.function_abi)
-        or call_context.function_signature
-        != abi_signature(context.function_abi)
+        or call_context.function_signature != abi_signature(call_context.function_abi)
+        or call_context.function_signature != abi_signature(context.function_abi)
     ):
         raise BlockchainConfirmationPreviewError("call_context")
     try:
@@ -222,8 +222,19 @@ def _build_resolved_confirmation_preview(
         transaction["max_total_fee_wei"]
     ):
         raise BlockchainConfirmationPreviewError("request_schema")
+    return request, transaction, calldata
 
-    preview = ResolvedBlockchainSendConfirmationPreview(
+
+def _resolved_preview_from_request(
+    request: Any, transaction: Mapping[str, Any], calldata: bytes
+) -> ResolvedBlockchainSendConfirmationPreview:
+    from web3 import Web3
+
+    context = request.resolved_context
+    call_context = request.call_context
+    gas_price = transaction.get("gas_price_wei")
+    max_fee = transaction.get("max_fee_per_gas_wei")
+    return ResolvedBlockchainSendConfirmationPreview(
         schema_version="blockchain-send-preview-v2",
         resolution_digest=request.resolution_digest,
         preparation_digest=request.preparation_digest,
@@ -282,14 +293,20 @@ def _build_resolved_confirmation_preview(
             postcondition.model_dump(mode="json")
             for postcondition in request.postconditions
         ],
-        fee_note=(
-            "The global fee cap may not include chain-specific L2 charges."
-        ),
+        fee_note="The global fee cap may not include chain-specific L2 charges.",
         evidence_note=(
             "Current state, nonce, simulation, gas, receipt, and finality come "
             "from one researched RPC and are not independently corroborated."
         ),
     )
+
+
+def _build_resolved_confirmation_preview(
+    args: Mapping[str, Any],
+) -> ResolvedBlockchainSendConfirmationPreview:
+    request, transaction, calldata = _validated_resolved_preview_request(args)
+    preview = _resolved_preview_from_request(request, transaction, calldata)
+
     if _serialized_size(preview_to_dict(preview)) > MAX_RESOLVED_APPROVAL_PREVIEW_BYTES:
         raise BlockchainConfirmationPreviewError("preview_limit")
     return preview
@@ -439,25 +456,11 @@ def _parse_configured_confirmation_preview(
     return preview
 
 
-def _parse_resolved_confirmation_preview(
-    value: Mapping[str, Any],
-) -> ResolvedBlockchainSendConfirmationPreview:
-    from dataclasses import fields
+def _validate_resolved_preview_fields(
+    preview: ResolvedBlockchainSendConfirmationPreview,
+) -> None:
     from web3 import Web3
 
-    expected_fields = {
-        item.name for item in fields(ResolvedBlockchainSendConfirmationPreview)
-    }
-    if set(value) != expected_fields:
-        raise BlockchainConfirmationPreviewError("request_schema")
-    try:
-        payload = dict(value)
-        payload["call"] = cast(
-            BlockchainCallPreview, _call_preview(value.get("call"))
-        )
-        preview = ResolvedBlockchainSendConfirmationPreview(**payload)
-    except TypeError as exc:
-        raise BlockchainConfirmationPreviewError("request_schema") from exc
     decimal_values = (
         preview.expected_chain_id,
         preview.observed_chain_id,
@@ -516,6 +519,11 @@ def _parse_resolved_confirmation_preview(
         or _HASH_RE.fullmatch(preview.calldata_sha256) is None
     ):
         raise BlockchainConfirmationPreviewError("request_schema")
+
+
+def _validate_resolved_preview_transaction(
+    preview: ResolvedBlockchainSendConfirmationPreview,
+) -> None:
     if preview.transaction_type == "legacy":
         if preview.gas_price_wei is None or any(
             item is not None
@@ -542,6 +550,26 @@ def _parse_resolved_confirmation_preview(
         raise BlockchainConfirmationPreviewError("request_schema")
     if int(preview.calldata_bytes) > MAX_APPROVAL_CALLDATA_BYTES:
         raise BlockchainConfirmationPreviewError("calldata_limit")
+
+
+def _parse_resolved_confirmation_preview(
+    value: Mapping[str, Any],
+) -> ResolvedBlockchainSendConfirmationPreview:
+    from dataclasses import fields
+
+    expected_fields = {
+        item.name for item in fields(ResolvedBlockchainSendConfirmationPreview)
+    }
+    if set(value) != expected_fields:
+        raise BlockchainConfirmationPreviewError("request_schema")
+    try:
+        payload = dict(value)
+        payload["call"] = cast(BlockchainCallPreview, _call_preview(value.get("call")))
+        preview = ResolvedBlockchainSendConfirmationPreview(**payload)
+    except TypeError as exc:
+        raise BlockchainConfirmationPreviewError("request_schema") from exc
+    _validate_resolved_preview_fields(preview)
+    _validate_resolved_preview_transaction(preview)
     if _serialized_size(preview_to_dict(preview)) > MAX_RESOLVED_APPROVAL_PREVIEW_BYTES:
         raise BlockchainConfirmationPreviewError("preview_limit")
     return preview

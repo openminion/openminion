@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
 from eth_account import Account
+from eth_abi.exceptions import DecodingError
 import pytest
 from web3 import Web3
 from web3.exceptions import ContractLogicError, TimeExhausted
@@ -11,7 +12,11 @@ from web3.exceptions import ContractLogicError, TimeExhausted
 from openminion.modules.tool.plugin_api import PolicyAuthorization
 from openminion.tools.blockchain.runtime import preparation_digest, send_transaction
 from openminion.tools.blockchain.runtime import inspect_blockchain
-from openminion.tools.blockchain.preparations import save_resolved_preparation_record
+from openminion.tools.blockchain.preparations import (
+    SessionRecordError,
+    save_resolved_preparation_record,
+)
+from openminion.tools.blockchain.resolution import ResolutionFailure
 from openminion.tools.blockchain.transaction_schemas import (
     resolved_preparation_digest,
     validate_resolved_preparation_record,
@@ -356,7 +361,7 @@ def test_send_returns_mined_revert_without_rebroadcast(tmp_path) -> None:
 def test_resolved_send_claims_once_and_status_survives_restart(
     tmp_path, monkeypatch
 ) -> None:
-    from openminion.tools.blockchain import runtime
+    from openminion.tools.blockchain import resolved_operations, resolved_calls
 
     context = _context(tmp_path)
     context.session_id = "resolved-session"
@@ -487,12 +492,19 @@ def test_resolved_send_claims_once_and_status_survives_restart(
         "implementation_code_hash": None,
     }
     receipt = {"present": True}
+    rpc_state = {
+        "balance": "0xde0b6b3a7640000",
+        "priority_fee": "0x3",
+        "postcondition_error": False,
+    }
     broadcast_count = 0
     broadcast_lock = Lock()
 
-    monkeypatch.setattr(runtime, "load_resolution", lambda digest, ctx: record)
     monkeypatch.setattr(
-        runtime,
+        resolved_operations, "load_resolution", lambda digest, ctx: record
+    )
+    monkeypatch.setattr(
+        resolved_operations,
         "revalidate_resolution",
         lambda value: {
             "block_number": str(head["number"]),
@@ -500,7 +512,7 @@ def test_resolved_send_claims_once_and_status_survives_restart(
         },
     )
     monkeypatch.setattr(
-        runtime,
+        resolved_operations,
         "function_by_signature",
         lambda value, signature: setter if signature.startswith("setApr") else reader,
     )
@@ -508,11 +520,18 @@ def test_resolved_send_claims_once_and_status_survives_restart(
     def rpc_call(_record, method, params):
         nonlocal broadcast_count
         if method == "eth_getBalance":
-            return "0xde0b6b3a7640000"
+            assert params[1] == "pending"
+            return rpc_state["balance"]
         if method == "eth_getTransactionCount":
             return "0x9"
+        if method == "eth_maxPriorityFeePerGas":
+            return rpc_state["priority_fee"]
         if method == "eth_call":
             if params[1] == "0xa":
+                if rpc_state["postcondition_error"]:
+                    raise ResolutionFailure(
+                        "RPC_UNAVAILABLE", "Postcondition observation failed."
+                    )
                 return "0x" + Web3().codec.encode(["uint256"], [5]).hex()
             return "0x"
         if method == "eth_sendRawTransaction":
@@ -531,12 +550,19 @@ def test_resolved_send_claims_once_and_status_survives_restart(
             }
         assert method == "eth_getBlockByNumber"
         number = int(params[0], 16)
-        return {"number": hex(number), "hash": head_hashes[number]}
+        return {
+            "number": hex(number),
+            "hash": head_hashes[number],
+            "baseFeePerGas": "0xa",
+        }
 
-    monkeypatch.setattr(runtime, "rpc_call", rpc_call)
+    monkeypatch.setattr(resolved_operations, "rpc_call", rpc_call)
+    monkeypatch.setattr(resolved_calls, "rpc_call", rpc_call)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        sends = list(pool.map(lambda _index: send_transaction(prepared, context), range(2)))
+        sends = list(
+            pool.map(lambda _index: send_transaction(prepared, context), range(2))
+        )
 
     assert broadcast_count == 1
     assert sorted(result["state"] for result in sends) == ["failed", "pending"]
@@ -577,6 +603,36 @@ def test_resolved_send_claims_once_and_status_survives_restart(
     assert succeeded["data"]["state"] == "succeeded"
     assert succeeded["data"]["postcondition_results"][0]["matched"] is True
 
+    original_decode = resolved_operations.decode_abi_values
+
+    def fail_decode(*_args, **_kwargs):
+        raise DecodingError("invalid return data")
+
+    monkeypatch.setattr(resolved_operations, "decode_abi_values", fail_decode)
+    decode_failed = inspect_blockchain(
+        {
+            "action": "operation_status",
+            "preparation_digest": prepared["preparation_digest"],
+        },
+        restarted_context,
+    )
+    assert decode_failed["data"]["state"] == "confirming"
+    assert decode_failed["data"]["last_error_code"] == "ABI_DECODE_FAILED"
+    monkeypatch.setattr(resolved_operations, "decode_abi_values", original_decode)
+
+    rpc_state["postcondition_error"] = True
+    observation_failed = inspect_blockchain(
+        {
+            "action": "operation_status",
+            "preparation_digest": prepared["preparation_digest"],
+        },
+        restarted_context,
+    )
+    assert observation_failed["state"] == "succeeded"
+    assert observation_failed["data"]["state"] == "confirming"
+    assert observation_failed["data"]["last_error_code"] == "RPC_UNAVAILABLE"
+    rpc_state["postcondition_error"] = False
+
     receipt["present"] = False
     reorged = inspect_blockchain(
         {
@@ -591,3 +647,67 @@ def test_resolved_send_claims_once_and_status_survives_restart(
     repeated = send_transaction(prepared, restarted_context)
     assert repeated["error"]["code"] == "OPERATION_INVALID"
     assert broadcast_count == 1
+
+    context.session_id = "insufficient-session"
+    save_resolved_preparation_record(
+        prepared,
+        context,
+        validator=validate_resolved_preparation_record,
+        digester=resolved_preparation_digest,
+    )
+    rpc_state["balance"] = "0x1"
+    insufficient = send_transaction(prepared, context)
+    assert insufficient["error"]["code"] == "INSUFFICIENT_FUNDS"
+    assert broadcast_count == 1
+
+    context.session_id = "stale-fee-session"
+    save_resolved_preparation_record(
+        prepared,
+        context,
+        validator=validate_resolved_preparation_record,
+        digester=resolved_preparation_digest,
+    )
+    rpc_state["balance"] = "0xde0b6b3a7640000"
+    rpc_state["priority_fee"] = "0x4"
+    stale_fee = send_transaction(prepared, context)
+    assert stale_fee["error"]["code"] == "STALE_PREPARATION"
+    assert stale_fee["error"]["details"] == {"fields": ["fee"]}
+    assert broadcast_count == 1
+    rpc_state["priority_fee"] = "0x3"
+
+    context.session_id = "claim-failure-session"
+    save_resolved_preparation_record(
+        prepared,
+        context,
+        validator=validate_resolved_preparation_record,
+        digester=resolved_preparation_digest,
+    )
+    original_claim = resolved_operations.claim_operation_record
+
+    def fail_claim(*_args, **_kwargs):
+        raise SessionRecordError("unavailable", reason="unavailable")
+
+    monkeypatch.setattr(resolved_operations, "claim_operation_record", fail_claim)
+    claim_failed = send_transaction(prepared, context)
+    assert claim_failed["error"]["code"] == "OPERATION_UNAVAILABLE"
+    assert claim_failed["data"]["broadcast_attempts"] == 0
+    assert broadcast_count == 1
+    monkeypatch.setattr(resolved_operations, "claim_operation_record", original_claim)
+
+    context.session_id = "replace-failure-session"
+    save_resolved_preparation_record(
+        prepared,
+        context,
+        validator=validate_resolved_preparation_record,
+        digester=resolved_preparation_digest,
+    )
+
+    def fail_replace(*_args, **_kwargs):
+        raise SessionRecordError("unavailable", reason="unavailable")
+
+    monkeypatch.setattr(resolved_operations, "replace_operation_record", fail_replace)
+    replace_failed = send_transaction(prepared, context)
+    assert replace_failed["state"] == "broadcast_unknown"
+    assert replace_failed["error"]["code"] == "OPERATION_UNAVAILABLE"
+    assert replace_failed["data"]["broadcast_attempts"] == 1
+    assert broadcast_count == 2

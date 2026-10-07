@@ -12,6 +12,7 @@ from web3 import Web3
 
 from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.tool.runtime.public_https import (
+    DEFAULT_TIMEOUT_SECONDS,
     PublicHttpsError,
     PublicHttpsResponse,
     request_public_https,
@@ -38,7 +39,6 @@ _EIP1967_IMPLEMENTATION_SLOT = (
 _GENESIS_PARENT_HASH = "0x" + "00" * 32
 _DECIMAL_STRING_RE = re.compile(r"^(?:0|[1-9][0-9]*)$")
 _MAX_BODY_BYTES = 2 * 1024 * 1024
-_TIMEOUT_SECONDS = 15.0
 _USER_AGENT = (
     f"OpenMinion/{OPENMINION_VERSION} (+https://github.com/openminion/openminion)"
 )
@@ -113,9 +113,7 @@ class ResolveContractArgs(ClosedModel):
     @field_validator("research_source_urls")
     @classmethod
     def validate_source_urls(cls, values: list[str]) -> list[str]:
-        return [
-            _validate_https_url(value, query_allowed=True) for value in values
-        ]
+        return [_validate_https_url(value, query_allowed=True) for value in values]
 
 
 class ResolvedContractRecord(ClosedModel):
@@ -254,7 +252,7 @@ def _request(
         method=method,
         body=body,
         headers=headers,
-        timeout=_TIMEOUT_SECONDS,
+        timeout=DEFAULT_TIMEOUT_SECONDS,
         max_body_bytes=_MAX_BODY_BYTES,
     )
 
@@ -334,7 +332,7 @@ class _RpcClient:
         return payload["result"]
 
 
-def _quantity(value: Any, *, operation: str) -> int:
+def _quantity(value: Any, operation: str) -> int:
     if not isinstance(value, str) or not value.startswith("0x"):
         raise ResolutionFailure(
             "RPC_UNAVAILABLE",
@@ -351,7 +349,7 @@ def _quantity(value: Any, *, operation: str) -> int:
         ) from exc
 
 
-def _block(value: Any, *, operation: str) -> tuple[int, str]:
+def _block(value: Any, operation: str) -> tuple[int, str]:
     if not isinstance(value, dict):
         raise ResolutionFailure(
             "RPC_UNAVAILABLE",
@@ -374,9 +372,7 @@ def _transaction_hash(value: Any, *, operation: str) -> str:
     if (
         len(normalized) != 66
         or not normalized.startswith("0x")
-        or any(
-            character not in "0123456789abcdef" for character in normalized[2:]
-        )
+        or any(character not in "0123456789abcdef" for character in normalized[2:])
     ):
         raise ResolutionFailure(
             "RPC_UNAVAILABLE",
@@ -386,7 +382,7 @@ def _transaction_hash(value: Any, *, operation: str) -> str:
     return normalized
 
 
-def _hex_data(value: Any, *, operation: str, exact_bytes: int | None = None) -> str:
+def _hex_data(value: Any, operation: str, exact_bytes: int | None = None) -> str:
     if not isinstance(value, str) or not value.startswith("0x"):
         raise ResolutionFailure(
             "RPC_UNAVAILABLE",
@@ -394,7 +390,9 @@ def _hex_data(value: Any, *, operation: str, exact_bytes: int | None = None) -> 
             {"operation": operation},
         )
     body = value[2:]
-    if len(body) % 2 or any(character not in "0123456789abcdefABCDEF" for character in body):
+    if len(body) % 2 or any(
+        character not in "0123456789abcdefABCDEF" for character in body
+    ):
         raise ResolutionFailure(
             "RPC_UNAVAILABLE",
             "Blockchain RPC returned invalid hexadecimal data.",
@@ -526,6 +524,8 @@ def _sourcify_contract(
             "Verified contract metadata is invalid.",
         )
     try:
+        if not isinstance(runtime, Mapping):
+            raise TypeError("runtime bytecode is missing")
         metadata_code = _hex_data(
             runtime["onchainBytecode"],
             operation="sourcify_runtime_bytecode",
@@ -592,16 +592,12 @@ def rpc_call(
     *,
     https_request: _HttpsRequest = request_public_https,
 ) -> Any:
-    normalized = validate_resolution_record(record)
-    return _RpcClient(normalized["rpc_url"], https_request).call(method, params)
+    return _RpcClient(str(record["rpc_url"]), https_request).call(method, params)
 
 
-def function_by_signature(
-    record: Mapping[str, Any], signature: str
-) -> FunctionAbi:
-    normalized = validate_resolution_record(record)
+def function_by_signature(record: Mapping[str, Any], signature: str) -> FunctionAbi:
     matches: list[FunctionAbi] = []
-    for raw_function in normalized["function_abi"]:
+    for raw_function in record["function_abi"]:
         function = FunctionAbi.model_validate(raw_function)
         if abi_signature(function) == signature:
             matches.append(function)
@@ -610,14 +606,12 @@ def function_by_signature(
     return matches[0]
 
 
-def _observe_chain_and_lineage(
+def _observe_chain_identity(
     rpc: _RpcClient,
     *,
     expected_chain_id: int,
     expected_genesis_hash: str,
     expected_checkpoint: Mapping[str, Any] | None,
-    contract_address: str,
-    revalidation: bool,
 ) -> dict[str, Any]:
     observed_chain_id = _quantity(rpc.call("eth_chainId", []), operation="eth_chainId")
     genesis_value = rpc.call("eth_getBlockByNumber", ["0x0", False])
@@ -673,6 +667,19 @@ def _observe_chain_and_lineage(
                 },
             )
 
+    return {
+        "observed_chain_id": observed_chain_id,
+        "observed_genesis_hash": genesis_hash,
+        "observed_checkpoint": observed_checkpoint,
+    }
+
+
+def _observe_contract_lineage(
+    rpc: _RpcClient,
+    *,
+    contract_address: str,
+    revalidation: bool,
+) -> dict[str, Any]:
     block_number, block_hash = _block(
         rpc.call("eth_getBlockByNumber", ["latest", False]),
         operation="eth_getBlockByNumber:latest",
@@ -746,15 +753,35 @@ def _observe_chain_and_lineage(
             "Pinned block changed during contract inspection.",
         )
     return {
-        "observed_chain_id": observed_chain_id,
-        "observed_genesis_hash": genesis_hash,
-        "observed_checkpoint": observed_checkpoint,
         "block_number": block_number,
         "block_hash": block_hash,
         "target_code": target_code,
         "implementation_address": implementation_address,
         "implementation_code": implementation_code,
     }
+
+
+def _observe_chain_and_lineage(
+    rpc: _RpcClient,
+    *,
+    expected_chain_id: int,
+    expected_genesis_hash: str,
+    expected_checkpoint: Mapping[str, Any] | None,
+    contract_address: str,
+    revalidation: bool,
+) -> dict[str, Any]:
+    identity = _observe_chain_identity(
+        rpc,
+        expected_chain_id=expected_chain_id,
+        expected_genesis_hash=expected_genesis_hash,
+        expected_checkpoint=expected_checkpoint,
+    )
+    lineage = _observe_contract_lineage(
+        rpc,
+        contract_address=contract_address,
+        revalidation=revalidation,
+    )
+    return identity | lineage
 
 
 def revalidate_resolution(
@@ -869,9 +896,7 @@ def _resolve(
 
 def _public_resolution_data(record: Mapping[str, Any]) -> dict[str, Any]:
     hidden = {"rpc_url", "sourcify_target_url", "sourcify_implementation_url"}
-    return {
-        key: value for key, value in record.items() if key not in hidden
-    } | {
+    return {key: value for key, value in record.items() if key not in hidden} | {
         "rpc_origin": _url_origin(str(record["rpc_url"])),
         "sourcify_origin": "https://sourcify.dev",
     }

@@ -25,9 +25,8 @@ from .runtime import (
     _chain_id,
     _client,
     _error,
-    _hex_data,
 )
-from .schema_types import AbiParameter, ErrorAbi
+from .schema_types import AbiParameter, ErrorAbi, web3_hex_data
 
 MAX_DEBUG_BYTES = 65536
 MAX_TRANSACTION_EVENTS = 100
@@ -86,7 +85,7 @@ def _decode_error(
     )
 
 
-def _resolved_block(
+def _debug_block_identity(
     client: Any, block_identifier: str
 ) -> tuple[str | None, str | None]:
     if block_identifier == "pending":
@@ -95,7 +94,7 @@ def _resolved_block(
         int(block_identifier) if block_identifier.isdecimal() else block_identifier
     )
     block = client.eth.get_block(value)
-    return str(int(block["number"])), _hex_data(block["hash"]).lower()
+    return str(int(block["number"])), web3_hex_data(block["hash"]).lower()
 
 
 def _simulate(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
@@ -126,7 +125,7 @@ def _simulate(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
     try:
         return_data = client.eth.call(transaction, block)
         gas_estimate = client.eth.estimate_gas(transaction, block)
-        resolved_number, resolved_hash = _resolved_block(
+        resolved_number, resolved_hash = _debug_block_identity(
             client, request.block_identifier
         )
     except ContractLogicError as exc:
@@ -158,7 +157,7 @@ def _simulate(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
                 bytes(return_data),
             )
         except (DecodingError, ValueError):
-            return _decode_error("decode_calldata", _hex_data(return_data).lower())
+            return _decode_error("decode_calldata", web3_hex_data(return_data).lower())
     return {
         "ok": True,
         "state": "succeeded",
@@ -168,7 +167,7 @@ def _simulate(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
             "block_identifier": request.block_identifier,
             "resolved_block_number": resolved_number,
             "resolved_block_hash": resolved_hash,
-            "return_data": _hex_data(return_data).lower(),
+            "return_data": web3_hex_data(return_data).lower(),
             "gas_estimate": str(int(gas_estimate)),
             "decoded_returns": decoded_returns,
         },
@@ -208,13 +207,13 @@ def _event_arguments(
 ) -> list[dict[str, Any]]:
     indexed = [item for item in event_abi.inputs if item.indexed]
     unindexed = [item for item in event_abi.inputs if not item.indexed]
-    topics = [_hex_data(topic).lower() for topic in log["topics"]][1:]
+    topics = [web3_hex_data(topic).lower() for topic in log["topics"]][1:]
     if len(topics) != len(indexed):
         raise ValueError("event topic count does not match")
     unindexed_values = decode_abi_values(
         client,
         unindexed,
-        bytes.fromhex(_hex_data(log["data"])[2:]),
+        bytes.fromhex(web3_hex_data(log["data"])[2:]),
     )
     indexed_values = iter(topics)
     unindexed_iter = iter(unindexed_values)
@@ -281,7 +280,7 @@ def _transaction_events(request: Any, client: Any, chain_id: int) -> dict[str, A
         log
         for log in receipt["logs"]
         if log.get("topics")
-        and _hex_data(log["topics"][0]).lower() == topic_zero
+        and web3_hex_data(log["topics"][0]).lower() == topic_zero
         and (
             contract_address is None
             or client.to_checksum_address(log["address"]) == contract_address
@@ -305,7 +304,7 @@ def _transaction_events(request: Any, client: Any, chain_id: int) -> dict[str, A
         except (DecodingError, ValueError):
             return _decode_error(
                 "transaction_events",
-                _hex_data(log["data"]).lower(),
+                web3_hex_data(log["data"]).lower(),
                 log_index=log_index,
             )
         events.append(

@@ -54,12 +54,8 @@ def _metadata(
     function = {
         "type": "function",
         "name": "balanceOf",
-        "inputs": [
-            {"name": "owner", "type": "address", "internalType": "address"}
-        ],
-        "outputs": [
-            {"name": "balance", "type": "uint256", "internalType": "uint256"}
-        ],
+        "inputs": [{"name": "owner", "type": "address", "internalType": "address"}],
+        "outputs": [{"name": "balance", "type": "uint256", "internalType": "uint256"}],
         "stateMutability": "view",
         "ignored": "provider-field",
     }
@@ -178,7 +174,11 @@ def test_resolver_schema_is_closed_and_rpc_url_has_no_query() -> None:
         )
     with pytest.raises(ValidationError):
         ResolveContractArgs.model_validate(
-            _args(research_source_urls=[f"https://source.example/{index}" for index in range(6)])
+            _args(
+                research_source_urls=[
+                    f"https://source.example/{index}" for index in range(6)
+                ]
+            )
         )
     resolved = ResolveContractArgs.model_validate(
         _args(
@@ -213,9 +213,7 @@ def test_resolve_contract_verifies_and_persists_canonical_facts(tmp_path) -> Non
             "type": "function",
             "name": "balanceOf",
             "inputs": [{"name": "owner", "type": "address", "components": None}],
-            "outputs": [
-                {"name": "balance", "type": "uint256", "components": None}
-            ],
+            "outputs": [{"name": "balance", "type": "uint256", "components": None}],
             "stateMutability": "view",
         }
     ]
@@ -269,9 +267,7 @@ def test_resolution_digest_excludes_display_only_sources(tmp_path) -> None:
     assert resolution_digest(changed) == record["resolution_digest"]
 
 
-def test_resolver_uses_typed_persistence_failure_reason(
-    tmp_path, monkeypatch
-) -> None:
+def test_resolver_uses_typed_persistence_failure_reason(tmp_path, monkeypatch) -> None:
     def fail_save(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         raise SessionRecordError("changed wording", reason="size_limit")

@@ -72,6 +72,20 @@ def _session_store_root(*, session_id: str, env: EnvironmentConfig) -> Path:
     return Path(data_root) / "blockchain" / "sessions" / session_key
 
 
+def _latest_preparation_path(*, session_id: str, env: EnvironmentConfig) -> Path:
+    return _session_store_root(session_id=session_id, env=env) / "latest_preparation"
+
+
+def _save_latest_preparation(
+    preparation_digest: str, *, session_id: str, env: EnvironmentConfig
+) -> None:
+    _digest_token(preparation_digest, label="preparation digest")
+    _replace_record(
+        _latest_preparation_path(session_id=session_id, env=env),
+        preparation_digest.encode("utf-8"),
+    )
+
+
 def _digest_token(value: str, *, label: str) -> str:
     digest = str(value)
     if not digest.startswith("sha256:"):
@@ -334,6 +348,12 @@ def save_resolved_preparation_record(
         digester=digester,
         max_bytes=MAX_RESOLVED_PREPARATION_RECORD_BYTES,
     )
+    env = resolve_environment_config(env=getattr(context, "env", None))
+    _save_latest_preparation(
+        str(record.get("preparation_digest", "")),
+        session_id=str(getattr(context, "session_id", "") or ""),
+        env=env,
+    )
 
 
 def load_resolved_preparation_record(
@@ -485,6 +505,9 @@ def save_prepared_transaction(
     temporary.replace(path)
     latest = path.parent / "latest"
     latest.write_text(payload["preparation_digest"], encoding="utf-8")
+    _save_latest_preparation(
+        payload["preparation_digest"], session_id=session_id, env=env
+    )
 
 
 def resolve_prepared_transaction(
@@ -494,15 +517,32 @@ def resolve_prepared_transaction(
     env: EnvironmentConfig | Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
     if args.get("kind") == "resolved_contract_call":
-        return RESOLVED_PREPARATION_ADAPTER.validate_python(args).model_dump(mode="json")
+        return RESOLVED_PREPARATION_ADAPTER.validate_python(args).model_dump(
+            mode="json"
+        )
     if "transaction" in args:
         return SEND_REQUEST_ADAPTER.validate_python(dict(args)).model_dump(mode="json")
     resolved_env = resolve_environment_config(env=env)
     digest = str(args.get("preparation_digest", "") or "")
     if not digest:
-        store_root = _store_root(session_id=session_id, env=resolved_env)
         try:
-            digest = (store_root / "latest").read_text(encoding="utf-8").strip()
+            latest_path = _latest_preparation_path(
+                session_id=session_id, env=resolved_env
+            )
+        except SessionRecordError as exc:
+            raise PreparationReferenceError(
+                "prepared transaction is unavailable"
+            ) from exc
+        try:
+            digest = latest_path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            store_root = _store_root(session_id=session_id, env=resolved_env)
+            try:
+                digest = (store_root / "latest").read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise PreparationReferenceError(
+                    "prepared transaction is unavailable"
+                ) from exc
         except OSError as exc:
             raise PreparationReferenceError(
                 "prepared transaction is unavailable"

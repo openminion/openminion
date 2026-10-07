@@ -370,6 +370,15 @@ def _canonical_digest(value: Mapping[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
+def preparation_digest(
+    transaction: Mapping[str, Any],
+    call_context: Mapping[str, Any] | None,
+) -> str:
+    return _canonical_digest(
+        {"transaction": dict(transaction), "call_context": call_context}
+    )
+
+
 def resolved_preparation_digest(record: Mapping[str, Any]) -> str:
     normalized = dict(record)
     normalized.pop("preparation_digest", None)

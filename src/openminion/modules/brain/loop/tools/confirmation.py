@@ -147,6 +147,78 @@ def is_session_confirmation_response(text: str) -> bool:
     return token in _SESSION_CONFIRMATION_TOKENS
 
 
+def _resolved_blockchain_preview_lines(
+    preview: ResolvedBlockchainSendConfirmationPreview,
+) -> list[str]:
+    return [
+        f"Chain ID: {preview.observed_chain_id}",
+        f"Genesis hash: {preview.observed_genesis_hash}",
+        f"RPC: {preview.rpc_origin}",
+        f"Contract: {preview.contract_address}",
+        f"Implementation: {preview.implementation_address or '-'}",
+        f"Signer: {preview.signer_address}",
+        f"Function: {preview.call.function_signature}",
+        "Arguments: "
+        + json.dumps(
+            preview.call.function_args,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ),
+        f"Value (wei): {preview.value_wei}",
+        f"Nonce: {preview.nonce}",
+        f"Gas limit: {preview.gas_limit}",
+        f"Maximum total fee (wei): {preview.max_total_fee_wei}",
+        f"Calldata SHA-256: {preview.calldata_sha256}",
+        f"Preparation block: {preview.preparation_block_number}",
+        f"Simulation result: {preview.simulation_return_data}",
+        "Postconditions: "
+        + json.dumps(
+            preview.postconditions,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ),
+        f"Resolution digest: {preview.resolution_digest}",
+        f"Preparation digest: {preview.preparation_digest}",
+        preview.fee_note,
+        preview.evidence_note,
+    ]
+
+
+def _blockchain_preview_lines(preview: BlockchainSendConfirmationPreview) -> list[str]:
+    lines = [
+        f"Chain ID: {preview.chain_id}",
+        f"From: {preview.from_address}",
+        f"To: {preview.to_address}",
+        f"Value (wei): {preview.value_wei}",
+        f"Transaction type: {preview.transaction_type}",
+        f"Nonce: {preview.nonce}",
+        f"Gas limit: {preview.gas_limit}",
+        f"Gas price (wei): {preview.gas_price_wei or '-'}",
+        f"Max fee per gas (wei): {preview.max_fee_per_gas_wei or '-'}",
+        "Max priority fee per gas (wei): "
+        f"{preview.max_priority_fee_per_gas_wei or '-'}",
+        f"Maximum total fee (wei): {preview.max_total_fee_wei}",
+        f"Calldata bytes: {preview.calldata_bytes}",
+        f"Calldata SHA-256: {preview.calldata_sha256}",
+        f"Calldata: {preview.calldata_hex or '-'}",
+        f"Preparation digest: {preview.preparation_digest}",
+        f"Opaque calldata: {'yes' if preview.opaque_calldata else 'no'}",
+    ]
+    if preview.call is not None:
+        lines.extend(
+            [
+                f"Function: {preview.call.function_signature}",
+                "Arguments: "
+                + json.dumps(
+                    preview.call.function_args,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ),
+            ]
+        )
+    return lines
+
+
 def confirmation_required_user_message(
     command: Command,
     confirmation_preview: ToolConfirmationPreview | None = None,
@@ -174,78 +246,11 @@ def confirmation_required_user_message(
     if tool_name == "blockchain.send_transaction" and isinstance(
         confirmation_preview, ResolvedBlockchainSendConfirmationPreview
     ):
-        preview = confirmation_preview
-        lines.extend(
-            [
-                f"Chain ID: {preview.observed_chain_id}",
-                f"Genesis hash: {preview.observed_genesis_hash}",
-                f"RPC: {preview.rpc_origin}",
-                f"Contract: {preview.contract_address}",
-                f"Implementation: {preview.implementation_address or '-'}",
-                f"Signer: {preview.signer_address}",
-                f"Function: {preview.call.function_signature}",
-                "Arguments: "
-                + json.dumps(
-                    preview.call.function_args,
-                    separators=(",", ":"),
-                    ensure_ascii=True,
-                ),
-                f"Value (wei): {preview.value_wei}",
-                f"Nonce: {preview.nonce}",
-                f"Gas limit: {preview.gas_limit}",
-                f"Maximum total fee (wei): {preview.max_total_fee_wei}",
-                f"Calldata SHA-256: {preview.calldata_sha256}",
-                f"Preparation block: {preview.preparation_block_number}",
-                f"Simulation result: {preview.simulation_return_data}",
-                "Postconditions: "
-                + json.dumps(
-                    preview.postconditions,
-                    separators=(",", ":"),
-                    ensure_ascii=True,
-                ),
-                f"Resolution digest: {preview.resolution_digest}",
-                f"Preparation digest: {preview.preparation_digest}",
-                preview.fee_note,
-                preview.evidence_note,
-            ]
-        )
+        lines.extend(_resolved_blockchain_preview_lines(confirmation_preview))
     elif tool_name == "blockchain.send_transaction" and isinstance(
         confirmation_preview, BlockchainSendConfirmationPreview
     ):
-        preview = confirmation_preview
-        lines.extend(
-            [
-                f"Chain ID: {preview.chain_id}",
-                f"From: {preview.from_address}",
-                f"To: {preview.to_address}",
-                f"Value (wei): {preview.value_wei}",
-                f"Transaction type: {preview.transaction_type}",
-                f"Nonce: {preview.nonce}",
-                f"Gas limit: {preview.gas_limit}",
-                f"Gas price (wei): {preview.gas_price_wei or '-'}",
-                f"Max fee per gas (wei): {preview.max_fee_per_gas_wei or '-'}",
-                "Max priority fee per gas (wei): "
-                f"{preview.max_priority_fee_per_gas_wei or '-'}",
-                f"Maximum total fee (wei): {preview.max_total_fee_wei}",
-                f"Calldata bytes: {preview.calldata_bytes}",
-                f"Calldata SHA-256: {preview.calldata_sha256}",
-                f"Calldata: {preview.calldata_hex or '-'}",
-                f"Preparation digest: {preview.preparation_digest}",
-                f"Opaque calldata: {'yes' if preview.opaque_calldata else 'no'}",
-            ]
-        )
-        if preview.call is not None:
-            lines.extend(
-                [
-                    f"Function: {preview.call.function_signature}",
-                    "Arguments: "
-                    + json.dumps(
-                        preview.call.function_args,
-                        separators=(",", ":"),
-                        ensure_ascii=True,
-                    ),
-                ]
-            )
+        lines.extend(_blockchain_preview_lines(confirmation_preview))
     elif tool_name == "ops.command.run" and isinstance(confirmation_preview, dict):
         redacted_preview, _ = redact_mapping(confirmation_preview)
         lines.append(

@@ -8,11 +8,10 @@ from .inspect_schemas import (
     InspectRequest,
     InspectResult,
     NativeBalanceArgs,
-    OperationStatusArgs,
     ReceiptArgs,
-    ResolvedContractCallInspectArgs,
     TransactionArgs,
 )
+from .resolved_schemas import OperationStatusArgs, ResolvedContractCallInspectArgs
 from .debug_schemas import (
     DEBUG_REQUEST_ADAPTER,
     DebugArgs,

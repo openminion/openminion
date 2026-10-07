@@ -54,6 +54,8 @@ def _connect_socket(
 
 
 class _PinnedHttpsConnection(http.client.HTTPSConnection):
+    _context: ssl.SSLContext
+
     def __init__(
         self,
         host: str,
@@ -64,14 +66,16 @@ class _PinnedHttpsConnection(http.client.HTTPSConnection):
         connector: _Connector = _connect_socket,
         context: ssl.SSLContext | None = None,
     ) -> None:
+        ssl_context = context or ssl.create_default_context()
         super().__init__(
             host=host,
             port=port,
             timeout=timeout,
-            context=context or ssl.create_default_context(),
+            context=ssl_context,
         )
         self._address = address
         self._connector = connector
+        self._pinned_timeout = timeout
 
     def connect(self) -> None:
         family, socktype, proto, _, sockaddr = self._address
@@ -80,7 +84,7 @@ class _PinnedHttpsConnection(http.client.HTTPSConnection):
             socktype,
             proto,
             sockaddr,
-            float(self.timeout),
+            self._pinned_timeout,
         )
         expected_peer = ipaddress.ip_address(str(sockaddr[0]))
         try:
@@ -147,19 +151,19 @@ def _read_bounded_body(
     read1 = getattr(response, "read1", None)
     if not callable(read1):
         _set_connection_timeout(connection, _remaining_seconds(deadline))
-        body = response.read(max_body_bytes + 1)
+        bounded_body = response.read(max_body_bytes + 1)
         _remaining_seconds(deadline)
-        return body
+        return bounded_body
 
-    body = bytearray()
-    while len(body) <= max_body_bytes:
+    body_buffer = bytearray()
+    while len(body_buffer) <= max_body_bytes:
         _set_connection_timeout(connection, _remaining_seconds(deadline))
-        chunk = read1(min(64 * 1024, max_body_bytes + 1 - len(body)))
+        chunk = read1(min(64 * 1024, max_body_bytes + 1 - len(body_buffer)))
         _remaining_seconds(deadline)
         if not chunk:
             break
-        body.extend(chunk)
-    return bytes(body)
+        body_buffer.extend(chunk)
+    return bytes(body_buffer)
 
 
 def _default_connection_factory(

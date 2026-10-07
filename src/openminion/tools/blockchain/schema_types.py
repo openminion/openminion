@@ -19,6 +19,20 @@ _ABI_INT_RE = re.compile(r"^(?:u?int)(?:([0-9]+))?$")
 _ABI_BYTES_RE = re.compile(r"^bytes(?:([0-9]+))?$")
 
 
+def web3_hex_data(value: Any) -> str:
+    if isinstance(value, str):
+        token = value
+    elif hasattr(value, "hex"):
+        token = value.hex()
+    else:
+        token = bytes(value).hex()
+    return token if token.startswith("0x") else f"0x{token}"
+
+
+def decimal_string(value: Any) -> str:
+    return str(int(value))
+
+
 class ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -264,11 +278,26 @@ class BlockchainError(ClosedModel):
         "INVALID_ARGUMENT",
         "RPC_UNAVAILABLE",
         "CHAIN_MISMATCH",
+        "CHAIN_IDENTITY_MISMATCH",
+        "ENDPOINT_FORBIDDEN",
         "SIGNER_UNAVAILABLE",
         "SIGNER_MISMATCH",
         "SIMULATION_REVERTED",
         "FEE_CAP_EXCEEDED",
+        "INSUFFICIENT_FUNDS",
         "STALE_PREPARATION",
+        "STALE_BLOCK",
+        "STALE_RESOLUTION",
+        "RESOLUTION_UNAVAILABLE",
+        "EMPTY_CONTRACT_CODE",
+        "UNSUPPORTED_PROXY",
+        "METADATA_UNAVAILABLE",
+        "CONTRACT_NOT_VERIFIED",
+        "ABI_INVALID",
+        "RESULT_TOO_LARGE",
+        "OPERATION_UNAVAILABLE",
+        "OPERATION_INVALID",
+        "POSTCONDITION_FAILED",
         "POLICY_MODE_UNSUPPORTED",
         "CONFIRM_REQUIRED",
         "BROADCAST_UNKNOWN",

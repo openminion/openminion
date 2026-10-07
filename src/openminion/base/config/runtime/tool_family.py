@@ -109,17 +109,8 @@ def coerce_tool_family_runtime_config(
 
 
 _BLOCKCHAIN_CONFIG_KEYS = frozenset(
-    {
-        "enabled",
-        "rpc_url",
-        "chain_id",
-        "signer_secret_key",
-        "signer_secret_namespace",
-        "writes_enabled",
-        "max_total_fee_wei",
-        "receipt_timeout_seconds",
-        "confirmation_depth",
-    }
+    "enabled rpc_url chain_id signer_secret_key signer_secret_namespace "
+    "writes_enabled max_total_fee_wei receipt_timeout_seconds confirmation_depth".split()
 )
 _CANONICAL_UNSIGNED_DECIMAL_RE = re.compile(r"^(?:0|[1-9][0-9]*)$")
 
@@ -160,15 +151,10 @@ def _validate_blockchain_config(
             "runtime.tools.blockchain.receipt_timeout_seconds must be an integer "
             "from 1 through 300."
         )
-    confirmation_depth = config.confirmation_depth
-    if (
-        not isinstance(confirmation_depth, int)
-        or isinstance(confirmation_depth, bool)
-        or not 1 <= confirmation_depth <= 64
-    ):
+    depth = config.confirmation_depth
+    if type(depth) is not int or not 1 <= depth <= 64:
         raise ConfigError(
-            "runtime.tools.blockchain.confirmation_depth must be an integer "
-            "from 1 through 64."
+            "runtime.tools.blockchain.confirmation_depth must be an integer from 1 through 64."
         )
     if (
         not _CANONICAL_UNSIGNED_DECIMAL_RE.fullmatch(config.max_total_fee_wei)
@@ -184,7 +170,7 @@ def _validate_blockchain_config(
         )
     if bool(config.rpc_url) != (config.chain_id is not None):
         raise ConfigError(
-            "runtime.tools.blockchain.rpc_url and chain_id must be configured together."
+            "Blockchain rpc_url and chain_id must be configured together."
         )
     if config.writes_enabled and not config.enabled:
         raise ConfigError(

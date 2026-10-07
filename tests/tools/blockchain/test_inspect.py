@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+from eth_abi.exceptions import DecodingError
 from web3 import Web3
 from web3.exceptions import TransactionNotFound
 
@@ -334,9 +335,7 @@ def test_configured_inspect_requires_the_optional_network_pair() -> None:
     blockchain.pop("rpc_url")
     blockchain.pop("chain_id")
 
-    result = inspect_blockchain(
-        {"action": "chain_summary"}, context, web3=_Web3()
-    )
+    result = inspect_blockchain({"action": "chain_summary"}, context, web3=_Web3())
 
     assert result["error"] == {
         "code": "FEATURE_UNAVAILABLE",
@@ -349,7 +348,7 @@ def test_configured_inspect_requires_the_optional_network_pair() -> None:
 def test_resolved_contract_read_uses_pinned_record_without_configured_network(
     monkeypatch,
 ) -> None:
-    from openminion.tools.blockchain import runtime
+    from openminion.tools.blockchain import resolved_calls
 
     context = _context()
     blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
@@ -370,14 +369,14 @@ def test_resolved_contract_read_uses_pinned_record_without_configured_network(
     )
     record = {"contract_address": ADDRESS}
 
-    monkeypatch.setattr(runtime, "load_resolution", lambda digest, ctx: record)
+    monkeypatch.setattr(resolved_calls, "load_resolution", lambda digest, ctx: record)
     monkeypatch.setattr(
-        runtime,
+        resolved_calls,
         "revalidate_resolution",
         lambda value: {"block_number": "42", "block_hash": block_hash},
     )
     monkeypatch.setattr(
-        runtime,
+        resolved_calls,
         "function_by_signature",
         lambda value, signature: function,
     )
@@ -389,7 +388,7 @@ def test_resolved_contract_read_uses_pinned_record_without_configured_network(
         assert method == "eth_getBlockByNumber"
         return {"number": "0x2a", "hash": block_hash}
 
-    monkeypatch.setattr(runtime, "rpc_call", rpc_call)
+    monkeypatch.setattr(resolved_calls, "rpc_call", rpc_call)
 
     result = inspect_blockchain(
         {
@@ -406,3 +405,18 @@ def test_resolved_contract_read_uses_pinned_record_without_configured_network(
     assert result["data"]["block_hash"] == block_hash
     assert result["data"]["result"] == ["7"]
     assert result["data"]["raw_return_digest"].startswith("sha256:")
+
+    def fail_decode(*_args, **_kwargs):
+        raise DecodingError("invalid return data")
+
+    monkeypatch.setattr(resolved_calls, "decode_abi_values", fail_decode)
+    decode_failed = inspect_blockchain(
+        {
+            "action": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "apr()",
+            "arguments": [],
+        },
+        context,
+    )
+    assert decode_failed["error"]["code"] == "ABI_DECODE_FAILED"

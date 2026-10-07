@@ -1,10 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from openminion.tools.blockchain import preparations
 from openminion.base.config.env import EnvironmentConfig
 from openminion.tools.blockchain.preparations import (
     MAX_RESOLUTION_RECORD_BYTES,
@@ -154,6 +156,33 @@ def test_latest_prepared_transaction_needs_no_model_selector(tmp_path) -> None:
     assert resolved == prepared
 
 
+def test_latest_preparation_read_failure_does_not_use_legacy_pointer(
+    tmp_path, monkeypatch
+) -> None:
+    prepared = _prepared()
+    env = _env(tmp_path)
+    save_prepared_transaction(
+        prepared,
+        SimpleNamespace(session_id="session-a", env=env),
+    )
+    original_read_text = Path.read_text
+
+    def fail_latest_pointer(path: Path, *args, **kwargs) -> str:
+        if path.name == "latest_preparation":
+            raise PermissionError("denied")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_latest_pointer)
+
+    with pytest.raises(PreparationReferenceError, match="unavailable"):
+        resolve_prepared_transaction({}, session_id="session-a", env=env)
+
+
+def test_latest_preparation_requires_session(tmp_path) -> None:
+    with pytest.raises(PreparationReferenceError, match="unavailable"):
+        resolve_prepared_transaction({}, session_id="", env=_env(tmp_path))
+
+
 def test_prepared_transaction_is_scoped_to_session(tmp_path) -> None:
     prepared = _prepared()
     env = _env(tmp_path)
@@ -265,6 +294,33 @@ def test_resolution_and_resolved_preparation_records_round_trip(tmp_path) -> Non
             digester=_record_digester,
         )
         == preparation
+    )
+
+
+def test_latest_preparation_tracks_configured_and_resolved_order(
+    tmp_path, monkeypatch
+) -> None:
+    env = _env(tmp_path)
+    context = SimpleNamespace(session_id="session-a", env=env)
+    configured = _prepared()
+    resolved = _resolved_preparation_record()
+    monkeypatch.setattr(
+        preparations, "validate_resolved_preparation_record", _validate_record
+    )
+    monkeypatch.setattr(preparations, "resolved_preparation_digest", _record_digester)
+
+    save_prepared_transaction(configured, context)
+    save_resolved_preparation_record(
+        resolved,
+        context,
+        validator=_validate_record,
+        digester=_record_digester,
+    )
+    assert resolve_prepared_transaction({}, session_id="session-a", env=env) == resolved
+
+    save_prepared_transaction(configured, context)
+    assert (
+        resolve_prepared_transaction({}, session_id="session-a", env=env) == configured
     )
 
 

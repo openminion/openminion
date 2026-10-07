@@ -5,11 +5,13 @@ from typing import Any
 from dataclasses import asdict
 
 import pytest
+from eth_abi.exceptions import DecodingError
 from eth_account import Account
 from web3 import Web3
 from web3.exceptions import ContractLogicError, Web3Exception
 
 from openminion.tools.blockchain.runtime import prepare_transaction
+from openminion.tools.blockchain.preparations import SessionRecordError
 from openminion.tools.blockchain.confirmation import (
     build_blockchain_send_confirmation_preview,
     parse_blockchain_send_confirmation_preview,
@@ -343,7 +345,7 @@ def test_prepare_rejects_chain_mismatch() -> None:
 def test_resolved_prepare_persists_digest_bound_v2_approval(
     monkeypatch,
 ) -> None:
-    from openminion.tools.blockchain import runtime
+    from openminion.tools.blockchain import resolved_calls
 
     context = _context(secret_service=_SecretService())
     blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
@@ -360,6 +362,15 @@ def test_resolved_prepare_persists_digest_bound_v2_approval(
             "name": "setApr",
             "inputs": [{"name": "value", "type": "uint256"}],
             "outputs": [],
+            "stateMutability": "nonpayable",
+        }
+    )
+    setter_with_output = FunctionAbi.model_validate(
+        {
+            "type": "function",
+            "name": "setApr",
+            "inputs": [{"name": "value", "type": "uint256"}],
+            "outputs": [{"name": "", "type": "uint256"}],
             "stateMutability": "nonpayable",
         }
     )
@@ -394,30 +405,34 @@ def test_resolved_prepare_persists_digest_bound_v2_approval(
     }
     saved: dict[str, Any] = {}
 
-    monkeypatch.setattr(runtime, "load_resolution", lambda digest, ctx: record)
+    monkeypatch.setattr(resolved_calls, "load_resolution", lambda digest, ctx: record)
     monkeypatch.setattr(
-        runtime,
+        resolved_calls,
         "revalidate_resolution",
         lambda value: {"block_number": "42", "block_hash": block_hash},
     )
     monkeypatch.setattr(
-        runtime,
+        resolved_calls,
         "function_by_signature",
         lambda value, signature: setter if signature.startswith("setApr") else reader,
     )
 
+    rpc_state = {"balance": "0xde0b6b3a7640000"}
+
     def rpc_call(_record, method, params):
+        if method == "eth_getBalance":
+            assert params[1] == "pending"
         return {
-            "eth_getBalance": "0xde0b6b3a7640000",
+            "eth_getBalance": rpc_state["balance"],
             "eth_getTransactionCount": "0x9",
             "eth_call": "0x",
             "eth_estimateGas": "0x5208",
             "eth_maxPriorityFeePerGas": "0x3",
         }.get(method) or {"number": "0x2a", "hash": block_hash, "baseFeePerGas": "0xa"}
 
-    monkeypatch.setattr(runtime, "rpc_call", rpc_call)
+    monkeypatch.setattr(resolved_calls, "rpc_call", rpc_call)
     monkeypatch.setattr(
-        runtime,
+        resolved_calls,
         "save_resolved_preparation_record",
         lambda record, context, **kwargs: saved.update(record),
     )
@@ -448,3 +463,68 @@ def test_resolved_prepare_persists_digest_bound_v2_approval(
     assert preview.signer_address == SENDER
     assert preview.postconditions[0]["expected_result"] == ["5"]
     assert parse_blockchain_send_confirmation_preview(asdict(preview)) == preview
+
+    original_decode = resolved_calls.decode_abi_values
+
+    def fail_decode(*_args, **_kwargs):
+        raise DecodingError("invalid return data")
+
+    monkeypatch.setattr(resolved_calls, "decode_abi_values", fail_decode)
+    monkeypatch.setattr(
+        resolved_calls,
+        "function_by_signature",
+        lambda value, signature: (
+            setter_with_output if signature.startswith("setApr") else reader
+        ),
+    )
+    undecoded = prepare_transaction(
+        {
+            "kind": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "setApr(uint256)",
+            "arguments": [5],
+        },
+        context,
+    )
+    assert undecoded["ok"] is True
+    assert undecoded["simulation"]["decoded_returns"] is None
+    monkeypatch.setattr(resolved_calls, "decode_abi_values", original_decode)
+    monkeypatch.setattr(
+        resolved_calls,
+        "function_by_signature",
+        lambda value, signature: setter if signature.startswith("setApr") else reader,
+    )
+
+    rpc_state["balance"] = "0x1"
+    insufficient = prepare_transaction(
+        {
+            "kind": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "setApr(uint256)",
+            "arguments": [5],
+        },
+        context,
+    )
+    assert insufficient["error"]["code"] == "INSUFFICIENT_FUNDS"
+
+    rpc_state["balance"] = "0xde0b6b3a7640000"
+
+    def fail_save(*_args, **_kwargs):
+        raise SessionRecordError("unavailable", reason="unavailable")
+
+    monkeypatch.setattr(resolved_calls, "save_resolved_preparation_record", fail_save)
+    unavailable = prepare_transaction(
+        {
+            "kind": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "setApr(uint256)",
+            "arguments": [5],
+        },
+        context,
+    )
+    assert unavailable["error"] == {
+        "code": "INVALID_ARGUMENT",
+        "message": "Resolved preparation could not be stored for this session.",
+        "retryable": False,
+        "details": {"reason": "unavailable"},
+    }

@@ -48,6 +48,7 @@ from openminion.tools.blockchain.schemas import (
     SendTransactionArgs,
     SendPreparedTransactionArgs,
 )
+from openminion.tools.blockchain.schema_types import BlockchainError
 from openminion.tools.blockchain.abi import (
     abi_selector,
     abi_signature,
@@ -72,6 +73,24 @@ RUNTIME_IDS = {
     RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
 }
 
+RESOLVED_RUNTIME_ERROR_CODES = {
+    "ABI_INVALID",
+    "CHAIN_IDENTITY_MISMATCH",
+    "CONTRACT_NOT_VERIFIED",
+    "EMPTY_CONTRACT_CODE",
+    "ENDPOINT_FORBIDDEN",
+    "INSUFFICIENT_FUNDS",
+    "METADATA_UNAVAILABLE",
+    "OPERATION_INVALID",
+    "OPERATION_UNAVAILABLE",
+    "POSTCONDITION_FAILED",
+    "RESOLUTION_UNAVAILABLE",
+    "RESULT_TOO_LARGE",
+    "STALE_BLOCK",
+    "STALE_RESOLUTION",
+    "UNSUPPORTED_PROXY",
+}
+
 
 def test_blockchain_package_exports_final_registrar() -> None:
     manifest = blockchain_package.REGISTRAR.get_manifest(None)
@@ -82,6 +101,15 @@ def test_blockchain_package_exports_final_registrar() -> None:
         item.runtime_binding_id for item in manifest.runtime_bindings
     } == RUNTIME_IDS
     assert all(not item.aliases for item in manifest.model_tools)
+
+
+@pytest.mark.parametrize("code", sorted(RESOLVED_RUNTIME_ERROR_CODES))
+def test_blockchain_error_contract_accepts_resolved_calls_codes(code: str) -> None:
+    error = BlockchainError.model_validate(
+        {"code": code, "message": "failed", "retryable": False, "details": {}}
+    )
+
+    assert error.code == code
 
 
 def test_manifest_distinguishes_inspect_from_debug() -> None:
