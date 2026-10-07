@@ -10,6 +10,14 @@ from openminion.api.agent import (
 from openminion.api.handoff import Handoff, subagent
 from openminion.api.runtime import APIRuntime
 from openminion.modules.llm import ProviderError
+from openminion.modules.runtime.contracts import (
+    ToolCallSummary,
+    TurnChunk,
+    TurnError,
+    TurnResponse,
+    TurnTelemetry,
+)
+from openminion.services.runtime.ingress.types import RuntimeTurnHandle
 
 
 def __getattr__(name: str) -> Any:
@@ -27,6 +35,12 @@ __all__ = [
     "AgentRunResult",
     "Handoff",
     "ProviderError",
+    "RuntimeTurnHandle",
+    "ToolCallSummary",
+    "TurnChunk",
+    "TurnError",
+    "TurnResponse",
+    "TurnTelemetry",
     "dispatch_request",
     "subagent",
 ]

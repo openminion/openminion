@@ -1,5 +1,4 @@
 # path	loc	reason
-src/openminion/__init__.py	50	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/api/server/__init__.py	107	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/base/config/runtime/__init__.py	228	IPASC extracted canonical identity path resolution into its focused runtime owner.
 src/openminion/base/runtime/__init__.py	74	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.

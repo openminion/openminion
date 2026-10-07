@@ -144,6 +144,7 @@ def test_sdk_examples_expose_help_without_provider_calls() -> None:
         "sessions.py",
         "streaming_progress.py",
         "structured_output.py",
+        "submitted_stream.py",
         "tool_agent.py",
     }
     for script in scripts:

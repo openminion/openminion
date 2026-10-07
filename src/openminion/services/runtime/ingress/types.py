@@ -2,10 +2,11 @@
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any
-from collections.abc import Mapping
+from typing import Any, cast
+from collections.abc import Iterator, Mapping
 
 from openminion.base.config import RunProfileOverrides
+from openminion.modules.runtime.contracts import TurnChunk, TurnResponse
 from openminion.services.runtime.manager import TurnRequest
 from openminion.services.runtime.manager import TurnHandle as ManagerTurnHandle
 from openminion.modules.telemetry.usage import RunStats
@@ -82,15 +83,23 @@ class RuntimeTurnHandle:
     def trace_id(self) -> str:
         return str(self.handle.trace_id)
 
-    def result(self, timeout_s: float | None = None) -> Any:
+    def result(self, timeout_s: float | None = None) -> TurnResponse:
         effective_timeout = self.timeout_s if timeout_s is None else timeout_s
         return self.handle.result(timeout_s=effective_timeout)
 
-    def stream(self, timeout_s: float | None = None) -> Any:
-        return self.handle.stream(timeout_s=timeout_s)
+    def stream(self, timeout_s: float | None = None) -> Iterator[TurnChunk]:
+        return cast(Iterator[TurnChunk], self.handle.stream(timeout_s=timeout_s))
 
     def cancel(self) -> bool:
         return bool(self.handle.cancel())
+
+    def resolve_approval(self, *, approval_id: str, decision: str) -> bool:
+        return bool(
+            self.handle.resolve_approval(
+                approval_id=approval_id,
+                decision=decision,
+            )
+        )
 
 
 @dataclass(frozen=True)

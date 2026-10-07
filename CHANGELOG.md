@@ -7,6 +7,14 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Type the existing submitted-turn stream and result lifecycle, including
+  cancellation and approval resolution, without adding another SDK runtime.
+- Expose existing timeout, approval, cancellation, result metadata, and usage
+  facts through the public Agent facade and ship PEP 561 typing metadata.
+- Fail clearly when decorated tools lack the canonical runtime registry or a
+  runtime omits its canonical response body; preserve `0.1.x` support for one
+  schema-valid JSON object wrapped in provider prose.
+
 ## Current package line - 2026-10-06
 
 - Harden the public Agent SDK with decorated-tool support, isolated sessions,

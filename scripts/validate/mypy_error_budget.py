@@ -17,9 +17,21 @@ from typing import Any
 
 ERROR_RE = re.compile(r"^src/openminion/(?:(?P<pkg>[^/:]+)/)?.*: error:")
 MYPY_COMMAND = (
-    ".venv/bin/python3.11 -m mypy src/openminion --explicit-package-bases "
+    ".venv/bin/python3.11 -m mypy src/openminion "
+    "--config-file <editable-mirror-isolation> --explicit-package-bases "
     "--hide-error-context --no-error-summary --show-error-codes"
 )
+_RATCHET_CONFIG = """\
+[mypy]
+python_version = 3.11
+strict = True
+ignore_missing_imports = True
+warn_unused_ignores = True
+untyped_calls_exclude = slack_sdk
+
+[mypy-openminion.*]
+follow_imports = skip
+"""
 HISTORICAL_FLOOR = {
     "source_commit": "0a77f9c^",
     "package_errors": {
@@ -49,24 +61,29 @@ def _package_for(line: str) -> str:
 
 
 def _run_mypy(repo_root: Path) -> tuple[int, list[str]]:
-    cmd = [
-        sys.executable,
-        "-m",
-        "mypy",
-        "src/openminion",
-        "--explicit-package-bases",
-        "--hide-error-context",
-        "--no-error-summary",
-        "--show-error-codes",
-    ]
-    proc = subprocess.run(
-        cmd,
-        cwd=repo_root,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
+    with tempfile.TemporaryDirectory(prefix="openminion-mypy-") as tmp_dir:
+        config_path = Path(tmp_dir) / "ratchet.ini"
+        config_path.write_text(_RATCHET_CONFIG, encoding="utf-8")
+        cmd = [
+            sys.executable,
+            "-m",
+            "mypy",
+            "src/openminion",
+            "--config-file",
+            str(config_path),
+            "--explicit-package-bases",
+            "--hide-error-context",
+            "--no-error-summary",
+            "--show-error-codes",
+        ]
+        proc = subprocess.run(
+            cmd,
+            cwd=repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
     return proc.returncode, proc.stdout.splitlines()
 
 
@@ -117,7 +134,7 @@ def _metadata(repo_root: Path, *, counts: dict[str, int], total: int) -> dict[st
         "source_snapshot_sha256": _source_snapshot_sha256(repo_root),
         "python_version": sys.version.split()[0],
         "mypy_version": _mypy_version(repo_root),
-        "config_sha256": _file_sha256(repo_root / "pyproject.toml"),
+        "config_sha256": hashlib.sha256(_RATCHET_CONFIG.encode()).hexdigest(),
         "command": MYPY_COMMAND,
         "monthly_burn_down_quota": DEFAULT_MONTHLY_BURN_DOWN_QUOTA,
         "total_errors": total,

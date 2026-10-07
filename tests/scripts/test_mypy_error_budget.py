@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -212,6 +213,16 @@ def test_source_snapshot_hash_changes_when_checked_source_changes(
     source.write_text("VALUE = 2\n", encoding="utf-8")
 
     assert budget._source_snapshot_sha256(repo) != before
+
+
+def test_metadata_binds_the_effective_ratchet_config(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+
+    metadata = budget._metadata(repo, counts={}, total=0)
+
+    assert metadata["config_sha256"] == hashlib.sha256(
+        budget._RATCHET_CONFIG.encode()
+    ).hexdigest()
 
 
 def test_reviewed_reset_rejects_noncanonical_path(tmp_path: Path) -> None:

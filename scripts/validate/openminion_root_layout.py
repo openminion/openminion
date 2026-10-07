@@ -20,6 +20,7 @@ ALLOWED_ROOT_FILES = {
     "__main__.py",
     "daemon.py",
     "daemon_main.py",
+    "py.typed",
 }
 
 ALLOWED_TOP_LEVEL_DIRS = {

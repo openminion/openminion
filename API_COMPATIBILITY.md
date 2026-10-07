@@ -1,7 +1,7 @@
 # OpenMinion API Compatibility
 
 Status: active
-Last updated: 2026-09-06
+Last updated: 2026-10-06
 
 Purpose: record the supported public import roots and entrypoint compatibility
 posture for `openminion`.
@@ -40,10 +40,29 @@ Current documented exports:
 4. `AgentRunResult`
 5. `Handoff`
 6. `ProviderError`
-7. `dispatch_request`
-8. `subagent`
+7. `RuntimeTurnHandle`
+8. `ToolCallSummary`
+9. `TurnChunk`
+10. `TurnError`
+11. `TurnResponse`
+12. `TurnTelemetry`
+13. `dispatch_request`
+14. `subagent`
 
 These are defined in `src/openminion/api/__init__.py`.
+
+`Agent.run_stream()` remains the synchronous `Agent` call with a progress
+callback. Applications that need an iterator, cancellation, or streamed
+approval resolution use `APIRuntime.submit_turn()` and its
+`RuntimeTurnHandle`. The handle exposes typed `TurnChunk` iteration, typed
+`TurnResponse` resolution, cancellation, and approval decisions without a
+second SDK runtime.
+
+`Agent.run()` and `Agent.run_stream()` accept optional runtime-owned timeout,
+approval-callback, and cancellation inputs. `AgentRunResult` includes the
+canonical result ID plus copied metadata and stats. Structured Pydantic output
+should be exact JSON; during `0.1.x`, one schema-valid JSON object wrapped in
+provider prose remains accepted for compatibility.
 
 ## Public CLI/operator entrypoints
 
@@ -174,6 +193,11 @@ Within the `0.1.x` line:
    in release notes and this file, and
 5. fixes may correct behavior that contradicted the documented contract; the
    correction and migration impact must be stated in release notes.
+
+The SDK no longer silently ignores decorated-tool or handoff registration when
+an injected runtime lacks the canonical `ToolRegistry`, and it no longer
+guesses noncanonical `text` or `reply` result keys. Both cases now fail at the
+owning boundary. String tool names and canonical `body` results are unchanged.
 
 The non-promises above remain internal in `0.1.x`. Long-duration autonomy,
 provider-specific quality, signed native packaging, and public Desktop update

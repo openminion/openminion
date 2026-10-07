@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
+from threading import Event
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
 from openminion.api.runtime import APIRuntime
+from openminion.modules.tool.registry import ToolRegistry
 
 if TYPE_CHECKING:  # pragma: no cover
     from openminion.api.handoff import (
@@ -22,8 +25,8 @@ if TYPE_CHECKING:  # pragma: no cover
 
 InputT = TypeVar("InputT")
 OutputT = TypeVar("OutputT")
-MessageInput = str | BaseModel | dict[str, Any] | list[Any] | None
 ToolInput = str | Callable[..., Any]
+_ApprovalCallback = Callable[[str, dict[str, Any], str], bool | Awaitable[bool]]
 
 
 class AgentOutputValidationError(ValueError):
@@ -51,6 +54,9 @@ class AgentRunResult(Generic[OutputT]):
     run_id: str | None = None
     run_state: str | None = None
     session_id: str | None = None
+    id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    stats: dict[str, Any] = field(default_factory=dict)
 
 
 class Agent(Generic[InputT, OutputT]):
@@ -60,7 +66,7 @@ class Agent(Generic[InputT, OutputT]):
         self,
         *,
         instructions: str | None = None,
-        output_type: type | None = None,
+        output_type: type[OutputT] | None = None,
         runtime: APIRuntime | None = None,
         config_path: str | None = None,
         agent_id: str | None = None,
@@ -129,7 +135,7 @@ class Agent(Generic[InputT, OutputT]):
             )
         return self._runtime
 
-    def _serialize_input(self, value: Any) -> str:
+    def _serialize_input(self, value: object) -> str:
         if value is None:
             return ""
         if isinstance(value, str):
@@ -145,6 +151,7 @@ class Agent(Generic[InputT, OutputT]):
         message: str,
         *,
         session_id: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "message": message,
@@ -161,22 +168,16 @@ class Agent(Generic[InputT, OutputT]):
             payload["allowed_tools"] = list(self.tools)
         if self.forced_tools:
             payload["forced_tools"] = list(self.forced_tools)
-        if (
+        if timeout_seconds is not None:
+            payload["timeout_seconds"] = timeout_seconds
+        elif (
             self.subagent_context is not None
             and self.subagent_context.timeout_seconds is not None
         ):
             payload["timeout_seconds"] = self.subagent_context.timeout_seconds
         return payload
 
-    def _register_tools_for_run(self, runtime: APIRuntime) -> list[str]:
-        if not self.handoffs and not self._tool_family_builders:
-            return []
-        registry = getattr(runtime, "tools", None)
-        add_tool = getattr(registry, "add", None)
-        unregister_tool = getattr(registry, "unregister", None)
-        if not callable(add_tool) or not callable(unregister_tool):
-            return []
-
+    def _register_tools_for_run(self, registry: ToolRegistry) -> list[str]:
         from openminion.api.handoff import build_delegate_family_spec
         from openminion.modules.tool.errors import ToolRuntimeError
         from openminion.modules.tool.framework import derive_tool_specs
@@ -191,40 +192,42 @@ class Agent(Generic[InputT, OutputT]):
             for family in families:
                 for spec in derive_tool_specs(family):
                     spec.prompt_visible_runtime_name = True
-                    add_tool(spec)
+                    registry.add(spec)
                     registered.append(spec.name)
         except (ToolRuntimeError, TypeError, ValueError, AttributeError):
             for name in reversed(registered):
-                unregister_tool(name)
+                registry.unregister(name)
             raise
         return registered
 
     @staticmethod
-    def _unregister_tools(runtime: APIRuntime, tool_names: list[str]) -> None:
-        if not tool_names:
-            return
-        registry = getattr(runtime, "tools", None)
-        unregister_tool = getattr(registry, "unregister", None)
-        if not callable(unregister_tool):
+    def _unregister_tools(
+        registry: ToolRegistry | None,
+        tool_names: list[str],
+    ) -> None:
+        if registry is None:
             return
         for name in reversed(tool_names):
-            unregister_tool(name)
+            registry.unregister(name)
 
-    def _coerce_output(self, text: str) -> Any:
+    def _coerce_output(self, text: str) -> OutputT:
         if self.output_type is None or self.output_type is str:
-            return text
+            return cast(OutputT, text)
         if isinstance(self.output_type, type) and issubclass(
             self.output_type, BaseModel
         ):
             try:
-                return self.output_type.model_validate_json(text)
+                return cast(OutputT, self.output_type.model_validate_json(text))
             except ValidationError as exc:
                 # Some providers wrap JSON answers in prose; recover the first
                 # balanced object before failing validation.
                 stripped = _extract_json_object(text)
                 if stripped:
                     try:
-                        return self.output_type.model_validate_json(stripped)
+                        return cast(
+                            OutputT,
+                            self.output_type.model_validate_json(stripped),
+                        )
                     except ValidationError:
                         pass
                 raise AgentOutputValidationError(
@@ -240,25 +243,31 @@ class Agent(Generic[InputT, OutputT]):
                 raw_text=text,
             ) from exc
 
-    def _reply_text(self, raw: Any) -> str:
-        if not isinstance(raw, dict):
-            return ""
-        return str(raw.get("body") or raw.get("text") or raw.get("reply") or "")
-
     def _run_once(
         self,
-        message: MessageInput,
+        message: InputT,
         *,
         session_id: str | None = None,
-        on_delta: Callable[[dict[str, Any]], None] | None = None,
-    ) -> AgentRunResult[Any]:
+        on_delta: Callable[[object], None] | None = None,
+        timeout_seconds: float | None = None,
+        approval_callback: _ApprovalCallback | None = None,
+        cancel_event: Event | None = None,
+    ) -> AgentRunResult[OutputT]:
         runtime = self._ensure_runtime()
         payload = self._build_payload(
             self._serialize_input(message),
             session_id=session_id,
+            timeout_seconds=timeout_seconds,
         )
         run_context = None
         delegated_grant_id = None
+        temporary_tools = bool(self.handoffs or self._tool_family_builders)
+        registry = getattr(runtime, "tools", None) if temporary_tools else None
+        if temporary_tools and not isinstance(registry, ToolRegistry):
+            raise TypeError(
+                "Agent decorated tools and handoffs require APIRuntime.tools "
+                "to be a ToolRegistry"
+            )
         if self.subagent_context is not None:
             from openminion.api.handoff import materialize_subagent_run_context
 
@@ -269,57 +278,92 @@ class Agent(Generic[InputT, OutputT]):
             )
             self.subagent_context = run_context
             delegated_grant_id = run_context.memory_grant_id
-        registry = getattr(runtime, "tools", None)
-        registration_lock = getattr(registry, "temporary_registration_lock", None)
-        with registration_lock or nullcontext():
+        registration_scope = (
+            registry.temporary_registration_lock
+            if registry is not None
+            else nullcontext()
+        )
+        with registration_scope:
             try:
-                registered_tools = self._register_tools_for_run(runtime)
+                registered_tools = (
+                    self._register_tools_for_run(registry)
+                    if registry is not None
+                    else []
+                )
                 try:
                     raw = runtime.run_turn(
                         payload=payload,
                         progress_callback=on_delta,
+                        approval_callback=approval_callback,
+                        cancel_event=cancel_event,
                         trusted_subagent_context=run_context,
                     )
                 finally:
-                    self._unregister_tools(runtime, registered_tools)
+                    self._unregister_tools(registry, registered_tools)
             finally:
                 if delegated_grant_id is not None:
                     runtime.action_policy.revoke_grant(delegated_grant_id)
-        reply_text = self._reply_text(raw)
+        if not isinstance(raw, dict) or "body" not in raw:
+            raise RuntimeError("APIRuntime.run_turn() returned no canonical body")
+        reply_text = str(raw["body"] or "")
+        raw_payload = dict(raw)
+        metadata_value = raw_payload.get("metadata", {})
+        stats_value = raw_payload.get("stats", {})
+        if not isinstance(metadata_value, dict) or not isinstance(stats_value, dict):
+            raise RuntimeError("APIRuntime.run_turn() returned invalid result facts")
         output = self._coerce_output(reply_text)
-        raw_payload = dict(raw or {})
         return AgentRunResult(
             output=output,
             text=reply_text,
             raw=raw_payload,
+            id=str(raw_payload.get("id") or "").strip() or None,
             session_id=str(raw_payload.get("session_id") or "").strip() or None,
             run_id=str(raw_payload.get("run_id") or "").strip() or None,
             run_state=str(raw_payload.get("run_state") or "").strip() or None,
+            metadata=dict(metadata_value),
+            stats=dict(stats_value),
         )
 
     def run(
         self,
-        message: MessageInput,
+        message: InputT,
         *,
         session_id: str | None = None,
-    ) -> AgentRunResult[Any]:
-        return self._run_once(message, session_id=session_id)
+        timeout_seconds: float | None = None,
+        approval_callback: _ApprovalCallback | None = None,
+        cancel_event: Event | None = None,
+    ) -> AgentRunResult[OutputT]:
+        return self._run_once(
+            message,
+            session_id=session_id,
+            timeout_seconds=timeout_seconds,
+            approval_callback=approval_callback,
+            cancel_event=cancel_event,
+        )
 
     def run_stream(
         self,
-        message: MessageInput,
+        message: InputT,
         *,
         session_id: str | None = None,
-        on_delta: Callable[[dict[str, Any]], None] | None = None,
-    ) -> AgentRunResult[Any]:
+        on_delta: Callable[[object], None] | None = None,
+        timeout_seconds: float | None = None,
+        approval_callback: _ApprovalCallback | None = None,
+        cancel_event: Event | None = None,
+    ) -> AgentRunResult[OutputT]:
         """Run one turn while forwarding progress events to ``on_delta``."""
-        return self._run_once(message, session_id=session_id, on_delta=on_delta)
+        return self._run_once(
+            message,
+            session_id=session_id,
+            on_delta=on_delta,
+            timeout_seconds=timeout_seconds,
+            approval_callback=approval_callback,
+            cancel_event=cancel_event,
+        )
 
     def close(self) -> None:
         if self._runtime is not None and self._owns_runtime:
-            close = getattr(self._runtime, "close", None)
-            if callable(close):
-                close()
+            self._runtime.close()
             self._runtime = None
 
     def __enter__(self) -> Agent[InputT, OutputT]:
