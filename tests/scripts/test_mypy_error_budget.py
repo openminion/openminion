@@ -220,9 +220,10 @@ def test_metadata_binds_the_effective_ratchet_config(tmp_path: Path) -> None:
 
     metadata = budget._metadata(repo, counts={}, total=0)
 
-    assert metadata["config_sha256"] == hashlib.sha256(
-        budget._RATCHET_CONFIG.encode()
-    ).hexdigest()
+    assert (
+        metadata["config_sha256"]
+        == hashlib.sha256(budget._RATCHET_CONFIG.encode()).hexdigest()
+    )
 
 
 def test_reviewed_reset_rejects_noncanonical_path(tmp_path: Path) -> None:
