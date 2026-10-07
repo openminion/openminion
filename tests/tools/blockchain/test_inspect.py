@@ -325,3 +325,21 @@ def test_invalid_action_and_disabled_config_fail_without_rpc() -> None:
 
     assert invalid["error"]["code"] == "INVALID_ARGUMENT"
     assert disabled["error"]["code"] == "FEATURE_DISABLED"
+
+
+def test_configured_inspect_requires_the_optional_network_pair() -> None:
+    context = _context()
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain.pop("rpc_url")
+    blockchain.pop("chain_id")
+
+    result = inspect_blockchain(
+        {"action": "chain_summary"}, context, web3=_Web3()
+    )
+
+    assert result["error"] == {
+        "code": "FEATURE_UNAVAILABLE",
+        "message": "Configured blockchain network is unavailable.",
+        "retryable": False,
+        "details": {"feature": "configured_blockchain_network"},
+    }

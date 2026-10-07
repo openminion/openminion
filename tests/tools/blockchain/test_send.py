@@ -142,6 +142,24 @@ def _context(tmp_path, *, authorized: bool = True):
     )
 
 
+def test_configured_send_requires_the_optional_network_pair(tmp_path) -> None:
+    context = _context(tmp_path)
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain.pop("rpc_url")
+    blockchain.pop("chain_id")
+    client = _Web3()
+
+    result = send_transaction({}, context, web3=client)
+
+    assert result["error"] == {
+        "code": "FEATURE_UNAVAILABLE",
+        "message": "Configured blockchain network is unavailable.",
+        "retryable": False,
+        "details": {"feature": "configured_blockchain_network"},
+    }
+    assert client.eth.broadcasts == 0
+
+
 def test_send_requires_trusted_authorization_before_signing(tmp_path) -> None:
     context = _context(tmp_path, authorized=False)
     client = _Web3()

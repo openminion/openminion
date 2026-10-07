@@ -342,6 +342,14 @@ def debug_blockchain(
                 {"feature": "blockchain"},
             )
         )
+    if not config.rpc_url or config.chain_id is None:
+        return _bounded(
+            _error(
+                "FEATURE_UNAVAILABLE",
+                "Configured blockchain network is unavailable.",
+                {"feature": "configured_blockchain_network"},
+            )
+        )
     try:
         request = DEBUG_REQUEST_ADAPTER.validate_python(dict(args))
     except ValidationError:

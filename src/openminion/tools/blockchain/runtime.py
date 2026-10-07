@@ -193,6 +193,12 @@ def inspect_blockchain(
             "Blockchain capability is disabled.",
             {"feature": "blockchain"},
         )
+    if not config.rpc_url or config.chain_id is None:
+        return _error(
+            "FEATURE_UNAVAILABLE",
+            "Configured blockchain network is unavailable.",
+            {"feature": "configured_blockchain_network"},
+        )
     try:
         request = INSPECT_REQUEST_ADAPTER.validate_python(dict(args))
     except ValidationError:
@@ -403,6 +409,12 @@ def prepare_transaction(
             "FEATURE_DISABLED",
             "Blockchain capability is disabled.",
             {"feature": "blockchain"},
+        )
+    if not config.rpc_url or config.chain_id is None:
+        return _error(
+            "FEATURE_UNAVAILABLE",
+            "Configured blockchain network is unavailable.",
+            {"feature": "configured_blockchain_network"},
         )
     try:
         request = PREPARE_REQUEST_ADAPTER.validate_python(dict(args))
@@ -818,6 +830,12 @@ def send_transaction(
             "FEATURE_DISABLED",
             "Blockchain capability is disabled.",
             {"feature": "blockchain_writes"},
+        )
+    if not config.rpc_url or config.chain_id is None:
+        return _error(
+            "FEATURE_UNAVAILABLE",
+            "Configured blockchain network is unavailable.",
+            {"feature": "configured_blockchain_network"},
         )
     try:
         request = SEND_REQUEST_ADAPTER.validate_python(dict(args))

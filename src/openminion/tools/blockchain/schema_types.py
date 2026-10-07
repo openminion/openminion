@@ -259,6 +259,7 @@ class DecodedEvent(ClosedModel):
 class BlockchainError(ClosedModel):
     code: Literal[
         "FEATURE_DISABLED",
+        "FEATURE_UNAVAILABLE",
         "DEPENDENCY_MISSING",
         "INVALID_ARGUMENT",
         "RPC_UNAVAILABLE",

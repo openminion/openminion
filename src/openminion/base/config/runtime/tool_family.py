@@ -118,6 +118,7 @@ _BLOCKCHAIN_CONFIG_KEYS = frozenset(
         "writes_enabled",
         "max_total_fee_wei",
         "receipt_timeout_seconds",
+        "confirmation_depth",
     }
 )
 _CANONICAL_UNSIGNED_DECIMAL_RE = re.compile(r"^(?:0|[1-9][0-9]*)$")
@@ -133,6 +134,7 @@ class BlockchainToolRuntimeConfig:
     writes_enabled: bool = False
     max_total_fee_wei: str = "10000000000000000"
     receipt_timeout_seconds: int = 60
+    confirmation_depth: int = 1
 
 
 def _validate_blockchain_config(
@@ -158,6 +160,16 @@ def _validate_blockchain_config(
             "runtime.tools.blockchain.receipt_timeout_seconds must be an integer "
             "from 1 through 300."
         )
+    confirmation_depth = config.confirmation_depth
+    if (
+        not isinstance(confirmation_depth, int)
+        or isinstance(confirmation_depth, bool)
+        or not 1 <= confirmation_depth <= 64
+    ):
+        raise ConfigError(
+            "runtime.tools.blockchain.confirmation_depth must be an integer "
+            "from 1 through 64."
+        )
     if (
         not _CANONICAL_UNSIGNED_DECIMAL_RE.fullmatch(config.max_total_fee_wei)
         or int(config.max_total_fee_wei) <= 0
@@ -170,9 +182,9 @@ def _validate_blockchain_config(
         raise ConfigError(
             "runtime.tools.blockchain.signer_secret_namespace must be non-empty."
         )
-    if config.enabled and (not config.rpc_url or config.chain_id is None):
+    if bool(config.rpc_url) != (config.chain_id is not None):
         raise ConfigError(
-            "runtime.tools.blockchain.rpc_url and chain_id are required when enabled."
+            "runtime.tools.blockchain.rpc_url and chain_id must be configured together."
         )
     if config.writes_enabled and not config.enabled:
         raise ConfigError(
@@ -217,6 +229,7 @@ def coerce_blockchain_tool_runtime_config(
             writes_enabled=value.get("writes_enabled", False),
             max_total_fee_wei=str(value.get("max_total_fee_wei", "10000000000000000")),
             receipt_timeout_seconds=value.get("receipt_timeout_seconds", 60),
+            confirmation_depth=value.get("confirmation_depth", 1),
         )
     )
 
@@ -233,4 +246,5 @@ def blockchain_tool_runtime_config_to_dict(
         "writes_enabled": config.writes_enabled,
         "max_total_fee_wei": config.max_total_fee_wei,
         "receipt_timeout_seconds": config.receipt_timeout_seconds,
+        "confirmation_depth": config.confirmation_depth,
     }

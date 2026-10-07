@@ -53,6 +53,28 @@ def _context(
     )
 
 
+def test_configured_prepare_requires_the_optional_network_pair() -> None:
+    secret_service = _SecretService()
+    context = _context(secret_service=secret_service)
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain.pop("rpc_url")
+    blockchain.pop("chain_id")
+
+    result = prepare_transaction(
+        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "1"},
+        context,
+        web3=_Web3(),
+    )
+
+    assert result["error"] == {
+        "code": "FEATURE_UNAVAILABLE",
+        "message": "Configured blockchain network is unavailable.",
+        "retryable": False,
+        "details": {"feature": "configured_blockchain_network"},
+    }
+    assert secret_service.reads == []
+
+
 class _Contract:
     @staticmethod
     def encode_abi(name: str, *, args: list[Any]) -> str:
