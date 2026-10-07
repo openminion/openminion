@@ -28,6 +28,7 @@ def _config_path(tmp_path: Path) -> Path:
                     "blob_root": str(tmp_path / "blob"),
                     "fallback_root": str(tmp_path / "fallback"),
                     "wal": False,
+                    "runtime_workflow_observation_enabled": True,
                 }
             }
         ),
@@ -57,6 +58,16 @@ def test_learning_apply_help_names_pending_admission(capsys) -> None:
         main(["learning-apply-proved", "--help"])
     assert exit_info.value.code == 0
     assert "pending-admission skill draft" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "command", ["learning-observation-list", "learning-shape-list"]
+)
+def test_runtime_observation_help_requires_agent_id(command: str, capsys) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main([command, "--help"])
+    assert exit_info.value.code == 0
+    assert "--agent-id" in capsys.readouterr().out
 
 
 def _shape() -> WorkflowShape:
@@ -154,6 +165,46 @@ def test_learning_cli_scan_inspect_save_and_trust_status(tmp_path: Path) -> None
     assert trust["trust"]["diagnostic_state"] == "unavailable"
     assert trust["trust"]["persisted_trust_history"] is False
     assert trust["trust"]["automatic_demotion_enforced"] is False
+
+
+def test_learning_cli_lists_runtime_observations_and_shapes(tmp_path: Path) -> None:
+    cfg = _config_path(tmp_path)
+    skill = Skill(cfg)
+    try:
+        for source_run_ref in ("run-1", "run-2"):
+            skill.observe_workflow(
+                agent_id="agent-a",
+                source_run_ref=source_run_ref,
+                intent_category="modify",
+                capability_category="code",
+                tool_names=["file.write", "exec.run"],
+            )
+    finally:
+        skill.close()
+
+    observations = _run_cli(
+        [
+            "--config",
+            str(cfg),
+            "learning-observation-list",
+            "--agent-id",
+            "agent-a",
+        ]
+    )
+    shapes = _run_cli(
+        [
+            "--config",
+            str(cfg),
+            "learning-shape-list",
+            "--agent-id",
+            "agent-a",
+        ]
+    )
+
+    assert len(observations["observations"]) == 2
+    assert observations["observations"][0]["actor_id"] == "agent-a"
+    assert shapes["shapes"][0]["success_count"] == 2
+    assert shapes["shapes"][0]["state"] == "authoring_ready"
 
 
 def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:

@@ -10,16 +10,14 @@ from openminion.modules.skill.constants import (
     SKILL_TOOL_REGISTRY_AVAILABLE,
     SKILL_TOOL_REGISTRY_AVAILABLE_EMPTY,
 )
-from openminion.modules.skill.diagnostics.events import (
-    emit_skill_counter,
-    emit_skill_operation,
-)
-from openminion.modules.skill.runtime.skill.catalog import SkillCatalogMixin
-from openminion.modules.skill.runtime.skill.ingest import SkillIngestMixin
-from openminion.modules.skill.runtime.skill.matching import SkillMatchingMixin
 from openminion.modules.skill.storage import SQLiteSkillStore
 from openminion.modules.storage.engine import StorageEngine
 
+from .catalog import SkillCatalogMixin
+from .ingest import SkillIngestMixin
+from .matching import SkillMatchingMixin
+from .workflow_observations import WorkflowObservationMixin
+from ...diagnostics.events import emit_skill_counter, emit_skill_operation
 from ...interfaces import SKILL_INTERFACE_VERSION
 
 ArtifactIngestor = Callable[[str, str], str]
@@ -27,7 +25,9 @@ ArtifactLoader = Callable[[str], str | bytes]
 SkillEventCallback = Callable[[str, dict[str, Any]], None]
 
 
-class Skill(SkillIngestMixin, SkillCatalogMixin, SkillMatchingMixin):
+class Skill(
+    WorkflowObservationMixin, SkillIngestMixin, SkillCatalogMixin, SkillMatchingMixin
+):
     def __init__(
         self,
         config: str | Path | dict[str, Any] | SkillConfig = DEFAULT_CONFIG_FILENAME,

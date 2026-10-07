@@ -12,6 +12,7 @@ from openminion.modules.brain.loop.services import (
     runner_from_context,
     runtime_allows_tool,
 )
+from openminion.modules.brain.loop.constants import WORKFLOW_OBSERVATION_ENABLED_KEY
 from openminion.modules.brain.schemas import DelegationContext
 from openminion.modules.llm.constants import REQUESTABLE_TOOL_NAMES_METADATA_KEY
 from openminion.modules.llm.schemas import Message, ToolSpec
@@ -47,6 +48,7 @@ from ..response_payloads import (
     _TASK_PLAN_PROGRESS_GUIDANCE,
     _WATCH_ACTION_GUIDANCE,
     _WATCH_OUTCOME_GUIDANCE,
+    _WORKFLOW_LEARNING_GUIDANCE,
 )
 from ..shortlisting import (
     TOOL_REQUEST_TOOL_NAME,
@@ -78,16 +80,23 @@ def _has_system_message(messages: list[Message], content: str) -> bool:
 def _loop_request_metadata(
     profile: AdaptiveToolLoopProfile,
     requestable_specs: list[ToolSpec],
+    *,
+    workflow_observation_enabled: bool = False,
 ) -> dict[str, Any] | None:
     metadata_override = profile.llm_request_overrides.get("metadata")
     metadata = (
         dict(metadata_override or {}) if isinstance(metadata_override, dict) else None
     )
+    if metadata is not None:
+        metadata.pop(WORKFLOW_OBSERVATION_ENABLED_KEY, None)
     if requestable_specs:
         metadata = dict(metadata or {})
         metadata[REQUESTABLE_TOOL_NAMES_METADATA_KEY] = json.dumps(
             [spec.name for spec in requestable_specs if spec.name.strip()]
         )
+    if workflow_observation_enabled:
+        metadata = dict(metadata or {})
+        metadata[WORKFLOW_OBSERVATION_ENABLED_KEY] = True
     return metadata
 
 
@@ -230,6 +239,78 @@ def _with_loop_control_specs(
     return tool_request_enabled, plan_enabled, active_specs
 
 
+def _workflow_observation_enabled(
+    loop_ctx: AdaptiveToolLoopContext,
+    *,
+    profile: AdaptiveToolLoopProfile,
+    seeded_queue: list[Any],
+    loop_state: AdaptiveToolLoopState,
+) -> bool:
+    if (
+        not _general_profile_name(profile)
+        or seeded_queue
+        or loop_state.direct_tool_turn
+    ):
+        return False
+    skill_api = getattr(loop_ctx, "skill_api", None)
+    return bool(getattr(skill_api, "runtime_workflow_observation_enabled", False))
+
+
+def _ensure_profile_guidance(
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    render_policy: Any,
+) -> None:
+    policy_line = render_policy(profile)
+    if policy_line:
+        _ensure_system_message(loop_state.messages, index=3, content=policy_line)
+    if _general_profile_name(profile):
+        _ensure_system_message(
+            loop_state.messages,
+            index=2,
+            content=_tool_efficiency_guidance(profile),
+        )
+    if profile.profile_name == "watch_check_v1":
+        _ensure_system_message(
+            loop_state.messages,
+            index=2,
+            content=_WATCH_OUTCOME_GUIDANCE,
+        )
+    if profile.profile_name == "watch_action_v1":
+        _ensure_system_message(
+            loop_state.messages,
+            index=2,
+            content=_WATCH_ACTION_GUIDANCE,
+        )
+
+
+def _workflow_observation_metadata(
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    seeded_queue: list[Any],
+    loop_state: AdaptiveToolLoopState,
+    requestable_specs: list[ToolSpec],
+) -> dict[str, Any] | None:
+    enabled = _workflow_observation_enabled(
+        loop_ctx,
+        profile=profile,
+        seeded_queue=seeded_queue,
+        loop_state=loop_state,
+    )
+    loop_state.scratchpad[WORKFLOW_OBSERVATION_ENABLED_KEY] = enabled
+    if enabled:
+        _ensure_system_message(
+            loop_state.messages,
+            index=2,
+            content=_WORKFLOW_LEARNING_GUIDANCE,
+        )
+    return _loop_request_metadata(
+        profile,
+        requestable_specs,
+        workflow_observation_enabled=enabled,
+    )
+
+
 def prepare_loop_frame(
     loop_ctx: AdaptiveToolLoopContext,
     *,
@@ -349,28 +430,7 @@ def prepare_loop_frame(
         render_goal_execution_policy,
     )
 
-    policy_line = render_goal_execution_policy(profile)
-    if policy_line:
-        _ensure_system_message(loop_state.messages, index=3, content=policy_line)
-    if _general_profile_name(profile):
-        tool_efficiency_guidance = _tool_efficiency_guidance(profile)
-        _ensure_system_message(
-            loop_state.messages,
-            index=2,
-            content=tool_efficiency_guidance,
-        )
-    if profile.profile_name == "watch_check_v1":
-        _ensure_system_message(
-            loop_state.messages,
-            index=2,
-            content=_WATCH_OUTCOME_GUIDANCE,
-        )
-    if profile.profile_name == "watch_action_v1":
-        _ensure_system_message(
-            loop_state.messages,
-            index=2,
-            content=_WATCH_ACTION_GUIDANCE,
-        )
+    _ensure_profile_guidance(profile, loop_state, render_goal_execution_policy)
     refresh_shortlisting_state(
         loop_state.messages,
         loop_state.scratchpad,
@@ -379,7 +439,9 @@ def prepare_loop_frame(
         control_schema_count=int(tool_request_enabled) + int(plan_enabled),
     )
     max_output_tokens = profile.llm_request_overrides.get("max_output_tokens")
-    metadata = _loop_request_metadata(profile, requestable_specs)
+    metadata = _workflow_observation_metadata(
+        loop_ctx, profile, seeded_queue, loop_state, requestable_specs
+    )
     turn_scope_id = _current_turn_scope_id(loop_ctx)
 
     runtime_state = initialize_loop_runtime_state(

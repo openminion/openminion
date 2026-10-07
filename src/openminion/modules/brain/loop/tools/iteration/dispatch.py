@@ -9,6 +9,7 @@ from openminion.modules.brain.execution.child_tasks import (
 )
 from openminion.modules.brain.loop.constants import (
     PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
+    WORKFLOW_OBSERVATION_ENABLED_KEY,
 )
 from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.llm.schemas import Message
@@ -832,6 +833,7 @@ def _stage_terminal_request(
         requested_batch_signature="",
         match_by_name_only=True,
     )
+    loop_state.scratchpad[WORKFLOW_OBSERVATION_ENABLED_KEY] = False
     loop_state.scratchpad["tool_schema_shortlisting.terminal_tool"] = requested_name
     turn_scope_id = str(getattr(loop_ctx.state, "trace_id", "") or "")
     for result in reversed(_loop_tool_result_payloads(loop_state)):

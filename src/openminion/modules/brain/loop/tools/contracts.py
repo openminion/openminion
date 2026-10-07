@@ -392,6 +392,7 @@ class AdaptiveToolLoopOutcome:
     confident_complete_reasoning: str | None = None
     finalization_status: dict[str, Any] | None = None
     meta_rule_preference: dict[str, Any] | None = None
+    workflow_learning: dict[str, Any] | None = None
     memory_consolidation_decisions: list[dict[str, Any]] | None = None
     session_work_summary: str | None = None
     goal_declaration: dict[str, Any] | None = None

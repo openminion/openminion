@@ -15,6 +15,7 @@ from openminion.modules.brain.constants import (
     MEMORY_CONSOLIDATION_MODULE_STATE_KEY,
     STATE_KEY_MODULE_STATE,
 )
+from openminion.modules.brain.loop.constants import WORKFLOW_OBSERVATION_ENABLED_KEY
 from openminion.modules.brain.execution.closure import final_close_message
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
@@ -32,6 +33,7 @@ from openminion.modules.brain.schemas.decisions import (
     PendingTurnContext,
 )
 from openminion.modules.brain.schemas.state import ActionError, ActionResult
+from openminion.modules.skill.learning.runtime import WorkflowObservationError
 from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_CORRECTION_BUDGET_EXHAUSTED,
@@ -82,6 +84,7 @@ from ..tools.iteration.helpers import (  # noqa: E402
 )
 from ..tools.evidence import (  # noqa: E402
     _successful_substantive_tool_results,
+    successful_substantive_tool_names,
 )
 from ..tools.plan_control import (  # noqa: E402
     complete_active_plan_if_ready,
@@ -115,6 +118,83 @@ def _finalization_contract_missing_result(
             "act_finalization_contract_missing",
         ),
     )
+
+
+def _closure_final_answer(judgment: Any, disposition: str) -> str:
+    if judgment is None or disposition != BRAIN_DISPOSITION_CLOSE:
+        return ""
+    return str(getattr(judgment, "final_answer", "") or "").strip()
+
+
+def _record_workflow_observation(
+    ctx: ExecutionContext,
+    *,
+    loop_outcome: AdaptiveToolLoopOutcome,
+    telemetry_payload: dict[str, Any],
+) -> None:
+    signal = loop_outcome.workflow_learning
+    if (
+        loop_outcome.profile_name != "general_adaptive_v1"
+        or not bool(
+            loop_outcome.state.scratchpad.get(WORKFLOW_OBSERVATION_ENABLED_KEY, False)
+        )
+        or not isinstance(signal, dict)
+    ):
+        return
+    runner = runner_from_context(ctx)
+    skill_api = getattr(runner, "skill_api", None) if runner is not None else None
+    if not bool(getattr(skill_api, "runtime_workflow_observation_enabled", False)):
+        return
+    observe = getattr(skill_api, "observe_workflow", None)
+    if not callable(observe):
+        telemetry_payload["workflow_learning.status"] = "skill_api_unavailable"
+        return
+    tool_names = successful_substantive_tool_names(loop_outcome.state)
+    if not tool_names:
+        telemetry_payload["workflow_learning.status"] = "no_tool_evidence"
+        return
+    try:
+        result = observe(
+            agent_id=str(ctx.state.agent_id or ""),
+            source_run_ref=str(ctx.state.trace_id or ""),
+            intent_category=str(signal["intent_category"]),
+            capability_category=str(signal["capability_category"]),
+            tool_names=tool_names,
+        )
+    except WorkflowObservationError:
+        telemetry_payload["workflow_learning.status"] = "error"
+        return
+    telemetry_payload.update(
+        {
+            "workflow_learning.status": result.status,
+            "workflow_learning.observation_id": result.observation_id,
+            "workflow_learning.observation_count": result.observation_count,
+            "workflow_learning.shape_id": result.shape_id,
+            "workflow_learning.matching_success_count": (result.matching_success_count),
+        }
+    )
+
+
+def _finalize_closed_observation(
+    ctx: ExecutionContext,
+    loop_outcome: AdaptiveToolLoopOutcome,
+    disposition: str,
+    closure_final_answer: str,
+    final_text: str,
+    final_action: ActionResult,
+    telemetry_payload: dict[str, Any],
+) -> str:
+    if closure_final_answer:
+        final_text = closure_final_answer
+        final_action.summary = final_text
+    if disposition == BRAIN_DISPOSITION_CLOSE:
+        _record_workflow_observation(
+            ctx,
+            loop_outcome=loop_outcome,
+            telemetry_payload=telemetry_payload,
+        )
+        final_action.outputs = dict(telemetry_payload)
+    return final_text
 
 
 def _maybe_close_contract_missing_with_tool_evidence(
@@ -517,15 +597,7 @@ class ActLoopFinalizationMixin:
         except Exception:  # noqa: BLE001
             judgment = None
             disposition = ""
-        closure_final_answer = ""
-        if (
-            judgment is not None
-            and disposition == BRAIN_DISPOSITION_CLOSE
-            and str(getattr(judgment, "final_answer", "") or "").strip()
-        ):
-            closure_final_answer = str(
-                getattr(judgment, "final_answer", "") or ""
-            ).strip()
+        closure_final_answer = _closure_final_answer(judgment, disposition)
         if (
             requires_typed_finalization
             and not isinstance(loop_outcome.finalization_status, dict)
@@ -552,9 +624,15 @@ class ActLoopFinalizationMixin:
                 ExecutionResult,
                 self._autonomous_seeded_result(ctx, action_result=final_action),
             )
-        if closure_final_answer:
-            final_text = closure_final_answer
-            final_action.summary = final_text
+        final_text = _finalize_closed_observation(
+            ctx,
+            loop_outcome,
+            disposition,
+            closure_final_answer,
+            final_text,
+            final_action,
+            telemetry_payload,
+        )
         ctx.emit_status(
             source_phase="ACT",
             detail_text=f"{_public_act_tag()} done",

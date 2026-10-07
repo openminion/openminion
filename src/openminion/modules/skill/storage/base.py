@@ -149,6 +149,29 @@ class SkillStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def insert_workflow_observation(
+        self,
+        *,
+        agent_id: str,
+        source_run_ref: str,
+        bundle_id: str,
+        provenance_checksum: str,
+        bundle_json: str,
+        created_at: str,
+    ) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_workflow_observation(
+        self, *, agent_id: str, source_run_ref: str
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_workflow_observations(self, *, agent_id: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
     def create_proposal(
         self,
         *,

@@ -44,3 +44,4 @@ PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY = (
 )
 RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY = "tool.recoverable_argument_failure"
 RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY = "tool.recoverable_argument_retry_used"
+WORKFLOW_OBSERVATION_ENABLED_KEY = "workflow_learning.enabled"

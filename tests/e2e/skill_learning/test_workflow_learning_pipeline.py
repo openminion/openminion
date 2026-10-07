@@ -261,7 +261,7 @@ Updated learned workflow candidate.
             runner = MagicMock()
             runner.skill_api = skill
             runner.profile = SimpleNamespace(
-                skill=None,
+                skill=addition.added_skill_id,
                 skill_catalog=[],
                 llm_profiles=SimpleNamespace(
                     act_model="", summarize_model="test-model"
