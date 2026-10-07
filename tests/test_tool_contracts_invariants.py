@@ -42,6 +42,7 @@ def _get_complete_bootstrap_manager():
         buyer_profile_record_id="buyer-profile",
         payment_token_record_id="payment-token",
         writes_enabled=True,
+        order_actions_enabled=True,
     )
     return build_runtime_bootstrap(
         config=config,
