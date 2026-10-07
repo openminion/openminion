@@ -89,6 +89,17 @@ same option when you want the grant again. Default file access no longer
 includes `~/projects` or `~/Downloads`; choose an explicit workspace, use
 `--add-dir`, or configure the exact policy root you need.
 
+Inside Focus, `/permissions` opens four session postures. Read only permits
+only registered read-only tools and still blocks `exec.run`. Ask requests
+approval for non-read effects. Workspace auto skips ordinary prompts only for
+`file.write` and `file.edit` inside the allowed workspace. Full access skips
+ordinary prompts after confirmation, but configured blocks, selected denies,
+workspace paths, host-execution enablement, exact financial, commerce,
+blockchain, and operations authorization, and `project.start` confirmation
+still apply. These controls are application policy, not an operating-system
+sandbox. Use `/permissions grants` and `/permissions revoke <grant-id>` to
+inspect or remove active session grants.
+
 ### Start a local human-plus-agents room
 
 Use explicit root flags so the room and its telemetry stay under one chosen

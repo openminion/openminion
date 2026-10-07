@@ -174,6 +174,15 @@ commands then use the OpenMinion process's OS permissions and are not confined
 to workspace roots; command policy and approvals still apply. A native local
 sandbox and approval-free command parity are not provided yet.
 
+In Focus, `/permissions` opens Read only, Ask, Workspace auto, and Full access.
+Workspace auto is intentionally narrow: only `file.write` and `file.edit` skip
+their ordinary prompt, and workspace/path enforcement remains active. Full
+access requires confirmation and does not bypass configured blocks, selected
+denies, host-execution enablement, exact financial or operations authorization,
+or `project.start`. Permission posture and exact-session grants persist with the
+OpenMinion session; `/permissions grants` lists active grants and
+`/permissions revoke <grant-id>` removes one.
+
 When setup finishes and the interactive CLI opens, ask: `List this workspace
 using the file tools.` The default config is saved at
 `~/.openminion/agents.json`, so the next bare launch reuses it.

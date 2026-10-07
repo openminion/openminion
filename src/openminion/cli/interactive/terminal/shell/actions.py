@@ -13,7 +13,6 @@ from openminion.cli.presentation.models import (
     MessageKind,
     ToolEvent,
 )
-from openminion.cli.presentation.permissions import format_permission_status_label
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style as _style
 from openminion.cli.presentation.theme import handle_theme
@@ -52,6 +51,11 @@ from .renderers import (
     _switch_theme_variant,
 )
 from .project import run_init_command, run_slash_goal, run_slash_project
+from .permissions import (
+    handle_permissions as _handle_slash_permissions,
+    runtime_permission_label as _runtime_permission_label,
+    sync_permission_status as _sync_permission_status,
+)
 from .sessions import (
     close_current_session,
     handle_room_slash,
@@ -166,152 +170,6 @@ def _handle_slash_theme(text: str, *, runtime: Any, console: Console) -> None:
 
 def _handle_slash_model(text: str, *, runtime: Any, console: Console) -> None:
     _render_model_command(_slash_arg(text), runtime=runtime, console=console)
-
-
-def _runtime_permission_mode(runtime: Any) -> str:
-    return str(getattr(runtime, "permission_mode", "default") or "default").strip()
-
-
-def _runtime_action_policy_mode(runtime: Any) -> str:
-    return str(getattr(runtime, "action_policy_mode_override", "") or "").strip()
-
-
-def _runtime_permission_label(runtime: Any) -> str:
-    return format_permission_status_label(
-        permission_mode=_runtime_permission_mode(runtime),
-        action_policy_mode=_runtime_action_policy_mode(runtime),
-    )
-
-
-def _sync_permission_status(
-    runtime: Any, status_line: TerminalStatusLine | None
-) -> None:
-    if status_line is not None:
-        status_line.set_state(
-            permission_mode=_runtime_permission_mode(runtime),
-            action_policy_mode=_runtime_action_policy_mode(runtime),
-        )
-
-
-def _set_permission_mode(
-    mode: str,
-    *,
-    runtime: Any,
-    status_line: TerminalStatusLine | None,
-) -> str:
-    setter = getattr(runtime, "set_permission_mode", None)
-    if not callable(setter):
-        raise RuntimeError("runtime does not expose set_permission_mode")
-    new_mode = str(setter(mode) or "default").strip() or "default"
-    _sync_permission_status(runtime, status_line)
-    return new_mode
-
-
-def _cycle_permission_mode(
-    *,
-    runtime: Any,
-    console: Console,
-    status_line: TerminalStatusLine | None,
-    announce: bool = True,
-) -> str:
-    cycler = getattr(runtime, "cycle_permission_mode", None)
-    if not callable(cycler):
-        raise RuntimeError("runtime does not expose cycle_permission_mode")
-    new_mode = str(cycler() or "default").strip() or "default"
-    _sync_permission_status(runtime, status_line)
-    if announce:
-        console.print(
-            Text(
-                f"(permissions: {_runtime_permission_label(runtime)} — Shift+Tab cycles modes)",
-                style=_muted_style(italic=True),
-            )
-        )
-    return new_mode
-
-
-def _handle_slash_permissions(
-    text: str,
-    *,
-    runtime: Any,
-    console: Console,
-    status_line: TerminalStatusLine | None,
-) -> None:
-    arg = _slash_arg(text).strip().lower()
-    if not arg:
-        overrides = getattr(runtime, "permission_overrides", {})
-        override_text = ""
-        if isinstance(overrides, dict) and overrides:
-            pairs = ", ".join(
-                f"{tool}={mode}" for tool, mode in sorted(overrides.items())
-            )
-            override_text = f"; overrides: {pairs}"
-        console.print(
-            Text(
-                f"(permissions: {_runtime_permission_label(runtime)}{override_text}; use `/permissions default|readonly|bypass`, `/permissions <tool> <ask|auto|bypass|readonly|default>`, or Shift+Tab)",
-                style=_muted_style(italic=True),
-            )
-        )
-        return
-    if arg == "cycle":
-        try:
-            _cycle_permission_mode(
-                runtime=runtime,
-                console=console,
-                status_line=status_line,
-            )
-        except RuntimeError as exc:
-            console.print(
-                Text(
-                    f"(/permissions: {exc})",
-                    style=_muted_style(),
-                )
-            )
-        return
-    arg_parts = arg.split()
-    if len(arg_parts) == 2:
-        tool_name, tool_mode = arg_parts
-        setter = getattr(runtime, "set_permission_override", None)
-        if not callable(setter):
-            console.print(
-                Text(
-                    "(/permissions: runtime does not expose set_permission_override)",
-                    style=_error_style(),
-                )
-            )
-            return
-        try:
-            mode = str(setter(tool_name, tool_mode) or "default")
-        except ValueError as exc:
-            console.print(
-                Text(
-                    f"(/permissions: {exc})",
-                    style=_error_style(),
-                )
-            )
-            return
-        if mode == "default":
-            message = f"(permissions: cleared override for {tool_name})"
-        else:
-            message = f"(permissions: {tool_name} → {mode} — session-scoped)"
-        console.print(Text(message, style=_muted_style(italic=True)))
-        return
-    try:
-        mode = _set_permission_mode(arg, runtime=runtime, status_line=status_line)
-    except (RuntimeError, ValueError) as exc:
-        console.print(
-            Text(
-                f"(/permissions: {exc})",
-                style=_error_style(),
-            )
-        )
-        return
-    message = (
-        "(permissions: bypass — full access for this session; use `/permissions` "
-        "in the interactive CLI for the safer chooser)"
-        if mode == "bypass"
-        else f"(permissions: {_runtime_permission_label(runtime)} — session-scoped)"
-    )
-    console.print(Text(message, style=_muted_style(italic=True)))
 
 
 def _handle_slash_agents(text: str, *, runtime: Any, console: Console) -> None:
@@ -766,10 +624,9 @@ async def _handle_slash(
     overlay: TerminalOverlayPresenter,
     status_line: TerminalStatusLine,
     working_dir: str,
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
+    approval_callback: Callable[..., Any] | None = None,
 ) -> bool:
     cmd = text.split(maxsplit=1)[0]
-
     if cmd in ("/exit", "/quit"):
         return True
     if cmd in ("/", "/help"):
@@ -837,11 +694,12 @@ async def _handle_slash(
         )
         return False
     if cmd == "/permissions":
-        _handle_slash_permissions(
+        await _handle_slash_permissions(
             text,
             runtime=runtime,
             console=console,
             status_line=status_line,
+            overlay=overlay,
         )
         return False
     if cmd == "/compact":

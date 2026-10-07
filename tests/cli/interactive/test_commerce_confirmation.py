@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from openminion.cli.interactive.terminal.shell.approval import (
     build_terminal_approval_callback,
+    format_terminal_approval_prompt,
 )
 from openminion.cli.presentation.tool.progress import build_tool_event_from_progress
 from openminion.modules.brain.adapters.tool.policy_context import (
@@ -33,6 +34,7 @@ from openminion.tools.commerce.authorization import confirmation_preview
 from openminion.tools.commerce.provider import OrderPlacement
 from openminion.modules.policy.adapters.brain import PolicyCtlBrainAdapter
 from openminion.modules.policy.models import PolicyConfig, RiskSpec
+from openminion.modules.policy.models import build_policy_facts
 from openminion.modules.policy.runtime.action_policy import derive_tool_risk_spec
 from openminion.modules.policy.runtime.service import PolicyCtl
 from openminion.modules.tool.registry import ToolRegistry
@@ -269,9 +271,10 @@ def _preview_payload(preview, *, tool_name="commerce.prepare_order"):
         "commerce.prepare_order",
         "commerce.place_order",
         "commerce.apply_order_action",
+        "blockchain.send_transaction",
     ],
 )
-def test_commerce_confirmation_is_individual_and_never_auto(
+def test_exact_authorization_is_individual_and_never_auto(
     tool_name: str,
 ) -> None:
     command = ToolCommand(
@@ -323,6 +326,59 @@ def test_shared_confirmation_message_is_one_time_and_escapes_merchant_text() -> 
         "Reply exactly yes to allow once, or no to cancel."
     )
     assert "allow this tool for the session" not in rendered
+
+
+def test_generic_confirmation_message_redacts_bearer_token() -> None:
+    command = ToolCommand(
+        kind="tool",
+        title="Run request",
+        tool_name="custom.run",
+        args={"command": "curl -H 'Authorization: Bearer abcdefghijklmnop' /private"},
+        inputs={},
+    )
+
+    message = confirmation_required_user_message(command)
+
+    assert "abcdefghijklmnop" not in message
+    assert "Bearer [REDACTED]" in message
+
+
+def test_generic_and_terminal_confirmation_share_typed_facts_and_redaction() -> None:
+    secret = "abcdefghijklmnop"
+    args = {"command": f"curl -H 'Authorization: Bearer {secret}' /private"}
+    facts = build_policy_facts(
+        canonical_tool="custom.run",
+        reason_code="DEFAULT_CONFIRM",
+        risk={
+            "risk_class": "exec",
+            "side_effects": "local",
+            "reversibility": "unknown",
+        },
+        duration_options=["allow_once", "allow_session", "deny"],
+    )
+    generic = confirmation_required_user_message(
+        ToolCommand(
+            kind="tool",
+            title="Run request",
+            tool_name="custom.run",
+            args=args,
+            inputs={},
+        ),
+        policy_facts=facts,
+    )
+    terminal = format_terminal_approval_prompt("custom.run", args, facts)
+
+    for expected in (
+        "Risk: exec",
+        "Side effects: local",
+        "Reversibility: unknown",
+        "Reason: DEFAULT_CONFIRM",
+        "Choices: allow_once, allow_session, deny",
+        "Bearer [REDACTED]",
+    ):
+        assert expected in generic
+        assert expected in terminal
+    assert secret not in generic + terminal
 
 
 def test_preparation_and_exact_order_approvals_are_separate_snapshots() -> None:
@@ -421,10 +477,8 @@ async def test_terminal_commerce_callback_offers_allow_once_only() -> None:
         ) -> str:
             raise AssertionError("commerce must not offer session approval")
 
-    session_grants: set[str] = set()
     callback = build_terminal_approval_callback(
         overlay=_Overlay(),
-        session_grants=session_grants,
     )
     assert await callback("commerce.prepare_order", {"items": []}, "a")
     assert await callback("commerce.place_order", {"preparation_ref": "prep-1"}, "b")
@@ -434,4 +488,3 @@ async def test_terminal_commerce_callback_offers_allow_once_only() -> None:
     assert all("allow once or deny" in prompt.lower() for prompt in prompts)
     assert all("session" not in prompt.lower() for prompt in prompts)
     assert all("always" not in prompt.lower() for prompt in prompts)
-    assert session_grants == set()

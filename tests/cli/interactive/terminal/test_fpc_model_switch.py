@@ -130,6 +130,7 @@ def _make_runtime(*, api_runtime: _StubAPIRuntime | None = None) -> OpenMinionRu
     rt._action_policy_mode_override = ""
     rt._permission_mode = ""
     rt._permission_overrides = {}
+    rt._permission_overrides_explicit = False
     rt._read_only_mode = False
     rt._effort_level = ""
     rt._pending_candidate_session = None

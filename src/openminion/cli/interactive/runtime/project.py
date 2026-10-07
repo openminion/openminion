@@ -7,9 +7,24 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping
 
 from openminion.modules.session.diagnostics.events import emit_session_operation
+from openminion.modules.policy.models import build_policy_facts
 
 if TYPE_CHECKING:
     from openminion.cli.commands.autonomy_project import ProjectLaunchRequest
+
+ProjectApprovalCallback = Callable[
+    [str, dict[str, Any], Any, dict[str, Any] | None], Awaitable[bool]
+]
+PROJECT_START_POLICY_FACTS = build_policy_facts(
+    canonical_tool="project.start",
+    reason_code="project_start_approval",
+    risk={
+        "risk_class": "state_change",
+        "side_effects": "local",
+        "reversibility": "unknown",
+    },
+    duration_options=["allow_once", "deny"],
+)
 
 
 def _select_project_run(
@@ -167,6 +182,10 @@ class RuntimeProjectMixin:
 
         def _turn_session_id(self) -> str: ...
 
+        def _policy_approval_callback(
+            self, callback: ProjectApprovalCallback | None
+        ) -> ProjectApprovalCallback | None: ...
+
     def execute_project_control(self, line: str) -> tuple[str, str]:
         from openminion.cli.commands.autonomy_project import (
             cancel_project_task_wake,
@@ -284,7 +303,7 @@ class RuntimeProjectMixin:
     async def approve_project_handoff(
         self,
         metadata: Mapping[str, Any] | None,
-        approval_callback: Callable[[str, dict[str, Any], Any], Awaitable[bool]] | None,
+        approval_callback: ProjectApprovalCallback | None,
         *,
         source_request: str = "",
     ) -> str:
@@ -350,10 +369,13 @@ class RuntimeProjectMixin:
                 exclude_none=True,
             ),
         )
-        approved = await approval_callback(
+        policy_callback = self._policy_approval_callback(approval_callback)
+        assert policy_callback is not None
+        approved = await policy_callback(
             "project.start",
             self.project_launch_approval_args(request),
             request.run.run_id,
+            PROJECT_START_POLICY_FACTS,
         )
         session_api = SessctlAdapter(
             resolve_brain_sessions_db_path(storage_path=self._rt.storage_path)

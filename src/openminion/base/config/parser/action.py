@@ -2,28 +2,20 @@
 
 from typing import Any
 
-from openminion.base.config.core import (
-    ActionPolicyConfig,
-    ActionPolicyMatchConfig,
-    ActionPolicyRuleConfig,
-    OpenMinionConfig,
-)
+from openminion.base.config.action_policy import normalize_action_policy_mode_override
+from openminion.base.config.base import ConfigError
+from openminion.base.config.core import ActionPolicyConfig, ActionPolicyMatchConfig
+from openminion.base.config.core import ActionPolicyRuleConfig, OpenMinionConfig
 from openminion.base.config.parse import _as_bool
 
+_RISKS = frozenset(
+    "read,write,state_change,exec,security,financial,destructive".split(",")
+)
 
-def _normalize_action_policy_mode(raw_value: Any) -> str:
-    value = str(raw_value or "").strip().lower()
-    return value if value in {"ask", "auto", "bypass"} else "auto"
 
-
-def _normalize_action_policy_default_action(raw_value: Any) -> str:
+def _normalize_default_action(raw_value: Any) -> str:
     value = str(raw_value or "").strip().lower()
     return value if value in {"allow", "require_confirm"} else "require_confirm"
-
-
-def _normalize_action_policy_rule_mode(raw_value: Any) -> str:
-    value = str(raw_value or "").strip().lower()
-    return value if value in {"ask", "auto", "block"} else "ask"
 
 
 def _as_token_list(raw_value: Any, fallback: list[str]) -> list[str]:
@@ -33,67 +25,73 @@ def _as_token_list(raw_value: Any, fallback: list[str]) -> list[str]:
     return tokens or list(fallback)
 
 
-def _build_action_policy_config(
-    action_policy_payload: dict[str, Any],
-) -> ActionPolicyConfig:
-    raw_rules = action_policy_payload.get("rules")
-    action_policy_rules_payload = raw_rules if isinstance(raw_rules, list) else []
-    rules: list[ActionPolicyRuleConfig] = []
-    for raw_rule in action_policy_rules_payload:
-        if not isinstance(raw_rule, dict):
-            continue
-        raw_match_value = raw_rule.get("match")
-        raw_match = raw_match_value if isinstance(raw_match_value, dict) else {}
-        rules.append(
-            ActionPolicyRuleConfig(
-                match=ActionPolicyMatchConfig(
-                    tool_category=str(raw_match.get("tool_category", "")).strip(),
-                    tool_name=str(raw_match.get("tool_name", "")).strip(),
-                    min_risk_class=str(raw_match.get("min_risk_class", "")).strip(),
-                ),
-                mode=_normalize_action_policy_rule_mode(raw_rule.get("mode")),
-            )
-        )
+def _parse_action_policy_rule(raw_rule: Any, index: int) -> ActionPolicyRuleConfig:
+    path = f"action_policy.rules[{index}]"
+    if not isinstance(raw_rule, dict):
+        raise ConfigError(f"{path} must be an object")
+    raw_match = raw_rule.get("match")
+    if not isinstance(raw_match, dict):
+        raise ConfigError(f"{path}.match must be an object")
+    if str(raw_match.get("tool_category", "")).strip():
+        raise ConfigError("action_policy rules require an exact canonical tool_name")
+    tool_name = str(raw_match.get("tool_name", "")).strip()
+    risk = str(raw_match.get("min_risk_class", "")).strip().lower()
+    mode = str(raw_rule.get("mode", "")).strip().lower()
+    if not tool_name:
+        raise ConfigError(f"{path}.match.tool_name is required")
+    if any(token in tool_name for token in "*?[]"):
+        raise ConfigError(f"{path}.match.tool_name must be exact")
+    if risk and risk not in _RISKS:
+        raise ConfigError(f"{path}.match.min_risk_class is invalid")
+    if mode not in {"block", "ask", "auto"}:
+        raise ConfigError(f"{path}.mode is invalid")
+    return ActionPolicyRuleConfig(
+        match=ActionPolicyMatchConfig(tool_name=tool_name, min_risk_class=risk),
+        mode=mode,
+    )
 
+
+def _build_action_policy_config(payload: dict[str, Any]) -> ActionPolicyConfig:
+    raw_rules = payload.get("rules", [])
+    if not isinstance(raw_rules, list):
+        raise ConfigError("action_policy.rules must be a list")
+    defaults = ActionPolicyConfig()
+    get = payload.get
+    parse_rule = _parse_action_policy_rule
     return ActionPolicyConfig(
-        mode=_normalize_action_policy_mode(action_policy_payload.get("mode")),
-        default_action=_normalize_action_policy_default_action(
-            action_policy_payload.get("default_action")
-        ),
+        mode=normalize_action_policy_mode_override(get("mode")) or "auto",
+        default_action=_normalize_default_action(get("default_action")),
         allow_read_only_without_prompt=_as_bool(
-            action_policy_payload.get("allow_read_only_without_prompt"),
-            True,
+            get("allow_read_only_without_prompt"), True
         ),
-        rules=rules,
+        rules=[parse_rule(rule, index) for index, rule in enumerate(raw_rules)],
         affirmative_tokens=_as_token_list(
-            action_policy_payload.get("affirmative_tokens"),
-            ActionPolicyConfig().affirmative_tokens,
+            get("affirmative_tokens"),
+            defaults.affirmative_tokens,
         ),
         negative_tokens=_as_token_list(
-            action_policy_payload.get("negative_tokens"),
-            ActionPolicyConfig().negative_tokens,
+            get("negative_tokens"),
+            defaults.negative_tokens,
         ),
     )
 
 
 def _action_policy_to_payload(config: OpenMinionConfig) -> dict[str, Any]:
+    policy = config.action_policy
     return {
-        "mode": _normalize_action_policy_mode(config.action_policy.mode),
-        "default_action": _normalize_action_policy_default_action(
-            config.action_policy.default_action
-        ),
-        "allow_read_only_without_prompt": config.action_policy.allow_read_only_without_prompt,
+        "mode": normalize_action_policy_mode_override(policy.mode) or "auto",
+        "default_action": _normalize_default_action(policy.default_action),
+        "allow_read_only_without_prompt": policy.allow_read_only_without_prompt,
         "rules": [
             {
-                "match": {
-                    "tool_category": rule.match.tool_category,
-                    "tool_name": rule.match.tool_name,
-                    "min_risk_class": rule.match.min_risk_class,
-                },
-                "mode": _normalize_action_policy_rule_mode(rule.mode),
+                "match": dict(
+                    tool_name=rule.match.tool_name,
+                    min_risk_class=rule.match.min_risk_class,
+                ),
+                "mode": rule.mode,
             }
-            for rule in config.action_policy.rules
+            for rule in policy.rules
         ],
-        "affirmative_tokens": list(config.action_policy.affirmative_tokens),
-        "negative_tokens": list(config.action_policy.negative_tokens),
+        "affirmative_tokens": list(policy.affirmative_tokens),
+        "negative_tokens": list(policy.negative_tokens),
     }

@@ -17,16 +17,15 @@ _UNSUPPORTED_OVERRIDE_FIELDS = {
     "override-tool-policy": "Tool-policy overrides belong to the policy owner.",
 }
 
-PERMISSION_MODE_CYCLE = ("default", "readonly", "bypass")
-PERMISSION_MODE_DEFAULT, PERMISSION_MODE_READONLY, PERMISSION_MODE_BYPASS = (
-    PERMISSION_MODE_CYCLE
-)
-PERMISSION_MODE_VALUES = frozenset(PERMISSION_MODE_CYCLE)
+PERMISSION_MODE_DEFAULT, PERMISSION_MODE_READONLY = "default", "readonly"
+PERMISSION_MODE_AUTO, PERMISSION_MODE_BYPASS = "auto", "bypass"
+PERMISSION_MODE_CYCLE = ("default", "readonly", "auto")
+PERMISSION_MODE_VALUES = frozenset((*PERMISSION_MODE_CYCLE, PERMISSION_MODE_BYPASS))
 
 
 def next_permission_mode(current: str) -> str:
     normalized = str(current or "").strip().lower()
-    if normalized not in PERMISSION_MODE_VALUES:
+    if normalized not in PERMISSION_MODE_CYCLE:
         return PERMISSION_MODE_DEFAULT
     index = (PERMISSION_MODE_CYCLE.index(normalized) + 1) % len(PERMISSION_MODE_CYCLE)
     return PERMISSION_MODE_CYCLE[index]

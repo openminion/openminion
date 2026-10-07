@@ -32,6 +32,7 @@ _COMPACT_INLINE_APPROVAL_RE = re.compile(
 )
 _DONE_RE = re.compile(r"\bDone in \d+(?:m\d{2}s|s)\b")
 _APPROVAL_PROMPT_PATTERN = (
+    r"Approval required:\s*[A-Za-z0-9_.-]+\(|"
     r"Policy confirmation required|High-risk action requires confirmation|"
     r"Reply exactly yes to (?:allow once|confirm)"
 )
@@ -56,7 +57,8 @@ _CONTINUATION_CUE_RE = re.compile(
     re.IGNORECASE,
 )
 _APPROVAL_RESOLVED_RE = re.compile(
-    r"(?:^|\n)\s*(?:[❯>]\s*)?(?:yes|session|a|always|no)\s*(?:\n|$)|"
+    r"(?:^|\n)\s*(?:[❯>]\s*)?(?:y|yes|session|a|always|n|no)\s*(?:\n|$)|"
+    r"\[y/N\]:\s*[yn]\b|"
     r"(?:Approved\.|Approval denied\.)"
 )
 _ACTIVE_TURN_STATUS_RE = re.compile(
@@ -155,6 +157,12 @@ def approval_prompt_needs_reply(transcript: str, *, offset: int) -> bool:
     if approval_match is None:
         return False
     after_prompt = transcript[approval_match.end() :]
+    compact_matches = list(_COMPACT_INLINE_APPROVAL_RE.finditer(after_prompt))
+    if compact_matches and _compact_approval_answered(
+        after_prompt,
+        match=compact_matches[-1],
+    ):
+        return False
     if _APPROVAL_RESOLVED_RE.search(after_prompt):
         return False
     return True
@@ -579,7 +587,10 @@ class FocusProbe:
                     screen_text=screen_text,
                     reply=approval_reply,
                 )
-                self._submit_composer_line(session, approval_reply)
+                if "Approval required:" in screen_text:
+                    self._submit_terminal_confirmation(session, approval_reply)
+                else:
+                    self._submit_composer_line(session, approval_reply)
                 event_offset = len(session.visible_transcript)
                 continue
             marker_seen = marker_re is None or marker_re.search(
@@ -767,6 +778,26 @@ class FocusProbe:
             f"Focus sidecar consent did not resolve\n{session.screen_text[-2000:]}"
         )
 
+    @staticmethod
+    def _submit_terminal_confirmation(session: PtySession, reply: str) -> None:
+        decision = str(reply or "").strip().lower()
+        if decision in {"no", "deny", "denied"}:
+            key = "n"
+        elif decision in {"session", "a", "always"}:
+            key = "a"
+        else:
+            key = "y"
+        session.send(f"{key}\r")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if not approval_prompt_needs_reply(session.screen_text, offset=0):
+                return
+            time.sleep(0.05)
+        raise AssertionError(
+            f"Focus terminal confirmation did not resolve\n"
+            f"{session.screen_text[-2000:]}"
+        )
+
     def run_turn(
         self,
         session: PtySession,
@@ -833,9 +864,13 @@ class FocusProbe:
                     screen_text=screen_text,
                     reply=scenario.approval_reply,
                 )
-                completion_probe = self._submit_composer_line(
-                    session, scenario.approval_reply
-                )
+                if "Approval required:" in screen_text:
+                    self._submit_terminal_confirmation(session, scenario.approval_reply)
+                    completion_probe = None
+                else:
+                    completion_probe = self._submit_composer_line(
+                        session, scenario.approval_reply
+                    )
                 event_offset = len(session.visible_transcript)
                 continue
             if failure_match is not None:
@@ -850,6 +885,15 @@ class FocusProbe:
                 and _composer_is_ready(screen_text)
                 and not active_turn_busy(screen_text)
             ):
+                if approvals and scenario.expected_markers:
+                    try:
+                        assert_expected_markers(
+                            transcript[turn_offset:],
+                            scenario.prompt,
+                            scenario.expected_markers,
+                        )
+                    except AssertionError:
+                        continue
                 completed_segment = transcript[event_offset:]
                 if completion_probe is not None:
                     completed_segment = (

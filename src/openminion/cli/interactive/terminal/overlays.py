@@ -6,6 +6,7 @@ from rich.text import Text
 
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
+from openminion.cli.presentation.permissions import PERMISSION_MENU_CHOICES
 from openminion.modules.runtime.sync import run_async_compat
 
 
@@ -86,6 +87,34 @@ class TerminalOverlayPresenter:
         if norm in ("a", "always"):
             return "always"
         return "deny"
+
+    async def present_permission_picker_async(self) -> str | None:
+        lines = [
+            "Choose permissions:",
+            *(
+                f"  {index}. {choice.label} — {choice.description}"
+                for index, choice in enumerate(PERMISSION_MENU_CHOICES, start=1)
+            ),
+        ]
+        try:
+            text = await self._session.prompt_async(
+                "\n".join(lines) + "\nNumber (Enter to cancel): "
+            )
+        except (EOFError, KeyboardInterrupt):
+            return None
+        raw = str(text or "").strip()
+        if not raw:
+            return None
+        try:
+            return str(PERMISSION_MENU_CHOICES[int(raw) - 1].choice_id)
+        except (ValueError, IndexError):
+            self._console.print(
+                Text(
+                    "(invalid permission choice)",
+                    style=token_rich_style(StyleToken.ERROR),
+                )
+            )
+            return None
 
     def present_completion(self, message: str) -> str:
         return run_async_compat(self._present_completion_async(message))

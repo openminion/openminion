@@ -11,6 +11,7 @@ from openminion.cli.interactive.project_context import (
     write_init_template,
 )
 from openminion.cli.presentation.styles import StyleToken
+from openminion.modules.policy.models import build_policy_facts
 from openminion.cli.presentation.markers import token_rich_style
 from ..overlays import TerminalOverlayPresenter
 from ..status_line import TerminalStatusLine
@@ -104,7 +105,7 @@ async def run_slash_project(
     *,
     runtime: Any,
     console: Console,
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None,
+    approval_callback: Callable[..., Any] | None,
 ) -> None:
     from openminion.cli.commands.autonomy_project import focus_project_help
 
@@ -147,6 +148,16 @@ async def run_slash_project(
                 "project.start",
                 runtime.project_launch_approval_args(request),
                 request.run.run_id,
+                build_policy_facts(
+                    canonical_tool="project.start",
+                    reason_code="project_start_approval",
+                    risk={
+                        "risk_class": "state_change",
+                        "side_effects": "local",
+                        "reversibility": "unknown",
+                    },
+                    duration_options=["allow_once", "deny"],
+                ),
             )
         )
         tone, body = (

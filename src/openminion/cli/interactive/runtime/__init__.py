@@ -41,7 +41,10 @@ from .project import RuntimeProjectMixin
 from .room_tasks import RuntimeRoomTaskMixin
 from .token_usage import RuntimeTokenUsageMixin
 
-ApprovalCallback = Callable[[str, dict[str, Any], Any], Awaitable[bool]]
+ApprovalCallback = Callable[..., Awaitable[bool]]
+PolicyApprovalCallback = Callable[
+    [str, dict[str, Any], Any, dict[str, Any] | None], Awaitable[bool]
+]
 
 
 def _session_sort_key(session: Any) -> str:
@@ -115,7 +118,10 @@ class OpenMinionRuntime(
         self._action_policy_mode_override: str = ""
         self._permission_mode: str = ""
         self._permission_overrides: dict[str, str] = {}
+        self._permission_overrides_explicit = False
+        self._permission_posture_diagnostic: str = ""
         self._read_only_mode: bool = False
+        self._apply_configured_permission_defaults()
         self._effort_level: str = ""
         self._statusline_command: str = ""
         register_settings_lifecycle_hooks(
@@ -135,6 +141,7 @@ class OpenMinionRuntime(
             self._session_id = session.id
             self._sync_conversation_id()
             self.restore_session_model_selection(session)
+            self.restore_session_permission_posture(session)
         elif self._prompt_on_resume:
             self._ensure_agent_resolved()
             if normalized_session_id:
@@ -470,6 +477,7 @@ class OpenMinionRuntime(
             self._session_id = session.id
             self._sync_conversation_id()
             self.restore_session_model_selection(session)
+            self.restore_session_permission_posture(session)
 
     def new_session(self) -> str:
         return self.create_new_session()
@@ -488,6 +496,7 @@ class OpenMinionRuntime(
         self._session_id = record.id
         self._sync_conversation_id()
         self.restore_session_model_selection(record)
+        self.restore_session_permission_posture(record)
         self._project_context_pending = False
         self._reset_token_usage_accounting()
 
@@ -512,6 +521,7 @@ class OpenMinionRuntime(
                 patch=metadata_patch,
             )
         self.restore_session_model_selection(session)
+        self.restore_session_permission_posture(session)
         self._project_context_pending = False
         self._reset_token_usage_accounting()
 
@@ -519,8 +529,16 @@ class OpenMinionRuntime(
         self._ensure_agent_resolved()
         self._clear_model_selection()
         self._rebind_model_gateway()
+        self._apply_configured_permission_defaults()
         prefix = _TARGET_KIND_FOCUS if self._target == _TARGET_KIND_FOCUS else "sess"
         metadata_patch = self._session_metadata_patch()
+        metadata_patch.update(
+            {
+                "permission_mode": self.permission_mode,
+                ACTION_POLICY_SESSION_OVERRIDE_KEY: self.action_policy_mode_override,
+                "permission_overrides": dict(self.permission_overrides),
+            }
+        )
         session = self._rt.sessions.resolve_session(
             agent_id=self.agent_id,
             channel=self._channel,
@@ -596,6 +614,34 @@ class OpenMinionRuntime(
             finally:
                 self._record_chat_phase_timing(timer, turn_id=turn_id)
 
+    @staticmethod
+    def _policy_approval_callback(
+        callback: ApprovalCallback | None,
+    ) -> PolicyApprovalCallback | None:
+        if callback is None:
+            return None
+        parameters = inspect.signature(callback).parameters.values()
+        positional = [
+            parameter
+            for parameter in parameters
+            if parameter.kind
+            in {parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD}
+        ]
+        if any(parameter.kind == parameter.VAR_POSITIONAL for parameter in parameters):
+            return cast(PolicyApprovalCallback, callback)
+        if len(positional) >= 4:
+            return cast(PolicyApprovalCallback, callback)
+
+        async def legacy_callback(
+            tool_name: str,
+            args: dict[str, Any],
+            call_id: Any,
+            _policy_facts: dict[str, Any] | None = None,
+        ) -> bool:
+            return await callback(tool_name, args, call_id)
+
+        return legacy_callback
+
     def _record_chat_phase_timing(
         self,
         timer: phase_timing.ChatPhaseTimer,
@@ -650,7 +696,7 @@ class OpenMinionRuntime(
             merged["permission_mode"] = self.permission_mode
             if self.permission_mode == "readonly":
                 merged["read_only"] = "1"
-        if self._permission_overrides:
+        if self._permission_overrides or self._permission_overrides_explicit:
             merged["permission_overrides"] = json.dumps(
                 self._permission_overrides,
                 sort_keys=True,
@@ -679,14 +725,14 @@ class OpenMinionRuntime(
             "body": text,
             "session_id": self.session_id,
         }
-        merged_metadata = self._turn_inbound_metadata(inbound_metadata)
-        if merged_metadata:
-            kwargs["inbound_metadata"] = merged_metadata
         stream_handler = getattr(self._gateway, "handle_message_streaming", None)
         if not callable(stream_handler):
             stream_handler = None
         handler = stream_handler or self._gateway.handle_message
         parameters = inspect.signature(handler).parameters
+        merged_metadata = self._turn_inbound_metadata(inbound_metadata)
+        if merged_metadata and "inbound_metadata" in parameters:
+            kwargs["inbound_metadata"] = merged_metadata
         if "deliver" in parameters:
             kwargs["deliver"] = False
         wrapped_progress = self._wrap_progress_callback(progress_callback)
@@ -715,11 +761,12 @@ class OpenMinionRuntime(
         if not self.is_bound:
             raise RuntimeError("interactive runtime is not bound to a session")
         self._begin_turn_usage_tracking()
+        policy_approval_callback = self._policy_approval_callback(approval_callback)
         kwargs, stream_handler, wrapped_progress = self._prepare_gateway_turn(
             text,
             progress_callback=progress_callback,
             inbound_metadata=inbound_metadata,
-            approval_callback=approval_callback,
+            approval_callback=policy_approval_callback,
         )
         if stream_handler is not None:
             final_text = ""
@@ -763,7 +810,7 @@ class OpenMinionRuntime(
                 yield final_text
             if handoff_result := await self.approve_project_handoff(
                 final_metadata,
-                approval_callback,
+                policy_approval_callback,
                 source_request=text,
             ):
                 yield "\n\n" + handoff_result
@@ -777,7 +824,7 @@ class OpenMinionRuntime(
         yield text_body
         if handoff_result := await self.approve_project_handoff(
             response.metadata,
-            approval_callback,
+            policy_approval_callback,
             source_request=text,
         ):
             yield "\n\n" + handoff_result

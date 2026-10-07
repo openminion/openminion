@@ -486,7 +486,7 @@ def test_focus_tool_adapter_resolves_ops_confirmation_once(tmp_path) -> None:
     )
     approvals = []
     adapter.set_approval_callback(
-        lambda tool, args, approval_id: (
+        lambda tool, args, approval_id, _policy_facts: (
             approvals.append((tool, args, approval_id)) or True
         )
     )

@@ -111,6 +111,7 @@ def test_focus_invokes_mcp_and_persists_completed_tool_event(
             prompt="Call the MCP echo tool once and report completion.",
             expected_markers=("FOCUS_MCP_OK",),
             timeout=180,
+            requires_approval=True,
         )
         with probe.session(rows=50, cols=160) as session:
             probe.wait_ready(session)

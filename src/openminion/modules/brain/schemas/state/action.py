@@ -1,4 +1,8 @@
 # ruff: noqa: F403,F405
+from typing import Any
+
+from pydantic import Field
+
 from openminion.modules.tool.plugin_api import ToolConfirmationPreview
 
 from .common import *
@@ -83,4 +87,6 @@ class PolicyDecision(BaseModel):
     require_clarification: bool = False
     clarification_question: str | None = None
     approval_id: str | None = None
+    matched_grant_id: str | None = None
     confirmation_preview: ToolConfirmationPreview | None = None
+    policy_facts: dict[str, Any] = Field(default_factory=dict)

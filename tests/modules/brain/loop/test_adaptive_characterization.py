@@ -818,7 +818,12 @@ def test_context_adapter_dispatch_fallbacks_and_confirmation_paths() -> None:
 
     ask_command = SimpleNamespace(
         kind="ask_user",
-        model_copy=lambda **kwargs: SimpleNamespace(kind="ask_user", copied=kwargs),
+        question="Confirm the action?",
+        model_copy=lambda **kwargs: SimpleNamespace(
+            kind="ask_user",
+            question="Confirm the action?",
+            copied=kwargs,
+        ),
     )
     adapter._postprocess_outcome(
         SimpleNamespace(

@@ -152,7 +152,9 @@ def test_skill_ingest_allow_once_calls_handler_once(
     adapter, skill = _adapter(tmp_path, monkeypatch)
     approvals: list[str] = []
     adapter.set_approval_callback(
-        lambda tool_name, _args, _approval_id: approvals.append(tool_name) or True
+        lambda tool_name, _args, _approval_id, _policy_facts: (
+            approvals.append(tool_name) or True
+        )
     )
     try:
         result = adapter.execute(

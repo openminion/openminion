@@ -34,7 +34,7 @@ def handle_slash_delegate(
     *,
     runtime: Any,
     console: Console,
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
+    approval_callback: Callable[..., Any] | None = None,
     render: bool = True,
 ) -> ChatMessage:
     runner = getattr(runtime, "delegate_task", None)
@@ -87,7 +87,7 @@ async def run_slash_delegate(
     text: str,
     runtime: Any,
     console: Console,
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None,
+    approval_callback: Callable[..., Any] | None,
     transcript: TerminalTranscript | None = None,
 ) -> None:
     start_message = delegation_start_message(text)
@@ -100,16 +100,22 @@ async def run_slash_delegate(
     if approval_callback is not None:
 
         async def invoke_approval(
-            tool_name: str, args: dict[str, Any], call_id: Any
+            tool_name: str,
+            args: dict[str, Any],
+            call_id: Any,
+            policy_facts: dict[str, Any] | None = None,
         ) -> bool:
-            result = approval_callback(tool_name, args, call_id)
+            result = approval_callback(tool_name, args, call_id, policy_facts)
             return bool(await result if inspect.isawaitable(result) else result)
 
         def approval_from_worker(
-            tool_name: str, args: dict[str, Any], call_id: Any
+            tool_name: str,
+            args: dict[str, Any],
+            call_id: Any,
+            policy_facts: dict[str, Any] | None = None,
         ) -> bool:
             return asyncio.run_coroutine_threadsafe(
-                invoke_approval(tool_name, args, call_id), terminal_loop
+                invoke_approval(tool_name, args, call_id, policy_facts), terminal_loop
             ).result()
 
         delegated_approval_callback = approval_from_worker

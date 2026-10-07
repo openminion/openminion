@@ -46,11 +46,11 @@ def consume_blockchain_send_authorization(
     session_id: str | None = None,
 ) -> PolicyAuthorization:
     policy_mode = str(policy_ctl.mode()) if policy_ctl is not None else ""
-    if (
-        policy_ctl is None
-        or policy_mode not in {"enforce", "enforce_safe"}
-        or permission_mode in {"bypass", "auto"}
-    ):
+    if policy_ctl is None or policy_mode not in {
+        "disabled",
+        "enforce",
+        "enforce_safe",
+    }:
         raise ToolRuntimeError(
             "POLICY_MODE_UNSUPPORTED",
             "Blockchain transaction send requires the canonical policy service.",

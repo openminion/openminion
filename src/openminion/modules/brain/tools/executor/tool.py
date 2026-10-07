@@ -10,6 +10,7 @@ from openminion.modules.brain.adapters.tool.permission_mode import (
     request_outcome_allows_tool,
 )
 from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
+from openminion.modules.policy.models import build_policy_facts
 
 from ...diagnostics.events import CanonicalEventLogger
 from ...config import TOOL_OUTCOME_SUCCESS_ALLOWLIST
@@ -687,7 +688,10 @@ def _tool_dispatch_payload(
     if not isinstance(inputs, dict):
         inputs = {}
         payload["inputs"] = inputs
-    inputs.setdefault("permission_mode", permission_mode)
+    inputs["permission_mode"] = permission_mode
+    inputs["permission_mode_origin"] = str(
+        lineage.get("permission_mode_origin", "global")
+    )
     if _watch_background_write_authorized(state):
         inputs["background_write_authorized"] = True
         inputs["background_write_authorization_source"] = _WATCH_STATE_KEY
@@ -732,7 +736,7 @@ def _tool_dispatch_preflight(
     state.permission_mode = global_permission_mode
 
     command, tool_name = _normalized_tool_command(command)
-    permission_mode = effective_permission_mode_for_tool(
+    permission_mode, permission_mode_origin = effective_permission_mode_for_tool(
         global_mode=global_permission_mode,
         permission_overrides=getattr(state, "permission_overrides", {}),
         tool_name=tool_name,
@@ -762,6 +766,7 @@ def _tool_dispatch_preflight(
         return command, tool_name, permission_mode, {}, outcome
 
     lineage = _command_lineage_payload(state=state, command=command)
+    lineage["permission_mode_origin"] = permission_mode_origin
     if state.budgets_remaining.tool_calls <= 0:
         outcome = _budget_exhausted_outcome(
             runner,
@@ -947,6 +952,22 @@ def finalize_tool_result(
         policy_approval_id=(str(error_details.get("approval_id", "")).strip() or None),
         policy_confirmation_preview=(
             confirmation_preview if isinstance(confirmation_preview, dict) else None
+        ),
+        policy_facts=build_policy_facts(
+            canonical_tool=prepared_dispatch.tool_name,
+            reason_code=str(
+                error_details.get("reason_code")
+                or getattr(normalized.error, "code", "")
+            ),
+            risk=(
+                error_details.get("risk")
+                if isinstance(error_details.get("risk"), dict)
+                else {}
+            ),
+            duration_options=list(
+                error_details.get("duration_options", error_details.get("choices", ()))
+                or ()
+            ),
         ),
     )
 

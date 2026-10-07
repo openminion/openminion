@@ -267,12 +267,6 @@ def test_admitted_workflow_still_requires_separate_one_time_transaction_approval
             command=command, session_id="session-1", trace_id="denied"
         )
         assert provider.ledger == []
-        if permission_mode != "ask":
-            assert denied["error"]["code"] == "POLICY_DENIED", denied
-            assert (
-                denied["error"]["details"]["commerce_code"] == "POLICY_MODE_UNSUPPORTED"
-            )
-            return
         assert denied["error"]["code"] == "CONFIRM_REQUIRED", denied
         command["inputs"]["confirmation_grant_id"] = _approve_once(
             policy, runtime, command

@@ -166,11 +166,13 @@ class _CodingLoopContextAdapter:
             tool_budget_debited=prepare_outcome.tool_budget_debited,
             policy_approval_id=prepare_outcome.policy_approval_id,
             policy_confirmation_preview=(prepare_outcome.policy_confirmation_preview),
+            policy_facts=dict(prepare_outcome.policy_facts),
         )
         self.state.pending_policy_approval_id = prepare_outcome.policy_approval_id
         self.state.pending_policy_confirmation_preview = (
             prepare_outcome.policy_confirmation_preview
         )
+        self.state.pending_policy_facts = dict(prepare_outcome.policy_facts)
         return self._postprocess_outcome(
             outcome,
             original_command=getattr(prepare_outcome, "original_command", None),

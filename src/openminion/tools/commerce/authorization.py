@@ -80,8 +80,7 @@ def consume_commerce_authorization(
     policy_mode = str(policy_ctl.mode()) if policy_ctl is not None else ""
     if (
         policy_ctl is None
-        or policy_mode not in {"enforce", "enforce_safe"}
-        or permission_mode in {"bypass", "auto"}
+        or policy_mode not in {"disabled", "enforce", "enforce_safe"}
         or subject_id != "local"
         or not session_id
     ):

@@ -449,10 +449,8 @@ class ActLoopSeededMixin:
         )
         telemetry_payload = loop_outcome.telemetry_payload()
         telemetry_payload.update(
-            {
-                "completed_intent_ids": list(completed_ids),
-                "remaining_intent_ids": list(remaining_ids),
-            }
+            completed_intent_ids=list(completed_ids),
+            remaining_intent_ids=list(remaining_ids),
         )
         _stage_task_plan_events(ctx, loop_outcome)
         _postprocess_adaptive_response_trailers(
@@ -466,15 +464,15 @@ class ActLoopSeededMixin:
             summary=f"{_public_act_tag()} completed.",
             outputs=telemetry_payload,
         )
-        action_result = action_result.model_copy(
-            update={
-                "outputs": {
-                    **action_result.outputs,
-                    **telemetry_payload,
-                }
-            },
-            deep=True,
-        )
+        outputs = {**action_result.outputs, **telemetry_payload}
+        action_result = action_result.model_copy(update={"outputs": outputs}, deep=True)
+        if ctx.state.pending_confirmation_command is not None:
+            ctx.state.status = BRAIN_STATE_WAITING_USER
+            loop_outcome.action_result = action_result
+            return cast(
+                ExecutionResult,
+                self._result_from_needs_user(ctx, outcome=loop_outcome),
+            )
         ctx.state.last_result = action_result
         continuation_guidance = self._seeded_autonomous_continuation_guidance(
             ctx=ctx, loop_outcome=loop_outcome

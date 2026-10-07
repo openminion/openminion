@@ -291,10 +291,21 @@ class Agent(Generic[InputT, OutputT]):
                     else []
                 )
                 try:
+                    internal_approval_callback = None
+                    if approval_callback is not None:
+
+                        def internal_approval_callback(
+                            tool_name: str,
+                            args: dict[str, Any],
+                            approval_id: str,
+                            _policy_facts: dict[str, Any],
+                        ) -> bool | Awaitable[bool]:
+                            return approval_callback(tool_name, args, approval_id)
+
                     raw = runtime.run_turn(
                         payload=payload,
                         progress_callback=on_delta,
-                        approval_callback=approval_callback,
+                        approval_callback=internal_approval_callback,
                         cancel_event=cancel_event,
                         trusted_subagent_context=run_context,
                     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from openminion.modules.brain.constants import BRAIN_ACTION_STATUS_SUCCESS
 from openminion.modules.task.project.checkpoints import load_latest_project_checkpoint
@@ -30,6 +30,7 @@ from openminion.modules.tool.diagnostics.events import (
     emit_tool_invoke_operation_for_context,
 )
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.contracts.schemas import ErrorCode
 from openminion.tools.git.errors import GIT_REMOTE_OUTCOME_UNCERTAIN
 from openminion.tools.git.runtime import (
     require_configured_git_remote,
@@ -91,6 +92,12 @@ class GitRemoteProjectEffect:
             "repository_ref": self.action.ref,
             "repository_expected_oid": self.action.expected_oid,
         }
+
+
+def is_git_remote_project_action(tool_name: str, args: Mapping[str, Any]) -> bool:
+    return tool_name == MODEL_GIT_PUSH or (
+        tool_name == MODEL_GIT_TAG and args.get("action") == "push"
+    )
 
 
 def git_push_action_scope(args: Mapping[str, Any], ctx: Any) -> str:
@@ -403,7 +410,7 @@ def _finalize_git_project_result(
     error = raw_error if isinstance(raw_error, Mapping) else {}
     raw_details = error.get("details")
     failure = ToolRuntimeError(
-        str(error.get("code") or "GIT_BINARY_ERROR"),
+        cast(ErrorCode, str(error.get("code") or "INTERNAL_ERROR")),
         str(result.get("summary") or "Git remote action failed"),
         dict(raw_details) if isinstance(raw_details, Mapping) else {},
     )
@@ -659,4 +666,5 @@ __all__ = [
     "execute_git_remote_project_effect",
     "git_push_action_scope",
     "git_tag_push_action_scope",
+    "is_git_remote_project_action",
 ]

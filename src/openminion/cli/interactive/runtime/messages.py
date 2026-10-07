@@ -66,8 +66,7 @@ class RuntimeMessageMixin:
             payload: dict[str, object],
             *,
             progress_callback: Callable[[dict[str, Any]], None] | None,
-            approval_callback: Callable[[str, dict[str, Any], Any], Awaitable[bool]]
-            | None,
+            approval_callback: Callable[..., Awaitable[bool]] | None,
             cancel_event: Any,
         ) -> dict[str, object]: ...
 
@@ -522,8 +521,7 @@ class RuntimeMessageMixin:
         *,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
         inbound_metadata: dict[str, str] | None = None,
-        approval_callback: Callable[[str, dict[str, Any], Any], Awaitable[bool]]
-        | None = None,
+        approval_callback: Callable[..., Awaitable[bool]] | None = None,
         cancel_event: Any,
     ) -> dict[str, object]:
         session, actor = self._room_session_and_actor()

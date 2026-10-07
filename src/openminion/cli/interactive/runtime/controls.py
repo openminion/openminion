@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
@@ -28,6 +29,8 @@ _PROVIDER_CONFIG_ALIASES = {
 }
 _MODEL_CONNECTION_SESSION_KEY = "override_model_connection"
 _MODEL_SESSION_KEY = "override_model"
+_PERMISSION_MODE_SESSION_KEY = "permission_mode"
+_PERMISSION_OVERRIDES_SESSION_KEY = "permission_overrides"
 
 
 class RuntimeControlsMixin:
@@ -302,7 +305,10 @@ class RuntimeControlsMixin:
         return len(self._added_workspace_roots)
 
     def set_read_only_mode(self, enabled: bool) -> bool:
-        self.set_permission_mode("readonly" if enabled else PERMISSION_MODE_DEFAULT)
+        self.set_permission_posture(
+            permission_mode="readonly" if enabled else PERMISSION_MODE_DEFAULT,
+            action_policy_mode="ask",
+        )
         return self.read_only_mode
 
     @property
@@ -315,18 +321,21 @@ class RuntimeControlsMixin:
         return PERMISSION_MODE_DEFAULT
 
     def set_permission_mode(self, mode: str) -> str:
-        normalized = str(mode or "").strip().lower() or PERMISSION_MODE_DEFAULT
-        if normalized not in PERMISSION_MODE_VALUES:
-            valid = ", ".join(sorted(PERMISSION_MODE_VALUES))
-            raise ValueError(f"unknown permission mode {mode!r}; valid modes: {valid}")
-        self._permission_mode = (
-            "" if normalized == PERMISSION_MODE_DEFAULT else normalized
+        normalized = self._normalize_permission_mode(mode)
+        self.set_permission_posture(
+            permission_mode=normalized,
+            action_policy_mode=self.action_policy_mode_override or "ask",
         )
-        self._read_only_mode = normalized == "readonly"
         return self.permission_mode
 
     def cycle_permission_mode(self) -> str:
-        return self.set_permission_mode(next_permission_mode(self.permission_mode))
+        mode = next_permission_mode(self.permission_mode)
+        action_mode = "auto" if mode == "auto" else "ask"
+        self.set_permission_posture(
+            permission_mode=mode,
+            action_policy_mode=action_mode,
+        )
+        return self.permission_mode
 
     @property
     def action_policy_mode_override(self) -> str:
@@ -338,24 +347,134 @@ class RuntimeControlsMixin:
             raise ValueError(
                 "unknown action policy mode; valid modes: ask, auto, bypass"
             )
-        self._action_policy_mode_override = normalized
-        self._persist_session_action_policy_mode(normalized)
+        self.set_permission_posture(
+            permission_mode=self.permission_mode,
+            action_policy_mode=normalized,
+        )
         return normalized
 
-    def _persist_session_action_policy_mode(self, mode: str) -> None:
-        if not self.is_bound or not self.session_id:
-            return
-        sessions = getattr(getattr(self, "_rt", None), "sessions", None)
-        update = getattr(sessions, "update_session_metadata", None)
-        if not callable(update):
-            return
-        try:
-            update(
-                session_id=self.session_id,
-                patch={ACTION_POLICY_SESSION_OVERRIDE_KEY: mode},
+    def set_permission_posture(
+        self,
+        *,
+        permission_mode: str,
+        action_policy_mode: str,
+        permission_overrides: Mapping[str, str] | None = None,
+    ) -> tuple[str, str]:
+        overrides_supplied = permission_overrides is not None
+        normalized_mode = self._normalize_permission_mode(permission_mode)
+        normalized_action = normalize_action_policy_mode_override(action_policy_mode)
+        if normalized_action is None:
+            raise ValueError(
+                "unknown action policy mode; valid modes: ask, auto, bypass"
             )
-        except Exception:
-            return
+        normalized_overrides = self._normalize_permission_overrides(
+            self.permission_overrides
+            if permission_overrides is None
+            else permission_overrides
+        )
+        if self.is_bound and self.session_id:
+            self._rt.sessions.update_session_metadata(
+                session_id=self.session_id,
+                patch={
+                    _PERMISSION_MODE_SESSION_KEY: normalized_mode,
+                    ACTION_POLICY_SESSION_OVERRIDE_KEY: normalized_action,
+                    _PERMISSION_OVERRIDES_SESSION_KEY: json.dumps(
+                        normalized_overrides, sort_keys=True
+                    ),
+                },
+            )
+        self._permission_mode = (
+            "" if normalized_mode == PERMISSION_MODE_DEFAULT else normalized_mode
+        )
+        self._read_only_mode = normalized_mode == "readonly"
+        self._action_policy_mode_override = normalized_action
+        self._permission_overrides = normalized_overrides
+        self._permission_overrides_explicit |= overrides_supplied
+        return self.permission_mode, normalized_action
+
+    def _configured_permission_defaults(self) -> tuple[str, str, dict[str, str]]:
+        configured = getattr(self._rt, "run_profile_overrides", RunProfileOverrides())
+        mode = self._normalize_permission_mode(
+            str(getattr(configured, "permission_mode", "") or "default")
+        )
+        overrides = self._normalize_permission_overrides(
+            dict(getattr(configured, "permission_overrides", ()) or ())
+        )
+        action = mode if mode in {"auto", "bypass"} else ""
+        return mode, action, overrides
+
+    def _apply_configured_permission_defaults(self) -> None:
+        mode, action, overrides = self._configured_permission_defaults()
+        self._permission_mode = "" if mode == PERMISSION_MODE_DEFAULT else mode
+        self._read_only_mode = mode == "readonly"
+        self._action_policy_mode_override = action
+        self._permission_overrides = overrides
+        self._permission_overrides_explicit = bool(overrides)
+
+    def restore_session_permission_posture(self, record: Any) -> None:
+        metadata = getattr(record, "metadata", {})
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+        default_mode, default_action, default_overrides = (
+            self._configured_permission_defaults()
+        )
+        try:
+            mode = self._normalize_permission_mode(
+                str(
+                    metadata.get(_PERMISSION_MODE_SESSION_KEY, default_mode)
+                    or default_mode
+                )
+            )
+            raw_action = str(
+                metadata.get(ACTION_POLICY_SESSION_OVERRIDE_KEY, default_action)
+                or default_action
+            ).strip()
+            action = normalize_action_policy_mode_override(raw_action)
+            if raw_action and action is None:
+                raise ValueError("invalid action policy mode")
+            raw_overrides = metadata.get(
+                _PERMISSION_OVERRIDES_SESSION_KEY, default_overrides
+            )
+            if isinstance(raw_overrides, str):
+                raw_overrides = json.loads(raw_overrides)
+            overrides = self._normalize_permission_overrides(raw_overrides)
+        except (TypeError, ValueError):
+            mode, action, overrides = default_mode, default_action, default_overrides
+            self._permission_posture_diagnostic = (
+                "Malformed saved permission posture ignored; configured defaults apply."
+            )
+        else:
+            self._permission_posture_diagnostic = ""
+        self._permission_mode = "" if mode == PERMISSION_MODE_DEFAULT else mode
+        self._read_only_mode = mode == "readonly"
+        self._action_policy_mode_override = action or ""
+        self._permission_overrides = overrides
+        self._permission_overrides_explicit = (
+            _PERMISSION_OVERRIDES_SESSION_KEY in metadata or bool(default_overrides)
+        )
+
+    @staticmethod
+    def _normalize_permission_mode(mode: str) -> str:
+        normalized = str(mode or "").strip().lower() or PERMISSION_MODE_DEFAULT
+        if normalized not in PERMISSION_MODE_VALUES:
+            valid = ", ".join(sorted(PERMISSION_MODE_VALUES))
+            raise ValueError(f"unknown permission mode {mode!r}; valid modes: {valid}")
+        return normalized
+
+    @staticmethod
+    def _normalize_permission_overrides(overrides: Mapping[str, str]) -> dict[str, str]:
+        if not isinstance(overrides, Mapping):
+            raise TypeError("permission overrides must be a mapping")
+        normalized: dict[str, str] = {}
+        for tool_name, mode in overrides.items():
+            tool = str(tool_name or "").strip().lower()
+            value = str(mode or "").strip().lower()
+            if not tool or value not in {"ask", "auto", "bypass", "readonly"}:
+                raise ValueError(
+                    "permission overrides require tool names and valid modes"
+                )
+            normalized[tool] = value
+        return normalized
 
     @property
     def permission_overrides(self) -> dict[str, str]:
@@ -367,7 +486,13 @@ class RuntimeControlsMixin:
             raise ValueError("tool name is required")
         normalized = str(mode or "").strip().lower()
         if normalized in {"default", "reset", "clear"}:
-            self._permission_overrides.pop(tool, None)
+            overrides = self.permission_overrides
+            overrides.pop(tool, None)
+            self.set_permission_posture(
+                permission_mode=self.permission_mode,
+                action_policy_mode=self.action_policy_mode_override or "ask",
+                permission_overrides=overrides,
+            )
             return PERMISSION_MODE_DEFAULT
         allowed = {"ask", "auto", "bypass", "readonly"}
         if normalized not in allowed:
@@ -375,14 +500,36 @@ class RuntimeControlsMixin:
             raise ValueError(
                 f"unknown per-tool permission mode {mode!r}; valid modes: {valid}"
             )
-        self._permission_overrides[tool] = normalized
+        overrides = self.permission_overrides
+        overrides[tool] = normalized
+        self.set_permission_posture(
+            permission_mode=self.permission_mode,
+            action_policy_mode=self.action_policy_mode_override or "ask",
+            permission_overrides=overrides,
+        )
         return normalized
 
     def clear_permission_override(self, tool_name: str) -> bool:
         tool = str(tool_name or "").strip().lower()
         if not tool:
             raise ValueError("tool name is required")
-        return self._permission_overrides.pop(tool, None) is not None
+        overrides = self.permission_overrides
+        removed = overrides.pop(tool, None) is not None
+        self.set_permission_posture(
+            permission_mode=self.permission_mode,
+            action_policy_mode=self.action_policy_mode_override or "ask",
+            permission_overrides=overrides,
+        )
+        return removed
+
+    def list_permission_grants(self) -> list[Any]:
+        return list(self._rt.action_policy.list_grants(active_only=True))
+
+    def revoke_permission_grant(self, grant_id: str) -> bool:
+        normalized = str(grant_id or "").strip()
+        if not normalized:
+            raise ValueError("grant ID is required")
+        return bool(self._rt.action_policy.revoke_grant(normalized))
 
     @property
     def effort_level(self) -> str:

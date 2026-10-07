@@ -211,7 +211,7 @@ def test_non_execution_outcome_blocks_write_even_with_bypass() -> None:
     assert result.error.details["requested_outcome"] == "answer_only"
 
 
-def test_plan_only_allows_session_plan_control_exception() -> None:
+def test_readonly_ceiling_blocks_plan_control_even_for_plan_only_request() -> None:
     state = _make_state(permission_mode="readonly")
     state.request_readiness = RequestReadiness(
         posture="brief_plan",
@@ -230,15 +230,16 @@ def test_plan_only_allows_session_plan_control_exception() -> None:
     )
     logger = SimpleNamespace(emit=lambda *a, **k: None)
 
-    with pytest.raises(AttributeError, match="model_dump"):
-        execute_action_dispatch(
-            runner,
-            state=state,
-            command=command,
-            logger=logger,
-            sanitize_tool_command_args=lambda runner, command: ({}, []),
-            execute_action_fn=None,
-        )
+    result, job = execute_action_dispatch(
+        runner,
+        state=state,
+        command=command,
+        logger=logger,
+        sanitize_tool_command_args=lambda runner, command: ({}, []),
+        execute_action_fn=None,
+    )
+    assert job is None
+    assert result.status == BRAIN_ACTION_STATUS_BLOCKED
 
 
 @pytest.mark.parametrize(
@@ -327,7 +328,7 @@ def test_per_tool_readonly_override_blocks_write_when_global_default() -> None:
     assert result.error.details["tool_name"] == "file.write"
 
 
-def test_per_tool_bypass_override_wins_over_global_readonly() -> None:
+def test_global_readonly_ceiling_blocks_per_tool_bypass_override() -> None:
     state = _make_state(permission_mode="readonly")
     state.permission_overrides = {"file.write": "bypass"}
     command = ToolCommand(
@@ -366,9 +367,9 @@ def test_per_tool_bypass_override_wins_over_global_readonly() -> None:
     )
 
     assert job is None
-    assert result.status == BRAIN_ACTION_STATUS_SUCCESS
-    payload = calls["command"]
-    assert payload["inputs"]["permission_mode"] == "bypass"
+    assert result.status == BRAIN_ACTION_STATUS_BLOCKED
+    assert result.error.code == "PERMISSION_DENIED_READONLY"
+    assert calls == {}
 
 
 def test_tool_progress_observer_failure_is_logged_and_counted() -> None:

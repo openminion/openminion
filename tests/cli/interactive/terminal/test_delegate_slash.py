@@ -86,16 +86,28 @@ def test_terminal_slash_delegate_forwards_review_request() -> None:
 async def test_terminal_slash_delegate_keeps_async_approval_responsive() -> None:
     loop = asyncio.get_running_loop()
     callback_loop: asyncio.AbstractEventLoop | None = None
+    received_facts: dict[str, object] = {}
 
-    async def approval_callback(*_args: object) -> bool:
+    async def approval_callback(
+        _tool_name: str,
+        _args: dict[str, object],
+        _call_id: object,
+        policy_facts: dict[str, object] | None,
+    ) -> bool:
         nonlocal callback_loop
         callback_loop = asyncio.get_running_loop()
+        received_facts.update(policy_facts or {})
         return True
 
     class _Runtime:
         def delegate_task(self, **kwargs: object) -> dict[str, object]:
             callback = kwargs["approval_callback"]
-            approved = callback("file.write", {"path": "marker.txt"}, "call-1")
+            approved = callback(
+                "file.write",
+                {"path": "marker.txt"},
+                "call-1",
+                {"reason_code": "DEFAULT_CONFIRM"},
+            )
             return {
                 "ok": approved,
                 "mode": kwargs.get("mode"),
@@ -119,6 +131,7 @@ async def test_terminal_slash_delegate_keeps_async_approval_responsive() -> None
 
     assert exited is False
     assert callback_loop is loop
+    assert received_facts == {"reason_code": "DEFAULT_CONFIRM"}
     assert "Delegation:" in console.export_text()
     assert "Delegation:" in str(transcript.copy_last_copyable_message())
 

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import fnmatch
 import re
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Optional, cast
 from urllib.parse import urlparse
@@ -17,11 +15,10 @@ from ..models import (
     ContextSummary,
     InvocationSummary,
     PolicyConfig,
-    PolicyDecision,
     PolicyControlError,
+    PolicyDecision,
     PolicyGrant,
     PolicyGrantInput,
-    DurationType,
     RiskClass,
     RiskSpec,
     SideEffects,
@@ -31,18 +28,12 @@ from ..models import (
 from ..interfaces import POLICY_INTERFACE_VERSION
 from ..constants import (
     POLICY_DECISION_ALLOW,
-    POLICY_DECISION_DENY,
     POLICY_DECISION_REQUIRE_CONFIRM,
-    POLICY_DURATION_FOREVER,
     POLICY_DURATION_ONCE,
     POLICY_DURATION_SESSION,
-    POLICY_DURATION_UNTIL,
     POLICY_HIGH_CONFIRM_RISKS,
     POLICY_GRANT_EFFECT_ALLOW,
-    POLICY_GRANT_EFFECT_DENY,
-    POLICY_GRANT_EFFECTS,
     POLICY_MODE_DISABLED,
-    POLICY_MODE_ENFORCE,
     POLICY_MODE_ENFORCE_SAFE,
     POLICY_MODE_LOG_ONLY,
     POLICY_MODES,
@@ -55,6 +46,7 @@ from ..constants import (
     POLICY_RISK_FINANCIAL,
     POLICY_RISK_READ,
     POLICY_RISK_SECURITY,
+    POLICY_RISK_ORDER,
     POLICY_SIDE_EFFECT_CONFIRM_RISKS,
     POLICY_SIDE_EFFECT_EXTERNAL_ACCOUNT,
     POLICY_SIDE_EFFECT_LOCAL,
@@ -72,19 +64,17 @@ from .confirmation import (
     is_exact_blockchain_send,
     is_exact_ops_command,
     parse_confirmation_response,
-    resolve_exact_ops_decision,
+    resolve_exact_authorization_decision,
 )
-
-
-_RISK_ORDER: Dict[RiskClass, int] = {
-    POLICY_RISK_READ: 0,
-    POLICY_RISK_WRITE: 1,
-    POLICY_RISK_STATE_CHANGE: 2,
-    POLICY_RISK_EXEC: 3,
-    POLICY_RISK_SECURITY: 4,
-    POLICY_RISK_FINANCIAL: 5,
-    POLICY_RISK_DESTRUCTIVE: 6,
-}
+from .action_policy import blocked_rule_decision, merge_policy_risk, select_policy_rule
+from ..grants import (
+    confirmation_grant_terms,
+    GrantMatch,
+    grant_specificity_score,
+    matching_grant_decision,
+    requires_once_duration,
+    validate_grant_input,
+)
 
 
 def _arg_path(args: Dict[str, Any]) -> Optional[str]:
@@ -110,10 +100,28 @@ def _arg_domain(args: Dict[str, Any]) -> Optional[str]:
     return _opt_str(urlparse(url).hostname) if isinstance(url, str) else None
 
 
-@dataclass(frozen=True)
-class _GrantMatch:
-    grant: PolicyGrant
-    score: int
+def _baseline_allow_decision(
+    *, mode: str, risk: RiskSpec, allow_read_only: bool, is_sensitive_target: bool
+) -> PolicyDecision | None:
+    if mode == POLICY_MODE_DISABLED:
+        return PolicyDecision(
+            decision=POLICY_DECISION_ALLOW,
+            reason_code="POLICY_DISABLED",
+            reason="Policy mode is disabled",
+            risk=risk,
+        )
+    if (
+        risk.risk_class == POLICY_RISK_READ
+        and allow_read_only
+        and not is_sensitive_target
+    ):
+        return PolicyDecision(
+            decision=POLICY_DECISION_ALLOW,
+            reason_code="READ_ONLY_ALLOW",
+            reason="Read-only operation allowed by default",
+            risk=risk,
+        )
+    return None
 
 
 class PolicyCtl:
@@ -187,10 +195,13 @@ class PolicyCtl:
         inv = self._normalize_invocation(invocation)
         csum = self._normalize_context(ctx)
         exact_policy_authorization = is_policy_authorization_pair(inv.tool, inv.method)
+        registered_risk = self._resolve_risk(inv)
         risk = (
-            self._resolve_risk(inv)
+            registered_risk
             if exact_policy_authorization
-            else risk_override or self._resolve_risk(inv)
+            else merge_policy_risk(
+                registered_risk, risk_override, risk_order=POLICY_RISK_ORDER
+            )
         )
         effective_config = config_overrides or self._config
         mode = effective_config.mode if config_overrides is not None else self.mode()
@@ -205,14 +216,7 @@ class PolicyCtl:
         if decision is not None:
             self._log_decision(inv=inv, ctx=csum, decision=decision)
             return decision
-        if mode == POLICY_MODE_DISABLED:
-            return PolicyDecision(
-                decision=POLICY_DECISION_ALLOW,
-                reason_code="POLICY_DISABLED",
-                reason="Policy mode is disabled",
-                risk=risk,
-            )
-        consume_grants = mode in {POLICY_MODE_ENFORCE, POLICY_MODE_ENFORCE_SAFE}
+        consume_grants = mode != POLICY_MODE_LOG_ONLY
         enforced = self._evaluate_enforced(
             inv,
             csum,
@@ -250,12 +254,7 @@ class PolicyCtl:
                 code,
                 message,
             )
-        if grant.effect not in POLICY_GRANT_EFFECTS:
-            raise ValueError("grant.effect must be allow|deny")
-        if grant.duration_type == POLICY_DURATION_ONCE and not grant.invocation_hash:
-            raise ValueError("once grants require invocation_hash")
-        if grant.duration_type == POLICY_DURATION_UNTIL and not grant.expires_at:
-            raise ValueError("until grants require expires_at")
+        validate_grant_input(grant)
         return self._store.create_grant(grant)
 
     def create_grant_from_confirmation(
@@ -285,27 +284,18 @@ class PolicyCtl:
         if scope_overrides:
             target.update(scope_overrides)
 
-        duration = POLICY_DURATION_FOREVER
-        expires_at: Optional[str] = None
-        session_id: Optional[str] = None
-        invocation_hash: Optional[str] = None
+        duration, expires_at, session_id, invocation_hash = confirmation_grant_terms(
+            action=action,
+            session_id=csum.session_id,
+            invocation_hash=inv.invocation_hash,
+            until_seconds=until_seconds,
+        )
 
-        if action == "allow_once":
-            duration = POLICY_DURATION_ONCE
-            invocation_hash = inv.invocation_hash
-        elif action == "allow_until":
-            duration = POLICY_DURATION_UNTIL
-            seconds = max(1, int(until_seconds or 600))
-            expires_at = (
-                datetime.now(timezone.utc) + timedelta(seconds=seconds)
-            ).isoformat()
-        elif action == "allow_session":
-            duration = POLICY_DURATION_SESSION
-            session_id = csum.session_id
-        elif action == "allow_forever":
-            duration = POLICY_DURATION_FOREVER
-        else:
-            raise ValueError(f"Unsupported confirmation action: {action}")
+        if (
+            requires_once_duration(tool=inv.tool, method=inv.method)
+            and duration != POLICY_DURATION_ONCE
+        ):
+            raise ValueError(f"{inv.tool}.{inv.method} approvals must be allow once")
 
         return self.create_grant(
             PolicyGrantInput(
@@ -314,7 +304,7 @@ class PolicyCtl:
                 tool=inv.tool,
                 method=inv.method,
                 target_json=target,
-                duration_type=cast(DurationType, duration),
+                duration_type=duration,
                 expires_at=expires_at,
                 session_id=session_id,
                 invocation_hash=invocation_hash,
@@ -384,6 +374,36 @@ class PolicyCtl:
             negative_tokens=self._config.negative_tokens,
         )
 
+    def _configured_rule_decision(
+        self,
+        *,
+        matching_rule: Any,
+        inv: InvocationSummary,
+        csum: ContextSummary,
+        risk: RiskSpec,
+        confirmation_preview: ToolConfirmationPreview | None,
+    ) -> PolicyDecision | None:
+        if matching_rule is None:
+            return None
+        if matching_rule.mode == "ask":
+            return self._confirm_decision(
+                inv=inv,
+                csum=csum,
+                risk=risk,
+                reason_code="CONFIG_RULE_ASK",
+                reason="Configured exact-tool rule requires confirmation",
+                confirmation_preview=confirmation_preview,
+            )
+        if matching_rule.mode == "auto":
+            return PolicyDecision(
+                decision=POLICY_DECISION_ALLOW,
+                reason_code="CONFIG_RULE_AUTO",
+                reason="Allowed by configured exact-tool rule",
+                risk=risk,
+                details={"rule_mode": "auto", "tool_name": matching_rule.tool_name},
+            )
+        return None
+
     def _evaluate_enforced(
         self,
         inv: InvocationSummary,
@@ -397,59 +417,56 @@ class PolicyCtl:
     ) -> PolicyDecision:
         self._store.cleanup_expired()
         subject_id = csum.subject_id or effective_config.subject_id_default
+        matching_rule = select_policy_rule(
+            invocation=inv,
+            risk=risk,
+            config=effective_config,
+            risk_order=POLICY_RISK_ORDER,
+        )
+        blocked_rule = blocked_rule_decision(matching_rule, risk)
+        if blocked_rule is not None:
+            return blocked_rule
         candidates = self._store.list_grants(subject_id=subject_id, active_only=True)
-        matches = self._find_matching_grants(candidates, inv=inv, csum=csum, risk=risk)
-        if is_policy_authorization_pair(inv.tool, inv.method):
-            matches = [match for match in matches if match.grant.approval_id]
-        selected = self._select_match(matches)
-        if selected is not None:
-            grant = selected.grant
-            if grant.effect == POLICY_GRANT_EFFECT_DENY:
-                return PolicyDecision(
-                    decision=POLICY_DECISION_DENY,
-                    reason_code="EXPLICIT_DENY",
-                    reason="Denied by explicit grant rule",
-                    risk=risk,
-                    matched_grant_id=grant.grant_id,
-                    details={"grant_id": grant.grant_id},
-                )
-            if not is_exact_ops_command(inv.tool, inv.method):
-                if consume_grants and not is_policy_authorization_pair(
-                    inv.tool, inv.method
-                ):
-                    self._store.consume_grant_use(grant.grant_id)
-                return PolicyDecision(
-                    decision=POLICY_DECISION_ALLOW,
-                    reason_code="EXPLICIT_ALLOW",
-                    reason="Allowed by explicit grant",
-                    risk=risk,
-                    matched_grant_id=grant.grant_id,
-                    approval_id=grant.approval_id,
-                    invocation_hash=inv.invocation_hash,
-                    details={"grant_id": grant.grant_id},
-                )
-        if is_exact_ops_command(inv.tool, inv.method):
-            decision = resolve_exact_ops_decision(
-                store=self._store,
-                invocation=inv,
-                context=csum,
-                subject_id=subject_id,
-                risk=risk,
-            )
-            if decision is not None:
-                return decision
+        grant_decision = matching_grant_decision(
+            store=self._store,
+            matches=self._find_matching_grants(
+                candidates, inv=inv, csum=csum, risk=risk
+            ),
+            invocation=inv,
+            risk=risk,
+            consume_grants=consume_grants,
+        )
+        if grant_decision is not None:
+            return grant_decision
+        exact_decision = resolve_exact_authorization_decision(
+            store=self._store,
+            invocation=inv,
+            context=csum,
+            risk=risk,
+            subject_id=subject_id,
+            confirmation_preview=confirmation_preview,
+            confirm=self._confirm_decision,
+        )
+        if exact_decision is not None:
+            return exact_decision
+        rule_decision = self._configured_rule_decision(
+            matching_rule=matching_rule,
+            inv=inv,
+            csum=csum,
+            risk=risk,
+            confirmation_preview=confirmation_preview,
+        )
+        if rule_decision is not None:
+            return rule_decision
         is_sensitive_target = self._matches_sensitive_target(inv, risk)
-        if (
-            risk.risk_class == POLICY_RISK_READ
-            and effective_config.allow_read_only_without_prompt
-            and not is_sensitive_target
-        ):
-            return PolicyDecision(
-                decision=POLICY_DECISION_ALLOW,
-                reason_code="READ_ONLY_ALLOW",
-                reason="Read-only operation allowed by default",
-                risk=risk,
-            )
+        baseline_allow = _baseline_allow_decision(
+            mode=mode,
+            risk=risk,
+            allow_read_only=effective_config.allow_read_only_without_prompt,
+            is_sensitive_target=is_sensitive_target,
+        )
+        if baseline_allow is not None:
+            return baseline_allow
         confirm_reason = self._confirm_reason(
             csum=csum,
             risk=risk,
@@ -609,8 +626,8 @@ class PolicyCtl:
         inv: InvocationSummary,
         csum: ContextSummary,
         risk: RiskSpec,
-    ) -> list[_GrantMatch]:
-        matched: list[_GrantMatch] = []
+    ) -> list[GrantMatch]:
+        matched: list[GrantMatch] = []
         facts = self._target_facts(inv)
         for grant in grants:
             if not self._grant_matches(
@@ -618,7 +635,7 @@ class PolicyCtl:
             ):
                 continue
             matched.append(
-                _GrantMatch(grant=grant, score=self._specificity_score(grant))
+                GrantMatch(grant=grant, score=grant_specificity_score(grant))
             )
         return matched
 
@@ -637,12 +654,11 @@ class PolicyCtl:
             return False
         if grant.max_uses is not None and grant.uses_count >= grant.max_uses:
             return False
+        if grant.duration_type == POLICY_DURATION_SESSION and not grant.session_id:
+            return False
         if grant.session_id and grant.session_id != csum.session_id:
             return False
-        if (
-            grant.duration_type == POLICY_DURATION_ONCE
-            and grant.invocation_hash != inv.invocation_hash
-        ):
+        if grant.invocation_hash and grant.invocation_hash != inv.invocation_hash:
             return False
         if grant.tool != "*" and grant.tool != inv.tool:
             return False
@@ -650,7 +666,7 @@ class PolicyCtl:
             return False
         if (
             grant.risk_floor
-            and _RISK_ORDER[risk.risk_class] < _RISK_ORDER[grant.risk_floor]
+            and POLICY_RISK_ORDER[risk.risk_class] < POLICY_RISK_ORDER[grant.risk_floor]
         ):
             return False
         if not self._target_matches(grant.target_json, facts=facts, args=inv.args):
@@ -726,21 +742,6 @@ class PolicyCtl:
                     return False
 
         return True
-
-    def _specificity_score(self, grant: PolicyGrant) -> int:
-        score = 8 if grant.tool != "*" else 0
-        score += 6 if grant.method != "*" else 0
-        if grant.target_json:
-            score += 4 + len(grant.target_json.keys())
-        return score + bool(grant.risk_floor)
-
-    def _select_match(self, matches: list[_GrantMatch]) -> Optional[_GrantMatch]:
-        if not matches:
-            return None
-        best_score = max(item.score for item in matches)
-        same = [item for item in matches if item.score == best_score]
-        deny = [item for item in same if item.grant.effect == POLICY_GRANT_EFFECT_DENY]
-        return max(deny or same, key=lambda item: item.grant.created_at)
 
     def _matches_sensitive_target(self, inv: InvocationSummary, risk: RiskSpec) -> bool:
         if not risk.sensitive_targets:
