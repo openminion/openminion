@@ -62,6 +62,7 @@ class SkillConfig:
     selection_rag_threshold: int = 10
     selection_rag_topk: int = 5
     promotion_cadence_enabled: bool = False
+    runtime_workflow_observation_enabled: bool = False
     promotion_cadence_success_threshold: int = 3
     promotion_cadence_utility_threshold: float = 0.7
     suggestion_batch_cap: int = 5
@@ -184,10 +185,7 @@ def load_config(
     else:
         known_tools_state = SKILL_TOOL_REGISTRY_AVAILABLE_EMPTY
 
-    raw_retention = str(root.get("skill_blob_retention", "retain")).strip()
-    skill_blob_retention = (
-        raw_retention if raw_retention in {"retain", "gc"} else "retain"
-    )
+    skill_blob_retention = _skill_blob_retention(root)
 
     return SkillConfig(
         provider=provider,
@@ -208,6 +206,9 @@ def load_config(
         allowed_roots=_as_str_list(root.get("allowed_roots"), []),
         trust_tier=str(root.get("trust_tier", "disabled")),
         ingest_enabled=bool(root.get("ingest_enabled", True)),
+        runtime_workflow_observation_enabled=_strict_bool(
+            root, "runtime_workflow_observation_enabled"
+        ),
         skill_blob_retention=skill_blob_retention,
         path_mode=default_mode,
         path_source=path_source,
@@ -277,6 +278,18 @@ def _as_str_list(value: Any, default: list[str]) -> list[str]:
         if text:
             out.append(text)
     return out or list(default)
+
+
+def _strict_bool(root: dict[str, Any], key: str) -> bool:
+    value = root.get(key, False)
+    if not isinstance(value, bool):
+        raise ValueError(f"skill.{key} must be a boolean")
+    return value
+
+
+def _skill_blob_retention(root: dict[str, Any]) -> str:
+    value = str(root.get("skill_blob_retention", "retain")).strip()
+    return value if value in {"retain", "gc"} else "retain"
 
 
 def _parse_yaml_like_mapping(text: str) -> dict[str, Any] | None:

@@ -65,6 +65,7 @@ from openminion.modules.brain.execution.child_tasks import (
 from .strategies import (
     AbortOnNewMessagePolicy,
     AcceptOrPlanResolver,
+    apply_subtask_act_profile,
     AllInlinePromoter,
     BlockingWait,
     build_child_state,
@@ -420,6 +421,7 @@ class OrchestrateMode:
                 user_input=prompt,
                 logger=ctx.logger,
             )
+        apply_subtask_act_profile(decision, subtask)
         if (
             str(getattr(decision, "route", getattr(decision, "mode", "")) or "").strip()
             == ORCHESTRATE_MODE

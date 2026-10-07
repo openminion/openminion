@@ -442,7 +442,7 @@ def finalize_child_worktree(
         child_record = finalize_delegated_worktree(
             lease=lease,
             artifactctl=artifactctl,
-            session_id=ctx.state.session_id,
+            session_id=str(ctx.state.runtime_session_id or ctx.state.session_id),
             trace_id=ctx.state.trace_id,
             agent_id=ctx.state.agent_id,
             status=status,

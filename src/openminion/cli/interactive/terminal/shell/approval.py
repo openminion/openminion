@@ -3,7 +3,10 @@ from collections.abc import Callable
 from typing import Any
 
 from openminion.cli.status.tool_calls import format_tool_args_preview
-from openminion.modules.tool.plugin_api import stable_invocation_hash
+from openminion.modules.tool.plugin_api import (
+    is_policy_authorization_pair,
+    stable_invocation_hash,
+)
 
 from ..overlays import TerminalOverlayPresenter
 
@@ -30,7 +33,21 @@ def format_terminal_approval_prompt(tool_name: str, args: dict[str, Any]) -> str
         compact=not full_command,
     )
     call_line = f"{name}({args_preview})" if args_preview else f"{name}()"
+    if name.startswith("commerce."):
+        return (
+            f"Approval required: {call_line}\n"
+            "This commerce approval is for this exact action once. Allow once or deny."
+        )
     return f"Approval required: {call_line}"
+
+
+def _requires_one_time_approval(tool_name: str) -> bool:
+    if tool_name == "ops.command.run" or tool_name.startswith("commerce."):
+        return True
+    tool, method = (
+        tool_name.rsplit(".", 1) if "." in tool_name else (tool_name, "default")
+    )
+    return bool(is_policy_authorization_pair(tool, method))
 
 
 def build_terminal_approval_callback(
@@ -54,7 +71,7 @@ def build_terminal_approval_callback(
             method="invoke",
             args=dict(args or {}),
         )
-        allow_session_grant = normalized != "ops.command.run"
+        allow_session_grant = not _requires_one_time_approval(normalized)
         if allow_session_grant and grant_key in session_grants:
             return True
         async with approval_lock:
@@ -64,7 +81,7 @@ def build_terminal_approval_callback(
             if callable(pause_prompt):
                 await pause_prompt()
             try:
-                if normalized == "ops.command.run":
+                if _requires_one_time_approval(normalized):
                     return await overlay.present_confirm_async(prompt)
                 decision = await overlay.present_approval_async(
                     prompt,

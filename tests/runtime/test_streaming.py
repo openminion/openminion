@@ -126,6 +126,32 @@ def test_no_chunks_after_stream_closed() -> None:
         manager.shutdown()
 
 
+def test_stream_timeout_remains_a_poll_interval() -> None:
+    def _executor(req, emit_chunk, cancel_event):  # noqa: ANN001
+        del req, emit_chunk, cancel_event
+        sleep(0.05)
+        return TurnResponse(final_text="ok")
+
+    manager = AgentRuntimeManager(turn_executor=_executor)
+    manager.start()
+    try:
+        handle = manager.submit_turn(
+            TurnRequest(
+                trace_id="stream-poll-interval",
+                agent_id="stream-agent",
+                session_id="sess",
+                input_text="hi",
+            )
+        )
+
+        chunks = list(handle.stream(timeout_s=0.001))
+
+        assert chunks[-1].kind == "status"
+        assert handle.result(timeout_s=1).final_text == "ok"
+    finally:
+        manager.shutdown()
+
+
 def test_turn_chunks_have_stable_sequence_and_terminal_status() -> None:
     def _executor(req, emit_chunk, cancel_event):  # noqa: ANN001
         del cancel_event

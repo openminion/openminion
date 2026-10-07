@@ -7,7 +7,7 @@ from openminion.base.config.action_policy import map_action_policy_mode
 from openminion.base.redaction import redact_mapping
 from openminion.base.time import utc_now_iso  # noqa: F401
 from openminion.modules.tool.plugin_api import (
-    BlockchainSendConfirmationPreview,
+    ToolConfirmationPreview,
     stable_invocation_hash as stable_invocation_hash,
 )
 
@@ -270,7 +270,7 @@ class PolicyDecision:
     details: dict[str, Any] = field(default_factory=dict)
     approval_id: Optional[str] = None
     invocation_hash: Optional[str] = None
-    confirmation_preview: BlockchainSendConfirmationPreview | None = None
+    confirmation_preview: ToolConfirmationPreview | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -286,7 +286,11 @@ class PolicyDecision:
             "confirmation_preview": (
                 None
                 if self.confirmation_preview is None
-                else asdict(self.confirmation_preview)
+                else (
+                    dict(self.confirmation_preview)
+                    if isinstance(self.confirmation_preview, dict)
+                    else asdict(self.confirmation_preview)
+                )
             ),
         }
 

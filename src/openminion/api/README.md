@@ -8,12 +8,16 @@ Canonical top-level entry points:
 
 The supported `openminion.api` facade exports `APIRuntime`, `Agent`,
 `AgentOutputValidationError`, `AgentRunResult`, `Handoff`, `dispatch_request`,
-`ProviderError`, and `subagent`. Deeper imports remain owner-specific unless
-documented here or in `API_COMPATIBILITY.md`.
+`ProviderError`, `RuntimeTurnHandle`, `ToolCallSummary`, `TurnChunk`,
+`TurnError`, `TurnResponse`, `TurnTelemetry`, and `subagent`. Deeper imports
+remain owner-specific unless documented here or in `API_COMPATIBILITY.md`.
 
 `Agent` accepts `config_path` and `agent_id` for normal application setup,
 owns an isolated session by default, and supports context-manager cleanup.
 Pass an existing `APIRuntime` only when the application owns runtime lifecycle.
+Use `APIRuntime.submit_turn()` when the application needs typed iterator
+streaming, cancellation, or streamed approval resolution. `Agent.run_stream()`
+is the synchronous callback-progress convenience API.
 
 Subpackages organize the internal layers:
 - `server/`: HTTP server implementation, request dispatch, and streaming transport.

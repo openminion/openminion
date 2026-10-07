@@ -15,6 +15,7 @@ from tests.helpers.live_cli_chat_alibaba import (
     LIVE_SKILL_SIMPLE_TIMEOUT_ENV,
     timeout_seconds,
 )
+from tests.helpers.live_e2e_profiles import resolve_live_framework_root
 from tests.helpers.live_skill_targets import (
     MATRIX_TYPE_DENSE,
     MATRIX_TYPE_SIMPLE,
@@ -31,7 +32,7 @@ from tests.helpers.live_skill_targets import (
 pytestmark = pytest.mark.package_integration
 
 
-FRAMEWORK_ROOT = Path(__file__).resolve().parents[3]
+FRAMEWORK_ROOT = resolve_live_framework_root(Path(__file__).resolve().parents[2])
 TEST_CONFIG_ROOT = FRAMEWORK_ROOT / "test-configs"
 EXPECTED_SKILL_E2E_CONFIG_NAMES = (
     "per-agent-alibaba-minimax-skill-e2e.json",

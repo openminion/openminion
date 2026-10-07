@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Mapping
 
@@ -47,6 +48,23 @@ def tool_call_body(tool_event: ToolEvent) -> str:
     return hint or tool_event.tool_name
 
 
+def format_tool_result_content(tool_name: str, content: str) -> str:
+    name = str(tool_name or "").strip()
+    if not name.startswith("commerce.") or not content.strip():
+        return content
+    try:
+        payload = json.loads(content)
+        if not isinstance(payload, Mapping):
+            return content
+        from openminion.modules.commerce.confirmation import (
+            commerce_tool_result_lines,
+        )
+
+        return "\n".join(commerce_tool_result_lines(name, payload))
+    except (TypeError, ValueError):
+        return content
+
+
 def format_tool_duration(duration_ms: int | None) -> str:
     if duration_ms is None:
         return ""
@@ -71,6 +89,7 @@ def is_diff_result(tool_name: str, content: str) -> bool:
 
 __all__ = (
     "format_tool_duration",
+    "format_tool_result_content",
     "is_diff_result",
     "tool_call_body",
     "tool_context_hint",

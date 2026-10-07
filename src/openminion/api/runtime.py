@@ -6,6 +6,7 @@ from typing import Any, Callable, cast
 
 from openminion.base.config import EnvironmentConfig, RunProfileOverrides
 from openminion.modules.llm import RuntimeLLMHandle
+from openminion.services.runtime.ingress.types import RuntimeTurnHandle
 
 from openminion.api.core.bootstrap import RuntimeBootstrapMixin
 from openminion.api.core.exposure import RuntimeToolExposureMixin
@@ -153,7 +154,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
             trusted_subagent_context=trusted_subagent_context,
         )
 
-    def submit_turn(self, *, payload: dict[str, object]) -> Any:
+    def submit_turn(self, *, payload: dict[str, object]) -> RuntimeTurnHandle:
         from openminion.services.runtime.ingress import submit_turn_payload
 
         return submit_turn_payload(runtime=self, payload=payload)

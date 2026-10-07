@@ -44,6 +44,7 @@ DEFAULT_POLICY: dict[str, Any] = {
             "tool.",
             "browser",
             "blockchain.",
+            "commerce.",
             "web.",
             "exec.",
             "git.",

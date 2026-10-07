@@ -77,10 +77,45 @@ def inline_discriminated_branches(schema: dict[str, Any]) -> dict[str, Any]:
             branches.append(resolved)
         else:
             branches.append(branch)
-    schema["oneOf"] = branches
-    schema["$defs"] = definitions
-    schema["discriminator"] = {"propertyName": schema["discriminator"]["propertyName"]}
-    return schema
+    discriminator = schema["discriminator"]["propertyName"]
+    properties: dict[str, Any] = {}
+    required_by: dict[str, list[str]] = {}
+    variants: list[str] = []
+    for branch in branches:
+        branch_properties = branch.get("properties", {})
+        variant = str(branch_properties.get(discriminator, {}).get("const", ""))
+        variants.append(variant)
+        for name, field_schema in branch_properties.items():
+            properties.setdefault(name, field_schema)
+        for name in branch.get("required", []):
+            required_by.setdefault(name, []).append(variant)
+
+    properties[discriminator] = {
+        "type": "string",
+        "enum": variants,
+        "description": f"Required discriminator. Choose one of: {', '.join(variants)}.",
+    }
+    for name, variants_requiring_field in required_by.items():
+        if name == discriminator:
+            continue
+        field_schema = properties[name]
+        requirement = (
+            f"Required when {discriminator} is {', '.join(variants_requiring_field)}."
+        )
+        description = str(field_schema.get("description", "") or "").strip()
+        field_schema["description"] = f"{requirement} {description}".strip()
+
+    return {
+        key: value
+        for key, value in schema.items()
+        if key not in {"oneOf", "discriminator", "$defs"}
+    } | {
+        "$defs": definitions,
+        "additionalProperties": False,
+        "properties": properties,
+        "required": [discriminator],
+        "type": "object",
+    }
 
 
 def _valid_abi_type(value: str) -> bool:

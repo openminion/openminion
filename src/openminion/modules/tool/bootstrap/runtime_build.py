@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from typing import Any, Mapping
 
 from openminion.base.config.env import resolve_environment_config
+from openminion.modules.commerce.config import coerce_commerce_tool_runtime_config
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.constants import TOOL_BOOTSTRAP_STATUS_SKIPPED_GATE
 from openminion.modules.tool.runtime.dispatch import set_registry, set_registry_manager
@@ -72,42 +73,113 @@ def _ci_mode_enabled() -> bool:
     return token in {"1", "true", "yes", "on"}
 
 
-def _set_blockchain_contract_omissions(
-    registry_manager: ToolRegistryManager,
+def _optional_contract_omissions(
     config: Any | None,
-) -> None:
+) -> tuple[set[str], set[str]]:
+    from openminion.modules.tool.contracts.model_ids import (
+        MODEL_BLOCKCHAIN_DEBUG,
+        MODEL_BLOCKCHAIN_INSPECT,
+        MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
+        MODEL_BLOCKCHAIN_SEND_TRANSACTION,
+        MODEL_COMMERCE_INSPECT,
+        MODEL_COMMERCE_APPLY_ORDER_ACTION,
+        MODEL_COMMERCE_PLACE_ORDER,
+        MODEL_COMMERCE_PREPARE_ORDER,
+        MODEL_COMMERCE_PREPARE_ORDER_ACTION,
+    )
+    from openminion.modules.tool.contracts.runtime_ids import (
+        RUNTIME_BLOCKCHAIN_DEBUG,
+        RUNTIME_BLOCKCHAIN_INSPECT,
+        RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
+        RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
+        RUNTIME_COMMERCE_INSPECT,
+        RUNTIME_COMMERCE_APPLY_ORDER_ACTION,
+        RUNTIME_COMMERCE_PLACE_ORDER,
+        RUNTIME_COMMERCE_PREPARE_ORDER,
+        RUNTIME_COMMERCE_PREPARE_ORDER_ACTION,
+    )
+
     runtime_cfg = getattr(config, "runtime", config)
     tools_cfg = getattr(runtime_cfg, "tools", None)
     blockchain_cfg = getattr(tools_cfg, "blockchain", None)
-    if blockchain_cfg and getattr(blockchain_cfg, "enabled", False):
-        return
+    missing_model_ids: set[str] = set()
+    missing_runtime_ids: set[str] = set()
+    if not (blockchain_cfg and getattr(blockchain_cfg, "enabled", False)):
+        missing_model_ids.update(
+            {
+                MODEL_BLOCKCHAIN_DEBUG,
+                MODEL_BLOCKCHAIN_INSPECT,
+                MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
+                MODEL_BLOCKCHAIN_SEND_TRANSACTION,
+            }
+        )
+        missing_runtime_ids.update(
+            {
+                RUNTIME_BLOCKCHAIN_DEBUG,
+                RUNTIME_BLOCKCHAIN_INSPECT,
+                RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
+                RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
+            }
+        )
 
-    from openminion.modules.tool.contracts.model_ids import (
-        MODEL_BLOCKCHAIN_INSPECT,
-        MODEL_BLOCKCHAIN_DEBUG,
-        MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
-        MODEL_BLOCKCHAIN_SEND_TRANSACTION,
+    commerce_cfg = coerce_commerce_tool_runtime_config(
+        getattr(tools_cfg, "commerce", None)
     )
-    from openminion.modules.tool.contracts.runtime_ids import (
-        RUNTIME_BLOCKCHAIN_INSPECT,
-        RUNTIME_BLOCKCHAIN_DEBUG,
-        RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
-        RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
-    )
+    if not (commerce_cfg and commerce_cfg.enabled):
+        missing_model_ids.update(
+            {
+                MODEL_COMMERCE_INSPECT,
+                MODEL_COMMERCE_APPLY_ORDER_ACTION,
+                MODEL_COMMERCE_PLACE_ORDER,
+                MODEL_COMMERCE_PREPARE_ORDER,
+                MODEL_COMMERCE_PREPARE_ORDER_ACTION,
+            }
+        )
+        missing_runtime_ids.update(
+            {
+                RUNTIME_COMMERCE_INSPECT,
+                RUNTIME_COMMERCE_APPLY_ORDER_ACTION,
+                RUNTIME_COMMERCE_PLACE_ORDER,
+                RUNTIME_COMMERCE_PREPARE_ORDER,
+                RUNTIME_COMMERCE_PREPARE_ORDER_ACTION,
+            }
+        )
+    elif not commerce_cfg.writes_enabled:
+        missing_model_ids.update(
+            {
+                MODEL_COMMERCE_APPLY_ORDER_ACTION,
+                MODEL_COMMERCE_PLACE_ORDER,
+                MODEL_COMMERCE_PREPARE_ORDER_ACTION,
+            }
+        )
+        missing_runtime_ids.update(
+            {
+                RUNTIME_COMMERCE_APPLY_ORDER_ACTION,
+                RUNTIME_COMMERCE_PLACE_ORDER,
+                RUNTIME_COMMERCE_PREPARE_ORDER_ACTION,
+            }
+        )
+    elif not commerce_cfg.order_actions_enabled:
+        missing_model_ids.update(
+            {MODEL_COMMERCE_APPLY_ORDER_ACTION, MODEL_COMMERCE_PREPARE_ORDER_ACTION}
+        )
+        missing_runtime_ids.update(
+            {
+                RUNTIME_COMMERCE_APPLY_ORDER_ACTION,
+                RUNTIME_COMMERCE_PREPARE_ORDER_ACTION,
+            }
+        )
+    return missing_model_ids, missing_runtime_ids
 
+
+def _set_optional_contract_omissions(
+    registry_manager: ToolRegistryManager,
+    config: Any | None,
+) -> None:
+    missing_model_ids, missing_runtime_ids = _optional_contract_omissions(config)
     registry_manager.set_expected_contract_omissions(
-        model_ids={
-            MODEL_BLOCKCHAIN_INSPECT,
-            MODEL_BLOCKCHAIN_DEBUG,
-            MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
-            MODEL_BLOCKCHAIN_SEND_TRANSACTION,
-        },
-        runtime_ids={
-            RUNTIME_BLOCKCHAIN_INSPECT,
-            RUNTIME_BLOCKCHAIN_DEBUG,
-            RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
-            RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
-        },
+        model_ids=missing_model_ids,
+        runtime_ids=missing_runtime_ids,
     )
 
 
@@ -116,46 +188,10 @@ def _emit_contract_drift_report(
     *,
     config: Any | None = None,
 ) -> ToolContractDriftReport:
-    from openminion.modules.tool.contracts.model_ids import (
-        MODEL_BLOCKCHAIN_INSPECT,
-        MODEL_BLOCKCHAIN_DEBUG,
-        MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
-        MODEL_BLOCKCHAIN_SEND_TRANSACTION,
-    )
-    from openminion.modules.tool.contracts.runtime_ids import (
-        RUNTIME_BLOCKCHAIN_INSPECT,
-        RUNTIME_BLOCKCHAIN_DEBUG,
-        RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
-        RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
-    )
-
-    runtime_cfg = getattr(config, "runtime", config)
-    tools_cfg = getattr(runtime_cfg, "tools", None)
-    blockchain_cfg = getattr(tools_cfg, "blockchain", None)
-    blockchain_enabled = bool(
-        blockchain_cfg and getattr(blockchain_cfg, "enabled", False)
-    )
+    missing_model_ids, missing_runtime_ids = _optional_contract_omissions(config)
     report = registry_manager.contract_drift_report(
-        expected_missing_model_ids=(
-            set()
-            if blockchain_enabled
-            else {
-                MODEL_BLOCKCHAIN_INSPECT,
-                MODEL_BLOCKCHAIN_DEBUG,
-                MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
-                MODEL_BLOCKCHAIN_SEND_TRANSACTION,
-            }
-        ),
-        expected_missing_runtime_ids=(
-            set()
-            if blockchain_enabled
-            else {
-                RUNTIME_BLOCKCHAIN_INSPECT,
-                RUNTIME_BLOCKCHAIN_DEBUG,
-                RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
-                RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
-            }
-        ),
+        expected_missing_model_ids=missing_model_ids,
+        expected_missing_runtime_ids=missing_runtime_ids,
     )
     if report.has_drift:
         payload = {
@@ -234,7 +270,7 @@ def build_runtime_bootstrap(
     workspace_path = Path(workspace_root) if workspace_root else None
     run_path = Path(run_root) if run_root else None
     bootstrap_records: list[_ToolBootstrapRecord] = []
-    _set_blockchain_contract_omissions(registry_manager, config)
+    _set_optional_contract_omissions(registry_manager, config)
     for entry in _dynamic_tool_bootstrap_entries(
         config,
         tool_bootstrap_entries=tool_bootstrap_entries or _TOOL_BOOTSTRAP_ENTRIES,

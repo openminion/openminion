@@ -13,9 +13,10 @@ from openminion.modules.storage.record_store import RecordStore
 
 from .migrations import list_migrations
 from .schema import create_skill_schema
+from .workflow_observations import WorkflowObservationStoreMixin
 
 
-class _SkillStoreMixin(SkillStore):
+class _SkillStoreMixin(WorkflowObservationStoreMixin, SkillStore):
     def upsert_skill(
         self,
         *,

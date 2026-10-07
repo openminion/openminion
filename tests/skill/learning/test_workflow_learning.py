@@ -197,6 +197,40 @@ def test_evidence_bundle_redacts_and_round_trips() -> None:
     )
 
 
+def test_default_low_risk_preserves_frozen_bundle_identity() -> None:
+    bundle = WorkflowEvidenceBundle(
+        source_run_refs=["run-legacy"],
+        tool_names=["exec.run"],
+        outcome="success",
+        intent_category="task:test",
+        capability_category="capability:test",
+        strategy_id="strategy:test",
+    )
+
+    assert bundle.risk_level == "low"
+    assert bundle.bundle_id == "wlev-4871cc9f2e810386"
+    assert (
+        bundle.provenance_checksum
+        == "4871cc9f2e810386b0189d8c7ca2ef701dbb0843a3f6b3a91ebd9f7a9a8ae50c"
+    )
+
+
+def test_miner_rejects_same_source_with_conflicting_risk() -> None:
+    low = WorkflowEvidenceBundle(
+        source_run_refs=["run-risk"],
+        tool_names=["exec.run"],
+        outcome="success",
+        intent_category="task:test",
+        capability_category="capability:test",
+        strategy_id="strategy:test",
+        risk_level="low",
+    )
+    high = low.model_copy(update={"risk_level": "high", "bundle_id": ""})
+
+    assert WorkflowShapeMiner().mine([low, high]) == []
+    assert WorkflowShapeMiner().mine([high, low]) == []
+
+
 def test_shape_contract_rejects_unknown_trust_state() -> None:
     with pytest.raises(ValidationError):
         SkillExecutionTrustRecord(

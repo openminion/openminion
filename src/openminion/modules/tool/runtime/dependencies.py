@@ -7,7 +7,7 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.config.env.subprocess import build_subprocess_env
@@ -20,8 +20,30 @@ from openminion.modules.tool.contracts.dependencies import (
 )
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.constants import TOOL_DEPENDENCY_VERSION_OUTPUT_LIMIT
+from openminion.modules.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
+
+if TYPE_CHECKING:
+    from openminion.modules.commerce.runtime import CommerceRuntime
 
 ConfiguredExecutable = str | Callable[[ToolDependencyProbeContext], str]
+
+
+def resolve_commerce_runtime(context: Any) -> CommerceRuntime:
+    service = getattr(context, "commerce_runtime", None)
+    if service is None:
+        raise ToolRuntimeError(
+            "DEPENDENCY_MISSING",
+            "Commerce runtime is not available.",
+            {"commerce_code": "COMMERCE_RUNTIME_UNAVAILABLE"},
+        )
+    subject_id = str(getattr(context, "subject_id", "") or "").strip()
+    if subject_id != COMMERCE_LOCAL_SUBJECT_ID:
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            "Commerce execution requires the trusted local subject.",
+            {"commerce_code": "SUBJECT_UNAVAILABLE"},
+        )
+    return cast("CommerceRuntime", service)
 
 
 def binary_dependency(
@@ -364,6 +386,7 @@ __all__ = [
     "dependency_probe_context_from_runtime",
     "enforce_tool_dependencies",
     "evaluate_tool_dependencies",
+    "resolve_commerce_runtime",
     "select_setup_hints",
     "setup_platform",
     "tool_dependency_report_fields",

@@ -35,6 +35,27 @@ def _ensure_column(
 def create_skill_schema(record_store: RecordStore) -> None:
     _create_catalog_schema(record_store)
     _create_proposal_schema(record_store)
+    _create_workflow_observation_schema(record_store)
+
+
+def _create_workflow_observation_schema(record_store: RecordStore) -> None:
+    record_store.execute_count(
+        """
+        CREATE TABLE IF NOT EXISTS skill_workflow_observations (
+            agent_id TEXT NOT NULL,
+            source_run_ref TEXT NOT NULL,
+            bundle_id TEXT NOT NULL UNIQUE,
+            provenance_checksum TEXT NOT NULL,
+            bundle_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (agent_id, source_run_ref)
+        )
+        """
+    )
+    record_store.execute_count(
+        "CREATE INDEX IF NOT EXISTS idx_skill_workflow_observations_agent "
+        "ON skill_workflow_observations(agent_id, created_at)"
+    )
 
 
 def _upgrade_legacy_catalog_columns(record_store: RecordStore) -> None:

@@ -894,6 +894,32 @@ def test_focus_pty_long_paste_keeps_transcript_top_down_and_composer_inline(
         session.send("\x15")
 
 
+def test_focus_probe_submits_large_single_line_prompt(
+    focus_probe: FocusProbe,
+) -> None:
+    marker = "large single line complete"
+    prompt = " ".join(
+        [f"Requirement {index}: preserve this instruction." for index in range(80)]
+        + [f"Reply with exactly: {marker}"]
+    )
+    assert "\n" not in prompt
+    assert len(prompt) > 3000
+
+    with focus_probe.session(rows=42, cols=100) as session:
+        focus_probe.wait_ready(session)
+        transcript = focus_probe.run_turn(
+            session,
+            FocusScenario(
+                scenario_id="large-single-line-prompt",
+                prompt=prompt,
+                expected_markers=(marker,),
+                timeout=60,
+            ),
+        )
+
+    assert marker in visible_text(transcript)
+
+
 def test_focus_pty_resets_inherited_terminal_viewport(
     focus_probe: FocusProbe,
 ) -> None:

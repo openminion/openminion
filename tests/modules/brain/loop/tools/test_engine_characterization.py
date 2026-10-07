@@ -8598,7 +8598,7 @@ def test_action_result_to_tool_message_compacts_large_payloads() -> None:
         summary="s" * 3000,
         outputs={
             "content": "c" * 5000,
-            "results": [{"title": "r", "body": "b" * 5000} for _ in range(10)],
+            "results": [{"title": "r", "body": "b" * 5000} for _ in range(20)],
         },
         error=ActionError(code="E", message="m" * 3000),
     )
@@ -8610,6 +8610,78 @@ def test_action_result_to_tool_message_compacts_large_payloads() -> None:
     assert payload["outputs"]["content"].endswith("...[truncated]")
     assert payload["outputs"]["results"][-1].startswith("...[")
     assert payload["error"]["message"].endswith("...[truncated]")
+
+
+def test_action_result_to_tool_message_preserves_prepared_transaction() -> None:
+    transaction = {
+        "schema_version": "evm-transaction-v1",
+        "transaction_type": "eip1559",
+        "chain_id": 31337,
+        "from_address": "0x" + "11" * 20,
+        "to_address": "0x" + "22" * 20,
+        "value_wei": "1",
+        "nonce": "0",
+        "gas_limit": "21000",
+        "data": "0x",
+        "max_fee_per_gas_wei": "3000000000",
+        "max_priority_fee_per_gas_wei": "1000000000",
+        "max_total_fee_wei": "63000000000000",
+    }
+    action_result = ActionResult(
+        command_id="prepare-transaction",
+        status="success",
+        summary="transaction prepared",
+        outputs={
+            "ok": True,
+            "state": "prepared",
+            "transaction": transaction,
+            "call_context": None,
+            "preparation_digest": "sha256:" + "a" * 64,
+        },
+    )
+
+    message = action_result_to_tool_message(
+        "call-prepare", "blockchain.prepare_transaction", action_result
+    )
+    payload = json.loads(message.content)
+
+    assert payload["outputs"]["transaction"] == transaction
+
+
+def test_action_result_to_tool_message_preserves_contract_call_context() -> None:
+    call_context = {
+        "function_abi": {
+            "type": "function",
+            "name": "swap",
+            "inputs": [
+                {
+                    "name": "request",
+                    "type": "tuple",
+                    "components": [
+                        {"name": "recipient", "type": "address"},
+                        {"name": "amount", "type": "uint256"},
+                    ],
+                }
+            ],
+            "outputs": [{"name": "amountOut", "type": "uint256"}],
+            "stateMutability": "nonpayable",
+        },
+        "function_args": [["0x" + "22" * 20, 7]],
+        "function_signature": "swap((address,uint256))",
+    }
+    action_result = ActionResult(
+        command_id="prepare-contract-call",
+        status="success",
+        summary="contract call prepared",
+        outputs={"call_context": call_context},
+    )
+
+    message = action_result_to_tool_message(
+        "call-prepare", "blockchain.prepare_transaction", action_result
+    )
+    payload = json.loads(message.content)
+
+    assert payload["outputs"]["call_context"] == call_context
 
 
 def test_action_result_to_tool_message_preserves_nested_record_scalars() -> None:
@@ -8643,4 +8715,4 @@ def test_action_result_to_tool_message_preserves_nested_record_scalars() -> None
 
     record = payload["outputs"]["data"]["records"][0]
     assert record["content"] == "durable-memory-value"
-    assert record["tags"] == "[truncated]"
+    assert record["tags"] == ["smoke"]

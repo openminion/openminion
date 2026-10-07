@@ -1477,6 +1477,59 @@ def test_prior_turn_context_hint_includes_recent_tool_failure() -> None:
     ]
 
 
+def test_prior_turn_context_hint_includes_latest_structured_tool_result() -> None:
+    prepared = {
+        "transaction": {
+            "schema_version": "evm-transaction-v1",
+            "transaction_type": "eip1559",
+            "max_total_fee_wei": "63000000000000",
+        },
+        "call_context": None,
+        "preparation_digest": "sha256:" + "a" * 64,
+    }
+    bridge = DummyBridge()
+    runner = _DummyRunner(
+        {
+            "module_state": {
+                "adaptive_loop": {
+                    "tool_results": [
+                        {
+                            "tool_name": "blockchain.prepare_transaction",
+                            "ok": True,
+                            "data": prepared,
+                        }
+                    ]
+                }
+            }
+        }
+    )
+
+    hint = bridge._prior_turn_context_hint(
+        runner=runner,
+        session_id="brain-session-prior",
+        history=[
+            Message(
+                channel="console",
+                target="user",
+                body="Prepare the transaction.",
+                metadata={"role": "user"},
+            ),
+            Message(
+                channel="console",
+                target="user",
+                body="The transaction is prepared.",
+                metadata={"role": "assistant"},
+            ),
+        ],
+    )
+
+    assert hint is not None
+    assert json.loads(hint["latest_tool_result"]) == {
+        "tool_name": "blockchain.prepare_transaction",
+        "data": prepared,
+    }
+
+
 def test_prepare_turn_appends_prior_turn_context_block_when_prior_assistant_exists() -> (
     None
 ):

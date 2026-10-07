@@ -31,6 +31,7 @@ from .repositories import (
 )
 
 if TYPE_CHECKING:
+    from openminion.modules.commerce.runtime import CommerceRuntime
     from openminion.modules.context.knowledge import KnowledgeGraphService
 
 
@@ -250,6 +251,8 @@ class RuntimeContext:
     policy_authorization: PolicyAuthorization | None = None
     skill_api: Optional[Any] = None
     secret_service: Any | None = None
+    commerce_runtime: CommerceRuntime | None = None
+    subject_id: str = ""
     telemetryctl: Optional[Any] = None
     telemetry_session_id: Optional[str] = None
     telemetry_turn_id: Optional[str] = None

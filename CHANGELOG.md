@@ -1,11 +1,32 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-10-06
+Last updated: 2026-10-07
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-10-07
+
+- Type the existing submitted-turn stream and result lifecycle, including
+  cancellation and approval resolution, without adding another SDK runtime.
+- Expose existing timeout, approval, cancellation, result metadata, and usage
+  facts through the public Agent facade and ship PEP 561 typing metadata.
+- Fail clearly when decorated tools lack the canonical runtime registry or a
+  runtime omits its canonical response body; preserve `0.1.x` support for one
+  schema-valid JSON object wrapped in provider prose.
+- Retain opt-in successful workflow observations in the existing Skill store
+  and expose read-only authoring readiness without changing skill activation or
+  model-owned selection.
+- Preserve delegated artifact verification, complete structured tool evidence,
+  durable blockchain preparations, exact approval identity, and reliable Focus
+  prompt submission and completion behavior.
+- Add a config-disabled commerce order lifecycle foundation with exact
+  one-time approvals, durable submit-once recovery, tracking, cancellation,
+  return and refund preparation, typed handoff, and deterministic evidence.
+  Production commerce remains unavailable until a provider passes sandbox and
+  release gates.
 
 ## Current package line - 2026-10-06
 

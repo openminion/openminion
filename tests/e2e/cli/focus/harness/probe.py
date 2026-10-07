@@ -65,6 +65,7 @@ _ACTIVE_TURN_STATUS_RE = re.compile(
     re.IGNORECASE,
 )
 _COMPOSER_ECHO_PROBE_LENGTH = 48
+_BRACKETED_PASTE_MIN_LENGTH = 1024
 _TRAILING_PUNCTUATION = ".,;:!?"
 
 
@@ -369,6 +370,7 @@ class FocusProbe:
         include_project_context: bool = True,
         allow_unsandboxed_exec: bool = True,
         added_dirs: tuple[Path, ...] = (),
+        entrypoint_module: str = "openminion",
     ) -> None:
         self.python_bin = python_bin
         self.openminion_root = openminion_root
@@ -381,6 +383,7 @@ class FocusProbe:
         self.include_project_context = include_project_context
         self.allow_unsandboxed_exec = allow_unsandboxed_exec
         self.added_dirs = tuple(added_dirs)
+        self.entrypoint_module = entrypoint_module
 
     def for_workdir(
         self,
@@ -404,6 +407,7 @@ class FocusProbe:
             ),
             allow_unsandboxed_exec=self.allow_unsandboxed_exec,
             added_dirs=self.added_dirs,
+            entrypoint_module=self.entrypoint_module,
         )
 
     def for_session(self, session_id: str) -> "FocusProbe":
@@ -419,6 +423,7 @@ class FocusProbe:
             include_project_context=self.include_project_context,
             allow_unsandboxed_exec=self.allow_unsandboxed_exec,
             added_dirs=self.added_dirs,
+            entrypoint_module=self.entrypoint_module,
         )
 
     def uses_echo_agent(self) -> bool:
@@ -428,7 +433,7 @@ class FocusProbe:
         command = (
             str(self.python_bin),
             "-m",
-            "openminion",
+            self.entrypoint_module,
             "--config",
             str(self.config_path),
             "--agent",
@@ -602,7 +607,9 @@ class FocusProbe:
     def _wait_for_composer(session: PtySession, *, timeout: float = 15.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if _composer_is_ready(session.screen_text):
+            if _composer_is_ready(session.screen_text) and not active_turn_busy(
+                session.screen_text
+            ):
                 return
             time.sleep(0.05)
         raise AssertionError(
@@ -620,7 +627,7 @@ class FocusProbe:
     ) -> str:
         """Submit through the composer only after its input state is visible."""
         cls._wait_for_composer(session)
-        if "\n" in text or "\r" in text:
+        if "\n" in text or "\r" in text or len(text) >= _BRACKETED_PASTE_MIN_LENGTH:
             session.send_bracketed_paste(text)
         else:
             session.send(text)

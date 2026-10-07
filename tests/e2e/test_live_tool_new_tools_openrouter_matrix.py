@@ -17,6 +17,7 @@ from tests.helpers.live_e2e_profiles import (
     agents_from_bundle as _agents_from_bundle,
     parse_live_agent_targets_env,
     resolve_live_config_path,
+    resolve_live_framework_root,
 )
 from tests.helpers.runtime_roots import isolate_runtime_roots
 
@@ -33,7 +34,7 @@ def _openminion_root() -> Path:
 
 
 def _agent_framework_root() -> Path:
-    return _openminion_root().parent
+    return resolve_live_framework_root(_openminion_root())
 
 
 def _runtime_home_root() -> Path:

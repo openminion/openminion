@@ -21,6 +21,7 @@ MODULE_APPLICATION_IDS: dict[str, int] = {
     "task": 0x4F4D000F,
     "authoring": 0x4F4D0010,
     "brain": 0x4F4D0011,
+    "commerce": 0x4F4D0012,
 }
 
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 
+from openminion.base.version import PROVIDER_ERROR_PUBLIC_VERSION
+
 
 EXPECTED_OPENMINION_PUBLIC = {
     "APIRuntime",
@@ -24,9 +26,21 @@ EXPECTED_OPENMINION_API_PUBLIC = {
     "AgentRunResult",
     "Handoff",
     "ProviderError",
+    "RuntimeTurnHandle",
+    "ToolCallSummary",
+    "TurnChunk",
+    "TurnError",
+    "TurnResponse",
+    "TurnTelemetry",
     "dispatch_request",
     "subagent",
 }
+
+EXPECTED_OPENMINION_SINCE = dict.fromkeys(
+    EXPECTED_OPENMINION_PUBLIC,
+    "0.0.1",
+)
+EXPECTED_OPENMINION_SINCE["ProviderError"] = PROVIDER_ERROR_PUBLIC_VERSION
 
 
 def _public_names(module_name: str) -> set[str]:
@@ -75,6 +89,7 @@ def test_openminion_since_metadata_covers_public_surface() -> None:
         f"{sorted(missing)}. Add an entry pointing at the version that "
         "first exposed the symbol on the stable public surface."
     )
+    assert openminion.__since__ == EXPECTED_OPENMINION_SINCE
 
 
 def test_openminion_since_versions_look_like_semver() -> None:

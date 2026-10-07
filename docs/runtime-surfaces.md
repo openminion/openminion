@@ -1,7 +1,7 @@
 # OpenMinion Runtime Surfaces
 
 Status: active
-Last updated: 2026-09-06
+Last updated: 2026-10-06
 
 Purpose: give developers one package-local map of the public `openminion`
 surfaces and when to use each one.
@@ -37,7 +37,7 @@ Use:
 
 1. `import openminion`
 2. `from openminion import Agent, ProviderError, tool`
-3. `from openminion.api import APIRuntime, Agent, ProviderError, dispatch_request`
+3. `from openminion.api import APIRuntime, Agent, RuntimeTurnHandle, TurnChunk, TurnResponse`
 
 Best for:
 
@@ -52,8 +52,19 @@ Pass `config_path` for a project-owned config and `agent_id` to select a
 configured profile. Agent calls return their result to Python without console
 delivery, and `AgentRunResult.session_id` exposes the resolved continuity key.
 `Agent` also supports `with Agent(...) as agent:` for deterministic cleanup.
+Its `run_stream()` method is a synchronous turn with a progress callback. For
+iterator streaming, cancellation, or explicit approval resolution, call
+`APIRuntime.submit_turn()` and use the returned `RuntimeTurnHandle`.
+`examples/sdk/submitted_stream.py` shows that lifecycle using public imports.
+
+`Agent.run()` and callback-progress `run_stream()` accept optional
+`timeout_seconds`, `approval_callback`, and `cancel_event` controls already
+owned by runtime ingress. Their results expose the canonical result ID,
+metadata, and stats alongside the existing output and continuity fields.
 
 Stable exported root symbols are recorded in `API_COMPATIBILITY.md`.
+Advanced turn lifecycle types are exported from `openminion.api` rather than
+added to the root package.
 
 ### 3. API runtime / server surface
 

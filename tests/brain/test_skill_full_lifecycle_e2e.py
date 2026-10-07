@@ -319,7 +319,7 @@ def test_runner_step_with_real_skill_selects_skill_at_bootstrap_and_hydrates_ent
             if call.get("schema") is not None
             and call["schema"].__name__ == "SkillSubsetSelection"
         ]
-        assert not skill_selection_calls
+        assert len(skill_selection_calls) == 1
 
         entry_calls = [call for call in llm.calls if call.get("kind") == "entry"]
         assert entry_calls
@@ -392,7 +392,7 @@ def test_runner_step_with_real_skill_selects_skill_at_bootstrap_and_hydrates_ent
             if call.get("schema") is not None
             and call["schema"].__name__ == "SkillSubsetSelection"
         ]
-        assert not skill_selection_calls
+        assert len(skill_selection_calls) == 1
 
         entry_calls = [call for call in llm.calls if call.get("kind") == "entry"]
         assert entry_calls

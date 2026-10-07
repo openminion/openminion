@@ -31,6 +31,7 @@ from openminion.modules.brain.loop.tools.snapshot import (
     LoopSnapshot,
     LoopToolCallRecord,
 )
+from openminion.modules.brain.loop.constants import WORKFLOW_OBSERVATION_ENABLED_KEY
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.schemas import (
     ActionError,
@@ -2786,6 +2787,49 @@ def test_act_adaptive_uses_closure_gate_final_answer_when_closing() -> None:
     assert result.message.startswith("SOURCES")
     assert result.action_result is not None
     assert str(result.action_result.summary).startswith("SOURCES")
+
+
+@pytest.mark.parametrize("closure_disposition", ["continue", "replan"])
+def test_act_adaptive_does_not_observe_workflow_when_closure_continues(
+    closure_disposition: str,
+) -> None:
+    services = _FakeServices(
+        closure_judgment=ClosureJudgment(
+            satisfied=False,
+            next_action="continue",
+            reason="more work remains",
+        ),
+        closure_disposition=closure_disposition,
+    )
+    ctx, _ = _ctx(_FakeLLMClient(), _FakeCommandExecutor(), services=services)
+    outcome = AdaptiveToolLoopOutcome(
+        profile_name="general_adaptive_v1",
+        mode_name=BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
+        termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
+        state=AdaptiveToolLoopState(
+            scratchpad={
+                WORKFLOW_OBSERVATION_ENABLED_KEY: True,
+                "adaptive.tool_results": [{"tool_name": "file.write", "ok": True}],
+            }
+        ),
+        allowed_tools=frozenset({"file.write"}),
+        final_text="Initial result.",
+        finalization_status={
+            "status": "final_answer",
+            "reasoning": "the current step is done",
+        },
+        workflow_learning={
+            "intent_category": "modify",
+            "capability_category": "code",
+        },
+    )
+
+    with patch(
+        "openminion.modules.brain.loop.adaptive.finalization._record_workflow_observation"
+    ) as observe:
+        ActLoopMode()._finalize_success(ctx, loop_outcome=outcome)
+
+    observe.assert_not_called()
 
 
 def test_act_adaptive_iteration_cap_can_close_with_closure_gate_final_answer() -> None:

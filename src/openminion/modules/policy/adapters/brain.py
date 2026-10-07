@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from openminion.base.config import ActionPolicyConfig
 from openminion.base.config.action_policy import (
@@ -14,6 +14,7 @@ from openminion.base.config.action_policy import (
     normalize_action_policy_mode_override,
     overlay_action_policy_mode,
 )
+from openminion.modules.tool.plugin_api import is_policy_authorization_pair
 from ..runtime.action_policy import policy_config_from_action_policy
 from ..constants import (
     POLICY_DECISION_ALLOW,
@@ -87,9 +88,11 @@ class PolicyCtlBrainAdapter:
         policyctl: PolicyCtl,
         *,
         action_policy_config: ActionPolicyConfig | None = None,
+        commerce_confirmation_resolver: Callable[..., Any] | None = None,
     ) -> None:
         self._ctl = policyctl
         self._action_policy_config = action_policy_config
+        self._commerce_confirmation_resolver = commerce_confirmation_resolver
 
     @classmethod
     def with_sqlite(
@@ -98,12 +101,24 @@ class PolicyCtlBrainAdapter:
         *,
         config: PolicyConfig | None = None,
         action_policy_config: ActionPolicyConfig | None = None,
+        commerce_confirmation_resolver: Callable[..., Any] | None = None,
     ) -> "PolicyCtlBrainAdapter":
         ctl = PolicyCtl.with_sqlite(database_path, config=config)
-        return cls(ctl, action_policy_config=action_policy_config)
+        return cls(
+            ctl,
+            action_policy_config=action_policy_config,
+            commerce_confirmation_resolver=commerce_confirmation_resolver,
+        )
 
     def close(self) -> None:
         self._ctl.close()
+
+    @staticmethod
+    def _tool_method(tool_name: str) -> tuple[str, str]:
+        if "." not in tool_name:
+            return tool_name, "default"
+        tool, method = tool_name.rsplit(".", 1)
+        return tool, method
 
     def evaluate(
         self,
@@ -131,14 +146,12 @@ class PolicyCtlBrainAdapter:
 
         config_overrides = self._effective_policy_config(working_state=working_state)
         if self._is_policy_disabled(config_overrides=config_overrides):
-            if str(getattr(command, "tool_name", "") or "") == (
-                "blockchain.send_transaction"
-            ):
+            tool_name = str(getattr(command, "tool_name", "") or "")
+            tool, method = self._tool_method(tool_name)
+            if is_policy_authorization_pair(tool, method):
                 return PolicyDecision(
                     outcome="DENY",
-                    explanation=(
-                        "Blockchain transaction send requires enforcing policy mode."
-                    ),
+                    explanation=f"{tool_name} requires enforcing policy mode.",
                 )
             self._log_policy_bypass(command=command, working_state=working_state)
             return PolicyDecision(
@@ -147,6 +160,7 @@ class PolicyCtlBrainAdapter:
             )
 
         try:
+            invocation = self._resolve_blockchain_preparation(invocation, ctx)
             decision = self._check_policy_decision(
                 invocation=invocation,
                 ctx=ctx,
@@ -242,9 +256,54 @@ class PolicyCtlBrainAdapter:
                 )
             except BlockchainConfirmationPreviewError as exc:
                 check_kwargs["confirmation_preview_error"] = exc.reason
+        tool_name = str(getattr(command, "tool_name", "") or "").strip()
+        tool, method = self._tool_method(tool_name)
+        if tool == "commerce" and is_policy_authorization_pair(tool, method):
+            resolver = self._commerce_confirmation_resolver
+            if callable(resolver):
+                from openminion.modules.commerce.confirmation import (
+                    commerce_confirmation_payload,
+                )
+                from openminion.tools.commerce.authorization import (
+                    canonical_commerce_args,
+                )
+
+                check_kwargs["invocation"] = {
+                    **invocation,
+                    "args": canonical_commerce_args(dict(invocation["args"])),
+                }
+                check_kwargs["confirmation_preview"] = commerce_confirmation_payload(
+                    resolver(
+                        tool_name=tool_name,
+                        args=dict(check_kwargs["invocation"]["args"]),
+                        subject_id=str(ctx.get("subject_id", "") or ""),
+                        session_id=str(ctx.get("session_id", "") or ""),
+                    )
+                )
         if config_overrides is not None:
             check_kwargs["config_overrides"] = config_overrides
         return self._ctl.check(**check_kwargs)
+
+    @staticmethod
+    def _resolve_blockchain_preparation(
+        invocation: dict[str, Any], ctx: dict[str, Any]
+    ) -> dict[str, Any]:
+        if (invocation.get("tool"), invocation.get("method")) != (
+            "blockchain",
+            "send_transaction",
+        ):
+            return invocation
+        from openminion.tools.blockchain.preparations import (
+            resolve_prepared_transaction,
+        )
+
+        return {
+            **invocation,
+            "args": resolve_prepared_transaction(
+                invocation.get("args", {}),
+                session_id=str(ctx.get("session_id", "") or ""),
+            ),
+        }
 
     def _policy_decision_from_raw(self, decision: Any) -> Any:
         from openminion.modules.brain.schemas import PolicyDecision
@@ -333,6 +392,7 @@ class PolicyCtlBrainAdapter:
         )
         if invocation is None:
             raise ValueError("Tool command is missing tool_name.")
+        invocation = self._resolve_blockchain_preparation(invocation, ctx)
         return self._ctl.create_grant_from_confirmation(
             invocation=invocation,
             ctx=ctx,
@@ -488,9 +548,7 @@ class PolicyCtlBrainAdapter:
         if not tool_name:
             return None, ctx
 
-        tool, method = (
-            tool_name.rsplit(".", 1) if "." in tool_name else (tool_name, "default")
-        )
+        tool, method = PolicyCtlBrainAdapter._tool_method(tool_name)
 
         invocation = {
             "tool": tool,

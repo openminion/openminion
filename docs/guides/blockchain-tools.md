@@ -81,10 +81,11 @@ Prepare and simulate, but do not send, 1 wei to 0x... on the configured EVM bloc
 ```
 
 The result contains the complete normalized transaction, optional call context,
-and preparation digest. Send that exact result in a later tool call. OpenMinion
-requires a one-time `yes` or `no` decision for every send. Approval is consumed
-before current chain state is checked, so a stale preparation requires a new
-prepare-and-approve cycle.
+and preparation digest. A later send uses the latest preparation in the current
+session by default; pass its digest only when selecting an earlier preparation.
+OpenMinion resolves the exact prepared payload before requesting a one-time
+`yes` or `no` decision. Approval is consumed before current chain state is
+checked, so a stale preparation requires a new prepare-and-approve cycle.
 
 The approval prompt shows the verified chain, sender, recipient, value,
 transaction type, nonce, gas and fee values, calldata size and digest,

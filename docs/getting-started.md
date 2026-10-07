@@ -213,6 +213,12 @@ fallback. Fixture-backed provider support means OpenMinion has local request and
 configuration coverage; it is not a live account, billing, quota, or model
 availability guarantee.
 
+Commerce is currently a config-disabled local foundation. No production
+provider can be enabled. See [Commerce Order Care](guides/commerce-order-care.md)
+for the five-tool lifecycle, exact one-time approval boundaries, recovery,
+handoff behavior, and the distinction between fixture, live-model, sandbox,
+and production evidence.
+
 To move an existing setup, export it without embedded secrets and import it on
 the new machine:
 

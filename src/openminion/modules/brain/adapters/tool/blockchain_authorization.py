@@ -9,6 +9,32 @@ from openminion.modules.tool.plugin_api import (
 )
 from openminion.modules.policy.models import PolicyControlError
 from openminion.tools.blockchain.confirmation import canonical_blockchain_send_args
+from openminion.tools.blockchain.preparations import (
+    PreparationReferenceError,
+    resolve_prepared_transaction,
+)
+
+
+def authorize_blockchain_send(
+    args: dict[str, Any],
+    context: Any,
+    policy_ctl: Any | None,
+) -> tuple[dict[str, Any], PolicyAuthorization]:
+    try:
+        resolved = resolve_prepared_transaction(
+            args,
+            session_id=str(context.session_id or ""),
+            env=context.env,
+        )
+    except PreparationReferenceError as exc:
+        raise ToolRuntimeError("PREPARATION_NOT_FOUND", str(exc)) from exc
+    return resolved, consume_blockchain_send_authorization(
+        policy_ctl=policy_ctl,
+        permission_mode=context.permission_mode,
+        args=resolved,
+        subject_id="local",
+        session_id=str(context.session_id or "") or None,
+    )
 
 
 def consume_blockchain_send_authorization(
@@ -16,6 +42,8 @@ def consume_blockchain_send_authorization(
     policy_ctl: Any | None,
     permission_mode: str,
     args: dict[str, Any],
+    subject_id: str = "local",
+    session_id: str | None = None,
 ) -> PolicyAuthorization:
     policy_mode = str(policy_ctl.mode()) if policy_ctl is not None else ""
     if (
@@ -33,13 +61,16 @@ def consume_blockchain_send_authorization(
         method="send_transaction",
         args=canonical_blockchain_send_args(args),
     )
+    criteria = {
+        "subject_id": subject_id,
+        "tool": "blockchain",
+        "method": "send_transaction",
+        "invocation_hash": invocation_hash,
+    }
+    if session_id is not None:
+        criteria["session_id"] = session_id
     try:
-        grant = policy_ctl.resolve_matching_active_grant_for_use(
-            subject_id="local",
-            tool="blockchain",
-            method="send_transaction",
-            invocation_hash=invocation_hash,
-        )
+        grant = policy_ctl.resolve_matching_active_grant_for_use(**criteria)
     except PolicyControlError as exc:
         if exc.code != "BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID":
             raise
@@ -64,4 +95,6 @@ def consume_blockchain_send_authorization(
         approval_id=str(grant.approval_id),
         grant_id=str(grant.grant_id),
         duration_type="once",
+        subject_id=subject_id,
+        session_id=session_id,
     )

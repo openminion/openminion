@@ -10,6 +10,7 @@ from openminion.modules.tool.runtime.delegation import A2ADelegateApi
 from openminion.modules.tool.runtime.memory import MemoryToolRuntimeService
 
 if TYPE_CHECKING:
+    from openminion.modules.commerce.runtime import CommerceRuntime
     from openminion.modules.context.knowledge import KnowledgeGraphService
 
 
@@ -18,7 +19,9 @@ class ToolExecutionContext:
     channel: str
     target: str
     session_id: str = ""
+    subject_id: str = ""
     metadata: dict[str, str] = field(default_factory=dict)
+    commerce_runtime: CommerceRuntime | None = None
     memory_service: MemoryToolRuntimeService | None = None
     knowledge_graph_service: KnowledgeGraphService | None = None
     sandbox_runner: Any | None = None

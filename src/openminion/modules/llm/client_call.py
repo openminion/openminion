@@ -26,6 +26,7 @@ _STRUCTURED_RESPONSE_FIELD_NAMES: tuple[str, ...] = (
     "confident_complete",
     STATE_KEY_FINALIZATION_STATUS,
     "meta_rule_preference",
+    "workflow_learning",
     "memory_consolidation",
     "watch_outcome",
     "session_work_summary",

@@ -13,7 +13,7 @@ from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from .debug import debug_blockchain
 from .debug_schemas import DebugArgs
 from .runtime import inspect_blockchain, prepare_transaction, send_transaction
-from .schemas import InspectArgs, PrepareArgs, SendTransactionArgs
+from .schemas import InspectArgs, PrepareArgs, SendPreparedTransactionArgs
 
 BLOCKCHAIN_INSPECT_DESCRIPTION = (
     "Use for read-only contract functions supplied as a function ABI and arguments, "
@@ -35,9 +35,9 @@ BLOCKCHAIN_PREPARE_DESCRIPTION = (
 BLOCKCHAIN_SEND_DESCRIPTION = (
     "Use when asked to send a previously prepared transaction. Requires exact "
     "one-time operator approval, then revalidates, signs, and broadcasts once. "
-    "Copy transaction, call_context, and preparation_digest exactly from the "
-    "structured prepare result without rebuilding them from prose or changing "
-    "JSON value types."
+    "No arguments are needed for the latest preparation in this session; pass a "
+    "preparation_digest only to select an earlier preparation. On a send request, "
+    "invoke this tool without modifying, comparing, or substituting preparations."
 )
 
 _WEB3_SETUP_HINT = ToolDependencySetupHint(
@@ -121,7 +121,7 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         ToolSpec(
             name="blockchain.send_transaction",
-            args_model=SendTransactionArgs,
+            args_model=SendPreparedTransactionArgs,
             min_scope="POWER_USER",
             handler=send_transaction,
             dangerous=True,

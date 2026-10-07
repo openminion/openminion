@@ -74,6 +74,35 @@ def test_focus_probe_does_not_add_demo_flag_for_real_provider(tmp_path: Path) ->
     assert "--allow-unsandboxed-exec" in probe.command()
 
 
+def test_focus_probe_uses_explicit_entrypoint_module(tmp_path: Path) -> None:
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps({"agents": {"minimax": {"provider": "openai"}}}),
+        encoding="utf-8",
+    )
+    probe = FocusProbe(
+        python_bin=Path("python"),
+        openminion_root=tmp_path,
+        framework_root=tmp_path.parent,
+        data_root=tmp_path / "data",
+        config_path=config,
+        agent_id="minimax",
+        workdir=tmp_path,
+        session_id="s1",
+        entrypoint_module="tests.e2e.runners.commerce_focus_entrypoint",
+    )
+
+    assert probe.command()[:3] == (
+        "python",
+        "-m",
+        "tests.e2e.runners.commerce_focus_entrypoint",
+    )
+    assert probe.for_session("s2").entrypoint_module == probe.entrypoint_module
+    assert probe.for_workdir(tmp_path / "other").entrypoint_module == (
+        probe.entrypoint_module
+    )
+
+
 def test_focus_probe_can_leave_host_execution_disabled(tmp_path: Path) -> None:
     config = tmp_path / "config.json"
     config.write_text(

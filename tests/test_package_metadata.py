@@ -195,9 +195,12 @@ def test_built_archives_exclude_test_tree(tmp_path: Path) -> None:
     wheel = next(dist.glob("openminion-*.whl"))
 
     with tarfile.open(source_archive, "r:gz") as archive:
-        assert not any("/tests/" in name for name in archive.getnames())
+        source_names = archive.getnames()
+        assert any(name.endswith("/src/openminion/py.typed") for name in source_names)
+        assert not any("/tests/" in name for name in source_names)
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
+        assert "openminion/py.typed" in names
         assert not any(name.startswith("tests/") for name in names)
         assert not any(name.endswith(".tcss") for name in names)
         assert not any("openminion/cli/interactive/widgets/" in name for name in names)

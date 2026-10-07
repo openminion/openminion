@@ -117,6 +117,35 @@ class AgentServiceLifecycleTests(AgentServiceTestCase):
         self.assertIn("No records were recalled here", prompt)
         self.assertIn("do not say persistent memory is unavailable", prompt)
 
+    def test_prior_turn_grounding_keeps_latest_structured_tool_result(self) -> None:
+        prompt = append_grounding_blocks(
+            system_prompt="BASE",
+            facts=build_grounding_facts(
+                runtime_env=None,
+                home_root=None,
+                workspace_root="/workspace",
+                inbound_metadata={},
+                tools=None,
+                include_session_working_state=True,
+                prior_turn_present=True,
+            ),
+            prior_turn_hint={
+                "user_message": "Prepare the transaction.",
+                "assistant_message": "The transaction is prepared.",
+                "latest_tool_result": (
+                    '{"tool_name":"blockchain.prepare_transaction",'
+                    '"data":{"max_total_fee_wei":"63000000000000"}}'
+                ),
+            },
+        )
+
+        self.assertIn("## Prior Turn Context", prompt)
+        self.assertIn(
+            'latest_tool_result: {"tool_name":"blockchain.prepare_transaction",'
+            '"data":{"max_total_fee_wei":"63000000000000"}}',
+            prompt,
+        )
+
     def test_plugins_transform_message(self) -> None:
         config = OpenMinionConfig()
         _csc_install_default_agent(config)

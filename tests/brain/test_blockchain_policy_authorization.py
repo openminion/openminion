@@ -48,6 +48,8 @@ from openminion.tools.blockchain.confirmation import (
     build_blockchain_send_confirmation_preview,
 )
 from openminion.tools.blockchain.runtime import preparation_digest
+from openminion.tools.blockchain.preparations import save_prepared_transaction
+from openminion.base.config.env import EnvironmentConfig
 
 
 def _command(*, recipient_byte: str = "22", nonce: int = 0) -> ToolCommand:
@@ -550,6 +552,7 @@ def test_tool_adapter_consumes_grant_for_canonical_invocation(tmp_path) -> None:
         "tool": "blockchain",
         "method": "send_transaction",
         "invocation_hash": expected_hash,
+        "session_id": "session",
     }
     assert captured["authorization"] == PolicyAuthorization(
         tool="blockchain",
@@ -558,4 +561,32 @@ def test_tool_adapter_consumes_grant_for_canonical_invocation(tmp_path) -> None:
         approval_id="approval",
         grant_id="grant",
         duration_type="once",
+        subject_id="local",
+        session_id="session",
     )
+
+
+def test_policy_resolves_digest_reference_to_canonical_send(tmp_path) -> None:
+    command = _command()
+    env = EnvironmentConfig(
+        values={
+            "OPENMINION_HOME": str(tmp_path),
+            "OPENMINION_DATA_ROOT": str(tmp_path / ".openminion"),
+        }
+    )
+    save_prepared_transaction(
+        command.args,
+        SimpleNamespace(session_id="session", env=env),
+    )
+    adapter = PolicyCtlBrainAdapter.__new__(PolicyCtlBrainAdapter)
+
+    resolved = adapter._resolve_blockchain_preparation(
+        {
+            "tool": "blockchain",
+            "method": "send_transaction",
+            "args": {"preparation_digest": command.args["preparation_digest"]},
+        },
+        {"session_id": "session"},
+    )
+
+    assert resolved["args"] == command.args

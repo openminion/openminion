@@ -43,6 +43,7 @@ from openminion.tools.blockchain.schemas import (
     EventAbi,
     FunctionAbi,
     SendTransactionArgs,
+    SendPreparedTransactionArgs,
 )
 from openminion.tools.blockchain.abi import (
     abi_selector,
@@ -120,14 +121,20 @@ def test_complex_blockchain_schema_examples_are_valid() -> None:
             adapter.validate_python(example)
 
 
-def test_discriminated_tool_schemas_inline_action_branches() -> None:
+def test_discriminated_tool_schemas_expose_flat_provider_objects() -> None:
     for model in (InspectArgs, PrepareArgs, DebugArgs):
         schema = model.model_json_schema()
-        assert schema["discriminator"] == {
-            "propertyName": "kind" if model is PrepareArgs else "action"
-        }
-        assert all("$ref" not in branch for branch in schema["oneOf"])
-        assert all("title" not in branch for branch in schema["oneOf"])
+        discriminator = "kind" if model is PrepareArgs else "action"
+        assert schema["type"] == "object"
+        assert "oneOf" not in schema
+        assert "discriminator" not in schema
+        assert schema["required"] == [discriminator]
+        assert len(schema["properties"][discriminator]["enum"]) >= 3
+        assert any(
+            "Required when" in str(field.get("description", ""))
+            for name, field in schema["properties"].items()
+            if name != discriminator
+        )
         assert not any(name.endswith("Args") for name in schema["$defs"])
 
 
@@ -553,6 +560,21 @@ def test_send_schema_rejects_non_object_json_nested_value() -> None:
                 "call_context": None,
                 "preparation_digest": "sha256:" + "0" * 64,
             }
+        )
+
+
+def test_model_send_schema_accepts_optional_preparation_digest() -> None:
+    digest = "sha256:" + "0" * 64
+
+    parsed = SendPreparedTransactionArgs.model_validate({"preparation_digest": digest})
+
+    assert parsed.model_dump(mode="json") == {"preparation_digest": digest}
+    assert SendPreparedTransactionArgs.model_validate({}).model_dump(mode="json") == {
+        "preparation_digest": None
+    }
+    with pytest.raises(ValidationError):
+        SendPreparedTransactionArgs.model_validate(
+            {"preparation_digest": digest, "transaction": {}}
         )
     with pytest.raises(ValidationError):
         SendTransactionArgs.model_validate(
