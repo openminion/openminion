@@ -49,6 +49,13 @@ class ToolRuntimeConfig:
                 raise ConfigError(f"runtime.tools.{family_name} must be an object.")
             setattr(self, family_name, dict(value) if value is not None else None)
 
+    def configured_families(self) -> dict[str, ToolFamilyRuntimeConfig]:
+        return {
+            family_name: family_config
+            for family_name in _SUPPORTED_RUNTIME_TOOL_FAMILIES
+            if (family_config := getattr(self, family_name)) is not None
+        }
+
 
 def coerce_tool_runtime_config(value: object) -> ToolRuntimeConfig:
     if value is None:

@@ -210,7 +210,7 @@ class ToolAdapter:
 
         return ToolExecutionContextBuilder(
             agent_id=self.agent_id,
-            commerce_runtime=self.commerce_runtime,
+            commerce_runtime=getattr(self, "commerce_runtime", None),
             memory_service=getattr(self, "memory_service", None),
             sandbox_runner=getattr(self, "sandbox_runner", None),
             security_lab_runner=getattr(self, "security_lab_runner", None),
