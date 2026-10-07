@@ -1,7 +1,15 @@
 """Declarative commerce tool family."""
 
+from functools import partial
+
 from openminion.modules.tool.exposure import ToolExposureProfile, ToolRiskAnnotations
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
+
+from .authorization import (
+    authorize_commerce_call,
+    canonical_commerce_args,
+    confirmation_preview,
+)
 
 from .interfaces import (
     TOOL_COMMERCE_APPLY_ORDER_ACTION,
@@ -22,6 +30,7 @@ from .plugin import (
     _h_place_order,
     _h_prepare_order,
     _h_prepare_order_action,
+    canonical_prepare_args,
 )
 
 COMMERCE_FAMILY = ToolFamilySpec(
@@ -65,6 +74,11 @@ COMMERCE_FAMILY = ToolFamilySpec(
         ),
         ToolDecl(
             name=TOOL_COMMERCE_PREPARE_ORDER,
+            canonical_args=canonical_prepare_args,
+            confirmation_preview=partial(
+                confirmation_preview, tool_name=TOOL_COMMERCE_PREPARE_ORDER
+            ),
+            policy_authorizer=authorize_commerce_call,
             args_model=CommercePrepareOrderArgs,
             handler=_h_prepare_order,
             description=(
@@ -79,6 +93,11 @@ COMMERCE_FAMILY = ToolFamilySpec(
         ),
         ToolDecl(
             name=TOOL_COMMERCE_PLACE_ORDER,
+            canonical_args=canonical_commerce_args,
+            confirmation_preview=partial(
+                confirmation_preview, tool_name=TOOL_COMMERCE_PLACE_ORDER
+            ),
+            policy_authorizer=authorize_commerce_call,
             args_model=CommercePlaceOrderArgs,
             handler=_h_place_order,
             description=(
@@ -104,6 +123,11 @@ COMMERCE_FAMILY = ToolFamilySpec(
         ),
         ToolDecl(
             name=TOOL_COMMERCE_APPLY_ORDER_ACTION,
+            canonical_args=canonical_commerce_args,
+            confirmation_preview=partial(
+                confirmation_preview, tool_name=TOOL_COMMERCE_APPLY_ORDER_ACTION
+            ),
+            policy_authorizer=authorize_commerce_call,
             args_model=CommerceApplyOrderActionArgs,
             handler=_h_apply_order_action,
             description=(

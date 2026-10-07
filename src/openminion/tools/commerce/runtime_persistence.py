@@ -12,6 +12,7 @@ from .provider import (
     ActionRecoveryLocator,
     ApplyOrderActionRequest,
     CommerceHandoff,
+    CommerceOutcomeUnknown,
     CommerceProvider,
     CommerceProviderError,
     OrderActionResult,
@@ -32,7 +33,6 @@ class CommerceRuntimePersistenceMixin:
     base_url: str
     merchant_id: str
     order_store: Any | None
-    _checkout_refs: dict[str, str]
 
     def _require_owned_preparation(self, preparation_ref: str) -> Any:
         if self.order_store is None:
@@ -141,7 +141,6 @@ class CommerceRuntimePersistenceMixin:
             )
         preparation = self._sanitize_links(preparation)
         self._persist_preparation(preparation, attempt)
-        self._checkout_refs[preparation.preparation_ref] = preparation.checkout_ref
         self._finish_attempt(
             attempt,
             state="succeeded",
@@ -224,18 +223,31 @@ class CommerceRuntimePersistenceMixin:
         )
         return result
 
-    @staticmethod
+    def _validate_placement_result(
+        self, request: PlaceOrderRequest, result: OrderPlacement, attempt: Any
+    ) -> None:
+        if (
+            result.idempotency_key != request.idempotency_key
+            or result.preparation_ref != request.preparation_ref
+        ):
+            self._finish_attempt(attempt, state="outcome_unknown")
+            raise CommerceOutcomeUnknown(
+                "Provider placement result does not match the requested preparation.",
+            )
+
     def _validate_action_result(
+        self,
         request: ApplyOrderActionRequest,
         result: OrderActionResult,
+        attempt: Any,
     ) -> None:
         if (
             result.idempotency_key != request.idempotency_key
             or result.action_ref != request.action_ref
             or result.order_ref != request.order_ref
         ):
-            raise CommerceProviderError(
-                "INVALID_RESPONSE",
+            self._finish_attempt(attempt, state="outcome_unknown")
+            raise CommerceOutcomeUnknown(
                 "Provider action result does not match the requested order action.",
             )
 

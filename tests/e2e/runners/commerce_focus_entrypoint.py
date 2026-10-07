@@ -13,7 +13,7 @@ from openminion.base.config.env import EnvironmentConfig
 from openminion.cli.commands.interactive import run_interactive
 from openminion.cli.main import _prepare_runtime_roots
 from openminion.cli.parser.base import build_parser
-from openminion.modules.commerce.models import CommerceLifecycleState
+from openminion.tools.commerce.models import CommerceLifecycleState
 from openminion.api.queries.cron import resolve_cron_store
 from openminion.services.runtime.cron.executor import CronTurnExecutor
 from openminion.tools.task.constants import WATCH_PAYLOAD_KEY
@@ -57,7 +57,7 @@ def _configure_scenario(runtime) -> None:
         provider.set_next_action_state("pending")
         return
     if scenario == "unsupported-action":
-        preparation = runtime.commerce_runtime.prepare_public(
+        preparation = runtime.tool_resources["commerce"].prepare_public(
             {
                 "items": [
                     {
@@ -68,7 +68,7 @@ def _configure_scenario(runtime) -> None:
                 ]
             }
         )
-        runtime.commerce_runtime.place_public(
+        runtime.tool_resources["commerce"].place_public(
             {
                 "preparation_ref": preparation.preparation_ref,
                 "preparation": preparation.model_dump(mode="json"),

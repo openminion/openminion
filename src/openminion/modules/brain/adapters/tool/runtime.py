@@ -121,7 +121,7 @@ class ToolAdapter:
         reactions_enabled: bool = True,
         skill_api: Any | None = None,
         secret_service: Any | None = None,
-        commerce_runtime: Any | None = None,
+        tool_resources: Mapping[str, Any] | None = None,
         memory_service: Any | None = None,
         knowledge_graph_service: Any | None = None,
         ops_service: Any | None = None,
@@ -147,7 +147,7 @@ class ToolAdapter:
         self.reactions_enabled = reactions_enabled
         self.skill_api = skill_api
         self.secret_service = secret_service
-        self.commerce_runtime = commerce_runtime
+        self.tool_resources = dict(tool_resources or {})
         self.memory_service = memory_service
         self.knowledge_graph_service = knowledge_graph_service
         self.ops_service = ops_service
@@ -210,7 +210,7 @@ class ToolAdapter:
 
         return ToolExecutionContextBuilder(
             agent_id=self.agent_id,
-            commerce_runtime=getattr(self, "commerce_runtime", None),
+            tool_resources=getattr(self, "tool_resources", {}),
             memory_service=getattr(self, "memory_service", None),
             sandbox_runner=getattr(self, "sandbox_runner", None),
             security_lab_runner=getattr(self, "security_lab_runner", None),
@@ -619,7 +619,7 @@ class ToolAdapter:
             policy_adapter=policy_adapter,
             skill_api=self.skill_api,
             secret_service=self.secret_service,
-            commerce_runtime=self.commerce_runtime,
+            tool_resources=self.tool_resources,
             subject_id="local",
             telemetryctl=self.telemetryctl,
             artifactctl=self.artifactctl,
@@ -727,7 +727,7 @@ class ToolAdapter:
         tool_name = ctx.tool_name
         try:
             validated_args = authorize_exact_tool_call(
-                validated_args, ctx, self.policy_ctl
+                validated_args, ctx, self.policy_ctl, spec=spec
             )
             if tool_name == "github.open_pr" and project_task_id:
                 return execute_github_open_pr_project_effect(

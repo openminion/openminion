@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from openminion.base.config import ActionPolicyConfig
 from openminion.base.config.env import EnvironmentConfig
@@ -33,7 +33,7 @@ def create_tool_api(
     agent_name: str | None = None,
     skill_api: Any | None = None,
     secret_service: Any | None = None,
-    commerce_runtime: Any | None = None,
+    tool_resources: Mapping[str, Any] | None = None,
     memory_service: Any | None = None,
     knowledge_graph_service: Any | None = None,
     ops_service: Any | None = None,
@@ -58,7 +58,7 @@ def create_tool_api(
         agent_id=str(agent_name or "").strip() or None,
         skill_api=skill_api,
         secret_service=secret_service,
-        commerce_runtime=commerce_runtime,
+        tool_resources=tool_resources,
         memory_service=memory_service,
         knowledge_graph_service=knowledge_graph_service,
         ops_service=ops_service,
@@ -150,7 +150,8 @@ def create_policy_api(
     db_dir: Path,
     policy_service: Any | None = None,
     action_policy_config: ActionPolicyConfig | None = None,
-    commerce_runtime: Any | None = None,
+    tool_registry: Any | None = None,
+    tool_resources: Mapping[str, Any] | None = None,
 ) -> Any:
     if policy_service is not None and mode != "local":
         from openminion.modules.brain.adapters.policy import PolicyCtlBrainAdapter
@@ -158,11 +159,8 @@ def create_policy_api(
         return PolicyCtlBrainAdapter(
             policy_service,
             action_policy_config=action_policy_config,
-            commerce_confirmation_resolver=(
-                commerce_runtime.resolve_confirmation_preview
-                if commerce_runtime is not None
-                else None
-            ),
+            tool_registry=tool_registry,
+            tool_resources=tool_resources,
         )
     return create_policy_adapter(mode=mode, db_path=db_dir)
 

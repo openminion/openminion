@@ -22,7 +22,7 @@ class ToolRegistryPreTurnContext(PreTurnContext):
         allowed_tools: tuple[str, ...] | None = None,
         metadata: Mapping[str, Any] | None = None,
         subject_id: str = "",
-        commerce_runtime: Any | None = None,
+        tool_resources: Mapping[str, Any] | None = None,
     ) -> None:
         self._registry = registry
         self._routine_id = str(routine_id or "").strip()
@@ -33,7 +33,7 @@ class ToolRegistryPreTurnContext(PreTurnContext):
         )
         self._metadata = dict(metadata or {})
         self._subject_id = subject_id
-        self._commerce_runtime = commerce_runtime
+        self._tool_resources = dict(tool_resources or {})
 
     def exact_provider_enabled(self, *, family: str, provider_id: str) -> bool:
         context = ToolExecutionContext(
@@ -41,7 +41,7 @@ class ToolRegistryPreTurnContext(PreTurnContext):
             target=self._routine_id or "routine",
             subject_id=self._subject_id,
             metadata=self._metadata,
-            commerce_runtime=self._commerce_runtime,
+            tool_resources=self._tool_resources,
         )
         config = getattr(resolve_runtime_tool_config(context), family, None)
         if config is None or config.allow_fallback is not False:
@@ -59,7 +59,7 @@ class ToolRegistryPreTurnContext(PreTurnContext):
             target=self._routine_id or "routine",
             subject_id=self._subject_id,
             metadata=self._metadata,
-            commerce_runtime=self._commerce_runtime,
+            tool_resources=self._tool_resources,
         )
         config = getattr(resolve_runtime_tool_config(context), family, None)
         if config is None:
@@ -105,7 +105,7 @@ class ToolRegistryPreTurnContext(PreTurnContext):
             session_id=self._session_id,
             subject_id=self._subject_id,
             metadata=metadata,
-            commerce_runtime=self._commerce_runtime,
+            tool_resources=self._tool_resources,
         )
 
         try:
@@ -157,7 +157,7 @@ def build_routine_pre_turn_context(
     agent_id: str,
     allowed_tools: tuple[str, ...],
     subject_id: str = "",
-    commerce_runtime: Any | None = None,
+    tool_resources: Mapping[str, Any] | None = None,
 ) -> ToolRegistryPreTurnContext | None:
     registry = getattr(runtime, "tools", None)
     if registry is None:
@@ -174,7 +174,7 @@ def build_routine_pre_turn_context(
         allowed_tools=allowed_tools,
         metadata=metadata,
         subject_id=subject_id,
-        commerce_runtime=commerce_runtime,
+        tool_resources=tool_resources,
     )
 
 

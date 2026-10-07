@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
-from openminion.modules.commerce.config import CommerceToolRuntimeConfig
+from openminion.tools.commerce.config import CommerceToolRuntimeConfig
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-from openminion.modules.commerce.provider import CommerceProviderError
+from openminion.tools.commerce.provider import CommerceProviderError
 from openminion.modules.tool.runtime.policy_defaults import DEFAULT_POLICY
-from openminion.modules.commerce.models import MerchantIdentity
+from openminion.tools.commerce.models import MerchantIdentity
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 from openminion.modules.tool.plugin_api import stable_invocation_hash
@@ -109,7 +110,7 @@ def _adapter(tmp_path, runtime, policy_ctl) -> ToolAdapter:
     return ToolAdapter(
         workspace_root=tmp_path,
         runtime_registry=bootstrap.registry,
-        commerce_runtime=runtime,
+        tool_resources={"commerce": runtime},
         policy_ctl=policy_ctl,
         policy={"tools": {"allow_exact": list(ALL_COMMERCE_TOOLS)}},
     )
@@ -192,7 +193,7 @@ def test_inspect_rejects_wrong_kind_reference_without_provider_access(tmp_path) 
             target="test",
             session_id="session-1",
             subject_id="local",
-            commerce_runtime=runtime,
+            tool_resources={"commerce": runtime},
         ),
     )
 
@@ -213,7 +214,7 @@ def test_product_inspection_injects_configured_merchant(tmp_path) -> None:
             target="test",
             session_id="session-1",
             subject_id="local",
-            commerce_runtime=runtime,
+            tool_resources={"commerce": runtime},
         ),
     )
 
@@ -236,7 +237,7 @@ def test_private_inspection_rejects_copied_reference_before_provider(tmp_path) -
             target="test",
             session_id="session-1",
             subject_id="local",
-            commerce_runtime=runtime,
+            tool_resources={"commerce": runtime},
         ),
     )
 
@@ -268,11 +269,32 @@ def test_prepare_denied_or_mismatched_approval_never_reaches_provider(
     assert provider.ledger == []
 
 
-def test_approved_prepare_creates_one_checkout_and_copy_is_rejected(tmp_path) -> None:
+@pytest.mark.parametrize("items", ["not-json", "{}", "null", "[]"])
+def test_invalid_encoded_items_do_not_consume_approval_or_call_provider(
+    tmp_path, items
+):
+    runtime, provider = build_fixture_commerce_runtime()
+    policy = _GrantPolicy(allowed_hash="unused")
+    result = _adapter(tmp_path, runtime, policy).execute(
+        command=_prepare_command({"items": items}),
+        session_id="session-1",
+        trace_id="invalid-items",
+    )
+    assert result["status"] == "error"
+    assert policy.consumed is False
+    assert provider.ledger == []
+
+
+@pytest.mark.parametrize("encoded_items", [False, True])
+def test_approved_prepare_creates_one_checkout_and_copy_is_rejected(
+    tmp_path, encoded_items
+) -> None:
     args = _prepare_args()
     expected_hash = stable_invocation_hash(
         tool="commerce", method="prepare_order", args=args
     )
+    if encoded_items:
+        args["items"] = json.dumps(args["items"])
     runtime, provider = build_fixture_commerce_runtime(
         store_path=tmp_path / "commerce.db"
     )
@@ -384,7 +406,7 @@ def test_provider_failures_use_closed_envelope_and_commerce_code(
             target="test",
             session_id="session-1",
             subject_id="local",
-            commerce_runtime=runtime,
+            tool_resources={"commerce": runtime},
         ),
     )
 

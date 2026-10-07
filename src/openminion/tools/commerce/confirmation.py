@@ -133,7 +133,7 @@ _REFUND_METHOD_LABELS = {
 
 class CommerceOutcomeUnknownNotice(CommerceConfirmationModel):
     commerce_code: Literal["OUTCOME_UNKNOWN"]
-    mutation_kind: Literal["prepare", "place", "action", "apply_action"]
+    mutation_kind: Literal["prepare", "place", "action", "apply_action", "order_action"]
     provider_attempts: int = Field(ge=1)
     recovery_required: Literal[True]
 

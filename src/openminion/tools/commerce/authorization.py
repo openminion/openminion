@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Any, Literal, Mapping, cast
 
 from openminion.modules.policy.models import PolicyControlError
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
@@ -28,7 +28,42 @@ def canonical_commerce_args(args: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], canonical(args))
 
 
-def _consume_commerce_authorization(
+def authorize_commerce_call(
+    args: dict[str, Any], context: Any, policy_ctl: Any
+) -> PolicyAuthorization:
+    return consume_commerce_authorization(
+        method=context.tool_name.rsplit(".", 1)[1],
+        policy_ctl=policy_ctl,
+        permission_mode=context.permission_mode,
+        args=args,
+        subject_id=context.subject_id,
+        session_id=context.session_id,
+    )
+
+
+def confirmation_preview(
+    args: dict[str, Any],
+    *,
+    tool_name: str,
+    subject_id: str,
+    session_id: str,
+    tool_resources: Mapping[str, Any],
+) -> dict[str, Any]:
+    from .confirmation import commerce_confirmation_lines, commerce_confirmation_payload
+
+    preview = tool_resources["commerce"].resolve_confirmation_preview(
+        tool_name=tool_name,
+        args=args,
+        subject_id=subject_id,
+        session_id=session_id,
+    )
+    return {
+        **commerce_confirmation_payload(preview),
+        "display_lines": commerce_confirmation_lines(preview),
+    }
+
+
+def consume_commerce_authorization(
     *,
     method: Literal["prepare_order", "place_order", "apply_order_action"],
     policy_ctl: Any | None,
@@ -91,63 +126,9 @@ def _consume_commerce_authorization(
     )
 
 
-def consume_commerce_prepare_authorization(
-    *,
-    policy_ctl: Any | None,
-    permission_mode: str,
-    args: dict[str, Any],
-    subject_id: str,
-    session_id: str | None,
-) -> PolicyAuthorization:
-    return _consume_commerce_authorization(
-        method="prepare_order",
-        policy_ctl=policy_ctl,
-        permission_mode=permission_mode,
-        args=args,
-        subject_id=subject_id,
-        session_id=session_id,
-    )
-
-
-def consume_commerce_place_authorization(
-    *,
-    policy_ctl: Any | None,
-    permission_mode: str,
-    args: dict[str, Any],
-    subject_id: str,
-    session_id: str | None,
-) -> PolicyAuthorization:
-    return _consume_commerce_authorization(
-        method="place_order",
-        policy_ctl=policy_ctl,
-        permission_mode=permission_mode,
-        args=args,
-        subject_id=subject_id,
-        session_id=session_id,
-    )
-
-
-def consume_commerce_action_authorization(
-    *,
-    policy_ctl: Any | None,
-    permission_mode: str,
-    args: dict[str, Any],
-    subject_id: str,
-    session_id: str | None,
-) -> PolicyAuthorization:
-    return _consume_commerce_authorization(
-        method="apply_order_action",
-        policy_ctl=policy_ctl,
-        permission_mode=permission_mode,
-        args=args,
-        subject_id=subject_id,
-        session_id=session_id,
-    )
-
-
 __all__ = [
+    "authorize_commerce_call",
     "canonical_commerce_args",
-    "consume_commerce_action_authorization",
-    "consume_commerce_place_authorization",
-    "consume_commerce_prepare_authorization",
+    "confirmation_preview",
+    "consume_commerce_authorization",
 ]

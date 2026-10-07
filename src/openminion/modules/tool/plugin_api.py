@@ -1,6 +1,8 @@
 import hashlib
 import json
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Literal, Protocol, TYPE_CHECKING, runtime_checkable
 
 if TYPE_CHECKING:  # pragma: no cover - typing helpers only
@@ -83,14 +85,45 @@ class BlockchainSendConfirmationPreview:
 
 ToolConfirmationPreview = BlockchainSendConfirmationPreview | dict[str, Any]
 
-POLICY_AUTHORIZATION_PAIRS = frozenset(
+
+@dataclass(frozen=True)
+class PolicyAuthorizationDescriptor:
+    risk_class: str
+    side_effects: str
+    reversibility: str
+    confirmation_ttl_seconds: int
+    required_subject_id: str | None = None
+    requires_session: bool = False
+
+
+POLICY_AUTHORIZATION_DESCRIPTORS = MappingProxyType(
     {
-        ("blockchain", "send_transaction"),
-        ("commerce", "prepare_order"),
-        ("commerce", "place_order"),
-        ("commerce", "apply_order_action"),
+        ("blockchain", "send_transaction"): PolicyAuthorizationDescriptor(
+            "financial", "external_account", "irreversible", 600
+        ),
+        ("commerce", "prepare_order"): PolicyAuthorizationDescriptor(
+            "state_change", "external_account", "reversible", 600, "local", True
+        ),
+        ("commerce", "place_order"): PolicyAuthorizationDescriptor(
+            "financial", "external_account", "irreversible", 600, "local", True
+        ),
+        ("commerce", "apply_order_action"): PolicyAuthorizationDescriptor(
+            "financial", "external_account", "partially_reversible", 600, "local", True
+        ),
     }
 )
+POLICY_AUTHORIZATION_PAIRS = frozenset(POLICY_AUTHORIZATION_DESCRIPTORS)
+
+
+class ConfirmationPreviewBuilder(Protocol):
+    def __call__(
+        self,
+        args: dict[str, Any],
+        *,
+        subject_id: str,
+        session_id: str,
+        tool_resources: Mapping[str, Any],
+    ) -> dict[str, Any]: ...
 
 
 def is_policy_authorization_pair(tool: str, method: str) -> bool:
@@ -99,10 +132,8 @@ def is_policy_authorization_pair(tool: str, method: str) -> bool:
 
 @dataclass(frozen=True)
 class PolicyAuthorization:
-    tool: Literal["blockchain", "commerce"]
-    method: Literal[
-        "send_transaction", "prepare_order", "place_order", "apply_order_action"
-    ]
+    tool: str
+    method: str
     invocation_hash: str
     approval_id: str
     grant_id: str
@@ -119,12 +150,17 @@ class PolicyAuthorization:
             raise ValueError(  # allow-bare-raise: immutable value contract validation
                 "policy authorization must be one-time"
             )
-        if self.tool == "commerce" and (
-            self.subject_id != "local" or not self.session_id
-        ):
+        descriptor = POLICY_AUTHORIZATION_DESCRIPTORS[(self.tool, self.method)]
+        if (
+            descriptor.required_subject_id is not None
+            and self.subject_id != descriptor.required_subject_id
+        ) or (descriptor.requires_session and not self.session_id):
             raise ValueError(  # allow-bare-raise: immutable value contract validation
-                "commerce authorization requires local subject and session"
+                "authorization requires the trusted subject and session"
             )
+
+
+PolicyAuthorizer = Callable[[dict[str, Any], Any, Any], PolicyAuthorization]
 
 
 @dataclass

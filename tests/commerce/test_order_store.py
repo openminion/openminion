@@ -7,14 +7,14 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from openminion.modules.commerce.constants import (
+from openminion.tools.commerce.constants import (
     ACTION_REQUEST_STATE_VALUES,
     FULFILLMENT_STATE_VALUES,
     ORDER_STATE_VALUES,
     PAYMENT_STATE_VALUES,
     SHIPMENT_STATE_VALUES,
 )
-from openminion.modules.commerce.models import (
+from openminion.tools.commerce.models import (
     CommerceLifecycleState,
     LineItem,
     MerchantIdentity,
@@ -24,11 +24,11 @@ from openminion.modules.commerce.models import (
     SafePaymentMethod,
     SellerIdentity,
 )
-from openminion.modules.commerce.storage import (
+from openminion.tools.commerce.storage import (
     PreparationPayload,
     SQLiteCommerceOrderStore,
 )
-from openminion.modules.commerce.storage.migrations import run_migrations
+from openminion.tools.commerce.storage.migrations import run_migrations
 from openminion.modules.storage.migrations.module_ids import (
     get_module_application_id,
 )

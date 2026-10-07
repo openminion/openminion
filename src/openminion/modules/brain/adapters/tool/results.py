@@ -19,7 +19,6 @@ from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.sidecars import ensure_tool_sidecar_ready
 
 _log = get_logger("brain.adapters.tool.runtime")
-_COMMERCE_HANDOFF_CODE = "HANDOFF_REQUIRED"
 
 
 def _normalized_summary_token(value: Any, *, limit: int = 600) -> str:
@@ -95,18 +94,6 @@ def _normalized_artifact_refs(raw: Any) -> list[dict[str, str]]:
         seen.add(ref)
         refs.append({"ref": ref, "role": "output"})
     return refs
-
-
-def _is_commerce_handoff_result(payload: Any, *, tool_name: str) -> bool:
-    if not tool_name.startswith("commerce.") or not isinstance(payload, Mapping):
-        return False
-    nested = payload.get("data")
-    handoff = nested if isinstance(nested, Mapping) else payload
-    return (
-        handoff.get("commerce_code") == _COMMERCE_HANDOFF_CODE
-        and handoff.get("state") == "handoff_required"
-        and handoff.get("requires_user_takeover") is True
-    )
 
 
 def _tool_result_status(inner_status: str, *, handoff_required: bool) -> str:
@@ -212,7 +199,9 @@ def run_tool_spec(
         inner_status = str(data.get("status", BRAIN_STATE_ERROR))
     else:
         inner_status = "ok"
-    handoff_required = _is_commerce_handoff_result(data, tool_name=tool_name)
+    handoff_required = (
+        isinstance(data, Mapping) and data.get("requires_user_takeover") is True
+    )
     status = _tool_result_status(inner_status, handoff_required=handoff_required)
     summary = _derive_toolspec_summary(data, status=status, tool_name=spec.name)
     result = {
@@ -227,6 +216,8 @@ def run_tool_spec(
             "cost_estimate": 0.0,
         },
     }
+    if isinstance(data, Mapping) and isinstance(data.get("content"), str):
+        result["content"] = data["content"]
     if background_write_authorized:
         result["outputs"] = dict(result["outputs"])
         result["outputs"].update(
@@ -304,7 +295,6 @@ def run_runtime_tool(
 __all__ = [
     "_derive_toolspec_summary",
     "_error_envelope",
-    "_is_commerce_handoff_result",
     "_normalized_artifact_refs",
     "_tool_allowlist_error",
     "run_runtime_tool",

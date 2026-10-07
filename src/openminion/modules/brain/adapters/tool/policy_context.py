@@ -208,7 +208,9 @@ def _resolve_auto_confirm(
     tool, method = (
         tool_name.rsplit(".", 1) if "." in tool_name else (tool_name, "default")
     )
-    if tool == "commerce" and is_policy_authorization_pair(tool, method):
+    if tool_name != "blockchain.send_transaction" and is_policy_authorization_pair(
+        tool, method
+    ):
         return replay_confirmed
     if permission_mode == "bypass":
         return True

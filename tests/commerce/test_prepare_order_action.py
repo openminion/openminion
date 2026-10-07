@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from openminion.modules.commerce.config import CommerceToolRuntimeConfig
-from openminion.modules.commerce.provider import CommerceProviderError
+from openminion.tools.commerce.config import CommerceToolRuntimeConfig
+from openminion.tools.commerce.provider import CommerceProviderError
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
@@ -67,7 +67,7 @@ def _call(tmp_path, runtime, arguments):
             target="test",
             session_id="session-1",
             subject_id="local",
-            commerce_runtime=runtime,
+            tool_resources={"commerce": runtime},
         ),
     )
 

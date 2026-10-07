@@ -10,6 +10,33 @@ from openminion.modules.storage.runtime.sqlite import connect_database
 from openminion.services.runtime.cron.delivery import CronDeliveryBridge
 
 
+@pytest.mark.parametrize(
+    "output",
+    [
+        {},
+        {"watch_delivery_requested": True},
+        {"watch_delivery_requested": "false"},
+        {"watch_delivery_requested": 0},
+        {"watch_delivery_requested": False},
+    ],
+)
+def test_delivery_honors_only_explicit_false_without_domain_routing(
+    monkeypatch, output
+):
+    calls = []
+
+    def deliver(*args, **kwargs):
+        calls.append(args)
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "openminion.services.runtime.cron.delivery.deliver_cron_result", deliver
+    )
+    bridge = CronDeliveryBridge(runtime=SimpleNamespace())
+    bridge.deliver("none", "", {"payload": {}}, {}, {"output": output})
+    assert bool(calls) is (output.get("watch_delivery_requested") is not False)
+
+
 def test_cron_announce_delivery_writes_session_message_and_event(tmp_path) -> None:
     db_path = tmp_path / "state" / "openminion.db"
     migrate_database(db_path)

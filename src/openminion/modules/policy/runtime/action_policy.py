@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from openminion.base.config import OpenMinionConfig
+from openminion.modules.tool.plugin_api import POLICY_AUTHORIZATION_DESCRIPTORS
 
 from ..models import RiskSpec, policy_config_from_action_policy
 
@@ -35,33 +36,16 @@ def build_action_policy_service(
 
 
 def derive_tool_risk_spec(*, tool_name: str, tool: Any) -> RiskSpec:
-    if tool_name == "commerce.prepare_order":
-        return RiskSpec(
-            risk_class="state_change",
-            side_effects="external_account",
-            reversibility="reversible",
-            default_confirm=True,
-        )
-    if tool_name == "commerce.place_order":
-        return RiskSpec(
-            risk_class="financial",
-            side_effects="external_account",
-            reversibility="irreversible",
-            default_confirm=True,
-        )
-    if tool_name == "commerce.apply_order_action":
-        return RiskSpec(
-            risk_class="financial",
-            side_effects="external_account",
-            reversibility="partially_reversible",
-            default_confirm=True,
-        )
-    if tool_name == "blockchain.send_transaction":
-        return RiskSpec(
-            risk_class="financial",
-            side_effects="external_account",
-            reversibility="irreversible",
-            default_confirm=True,
+    tool_id, _, method = tool_name.rpartition(".")
+    descriptor = POLICY_AUTHORIZATION_DESCRIPTORS.get((tool_id, method))
+    if descriptor is not None:
+        return RiskSpec.from_dict(
+            {
+                "risk_class": descriptor.risk_class,
+                "side_effects": descriptor.side_effects,
+                "reversibility": descriptor.reversibility,
+                "default_confirm": True,
+            }
         )
 
     min_scope = (

@@ -4,20 +4,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from openminion.modules.commerce.config import CommerceToolRuntimeConfig
+from openminion.tools.commerce.config import CommerceToolRuntimeConfig
 from openminion.modules.brain.adapters.tool.execution_context import (
     ToolExecutionContextBuilder,
 )
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-from openminion.modules.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
-from openminion.modules.commerce.runtime import (
+from openminion.tools.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
+from openminion.tools.commerce.runtime import (
     build_commerce_runtime,
-    resolve_injected_commerce_runtime,
 )
 from openminion.modules.tool import Policy, ToolRegistry, ToolSpec
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.runtime.dependencies import resolve_commerce_runtime
+from openminion.tools.commerce.plugin import resolve_commerce_runtime
 from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
 from tests.helpers.commerce_runtime import (
     FixtureSecretService,
@@ -50,7 +49,7 @@ def test_tool_execution_paths_share_commerce_runtime_and_trusted_subject(
     adapter = ToolAdapter(
         workspace_root=tmp_path,
         runtime_registry=registry,
-        commerce_runtime=commerce_runtime,
+        tool_resources={"commerce": commerce_runtime},
         policy={"tools": {"allow_exact": [spec.name]}},
     )
 
@@ -61,7 +60,7 @@ def test_tool_execution_paths_share_commerce_runtime_and_trusted_subject(
     )
     builder = ToolExecutionContextBuilder(
         agent_id="agent-1",
-        commerce_runtime=commerce_runtime,
+        tool_resources={"commerce": commerce_runtime},
         memory_service=None,
         sandbox_runner=None,
         security_lab_runner=None,
@@ -129,7 +128,7 @@ def test_commerce_dependency_resolver_fails_before_handler_or_provider(
             channel="console",
             target="session-1",
             session_id="session-1",
-            commerce_runtime=commerce_runtime,
+            tool_resources={"commerce": commerce_runtime},
         ),
     )
     assert result.data["error_code"] == "POLICY_DENIED"
@@ -137,7 +136,7 @@ def test_commerce_dependency_resolver_fails_before_handler_or_provider(
     assert called is False
 
 
-def test_bootstrap_builds_and_resolves_only_explicit_commerce_runtime() -> None:
+def test_commerce_resource_is_resolved_only_from_trusted_injection() -> None:
     _, provider = build_fixture_commerce_runtime()
     config = CommerceToolRuntimeConfig(
         enabled=True,
@@ -155,18 +154,50 @@ def test_bootstrap_builds_and_resolves_only_explicit_commerce_runtime() -> None:
     )
 
     assert runtime is not None
-    assert (
-        resolve_injected_commerce_runtime(SimpleNamespace(commerce_runtime=runtime))
-        is runtime
+    context = ToolExecutionContext(
+        channel="console",
+        target="session-1",
+        subject_id="local",
+        tool_resources={"commerce": runtime},
     )
-    assert resolve_injected_commerce_runtime(SimpleNamespace()) is None
+    assert resolve_commerce_runtime(context) is runtime
+    forged = ToolExecutionContext(
+        channel="console",
+        target="session-1",
+        subject_id="local",
+        metadata={"commerce": "forged-resource"},
+    )
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        resolve_commerce_runtime(forged)
+    assert exc_info.value.code == "DEPENDENCY_MISSING"
+
+
+def test_tool_resource_defaults_are_independent() -> None:
+    first = ToolExecutionContext(channel="console", target="first")
+    second = ToolExecutionContext(channel="console", target="second")
+    assert first.tool_resources == second.tool_resources == {}
+    assert first.tool_resources is not second.tool_resources
+
+
+def test_adapter_copies_injected_resource_mapping(tmp_path) -> None:
+    resource = object()
+    resources = {"fixture": resource}
+    adapter = ToolAdapter(
+        workspace_root=tmp_path,
+        runtime_registry=ToolRegistry(),
+        tool_resources=resources,
+    )
+    resources.clear()
+    assert adapter.tool_resources == {"fixture": resource}
 
 
 def test_subject_resolver_rejects_nonlocal_subject() -> None:
     commerce_runtime, _ = build_fixture_commerce_runtime()
     with pytest.raises(ToolRuntimeError) as exc_info:
         resolve_commerce_runtime(
-            SimpleNamespace(commerce_runtime=commerce_runtime, subject_id="remote")
+            SimpleNamespace(
+                tool_resources={"commerce": commerce_runtime}, subject_id="remote"
+            )
         )
     assert exc_info.value.code == "POLICY_DENIED"
     assert exc_info.value.details["commerce_code"] == "SUBJECT_UNAVAILABLE"

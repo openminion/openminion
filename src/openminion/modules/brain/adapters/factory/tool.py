@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from .modes import mode_is_local, raise_if_strict
 
@@ -16,7 +16,7 @@ def create_tool_adapter(
     reactions_enabled: bool = True,
     skill_api: Any | None = None,
     secret_service: Any | None = None,
-    commerce_runtime: Any | None = None,
+    tool_resources: Mapping[str, Any] | None = None,
     memory_service: Any | None = None,
     knowledge_graph_service: Any | None = None,
     ops_service: Any | None = None,
@@ -49,7 +49,7 @@ def create_tool_adapter(
             reactions_enabled=reactions_enabled,
             skill_api=skill_api,
             secret_service=secret_service,
-            commerce_runtime=commerce_runtime,
+            tool_resources=tool_resources,
             memory_service=memory_service,
             knowledge_graph_service=knowledge_graph_service,
             ops_service=ops_service,

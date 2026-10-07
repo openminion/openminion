@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from openminion.modules.commerce.models import CommerceLifecycleState
+from openminion.tools.commerce.models import CommerceLifecycleState
 from openminion.tools.task.routine.dispatcher import CommerceOrderHandler
 from openminion.tools.task.routine.schemas import (
     CommerceOrderConfigV1,
@@ -141,7 +141,7 @@ def test_handler_calls_only_inspect_and_notifies_once_per_material_revision() ->
     assert ctx.calls == [
         (
             "commerce.inspect",
-            {"kind": "order", "order_ref": "order-local-1"},
+            {"kind": "order", "local_order_ref": "order-local-1"},
         )
     ]
     assert first.condition_value is True

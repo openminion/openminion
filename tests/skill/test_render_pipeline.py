@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from openminion.modules.skill.runtime.skill import Skill
+from openminion.modules.skill.runtime.parser import parse_markdown
 
 
 class TestRenderPipeline:
@@ -47,13 +48,29 @@ class TestRenderPipeline:
                 f"{name} verify render too short: {len(text)} chars"
             )
 
-    def test_procedure_only_examples_do_not_create_executable_recipes(
+    def test_examples_preserve_only_authored_recipes_and_known_tool_bindings(
         self, skill, example_skills
     ):
         for path in example_skills:
             name = os.path.basename(os.path.dirname(path))
+            front_matter, _, _, _ = parse_markdown(Path(path).read_text())
             sid, vh, issues = skill.ingest_file(path, name=name)
-            assert skill.get_recipe(sid, vh) is None, name
+            recipe = skill.get_recipe(sid, vh)
+            authored = front_matter.get("recipe")
+            if authored is None:
+                assert recipe is None, name
+                continue
+
+            assert recipe is not None, name
+            assert [(step.step_id, step.instruction) for step in recipe.steps] == [
+                (step["step_id"], step["instruction"]) for step in authored["steps"]
+            ], name
+            assert [step.tool_id for step in recipe.steps] == [
+                step.get("tool_id")
+                if step.get("tool_id") in skill.config.known_tools
+                else None
+                for step in authored["steps"]
+            ], name
 
     def test_render_respects_max_tokens(self, skill, example_skills):
         path = example_skills[0]

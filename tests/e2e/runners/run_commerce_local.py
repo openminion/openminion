@@ -15,8 +15,8 @@ from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 isolate_runtime_roots(prefix="openminion-commerce-local-")
 
-from openminion.modules.commerce.models import CommerceLifecycleState  # noqa: E402
-from openminion.modules.commerce.provider import (  # noqa: E402
+from openminion.tools.commerce.models import CommerceLifecycleState  # noqa: E402
+from openminion.tools.commerce.provider import (  # noqa: E402
     CommerceHandoff,
     CommerceProviderError,
     OrderPreparation,
@@ -31,9 +31,7 @@ from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
 from openminion.services.runtime.cron.delivery import CronDeliveryBridge  # noqa: E402
 from openminion.tools.commerce.authorization import (  # noqa: E402
     canonical_commerce_args,
-    consume_commerce_action_authorization,
-    consume_commerce_place_authorization,
-    consume_commerce_prepare_authorization,
+    consume_commerce_authorization,
 )
 from openminion.tools.commerce.plugin import _h_inspect, _h_prepare_order  # noqa: E402
 from openminion.tools.commerce.family import COMMERCE_FAMILY  # noqa: E402
@@ -198,13 +196,6 @@ def _attempt(runtime, *, kind: str, idempotency_key: str) -> dict[str, object]:
     return attempt.model_dump(mode="json")
 
 
-_AUTHORIZATION_CONSUMERS = {
-    "prepare_order": consume_commerce_prepare_authorization,
-    "place_order": consume_commerce_place_authorization,
-    "apply_order_action": consume_commerce_action_authorization,
-}
-
-
 def _approved_policy(
     root: Path,
     *,
@@ -243,7 +234,8 @@ def _approved_policy(
     )
     assert pending.decision == "REQUIRE_CONFIRM" and pending.approval_id
     grant_id = ctl.resolve_confirmation(pending.approval_id, "allow_once")
-    authorization = _AUTHORIZATION_CONSUMERS[method](
+    authorization = consume_commerce_authorization(
+        method=method,
         policy_ctl=ctl,
         permission_mode="default",
         args=args,
@@ -273,11 +265,9 @@ class _RoutineContext:
 
     def invoke_tool(self, *, name: str, args: dict[str, object]):
         assert name == "commerce.inspect"
-        public_args = dict(args)
-        public_args["local_order_ref"] = public_args.pop("order_ref")
         return {
             "ok": True,
-            "data": self.runtime.inspect_public(public_args).model_dump(mode="json"),
+            "data": self.runtime.inspect_public(args).model_dump(mode="json"),
         }
 
 
@@ -317,10 +307,11 @@ def _run() -> dict[str, object]:
                 "Context",
                 (),
                 {
-                    "commerce_runtime": runtime,
+                    "tool_resources": {"commerce": runtime},
                     "policy_authorization": None,
                     "subject_id": "local",
                     "session_id": "commerce-local",
+                    "project_task_id": "",
                 },
             )(),
         )
@@ -335,13 +326,14 @@ def _run() -> dict[str, object]:
     prepared_result = _h_prepare_order(
         prepare_args,
         SimpleNamespace(
-            commerce_runtime=runtime,
+            tool_resources={"commerce": runtime},
             policy_authorization=prepare_authorization,
             subject_id="local",
             session_id="commerce-local",
             tool_name="commerce.prepare_order",
             tool_call_id="prepare-order-1",
             agent_id="fixture-agent",
+            project_task_id="",
             telemetryctl=None,
         ),
     )
@@ -709,7 +701,7 @@ def _run() -> dict[str, object]:
     try:
         _h_inspect(
             {"kind": "order", "local_order_ref": placement.order_ref},
-            SimpleNamespace(commerce_runtime=runtime, subject_id="remote"),
+            SimpleNamespace(tool_resources={"commerce": runtime}, subject_id="remote"),
         )
     except ToolRuntimeError as exc:
         cross_subject_code = str(exc.details.get("commerce_code", ""))
@@ -719,7 +711,8 @@ def _run() -> dict[str, object]:
     )
     channel_ingress_code = ""
     try:
-        consume_commerce_prepare_authorization(
+        consume_commerce_authorization(
+            method="prepare_order",
             policy_ctl=channel_policy,
             permission_mode="auto",
             args=prepare_args,

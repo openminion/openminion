@@ -1,7 +1,7 @@
 """Runtime tool context assembly for the brain tool adapter."""
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from openminion.modules.tool import (
@@ -13,7 +13,7 @@ from openminion.modules.tool.exposure.service import (
     project_security_lab_metadata,
     resolve_security_lab_metadata,
 )
-from openminion.modules.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
+from openminion.modules.policy.constants import POLICY_SUBJECT_ID_LOCAL
 
 from .policy_context import _runtime_env_from_policy
 
@@ -21,13 +21,13 @@ from .policy_context import _runtime_env_from_policy
 @dataclass(frozen=True)
 class ToolExecutionContextBuilder:
     agent_id: str
-    commerce_runtime: Any
     memory_service: Any
     sandbox_runner: Any
     security_lab_runner: Any
     security_lab_config: Any
     identity_security_lab_facts: Callable[[], dict[str, Any]] | None
     exposure_service: Any
+    tool_resources: Mapping[str, Any] = field(default_factory=dict)
 
     def security_lab_metadata(self, session_id: str) -> dict[str, Any]:
         identity = (
@@ -90,9 +90,9 @@ class ToolExecutionContextBuilder:
             channel="console",
             target=session_id or "session",
             session_id=session_id,
-            subject_id=COMMERCE_LOCAL_SUBJECT_ID,
+            subject_id=POLICY_SUBJECT_ID_LOCAL,
             metadata=metadata,
-            commerce_runtime=self.commerce_runtime,
+            tool_resources=self.tool_resources,
             memory_service=self.memory_service,
             sandbox_runner=self.sandbox_runner,
             security_lab_runner=self.security_lab_runner,

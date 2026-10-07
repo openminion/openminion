@@ -3,8 +3,11 @@ from __future__ import annotations
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from openminion.modules.brain.adapters.tool.results import run_tool_spec
-from openminion.modules.commerce.provider import build_commerce_handoff
+from openminion.tools.commerce.plugin import _result
+from openminion.tools.commerce.provider import build_commerce_handoff
 
 
 def _run_handoff_result(monkeypatch, *, tool_name: str = "commerce.place_order"):
@@ -19,7 +22,9 @@ def _run_handoff_result(monkeypatch, *, tool_name: str = "commerce.place_order")
     )
     spec = SimpleNamespace(
         name=tool_name,
-        handler=lambda _args, _context: handoff.model_dump(mode="json"),
+        handler=lambda _args, _context: _result(
+            "place_order", "handoff_required", handoff.model_dump(mode="json")
+        ),
     )
     return run_tool_spec(
         spec=spec,
@@ -31,18 +36,15 @@ def _run_handoff_result(monkeypatch, *, tool_name: str = "commerce.place_order")
     )
 
 
-def test_typed_commerce_handoff_maps_to_needs_user(monkeypatch) -> None:
-    result = _run_handoff_result(monkeypatch)
+@pytest.mark.parametrize("tool_name", ["commerce.place_order", "browser.open"])
+def test_explicit_plugin_handoff_maps_to_needs_user(monkeypatch, tool_name) -> None:
+    result = _run_handoff_result(monkeypatch, tool_name=tool_name)
 
     assert result["status"] == "needs_user"
-    assert result["summary"] == (
+    assert (
         "Open the configured merchant surface to authenticate, then inspect and prepare again."
-    )
-    assert result["outputs"]["commerce_code"] == "HANDOFF_REQUIRED"
+    ) in result["summary"]
+    assert result["outputs"]["data"]["commerce_code"] == "HANDOFF_REQUIRED"
+    assert result["outputs"]["requires_user_takeover"] is True
+    assert result["content"] == result["outputs"]["content"]
     assert "error" not in result
-
-
-def test_handoff_marker_does_not_change_non_commerce_tools(monkeypatch) -> None:
-    result = _run_handoff_result(monkeypatch, tool_name="browser.open")
-
-    assert result["status"] == "success"
