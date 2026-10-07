@@ -87,7 +87,7 @@ until a provider is selected.
 | --- | --- |
 | Models, storage, policy, runtime, and CLI rendering | Deterministic tests pass. |
 | Complete local scenario matrix | Fixture-ledger runner and negative evidence validator pass. |
-| Real Focus with MiniMax and fixture commerce | Runner exists; a valid `MINIMAX_API_KEY` is required for execution. |
+| Real Focus with MiniMax and fixture commerce | The credentialed live run verified phase inventory `0/2/3/5` and one approved preparation, then stopped because MiniMax did not invoke the separately requested placement. Placement and order-care completion therefore remain unproved in live Focus. |
 | Selected merchant sandbox | Blocked until a target, endpoint, credential owner, trusted origins, and recovery contract are recorded. |
 | Production | Unavailable. |
 
