@@ -114,7 +114,7 @@ def main() -> int:
     current_events = [event for event in events if event.session_id == brain_session_id]
     requested_tools = sorted(
         {
-            str(event.payload.get("tool_name") or event.payload.get("name") or "")
+            str(event.data.get("canonical_name") or "")
             for event in current_events
             if event.event_type == "tool.call.requested"
         }
