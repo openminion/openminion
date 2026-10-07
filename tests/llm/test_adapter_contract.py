@@ -62,7 +62,7 @@ class _AdapterOnlyProvider:
         return {"ok": True}
 
 
-def test_tool_call_normalization_decodes_json_container_arguments() -> None:
+def test_tool_call_normalization_preserves_domain_json_strings() -> None:
     calls = _coerce_tool_calls(
         [
             ToolCall(
@@ -76,7 +76,7 @@ def test_tool_call_normalization_decodes_json_container_arguments() -> None:
     )
 
     assert calls[0].arguments == {
-        "items": [{"offer_id": "offer-1", "quantity": 1}],
+        "items": '[{"offer_id":"offer-1","quantity":1}]',
         "note": "[keep as text",
     }
 
@@ -94,7 +94,7 @@ def test_tool_call_normalization_preserves_commerce_item_strings() -> None:
         [
             ToolCall(
                 name="commerce.prepare_order",
-                arguments={"items": '[{"offer_id":"[]","quantity":1}]'},
+                arguments={"items": [{"offer_id": "[]", "quantity": 1}]},
             )
         ]
     )
