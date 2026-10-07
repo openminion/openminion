@@ -30,14 +30,18 @@ def canonical_commerce_args(args: dict[str, Any]) -> dict[str, Any]:
 
 def _consume_commerce_authorization(
     *,
-    method: Literal["prepare_order", "place_order"],
+    method: Literal["prepare_order", "place_order", "apply_order_action"],
     policy_ctl: Any | None,
     permission_mode: str,
     args: dict[str, Any],
     subject_id: str,
     session_id: str | None,
 ) -> PolicyAuthorization:
-    mutation = "preparation" if method == "prepare_order" else "placement"
+    mutation = {
+        "prepare_order": "preparation",
+        "place_order": "placement",
+        "apply_order_action": "order action",
+    }[method]
     policy_mode = str(policy_ctl.mode()) if policy_ctl is not None else ""
     if (
         policy_ctl is None
@@ -123,8 +127,27 @@ def consume_commerce_place_authorization(
     )
 
 
+def consume_commerce_action_authorization(
+    *,
+    policy_ctl: Any | None,
+    permission_mode: str,
+    args: dict[str, Any],
+    subject_id: str,
+    session_id: str | None,
+) -> PolicyAuthorization:
+    return _consume_commerce_authorization(
+        method="apply_order_action",
+        policy_ctl=policy_ctl,
+        permission_mode=permission_mode,
+        args=args,
+        subject_id=subject_id,
+        session_id=session_id,
+    )
+
+
 __all__ = [
     "canonical_commerce_args",
+    "consume_commerce_action_authorization",
     "consume_commerce_place_authorization",
     "consume_commerce_prepare_authorization",
 ]

@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, Protocol, TypeVar, cast
-
-from pydantic import BaseModel
+from typing import Any, Literal, Protocol, cast
 
 from openminion.modules.runtime.credentials import (
     CredentialAuditLog,
@@ -31,6 +28,7 @@ from .provider import (
     InspectRequest,
     OrderActionPreparation,
     OrderActionResult,
+    OrderInspection,
     OrderPlacement,
     OrderPreparation,
     PlaceOrderRequest,
@@ -40,17 +38,17 @@ from .provider import (
     PreparationRecoveryLocator,
     ProviderOrderContext,
     RequestedItem,
-    build_commerce_handoff,
-    safe_commerce_links,
 )
-
-_CommerceModelT = TypeVar("_CommerceModelT", bound=BaseModel)
+from .identity import commerce_digest
+from .runtime_persistence import CommerceRuntimePersistenceMixin
 
 
 class CommerceOrderStore(Protocol):
     def get_preparation(self, subject_id: str, preparation_id: str) -> Any: ...
 
     def get_order(self, subject_id: str, order_id: str) -> Any: ...
+
+    def get_action_preparation(self, subject_id: str, action_id: str) -> Any: ...
 
     def reserve_preparation(self, **kwargs: Any) -> Any: ...
 
@@ -62,6 +60,8 @@ class CommerceOrderStore(Protocol):
 
     def save_order(self, **kwargs: Any) -> Any: ...
 
+    def save_action_preparation(self, **kwargs: Any) -> Any: ...
+
     def update_order_lifecycle(self, **kwargs: Any) -> Any: ...
 
     def finish_attempt(self, **kwargs: Any) -> Any: ...
@@ -70,15 +70,10 @@ class CommerceOrderStore(Protocol):
 
     def begin_placement_attempt(self, **kwargs: Any) -> Any: ...
 
-
-def _digest(value: object) -> str:
-    encoded = json.dumps(
-        value, sort_keys=True, separators=(",", ":"), default=str
-    ).encode()
-    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+    def begin_action_attempt(self, **kwargs: Any) -> Any: ...
 
 
-class CommerceRuntime:
+class CommerceRuntime(CommerceRuntimePersistenceMixin):
     def __init__(
         self,
         *,
@@ -163,7 +158,7 @@ class CommerceRuntime:
         }
         return self.prepare_order(
             PrepareOrderRequest(
-                idempotency_key=_digest(request_facts),
+                idempotency_key=commerce_digest(request_facts),
                 items=items,
                 promotion_code=args.get("promotion_code"),
             )
@@ -184,6 +179,11 @@ class CommerceRuntime:
         if tool_name == "commerce.place_order":
             return self._placement_confirmation(
                 self._validated_place_preparation(args),
+                session_id=session_id,
+            )
+        if tool_name == "commerce.apply_order_action":
+            return self._action_confirmation(
+                self._validated_action_preparation(args),
                 session_id=session_id,
             )
         if tool_name != "commerce.prepare_order":
@@ -237,7 +237,7 @@ class CommerceRuntime:
             caller_profile_id=caller_profile_id,
         )
         request = PlaceOrderRequest(
-            idempotency_key=_digest(
+            idempotency_key=commerce_digest(
                 {
                     "subject_id": COMMERCE_LOCAL_SUBJECT_ID,
                     "preparation_ref": preparation.preparation_ref,
@@ -249,8 +249,80 @@ class CommerceRuntime:
         )
         return self.place_order(request, authorization_hash=authorization_hash)
 
+    def prepare_action_public(
+        self, args: dict[str, Any]
+    ) -> OrderActionPreparation | CommerceHandoff:
+        order_ref = str(args["local_order_ref"])
+        self._require_owned_order(order_ref)
+        request = PrepareOrderActionRequest(
+            idempotency_key=commerce_digest(
+                {
+                    "subject_id": COMMERCE_LOCAL_SUBJECT_ID,
+                    "local_order_ref": order_ref,
+                    "order_revision": args["order_revision"],
+                    "kind": args["kind"],
+                    "line_item_ids": args.get("line_item_ids", ()),
+                    "quantity": args.get("quantity"),
+                    "reason": args.get("reason"),
+                    "refund_method": args.get("refund_method"),
+                }
+            ),
+            order_ref=order_ref,
+            order_revision=str(args["order_revision"]),
+            kind=args["kind"],
+            line_item_ids=tuple(args.get("line_item_ids", ())),
+            quantity=args.get("quantity"),
+            reason=args.get("reason"),
+            refund_method=args.get("refund_method"),
+        )
+        current = self.inspect(
+            InspectRequest(
+                kind="order",
+                merchant_id=self.merchant_id,
+                order_ref=order_ref,
+            )
+        )
+        if not isinstance(current, OrderInspection) or (
+            current.revision != request.order_revision
+        ):
+            raise CommerceProviderError("STALE_REVISION", "Order revision is stale.")
+        self._validate_action_items(request, current)
+        preparation = self.prepare_action(request)
+        if isinstance(preparation, CommerceHandoff):
+            return self._sanitize_links(preparation)
+        self._validate_action_preparation_response(request, current, preparation)
+        preparation = self._sanitize_links(preparation)
+        if self.order_store is not None:
+            self.order_store.save_action_preparation(
+                subject_id=COMMERCE_LOCAL_SUBJECT_ID,
+                order_id=order_ref,
+                prepared=preparation,
+            )
+        return preparation
+
+    def apply_action_public(
+        self,
+        args: dict[str, Any],
+        *,
+        authorization_hash: str,
+    ) -> OrderActionResult:
+        preparation = self._validated_action_preparation(args)
+        request = ApplyOrderActionRequest(
+            idempotency_key=commerce_digest(
+                {
+                    "subject_id": COMMERCE_LOCAL_SUBJECT_ID,
+                    "action_ref": preparation.action_ref,
+                    "action_digest": preparation.action_digest,
+                }
+            ),
+            action_ref=preparation.action_ref,
+            order_ref=preparation.order_ref,
+            action_digest=preparation.action_digest,
+        )
+        return self.apply_action(request, authorization_hash=authorization_hash)
+
     def prepare_order(self, request: PrepareOrderRequest) -> OrderPreparation:
-        request_digest = _digest(request.model_dump(mode="json"))
+        request_digest = commerce_digest(request.model_dump(mode="json"))
         attempt = self._reserve_preparation(request, request_digest)
         if attempt is not None and not attempt.created:
             recovered = self.recover_preparation(
@@ -285,7 +357,7 @@ class CommerceRuntime:
         *,
         authorization_hash: str | None = None,
     ) -> OrderPlacement | CommerceHandoff:
-        request_digest = _digest(request.model_dump(mode="json"))
+        request_digest = commerce_digest(request.model_dump(mode="json"))
         attempt = self._reserve_placement(
             request, request_digest, authorization_hash=authorization_hash
         )
@@ -325,22 +397,40 @@ class CommerceRuntime:
 
     def prepare_action(
         self, request: PrepareOrderActionRequest
-    ) -> OrderActionPreparation:
+    ) -> OrderActionPreparation | CommerceHandoff:
         return self.provider.prepare_action(request)
 
-    def apply_action(self, request: ApplyOrderActionRequest) -> OrderActionResult:
-        request_digest = _digest(request.model_dump(mode="json"))
-        attempt = self._reserve_action(request, request_digest)
+    def apply_action(
+        self,
+        request: ApplyOrderActionRequest,
+        *,
+        authorization_hash: str | None = None,
+    ) -> OrderActionResult:
+        request_digest = commerce_digest(request.model_dump(mode="json"))
+        attempt = self._reserve_action(
+            request,
+            request_digest,
+            authorization_hash=authorization_hash,
+        )
         if attempt is not None and not attempt.created:
             if attempt.attempt.idempotency_key != request.idempotency_key:
                 raise CommerceProviderError(
                     "ACTION_ALREADY_OPEN",
                     "A prior order action is still active.",
                 )
-            recovered = self._recover_action(request)
-            if recovered is None:
-                raise RuntimeError("Commerce action outcome requires recovery.")
-            return self._sanitize_links(recovered)
+        if attempt is not None and self.order_store is not None:
+            submitting = self.order_store.begin_action_attempt(
+                subject_id=COMMERCE_LOCAL_SUBJECT_ID,
+                attempt_id=attempt.attempt.attempt_id,
+            )
+            if submitting is None:
+                recovered = self._recover_action(request)
+                if recovered is None:
+                    raise CommerceOutcomeUnknown(
+                        "Commerce action is reserved or submitted and requires recovery."
+                    )
+                self._validate_action_result(request, recovered)
+                return self._action_result(recovered, attempt)
         try:
             result = self.provider.apply_action(request)
         except CommerceOutcomeUnknown:
@@ -349,20 +439,8 @@ class CommerceRuntime:
                 self._finish_attempt(attempt, state="outcome_unknown")
                 raise
             result = recovered
-        result = self._sanitize_links(result)
-        if self.order_store is not None:
-            self.order_store.update_order_lifecycle(
-                subject_id=COMMERCE_LOCAL_SUBJECT_ID,
-                order_id=result.order_ref,
-                lifecycle=result.lifecycle,
-            )
-            self._finish_attempt(
-                attempt,
-                state="succeeded" if result.state == "completed" else "failed",
-                response_digest=_digest(result.model_dump(mode="json")),
-                provider_reference_digest=_digest(result.action_ref),
-            )
-        return result
+        self._validate_action_result(request, result)
+        return self._action_result(result, attempt)
 
     def recover_action(
         self, locator: ActionRecoveryLocator
@@ -481,6 +559,180 @@ class CommerceRuntime:
             session_id=session_id,
         )
 
+    def _validated_action_preparation(
+        self, args: dict[str, Any]
+    ) -> OrderActionPreparation:
+        supplied = OrderActionPreparation.model_validate(args["preparation"])
+        if (
+            supplied.action_ref != args["action_ref"]
+            or supplied.action_digest != args["action_digest"]
+            or not supplied.eligible
+            or self._is_expired(supplied.expires_at)
+        ):
+            raise CommerceProviderError(
+                "STALE_PREPARATION",
+                "Order action preparation is stale.",
+            )
+        self._require_owned_order(supplied.order_ref)
+        if self.order_store is not None:
+            record = self.order_store.get_action_preparation(
+                COMMERCE_LOCAL_SUBJECT_ID,
+                supplied.action_ref,
+            )
+            if (
+                record is None
+                or record.invalidated_at is not None
+                or record.prepared != supplied
+            ):
+                raise CommerceProviderError(
+                    "STALE_PREPARATION",
+                    "Order action preparation is not subject-owned.",
+                )
+        is_partial = supplied.kind in {"partial_cancel", "partial_return"}
+        refreshed = self.prepare_action_public(
+            {
+                "local_order_ref": supplied.order_ref,
+                "order_revision": supplied.order_revision,
+                "kind": supplied.kind,
+                "line_item_ids": (
+                    tuple(item.line_item_id for item in supplied.affected_items)
+                    if is_partial
+                    else ()
+                ),
+                "quantity": (
+                    supplied.affected_items[0].quantity
+                    if is_partial and supplied.affected_items
+                    else None
+                ),
+                "reason": supplied.reason,
+                "refund_method": supplied.refund_method,
+            }
+        )
+        if refreshed != supplied:
+            raise CommerceProviderError(
+                "STALE_PREPARATION",
+                "Merchant action terms changed after review.",
+            )
+        return supplied
+
+    @staticmethod
+    def _validate_action_items(
+        request: PrepareOrderActionRequest,
+        inspection: OrderInspection,
+    ) -> None:
+        if not request.line_item_ids:
+            return
+        items = {
+            item.line_item_id: item
+            for item in inspection.items
+            if item.line_item_id is not None
+        }
+        if any(line_item_id not in items for line_item_id in request.line_item_ids):
+            raise CommerceProviderError(
+                "ACTION_INELIGIBLE",
+                "Order action contains an unknown line item.",
+            )
+        if request.quantity is not None and any(
+            request.quantity > items[line_item_id].quantity
+            for line_item_id in request.line_item_ids
+        ):
+            raise CommerceProviderError(
+                "ACTION_INELIGIBLE",
+                "Order action quantity exceeds the ordered quantity.",
+            )
+
+    @staticmethod
+    def _validate_action_preparation_response(
+        request: PrepareOrderActionRequest,
+        inspection: OrderInspection,
+        preparation: OrderActionPreparation,
+    ) -> None:
+        expected_items = (
+            tuple(
+                (line_item_id, request.quantity or 1)
+                for line_item_id in request.line_item_ids
+            )
+            if request.line_item_ids
+            else tuple(
+                (item.line_item_id, item.quantity)
+                for item in inspection.items
+                if item.line_item_id is not None
+            )
+        )
+        returned_items = tuple(
+            (item.line_item_id, item.quantity) for item in preparation.affected_items
+        )
+        is_return = request.kind in {"return", "partial_return"}
+        return_logistics = (
+            preparation.return_destination,
+            preparation.return_method,
+            preparation.shipment_responsibility,
+            preparation.deadlines or None,
+        )
+        return_logistics_match = (
+            all(value is not None for value in return_logistics)
+            if is_return
+            else all(value is None for value in return_logistics)
+        )
+        refund_destination_matches = (preparation.refund_destination is not None) == (
+            request.refund_method is not None
+        )
+        if (
+            preparation.order_ref != request.order_ref
+            or preparation.order_revision != request.order_revision
+            or preparation.kind != request.kind
+            or returned_items != expected_items
+            or preparation.reason != request.reason
+            or preparation.refund_method != request.refund_method
+            or preparation.fees.currency != inspection.total.currency
+            or preparation.refund.currency != inspection.total.currency
+            or not return_logistics_match
+            or not refund_destination_matches
+        ):
+            raise CommerceProviderError(
+                "INVALID_RESPONSE",
+                "Provider action preparation does not match the requested order action.",
+            )
+
+    def _action_confirmation(
+        self,
+        preparation: OrderActionPreparation,
+        *,
+        session_id: str,
+    ) -> Any:
+        from .confirmation import ActionConfirmationItem, OrderActionConfirmationPreview
+
+        destination = preparation.refund_destination
+        return OrderActionConfirmationPreview(
+            order_id=preparation.order_ref,
+            order_revision=preparation.order_revision,
+            action_kind=preparation.kind,
+            affected_items=tuple(
+                ActionConfirmationItem(
+                    line_item_id=item.line_item_id,
+                    quantity=item.quantity,
+                )
+                for item in preparation.affected_items
+            ),
+            fees_minor=preparation.fees.amount_minor,
+            refund_minor=preparation.refund.amount_minor,
+            currency=preparation.refund.currency,
+            refund_method=preparation.refund_method,
+            refund_destination_digest=(
+                destination.destination_digest if destination is not None else None
+            ),
+            refund_destination_label=(
+                destination.label if destination is not None else None
+            ),
+            deadlines=preparation.deadlines,
+            consequence=preparation.consequence,
+            action_revision=preparation.action_revision,
+            expires_at=preparation.expires_at,
+            action_digest=preparation.action_digest,
+            subject_id=COMMERCE_LOCAL_SUBJECT_ID,
+            session_id=session_id,
+        )
+
     @staticmethod
     def _is_expired(expires_at: str) -> bool:
         try:
@@ -554,201 +806,6 @@ class CommerceRuntime:
         if not label:
             raise ValueError(f"Commerce secret record is missing {field}.")
         return label
-
-    def _require_owned_preparation(self, preparation_ref: str) -> Any:
-        if self.order_store is None:
-            raise PermissionError("Commerce preparation ownership is unavailable.")
-        record = self.order_store.get_preparation(
-            COMMERCE_LOCAL_SUBJECT_ID, preparation_ref
-        )
-        if record is None:
-            raise PermissionError("Commerce preparation is not owned by the subject.")
-        return record
-
-    def _require_owned_order(self, order_ref: str) -> Any:
-        if self.order_store is None:
-            raise PermissionError("Commerce order ownership is unavailable.")
-        record = self.order_store.get_order(COMMERCE_LOCAL_SUBJECT_ID, order_ref)
-        if record is None:
-            raise PermissionError("Commerce order is not owned by the subject.")
-        return record
-
-    def _reserve_preparation(self, request: PrepareOrderRequest, digest: str) -> Any:
-        if self.order_store is None:
-            return None
-        return self.order_store.reserve_preparation(
-            subject_id=COMMERCE_LOCAL_SUBJECT_ID,
-            target_id=_digest(
-                {
-                    "merchant_id": self.merchant_id,
-                    "items": [item.model_dump(mode="json") for item in request.items],
-                    "promotion_code": request.promotion_code,
-                }
-            ),
-            idempotency_key=request.idempotency_key,
-            request_digest=digest,
-        )
-
-    def _reserve_placement(
-        self,
-        request: PlaceOrderRequest,
-        digest: str,
-        *,
-        authorization_hash: str | None,
-    ) -> Any:
-        if self.order_store is None:
-            return None
-        preparation = self._require_owned_preparation(request.preparation_ref)
-        if preparation.invalidated_at is not None:
-            raise CommerceProviderError(
-                "STALE_PREPARATION",
-                "Commerce preparation was invalidated by user takeover.",
-            )
-        return self.order_store.reserve_placement(
-            subject_id=COMMERCE_LOCAL_SUBJECT_ID,
-            preparation_id=request.preparation_ref,
-            idempotency_key=request.idempotency_key,
-            request_digest=digest,
-            authorization_hash=authorization_hash,
-        )
-
-    def _reserve_action(self, request: ApplyOrderActionRequest, digest: str) -> Any:
-        if self.order_store is None:
-            return None
-        return self.order_store.reserve_action(
-            subject_id=COMMERCE_LOCAL_SUBJECT_ID,
-            order_id=request.order_ref,
-            operation="apply",
-            idempotency_key=request.idempotency_key,
-            request_digest=digest,
-        )
-
-    def _persist_preparation(self, preparation: OrderPreparation, attempt: Any) -> None:
-        if self.order_store is None:
-            return
-        from .storage.models import PreparationPayload
-
-        self.order_store.save_preparation(
-            subject_id=COMMERCE_LOCAL_SUBJECT_ID,
-            preparation_id=preparation.preparation_ref,
-            payload=PreparationPayload(
-                merchant=preparation.merchant,
-                seller=preparation.seller,
-                items=preparation.items,
-                buyer=preparation.buyer,
-                destination=preparation.destination,
-                payment=preparation.payment,
-                total=preparation.totals.total,
-            ),
-            prepared=preparation,
-            preparation_attempt_id=attempt.attempt.attempt_id if attempt else None,
-        )
-
-    def _validated_preparation(
-        self, preparation: OrderPreparation, attempt: Any
-    ) -> OrderPreparation:
-        if preparation.merchant.provider_id != self.merchant_id:
-            self._finish_attempt(attempt, state="failed")
-            raise CommerceProviderError(
-                "MERCHANT_MISMATCH",
-                "Provider response does not match the configured merchant.",
-            )
-        preparation = self._sanitize_links(preparation)
-        self._persist_preparation(preparation, attempt)
-        self._checkout_refs[preparation.preparation_ref] = preparation.checkout_ref
-        self._finish_attempt(
-            attempt,
-            state="succeeded",
-            response_digest=preparation.preparation_digest,
-            provider_reference_digest=_digest(preparation.preparation_ref),
-        )
-        return preparation
-
-    def _persist_placement(self, placement: OrderPlacement, attempt: Any) -> None:
-        if self.order_store is None:
-            return
-        if placement.order_ref is not None:
-            self.order_store.save_order(
-                subject_id=COMMERCE_LOCAL_SUBJECT_ID,
-                order_id=placement.order_ref,
-                preparation_id=placement.preparation_ref,
-                provider_order_digest=_digest(placement.order_ref),
-                lifecycle=placement.lifecycle,
-                placement_attempt_id=attempt.attempt.attempt_id if attempt else None,
-            )
-        self._finish_attempt(
-            attempt,
-            state=(
-                "succeeded"
-                if placement.state == "succeeded"
-                else "outcome_unknown"
-                if placement.state == "outcome_unknown"
-                else "failed"
-            ),
-            response_digest=_digest(placement.model_dump(mode="json")),
-            provider_reference_digest=(
-                _digest(placement.order_ref) if placement.order_ref else None
-            ),
-        )
-
-    def _placement_result(
-        self, placement: OrderPlacement, attempt: Any = None
-    ) -> OrderPlacement | CommerceHandoff:
-        placement = self._sanitize_links(placement)
-        self._persist_placement(placement, attempt)
-        if placement.state != "action_required":
-            return placement
-        if self.order_store is not None:
-            self.order_store.invalidate_preparation(
-                subject_id=COMMERCE_LOCAL_SUBJECT_ID,
-                preparation_id=placement.preparation_ref,
-            )
-        return build_commerce_handoff(
-            reason_code="authentication_required",
-            configured_base_url=self.base_url,
-            candidate_url=placement.links.get("order"),
-        )
-
-    def _sanitize_links(self, value: _CommerceModelT) -> _CommerceModelT:
-        links = getattr(value, "links", None)
-        if not isinstance(links, dict):
-            return value
-        return value.model_copy(
-            update={
-                "links": safe_commerce_links(
-                    links,
-                    configured_base_url=self.base_url,
-                )
-            }
-        )
-
-    def _finish_attempt(self, attempt: Any, *, state: str, **facts: Any) -> None:
-        if self.order_store is None or attempt is None:
-            return
-        self.order_store.finish_attempt(
-            subject_id=COMMERCE_LOCAL_SUBJECT_ID,
-            attempt_id=attempt.attempt.attempt_id,
-            state=state,
-            **facts,
-        )
-
-    def _recover_placement(self, request: PlaceOrderRequest) -> OrderPlacement | None:
-        return self.provider.recover_placement(
-            PlacementRecoveryLocator(
-                idempotency_key=request.idempotency_key,
-                preparation_digest=request.preparation_digest,
-            )
-        )
-
-    def _recover_action(
-        self, request: ApplyOrderActionRequest
-    ) -> OrderActionResult | None:
-        return self.provider.recover_action(
-            ActionRecoveryLocator(
-                idempotency_key=request.idempotency_key,
-                action_digest=request.action_digest,
-            )
-        )
 
 
 def build_commerce_runtime(

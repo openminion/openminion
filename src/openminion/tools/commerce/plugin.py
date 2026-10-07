@@ -10,7 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from openminion.modules.commerce.provider import (
     CommerceOutcomeUnknown,
+    CommerceHandoff,
     CommerceProviderError,
+    OrderActionPreparation,
     OrderPreparation,
     RequestedItem,
 )
@@ -84,6 +86,24 @@ class CommercePlaceOrderArgs(_StrictArgs):
     preparation_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
+class CommercePrepareOrderActionArgs(_StrictArgs):
+    local_order_ref: str = Field(min_length=1)
+    order_revision: str = Field(min_length=1)
+    kind: Literal[
+        "cancel", "partial_cancel", "return", "partial_return", "refund_request"
+    ]
+    line_item_ids: tuple[str, ...] = ()
+    quantity: int | None = Field(default=None, ge=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=120)
+    refund_method: Literal["original_payment_method", "store_credit"] | None = None
+
+
+class CommerceApplyOrderActionArgs(_StrictArgs):
+    action_ref: str = Field(min_length=1)
+    preparation: OrderActionPreparation
+    action_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
 _PROVIDER_ERROR_MAP: dict[str, tuple[ErrorCode, str]] = {
     "NOT_FOUND": ("NOT_FOUND", "ORDER_NOT_FOUND"),
     "STALE_REVISION": ("INVALID_REQUEST", "STALE_PREPARATION"),
@@ -93,6 +113,8 @@ _PROVIDER_ERROR_MAP: dict[str, tuple[ErrorCode, str]] = {
     "CHECKOUT_NOT_READY": ("INVALID_REQUEST", "CHECKOUT_NOT_READY"),
     "MERCHANT_MISMATCH": ("INVALID_RESPONSE", "MERCHANT_MISMATCH"),
     "PROVIDER_UNAVAILABLE": ("UPSTREAM_ERROR", "PROVIDER_UNAVAILABLE"),
+    "ACTION_INELIGIBLE": ("INVALID_REQUEST", "UNSUPPORTED_ORDER"),
+    "ACTION_ALREADY_OPEN": ("INVALID_REQUEST", "ACTION_ALREADY_OPEN"),
 }
 
 
@@ -185,7 +207,10 @@ def _require_authorization(
             f"Exact one-time commerce {mutation} approval is required.",
             {
                 "commerce_code": TOOL_ERROR_CONFIRM_REQUIRED,
-                "mutation_kind": ("place" if method == "place_order" else "prepare"),
+                "mutation_kind": {
+                    "place_order": "place",
+                    "apply_order_action": "order_action",
+                }.get(method, "prepare"),
                 "provider_attempts": 0,
                 "recovery_required": False,
             },
@@ -298,11 +323,102 @@ def _h_place_order(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     }
 
 
+def _h_prepare_order_action(
+    args: dict[str, Any], ctx: RuntimeContext
+) -> dict[str, Any]:
+    runtime = resolve_commerce_runtime(ctx)
+    try:
+        preparation = runtime.prepare_action_public(args)
+    except PermissionError as exc:
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            str(exc),
+            {"commerce_code": "ORDER_ACCESS_DENIED"},
+        ) from exc
+    except CommerceProviderError as exc:
+        _raise_provider_error(exc)
+    return {
+        "ok": True,
+        "state": (
+            "handoff_required"
+            if isinstance(preparation, CommerceHandoff)
+            else "prepared"
+        ),
+        "data": preparation.model_dump(mode="json"),
+    }
+
+
+def _h_apply_order_action(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
+    runtime = resolve_commerce_runtime(ctx)
+    _require_authorization(
+        args,
+        ctx,
+        method="apply_order_action",
+        mutation="order action",
+    )
+    try:
+        authorization = ctx.policy_authorization
+        assert authorization is not None
+        result = runtime.apply_action_public(
+            args,
+            authorization_hash=authorization.invocation_hash,
+        )
+    except PermissionError as exc:
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            str(exc),
+            {"commerce_code": "ORDER_ACCESS_DENIED"},
+        ) from exc
+    except CommerceOutcomeUnknown:
+        _emit_action(
+            ctx,
+            action="apply_order_action",
+            outcome="outcome_unknown",
+            order_value=args["action_ref"],
+        )
+        return {
+            "ok": True,
+            "state": "outcome_unknown",
+            "data": {
+                "commerce_code": "OUTCOME_UNKNOWN",
+                "mutation_kind": "order_action",
+                "provider_attempts": 1,
+                "recovery_required": True,
+            },
+        }
+    except CommerceProviderError as exc:
+        _emit_action(
+            ctx,
+            action="apply_order_action",
+            outcome="failed",
+            order_value=args["action_ref"],
+        )
+        _raise_provider_error(exc)
+    _emit_action(
+        ctx,
+        action="apply_order_action",
+        outcome=result.state,
+        order_value=result.order_ref,
+    )
+    return {
+        "ok": True,
+        "state": result.state,
+        "data": {
+            **result.model_dump(mode="json"),
+            "mutation_kind": "order_action",
+            "provider_attempts": 1,
+            "recovery_required": result.state == "outcome_unknown",
+        },
+    }
+
+
 __all__ = [
     "CheckoutInspectArgs",
+    "CommerceApplyOrderActionArgs",
     "CommerceInspectArgs",
     "CommercePlaceOrderArgs",
     "CommercePrepareOrderArgs",
+    "CommercePrepareOrderActionArgs",
     "OrderActionsInspectArgs",
     "OrderInspectArgs",
     "ProductInspectArgs",

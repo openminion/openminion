@@ -215,6 +215,7 @@ def test_observations_survive_store_restart(tmp_path: Path) -> None:
 
 def test_concurrent_same_identity_creates_one_observation(tmp_path: Path) -> None:
     db_path = tmp_path / "skill.db"
+    SQLiteSkillStore(db_path, wal=True).close()
 
     def observe_once() -> str:
         store = SQLiteSkillStore(db_path, wal=True)

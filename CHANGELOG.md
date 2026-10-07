@@ -14,6 +14,11 @@ This file tracks package-facing release notes for `openminion`.
 - Fail clearly when decorated tools lack the canonical runtime registry or a
   runtime omits its canonical response body; preserve `0.1.x` support for one
   schema-valid JSON object wrapped in provider prose.
+- Add a config-disabled commerce order lifecycle foundation with exact
+  one-time approvals, durable submit-once recovery, tracking, cancellation,
+  return and refund preparation, typed handoff, and deterministic evidence.
+  Production commerce remains unavailable until a provider passes sandbox and
+  release gates.
 
 ## Current package line - 2026-10-06
 

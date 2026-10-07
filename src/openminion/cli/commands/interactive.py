@@ -262,7 +262,11 @@ def _build_update_notice_resolver(
     return lambda: _resolve_update_notice(args)
 
 
-def run_interactive(args: argparse.Namespace) -> int:
+def run_interactive(
+    args: argparse.Namespace,
+    *,
+    runtime_factory: Callable[..., Any] | None = None,
+) -> int:
     from openminion.cli.presentation.styles import set_color_mode
 
     set_color_mode(getattr(args, "color", None))
@@ -281,7 +285,8 @@ def run_interactive(args: argparse.Namespace) -> int:
         from openminion.api.runtime import APIRuntime
         from openminion.cli.status.surface import record_surface_event
 
-        runtime = APIRuntime.from_config_path(
+        factory = runtime_factory or APIRuntime.from_config_path
+        runtime = factory(
             getattr(args, "config", None),
             home_root=getattr(args, "home_root", None),
             data_root=getattr(args, "data_root", None),

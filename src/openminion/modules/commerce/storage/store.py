@@ -16,9 +16,10 @@ from openminion.modules.storage import (
 from openminion.modules.storage.record_store import RecordStore
 
 from ..models import CommerceDigest, CommerceLifecycleState
-from ..provider import OrderPreparation
+from ..provider import OrderActionPreparation, OrderPreparation
 from .migrations import list_migrations
 from .models import (
+    ActionPreparationRecord,
     AttemptKind,
     AttemptReservation,
     AttemptState,
@@ -221,6 +222,56 @@ class _CommerceOrderStoreOps:
         )
         return _order_from_row(rows[0]) if rows else None
 
+    def save_action_preparation(
+        self,
+        *,
+        subject_id: str,
+        order_id: str,
+        prepared: OrderActionPreparation,
+    ) -> ActionPreparationRecord:
+        if self.get_order(subject_id, order_id) is None:
+            raise ValueError("action order must belong to the same subject")
+        prepared_json = _canonical_json(prepared.model_dump(mode="json"))
+        created_at = _now_iso()
+        created = self._record_store.execute_count(
+            """
+            INSERT INTO commerce_action_preparations(
+                action_id, subject_id, order_id, prepared_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(action_id) DO NOTHING
+            """,
+            (
+                prepared.action_ref,
+                subject_id,
+                order_id,
+                prepared_json,
+                created_at,
+            ),
+        )
+        record = self.get_action_preparation(subject_id, prepared.action_ref)
+        if created != 1 and (
+            record is None or record.order_id != order_id or record.prepared != prepared
+        ):
+            raise ValueError("action preparation identity is owned by different facts")
+        if record is None:
+            raise RuntimeError("action preparation is not readable")
+        return record
+
+    def get_action_preparation(
+        self, subject_id: str, action_id: str
+    ) -> ActionPreparationRecord | None:
+        rows = self._record_store.query_dicts(
+            """
+            SELECT action_id, subject_id, order_id, prepared_json,
+                   created_at, invalidated_at
+            FROM commerce_action_preparations
+            WHERE subject_id = ? AND action_id = ?
+            """,
+            (subject_id, action_id),
+        )
+        return _action_preparation_from_row(rows[0]) if rows else None
+
     def update_order_lifecycle(
         self,
         *,
@@ -364,6 +415,7 @@ class _CommerceOrderStoreOps:
         operation: str,
         idempotency_key: str,
         request_digest: CommerceDigest,
+        authorization_hash: CommerceDigest | None = None,
     ) -> AttemptReservation:
         if self.get_order(subject_id, order_id) is None:
             raise ValueError("action order must belong to the same subject")
@@ -374,6 +426,7 @@ class _CommerceOrderStoreOps:
             operation=operation,
             idempotency_key=idempotency_key,
             request_digest=request_digest,
+            authorization_hash=authorization_hash,
         )
 
     def get_attempt_by_idempotency(
@@ -405,6 +458,21 @@ class _CommerceOrderStoreOps:
             SET state = 'submitted', attempt_count = attempt_count + 1,
                 updated_at = ?
             WHERE subject_id = ? AND attempt_id = ? AND kind = 'placement'
+              AND state = 'reserved' AND attempt_count = 0
+            """,
+            (_now_iso(), subject_id, attempt_id),
+        )
+        return self._get_attempt(subject_id, attempt_id) if updated == 1 else None
+
+    def begin_action_attempt(
+        self, *, subject_id: str, attempt_id: str
+    ) -> CommerceAttempt | None:
+        updated = self._record_store.execute_count(
+            """
+            UPDATE commerce_attempts
+            SET state = 'submitted', attempt_count = attempt_count + 1,
+                updated_at = ?
+            WHERE subject_id = ? AND attempt_id = ? AND kind = 'action'
               AND state = 'reserved' AND attempt_count = 0
             """,
             (_now_iso(), subject_id, attempt_id),
@@ -613,6 +681,23 @@ def _order_from_row(row: dict[str, object]) -> OrderRecord:
     )
 
 
+def _action_preparation_from_row(
+    row: dict[str, object],
+) -> ActionPreparationRecord:
+    return ActionPreparationRecord(
+        action_id=str(row["action_id"]),
+        subject_id=str(row["subject_id"]),
+        order_id=str(row["order_id"]),
+        prepared=OrderActionPreparation.model_validate_json(str(row["prepared_json"])),
+        created_at=str(row["created_at"]),
+        invalidated_at=(
+            str(row["invalidated_at"])
+            if row.get("invalidated_at") is not None
+            else None
+        ),
+    )
+
+
 def _snapshot_from_row(row: dict[str, object]) -> MaterialSnapshot:
     return MaterialSnapshot(
         snapshot_id=str(row["snapshot_id"]),
@@ -726,6 +811,19 @@ _SCHEMA_DDL = (
         cursor_digest TEXT,
         observed_at TEXT NOT NULL,
         UNIQUE(subject_id, target_type, target_id, payload_digest)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS commerce_action_preparations (
+        action_id TEXT PRIMARY KEY,
+        subject_id TEXT NOT NULL,
+        order_id TEXT NOT NULL,
+        prepared_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        invalidated_at TEXT,
+        UNIQUE(subject_id, action_id),
+        FOREIGN KEY(subject_id, order_id)
+            REFERENCES commerce_orders(subject_id, order_id)
     )
     """,
     """

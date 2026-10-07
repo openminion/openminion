@@ -82,8 +82,10 @@ def _optional_contract_omissions(
         MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
         MODEL_BLOCKCHAIN_SEND_TRANSACTION,
         MODEL_COMMERCE_INSPECT,
+        MODEL_COMMERCE_APPLY_ORDER_ACTION,
         MODEL_COMMERCE_PLACE_ORDER,
         MODEL_COMMERCE_PREPARE_ORDER,
+        MODEL_COMMERCE_PREPARE_ORDER_ACTION,
     )
     from openminion.modules.tool.contracts.runtime_ids import (
         RUNTIME_BLOCKCHAIN_DEBUG,
@@ -91,8 +93,10 @@ def _optional_contract_omissions(
         RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
         RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
         RUNTIME_COMMERCE_INSPECT,
+        RUNTIME_COMMERCE_APPLY_ORDER_ACTION,
         RUNTIME_COMMERCE_PLACE_ORDER,
         RUNTIME_COMMERCE_PREPARE_ORDER,
+        RUNTIME_COMMERCE_PREPARE_ORDER_ACTION,
     )
 
     runtime_cfg = getattr(config, "runtime", config)
@@ -125,20 +129,46 @@ def _optional_contract_omissions(
         missing_model_ids.update(
             {
                 MODEL_COMMERCE_INSPECT,
+                MODEL_COMMERCE_APPLY_ORDER_ACTION,
                 MODEL_COMMERCE_PLACE_ORDER,
                 MODEL_COMMERCE_PREPARE_ORDER,
+                MODEL_COMMERCE_PREPARE_ORDER_ACTION,
             }
         )
         missing_runtime_ids.update(
             {
                 RUNTIME_COMMERCE_INSPECT,
+                RUNTIME_COMMERCE_APPLY_ORDER_ACTION,
                 RUNTIME_COMMERCE_PLACE_ORDER,
                 RUNTIME_COMMERCE_PREPARE_ORDER,
+                RUNTIME_COMMERCE_PREPARE_ORDER_ACTION,
             }
         )
     elif not commerce_cfg.writes_enabled:
-        missing_model_ids.add(MODEL_COMMERCE_PLACE_ORDER)
-        missing_runtime_ids.add(RUNTIME_COMMERCE_PLACE_ORDER)
+        missing_model_ids.update(
+            {
+                MODEL_COMMERCE_APPLY_ORDER_ACTION,
+                MODEL_COMMERCE_PLACE_ORDER,
+                MODEL_COMMERCE_PREPARE_ORDER_ACTION,
+            }
+        )
+        missing_runtime_ids.update(
+            {
+                RUNTIME_COMMERCE_APPLY_ORDER_ACTION,
+                RUNTIME_COMMERCE_PLACE_ORDER,
+                RUNTIME_COMMERCE_PREPARE_ORDER_ACTION,
+            }
+        )
+    elif not commerce_cfg.order_actions_enabled:
+        missing_model_ids.update(
+            {MODEL_COMMERCE_APPLY_ORDER_ACTION, MODEL_COMMERCE_PREPARE_ORDER_ACTION}
+        )
+        missing_runtime_ids.update(
+            {
+                RUNTIME_COMMERCE_APPLY_ORDER_ACTION,
+                RUNTIME_COMMERCE_PREPARE_ORDER_ACTION,
+            }
+        )
     return missing_model_ids, missing_runtime_ids
 
 

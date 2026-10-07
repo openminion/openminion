@@ -35,6 +35,11 @@ Readiness covers the executable only. Credentials, network access, Semgrep
 rules, Trivy databases, and other family-owned assets retain their existing
 checks.
 
+Commerce does not use executable dependency readiness. Its tools remain absent
+because no production provider is selected; local fixture injection is limited
+to tests. The current lifecycle and evidence boundaries are documented in
+[Commerce Order Care](guides/commerce-order-care.md).
+
 ## Initial Tool Families
 
 Security tools use these operator-owned settings when present:

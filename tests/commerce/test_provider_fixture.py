@@ -301,6 +301,26 @@ def test_fixture_recovers_dropped_placement_and_action_responses() -> None:
     assert provider.ledger[-1].operation == "apply_action"
 
 
+def test_fixture_retains_latest_order_inspection_revision() -> None:
+    runtime, provider, _, place_request = _place()
+    placement = runtime.place_order(place_request)
+    provider.set_order_inspection_lifecycles(
+        (
+            placement.lifecycle,
+            placement.lifecycle.model_copy(update={"fulfillment": "partial"}),
+        )
+    )
+    request = InspectRequest(
+        kind="order",
+        merchant_id="merchant-fixture",
+        order_ref=str(placement.order_ref),
+    )
+
+    assert runtime.inspect(request).revision == "order-1:r1"
+    assert runtime.inspect(request).revision == "order-1:r2"
+    assert runtime.inspect(request).revision == "order-1:r2"
+
+
 def test_runtime_recovers_dropped_preparation_response() -> None:
     runtime, provider = build_fixture_commerce_runtime()
     provider.drop_next_response("prepare_order")

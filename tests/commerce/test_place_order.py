@@ -13,13 +13,16 @@ from openminion.tools.commerce import ALL_COMMERCE_TOOLS
 from tests.helpers.commerce_runtime import build_fixture_commerce_runtime
 
 
-def _config(*, enabled: bool, writes_enabled: bool) -> SimpleNamespace:
+def _config(
+    *, enabled: bool, writes_enabled: bool, order_actions_enabled: bool = False
+) -> SimpleNamespace:
     return SimpleNamespace(
         runtime=SimpleNamespace(
             tools=SimpleNamespace(
                 commerce=CommerceToolRuntimeConfig(
                     enabled=enabled,
                     writes_enabled=writes_enabled,
+                    order_actions_enabled=order_actions_enabled,
                     provider="fixture",
                     base_url="https://fixture.invalid",
                     merchant_id="merchant-fixture",
@@ -34,9 +37,19 @@ def _config(*, enabled: bool, writes_enabled: bool) -> SimpleNamespace:
     )
 
 
-def _bootstrap(tmp_path, *, enabled: bool, writes_enabled: bool):
+def _bootstrap(
+    tmp_path,
+    *,
+    enabled: bool,
+    writes_enabled: bool,
+    order_actions_enabled: bool = False,
+):
     return build_runtime_bootstrap(
-        config=_config(enabled=enabled, writes_enabled=writes_enabled),
+        config=_config(
+            enabled=enabled,
+            writes_enabled=writes_enabled,
+            order_actions_enabled=order_actions_enabled,
+        ),
         workspace_root=tmp_path,
         run_root=tmp_path / "run",
         strict=False,
@@ -117,13 +130,24 @@ def test_place_order_exposure_tracks_write_phase(tmp_path) -> None:
     write_enabled = _bootstrap(
         tmp_path / "write-enabled", enabled=True, writes_enabled=True
     )
+    action_enabled = _bootstrap(
+        tmp_path / "action-enabled",
+        enabled=True,
+        writes_enabled=True,
+        order_actions_enabled=True,
+    )
 
     assert _commerce_names(disabled) == set()
     assert _commerce_names(read_enabled) == {
         "commerce.inspect",
         "commerce.prepare_order",
     }
-    assert _commerce_names(write_enabled) == set(ALL_COMMERCE_TOOLS)
+    assert _commerce_names(write_enabled) == {
+        "commerce.inspect",
+        "commerce.prepare_order",
+        "commerce.place_order",
+    }
+    assert _commerce_names(action_enabled) == set(ALL_COMMERCE_TOOLS)
     assert disabled.contract_drift_report.has_drift is False
     assert read_enabled.contract_drift_report.has_drift is False
     assert write_enabled.contract_drift_report.has_drift is False

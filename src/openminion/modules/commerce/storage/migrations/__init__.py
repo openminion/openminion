@@ -13,6 +13,7 @@ MIGRATIONS = (
     BASELINE_REVISION,
     "0002_preparation_invalidation",
     "0003_placement_attempt_authorization",
+    "0004_action_preparations",
 )
 
 

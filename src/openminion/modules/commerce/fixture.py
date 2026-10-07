@@ -10,7 +10,9 @@ from typing import Literal, cast
 from .contracts import OrderActionResultState, PlacementState
 from .models import (
     ActionRequestState,
+    CommerceHandoff,
     CommerceLifecycleState,
+    CommerceHandoffReason,
     OrderState,
     PaymentState,
     ShipmentState,
@@ -34,6 +36,7 @@ from .provider import (
     InspectRequest,
     OrderActionKind,
     OrderActionPreparation,
+    OrderActionItem,
     OrderActionResult,
     OrderActionsInspection,
     OrderInspection,
@@ -48,6 +51,7 @@ from .provider import (
     ProviderOrderContext,
     RefundDestination,
     ShipmentInspection,
+    build_commerce_handoff,
 )
 
 _FIXTURE_EXPIRES_AT = "2030-01-01T00:00:00Z"
@@ -117,6 +121,10 @@ class FixtureCommerceProvider:
         self._orders: dict[str, OrderPlacement] = {}
         self._next_placement_state: PlacementState = "succeeded"
         self._next_action_state: OrderActionResultState = "completed"
+        self._next_action_handoff: CommerceHandoffReason | None = None
+        self._order_inspection_lifecycles: list[CommerceLifecycleState] = []
+        self._order_inspection_revision = 1
+        self._last_order_inspection_lifecycle: CommerceLifecycleState | None = None
         self._drop_next: set[str] = set()
 
     def set_next_placement_state(self, state: PlacementState) -> None:
@@ -124,6 +132,29 @@ class FixtureCommerceProvider:
 
     def set_next_action_state(self, state: OrderActionResultState) -> None:
         self._next_action_state = state
+
+    def set_next_action_handoff(self, reason: CommerceHandoffReason) -> None:
+        self._next_action_handoff = reason
+
+    def advance_action_result(
+        self, idempotency_key: str, state: OrderActionResultState
+    ) -> None:
+        result = self._action_results[idempotency_key]
+        preparation = self._action_preparation_for_ref(result.action_ref)
+        lifecycle = self._action_lifecycle(preparation, state)
+        self._action_results[idempotency_key] = result.model_copy(
+            update={"state": state, "lifecycle": lifecycle}
+        )
+        self._orders[result.order_ref] = self._orders[result.order_ref].model_copy(
+            update={"lifecycle": lifecycle}
+        )
+
+    def set_order_inspection_lifecycles(
+        self, lifecycles: tuple[CommerceLifecycleState, ...]
+    ) -> None:
+        self._order_inspection_lifecycles = list(lifecycles)
+        self._order_inspection_revision = 1
+        self._last_order_inspection_lifecycle = None
 
     def advance_checkout_revision(self) -> None:
         self.checkout_revision = "checkout-1:r2"
@@ -162,6 +193,22 @@ class FixtureCommerceProvider:
             )
         if request.kind == "order":
             placement = self._require_order(request.reference)
+            if self._order_inspection_lifecycles:
+                lifecycle = self._order_inspection_lifecycles.pop(0)
+                if (
+                    self._last_order_inspection_lifecycle is not None
+                    and lifecycle != self._last_order_inspection_lifecycle
+                ):
+                    self._order_inspection_revision += 1
+                revision = f"{request.reference}:r{self._order_inspection_revision}"
+                self._last_order_inspection_lifecycle = lifecycle
+                placement = placement.model_copy(
+                    update={"lifecycle": lifecycle, "order_revision": revision}
+                )
+                self._orders[request.reference] = placement
+            else:
+                lifecycle = placement.lifecycle
+                revision = placement.order_revision or "order-1:r1"
             terminal_action_refs = {
                 result.action_ref
                 for result in self._action_results.values()
@@ -169,9 +216,9 @@ class FixtureCommerceProvider:
             }
             return OrderInspection(
                 reference=request.reference,
-                revision=placement.order_revision or "order-1:r1",
+                revision=revision,
                 items=(self.item,),
-                lifecycle=placement.lifecycle,
+                lifecycle=lifecycle,
                 total=self.item.unit_price,
                 open_action_ids=tuple(
                     sorted(
@@ -372,7 +419,15 @@ class FixtureCommerceProvider:
 
     def prepare_action(
         self, request: PrepareOrderActionRequest
-    ) -> OrderActionPreparation:
+    ) -> OrderActionPreparation | CommerceHandoff:
+        if self._next_action_handoff is not None:
+            reason = self._next_action_handoff
+            self._next_action_handoff = None
+            return build_commerce_handoff(
+                reason_code=reason,
+                configured_base_url="https://fixture.invalid",
+                candidate_url="https://fixture.invalid",
+            )
         recovered = self._action_preparations.get(request.idempotency_key)
         if recovered is not None:
             return recovered
@@ -385,13 +440,34 @@ class FixtureCommerceProvider:
                 "ACTION_INELIGIBLE", "Partial actions require line item ids."
             )
         digest = _fixture_digest(request.model_dump(mode="json"))
+        action_ref = f"action-{len(self._action_preparations) + 1}"
+        is_return = request.kind in {"return", "partial_return"}
+        affected_line_item_ids = request.line_item_ids or (str(self.item.line_item_id),)
+        affected_quantity = request.quantity or (
+            1 if request.line_item_ids else self.item.quantity
+        )
         preparation = OrderActionPreparation(
-            action_ref=f"action-{len(self._action_preparations) + 1}",
+            action_ref=action_ref,
+            action_revision=f"{action_ref}:r1",
             order_ref=request.order_ref,
             order_revision=request.order_revision,
             kind=request.kind,
+            affected_items=tuple(
+                OrderActionItem(
+                    line_item_id=line_item_id,
+                    quantity=affected_quantity,
+                )
+                for line_item_id in affected_line_item_ids
+            ),
+            reason=request.reason,
             eligible=True,
             consequence=self._action_consequence(request.kind),
+            fees=Money(amount_minor=0, currency=self.item.unit_price.currency),
+            refund=Money(
+                amount_minor=self.item.unit_price.amount_minor
+                * (request.quantity or self.item.quantity),
+                currency=self.item.unit_price.currency,
+            ),
             refund_method=request.refund_method,
             refund_destination=(
                 RefundDestination(
@@ -413,11 +489,10 @@ class FixtureCommerceProvider:
                 if request.kind == "return"
                 else ()
             ),
-            return_destination=(
-                self.destination
-                if request.kind in {"return", "partial_return"}
-                else None
-            ),
+            return_destination=(self.destination if is_return else None),
+            return_method="mail" if is_return else None,
+            shipment_responsibility="buyer" if is_return else None,
+            deadlines=("Return by 2030-01-15",) if is_return else (),
             expires_at=_FIXTURE_EXPIRES_AT,
             action_digest=digest,
         )
@@ -446,6 +521,9 @@ class FixtureCommerceProvider:
             links={"order": f"https://fixture.invalid/orders/{preparation.order_ref}"},
         )
         self._action_results[request.idempotency_key] = result
+        self._orders[preparation.order_ref] = self._orders[
+            preparation.order_ref
+        ].model_copy(update={"lifecycle": lifecycle})
         self.ledger.append(
             FixtureLedgerEntry(
                 operation="apply_action",

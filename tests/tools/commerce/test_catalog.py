@@ -8,17 +8,24 @@ from pydantic import ValidationError
 from openminion.modules.commerce.config import CommerceToolRuntimeConfig
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 from openminion.modules.commerce.provider import CommerceProviderError
+from openminion.modules.tool.runtime.policy_defaults import DEFAULT_POLICY
 from openminion.modules.commerce.models import MerchantIdentity
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 from openminion.modules.tool.plugin_api import stable_invocation_hash
 from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
 from openminion.tools.commerce import ALL_COMMERCE_TOOLS, REGISTRAR
+from openminion.tools.commerce.family import COMMERCE_FAMILY
 from openminion.tools.commerce.plugin import CommerceInspectArgs
 from tests.helpers.commerce_runtime import build_fixture_commerce_runtime
 
 
-def _config(*, enabled: bool) -> SimpleNamespace:
+def _config(
+    *,
+    enabled: bool,
+    writes_enabled: bool = False,
+    order_actions_enabled: bool = False,
+) -> SimpleNamespace:
     return SimpleNamespace(
         runtime=SimpleNamespace(
             tools=SimpleNamespace(
@@ -30,6 +37,8 @@ def _config(*, enabled: bool) -> SimpleNamespace:
                     provider_secret_key="provider-secret",
                     buyer_profile_record_id="buyer-profile",
                     payment_token_record_id="payment-token",
+                    writes_enabled=writes_enabled,
+                    order_actions_enabled=order_actions_enabled,
                 )
             )
         ),
@@ -38,9 +47,19 @@ def _config(*, enabled: bool) -> SimpleNamespace:
     )
 
 
-def _bootstrap(tmp_path, *, enabled: bool):
+def _bootstrap(
+    tmp_path,
+    *,
+    enabled: bool,
+    writes_enabled: bool = False,
+    order_actions_enabled: bool = False,
+):
     return build_runtime_bootstrap(
-        config=_config(enabled=enabled),
+        config=_config(
+            enabled=enabled,
+            writes_enabled=writes_enabled,
+            order_actions_enabled=order_actions_enabled,
+        ),
         workspace_root=tmp_path,
         run_root=tmp_path / "run",
         strict=False,
@@ -49,6 +68,10 @@ def _bootstrap(tmp_path, *, enabled: bool):
 
 def _commerce_names(bootstrap) -> set[str]:
     return {name for name in bootstrap.registry.list() if name.startswith("commerce.")}
+
+
+def test_default_policy_allows_commerce_family() -> None:
+    assert "commerce." in DEFAULT_POLICY["tools"]["allow_prefix"]
 
 
 def _prepare_args() -> dict[str, object]:
@@ -111,6 +134,30 @@ def test_commerce_catalog_exposes_zero_disabled_and_exactly_two_enabled(
         ALL_COMMERCE_TOOLS
     )
     assert all(not item.aliases for item in manifest.model_tools)
+
+
+def test_commerce_catalog_exposes_three_write_and_five_action_tools(tmp_path) -> None:
+    write_enabled = _bootstrap(
+        tmp_path / "write",
+        enabled=True,
+        writes_enabled=True,
+    )
+    action_enabled = _bootstrap(
+        tmp_path / "actions",
+        enabled=True,
+        writes_enabled=True,
+        order_actions_enabled=True,
+    )
+
+    assert len(_commerce_names(write_enabled)) == 3
+    assert _commerce_names(action_enabled) == set(ALL_COMMERCE_TOOLS)
+    assert action_enabled.contract_drift_report is not None
+    assert action_enabled.contract_drift_report.has_drift is False
+    [profile] = COMMERCE_FAMILY.exposure_profiles
+    assert profile.profile_id == "commerce_order_care"
+    assert profile.tool_names == frozenset(ALL_COMMERCE_TOOLS)
+    assert profile.risk.tier == "apply"
+    assert profile.risk.requires_approval is True
 
 
 @pytest.mark.parametrize(

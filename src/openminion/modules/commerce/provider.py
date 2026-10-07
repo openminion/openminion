@@ -6,14 +6,18 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
-from .contracts import (
-    OrderActionKind,
-    OrderActionResultState,
-    PlacementState,
-    RefundMethod,
+from .action_models import (
+    ActionRecoveryLocator,
+    ApplyOrderActionRequest,
+    OrderActionItem,
+    OrderActionPreparation,
+    OrderActionResult,
+    PrepareOrderActionRequest,
+    RefundDestination,
 )
+from .contracts import OrderActionKind, PlacementState
 from .inspection import (
     CheckoutInspection,
     CommerceInspection,
@@ -249,74 +253,6 @@ class PlacementRecoveryLocator(CommerceModel):
     preparation_digest: CommerceDigest
 
 
-class PrepareOrderActionRequest(CommerceModel):
-    idempotency_key: str = Field(min_length=1)
-    order_ref: str = Field(min_length=1)
-    order_revision: str = Field(min_length=1)
-    kind: OrderActionKind
-    line_item_ids: tuple[str, ...] = ()
-    quantity: int | None = Field(default=None, ge=1)
-    reason: str | None = Field(default=None, min_length=1)
-    refund_method: RefundMethod | None = None
-
-    @model_validator(mode="after")
-    def validate_action_details(self) -> "PrepareOrderActionRequest":
-        if self.kind in {"partial_cancel", "partial_return"} and (
-            not self.line_item_ids or self.quantity is None
-        ):
-            raise ValueError("partial actions require line_item_ids and quantity")
-        if (
-            self.kind in {"return", "partial_return", "refund_request"}
-            and not self.reason
-        ):
-            raise ValueError("return and refund actions require a reason")
-        if self.kind == "refund_request" and self.refund_method is None:
-            raise ValueError("refund requests require a refund method")
-        return self
-
-
-class RefundDestination(CommerceModel):
-    destination_digest: CommerceDigest
-    label: str = Field(min_length=1)
-
-
-class OrderActionPreparation(CommerceModel):
-    action_ref: str = Field(min_length=1)
-    order_ref: str = Field(min_length=1)
-    order_revision: str = Field(min_length=1)
-    kind: OrderActionKind
-    eligible: bool
-    consequence: str = Field(min_length=1)
-    refund_method: RefundMethod | None = None
-    refund_destination: RefundDestination | None = None
-    returnable_line_item_ids: tuple[str, ...] = ()
-    return_destination: SafeDestination | None = None
-    expires_at: str = Field(min_length=1)
-    action_digest: CommerceDigest
-
-
-class ApplyOrderActionRequest(CommerceModel):
-    idempotency_key: str = Field(min_length=1)
-    action_ref: str = Field(min_length=1)
-    order_ref: str = Field(min_length=1)
-    action_digest: CommerceDigest
-
-
-class OrderActionResult(CommerceModel):
-    idempotency_key: str = Field(min_length=1)
-    action_ref: str = Field(min_length=1)
-    order_ref: str = Field(min_length=1)
-    state: OrderActionResultState
-    lifecycle: CommerceLifecycleState
-    warnings: tuple[str, ...] = ()
-    links: dict[str, str] = Field(default_factory=dict)
-
-
-class ActionRecoveryLocator(CommerceModel):
-    idempotency_key: str = Field(min_length=1)
-    action_digest: CommerceDigest
-
-
 class CommerceProvider(Protocol):
     provider_id: str
 
@@ -338,7 +274,7 @@ class CommerceProvider(Protocol):
 
     def prepare_action(
         self, request: PrepareOrderActionRequest
-    ) -> OrderActionPreparation: ...
+    ) -> OrderActionPreparation | CommerceHandoff: ...
 
     def apply_action(self, request: ApplyOrderActionRequest) -> OrderActionResult: ...
 
@@ -360,6 +296,7 @@ __all__ = [
     "FulfillmentSelection",
     "InspectRequest",
     "OrderActionKind",
+    "OrderActionItem",
     "OrderActionPreparation",
     "OrderActionResult",
     "OrderActionsInspection",

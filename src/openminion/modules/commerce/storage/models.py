@@ -18,7 +18,7 @@ from ..models import (
     SafePaymentMethod,
     SellerIdentity,
 )
-from ..provider import OrderPreparation
+from ..provider import OrderActionPreparation, OrderPreparation
 
 AttemptKind = Literal["preparation", "placement", "action"]
 AttemptState = Literal[
@@ -65,6 +65,15 @@ class OrderRecord(CommerceModel):
     updated_at: str = Field(min_length=1)
 
 
+class ActionPreparationRecord(CommerceModel):
+    action_id: str = Field(min_length=1)
+    subject_id: str = Field(min_length=1)
+    order_id: str = Field(min_length=1)
+    prepared: OrderActionPreparation
+    created_at: str = Field(min_length=1)
+    invalidated_at: str | None = Field(default=None, min_length=1)
+
+
 class MaterialSnapshot(CommerceModel):
     snapshot_id: str = Field(min_length=1)
     subject_id: str = Field(min_length=1)
@@ -101,6 +110,7 @@ class AttemptReservation(CommerceModel):
 
 __all__ = [
     "AttemptKind",
+    "ActionPreparationRecord",
     "AttemptReservation",
     "AttemptState",
     "CommerceAttempt",
