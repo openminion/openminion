@@ -9,9 +9,16 @@ from unittest.mock import patch
 
 import pytest
 
+from openminion.modules.brain.bootstrap.resolve import (
+    apply_resolved_act_route,
+    build_internal_dispatch,
+    resolve_working_act_route,
+)
+from openminion.modules.brain.loop.adaptive import ActLoopMode
 from openminion.modules.brain.schemas import (
     ActionError,
     ActionResult,
+    ActDecision,
     AdaptiveBudgetConfig,
     BudgetCounters,
     Decision,
@@ -66,6 +73,7 @@ from openminion.modules.brain.loop.tools.confirmation import (
 from openminion.modules.brain.loop.tools.response_payloads import (
     _FINALIZATION_STATUS_GUIDANCE,
 )
+from openminion.modules.brain.loop.tools.shortlisting import shortlist_tool_schemas
 from openminion.modules.brain.loop.tools.budget_answer import (
     _missing_contract_outcome,
 )
@@ -3415,6 +3423,185 @@ def test_default_runtime_parses_plan_revision_trailer() -> None:
     assert normalized.task_plan_revision["plan_id"] == "plan-1"
     assert normalized.task_plan_revision["reason"] == "scope changed"
     assert normalized.task_plan_revision["revised_steps"][0]["step_id"] == "ship"
+
+
+@pytest.mark.parametrize(
+    ("user_input", "target_tool", "target_arguments"),
+    [
+        (
+            (
+                "Research the current OpenMinion contributor guidance, verify it "
+                "against the repository README, and report whether they agree."
+            ),
+            "file.read",
+            {"path": "README.md"},
+        ),
+        (
+            (
+                "Research Acme staking, discover where its public state lives, "
+                "inspect the current rate, and prepare changing it to 5 percent."
+            ),
+            "fixture.blockchain.action",
+            {"intent": "inspect_and_prepare", "rate_percent": 5},
+        ),
+    ],
+)
+def test_general_act_route_composes_research_with_requested_action(
+    user_input: str,
+    target_tool: str,
+    target_arguments: dict[str, Any],
+) -> None:
+    research_summary = "found canonical public evidence"
+    target_summary = "verified the requested target action"
+    final_text = "Research and target verification are complete."
+
+    def _tool_call_response(
+        *, call_id: str, name: str, arguments: dict[str, Any]
+    ) -> LLMResponse:
+        return LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            tool_calls=[ToolCall(id=call_id, name=name, arguments=arguments)],
+            finish_reason="tool_calls",
+        )
+
+    state = _state(tool_calls=4, llm_calls_max=6)
+    decision = ActDecision(mode="act")
+    route = resolve_working_act_route(
+        decision=decision,
+        state=state,
+        default_act_profile=None,
+        has_new_user_input=True,
+    )
+    apply_resolved_act_route(decision=decision, route=route)
+    dispatch = build_internal_dispatch(
+        SimpleNamespace(state=state, decision=decision, user_input=user_input)
+    )
+
+    assert route.act_profile == "general"
+    assert isinstance(dispatch.handler, ActLoopMode)
+    assert dispatch.decision.act_profile == "general"
+
+    candidate_specs = _tool_specs(
+        "web.search",
+        target_tool,
+        "web.fetch",
+        "file.find",
+        "file.search",
+        "exec.run",
+        "exec.status",
+        "artifact.read",
+        "time",
+        "weather",
+    )
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text='{"tool_ids":["web.search"]}',
+            ),
+            _tool_call_response(
+                call_id="research",
+                name="web.search",
+                arguments={"query": user_input},
+            ),
+            _tool_call_response(
+                call_id="request-target",
+                name=TOOL_REQUEST_TOOL_NAME,
+                arguments={"name": target_tool},
+            ),
+            _tool_call_response(
+                call_id="use-target",
+                name=target_tool,
+                arguments=target_arguments,
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text=final_text,
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "Research and requested action both completed.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    shortlist = shortlist_tool_schemas(
+        runtime=runtime,
+        model="fake-model",
+        user_messages=[Message(role="user", content=user_input)],
+        tool_specs=candidate_specs,
+        metadata={"purpose": "tool_schema_shortlist"},
+    )
+    loop_ctx = _LoopContext(
+        state=state,
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary=research_summary,
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary=target_summary,
+                ),
+            ),
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset(spec.name for spec in candidate_specs),
+            max_iterations=5,
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content=user_input)],
+        tool_specs=shortlist.active_tool_specs,
+        requestable_tool_specs=shortlist.requestable_tool_specs,
+    )
+
+    assert shortlist.selected_tool_names == ("web.search",)
+    assert runtime.calls[0]["tool_choice"] == "none"
+    assert all(call["tool_choice"] == "auto" for call in runtime.calls[1:])
+    first_loop_tools = {spec.name for spec in runtime.calls[1]["tools"]}
+    assert TOOL_REQUEST_TOOL_NAME in first_loop_tools
+    assert target_tool not in first_loop_tools
+    assert any(
+        target_tool in {spec.name for spec in call["tools"]}
+        for call in runtime.calls[2:]
+    )
+    assert {command.tool_name for command in loop_ctx.commands} == {
+        "web.search",
+        target_tool,
+    }
+    assert any(
+        research_summary in str(message.content)
+        for call in runtime.calls[2:]
+        for message in call["messages"]
+        if message.role == "tool"
+    )
+    assert any(
+        target_summary in str(message.content)
+        for call in runtime.calls[2:]
+        for message in call["messages"]
+        if message.role == "tool"
+    )
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == final_text
 
 
 def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
