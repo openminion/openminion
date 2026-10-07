@@ -513,11 +513,14 @@ def _capture_commerce_scene(*, width: int) -> dict:
         commerce_result_lines(
             OrderActionPreparation(
                 action_ref="action-1",
+                action_revision="action-1:r1",
                 order_ref="order-1",
                 order_revision="order-r1",
                 kind="refund_request",
                 eligible=True,
                 consequence="Refund the selected item.",
+                fees=Money(currency="USD", amount_minor=0),
+                refund=Money(currency="USD", amount_minor=2500),
                 refund_method="original_payment_method",
                 refund_destination=RefundDestination(
                     destination_digest=_COMMERCE_DIGEST,

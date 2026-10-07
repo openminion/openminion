@@ -11,6 +11,7 @@ from openminion.modules.llm.contracts.adapter import (
     coerce_provider_output,
 )
 from openminion.modules.llm.interfaces import LLM_RESPONSE_INTERFACE_VERSION
+from openminion.modules.llm.providers.message_payloads import _coerce_tool_calls
 from openminion.modules.llm.schemas import (
     LLMRequest,
     LLMStreamEvent,
@@ -59,6 +60,46 @@ class _AdapterOnlyProvider:
     def healthcheck(self, config: Dict[str, Any]) -> Dict[str, Any]:
         del config
         return {"ok": True}
+
+
+def test_tool_call_normalization_decodes_json_container_arguments() -> None:
+    calls = _coerce_tool_calls(
+        [
+            ToolCall(
+                name="commerce.prepare_order",
+                arguments={
+                    "items": '[{"offer_id":"offer-1","quantity":1}]',
+                    "note": "[keep as text",
+                },
+            )
+        ]
+    )
+
+    assert calls[0].arguments == {
+        "items": [{"offer_id": "offer-1", "quantity": 1}],
+        "note": "[keep as text",
+    }
+
+
+def test_tool_call_normalization_preserves_other_json_looking_strings() -> None:
+    calls = _coerce_tool_calls(
+        [ToolCall(name="file.write", arguments={"content": "[]"})]
+    )
+
+    assert calls[0].arguments == {"content": "[]"}
+
+
+def test_tool_call_normalization_preserves_commerce_item_strings() -> None:
+    calls = _coerce_tool_calls(
+        [
+            ToolCall(
+                name="commerce.prepare_order",
+                arguments={"items": '[{"offer_id":"[]","quantity":1}]'},
+            )
+        ]
+    )
+
+    assert calls[0].arguments == {"items": [{"offer_id": "[]", "quantity": 1}]}
 
 
 def test_adapter_result_to_llm_response_infers_assistant_message() -> None:

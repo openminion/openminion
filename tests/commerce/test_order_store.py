@@ -131,9 +131,10 @@ def test_commerce_migration_bootstraps_standard_module_identity(tmp_path: Path) 
         "commerce_preparations",
         "commerce_orders",
         "commerce_material_snapshots",
+        "commerce_action_preparations",
     } <= tables
     assert metadata["module_id"] == "commerce"
-    assert metadata["schema_head"] == "0003_placement_attempt_authorization"
+    assert metadata["schema_head"] == "0004_action_preparations"
     assert application_id == get_module_application_id("commerce")
     assert preserved == ("preserved",)
 

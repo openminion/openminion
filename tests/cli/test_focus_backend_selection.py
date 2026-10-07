@@ -109,6 +109,55 @@ def test_interactive_launches_terminal_flow(monkeypatch) -> None:
         styles.set_color_mode(None)
 
 
+def test_interactive_accepts_scoped_runtime_factory(monkeypatch) -> None:
+    from openminion.cli.commands import interactive as interactive_cmd
+
+    runtime = SimpleNamespace(close=lambda: None)
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        interactive_cmd,
+        "_silence_logging_for_interactive",
+        lambda _args: "",
+    )
+    monkeypatch.setattr(
+        interactive_cmd,
+        "_resolve_workspace_access",
+        lambda _args: ("/tmp/project", False, ()),
+    )
+    monkeypatch.setattr(
+        interactive_cmd,
+        "_launch_terminal_focus",
+        lambda *_args, **_kwargs: 0,
+    )
+    monkeypatch.setattr(
+        "openminion.cli.status.surface.record_surface_event",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def factory(config, **kwargs):
+        calls.append({"config": config, **kwargs})
+        return runtime
+
+    args = SimpleNamespace(
+        config="config.json",
+        home_root="home",
+        data_root="data",
+        onboarding_checked=True,
+        no_update_check=True,
+        color=None,
+    )
+
+    assert interactive_cmd.run_interactive(args, runtime_factory=factory) == 0
+    assert calls == [
+        {
+            "config": "config.json",
+            "home_root": "home",
+            "data_root": "data",
+            "logging_mode": "interactive",
+        }
+    ]
+
+
 def test_terminal_focus_starts_fresh_unless_session_is_requested(monkeypatch) -> None:
     from openminion.cli.commands import interactive as interactive_cmd
 

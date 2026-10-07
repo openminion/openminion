@@ -26,6 +26,8 @@ def test_commerce_interface_contract_is_canonical_and_closed() -> None:
         "commerce.inspect",
         "commerce.prepare_order",
         "commerce.place_order",
+        "commerce.prepare_order_action",
+        "commerce.apply_order_action",
     )
 
 
