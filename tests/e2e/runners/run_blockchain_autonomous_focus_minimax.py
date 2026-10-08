@@ -141,6 +141,9 @@ def main() -> int:
         expected_markers=(),
         timeout=480,
         include_project_context=False,
+        requires_approval=True,
+        max_auto_approvals=4,
+        approval_reply="yes",
         max_auto_continuations=3,
     )
     with probe.session(rows=48, cols=160) as session:
