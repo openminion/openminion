@@ -1,19 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from openminion.base.version import OPENMINION_VERSION as OPENMINION_VERSION
 
 from .exports import LAZY_EXPORTS, PUBLIC_EXPORTS, resolve_lazy_export
-
-if TYPE_CHECKING:  # pragma: no cover - import-time contract only
-    from .runtime.public_https import (
-        DEFAULT_MAX_BODY_BYTES as DEFAULT_MAX_BODY_BYTES,
-        DEFAULT_TIMEOUT_SECONDS as DEFAULT_TIMEOUT_SECONDS,
-        PublicHttpsError as PublicHttpsError,
-        PublicHttpsResponse as PublicHttpsResponse,
-        request_public_https as request_public_https,
-    )
 
 __all__ = PUBLIC_EXPORTS
 

@@ -82,7 +82,6 @@ from openminion.tools.blockchain import resolution as resolution_runtime  # noqa
 from openminion.tools.blockchain import resolved_operations  # noqa: E402
 from openminion.tools.blockchain import resolved_calls  # noqa: E402
 from openminion.tools.blockchain import plugin as blockchain_plugin  # noqa: E402
-from openminion.tools.blockchain.confirmation import preview_to_dict  # noqa: E402
 
 
 class _FixtureArgs(BaseModel):
@@ -285,7 +284,7 @@ class ProductionBlockchainExecution:
             self.approval = {
                 "approval_id": approval_id,
                 "action": self.approval_action,
-                "preview": preview_to_dict(preview) if preview else None,
+                "preview": dict(preview) if preview else None,
             }
             grant_id = self.policy_ctl.resolve_confirmation(
                 approval_id, self.approval_action
@@ -802,11 +801,23 @@ def _run() -> dict[str, Any]:
             and event["payload"]["call_id"] == "prepare"
         )
         send_result = next(
-            event["payload"]["output"]["outputs"]
-            for event in session_api.events
-            if event["event_type"] == "tool.call.completed"
-            and event["payload"]["call_id"] == "send"
+            (
+                event["payload"]["output"]["outputs"]
+                for event in session_api.events
+                if event["event_type"] == "tool.call.completed"
+                and event["payload"]["call_id"] == "send"
+            ),
+            None,
         )
+        if send_result is None:
+            raise AssertionError(
+                {
+                    "result": {"status": result.status, "message": result.message},
+                    "executed_tools": executor.calls,
+                    "approval": executor.approval,
+                    "events": session_api.events,
+                }
+            )
         operation_status = next(
             event["payload"]["output"]["outputs"]
             for event in session_api.events

@@ -126,7 +126,7 @@ def _resolve_public_address(
     thread = threading.Thread(target=resolve, daemon=True)
     try:
         thread.start()
-    except BaseException:
+    except RuntimeError:
         _RESOLUTION_LOCK.release()
         raise
     thread.join(_remaining_seconds(deadline))
