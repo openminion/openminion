@@ -26,7 +26,7 @@ def _config(enabled: bool):
     )
 
 
-def test_enabled_bootstrap_registers_exact_four_blockchain_tools(tmp_path) -> None:
+def test_enabled_bootstrap_registers_exact_five_blockchain_tools(tmp_path) -> None:
     bootstrap = build_runtime_bootstrap(
         config=_config(True),
         workspace_root=tmp_path,
@@ -39,6 +39,7 @@ def test_enabled_bootstrap_registers_exact_four_blockchain_tools(tmp_path) -> No
     } == {
         "blockchain.debug",
         "blockchain.inspect",
+        "blockchain.resolve_contract",
         "blockchain.prepare_transaction",
         "blockchain.send_transaction",
     }

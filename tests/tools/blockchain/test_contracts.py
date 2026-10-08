@@ -13,6 +13,7 @@ from openminion.modules.tool.contracts.model_ids import (
     DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET,
     MODEL_BLOCKCHAIN_DEBUG,
     MODEL_BLOCKCHAIN_INSPECT,
+    MODEL_BLOCKCHAIN_RESOLVE_CONTRACT,
     MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
     MODEL_BLOCKCHAIN_SEND_TRANSACTION,
 )
@@ -20,6 +21,7 @@ from openminion.modules.tool.contracts.runtime_ids import (
     ALL_RUNTIME_BINDING_IDS_SET,
     RUNTIME_BLOCKCHAIN_DEBUG,
     RUNTIME_BLOCKCHAIN_INSPECT,
+    RUNTIME_BLOCKCHAIN_RESOLVE_CONTRACT,
     RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
     RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
 )
@@ -29,6 +31,7 @@ from openminion.base.config.env import EnvironmentConfig
 from openminion.tools.blockchain.plugin import (
     BLOCKCHAIN_DEBUG_DESCRIPTION,
     BLOCKCHAIN_INSPECT_DESCRIPTION,
+    BLOCKCHAIN_RESOLVE_DESCRIPTION,
     WEB3_DEPENDENCY,
 )
 from openminion.tools.blockchain.schemas import (
@@ -45,6 +48,7 @@ from openminion.tools.blockchain.schemas import (
     SendTransactionArgs,
     SendPreparedTransactionArgs,
 )
+from openminion.tools.blockchain.schema_types import BlockchainError
 from openminion.tools.blockchain.abi import (
     abi_selector,
     abi_signature,
@@ -57,14 +61,34 @@ from openminion.tools.blockchain.abi import (
 MODEL_IDS = {
     MODEL_BLOCKCHAIN_DEBUG,
     MODEL_BLOCKCHAIN_INSPECT,
+    MODEL_BLOCKCHAIN_RESOLVE_CONTRACT,
     MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
     MODEL_BLOCKCHAIN_SEND_TRANSACTION,
 }
 RUNTIME_IDS = {
     RUNTIME_BLOCKCHAIN_DEBUG,
     RUNTIME_BLOCKCHAIN_INSPECT,
+    RUNTIME_BLOCKCHAIN_RESOLVE_CONTRACT,
     RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
     RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
+}
+
+RESOLVED_RUNTIME_ERROR_CODES = {
+    "ABI_INVALID",
+    "CHAIN_IDENTITY_MISMATCH",
+    "CONTRACT_NOT_VERIFIED",
+    "EMPTY_CONTRACT_CODE",
+    "ENDPOINT_FORBIDDEN",
+    "INSUFFICIENT_FUNDS",
+    "METADATA_UNAVAILABLE",
+    "OPERATION_INVALID",
+    "OPERATION_UNAVAILABLE",
+    "POSTCONDITION_FAILED",
+    "RESOLUTION_UNAVAILABLE",
+    "RESULT_TOO_LARGE",
+    "STALE_BLOCK",
+    "STALE_RESOLUTION",
+    "UNSUPPORTED_PROXY",
 }
 
 
@@ -79,6 +103,15 @@ def test_blockchain_package_exports_final_registrar() -> None:
     assert all(not item.aliases for item in manifest.model_tools)
 
 
+@pytest.mark.parametrize("code", sorted(RESOLVED_RUNTIME_ERROR_CODES))
+def test_blockchain_error_contract_accepts_resolved_calls_codes(code: str) -> None:
+    error = BlockchainError.model_validate(
+        {"code": code, "message": "failed", "retryable": False, "details": {}}
+    )
+
+    assert error.code == code
+
+
 def test_manifest_distinguishes_inspect_from_debug() -> None:
     manifest = blockchain_package.REGISTRAR.get_manifest(None)
     inspect = next(
@@ -91,21 +124,36 @@ def test_manifest_distinguishes_inspect_from_debug() -> None:
         for item in manifest.model_tools
         if item.model_tool_id == MODEL_BLOCKCHAIN_DEBUG
     )
+    resolve = next(
+        item
+        for item in manifest.model_tools
+        if item.model_tool_id == MODEL_BLOCKCHAIN_RESOLVE_CONTRACT
+    )
 
     assert inspect.description == BLOCKCHAIN_INSPECT_DESCRIPTION
     assert inspect.description == (
-        "Use for read-only contract functions supplied as a function ABI and "
-        "arguments, including quotes and state. Also reads balance, bytecode, "
-        "transaction, or receipt, one fact per call. When asked to verify a receipt, "
-        "use action receipt even if a prior send returned receipt status. Use "
-        "blockchain.debug only for raw calldata, reverts, or event decoding. Never "
-        "signs or sends."
+        "Read blockchain state without signing or sending. For a contract candidate "
+        "discovered through research, first use blockchain.resolve_contract, then use "
+        "action resolved_contract_call with its resolution digest. Contract ABI, "
+        "balance, bytecode, transaction, and receipt actions use the configured "
+        "network. When asked to verify a receipt, use action receipt even if a prior "
+        "send returned receipt status. Use blockchain.debug only for raw calldata, "
+        "reverts, or event decoding."
     )
     assert debug.description == BLOCKCHAIN_DEBUG_DESCRIPTION
     assert debug.description == (
         "Simulate EVM calls and decode calldata, revert data, or events from one "
         "transaction receipt on the configured blockchain. Read-only; never signs "
         "or sends. Not for receipt status; use blockchain.inspect with action receipt."
+    )
+    assert resolve.description == BLOCKCHAIN_RESOLVE_DESCRIPTION
+    assert resolve.description == (
+        "Validate one EVM contract candidate that you already researched so it can "
+        "be read or prepared without a configured network. Supply its public RPC, "
+        "expected chain identity, address, and source URLs. This tool uses the fixed "
+        "official Sourcify v2 lookup to verify ABI and runtime bytecode. It verifies "
+        "and stores facts; it does not search, choose candidates, retry, send a "
+        "transaction, or prove that a deployment is official."
     )
 
 
@@ -160,6 +208,11 @@ def test_blockchain_manifest_maps_each_model_id_to_its_runtime_candidate() -> No
             MODEL_BLOCKCHAIN_INSPECT,
             RUNTIME_BLOCKCHAIN_INSPECT,
             (MODEL_BLOCKCHAIN_INSPECT,),
+        ),
+        (
+            MODEL_BLOCKCHAIN_RESOLVE_CONTRACT,
+            RUNTIME_BLOCKCHAIN_RESOLVE_CONTRACT,
+            (MODEL_BLOCKCHAIN_RESOLVE_CONTRACT,),
         ),
         (
             MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,

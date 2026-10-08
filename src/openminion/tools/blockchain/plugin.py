@@ -12,19 +12,20 @@ from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 
 from .debug import debug_blockchain
 from .debug_schemas import DebugArgs
-from .confirmation import (
-    build_policy_confirmation_preview,
-    canonical_blockchain_send_args,
-)
+from .confirmation import build_policy_confirmation_preview
+from .resolved_schemas import ResolveContractArgs
+from .resolution import resolve_contract
 from .runtime import inspect_blockchain, prepare_transaction, send_transaction
 from .schemas import InspectArgs, PrepareArgs, SendPreparedTransactionArgs
 
 BLOCKCHAIN_INSPECT_DESCRIPTION = (
-    "Use for read-only contract functions supplied as a function ABI and arguments, "
-    "including quotes and state. Also reads balance, bytecode, transaction, or "
-    "receipt, one fact per call. When asked to verify a receipt, use action receipt "
-    "even if a prior send returned receipt status. Use blockchain.debug only for raw "
-    "calldata, reverts, or event decoding. Never signs or sends."
+    "Read blockchain state without signing or sending. For a contract candidate "
+    "discovered through research, first use blockchain.resolve_contract, then use "
+    "action resolved_contract_call with its resolution digest. Contract ABI, balance, "
+    "bytecode, transaction, and receipt actions use the configured network. When "
+    "asked to verify a receipt, use action receipt even if a prior send returned "
+    "receipt status. Use blockchain.debug only for raw calldata, reverts, or event "
+    "decoding."
 )
 BLOCKCHAIN_DEBUG_DESCRIPTION = (
     "Simulate EVM calls and decode calldata, revert data, or events from one "
@@ -32,9 +33,11 @@ BLOCKCHAIN_DEBUG_DESCRIPTION = (
     "sends. Not for receipt status; use blockchain.inspect with action receipt."
 )
 BLOCKCHAIN_PREPARE_DESCRIPTION = (
-    "Use when asked to prepare but not send an unsigned transaction or contract "
-    "write. Accepts typed transaction fields or a function ABI and arguments, "
-    "simulates the write, and returns a digest. Not for read-only quotes; never sends."
+    "Prepare but do not send an unsigned transaction or contract write. For a "
+    "researched contract, use kind resolved_contract_call with its resolution digest, "
+    "exact function signature, arguments, value, and postconditions. Explicit "
+    "transaction and ABI requests use the configured network. Simulates the write "
+    "and returns a digest. Not for read-only quotes; never sends."
 )
 BLOCKCHAIN_SEND_DESCRIPTION = (
     "Use when asked to send a previously prepared transaction. Requires exact "
@@ -42,6 +45,14 @@ BLOCKCHAIN_SEND_DESCRIPTION = (
     "No arguments are needed for the latest preparation in this session; pass a "
     "preparation_digest only to select an earlier preparation. On a send request, "
     "invoke this tool without modifying, comparing, or substituting preparations."
+)
+BLOCKCHAIN_RESOLVE_DESCRIPTION = (
+    "Validate one EVM contract candidate that you already researched so it can be "
+    "read or prepared without a configured network. Supply its public RPC, expected "
+    "chain identity, address, and source URLs. This tool uses the fixed official "
+    "Sourcify v2 lookup to verify ABI and runtime bytecode. It verifies and stores "
+    "facts; it does not search, choose candidates, retry, send a transaction, or "
+    "prove that a deployment is official."
 )
 
 _WEB3_SETUP_HINT = ToolDependencySetupHint(
@@ -83,6 +94,19 @@ WEB3_DEPENDENCY = ToolDependencyDecl(
 
 
 def register(registry: ToolRegistry) -> None:
+    registry.register(
+        ToolSpec(
+            name="blockchain.resolve_contract",
+            args_model=ResolveContractArgs,
+            min_scope="READ_ONLY",
+            handler=resolve_contract,
+            dangerous=False,
+            idempotent=True,
+            tags=("blockchain", "read_only", "resolve"),
+            capabilities=("blockchain", "read_only", "resolve"),
+            dependencies=(WEB3_DEPENDENCY,),
+        )
+    )
     registry.register(
         ToolSpec(
             name="blockchain.debug",
@@ -133,7 +157,6 @@ def register(registry: ToolRegistry) -> None:
             tags=("blockchain", "transaction", "financial"),
             capabilities=("blockchain", "transaction", "financial"),
             dependencies=(WEB3_DEPENDENCY,),
-            canonical_args=canonical_blockchain_send_args,
             confirmation_preview=build_policy_confirmation_preview,
         )
     )
@@ -143,6 +166,7 @@ __all__ = [
     "BLOCKCHAIN_DEBUG_DESCRIPTION",
     "BLOCKCHAIN_INSPECT_DESCRIPTION",
     "BLOCKCHAIN_PREPARE_DESCRIPTION",
+    "BLOCKCHAIN_RESOLVE_DESCRIPTION",
     "BLOCKCHAIN_SEND_DESCRIPTION",
     "WEB3_DEPENDENCY",
     "register",

@@ -118,6 +118,7 @@ _BLOCKCHAIN_CONFIG_KEYS = frozenset(
         "writes_enabled",
         "max_total_fee_wei",
         "receipt_timeout_seconds",
+        "confirmation_depth",
     }
 )
 _CANONICAL_UNSIGNED_DECIMAL_RE = re.compile(r"^(?:0|[1-9][0-9]*)$")
@@ -133,6 +134,7 @@ class BlockchainToolRuntimeConfig:
     writes_enabled: bool = False
     max_total_fee_wei: str = "10000000000000000"
     receipt_timeout_seconds: int = 60
+    confirmation_depth: int = 1
 
 
 def _validate_blockchain_config(
@@ -143,21 +145,17 @@ def _validate_blockchain_config(
     ):
         raise ConfigError("runtime.tools.blockchain enabled flags must be booleans.")
     if config.chain_id is not None and (
-        not isinstance(config.chain_id, int)
-        or isinstance(config.chain_id, bool)
-        or config.chain_id < 1
+        type(config.chain_id) is not int or config.chain_id < 1
     ):
         raise ConfigError("runtime.tools.blockchain.chain_id must be an integer >= 1.")
-    timeout = config.receipt_timeout_seconds
-    if (
-        not isinstance(timeout, int)
-        or isinstance(timeout, bool)
-        or not 1 <= timeout <= 300
+    for value, field_name, maximum in (
+        (config.receipt_timeout_seconds, "receipt_timeout_seconds", 300),
+        (config.confirmation_depth, "confirmation_depth", 64),
     ):
-        raise ConfigError(
-            "runtime.tools.blockchain.receipt_timeout_seconds must be an integer "
-            "from 1 through 300."
-        )
+        if type(value) is not int or not 1 <= value <= maximum:
+            raise ConfigError(
+                f"runtime.tools.blockchain.{field_name} must be an integer from 1 through {maximum}."
+            )
     if (
         not _CANONICAL_UNSIGNED_DECIMAL_RE.fullmatch(config.max_total_fee_wei)
         or int(config.max_total_fee_wei) <= 0
@@ -170,9 +168,9 @@ def _validate_blockchain_config(
         raise ConfigError(
             "runtime.tools.blockchain.signer_secret_namespace must be non-empty."
         )
-    if config.enabled and (not config.rpc_url or config.chain_id is None):
+    if bool(config.rpc_url) != (config.chain_id is not None):
         raise ConfigError(
-            "runtime.tools.blockchain.rpc_url and chain_id are required when enabled."
+            "Blockchain rpc_url and chain_id must be configured together."
         )
     if config.writes_enabled and not config.enabled:
         raise ConfigError(
@@ -217,6 +215,7 @@ def coerce_blockchain_tool_runtime_config(
             writes_enabled=value.get("writes_enabled", False),
             max_total_fee_wei=str(value.get("max_total_fee_wei", "10000000000000000")),
             receipt_timeout_seconds=value.get("receipt_timeout_seconds", 60),
+            confirmation_depth=value.get("confirmation_depth", 1),
         )
     )
 
@@ -233,4 +232,5 @@ def blockchain_tool_runtime_config_to_dict(
         "writes_enabled": config.writes_enabled,
         "max_total_fee_wei": config.max_total_fee_wei,
         "receipt_timeout_seconds": config.receipt_timeout_seconds,
+        "confirmation_depth": config.confirmation_depth,
     }

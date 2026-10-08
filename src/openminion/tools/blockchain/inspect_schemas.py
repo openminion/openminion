@@ -14,6 +14,12 @@ from .schema_types import (
     inline_discriminated_branches,
     parse_json_container,
 )
+from .resolved_schemas import (
+    OperationStatusArgs,
+    OperationStatusResult,
+    ResolvedContractCallInspectArgs,
+    ResolvedContractCallResult,
+)
 
 
 class ChainSummaryArgs(ClosedModel):
@@ -83,7 +89,9 @@ InspectRequest = Annotated[
     | BytecodeArgs
     | ContractReadArgs
     | TransactionArgs
-    | ReceiptArgs,
+    | ReceiptArgs
+    | ResolvedContractCallInspectArgs
+    | OperationStatusArgs,
     Field(discriminator="action"),
 ]
 INSPECT_REQUEST_ADAPTER: TypeAdapter[InspectRequest] = TypeAdapter(InspectRequest)
@@ -212,7 +220,9 @@ InspectResult = Annotated[
     | BytecodeResult
     | ContractReadResult
     | TransactionResult
-    | ReceiptResult,
+    | ReceiptResult
+    | ResolvedContractCallResult
+    | OperationStatusResult,
     Field(discriminator="action"),
 ]
 INSPECT_RESULT_ADAPTER: TypeAdapter[InspectResult] = TypeAdapter(InspectResult)

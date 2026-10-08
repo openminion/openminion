@@ -20,6 +20,10 @@ class FeatureDisabledDetails(ClosedModel):
     feature: Literal["blockchain"]
 
 
+class FeatureUnavailableDetails(ClosedModel):
+    feature: Literal["configured_blockchain_network"]
+
+
 class InvalidArgumentDetails(ClosedModel):
     field: Literal[""]
     reason: Literal["request_schema", "debug_request_size"]
@@ -69,6 +73,7 @@ class TransactionNotFoundDetails(ClosedModel):
 
 DebugErrorDetails = (
     FeatureDisabledDetails
+    | FeatureUnavailableDetails
     | InvalidArgumentDetails
     | RpcUnavailableDetails
     | ChainMismatchDetails
@@ -84,6 +89,7 @@ DebugErrorDetails = (
 class DebugError(ClosedModel):
     code: Literal[
         "FEATURE_DISABLED",
+        "FEATURE_UNAVAILABLE",
         "INVALID_ARGUMENT",
         "RPC_UNAVAILABLE",
         "CHAIN_MISMATCH",
@@ -109,6 +115,10 @@ class DebugError(ClosedModel):
         "FEATURE_DISABLED": (
             "Blockchain capability is disabled.",
             FeatureDisabledDetails,
+        ),
+        "FEATURE_UNAVAILABLE": (
+            "Configured blockchain network is unavailable.",
+            FeatureUnavailableDetails,
         ),
         "INVALID_ARGUMENT": (
             "Blockchain arguments are invalid.",

@@ -573,7 +573,9 @@ def test_tool_adapter_consumes_grant_for_canonical_invocation(tmp_path) -> None:
     )
 
 
-def test_policy_resolves_digest_reference_to_canonical_send(tmp_path) -> None:
+def test_policy_resolves_digest_reference_to_canonical_send(
+    tmp_path, monkeypatch
+) -> None:
     command = _command()
     env = EnvironmentConfig(
         values={
@@ -585,6 +587,8 @@ def test_policy_resolves_digest_reference_to_canonical_send(tmp_path) -> None:
         command.args,
         SimpleNamespace(session_id="session", env=env),
     )
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
     adapter = PolicyCtlBrainAdapter.__new__(PolicyCtlBrainAdapter)
 
     resolved = adapter._resolve_blockchain_preparation(
