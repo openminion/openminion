@@ -501,25 +501,46 @@ def _call_preview(value: Any) -> BlockchainCallPreview | None:
 def _preview_from_mapping(
     value: Mapping[str, Any], call: BlockchainCallPreview | None
 ) -> BlockchainSendConfirmationPreview:
+    text_fields = (
+        "chain_id",
+        "from_address",
+        "to_address",
+        "value_wei",
+        "transaction_type",
+        "nonce",
+        "gas_limit",
+        "max_total_fee_wei",
+        "calldata_bytes",
+        "calldata_sha256",
+        "preparation_digest",
+    )
+    if (
+        value.get("schema_version") != "blockchain-send-preview-v1"
+        or not all(isinstance(value.get(field), str) for field in text_fields)
+        or not isinstance(value.get("opaque_calldata"), bool)
+    ):
+        raise BlockchainConfirmationPreviewError("request_schema")
     return BlockchainSendConfirmationPreview(
-        schema_version=value.get("schema_version"),
-        chain_id=value.get("chain_id"),
-        from_address=value.get("from_address"),
-        to_address=value.get("to_address"),
-        value_wei=value.get("value_wei"),
-        transaction_type=value.get("transaction_type"),
-        nonce=value.get("nonce"),
-        gas_limit=value.get("gas_limit"),
-        gas_price_wei=value.get("gas_price_wei"),
-        max_fee_per_gas_wei=value.get("max_fee_per_gas_wei"),
-        max_priority_fee_per_gas_wei=value.get("max_priority_fee_per_gas_wei"),
-        max_total_fee_wei=value.get("max_total_fee_wei"),
-        calldata_bytes=value.get("calldata_bytes"),
-        calldata_sha256=value.get("calldata_sha256"),
-        calldata_hex=value.get("calldata_hex"),
-        preparation_digest=value.get("preparation_digest"),
+        schema_version="blockchain-send-preview-v1",
+        chain_id=cast(str, value["chain_id"]),
+        from_address=cast(str, value["from_address"]),
+        to_address=cast(str, value["to_address"]),
+        value_wei=cast(str, value["value_wei"]),
+        transaction_type=cast(str, value["transaction_type"]),
+        nonce=cast(str, value["nonce"]),
+        gas_limit=cast(str, value["gas_limit"]),
+        gas_price_wei=cast(str | None, value.get("gas_price_wei")),
+        max_fee_per_gas_wei=cast(str | None, value.get("max_fee_per_gas_wei")),
+        max_priority_fee_per_gas_wei=cast(
+            str | None, value.get("max_priority_fee_per_gas_wei")
+        ),
+        max_total_fee_wei=cast(str, value["max_total_fee_wei"]),
+        calldata_bytes=cast(str, value["calldata_bytes"]),
+        calldata_sha256=cast(str, value["calldata_sha256"]),
+        calldata_hex=cast(str | None, value.get("calldata_hex")),
+        preparation_digest=cast(str, value["preparation_digest"]),
         call=call,
-        opaque_calldata=value.get("opaque_calldata"),
+        opaque_calldata=cast(bool, value["opaque_calldata"]),
     )
 
 
@@ -531,27 +552,6 @@ def _parse_configured_confirmation_preview(
     if set(value) != _PREVIEW_FIELDS:
         raise BlockchainConfirmationPreviewError("request_schema")
     preview = _preview_from_mapping(value, _call_preview(value.get("call")))
-    if (
-        preview.schema_version != "blockchain-send-preview-v1"
-        or not all(
-            isinstance(item, str)
-            for item in (
-                preview.chain_id,
-                preview.from_address,
-                preview.to_address,
-                preview.value_wei,
-                preview.transaction_type,
-                preview.nonce,
-                preview.gas_limit,
-                preview.max_total_fee_wei,
-                preview.calldata_bytes,
-                preview.calldata_sha256,
-                preview.preparation_digest,
-            )
-        )
-        or not isinstance(preview.opaque_calldata, bool)
-    ):
-        raise BlockchainConfirmationPreviewError("request_schema")
     decimal_values = (
         preview.chain_id,
         preview.value_wei,

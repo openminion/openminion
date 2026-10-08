@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import tempfile
@@ -213,7 +214,7 @@ def _record_lock(path: Path) -> Iterator[None]:
     descriptor = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR, 0o600)
     with os.fdopen(descriptor, "r+b") as handle:
         if os.name == "nt":
-            import msvcrt
+            msvcrt = importlib.import_module("msvcrt")
 
             if not handle.read(1):
                 handle.write(b"\0")
