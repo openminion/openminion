@@ -72,7 +72,13 @@ class ContractCallArgs(ClosedModel):
 
 
 class EqualityPostcondition(ClosedModel):
-    function_signature: str = Field(min_length=1)
+    function_signature: str = Field(
+        min_length=1,
+        description=(
+            "Copy one exact read-only canonical signature from the resolver's "
+            "available_function_signatures list."
+        ),
+    )
     arguments: list[Any]
     expected_result: list[Any]
 
@@ -87,7 +93,13 @@ class ResolvedContractCallArgs(ClosedModel):
         description="Required discriminator; use exactly resolved_contract_call."
     )
     resolution_digest: PreparationDigest
-    function_signature: str = Field(min_length=1)
+    function_signature: str = Field(
+        min_length=1,
+        description=(
+            "Copy one exact canonical signature from the resolver's "
+            "available_function_signatures list; do not include names or return types."
+        ),
+    )
     arguments: list[Any]
     value_wei: DecimalString = "0"
     postconditions: list[EqualityPostcondition] = Field(

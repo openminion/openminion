@@ -17,7 +17,13 @@ from .transaction_schemas import OperationState, PostconditionResult
 class ResolvedContractCallInspectArgs(ClosedModel):
     action: Literal["resolved_contract_call"]
     resolution_digest: PreparationDigest
-    function_signature: str = Field(min_length=1)
+    function_signature: str = Field(
+        min_length=1,
+        description=(
+            "Copy one exact canonical signature from the resolver's "
+            "available_function_signatures list; do not include names or return types."
+        ),
+    )
     arguments: list[Any]
 
     @field_validator("arguments", mode="before")

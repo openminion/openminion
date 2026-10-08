@@ -200,6 +200,7 @@ def test_resolve_contract_verifies_and_persists_canonical_facts(tmp_path) -> Non
     assert record["proxy_kind"] == "direct"
     assert record["rpc_origin"] == "https://rpc.example"
     assert record["sourcify_origin"] == "https://sourcify.dev"
+    assert record["available_function_signatures"] == ["balanceOf(address)"]
     assert "rpc_url" not in record
     assert "sourcify_target_url" not in record
     assert record["abi_address"] == _TARGET

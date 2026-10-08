@@ -164,6 +164,7 @@ class ResolvedContractData(ClosedModel):
     target_code_hash: TransactionHash
     implementation_code_hash: TransactionHash | None
     function_abi: list[FunctionAbi]
+    available_function_signatures: list[str]
     explorer_contract_url: str | None
     research_source_urls: list[str]
     verification_statement: str
@@ -971,6 +972,10 @@ def _public_resolution_data(record: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in record.items() if key not in hidden} | {
         "rpc_origin": _url_origin(str(record["rpc_url"])),
         "sourcify_origin": "https://sourcify.dev",
+        "available_function_signatures": [
+            abi_signature(FunctionAbi.model_validate(function))
+            for function in record["function_abi"]
+        ],
     }
 
 
