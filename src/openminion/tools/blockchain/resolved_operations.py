@@ -56,6 +56,16 @@ def _load_resolved_preparation(digest: str, context: Any) -> dict[str, Any]:
     )
 
 
+def _load_operation(digest: str, context: Any) -> dict[str, Any]:
+    return load_operation_record(
+        digest,
+        session_id=str(getattr(context, "session_id", "") or ""),
+        env=getattr(context, "env", None),
+        validator=validate_operation_record,
+        digester=operation_digest,
+    )
+
+
 def _resolved_send_failure(
     context: Any,
     request: Any,
@@ -438,13 +448,7 @@ def _replace_submitted_operation(
             digester=operation_digest,
         )
         if not replaced:
-            current = load_operation_record(
-                request.preparation_digest,
-                session_id=str(getattr(context, "session_id", "") or ""),
-                env=getattr(context, "env", None),
-                validator=validate_operation_record,
-                digester=operation_digest,
-            )
+            current = _load_operation(request.preparation_digest, context)
             return _send_terminal(
                 context,
                 transaction,
@@ -651,13 +655,7 @@ def _persist_operation(
             digester=operation_digest,
         )
         if not replaced:
-            operation = load_operation_record(
-                str(operation["preparation_digest"]),
-                session_id=str(getattr(context, "session_id", "") or ""),
-                env=getattr(context, "env", None),
-                validator=validate_operation_record,
-                digester=operation_digest,
-            )
+            operation = _load_operation(str(operation["preparation_digest"]), context)
     except (OSError, SessionRecordError) as exc:
         reason = exc.reason if isinstance(exc, SessionRecordError) else "unavailable"
         return _error(
@@ -732,13 +730,7 @@ def _load_operation_status_facts(
     dict[str, Any] | None,
 ]:
     try:
-        operation = load_operation_record(
-            preparation_digest_value,
-            session_id=str(getattr(context, "session_id", "") or ""),
-            env=getattr(context, "env", None),
-            validator=validate_operation_record,
-            digester=operation_digest,
-        )
+        operation = _load_operation(preparation_digest_value, context)
     except SessionRecordError as exc:
         code = {
             "unavailable": "OPERATION_UNAVAILABLE",
