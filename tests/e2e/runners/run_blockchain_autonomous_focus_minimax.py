@@ -22,9 +22,11 @@ EVIDENCE_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "abo-e2e" / "focus"
 OPT_IN = "OPENMINION_LIVE_CLI_FOCUS_E2E"
 CONFIG_ENV = "OPENMINION_BLOCKCHAIN_AUTONOMOUS_FOCUS_CONFIG"
 PROMPT = (
-    "Research a currently deployed public Uniswap smart contract, verify it from "
-    "public sources, and report one read-only protocol value. Discover the network, "
-    "RPC, contract address, ABI, function, and arguments yourself."
+    "Research a currently deployed public Uniswap smart contract, verify its "
+    "deployment and interface against current on-chain state, and read one current "
+    "protocol value directly from the contract. Discover the network, RPC, contract "
+    "address, ABI, function, and arguments yourself. Do not report a value from "
+    "articles, search snippets, or explorer pages alone."
 )
 
 
