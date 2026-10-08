@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from openminion.modules.tool.contracts.model_ids import SECURITY_MODEL_TOOL_IDS
-from openminion.modules.telemetry.events.catalog import TOOL_COMMERCE_ACTION
 from openminion.modules.telemetry.events.module import (
     emit_module_operation as _emit_module_operation_impl,
     emit_module_telemetry as _emit_module_telemetry_impl,
@@ -43,7 +42,6 @@ _RESULT_STATUSES = frozenset(
 _CANONICAL_ARTIFACT_REF = re.compile(r"^artifact://sha256/[0-9a-f]{64}$")
 _ASSESSMENT_ID = re.compile(r"^[0-9a-f]{32}$")
 _STRUCTURAL_SECURITY_TOOLS = frozenset(SECURITY_MODEL_TOOL_IDS)
-_STRUCTURAL_SECURITY_AGENT_ID = "security-researcher-readonly"
 
 
 def emit_module_telemetry(
@@ -133,10 +131,6 @@ def structural_result_fields(data: Mapping[str, Any]) -> dict[str, Any]:
 
 def is_structural_security_tool(tool_name: str) -> bool:
     return tool_name in _STRUCTURAL_SECURITY_TOOLS
-
-
-def is_structural_security_agent(agent_id: str) -> bool:
-    return str(agent_id or "").strip() == _STRUCTURAL_SECURITY_AGENT_ID
 
 
 def structural_security_tool_result(
@@ -339,35 +333,4 @@ def emit_tool_execution_event(
         trace_id=str(metadata.get("trace_id") or ""),
         status=status,
         error=dict(error) if error else None,
-    )
-
-
-def emit_commerce_action_event(
-    *,
-    ctx: Any,
-    action: str,
-    outcome: str,
-    order_id: str,
-    attempt_id: str,
-) -> bool:
-    """Emit the allowlisted correlation facts for an authorized commerce action."""
-    authorization = getattr(ctx, "policy_authorization", None)
-    if authorization is None:
-        return False
-    return emit_tool_execution_event(
-        ctx=ctx,
-        event_type=TOOL_COMMERCE_ACTION,
-        status=outcome,
-        payload={
-            "tool_name": str(getattr(ctx, "tool_name", "") or "commerce"),
-            "action": action,
-            "outcome": outcome,
-            "subject_id": str(getattr(ctx, "subject_id", "") or ""),
-            "policy_approval_id": str(authorization.approval_id),
-            "policy_grant_id": str(authorization.grant_id),
-            "invocation_id": str(authorization.invocation_hash),
-            "order_id": order_id,
-            "attempt_id": attempt_id,
-            "task_id": str(getattr(ctx, "project_task_id", "") or ""),
-        },
     )

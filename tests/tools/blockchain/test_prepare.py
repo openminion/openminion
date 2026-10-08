@@ -2,13 +2,21 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from dataclasses import asdict
 
 import pytest
+from eth_abi.exceptions import DecodingError
 from eth_account import Account
 from web3 import Web3
 from web3.exceptions import ContractLogicError, Web3Exception
 
 from openminion.tools.blockchain.runtime import prepare_transaction
+from openminion.tools.blockchain.preparations import SessionRecordError
+from openminion.tools.blockchain.confirmation import (
+    build_blockchain_send_confirmation_preview,
+    parse_blockchain_send_confirmation_preview,
+)
+from openminion.tools.blockchain.schema_types import FunctionAbi
 
 PRIVATE_KEY = "0x" + "11" * 32
 SENDER = Account.from_key(PRIVATE_KEY).address
@@ -51,6 +59,28 @@ def _context(
             }
         ),
     )
+
+
+def test_configured_prepare_requires_the_optional_network_pair() -> None:
+    secret_service = _SecretService()
+    context = _context(secret_service=secret_service)
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain.pop("rpc_url")
+    blockchain.pop("chain_id")
+
+    result = prepare_transaction(
+        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "1"},
+        context,
+        web3=_Web3(),
+    )
+
+    assert result["error"] == {
+        "code": "FEATURE_UNAVAILABLE",
+        "message": "Configured blockchain network is unavailable.",
+        "retryable": False,
+        "details": {"feature": "configured_blockchain_network"},
+    }
+    assert secret_service.reads == []
 
 
 class _Contract:
@@ -309,4 +339,194 @@ def test_prepare_rejects_chain_mismatch() -> None:
     assert result["error"]["details"] == {
         "expected_chain_id": 31337,
         "observed_chain_id": 1,
+    }
+
+
+def test_resolved_prepare_persists_digest_bound_v2_approval(
+    monkeypatch,
+) -> None:
+    from openminion.tools.blockchain import resolved_calls
+
+    context = _context(secret_service=_SecretService())
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain.pop("rpc_url")
+    blockchain.pop("chain_id")
+    blockchain["confirmation_depth"] = 2
+    context.session_id = "session"
+    context.env = {}
+    resolution_digest = "sha256:" + "12" * 32
+    block_hash = "0x" + "34" * 32
+    setter = FunctionAbi.model_validate(
+        {
+            "type": "function",
+            "name": "setApr",
+            "inputs": [{"name": "value", "type": "uint256"}],
+            "outputs": [],
+            "stateMutability": "nonpayable",
+        }
+    )
+    setter_with_output = FunctionAbi.model_validate(
+        {
+            "type": "function",
+            "name": "setApr",
+            "inputs": [{"name": "value", "type": "uint256"}],
+            "outputs": [{"name": "", "type": "uint256"}],
+            "stateMutability": "nonpayable",
+        }
+    )
+    reader = FunctionAbi.model_validate(
+        {
+            "type": "function",
+            "name": "apr",
+            "inputs": [],
+            "outputs": [{"name": "", "type": "uint256"}],
+            "stateMutability": "view",
+        }
+    )
+    record = {
+        "resolution_digest": resolution_digest,
+        "rpc_url": "https://rpc.example/",
+        "sourcify_target_url": "https://sourcify.dev/target",
+        "sourcify_target_match": "exact_match",
+        "sourcify_implementation_url": None,
+        "sourcify_implementation_match": None,
+        "expected_chain_id": 31337,
+        "observed_chain_id": 31337,
+        "expected_genesis_hash": "0x" + "01" * 32,
+        "observed_genesis_hash": "0x" + "01" * 32,
+        "expected_checkpoint": None,
+        "observed_checkpoint": None,
+        "verification_block_number": "40",
+        "verification_block_hash": "0x" + "02" * 32,
+        "contract_address": RECIPIENT,
+        "proxy_kind": "direct",
+        "implementation_address": None,
+        "abi_address": RECIPIENT,
+        "target_code_hash": "0x" + "03" * 32,
+        "implementation_code_hash": None,
+    }
+    saved: dict[str, Any] = {}
+
+    monkeypatch.setattr(resolved_calls, "load_resolution", lambda digest, ctx: record)
+    monkeypatch.setattr(
+        resolved_calls,
+        "revalidate_resolution",
+        lambda value: {"block_number": "42", "block_hash": block_hash},
+    )
+    monkeypatch.setattr(
+        resolved_calls,
+        "function_by_signature",
+        lambda value, signature: setter if signature.startswith("setApr") else reader,
+    )
+
+    rpc_state = {"balance": "0xde0b6b3a7640000"}
+
+    def rpc_call(_record, method, params):
+        if method == "eth_getBalance":
+            assert params[1] == "latest"
+        return {
+            "eth_getBalance": rpc_state["balance"],
+            "eth_getTransactionCount": "0x9",
+            "eth_call": "0x",
+            "eth_estimateGas": "0x5208",
+            "eth_maxPriorityFeePerGas": "0x3",
+        }.get(method) or {"number": "0x2a", "hash": block_hash, "baseFeePerGas": "0xa"}
+
+    monkeypatch.setattr(resolved_calls, "rpc_call", rpc_call)
+    monkeypatch.setattr(
+        resolved_calls,
+        "save_resolved_preparation_record",
+        lambda record, context, **kwargs: saved.update(record),
+    )
+
+    result = prepare_transaction(
+        {
+            "kind": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "setApr(uint256)",
+            "arguments": [5],
+            "postconditions": [
+                {
+                    "function_signature": "apr()",
+                    "arguments": [],
+                    "expected_result": ["5"],
+                }
+            ],
+        },
+        context,
+    )
+
+    assert result["ok"] is True
+    assert result["preparation_digest"] == saved["preparation_digest"]
+    assert saved["resolved_context"]["rpc_origin"] == "https://rpc.example"
+    assert saved["signer_address"] == SENDER
+    preview = build_blockchain_send_confirmation_preview(saved)
+    assert preview.schema_version == "blockchain-send-preview-v2"
+    assert preview.signer_address == SENDER
+    assert preview.postconditions[0]["expected_result"] == ["5"]
+    assert parse_blockchain_send_confirmation_preview(asdict(preview)) == preview
+
+    original_decode = resolved_calls.decode_abi_values
+
+    def fail_decode(*_args, **_kwargs):
+        raise DecodingError("invalid return data")
+
+    monkeypatch.setattr(resolved_calls, "decode_abi_values", fail_decode)
+    monkeypatch.setattr(
+        resolved_calls,
+        "function_by_signature",
+        lambda value, signature: (
+            setter_with_output if signature.startswith("setApr") else reader
+        ),
+    )
+    undecoded = prepare_transaction(
+        {
+            "kind": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "setApr(uint256)",
+            "arguments": [5],
+        },
+        context,
+    )
+    assert undecoded["ok"] is True
+    assert undecoded["simulation"]["decoded_returns"] is None
+    monkeypatch.setattr(resolved_calls, "decode_abi_values", original_decode)
+    monkeypatch.setattr(
+        resolved_calls,
+        "function_by_signature",
+        lambda value, signature: setter if signature.startswith("setApr") else reader,
+    )
+
+    rpc_state["balance"] = "0x1"
+    insufficient = prepare_transaction(
+        {
+            "kind": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "setApr(uint256)",
+            "arguments": [5],
+        },
+        context,
+    )
+    assert insufficient["error"]["code"] == "INSUFFICIENT_FUNDS"
+
+    rpc_state["balance"] = "0xde0b6b3a7640000"
+
+    def fail_save(*_args, **_kwargs):
+        raise SessionRecordError("unavailable", reason="unavailable")
+
+    monkeypatch.setattr(resolved_calls, "save_resolved_preparation_record", fail_save)
+    unavailable = prepare_transaction(
+        {
+            "kind": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "setApr(uint256)",
+            "arguments": [5],
+        },
+        context,
+    )
+    assert unavailable["error"] == {
+        "code": "INVALID_ARGUMENT",
+        "message": "Resolved preparation could not be stored for this session.",
+        "retryable": False,
+        "details": {"reason": "unavailable"},
     }

@@ -8,11 +8,6 @@ from openminion.modules.tool.plugin_api import (
     stable_invocation_hash,
 )
 from openminion.modules.policy.models import PolicyControlError
-from openminion.tools.blockchain.confirmation import canonical_blockchain_send_args
-from openminion.tools.blockchain.preparations import (
-    PreparationReferenceError,
-    resolve_prepared_transaction,
-)
 
 
 def authorize_blockchain_send(
@@ -20,6 +15,11 @@ def authorize_blockchain_send(
     context: Any,
     policy_ctl: Any | None,
 ) -> tuple[dict[str, Any], PolicyAuthorization]:
+    from openminion.tools.blockchain.preparations import (
+        PreparationReferenceError,
+        resolve_prepared_transaction,
+    )
+
     try:
         resolved = resolve_prepared_transaction(
             args,
@@ -45,12 +45,16 @@ def consume_blockchain_send_authorization(
     subject_id: str = "local",
     session_id: str | None = None,
 ) -> PolicyAuthorization:
+    from openminion.tools.blockchain.confirmation import (
+        canonical_blockchain_send_args,
+    )
+
     policy_mode = str(policy_ctl.mode()) if policy_ctl is not None else ""
-    if (
-        policy_ctl is None
-        or policy_mode not in {"enforce", "enforce_safe"}
-        or permission_mode in {"bypass", "auto"}
-    ):
+    if policy_ctl is None or policy_mode not in {
+        "disabled",
+        "enforce",
+        "enforce_safe",
+    }:
         raise ToolRuntimeError(
             "POLICY_MODE_UNSUPPORTED",
             "Blockchain transaction send requires the canonical policy service.",

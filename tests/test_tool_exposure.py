@@ -229,6 +229,19 @@ def test_request_exposure_preserves_control_tools_and_hides_unknown_tools() -> N
     assert [spec.name for spec in request.tools] == ["plan"]
 
 
+def test_request_exposure_does_not_restore_an_all_hidden_request() -> None:
+    request = SimpleNamespace(
+        tools=[_spec("cluster.future.inspect")],
+        metadata={},
+        system_prompt="system",
+    )
+    registry = SimpleNamespace(exposure_service=ToolExposureService())
+
+    apply_model_exposure(request, registry)
+
+    assert request.tools == []
+
+
 def test_control_tool_classification_matches_brain_contracts() -> None:
     from openminion.modules.brain.loop.entry import (
         ENTRY_CLARIFY_TOOL_NAME,

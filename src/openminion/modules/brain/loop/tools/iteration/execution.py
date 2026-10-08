@@ -159,6 +159,7 @@ def _set_pending_confirmation(
     state.pending_policy_confirmation_preview = (
         command_outcome.policy_confirmation_preview
     )
+    state.pending_policy_facts = dict(command_outcome.policy_facts)
     pending_confirmation = command_outcome.approved_command.model_copy(deep=True)
     queued_siblings = [
         later_outcome.approved_command.model_copy(deep=True)
@@ -174,6 +175,7 @@ def _set_pending_confirmation(
     state.post_action_user_message = confirmation_required_user_message(
         state.pending_confirmation_command,
         state.pending_policy_confirmation_preview,
+        state.pending_policy_facts,
     )
 
 

@@ -171,7 +171,11 @@ class BrowserCallArgs(BaseModel):
         if not isinstance(value, Mapping):
             return value
         payload = dict(value)
-        payload["op"] = normalize_op(str(payload.get("op", "")))
+        raw_op = payload.get("op")
+        if raw_op is None:
+            raw_op = payload.get("operation", "")
+        payload.pop("operation", None)
+        payload["op"] = normalize_op(str(raw_op))
         return payload
 
     @model_validator(mode="after")

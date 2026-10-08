@@ -42,6 +42,7 @@ def test_blockchain_config_defaults_round_trip_when_present() -> None:
             "writes_enabled": False,
             "max_total_fee_wei": "10000000000000000",
             "receipt_timeout_seconds": 60,
+            "confirmation_depth": 1,
         }
     }
 
@@ -85,6 +86,9 @@ def test_agent_blockchain_config_replaces_system_object_whole() -> None:
         _enabled_config(chain_id=0),
         _enabled_config(receipt_timeout_seconds=0),
         _enabled_config(receipt_timeout_seconds=301),
+        _enabled_config(confirmation_depth=0),
+        _enabled_config(confirmation_depth=65),
+        _enabled_config(confirmation_depth=True),
         _enabled_config(max_total_fee_wei="01"),
         _enabled_config(max_total_fee_wei="0"),
         _enabled_config(signer_secret_namespace=""),
@@ -113,3 +117,23 @@ def test_write_enabled_config_requires_and_serializes_signer_reference() -> None
     assert config.blockchain is not None
     assert config.blockchain.writes_enabled is True
     assert config.blockchain.signer_secret_key == "local-signer"
+
+
+def test_enabled_blockchain_config_allows_no_configured_network() -> None:
+    config = coerce_tool_runtime_config(
+        {
+            "blockchain": {
+                "enabled": True,
+                "writes_enabled": True,
+                "signer_secret_key": "local-signer",
+                "confirmation_depth": 2,
+            }
+        }
+    )
+
+    assert config.blockchain == BlockchainToolRuntimeConfig(
+        enabled=True,
+        writes_enabled=True,
+        signer_secret_key="local-signer",
+        confirmation_depth=2,
+    )

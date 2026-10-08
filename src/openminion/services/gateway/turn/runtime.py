@@ -6,6 +6,7 @@ import json
 import sys
 from datetime import datetime, timezone
 
+from openminion.base.config.action_policy import ACTION_POLICY_SESSION_OVERRIDE_KEY
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.constants import (
     OPENMINION_COLOR_ENV,
@@ -210,7 +211,6 @@ def _request_hash(
 def _response_has_tool_activity(metadata: dict[str, str]) -> bool:
     raw_tool_calls = metadata.get("tool_calls_count", "").strip()
     raw_tool_exec = metadata.get("tool_execution_count", "").strip()
-
     tool_calls = int(raw_tool_calls) if raw_tool_calls.isdigit() else 0
     tool_exec = int(raw_tool_exec) if raw_tool_exec.isdigit() else 0
     return tool_calls > 0 or tool_exec > 0
@@ -242,6 +242,7 @@ def _extract_ephemeral_prompt_metadata(
         "project_context_truncated",
         "permission_mode",
         "permission_overrides",
+        ACTION_POLICY_SESSION_OVERRIDE_KEY,
         "linked_task_id",
         "project_tool_calls_remaining",
         "project_plan_revision_required",

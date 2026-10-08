@@ -46,6 +46,9 @@ class _StubOverlay:
     def present_approval(self, _prompt: str) -> str:
         return "deny"
 
+    async def present_permission_picker_async(self) -> None:
+        return None
+
     def present_resume_picker(self, _sessions: list[object]) -> None:
         return None
 

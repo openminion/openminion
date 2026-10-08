@@ -6,7 +6,6 @@ from collections.abc import Iterable
 from typing import Any, Mapping
 
 from openminion.base.config.env import resolve_environment_config
-from openminion.modules.commerce.config import coerce_commerce_tool_runtime_config
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.constants import TOOL_BOOTSTRAP_STATUS_SKIPPED_GATE
 from openminion.modules.tool.runtime.dispatch import set_registry, set_registry_manager
@@ -79,24 +78,16 @@ def _optional_contract_omissions(
     from openminion.modules.tool.contracts.model_ids import (
         MODEL_BLOCKCHAIN_DEBUG,
         MODEL_BLOCKCHAIN_INSPECT,
+        MODEL_BLOCKCHAIN_RESOLVE_CONTRACT,
         MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
         MODEL_BLOCKCHAIN_SEND_TRANSACTION,
-        MODEL_COMMERCE_INSPECT,
-        MODEL_COMMERCE_APPLY_ORDER_ACTION,
-        MODEL_COMMERCE_PLACE_ORDER,
-        MODEL_COMMERCE_PREPARE_ORDER,
-        MODEL_COMMERCE_PREPARE_ORDER_ACTION,
     )
     from openminion.modules.tool.contracts.runtime_ids import (
         RUNTIME_BLOCKCHAIN_DEBUG,
         RUNTIME_BLOCKCHAIN_INSPECT,
+        RUNTIME_BLOCKCHAIN_RESOLVE_CONTRACT,
         RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
         RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
-        RUNTIME_COMMERCE_INSPECT,
-        RUNTIME_COMMERCE_APPLY_ORDER_ACTION,
-        RUNTIME_COMMERCE_PLACE_ORDER,
-        RUNTIME_COMMERCE_PREPARE_ORDER,
-        RUNTIME_COMMERCE_PREPARE_ORDER_ACTION,
     )
 
     runtime_cfg = getattr(config, "runtime", config)
@@ -109,6 +100,7 @@ def _optional_contract_omissions(
             {
                 MODEL_BLOCKCHAIN_DEBUG,
                 MODEL_BLOCKCHAIN_INSPECT,
+                MODEL_BLOCKCHAIN_RESOLVE_CONTRACT,
                 MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
                 MODEL_BLOCKCHAIN_SEND_TRANSACTION,
             }
@@ -117,58 +109,17 @@ def _optional_contract_omissions(
             {
                 RUNTIME_BLOCKCHAIN_DEBUG,
                 RUNTIME_BLOCKCHAIN_INSPECT,
+                RUNTIME_BLOCKCHAIN_RESOLVE_CONTRACT,
                 RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
                 RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
             }
         )
 
-    commerce_cfg = coerce_commerce_tool_runtime_config(
-        getattr(tools_cfg, "commerce", None)
-    )
-    if not (commerce_cfg and commerce_cfg.enabled):
-        missing_model_ids.update(
-            {
-                MODEL_COMMERCE_INSPECT,
-                MODEL_COMMERCE_APPLY_ORDER_ACTION,
-                MODEL_COMMERCE_PLACE_ORDER,
-                MODEL_COMMERCE_PREPARE_ORDER,
-                MODEL_COMMERCE_PREPARE_ORDER_ACTION,
-            }
-        )
-        missing_runtime_ids.update(
-            {
-                RUNTIME_COMMERCE_INSPECT,
-                RUNTIME_COMMERCE_APPLY_ORDER_ACTION,
-                RUNTIME_COMMERCE_PLACE_ORDER,
-                RUNTIME_COMMERCE_PREPARE_ORDER,
-                RUNTIME_COMMERCE_PREPARE_ORDER_ACTION,
-            }
-        )
-    elif not commerce_cfg.writes_enabled:
-        missing_model_ids.update(
-            {
-                MODEL_COMMERCE_APPLY_ORDER_ACTION,
-                MODEL_COMMERCE_PLACE_ORDER,
-                MODEL_COMMERCE_PREPARE_ORDER_ACTION,
-            }
-        )
-        missing_runtime_ids.update(
-            {
-                RUNTIME_COMMERCE_APPLY_ORDER_ACTION,
-                RUNTIME_COMMERCE_PLACE_ORDER,
-                RUNTIME_COMMERCE_PREPARE_ORDER_ACTION,
-            }
-        )
-    elif not commerce_cfg.order_actions_enabled:
-        missing_model_ids.update(
-            {MODEL_COMMERCE_APPLY_ORDER_ACTION, MODEL_COMMERCE_PREPARE_ORDER_ACTION}
-        )
-        missing_runtime_ids.update(
-            {
-                RUNTIME_COMMERCE_APPLY_ORDER_ACTION,
-                RUNTIME_COMMERCE_PREPARE_ORDER_ACTION,
-            }
-        )
+    from openminion.tools.commerce.registrar import optional_contract_omissions
+
+    commerce_model_ids, commerce_runtime_ids = optional_contract_omissions(config)
+    missing_model_ids.update(commerce_model_ids)
+    missing_runtime_ids.update(commerce_runtime_ids)
     return missing_model_ids, missing_runtime_ids
 
 

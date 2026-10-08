@@ -3,8 +3,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from openminion.modules.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
-from openminion.modules.commerce.models import CommerceLifecycleState
+from openminion.tools.commerce.routine import (
+    ROUTINE_KIND_COMMERCE_ORDER,
+    CommerceOrderConfigV1,
+    CommerceOrderCursorV1,
+    CommerceOrderFactsV1,
+)
 
 from .social import (
     ROUTINE_KIND_SOCIAL_SIGNAL,
@@ -13,7 +17,6 @@ from .social import (
 )
 
 ROUTINE_KIND_GITHUB_PR_REVIEW: Literal["github_pr_review"] = "github_pr_review"
-ROUTINE_KIND_COMMERCE_ORDER: Literal["commerce_order"] = "commerce_order"
 
 ROUTINE_VERSION_V1 = 1
 
@@ -44,36 +47,6 @@ class GitHubPrReviewCursorV1(BaseModel):
     seen_pr_numbers: list[int] = Field(default_factory=list)
     delivered_findings_hashes: dict[str, list[str]] = Field(default_factory=dict)
     consecutive_failures: int = Field(default=0, ge=0)
-
-
-class CommerceOrderConfigV1(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    subject_id: Literal["local"] = COMMERCE_LOCAL_SUBJECT_ID
-    local_order_ref: str = Field(min_length=1)
-    expires_at: str = Field(min_length=1)
-    terminal_policy: Literal["order_terminal", "fully_settled"] = "fully_settled"
-    max_failures: int = Field(default=3, ge=1, le=8)
-
-
-class CommerceOrderCursorV1(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    material_cursor: str | None = Field(default=None, min_length=1)
-    open_shipment_ids: tuple[str, ...] = ()
-    open_action_ids: tuple[str, ...] = ()
-    failure_count: int = Field(default=0, ge=0, le=8)
-
-
-class CommerceOrderFactsV1(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["ok", "paused", "expired", "denied", "failed"]
-    material_cursor: str | None = Field(default=None, min_length=1)
-    lifecycle: CommerceLifecycleState | None = None
-    open_shipment_ids: tuple[str, ...] = ()
-    open_action_ids: tuple[str, ...] = ()
-    detail: str = ""
 
 
 class RoutinePayloadV1(BaseModel):

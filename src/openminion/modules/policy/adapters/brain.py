@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, Literal, cast
 
 from openminion.base.config import ActionPolicyConfig
 from openminion.base.config.action_policy import (
@@ -14,7 +16,11 @@ from openminion.base.config.action_policy import (
     normalize_action_policy_mode_override,
     overlay_action_policy_mode,
 )
-from openminion.modules.tool.plugin_api import is_policy_authorization_pair
+from openminion.modules.tool.plugin_api import (
+    ConfirmationPreviewError,
+    is_policy_authorization_pair,
+)
+from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from ..runtime.action_policy import policy_config_from_action_policy
 from ..constants import (
     POLICY_DECISION_ALLOW,
@@ -25,14 +31,20 @@ from ..constants import (
     POLICY_MODE_DISABLED,
     POLICY_RISK_DESTRUCTIVE,
     POLICY_RISK_READ,
-    POLICY_RISK_SECURITY,
     POLICY_RISK_WRITE,
     POLICY_REVERSIBILITY_UNKNOWN,
     POLICY_SIDE_EFFECT_NONE,
     POLICY_SUBJECT_ID_LOCAL,
 )
 from ..interfaces import POLICY_INTERFACE_VERSION
-from ..models import PolicyConfig, PolicyMode, RiskClass, RiskSpec
+from ..models import (
+    PolicyConfig,
+    PolicyMode,
+    PolicyRule,
+    RiskClass,
+    RiskSpec,
+    build_policy_facts,
+)
 from ..runtime.service import PolicyCtl
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,11 +100,13 @@ class PolicyCtlBrainAdapter:
         policyctl: PolicyCtl,
         *,
         action_policy_config: ActionPolicyConfig | None = None,
-        commerce_confirmation_resolver: Callable[..., Any] | None = None,
+        tool_registry: ToolRegistry | None = None,
+        tool_resources: Mapping[str, Any] | None = None,
     ) -> None:
         self._ctl = policyctl
         self._action_policy_config = action_policy_config
-        self._commerce_confirmation_resolver = commerce_confirmation_resolver
+        self._tool_registry = tool_registry
+        self._tool_resources = tool_resources if tool_resources is not None else {}
 
     @classmethod
     def with_sqlite(
@@ -101,13 +115,15 @@ class PolicyCtlBrainAdapter:
         *,
         config: PolicyConfig | None = None,
         action_policy_config: ActionPolicyConfig | None = None,
-        commerce_confirmation_resolver: Callable[..., Any] | None = None,
+        tool_registry: ToolRegistry | None = None,
+        tool_resources: Mapping[str, Any] | None = None,
     ) -> "PolicyCtlBrainAdapter":
         ctl = PolicyCtl.with_sqlite(database_path, config=config)
         return cls(
             ctl,
             action_policy_config=action_policy_config,
-            commerce_confirmation_resolver=commerce_confirmation_resolver,
+            tool_registry=tool_registry,
+            tool_resources=tool_resources,
         )
 
     def close(self) -> None:
@@ -145,20 +161,6 @@ class PolicyCtlBrainAdapter:
             return self._missing_tool_name_decision()
 
         config_overrides = self._effective_policy_config(working_state=working_state)
-        if self._is_policy_disabled(config_overrides=config_overrides):
-            tool_name = str(getattr(command, "tool_name", "") or "")
-            tool, method = self._tool_method(tool_name)
-            if is_policy_authorization_pair(tool, method):
-                return PolicyDecision(
-                    outcome="DENY",
-                    explanation=f"{tool_name} requires enforcing policy mode.",
-                )
-            self._log_policy_bypass(command=command, working_state=working_state)
-            return PolicyDecision(
-                outcome="ALLOW",
-                explanation="Policy bypassed by resolved action policy mode.",
-            )
-
         try:
             invocation = self._resolve_blockchain_preparation(invocation, ctx)
             decision = self._check_policy_decision(
@@ -167,7 +169,10 @@ class PolicyCtlBrainAdapter:
                 command=command,
                 config_overrides=config_overrides,
             )
-            return self._policy_decision_from_raw(decision)
+            return self._policy_decision_from_raw(
+                decision,
+                canonical_tool=str(getattr(command, "tool_name", "") or ""),
+            )
         except Exception as exc:
             return PolicyDecision(
                 outcome="DENY",
@@ -192,9 +197,8 @@ class PolicyCtlBrainAdapter:
             return None
         risk_map = {
             "low": POLICY_RISK_READ,
-            "medium": POLICY_RISK_WRITE,
+            "med": POLICY_RISK_WRITE,
             "high": POLICY_RISK_DESTRUCTIVE,
-            "critical": POLICY_RISK_SECURITY,
         }
         risk_class = risk_map.get(str(risk_level).lower())
         if not risk_class:
@@ -235,51 +239,30 @@ class PolicyCtlBrainAdapter:
             "ctx": ctx,
             "risk_override": self._risk_override_for_command(command),
         }
-        if str(getattr(command, "tool_name", "") or "") == (
-            "blockchain.send_transaction"
-        ):
-            from openminion.tools.blockchain.confirmation import (
-                BlockchainConfirmationPreviewError,
-                build_blockchain_send_confirmation_preview,
-                canonical_blockchain_send_args,
-            )
-
-            try:
-                check_kwargs["invocation"] = {
-                    **invocation,
-                    "args": canonical_blockchain_send_args(invocation["args"]),
-                }
-                check_kwargs["confirmation_preview"] = (
-                    build_blockchain_send_confirmation_preview(
-                        check_kwargs["invocation"]["args"]
-                    )
-                )
-            except BlockchainConfirmationPreviewError as exc:
-                check_kwargs["confirmation_preview_error"] = exc.reason
         tool_name = str(getattr(command, "tool_name", "") or "").strip()
         tool, method = self._tool_method(tool_name)
-        if tool == "commerce" and is_policy_authorization_pair(tool, method):
-            resolver = self._commerce_confirmation_resolver
-            if callable(resolver):
-                from openminion.modules.commerce.confirmation import (
-                    commerce_confirmation_payload,
-                )
-                from openminion.tools.commerce.authorization import (
-                    canonical_commerce_args,
-                )
-
-                check_kwargs["invocation"] = {
-                    **invocation,
-                    "args": canonical_commerce_args(dict(invocation["args"])),
-                }
-                check_kwargs["confirmation_preview"] = commerce_confirmation_payload(
-                    resolver(
-                        tool_name=tool_name,
-                        args=dict(check_kwargs["invocation"]["args"]),
+        if is_policy_authorization_pair(tool, method):
+            spec = (
+                self._tool_registry.get(tool_name)
+                if self._tool_registry is not None
+                else None
+            )
+            if isinstance(spec, ToolSpec) and spec.confirmation_preview is not None:
+                try:
+                    check_kwargs["invocation"] = {
+                        **invocation,
+                        "args": spec.canonical_args(dict(invocation["args"]))
+                        if spec.canonical_args is not None
+                        else dict(invocation["args"]),
+                    }
+                    check_kwargs["confirmation_preview"] = spec.confirmation_preview(
+                        dict(check_kwargs["invocation"]["args"]),
                         subject_id=str(ctx.get("subject_id", "") or ""),
                         session_id=str(ctx.get("session_id", "") or ""),
+                        tool_resources=self._tool_resources,
                     )
-                )
+                except ConfirmationPreviewError as exc:
+                    check_kwargs["confirmation_preview_error"] = exc.reason
         if config_overrides is not None:
             check_kwargs["config_overrides"] = config_overrides
         return self._ctl.check(**check_kwargs)
@@ -305,7 +288,7 @@ class PolicyCtlBrainAdapter:
             ),
         }
 
-    def _policy_decision_from_raw(self, decision: Any) -> Any:
+    def _policy_decision_from_raw(self, decision: Any, *, canonical_tool: str) -> Any:
         from openminion.modules.brain.schemas import PolicyDecision
 
         decision_name = str(getattr(decision, "decision", "")).strip().upper()
@@ -326,13 +309,30 @@ class PolicyCtlBrainAdapter:
                 clarification_question
                 or str(getattr(decision, "reason", "") or "").strip()
             )
+        confirm_request = getattr(decision, "confirm_request", None) or {}
+        duration_options = list(confirm_request.get("choices", ()) or ())
+        if not duration_options:
+            duration_options = [
+                str(choice.get("action", "") or "")
+                for choice in confirm_request.get("suggested_choices", ()) or ()
+                if isinstance(choice, dict) and str(choice.get("action", "") or "")
+            ]
         return PolicyDecision(
             outcome=cast(Any, outcome),
             explanation=str(getattr(decision, "reason", "") or ""),
             require_clarification=require_clarification,
             clarification_question=clarification_question or None,
             approval_id=str(getattr(decision, "approval_id", "") or "") or None,
+            matched_grant_id=(
+                str(getattr(decision, "matched_grant_id", "") or "") or None
+            ),
             confirmation_preview=getattr(decision, "confirmation_preview", None),
+            policy_facts=build_policy_facts(
+                canonical_tool=canonical_tool,
+                reason_code=reason_code,
+                risk=getattr(getattr(decision, "risk", None), "to_dict", lambda: {})(),
+                duration_options=duration_options,
+            ),
         )
 
     @staticmethod
@@ -377,13 +377,14 @@ class PolicyCtlBrainAdapter:
         command: Any,
         working_state: Any,
         session_context: dict[str, Any],
+        action: str = "allow_once",
     ) -> str:
-        """Create a one-time allow grant for a confirmed pending command."""
+        """Create the requested allow grant for a confirmed pending command."""
         approval_id = str(
             getattr(working_state, "pending_policy_approval_id", "") or ""
         ).strip()
         if approval_id:
-            grant_id = self._ctl.resolve_confirmation(approval_id, "allow_once")
+            grant_id = self._ctl.resolve_confirmation(approval_id, action)
             return str(grant_id or "")
         invocation, ctx = self._build_invocation_and_context(
             command=command,
@@ -396,8 +397,8 @@ class PolicyCtlBrainAdapter:
         return self._ctl.create_grant_from_confirmation(
             invocation=invocation,
             ctx=ctx,
-            action="allow_once",
-            max_uses=1,
+            action=action,
+            max_uses=1 if action == "allow_once" else None,
         )
 
     def deny_confirmation(self, *, working_state: Any) -> None:
@@ -518,23 +519,67 @@ class PolicyCtlBrainAdapter:
                 action_policy_config,
                 session_mode_override,
             )
-            return policy_config_from_action_policy(effective)
+            config = policy_config_from_action_policy(effective)
+            return self._with_permission_rules(config, working_state)
         if session_mode_override is None:
             return None
         base_config = getattr(self._ctl, "_config", None)
         if not isinstance(base_config, PolicyConfig):
-            return PolicyConfig(mode=map_action_policy_mode(session_mode_override))
-        return PolicyConfig(
-            mode=cast(PolicyMode, map_action_policy_mode(session_mode_override)),
-            default_action=base_config.default_action,
-            default_duration=base_config.default_duration,
-            sandbox_path_prefixes=list(base_config.sandbox_path_prefixes),
-            allow_read_only_without_prompt=base_config.allow_read_only_without_prompt,
-            affirmative_tokens=list(base_config.affirmative_tokens),
-            negative_tokens=list(base_config.negative_tokens),
-            subject_id_default=base_config.subject_id_default,
-            decision_log_enabled=base_config.decision_log_enabled,
+            config = PolicyConfig(mode=map_action_policy_mode(session_mode_override))
+        else:
+            config = replace(
+                base_config,
+                mode=cast(PolicyMode, map_action_policy_mode(session_mode_override)),
+            )
+        return self._with_permission_rules(config, working_state)
+
+    @staticmethod
+    def _with_permission_rules(
+        config: PolicyConfig,
+        working_state: Any,
+    ) -> PolicyConfig:
+        from openminion.modules.brain.adapters.tool.permission_mode import (
+            WORKSPACE_AUTO_TOOL_NAMES,
+            canonical_permission_mode,
+            canonical_permission_overrides,
+            readonly_blocked_tool_names,
         )
+
+        permission_mode = canonical_permission_mode(
+            getattr(working_state, "permission_mode", "")
+        )
+        posture_rules: list[PolicyRule] = []
+        if permission_mode == "auto":
+            posture_rules.extend(
+                PolicyRule(tool_name=tool_name, mode="auto")
+                for tool_name in sorted(WORKSPACE_AUTO_TOOL_NAMES)
+            )
+        elif permission_mode == "readonly":
+            posture_rules.extend(
+                PolicyRule(tool_name=tool_name, mode="block")
+                for tool_name in sorted(readonly_blocked_tool_names())
+            )
+        for tool_name, override in canonical_permission_overrides(
+            getattr(working_state, "permission_overrides", {})
+        ).items():
+            posture_rules.append(
+                PolicyRule(
+                    tool_name=tool_name,
+                    mode=cast(
+                        Literal["block", "ask", "auto"],
+                        {
+                            "readonly": "block",
+                            "ask": "ask",
+                            "auto": "auto",
+                            "bypass": "auto",
+                        }[override],
+                    ),
+                )
+            )
+        if not posture_rules:
+            return config
+        rules = config.rules + tuple(posture_rules)
+        return replace(config, rules=rules)
 
     @staticmethod
     def _build_invocation_and_context(

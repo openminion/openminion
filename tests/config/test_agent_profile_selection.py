@@ -103,6 +103,29 @@ def test_agent_profile_command_policy_is_explicit_and_round_trips() -> None:
     assert "command_policy" not in disabled.to_dict()
 
 
+def test_agent_profile_structural_tool_results_round_trips() -> None:
+    config = OpenMinionConfig.from_dict(
+        {
+            "agents": {
+                "structural": {
+                    "provider": "echo",
+                    "structural_tool_results": True,
+                },
+                "default-agent": {"provider": "echo"},
+            },
+            "default_agent": "default-agent",
+        }
+    )
+
+    enabled = config.agents["structural"]
+    disabled = config.agents["default-agent"]
+
+    assert enabled.structural_tool_results is True
+    assert enabled.to_dict()["structural_tool_results"] is True
+    assert disabled.structural_tool_results is False
+    assert "structural_tool_results" not in disabled.to_dict()
+
+
 def _build_effective_profile(config, agent_id):
     effective = build_runtime_config(
         config,

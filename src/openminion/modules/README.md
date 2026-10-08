@@ -2,9 +2,12 @@
 
 ## Purpose
 
-`openminion.modules` owns feature subsystems: schemas, adapters, protocol
-contracts, storage/runtime helpers, and any internal execution engines those
-subsystems operate.
+`openminion.modules` owns reusable framework subsystems: schemas, adapters,
+protocol contracts, storage/runtime helpers, and their execution engines.
+Business procedures such as commerce order care are authored skills composed
+through existing brain/task owners, not new framework modules. Merchant-specific
+schemas, transaction safeguards, and persistence belong to `tools/commerce`.
+Do not create a workflow module or duplicate the existing skill workflow seam.
 
 ## Ownership split with `services/`
 

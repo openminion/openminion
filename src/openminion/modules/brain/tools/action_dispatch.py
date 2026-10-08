@@ -197,7 +197,7 @@ def execute_action_dispatch(
         )
         state.permission_mode = global_permission_mode
         tool_name = str(getattr(command, "tool_name", "") or "").strip()
-        permission_mode = effective_permission_mode_for_tool(
+        permission_mode, permission_mode_origin = effective_permission_mode_for_tool(
             global_mode=global_permission_mode,
             permission_overrides=getattr(state, "permission_overrides", {}),
             tool_name=tool_name,
@@ -365,10 +365,10 @@ def execute_action_dispatch(
         payload = command.model_dump(mode="json")
         _inject_runtime_tool_metadata(payload, state=state, lineage=lineage)
         inputs = payload.get("inputs")
-        if isinstance(inputs, dict):
-            inputs.setdefault("permission_mode", permission_mode)
-        else:
-            payload["inputs"] = {"permission_mode": permission_mode}
+        if not isinstance(inputs, dict):
+            inputs = payload["inputs"] = {}
+        inputs["permission_mode"] = permission_mode
+        inputs["permission_mode_origin"] = permission_mode_origin
         _tool_started_at = time.monotonic()
         raw = runner.tool_api.execute(
             command=payload,
@@ -402,7 +402,7 @@ def execute_action_dispatch(
                         call_id=str(getattr(command, "command_id", "") or ""),
                         duration_ms=_tool_duration_ms,
                         ok=(normalized.status == BRAIN_ACTION_STATUS_SUCCESS),
-                        content=str(getattr(normalized, "summary", "") or ""),
+                        content=normalized.outputs.get("content", normalized.summary),
                     )
                 except Exception as exc:
                     _record_dispatch_observer_failure(

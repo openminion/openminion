@@ -176,7 +176,7 @@ def test_executor_observes_without_suppressing_legitimate_calls() -> None:
 
 def test_executor_runtime_routes_sidecar_autostart_through_approval_callback() -> None:
     captured_env: dict[str, str] = {}
-    approvals: list[tuple[str, dict[str, object], str]] = []
+    approvals: list[tuple[str, dict[str, object], str, dict[str, object]]] = []
     config = OpenMinionConfig()
     config.runtime.env["OPENMINION_PINCHTAB_ALLOW_EXTERNAL"] = "1"
 
@@ -206,8 +206,10 @@ def test_executor_runtime_routes_sidecar_autostart_through_approval_callback() -
     )
     inbound = Message(channel="console", target="user", body="browser", metadata={})
 
-    async def _approve(tool_name, args, call_id):
-        approvals.append((tool_name, dict(args), str(call_id)))
+    async def _approve(tool_name, args, call_id, policy_facts):
+        approvals.append(
+            (tool_name, dict(args), str(call_id), dict(policy_facts or {}))
+        )
         return True
 
     runtime = SimpleNamespace(
@@ -249,6 +251,10 @@ def test_executor_runtime_routes_sidecar_autostart_through_approval_callback() -
             "sidecar.pinchtab.autostart",
             {"sidecar": "pinchtab"},
             "call-1:sidecar:pinchtab",
+            {
+                "canonical_tool": "sidecar.pinchtab.autostart",
+                "reason_code": "sidecar_autostart_required",
+            },
         )
     ]
 
@@ -282,7 +288,7 @@ def test_sidecar_approval_runs_when_security_policy_adapter_is_absent() -> None:
     )
     inbound = Message(channel="console", target="user", body="browser", metadata={})
 
-    async def _approve(tool_name, _args, _call_id):
+    async def _approve(tool_name, _args, _call_id, _policy_facts):
         approvals.append(str(tool_name))
         return True
 
@@ -345,7 +351,7 @@ def test_sidecar_approval_follows_tool_execution_approval() -> None:
     )
     inbound = Message(channel="console", target="user", body="browser", metadata={})
 
-    async def _approve(tool_name, _args, _call_id):
+    async def _approve(tool_name, _args, _call_id, _policy_facts):
         approvals.append(str(tool_name))
         return True
 

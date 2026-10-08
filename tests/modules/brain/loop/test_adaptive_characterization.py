@@ -776,6 +776,18 @@ def test_entry_inactive_tool_directory_uses_visible_activation_control() -> None
     assert "- memory.write: Store a memory." in rendered
 
 
+def test_context_adapter_fallback_has_no_profile_dependency() -> None:
+    ctx = _ctx()
+    ctx._services.runner = None
+
+    adapter = _AdaptiveLoopContextAdapter(ctx)
+
+    assert adapter.structural_tool_results is False
+    assert adaptive_modes._tool_result_scratchpad(None) == {
+        "telemetry.structural_tool_results": False
+    }
+
+
 def test_context_adapter_dispatch_fallbacks_and_confirmation_paths() -> None:
     command = ToolCommand(
         title="read", tool_name="file.read", args={"path": "README.md"}
@@ -818,7 +830,12 @@ def test_context_adapter_dispatch_fallbacks_and_confirmation_paths() -> None:
 
     ask_command = SimpleNamespace(
         kind="ask_user",
-        model_copy=lambda **kwargs: SimpleNamespace(kind="ask_user", copied=kwargs),
+        question="Confirm the action?",
+        model_copy=lambda **kwargs: SimpleNamespace(
+            kind="ask_user",
+            question="Confirm the action?",
+            copied=kwargs,
+        ),
     )
     adapter._postprocess_outcome(
         SimpleNamespace(

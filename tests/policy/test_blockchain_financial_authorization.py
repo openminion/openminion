@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from alembic import command
@@ -92,6 +93,36 @@ def _ctl(path: Path) -> PolicyCtl:
     return ctl
 
 
+def test_auto_rule_does_not_bypass_blockchain_authorization(tmp_path: Path) -> None:
+    ctl = PolicyCtl.with_sqlite(
+        tmp_path / "policy.db",
+        config=PolicyConfig(
+            mode="enforce",
+            rules=(
+                SimpleNamespace(
+                    tool_name="blockchain.send_transaction",
+                    min_risk_class="",
+                    mode="auto",
+                ),
+            ),
+        ),
+    )
+    invocation = _invocation()
+    try:
+        decision = ctl.check(
+            invocation,
+            _context(),
+            confirmation_preview=build_blockchain_send_confirmation_preview(
+                invocation["args"]
+            ),
+        )
+        assert decision.decision == "REQUIRE_CONFIRM"
+        assert decision.reason_code == "EXACT_AUTHORIZATION_REQUIRED"
+        assert decision.approval_id
+    finally:
+        ctl.close()
+
+
 def test_policy_interface_and_migration_head_are_v3() -> None:
     assert POLICY_INTERFACE_VERSION == "v3"
     assert MIGRATIONS == (
@@ -174,10 +205,12 @@ def test_exact_send_creates_reusable_server_owned_pending_confirmation(
 
         assert first.decision == "REQUIRE_CONFIRM"
         assert first.approval_id == second.approval_id
+        stored_preview = dict(first.confirmation_preview or {})
+        stored_preview.pop("display_lines", None)
         assert first.confirm_request == {
             "approval_id": first.approval_id,
             "choices": ["allow_once", "deny"],
-            "preview": first.confirmation_preview.__dict__,
+            "preview": stored_preview,
         }
         assert first.invocation_hash == stable_invocation_hash(
             tool="blockchain",
@@ -297,14 +330,21 @@ def test_exact_registered_financial_risk_wins_over_low_override(tmp_path: Path) 
         ctl.close()
 
 
-@pytest.mark.parametrize("mode", ["disabled", "log_only"])
-def test_non_enforcing_modes_deny_exact_send(mode: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("mode", "decision_name", "reason_code"),
+    [
+        ("disabled", "REQUIRE_CONFIRM", "EXACT_AUTHORIZATION_REQUIRED"),
+        ("log_only", "DENY", "POLICY_MODE_UNSUPPORTED"),
+    ],
+)
+def test_non_enforcing_modes_keep_exact_send_floor(
+    mode: str, decision_name: str, reason_code: str, tmp_path: Path
+) -> None:
     ctl = PolicyCtl.with_sqlite(tmp_path / f"{mode}.db", config=PolicyConfig(mode=mode))
     try:
         decision = _check(ctl)
-        assert decision.decision == "DENY"
-        assert decision.reason_code == "POLICY_MODE_UNSUPPORTED"
-        assert decision.details == {"mode": mode}
+        assert decision.decision == decision_name
+        assert decision.reason_code == reason_code
     finally:
         ctl.close()
 

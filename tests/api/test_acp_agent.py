@@ -77,7 +77,7 @@ class _Runtime:
             {"kind": "token", "trace_id": "trace-1", "data": {"text": "hello"}}
         )
         self.approval_result = asyncio.run(
-            approval_callback("file.write", {"path": "result.txt"}, "approval-1")
+            approval_callback("file.write", {"path": "result.txt"}, "approval-1", {})
         )
         return {"body": "hello", "session_id": payload["session_id"]}
 

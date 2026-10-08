@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-import hashlib
-import json
 from typing import Any, cast
-
 from pydantic import ValidationError
 
 from .config import resolve_blockchain_config
@@ -23,8 +20,12 @@ from .schemas import (
     SEND_REQUEST_ADAPTER,
     CallContext,
     PreparedTransactionResult,
+    ResolvedPreparedTransaction,
+    SendTransactionArgs,
 )
 from .preparations import save_prepared_transaction
+from .schema_types import decimal_string, web3_hex_data
+from .transaction_schemas import preparation_digest
 
 
 class _RpcFailure(RuntimeError):
@@ -45,7 +46,9 @@ class _PreparationReverted(RuntimeError):
         super().__init__("prepare")
 
 
-def _error(code: str, message: str, details: Mapping[str, Any]) -> dict[str, Any]:
+def _error(
+    code: str, message: str, details: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     return {
         "ok": False,
         "state": "failed",
@@ -53,7 +56,7 @@ def _error(code: str, message: str, details: Mapping[str, Any]) -> dict[str, Any
             "code": code,
             "message": message,
             "retryable": False,
-            "details": dict(details),
+            "details": dict(details or {}),
         },
     }
 
@@ -73,33 +76,6 @@ def _client(rpc_url: str) -> Any:
     return Web3(HTTPProvider(rpc_url))
 
 
-def _decimal(value: Any) -> str:
-    return str(int(value))
-
-
-def _hex_data(value: Any) -> str:
-    if isinstance(value, str):
-        token = value
-    elif hasattr(value, "hex"):
-        token = value.hex()
-    else:
-        token = bytes(value).hex()
-    return token if token.startswith("0x") else f"0x{token}"
-
-
-def preparation_digest(
-    transaction: Mapping[str, Any],
-    call_context: Mapping[str, Any] | None,
-) -> str:
-    encoded = json.dumps(
-        {"transaction": dict(transaction), "call_context": call_context},
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode()
-    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
-
-
 def _chain_id(web3: Any, expected_chain_id: int) -> int:
     observed = int(_rpc("chain_read", lambda: web3.eth.chain_id))
     if observed != expected_chain_id:
@@ -111,7 +87,7 @@ def _inspect_data(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
     if request.action == "chain_summary":
         return {
             "chain_id": chain_id,
-            "latest_block_number": _decimal(
+            "latest_block_number": decimal_string(
                 _rpc("chain_read", lambda: client.eth.block_number)
             ),
         }
@@ -120,13 +96,15 @@ def _inspect_data(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
         return {
             "chain_id": chain_id,
             "address": address,
-            "balance_wei": _decimal(
+            "balance_wei": decimal_string(
                 _rpc("chain_read", lambda: client.eth.get_balance(address))
             ),
         }
     if request.action == "bytecode":
         address = client.to_checksum_address(request.address)
-        bytecode = _hex_data(_rpc("chain_read", lambda: client.eth.get_code(address)))
+        bytecode = web3_hex_data(
+            _rpc("chain_read", lambda: client.eth.get_code(address))
+        )
         return {
             "chain_id": chain_id,
             "address": address,
@@ -168,11 +146,11 @@ def _inspect_data(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
             "to_address": client.to_checksum_address(to_address)
             if to_address
             else None,
-            "value_wei": _decimal(transaction["value"]),
-            "input": _hex_data(transaction["input"]),
-            "nonce": _decimal(transaction["nonce"]),
+            "value_wei": decimal_string(transaction["value"]),
+            "input": web3_hex_data(transaction["input"]),
+            "nonce": decimal_string(transaction["nonce"]),
             "block_number": (
-                _decimal(transaction["blockNumber"])
+                decimal_string(transaction["blockNumber"])
                 if transaction.get("blockNumber") is not None
                 else None
             ),
@@ -193,6 +171,14 @@ def inspect_blockchain(
             "Blockchain capability is disabled.",
             {"feature": "blockchain"},
         )
+    if args.get("action") not in {"resolved_contract_call", "operation_status"} and (
+        not config.rpc_url or config.chain_id is None
+    ):
+        return _error(
+            "FEATURE_UNAVAILABLE",
+            "Configured blockchain network is unavailable.",
+            {"feature": "configured_blockchain_network"},
+        )
     try:
         request = INSPECT_REQUEST_ADAPTER.validate_python(dict(args))
     except ValidationError:
@@ -200,6 +186,21 @@ def inspect_blockchain(
             "INVALID_ARGUMENT",
             "Blockchain arguments are invalid.",
             {"field": "", "reason": "request_schema"},
+        )
+
+    if request.action == "resolved_contract_call":
+        from .resolved_calls import inspect_resolved_contract
+
+        return inspect_resolved_contract(request, context)
+    if request.action == "operation_status":
+        from .resolved_operations import operation_status
+
+        return operation_status(request.preparation_digest, context)
+    if not config.rpc_url or config.chain_id is None:
+        return _error(
+            "FEATURE_UNAVAILABLE",
+            "Configured blockchain network is unavailable.",
+            {"feature": "configured_blockchain_network"},
         )
 
     client = web3 or _client(config.rpc_url)
@@ -382,7 +383,7 @@ def _simulate_prepared_transaction(
                 "block_identifier": "pending",
                 "resolved_block_number": None,
                 "resolved_block_hash": None,
-                "return_data": _hex_data(return_data).lower(),
+                "return_data": web3_hex_data(return_data).lower(),
                 "gas_estimate": str(gas_limit),
                 "decoded_returns": decoded_returns,
             },
@@ -404,6 +405,14 @@ def prepare_transaction(
             "Blockchain capability is disabled.",
             {"feature": "blockchain"},
         )
+    if args.get("kind") != "resolved_contract_call" and (
+        not config.rpc_url or config.chain_id is None
+    ):
+        return _error(
+            "FEATURE_UNAVAILABLE",
+            "Configured blockchain network is unavailable.",
+            {"feature": "configured_blockchain_network"},
+        )
     try:
         request = PREPARE_REQUEST_ADAPTER.validate_python(dict(args))
     except ValidationError:
@@ -411,6 +420,17 @@ def prepare_transaction(
             "INVALID_ARGUMENT",
             "Blockchain arguments are invalid.",
             {"field": "", "reason": "request_schema"},
+        )
+
+    if request.kind == "resolved_contract_call":
+        from .resolved_calls import prepare_resolved_transaction
+
+        return prepare_resolved_transaction(request, config, context)
+    if not config.rpc_url or config.chain_id is None:
+        return _error(
+            "FEATURE_UNAVAILABLE",
+            "Configured blockchain network is unavailable.",
+            {"feature": "configured_blockchain_network"},
         )
 
     try:
@@ -656,9 +676,9 @@ def _submit_transaction(
         {key: value for key, value in rpc_transaction.items() if key != "from"}
     )
     raw_transaction = signed.raw_transaction
-    transaction_hash = _hex_data(client.keccak(raw_transaction))
+    transaction_hash = web3_hex_data(client.keccak(raw_transaction))
     try:
-        submitted_hash = _hex_data(client.eth.send_raw_transaction(raw_transaction))
+        submitted_hash = web3_hex_data(client.eth.send_raw_transaction(raw_transaction))
     except (OSError, ValueError, Web3Exception):
         return _send_terminal(
             context,
@@ -819,8 +839,22 @@ def send_transaction(
             "Blockchain capability is disabled.",
             {"feature": "blockchain_writes"},
         )
+    if args.get("kind") != "resolved_contract_call" and (
+        not config.rpc_url or config.chain_id is None
+    ):
+        return _error(
+            "FEATURE_UNAVAILABLE",
+            "Configured blockchain network is unavailable.",
+            {"feature": "configured_blockchain_network"},
+        )
+    request: ResolvedPreparedTransaction | SendTransactionArgs
     try:
-        request = SEND_REQUEST_ADAPTER.validate_python(dict(args))
+        if args.get("kind") == "resolved_contract_call":
+            from .transaction_schemas import RESOLVED_PREPARATION_ADAPTER
+
+            request = RESOLVED_PREPARATION_ADAPTER.validate_python(dict(args))
+        else:
+            request = SEND_REQUEST_ADAPTER.validate_python(dict(args))
     except ValidationError:
         return _error(
             "INVALID_ARGUMENT",
@@ -832,6 +866,16 @@ def send_transaction(
             "POLICY_MODE_UNSUPPORTED",
             "Enforcing policy is required for blockchain send.",
             {"mode": "unavailable"},
+        )
+    if isinstance(request, ResolvedPreparedTransaction):
+        from .resolved_operations import send_resolved_transaction
+
+        return send_resolved_transaction(request, context, config)
+    if not config.rpc_url or config.chain_id is None:
+        return _error(
+            "FEATURE_UNAVAILABLE",
+            "Configured blockchain network is unavailable.",
+            {"feature": "configured_blockchain_network"},
         )
     transaction = request.transaction.model_dump(mode="json")
     call_context = (
@@ -940,10 +984,10 @@ def _receipt_from_mapping(
         "chain_id": chain_id,
         "transaction_hash": transaction_hash,
         "state": "succeeded" if status == 1 else "reverted",
-        "block_number": _decimal(receipt["blockNumber"]),
+        "block_number": decimal_string(receipt["blockNumber"]),
         "status": status,
-        "gas_used": _decimal(receipt["gasUsed"]),
-        "effective_gas_price_wei": _decimal(receipt["effectiveGasPrice"]),
+        "gas_used": decimal_string(receipt["gasUsed"]),
+        "effective_gas_price_wei": decimal_string(receipt["effectiveGasPrice"]),
     }
 
 

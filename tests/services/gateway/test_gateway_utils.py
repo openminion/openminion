@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from openminion.base.config.action_policy import ACTION_POLICY_SESSION_OVERRIDE_KEY
 from openminion.services.gateway.turn.runtime import _extract_ephemeral_prompt_metadata
 
 
@@ -40,6 +41,23 @@ def test_extract_ephemeral_prompt_metadata_keeps_turn_tool_scope() -> None:
         "subagent_tool_allowlist": "file.read,web.search",
         "turn_tool_allowlist": "file.read",
         "turn_tool_allowlist_supplied": "true",
+    }
+
+
+def test_extract_ephemeral_prompt_metadata_keeps_permission_posture() -> None:
+    extracted = _extract_ephemeral_prompt_metadata(
+        {
+            "permission_mode": "bypass",
+            "permission_overrides": '{"file.write": "auto"}',
+            ACTION_POLICY_SESSION_OVERRIDE_KEY: "bypass",
+            "private_value": "drop-me",
+        }
+    )
+
+    assert extracted == {
+        "permission_mode": "bypass",
+        "permission_overrides": '{"file.write": "auto"}',
+        ACTION_POLICY_SESSION_OVERRIDE_KEY: "bypass",
     }
 
 

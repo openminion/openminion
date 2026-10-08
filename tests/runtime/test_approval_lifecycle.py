@@ -316,6 +316,7 @@ def test_daemon_negotiated_approval_emits_stream_and_session_events() -> None:
                 "exec.run",
                 {"command": "pytest", "api_key": "sk-secret-value-123456789"},
                 "provider-call-1",
+                {},
             )
         )
         resolver.join(timeout=1.0)

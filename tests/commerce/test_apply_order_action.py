@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-from openminion.modules.commerce.config import CommerceToolRuntimeConfig
-from openminion.modules.commerce.provider import (
+from openminion.tools.commerce.config import CommerceToolRuntimeConfig
+from openminion.tools.commerce.provider import (
     ApplyOrderActionRequest,
     CommerceOutcomeUnknown,
     CommerceProviderError,
@@ -72,7 +72,7 @@ def _adapter(tmp_path, runtime, policy) -> ToolAdapter:
     return ToolAdapter(
         workspace_root=tmp_path,
         runtime_registry=_bootstrap(tmp_path).registry,
-        commerce_runtime=runtime,
+        tool_resources={"commerce": runtime},
         policy_ctl=policy,
         policy={"tools": {"allow_exact": list(ALL_COMMERCE_TOOLS)}},
     )
@@ -275,7 +275,7 @@ def test_apply_action_rejects_mismatched_provider_result(
     with pytest.raises(CommerceProviderError, match="does not match") as exc_info:
         runtime.apply_action_public(args, authorization_hash="b" * 64)
 
-    assert exc_info.value.code == "INVALID_RESPONSE"
+    assert exc_info.value.code == "OUTCOME_UNKNOWN"
 
 
 def test_reserved_action_resumes_before_provider_submission(

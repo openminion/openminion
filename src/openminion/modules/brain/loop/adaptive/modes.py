@@ -66,7 +66,6 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_FILE_EDIT,
     MODEL_FILE_WRITE,
 )
-from openminion.modules.tool.diagnostics.events import is_structural_security_agent
 
 from ..services import runner_from_context, runtime_allows_tool
 
@@ -122,8 +121,12 @@ def _seed_requests_inactive_tool(seed_response: Any) -> bool:
     )
 
 
-def _tool_result_scratchpad(agent_id: str) -> dict[str, Any]:
-    return {"telemetry.structural_tool_results": is_structural_security_agent(agent_id)}
+def _tool_result_scratchpad(runner: Any) -> dict[str, Any]:
+    return {
+        "telemetry.structural_tool_results": bool(
+            getattr(getattr(runner, "profile", None), "structural_tool_results", False)
+        )
+    }
 
 
 from .finalization import ActLoopFinalizationMixin  # noqa: E402
@@ -486,7 +489,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
             adaptive_budget_config=_aib_config,
         )
         loop_ctx_adapter = _AdaptiveLoopContextAdapter(ctx)
-        shortlisting_scratchpad = _tool_result_scratchpad(ctx.state.agent_id)
+        shortlisting_scratchpad = _tool_result_scratchpad(runner)
         requestable_tool_specs = None
         tool_specs = full_tool_specs
         tool_request_allowed = runtime_allows_tool(runner, "tool.request")

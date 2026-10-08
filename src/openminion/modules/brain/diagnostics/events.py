@@ -2,7 +2,6 @@ import logging
 from typing import Any
 
 from openminion.base.redaction import redact_mapping
-from openminion.modules.tool.diagnostics.events import is_structural_security_agent
 
 _log = logging.getLogger(__name__)
 
@@ -79,11 +78,13 @@ class CanonicalEventLogger:
         agent_id: str,
         llm_api: Any | None = None,
         logger: logging.Logger | None = None,
+        structural_tool_results: bool = False,
     ) -> None:
         self._session_api = session_api
         self._session_id = session_id
         self._agent_id = agent_id
         self._log = logger or _log
+        self._structural_tool_results = bool(structural_tool_results)
         identity_getter = getattr(llm_api, "get_provider_identity", None)
         identity = identity_getter() if callable(identity_getter) else {}
         self._provider_name = str(identity.get("provider_name") or "").strip()
@@ -105,10 +106,10 @@ class CanonicalEventLogger:
         importance: int | None = None,
         redaction: str | None = None,
     ) -> str:
-        if event_type == "tool.completed" and is_structural_security_agent(
-            self._agent_id
-        ):
-            payload = {key: value for key, value in payload.items() if key != "summary"}
+        if self._structural_tool_results:
+            payload = {**payload, "structural_only": True}
+            if event_type == "tool.completed":
+                payload.pop("summary", None)
         if event_type.startswith("llm.call.") and self._provider_name:
             payload = dict(payload)
             payload.setdefault("provider", self._provider_name)

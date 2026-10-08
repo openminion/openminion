@@ -12,6 +12,27 @@ from openminion.modules.tool.errors import ToolRuntimeError
 SIDECAR_AUTOSTART_ENV_KEYS: dict[str, str] = {"pinchtab": "PINCHTAB_AUTOSTART"}
 
 
+def _approval_policy_facts(
+    *, tool_name: str, reason_code: str, details: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    source = details or {}
+    raw_risk = source.get("risk")
+    risk = (
+        {str(key): value for key, value in raw_risk.items()}
+        if isinstance(raw_risk, Mapping)
+        else {}
+    )
+    facts = {
+        "canonical_tool": str(tool_name or "").strip(),
+        "reason_code": str(reason_code or "").strip(),
+        "risk": risk,
+        "duration_options": list(
+            source.get("duration_options", source.get("choices", ())) or ()
+        ),
+    }
+    return {key: value for key, value in facts.items() if value}
+
+
 def sidecar_autostart_env_key(name: str) -> str:
     return SIDECAR_AUTOSTART_ENV_KEYS.get(str(name or "").strip().lower(), "")
 
@@ -44,7 +65,13 @@ def ensure_tool_sidecar_ready(
             {"approval_id": approval_id, "sidecar": sidecar},
         )
     if not approval_callback(
-        f"sidecar.{sidecar}.autostart", {"sidecar": sidecar}, approval_id
+        f"sidecar.{sidecar}.autostart",
+        {"sidecar": sidecar},
+        approval_id,
+        _approval_policy_facts(
+            tool_name=f"sidecar.{sidecar}.autostart",
+            reason_code="sidecar_autostart_required",
+        ),
     ):
         raise ToolRuntimeError(
             "POLICY_DENIED",
@@ -106,6 +133,10 @@ async def approve_sidecar_autostart(
             f"sidecar.{sidecar}.autostart",
             {"sidecar": sidecar},
             f"{str(getattr(call, 'id', '') or '')}:sidecar:{sidecar}",
+            _approval_policy_facts(
+                tool_name=f"sidecar.{sidecar}.autostart",
+                reason_code="sidecar_autostart_required",
+            ),
         )
     )
 
@@ -159,7 +190,14 @@ async def maybe_allow_denied_call_with_operator_approval(
     with active_chat_phase("approval_wait"):
         approved = bool(
             await approval_callback(
-                tool_name, tool_args, str(getattr(call, "id", "") or "")
+                tool_name,
+                tool_args,
+                str(getattr(call, "id", "") or ""),
+                _approval_policy_facts(
+                    tool_name=tool_name,
+                    reason_code=str(decision.code or decision.reason),
+                    details=decision.details,
+                ),
             )
         )
     if not approved:

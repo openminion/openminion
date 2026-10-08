@@ -1,21 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import asdict
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from openminion.modules.tool.plugin_api import (
-    BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
-    BlockchainSendConfirmationPreview,
+    POLICY_AUTHORIZATION_DESCRIPTORS,
     ToolConfirmationPreview,
+    confirmation_preview_payload,
     is_policy_authorization_pair,
 )
 
 from ..constants import (
-    BLOCKCHAIN_CONFIRMATION_TTL_SECONDS,
+    BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
     BLOCKCHAIN_POLICY_TOOL,
     BLOCKCHAIN_SEND_METHOD,
-    COMMERCE_CONFIRMATION_TTL_SECONDS,
     OPS_COMMAND_CONFIRMATION_TTL_SECONDS,
     OPS_COMMAND_POLICY_TOOL,
     OPS_COMMAND_RUN_METHOD,
@@ -24,6 +22,7 @@ from ..constants import (
     POLICY_CONFIRM_RESPONSE_UNCLEAR,
     POLICY_DECISION_ALLOW,
     POLICY_DECISION_DENY,
+    POLICY_MODE_DISABLED,
     POLICY_MODE_ENFORCE,
     POLICY_MODE_ENFORCE_SAFE,
 )
@@ -55,10 +54,6 @@ def is_exact_ops_command(tool: str, method: str) -> bool:
     return tool == OPS_COMMAND_POLICY_TOOL and method == OPS_COMMAND_RUN_METHOD
 
 
-def is_exact_commerce_action(tool: str, method: str) -> bool:
-    return tool == "commerce" and is_policy_authorization_pair(tool, method)
-
-
 def get_or_create_exact_confirmation(
     *,
     store: PolicyStore,
@@ -67,14 +62,13 @@ def get_or_create_exact_confirmation(
     subject_id: str,
     confirmation_preview: ToolConfirmationPreview | None,
 ) -> PendingPolicyConfirmation:
-    if is_exact_blockchain_send(invocation.tool, invocation.method):
-        assert isinstance(confirmation_preview, BlockchainSendConfirmationPreview)
-        preview = asdict(confirmation_preview)
-        ttl_seconds = BLOCKCHAIN_CONFIRMATION_TTL_SECONDS
-    elif is_exact_commerce_action(invocation.tool, invocation.method):
-        assert isinstance(confirmation_preview, dict)
-        preview = dict(confirmation_preview)
-        ttl_seconds = COMMERCE_CONFIRMATION_TTL_SECONDS
+    descriptor = POLICY_AUTHORIZATION_DESCRIPTORS.get(
+        (invocation.tool, invocation.method)
+    )
+    if descriptor is not None:
+        assert confirmation_preview is not None
+        preview = confirmation_preview_payload(confirmation_preview)
+        preview.pop("display_lines", None)
     else:
         preview = {
             "plan_id": str(invocation.args.get("plan_id", "")),
@@ -86,7 +80,6 @@ def get_or_create_exact_confirmation(
             "timeout_seconds": invocation.args.get("timeout_seconds"),
             "expires_at": str(invocation.args.get("expires_at", "")),
         }
-        ttl_seconds = OPS_COMMAND_CONFIRMATION_TTL_SECONDS
     return store.get_or_create_pending_confirmation(
         subject_id=subject_id,
         tool=invocation.tool,
@@ -96,7 +89,9 @@ def get_or_create_exact_confirmation(
         trace_id=context.trace_id,
         session_id=context.session_id,
         preview=preview,
-        ttl_seconds=ttl_seconds,
+        ttl_seconds=descriptor.confirmation_ttl_seconds
+        if descriptor is not None
+        else OPS_COMMAND_CONFIRMATION_TTL_SECONDS,
     )
 
 
@@ -129,6 +124,44 @@ def resolve_exact_ops_decision(
             "grant_id": grant.grant_id,
             "duration_type": grant.duration_type,
         },
+    )
+
+
+def resolve_exact_authorization_decision(
+    *,
+    store: PolicyStore,
+    invocation: InvocationSummary,
+    context: ContextSummary,
+    subject_id: str,
+    risk: RiskSpec,
+    confirmation_preview: ToolConfirmationPreview | None,
+    confirm: Callable[..., PolicyDecision],
+) -> PolicyDecision | None:
+    if is_policy_authorization_pair(invocation.tool, invocation.method):
+        return confirm(
+            inv=invocation,
+            csum=context,
+            risk=risk,
+            reason_code="EXACT_AUTHORIZATION_REQUIRED",
+            reason="Exact authorization is required for this action",
+            confirmation_preview=confirmation_preview,
+        )
+    if not is_exact_ops_command(invocation.tool, invocation.method):
+        return None
+    decision = resolve_exact_ops_decision(
+        store=store,
+        invocation=invocation,
+        context=context,
+        subject_id=subject_id,
+        risk=risk,
+    )
+    return decision or confirm(
+        inv=invocation,
+        csum=context,
+        risk=risk,
+        reason_code="EXACT_AUTHORIZATION_REQUIRED",
+        reason="Policy confirmation is required for this exact operations command",
+        confirmation_preview=confirmation_preview,
     )
 
 
@@ -165,27 +198,38 @@ def authorization_preflight_decision(
                 risk,
                 confirmation_preview_error,
             )
-    elif is_exact_commerce_action(invocation.tool, invocation.method):
-        if context.subject_id != "local" or not context.session_id:
+    elif (
+        descriptor := POLICY_AUTHORIZATION_DESCRIPTORS.get(
+            (invocation.tool, invocation.method)
+        )
+    ) is not None:
+        if (
+            descriptor.required_subject_id is not None
+            and context.subject_id != descriptor.required_subject_id
+        ) or (descriptor.requires_session and not context.session_id):
             return PolicyDecision(
                 decision=POLICY_DECISION_DENY,
                 reason_code="SUBJECT_UNAVAILABLE",
-                reason="Commerce authorization requires the trusted local subject and session.",
+                reason="Authorization requires the trusted subject and session.",
                 risk=risk,
                 invocation_hash=invocation.invocation_hash,
             )
         if not isinstance(confirmation_preview, dict):
             return PolicyDecision(
                 decision=POLICY_DECISION_DENY,
-                reason_code="COMMERCE_CONFIRMATION_PREVIEW_INVALID",
-                reason="Commerce approval preview could not be verified.",
+                reason_code=f"{invocation.tool.upper()}_CONFIRMATION_PREVIEW_INVALID",
+                reason="Approval preview could not be verified.",
                 risk=risk,
                 invocation_hash=invocation.invocation_hash,
             )
     if (
         is_policy_authorization_pair(invocation.tool, invocation.method)
         or is_exact_ops_command(invocation.tool, invocation.method)
-    ) and mode not in {POLICY_MODE_ENFORCE, POLICY_MODE_ENFORCE_SAFE}:
+    ) and mode not in {
+        POLICY_MODE_DISABLED,
+        POLICY_MODE_ENFORCE,
+        POLICY_MODE_ENFORCE_SAFE,
+    }:
         action = (
             "operations command"
             if is_exact_ops_command(invocation.tool, invocation.method)

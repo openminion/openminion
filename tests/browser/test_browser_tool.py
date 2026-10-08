@@ -36,6 +36,15 @@ from openminion.tools.browser.tool import BrowserTool
 from openminion.tools.browser import tool as browser_tool_module
 
 
+def test_browser_call_accepts_operation_alias() -> None:
+    call = BrowserTool.args_model.model_validate(
+        {"operation": "tab.list", "provider": "playwright"}
+    )
+
+    assert call.op == "tab.list"
+    assert "operation" not in call.model_dump()
+
+
 @dataclass
 class ToolContext:
     runtime: object | None = None

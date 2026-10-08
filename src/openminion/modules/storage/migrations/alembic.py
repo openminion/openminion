@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 _NESTED_MODULE_STORAGE_IMPORT_PATHS: dict[str, list[str]] = {
     "authoring": ["openminion.modules.tool.authoring.storage"],
+    "commerce": ["openminion.tools.commerce.storage"],
 }
 
 
@@ -21,8 +22,11 @@ def discover_module_storage_root(module_id: str) -> Path | None:
     if not normalized:
         return None
     # controlplane channel families with durable module_id
-    candidate_paths = [f"openminion.modules.{normalized}.storage"]
-    candidate_paths.extend(_NESTED_MODULE_STORAGE_IMPORT_PATHS.get(normalized, ()))
+    candidate_paths = list(
+        _NESTED_MODULE_STORAGE_IMPORT_PATHS.get(
+            normalized, [f"openminion.modules.{normalized}.storage"]
+        )
+    )
     if normalized.startswith("controlplane_"):
         channel_name = normalized[len("controlplane_") :]
         candidate_paths.append(

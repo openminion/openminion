@@ -3260,10 +3260,14 @@ def test_coding_loop_preserves_confirmation_replay_state() -> None:
 
 def test_coding_loop_replays_confirmed_pending_tool_without_llm_yes() -> None:
     class _PolicyAPI:
+        def __init__(self) -> None:
+            self.grant_calls = 0
+
         def parse_confirmation_response(self, text: str) -> str:
             return "affirm" if text == "yes" else "unclear"
 
         def grant_once_from_confirmation(self, **kwargs) -> str:
+            self.grant_calls += 1
             return "grant-1"
 
     state = _state()
@@ -3286,7 +3290,8 @@ def test_coding_loop_replays_confirmed_pending_tool_without_llm_yes() -> None:
         "exec.run (command=python --version)\n"
         "Reply exactly yes to confirm or exactly no to cancel."
     )
-    services = _FakeServices(runner=SimpleNamespace(policy_api=_PolicyAPI()))
+    policy_api = _PolicyAPI()
+    services = _FakeServices(runner=SimpleNamespace(policy_api=policy_api))
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
@@ -3314,7 +3319,12 @@ def test_coding_loop_replays_confirmed_pending_tool_without_llm_yes() -> None:
     assert state.pending_confirmation_command is None
     assert executor.calls[0].tool_name == "exec.run"
     assert executor.calls[0].inputs["confirmation_source"] == "policy_replay"
-    assert executor.calls[0].inputs["confirmation_grant_id"] == "grant-1"
+    assert (
+        executor.calls[0]
+        .inputs["confirmation_grant_id"]
+        .startswith("local-confirmation-")
+    )
+    assert policy_api.grant_calls == 0
     first_llm_messages = llm_client.calls[0]["messages"]
     assert all(message.content != "yes" for message in first_llm_messages)
     assert any(message.role == "tool" for message in first_llm_messages)
@@ -3395,7 +3405,8 @@ def test_coding_loop_replays_confirmed_pending_tool_batch_without_llm_yes() -> N
     state.post_action_user_message = confirmation_required_user_message(
         state.pending_confirmation_command
     )
-    services = _FakeServices(runner=SimpleNamespace(policy_api=_PolicyAPI()))
+    policy_api = _PolicyAPI()
+    services = _FakeServices(runner=SimpleNamespace(policy_api=policy_api))
 
     class _StateAwareExecutor(_FakeCommandExecutor):
         def execute_command(
@@ -3447,12 +3458,11 @@ def test_coding_loop_replays_confirmed_pending_tool_batch_without_llm_yes() -> N
         "demo/pyproject.toml",
         "demo/README.md",
     ]
-    assert [
-        command.inputs["confirmation_grant_id"] for command in executor.calls[:2]
-    ] == [
-        "grant-1",
-        "grant-2",
-    ]
+    assert all(
+        command.inputs["confirmation_grant_id"].startswith("local-confirmation-")
+        for command in executor.calls[:2]
+    )
+    assert policy_api._grant_ids == ["grant-1", "grant-2"]
     assert all(
         command.inputs["confirmation_source"] == "policy_replay"
         for command in executor.calls[:2]

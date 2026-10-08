@@ -233,11 +233,13 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     ),
     SlashCommandMetadata(
         "/permissions",
-        "Show or set the sandbox approval mode",
+        "Choose, inspect, or set the session permission posture",
         (
             "/permissions",
             "/permissions <default|readonly|bypass|cycle>",
             "/permissions <tool> <ask|auto|bypass|readonly|default>",
+            "/permissions grants",
+            "/permissions revoke <grant-id>",
         ),
     ),
     SlashCommandMetadata(

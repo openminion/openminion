@@ -166,7 +166,7 @@ def test_terminal_project_launch_approval_persists_exact_repository(
     )
     approval_args: dict[str, object] = {}
 
-    async def approve(_name, args, _call_id) -> bool:  # noqa: ANN001
+    async def approve(_name, args, _call_id, _policy_facts) -> bool:  # noqa: ANN001
         approval_args.update(args)
         return True
 

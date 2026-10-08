@@ -56,10 +56,13 @@ from .slash_output import (
 from .actions import (
     _handle_slash,
     _run_shell_escape,
-    _runtime_permission_mode,
-    _runtime_action_policy_mode,
-    _cycle_permission_mode,
     _SLASH_COMMANDS,
+)
+from .permissions import (
+    cycle_permission_mode as _cycle_permission_mode,
+    initialize_permission_status as _initialize_permission_status,
+    runtime_action_policy_mode as _runtime_action_policy_mode,
+    runtime_permission_mode as _runtime_permission_mode,
 )
 from .sessions import run_room_turn_if_bound, runtime_message_stream
 from .timing import push_phase_timing_report_if_enabled
@@ -213,8 +216,7 @@ async def _handle_slash_input(
     status_line: TerminalStatusLine,
     working_dir: str,
     custom_commands: dict,
-    approval_grants: set[str] | None = None,
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
+    approval_callback: Callable[..., Any] | None = None,
 ) -> bool:
     """Dispatch a slash command and return whether the shell should exit."""
 
@@ -272,7 +274,7 @@ async def _handle_slash_input(
             status_line=status_line,
             approval_callback=_build_approval_callback(
                 overlay=overlay,
-                session_grants=approval_grants or set(),
+                runtime=runtime,
             ),
         )
         return False
@@ -301,7 +303,6 @@ class _TerminalFocusLoop:
         overlay: TerminalOverlayPresenter,
         working_dir: str,
         custom_commands: dict[str, Any],
-        approval_grants: set[str],
         startup_notice_task: asyncio.Task[str] | None = None,
     ) -> None:
         self.runtime = runtime
@@ -312,7 +313,6 @@ class _TerminalFocusLoop:
         self.overlay = overlay
         self.working_dir = working_dir
         self.custom_commands = custom_commands
-        self.approval_grants = approval_grants
         self.startup_notice_task = startup_notice_task
         self.pending_turns: deque[str] = deque()
         self.active_turn_task: asyncio.Task[None] | None = None
@@ -414,7 +414,7 @@ class _TerminalFocusLoop:
                 status_line=self.status_line,
                 approval_callback=_build_approval_callback(
                     overlay=self.overlay,
-                    session_grants=self.approval_grants,
+                    runtime=self.runtime,
                     pause_prompt=self.cancel_read_task,
                     resume_prompt=self.start_read_task,
                 ),
@@ -537,10 +537,9 @@ class _TerminalFocusLoop:
                     status_line=self.status_line,
                     working_dir=self.working_dir,
                     custom_commands=self.custom_commands,
-                    approval_grants=self.approval_grants,
                     approval_callback=_build_approval_callback(
                         overlay=self.overlay,
-                        session_grants=self.approval_grants,
+                        runtime=self.runtime,
                         pause_prompt=self.cancel_read_task,
                     ),
                 )
@@ -710,8 +709,8 @@ async def _run_terminal_focus_async(
     )
     transcript.set_terminal_writer(terminal_writer)
     overlay = TerminalOverlayPresenter(console=console)
-    approval_grants: set[str] = set()
     _push_greeter(console, runtime=runtime, working_dir=working_dir)
+    _initialize_permission_status(runtime, status_line, console)
     startup_notice_task = _schedule_startup_notice(startup_notice)
     loop = _TerminalFocusLoop(
         runtime=runtime,
@@ -722,7 +721,6 @@ async def _run_terminal_focus_async(
         overlay=overlay,
         working_dir=working_dir,
         custom_commands=custom_commands,
-        approval_grants=approval_grants,
         startup_notice_task=startup_notice_task,
     )
     composer._on_escape = loop.request_turn_interrupt
@@ -860,7 +858,7 @@ async def _run_interruptible_agent_turn(
     runtime: Any,
     transcript: TerminalTranscript,
     status_line: TerminalStatusLine | None,
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
+    approval_callback: Callable[..., Any] | None = None,
     invalidate_prompt: Callable[[], None] | None = None,
 ) -> None:
     turn_task = asyncio.create_task(
@@ -898,7 +896,7 @@ async def _run_agent_turn(
     runtime: Any,
     transcript: TerminalTranscript,
     status_line: TerminalStatusLine | None,
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
+    approval_callback: Callable[..., Any] | None = None,
     invalidate_prompt: Callable[[], None] | None = None,
 ) -> None:
     if status_line is not None:

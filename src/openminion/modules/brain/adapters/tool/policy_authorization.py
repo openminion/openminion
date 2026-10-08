@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from openminion.modules.tool.plugin_api import is_policy_authorization_pair
-from openminion.tools.commerce.authorization import (
-    consume_commerce_action_authorization,
-    consume_commerce_place_authorization,
-    consume_commerce_prepare_authorization,
+from openminion.modules.tool.plugin_api import (
+    PolicyAuthorization,
+    is_policy_authorization_pair,
 )
+from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.registry import ToolSpec
 
 from .blockchain_authorization import authorize_blockchain_send
 
@@ -30,37 +30,46 @@ def authorize_exact_tool_call(
     args: dict[str, Any],
     context: Any,
     policy_ctl: Any | None,
+    *,
+    spec: ToolSpec,
 ) -> dict[str, Any]:
+    if spec.canonical_args is not None:
+        try:
+            args = spec.canonical_args(args)
+        except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+            raise ToolRuntimeError(
+                "POLICY_DENIED", "Authorization arguments could not be verified."
+            ) from exc
     if context.tool_name == "blockchain.send_transaction":
         args, context.policy_authorization = authorize_blockchain_send(
             args,
             context,
             policy_ctl,
         )
-    elif context.tool_name == "commerce.prepare_order":
-        context.policy_authorization = consume_commerce_prepare_authorization(
-            policy_ctl=policy_ctl,
-            permission_mode=context.permission_mode,
-            args=args,
-            subject_id="local",
-            session_id=context.session_id,
+    else:
+        tool, method = (
+            context.tool_name.rsplit(".", 1)
+            if "." in context.tool_name
+            else (context.tool_name, "default")
         )
-    elif context.tool_name == "commerce.place_order":
-        context.policy_authorization = consume_commerce_place_authorization(
-            policy_ctl=policy_ctl,
-            permission_mode=context.permission_mode,
-            args=args,
-            subject_id="local",
-            session_id=context.session_id,
-        )
-    elif context.tool_name == "commerce.apply_order_action":
-        context.policy_authorization = consume_commerce_action_authorization(
-            policy_ctl=policy_ctl,
-            permission_mode=context.permission_mode,
-            args=args,
-            subject_id="local",
-            session_id=context.session_id,
-        )
+        if is_policy_authorization_pair(tool, method):
+            if spec.policy_authorizer is None:
+                raise ToolRuntimeError(
+                    "POLICY_DENIED", "Exact action authorizer is unavailable."
+                )
+            try:
+                authorization = spec.policy_authorizer(args, context, policy_ctl)
+            except ToolRuntimeError:
+                raise
+            except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+                raise ToolRuntimeError(
+                    "POLICY_DENIED", "Exact action authorization failed."
+                ) from exc
+            if not isinstance(authorization, PolicyAuthorization):
+                raise ToolRuntimeError(
+                    "POLICY_DENIED", "Exact action authorization is invalid."
+                )
+            context.policy_authorization = authorization
     return args
 
 

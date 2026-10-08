@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 import tempfile
 import unittest
@@ -19,6 +20,10 @@ from openminion.api.turns import run_turn
 from openminion.modules.memory.smoke import EphemeralMemorySmokeProvider
 from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
 from openminion.modules.tool.exposure import get_model_exposure_specs
+from openminion.cli.interactive.runtime import OpenMinionRuntime
+from openminion.cli.interactive.terminal.shell.approval import (
+    build_terminal_approval_callback,
+)
 from tests.helpers import (
     extract_runtime_info_from_agent_service,
     extract_runtime_info_from_api_runtime,
@@ -288,6 +293,40 @@ class APIRuntimeTests(unittest.TestCase):
                 self.assertIs(
                     getattr(runner.policy_api, "_ctl", None), runtime.action_policy
                 )
+            finally:
+                runtime.close()
+
+    def test_terminal_approval_uses_runtime_action_policy_service(self) -> None:
+        class DenyOverlay:
+            async def present_approval_async(
+                self, *_args: object, **_kwargs: object
+            ) -> str:
+                return "deny"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_echo_config(Path(tmp))
+            runtime = APIRuntime.from_config_path(str(config_path))
+            facade = OpenMinionRuntime(runtime)
+            try:
+                callback = build_terminal_approval_callback(
+                    overlay=DenyOverlay(),
+                    runtime=facade,
+                )
+                with patch.object(
+                    runtime.action_policy,
+                    "check",
+                    wraps=runtime.action_policy.check,
+                ) as check:
+                    self.assertFalse(
+                        asyncio.run(
+                            callback(
+                                "file.write",
+                                {"path": "README.md", "content": "text"},
+                                "call-1",
+                            )
+                        )
+                    )
+                self.assertGreaterEqual(check.call_count, 1)
             finally:
                 runtime.close()
 

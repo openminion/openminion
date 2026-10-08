@@ -6,7 +6,7 @@ from openminion.base.config import OpenMinionConfig
 from openminion.base.config.runtime.tools import (
     BlockchainToolRuntimeConfig,
 )
-from openminion.modules.commerce.config import CommerceToolRuntimeConfig
+from openminion.tools.commerce.config import CommerceToolRuntimeConfig
 from openminion.modules.tool.contracts import (
     ALL_MODEL_TOOL_IDS,
     ALL_MODEL_TOOL_IDS_SET,

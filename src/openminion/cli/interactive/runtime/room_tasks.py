@@ -47,13 +47,19 @@ class RuntimeRoomTaskMixin:
             self, timer: phase_timing.ChatPhaseTimer, *, turn_id: str
         ) -> None: ...
 
+        def _policy_approval_callback(
+            self, callback: Callable[..., Awaitable[bool]] | None
+        ) -> (
+            Callable[[str, dict[str, Any], Any, dict[str, Any] | None], Awaitable[bool]]
+            | None
+        ): ...
+
     async def start_room_task(
         self,
         task_step_id: str,
         *,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
-        approval_callback: Callable[[str, dict[str, Any], Any], Awaitable[bool]]
-        | None = None,
+        approval_callback: Callable[..., Awaitable[bool]] | None = None,
         cancel_event: Any,
     ) -> dict[str, object]:
         session, _actor = self._room_owner()
@@ -142,7 +148,7 @@ class RuntimeRoomTaskMixin:
         payload: dict[str, object],
         *,
         progress_callback: Callable[[dict[str, Any]], None] | None,
-        approval_callback: Callable[[str, dict[str, Any], Any], Awaitable[bool]] | None,
+        approval_callback: Callable[..., Awaitable[bool]] | None,
         cancel_event: Any,
     ) -> dict[str, object]:
         loop = asyncio.get_running_loop()
@@ -158,16 +164,22 @@ class RuntimeRoomTaskMixin:
                 loop.call_soon_threadsafe(wrapped_progress, mapped)
 
         approval_from_worker = None
-        if approval_callback is not None:
+        policy_approval_callback = self._policy_approval_callback(approval_callback)
+        if policy_approval_callback is not None:
 
             def approval_from_worker(
-                tool_name: str, args: dict[str, Any], call_id: Any
+                tool_name: str,
+                args: dict[str, Any],
+                call_id: Any,
+                policy_facts: dict[str, Any] | None = None,
             ) -> bool:
                 return bool(
                     asyncio.run_coroutine_threadsafe(
                         cast(
                             Coroutine[Any, Any, bool],
-                            approval_callback(tool_name, args, call_id),
+                            policy_approval_callback(
+                                tool_name, args, call_id, policy_facts
+                            ),
                         ),
                         loop,
                     ).result()

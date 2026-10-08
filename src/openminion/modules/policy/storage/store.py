@@ -12,12 +12,14 @@ from openminion.modules.storage.runtime.module_store import (
     BaseModuleStore,
 )
 from openminion.modules.storage.record_store import RecordStore
-from openminion.modules.tool.plugin_api import (
-    BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
-)
+from openminion.modules.tool.plugin_api import POLICY_AUTHORIZATION_DESCRIPTORS
 from .base import PolicyStore
 from .migrations import list_migrations
-from ..constants import EXACT_CONFIRMATION_PAIRS, POLICY_DURATION_ONCE
+from ..constants import (
+    BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
+    EXACT_CONFIRMATION_PAIRS,
+    POLICY_DURATION_ONCE,
+)
 from ..models import (
     PendingPolicyConfirmation,
     PolicyControlError,
@@ -307,26 +309,38 @@ class _PolicyStoreMixin(PolicyStore):
 
     def consume_grant_use(self, grant_id: str) -> Optional[PolicyGrant]:
         now = utc_now_iso()
-        grant = self.get_grant(grant_id)
-        if grant is None:
-            return None
-
-        new_uses = grant.uses_count + 1
-        revoke_at = grant.revoked_at
-        if grant.duration_type == POLICY_DURATION_ONCE:
-            revoke_at = now
-        if grant.max_uses is not None and new_uses >= grant.max_uses:
-            revoke_at = now
-
-        self._record_store.execute_count(
-            """
-            UPDATE policy_grants
-            SET uses_count = ?, updated_at = ?, revoked_at = COALESCE(?, revoked_at)
-            WHERE grant_id = ?
-            """,
-            (new_uses, now, revoke_at, grant_id),
-        )
-        return self.get_grant(grant_id)
+        with self._lock, self._record_store.transaction():
+            grant = self.get_grant(grant_id)
+            if (
+                grant is None
+                or grant.revoked_at is not None
+                or (grant.expires_at is not None and grant.expires_at <= now)
+                or (grant.max_uses is not None and grant.uses_count >= grant.max_uses)
+            ):
+                return None
+            revoke_at = (
+                now
+                if grant.duration_type == POLICY_DURATION_ONCE
+                or (
+                    grant.max_uses is not None
+                    and grant.uses_count + 1 >= grant.max_uses
+                )
+                else None
+            )
+            updated = self._record_store.execute_count(
+                """
+                UPDATE policy_grants
+                SET uses_count = uses_count + 1,
+                    updated_at = ?,
+                    revoked_at = COALESCE(?, revoked_at)
+                WHERE grant_id = ?
+                  AND revoked_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > ?)
+                  AND (max_uses IS NULL OR uses_count < max_uses)
+                """,
+                (now, revoke_at, grant_id, now),
+            )
+            return self.get_grant(grant_id) if updated == 1 else None
 
     def resolve_active_grant_for_use(
         self,
@@ -530,7 +544,7 @@ class _PolicyStoreMixin(PolicyStore):
                             session_id=pending.session_id,
                             invocation_hash=pending.invocation_hash,
                             max_uses=1,
-                            reason="created_from_pending_confirmation",
+                            reason=f"created_from_confirmation:{action}",
                             created_trace_id=pending.trace_id,
                             approval_id=pending.approval_id,
                         ),
@@ -567,7 +581,11 @@ class _PolicyStoreMixin(PolicyStore):
     ) -> PolicyGrant | None:
         if (tool, method) not in EXACT_CONFIRMATION_PAIRS:
             return None
-        if tool == "commerce" and not session_id:
+        descriptor = POLICY_AUTHORIZATION_DESCRIPTORS.get((tool, method))
+        if descriptor is not None and (
+            (descriptor.requires_session and not session_id)
+            or descriptor.required_subject_id not in (None, subject_id)
+        ):
             return None
         now = utc_now_iso()
         invalid_approval_id: str | None = None

@@ -224,6 +224,7 @@ class RunnerCommandExecutor:
                 action_result=action_result,
                 policy_approval_id=policy_approval_id,
                 policy_confirmation_preview=(state.pending_policy_confirmation_preview),
+                policy_facts=dict(state.pending_policy_facts),
             )
         return prepare_tool_dispatch(
             self.runner,

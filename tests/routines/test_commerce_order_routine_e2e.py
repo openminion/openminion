@@ -4,13 +4,17 @@ from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any
 
-from openminion.modules.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
-from openminion.modules.commerce.models import CommerceLifecycleState
+from openminion.tools.commerce.constants import COMMERCE_LOCAL_SUBJECT_ID
+from openminion.tools.commerce.models import CommerceLifecycleState
 from openminion.modules.tool import ToolRegistry, ToolSpec
-from openminion.modules.tool.runtime.dependencies import resolve_commerce_runtime
+from openminion.tools.commerce.plugin import resolve_commerce_runtime
+from openminion.tools.commerce.provider import PlaceOrderRequest
+from openminion.tools.commerce.registrar import REGISTRAR
+from openminion.tools.commerce.routine import CommerceOrderHandler
 from openminion.services.runtime.cron.delivery import CronDeliveryBridge
 from openminion.services.runtime.cron.executor import CronTurnExecutor
 from openminion.services.runtime.routine_context import (
+    ToolRegistryPreTurnContext,
     build_routine_pre_turn_context,
 )
 from openminion.tools.task.constants import WATCH_PAYLOAD_KEY
@@ -19,6 +23,7 @@ from openminion.tools.task.routine.schemas import (
     CommerceOrderCursorV1,
     RoutinePayloadV1,
 )
+from tests.helpers.commerce_runtime import build_fixture_commerce_runtime
 
 
 class _Context:
@@ -39,7 +44,7 @@ class _Context:
 
     def invoke_tool(self, *, name: str, args: Mapping[str, Any]) -> Mapping[str, Any]:
         assert name == "commerce.inspect"
-        assert args == {"kind": "order", "order_ref": "order-local-1"}
+        assert args == {"kind": "order", "local_order_ref": "order-local-1"}
         self.calls += 1
         return self.responses.pop(0)
 
@@ -119,12 +124,12 @@ def _job(routine: RoutinePayloadV1 | None = None) -> dict[str, Any]:
 def _executor(
     cron_store: _CronStore,
     *,
-    commerce_runtime: object | None = None,
+    tool_resources: Mapping[str, Any] | None = None,
 ) -> CronTurnExecutor:
     return CronTurnExecutor(
         runtime=SimpleNamespace(
             runtime_manager=object(),
-            commerce_runtime=commerce_runtime,
+            tool_resources=dict(tool_resources or {}),
         ),
         cron_store=cron_store,
         request_builder=lambda payload, agent_id: (payload, agent_id),
@@ -183,9 +188,9 @@ def test_disabled_family_pauses_without_inspection_or_model_turn(monkeypatch) ->
     )
     cron_store = _CronStore()
 
-    result = _executor(cron_store, commerce_runtime=commerce_runtime).execute(
-        _job(), {"run_id": "run-1"}
-    )
+    result = _executor(
+        cron_store, tool_resources={"commerce": commerce_runtime}
+    ).execute(_job(), {"run_id": "run-1"})
 
     assert result["summary"] == ""
     assert result["output"]["watch_delivery_requested"] is False
@@ -193,7 +198,7 @@ def test_disabled_family_pauses_without_inspection_or_model_turn(monkeypatch) ->
     assert context.calls == 0
     assert cron_store.replaced == []
     assert context_args["subject_id"] == COMMERCE_LOCAL_SUBJECT_ID
-    assert context_args["commerce_runtime"] is commerce_runtime
+    assert context_args["tool_resources"]["commerce"] is commerce_runtime
 
 
 def test_cancelled_order_stops_the_routine(monkeypatch) -> None:
@@ -209,6 +214,60 @@ def test_cancelled_order_stops_the_routine(monkeypatch) -> None:
 
     assert result["output"]["watch_terminal"] is True
     assert result["output"]["watch_delivery_requested"] is True
+
+
+def test_routine_inspects_owned_order_through_registered_commerce_tool(
+    tmp_path,
+) -> None:
+    runtime, provider = build_fixture_commerce_runtime(
+        store_path=tmp_path / "commerce.db"
+    )
+    try:
+        preparation = runtime.prepare_public(
+            {
+                "items": [
+                    {"offer_id": "offer-1", "variant_id": "standard", "quantity": 1}
+                ]
+            }
+        )
+        order = runtime.place_order(
+            PlaceOrderRequest(
+                idempotency_key="routine-fixture-order",
+                preparation_ref=preparation.preparation_ref,
+                preparation_digest=preparation.preparation_digest,
+            )
+        )
+        routine = RoutinePayloadV1(
+            routine_kind="commerce_order",
+            config=CommerceOrderConfigV1(
+                local_order_ref=order.order_ref,
+                expires_at="2099-01-01T00:00:00Z",
+            ),
+            cursor=CommerceOrderCursorV1(),
+        )
+        registry = ToolRegistry()
+        REGISTRAR.register(registry)
+        handler = CommerceOrderHandler()
+        context = ToolRegistryPreTurnContext(
+            registry=registry,
+            session_id="session-1",
+            subject_id="local",
+            allowed_tools=handler.pre_turn_tools_for(routine),
+            metadata={"runtime_tools": {"commerce": {"enabled": True}}},
+            tool_resources={"commerce": runtime},
+        )
+        ledger_before = list(provider.ledger)
+
+        facts = handler.pre_turn(routine=routine, routine_id="routine-1", ctx=context)
+
+        assert facts.status == "ok", facts.detail
+        assert facts.material_cursor
+        assert facts.lifecycle == order.lifecycle
+        assert len(provider.inspect_calls) == 1
+        assert provider.inspect_calls[0].order_ref == order.order_ref
+        assert provider.ledger == ledger_before
+    finally:
+        runtime.order_store.close()
 
 
 def test_routine_tool_context_uses_trusted_subject_and_runtime_service(
@@ -244,21 +303,21 @@ def test_routine_tool_context_uses_trusted_subject_and_runtime_service(
         runtime=SimpleNamespace(
             tools=registry,
             config=SimpleNamespace(runtime=SimpleNamespace(tools=None)),
-            commerce_runtime=commerce_runtime,
+            tool_resources={"commerce": commerce_runtime},
         ),
         routine_id="routine-1",
         session_id="session-1",
         agent_id="agent-1",
         allowed_tools=("commerce.inspect",),
         subject_id=COMMERCE_LOCAL_SUBJECT_ID,
-        commerce_runtime=commerce_runtime,
+        tool_resources={"commerce": commerce_runtime},
     )
 
     assert context is not None
     assert (
         context.invoke_tool(
             name="commerce.inspect",
-            args={"kind": "order", "order_ref": "order-local-1"},
+            args={"kind": "order", "local_order_ref": "order-local-1"},
         )["ok"]
         is True
     )

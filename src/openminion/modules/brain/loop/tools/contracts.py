@@ -123,6 +123,7 @@ class CommandExecutionOutcome:
     tool_budget_debited: bool = False
     policy_approval_id: str | None = None
     policy_confirmation_preview: ToolConfirmationPreview | None = None
+    policy_facts: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +162,7 @@ class PrepareOutcome:
     tool_budget_debited: bool = False
     policy_approval_id: str | None = None
     policy_confirmation_preview: ToolConfirmationPreview | None = None
+    policy_facts: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +192,7 @@ class AdaptiveToolLoopContext(Protocol):
     state: WorkingState
     session_api: Any | None
     provider_retry_max_attempts: int
+    structural_tool_results: bool
 
     def apply_turn_steering(self, messages: list[Message]) -> list[Message]: ...
 
@@ -373,6 +376,9 @@ def _tool_result_telemetry(state: AdaptiveToolLoopState) -> dict[str, Any]:
         else structural_security_tool_results
     )
     return {
+        "structural_only": bool(
+            state.scratchpad.get("telemetry.structural_tool_results")
+        ),
         "tool_results": formatter(results),
         "tool_calls_count": len(results),
         "tool_execution_count": len(results),

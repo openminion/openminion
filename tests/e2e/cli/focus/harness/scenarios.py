@@ -75,19 +75,22 @@ TOOL_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         requires_approval=True,
         max_auto_approvals=4,
         approval_reply="yes",
+        include_project_context=False,
     ),
     FocusScenario(
         scenario_id="browser_tool_unavailable",
         prompt=(
             "Use the browser tool with provider `missing-provider` and the "
-            "tab.list operation. Report the provider error in one sentence; do "
-            "not describe this as a successful browser operation."
+            "tab.list operation exactly once. Do not retry or call other tools. "
+            "Report the provider error in one sentence; do not describe this as "
+            "a successful browser operation."
         ),
         expected_markers=("missing-provider|error|unavailable",),
         timeout=360,
         requires_approval=True,
         max_auto_approvals=4,
-        approval_reply="yes",
+        approval_reply="session",
+        include_project_context=False,
     ),
 )
 

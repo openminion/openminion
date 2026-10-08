@@ -80,7 +80,6 @@ from openminion.services.runtime.errors import (
 from openminion.services.runtime.memory import (
     _build_memory_v2_gateway_adapter as _build_bootstrap_memory_v2_gateway_adapter_impl,
 )
-from openminion.modules.commerce import resolve_injected_commerce_runtime
 
 if TYPE_CHECKING:
     from openminion.modules.runtime.sandboxes.docker import DockerSandboxRunner
@@ -726,13 +725,13 @@ def build_brain_runner_bundle(service: Any) -> Any:
     memory_api = getattr(memory_assembly, "memctl", None)
     resolved_action_policy = resolve_profile_action_policy(config, default_profile)
     runtime_handle = service._runtime_handle
-    commerce_runtime = resolve_injected_commerce_runtime(runtime_handle)
     policy_api = bridge_module.create_policy_api(
         mode=service.mode,
         db_dir=db_dir,
         policy_service=service._action_policy_service,
         action_policy_config=resolved_action_policy,
-        commerce_runtime=commerce_runtime,
+        tool_registry=service._tools,
+        tool_resources=getattr(runtime_handle, "tool_resources", {}),
     )
     safety_api = bridge_module.create_safety_api(mode=service.mode)
 
@@ -779,7 +778,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         agent_name=default_profile.name or default_agent_id,
         skill_api=skill_api,
         secret_service=_runtime_secret_service(service, config),
-        commerce_runtime=commerce_runtime,
+        tool_resources=getattr(runtime_handle, "tool_resources", {}),
         memory_service=memory_api,
         knowledge_graph_service=getattr(runtime_handle, "knowledge_graphs", None),
         ops_service=getattr(runtime_handle, "ops_service", None),
@@ -816,7 +815,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         config,
         override_value=service._resolve_override_value,
     )
-
     pre_resolved_brain_config = service._resolve_brain_config()
     profile_pae_config = _copy_optional_config_section(
         pre_resolved_brain_config,
@@ -842,6 +840,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         skill=default_profile.skill,
         skill_catalog=list(default_profile.skill_catalog or []),
         budgets=budgets,
+        structural_tool_results=bool(default_profile.structural_tool_results),
         model_capability_overrides=dict(
             getattr(default_profile, "model_capability_overrides", {}) or {}
         ),

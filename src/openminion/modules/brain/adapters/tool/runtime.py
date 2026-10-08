@@ -1,4 +1,3 @@
-import copy
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -18,7 +17,6 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.interfaces import BRAIN_ADAPTER_INTERFACE_VERSION
 from .permission_mode import permission_mode_from_inputs
 from openminion.modules.tool import (
-    DEFAULT_POLICY,
     Policy,
     RuntimeContext,
     ToolRegistry,
@@ -29,7 +27,7 @@ from openminion.modules.tool import (
     new_run_id,
     resolve_binding_for_call,
 )
-from openminion.modules.tool.adapters import AllowAllSafetyAdapter, LocalPolicyAdapter
+from openminion.modules.tool.adapters import AllowAllSafetyAdapter
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.plugin_api import PolicyAdapter
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
@@ -54,13 +52,22 @@ from .github_release import execute_github_release_project_effect
 from .github_update import execute_github_update_pr_project_effect
 from .github_workflow import execute_github_workflow_project_effect
 from .project_github import execute_github_open_pr_project_effect
-from .project_git import execute_git_remote_project_effect
+from .project_git import (
+    execute_git_remote_project_effect,
+    is_git_remote_project_action,
+)
 from .policy_context import (
     _agent_id_from_policy,
+    _approval_policy_facts,
     _apply_agent_command_policy,
     _apply_reactions_default_policy,
     _background_write_authorized,
-    _compose_policy_adapter,
+    _build_policy_adapter,
+    _permission_mode_origin,
+    _coerce_policy,
+    _is_confirm_required_code,
+    _policy_context_metadata,
+    _tool_run_policy,
     _resolve_auto_confirm,
     _runtime_background_write_authorization_enabled,
     _runtime_env_from_policy,
@@ -89,21 +96,12 @@ _ADDED_WORKSPACE_ROOTS: ContextVar[tuple[Path, ...]] = ContextVar(
 _TURN_TOOL_ALLOWLIST: ContextVar[frozenset[str] | None] = ContextVar(
     "openminion_turn_tool_allowlist", default=None
 )
-
-
-def _is_confirm_required_code(code: Any) -> bool:
-    return cast(bool, str(code or "").strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED)
-
-
-def _is_project_git_action(tool_name: str, args: Mapping[str, Any]) -> bool:
-    return tool_name == "git.push" or (
-        tool_name == "git.tag" and args.get("action") == "push"
-    )
-
-
-def _policy_context_metadata(policy: Policy) -> Any:
-    raw = getattr(policy, "raw", {}) or {}
-    return raw.get("context_metadata") if isinstance(raw, Mapping) else None
+_PROJECT_GITHUB_EFFECTS: dict[str, Callable[..., dict[str, Any]]] = {
+    "github.update_pr": execute_github_update_pr_project_effect,
+    "github.merge_pr": execute_github_merge_pr_project_effect,
+    "github.dispatch_workflow": execute_github_workflow_project_effect,
+    "github.create_release": execute_github_release_project_effect,
+}
 
 
 class ToolAdapter:
@@ -121,7 +119,7 @@ class ToolAdapter:
         reactions_enabled: bool = True,
         skill_api: Any | None = None,
         secret_service: Any | None = None,
-        commerce_runtime: Any | None = None,
+        tool_resources: Mapping[str, Any] | None = None,
         memory_service: Any | None = None,
         knowledge_graph_service: Any | None = None,
         ops_service: Any | None = None,
@@ -138,16 +136,14 @@ class ToolAdapter:
     ) -> None:
         self.workspace_root = workspace_root
         policy_from_none = policy is None
-        self.policy = self._coerce_policy(policy)
+        self.policy = _coerce_policy(policy)
         self.policy_adapter = policy_adapter
         self.policy_ctl = policy_ctl
-        self._approval_callback: Callable[[str, dict[str, Any], str], bool] | None = (
-            None
-        )
+        self._approval_callback: Callable[..., bool] | None = None
         self.reactions_enabled = reactions_enabled
         self.skill_api = skill_api
         self.secret_service = secret_service
-        self.commerce_runtime = commerce_runtime
+        self.tool_resources = dict(tool_resources or {})
         self.memory_service = memory_service
         self.knowledge_graph_service = knowledge_graph_service
         self.ops_service = ops_service
@@ -210,7 +206,7 @@ class ToolAdapter:
 
         return ToolExecutionContextBuilder(
             agent_id=self.agent_id,
-            commerce_runtime=getattr(self, "commerce_runtime", None),
+            tool_resources=getattr(self, "tool_resources", {}),
             memory_service=getattr(self, "memory_service", None),
             sandbox_runner=getattr(self, "sandbox_runner", None),
             security_lab_runner=getattr(self, "security_lab_runner", None),
@@ -274,30 +270,10 @@ class ToolAdapter:
         allowlist = _TURN_TOOL_ALLOWLIST.get()
         return allowlist is None or str(tool_name or "").strip() in allowlist
 
-    @staticmethod
-    def _coerce_policy(policy: Any) -> Policy:
-        """Normalize policy inputs for the tool runtime context."""
-        if policy is None:
-            return Policy(raw=copy.deepcopy(DEFAULT_POLICY))
-        if isinstance(policy, Policy):
-            return policy
-        if isinstance(policy, Mapping):
-            merged = copy.deepcopy(DEFAULT_POLICY)
-            merged.update(dict(policy))
-            return Policy(raw=merged)
-        raw = getattr(policy, "raw", None)
-        if isinstance(raw, Mapping):
-            merged = copy.deepcopy(DEFAULT_POLICY)
-            merged.update(dict(raw))
-            return Policy(raw=merged)
-        raise ValueError(
-            f"policy_mismatch: Unsupported policy type: {type(policy).__name__}"
-        )
-
     def set_approval_callback(
         self,
-        callback: Callable[[str, dict[str, Any], str], bool] | None,
-    ) -> Callable[[str, dict[str, Any], str], bool] | None:
+        callback: Callable[..., bool] | None,
+    ) -> Callable[..., bool] | None:
         previous = self._approval_callback
         self._approval_callback = callback if callable(callback) else None
         delegate_setter = getattr(self.a2a_delegate_api, "set_approval_callback", None)
@@ -315,12 +291,25 @@ class ToolAdapter:
         session_id: str,
         trace_id: str,
         start_time: float,
+        details: Mapping[str, Any] | None = None,
+        reason_code: str = "",
     ) -> dict[str, Any] | None:
         callback = self._approval_callback
         if callback is None:
             return None
         try:
-            approved = bool(callback(tool_name, dict(args), approval_id))
+            approved = bool(
+                callback(
+                    tool_name,
+                    dict(args),
+                    approval_id,
+                    _approval_policy_facts(
+                        tool_name=tool_name,
+                        details=details,
+                        reason_code=reason_code,
+                    ),
+                )
+            )
         except Exception as exc:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
@@ -440,24 +429,12 @@ class ToolAdapter:
                 code="INVALID_RUNTIME_CONTEXT",
                 message=str(exc),
             )
-        if runtime_message_ref is not None:
-            policy_raw = copy.deepcopy(getattr(policy_for_run, "raw", {}) or {})
-            tools_cfg = policy_raw.setdefault("tools", {})
-            if isinstance(tools_cfg, dict):
-                reactions_cfg = tools_cfg.setdefault("reactions", {})
-                if isinstance(reactions_cfg, dict):
-                    reactions_cfg["runtime_message_ref"] = runtime_message_ref
-            policy_for_run = Policy(raw=policy_raw)
-        if isinstance(spec, ToolSpec) and bool(
-            getattr(spec, "prompt_visible_runtime_name", False)
-        ):
-            policy_raw = copy.deepcopy(getattr(policy_for_run, "raw", {}) or {})
-            tools_cfg = policy_raw.setdefault("tools", {})
-            if isinstance(tools_cfg, dict):
-                allow_exact = list(tools_cfg.get("allow_exact", []) or [])
-                if tool_name not in allow_exact:
-                    tools_cfg["allow_exact"] = [*allow_exact, tool_name]
-            policy_for_run = Policy(raw=policy_raw)
+        policy_for_run = _tool_run_policy(
+            policy_for_run,
+            runtime_message_ref=runtime_message_ref,
+            spec=spec if isinstance(spec, ToolSpec) else None,
+            tool_name=tool_name,
+        )
         self._project_execution_context(
             policy_for_run,
             session_id=session_id,
@@ -552,6 +529,7 @@ class ToolAdapter:
                 session_id=session_id,
                 trace_id=trace_id,
                 start_time=start_time,
+                reason_code="background_write_authorization_required",
             )
             if replay is not None:
                 return replay
@@ -579,6 +557,7 @@ class ToolAdapter:
             tool_name=tool_name,
             args=validated_args,
             permission_mode=permission_mode,
+            permission_mode_origin=_permission_mode_origin(inputs),
             replay_confirmed=replay_confirmed,
             background_write_authorized=background_write_authorized,
         )
@@ -588,20 +567,19 @@ class ToolAdapter:
             "github.merge_pr",
         }:
             auto_confirm = True
-        extra_adapter = None if permission_mode == "bypass" else self.policy_adapter
-        local_adapter = LocalPolicyAdapter(
+        approval_satisfied = (
+            replay_confirmed
+            or background_write_authorized
+            or (permission_mode in {"auto", "bypass"} and auto_confirm)
+        )
+        policy_adapter = _build_policy_adapter(
+            tool_name=tool_name,
+            tool_spec=spec,
             policy=policy_for_run,
             workspace=effective_workspace_root,
-            scope=policy_for_run.max_scope(),
             confirm=auto_confirm,
-        )
-        policy_adapter = (
-            None
-            if replay_confirmed or tool_name == "ops.command.run"
-            else _compose_policy_adapter(
-                base_adapter=local_adapter,
-                extra_adapter=extra_adapter,
-            )
+            extra_adapter=self.policy_adapter,
+            approval_satisfied=approval_satisfied,
         )
         context_metadata = _policy_context_metadata(policy_for_run)
         enforce_watch_target_binding(validated_args, context_metadata)
@@ -619,7 +597,7 @@ class ToolAdapter:
             policy_adapter=policy_adapter,
             skill_api=self.skill_api,
             secret_service=self.secret_service,
-            commerce_runtime=self.commerce_runtime,
+            tool_resources=self.tool_resources,
             subject_id="local",
             telemetryctl=self.telemetryctl,
             artifactctl=self.artifactctl,
@@ -685,6 +663,8 @@ class ToolAdapter:
                         session_id=session_id,
                         trace_id=trace_id,
                         start_time=start_time,
+                        details=details,
+                        reason_code=str(policy_decision.code or ""),
                     )
                     if replay is not None:
                         return replay
@@ -727,7 +707,7 @@ class ToolAdapter:
         tool_name = ctx.tool_name
         try:
             validated_args = authorize_exact_tool_call(
-                validated_args, ctx, self.policy_ctl
+                validated_args, ctx, self.policy_ctl, spec=spec
             )
             if tool_name == "github.open_pr" and project_task_id:
                 return execute_github_open_pr_project_effect(
@@ -741,15 +721,7 @@ class ToolAdapter:
                     start_time=start_time,
                     background_write_authorized=background_write_authorized,
                 )
-            github_effect: Callable[..., dict[str, Any]] | None = None
-            if tool_name == "github.update_pr":
-                github_effect = execute_github_update_pr_project_effect
-            elif tool_name == "github.merge_pr":
-                github_effect = execute_github_merge_pr_project_effect
-            elif tool_name == "github.dispatch_workflow":
-                github_effect = execute_github_workflow_project_effect
-            elif tool_name == "github.create_release":
-                github_effect = execute_github_release_project_effect
+            github_effect = _PROJECT_GITHUB_EFFECTS.get(tool_name)
             if github_effect is not None and project_task_id:
                 return github_effect(
                     task_manager=self.task_manager,
@@ -767,7 +739,7 @@ class ToolAdapter:
                     "Release-only GitHub actions require an approved project.",
                     {"reason_code": "github_release_project_required"},
                 )
-            if _is_project_git_action(tool_name, validated_args):
+            if is_git_remote_project_action(tool_name, validated_args):
                 return self._invoke_project_git_effect(
                     validated_args=validated_args,
                     ctx=ctx,
@@ -797,6 +769,8 @@ class ToolAdapter:
                     session_id=str(ctx.session_id or ""),
                     trace_id=ctx.trace_id,
                     start_time=start_time,
+                    details=details,
+                    reason_code=str(exc.code or ""),
                 )
                 if replay is not None:
                     return replay
@@ -928,7 +902,6 @@ class ToolAdapter:
         )
         if error is not None:
             return error
-
         ok = bool(getattr(result, "ok", False))
         content = str(getattr(result, "content", "") or "")
         error_message = str(getattr(result, "error", "") or "")
@@ -942,9 +915,9 @@ class ToolAdapter:
                 "source": str(getattr(result, "source", "") or "openminion"),
             }
         )
-        summary = (
-            content if ok else (error_message or content or "Tool execution failed")
-        )
+        summary = error_message or content or "Tool execution failed"
+        if ok:
+            summary = content
         error_code = ""
         error_details: dict[str, Any] = {}
         if isinstance(data, Mapping):
@@ -963,19 +936,20 @@ class ToolAdapter:
                 session_id=session_id,
                 trace_id=trace_id,
                 start_time=start_time,
+                details=error_details,
+                reason_code=error_code,
             )
             if replay is not None:
                 return replay
+        status = BRAIN_ACTION_STATUS_SUCCESS
+        if not ok:
+            status = (
+                BRAIN_ACTION_STATUS_NEEDS_USER
+                if requires_confirm
+                else BRAIN_STATE_ERROR
+            )
         response: dict[str, Any] = {
-            "status": (
-                BRAIN_ACTION_STATUS_SUCCESS
-                if ok
-                else (
-                    BRAIN_ACTION_STATUS_NEEDS_USER
-                    if requires_confirm
-                    else BRAIN_STATE_ERROR
-                )
-            ),
+            "status": status,
             "summary": summary,
             "outputs": outputs,
             "artifact_refs": _normalized_artifact_refs(

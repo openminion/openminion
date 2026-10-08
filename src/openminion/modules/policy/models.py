@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 import json
 from typing import Any, Literal, Optional, cast
 
@@ -8,6 +8,7 @@ from openminion.base.redaction import redact_mapping
 from openminion.base.time import utc_now_iso  # noqa: F401
 from openminion.modules.tool.plugin_api import (
     ToolConfirmationPreview,
+    confirmation_preview_payload,
     stable_invocation_hash as stable_invocation_hash,
 )
 
@@ -59,6 +60,22 @@ def sanitize_args(args: dict[str, Any]) -> dict[str, Any]:
         else:
             sanitized[key] = {"_type": type(value).__name__}
     return sanitized
+
+
+def build_policy_facts(
+    *,
+    canonical_tool: str,
+    reason_code: str = "",
+    risk: dict[str, Any] | None = None,
+    duration_options: list[str] | tuple[str, ...] = (),
+) -> dict[str, Any]:
+    facts = {
+        "canonical_tool": str(canonical_tool or "").strip(),
+        "reason_code": str(reason_code or "").strip(),
+        "risk": dict(risk or {}),
+        "duration_options": list(duration_options),
+    }
+    return {key: value for key, value in facts.items() if value}
 
 
 def build_consent_preview(
@@ -154,6 +171,13 @@ class RiskSpec:
 
 
 @dataclass
+class PolicyRule:
+    tool_name: str
+    min_risk_class: RiskClass | Literal[""] = ""
+    mode: Literal["block", "ask", "auto"] = "ask"
+
+
+@dataclass
 class PolicyConfig:
     mode: PolicyMode = POLICY_MODE_ENFORCE
     default_action: Literal["allow", "require_confirm"] = (
@@ -164,6 +188,7 @@ class PolicyConfig:
         default_factory=lambda: ["/sandbox", "./sandbox"]
     )
     allow_read_only_without_prompt: bool = True
+    rules: tuple[PolicyRule, ...] = ()
     affirmative_tokens: list[str] = field(
         default_factory=lambda: [
             "yes",
@@ -189,6 +214,20 @@ def policy_config_from_action_policy(action_policy: ActionPolicyConfig) -> Polic
         mode=cast(PolicyMode, map_action_policy_mode(action_policy.mode)),
         default_action=action_policy.default_action or defaults.default_action,
         allow_read_only_without_prompt=action_policy.allow_read_only_without_prompt,
+        rules=tuple(
+            PolicyRule(
+                tool_name=str(rule.match.tool_name or "").strip(),
+                min_risk_class=cast(
+                    RiskClass | Literal[""],
+                    str(rule.match.min_risk_class or "").strip().lower(),
+                ),
+                mode=cast(
+                    Literal["block", "ask", "auto"],
+                    str(rule.mode or "ask").strip().lower(),
+                ),
+            )
+            for rule in action_policy.rules
+        ),
         affirmative_tokens=list(
             action_policy.affirmative_tokens or defaults.affirmative_tokens
         ),
@@ -286,11 +325,7 @@ class PolicyDecision:
             "confirmation_preview": (
                 None
                 if self.confirmation_preview is None
-                else (
-                    dict(self.confirmation_preview)
-                    if isinstance(self.confirmation_preview, dict)
-                    else asdict(self.confirmation_preview)
-                )
+                else confirmation_preview_payload(self.confirmation_preview)
             ),
         }
 

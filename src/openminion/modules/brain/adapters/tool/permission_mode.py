@@ -13,6 +13,9 @@ _PLAN_CONTROL_TOOL_NAMES: Final[frozenset[str]] = frozenset(
         "plan.clear",
     }
 )
+WORKSPACE_AUTO_TOOL_NAMES: Final[frozenset[str]] = frozenset(
+    {"file.write", "file.edit"}
+)
 
 
 PERMISSION_MODE_ALIASES: Final[dict[str, str]] = {
@@ -73,14 +76,17 @@ def effective_permission_mode_for_tool(
     global_mode: str,
     permission_overrides: object,
     tool_name: str,
-) -> str:
+) -> tuple[str, str]:
     normalized_tool_name = str(tool_name or "").strip().lower()
+    normalized_global_mode = canonical_permission_mode(global_mode)
+    if normalized_global_mode == "readonly":
+        return "readonly", "global"
     overrides = canonical_permission_overrides(permission_overrides)
     if normalized_tool_name:
         for override_tool_name, override_mode in overrides.items():
             if _matches_tool_name(normalized_tool_name, override_tool_name):
-                return override_mode
-    return canonical_permission_mode(global_mode)
+                return override_mode, "tool_override"
+    return normalized_global_mode, "global"
 
 
 @lru_cache(maxsize=1)
@@ -108,14 +114,33 @@ def registered_readonly_tool_names() -> frozenset[str]:
     )
 
 
+@lru_cache(maxsize=256)
+def _readonly_runtime_tool_name(tool_name: str) -> str:
+    from openminion.modules.tool.dispatch import resolve_binding_for_call
+
+    resolution = resolve_binding_for_call(
+        raw_tool_name=tool_name,
+        available_tool_names=tuple(registered_readonly_tool_names()),
+    )
+    return str(getattr(resolution, "runtime_tool_name", "") or "").strip().lower()
+
+
+def _is_readonly_tool(tool_name: str) -> bool:
+    normalized = str(tool_name or "").strip().lower()
+    if not normalized:
+        return True
+    readonly_names = registered_readonly_tool_names()
+    return (
+        normalized in readonly_names
+        or _readonly_runtime_tool_name(normalized) in readonly_names
+    )
+
+
 def is_tool_blocked_by_readonly(tool_name: str) -> bool:
     normalized = str(tool_name or "").strip().lower()
     if not normalized:
         return False
-    for pattern in readonly_blocked_tool_names():
-        if _matches_tool_name(normalized, pattern):
-            return True
-    return False
+    return not _is_readonly_tool(normalized)
 
 
 def request_outcome_allows_tool(
@@ -131,11 +156,12 @@ def request_outcome_allows_tool(
         return False
     if outcome == "plan_only" and normalized in _PLAN_CONTROL_TOOL_NAMES:
         return True
-    return normalized in registered_readonly_tool_names()
+    return _is_readonly_tool(normalized)
 
 
 __all__ = [
     "PERMISSION_MODE_ALIASES",
+    "WORKSPACE_AUTO_TOOL_NAMES",
     "canonical_permission_overrides",
     "canonical_permission_mode",
     "effective_permission_mode_for_tool",

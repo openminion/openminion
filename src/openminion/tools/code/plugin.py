@@ -111,7 +111,19 @@ class CodeGrepArgs(BaseModel):
     pattern: str = Field(..., min_length=1)
     path: str = Field(default=".")
     file_glob: str = Field(default="*")
+    cwd: str | None = Field(default=None, exclude=True)
+    file_pattern: str | None = Field(default=None, exclude=True)
     max_results: int = Field(default=200, ge=1, le=1000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _collapse_compatible_aliases(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        _collapse_alias_group(data, "path", ("cwd",))
+        _collapse_alias_group(data, "file_glob", ("file_pattern",))
+        return data
 
     @field_validator("path", mode="before")
     @classmethod

@@ -14,6 +14,10 @@ from openminion.modules.tool.contracts.manifest import (
 )
 from openminion.modules.tool.contracts.dependencies import ToolDependencyDecl
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.plugin_api import (
+    ConfirmationPreviewBuilder,
+    PolicyAuthorizer,
+)
 from openminion.modules.tool.registry import Scope, ToolRegistry
 from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.tool.runtime.registrar import (
@@ -42,6 +46,9 @@ class ToolDecl:
     aliases: tuple[str, ...] = ()
     block_under_readonly: bool = False
     dependencies: tuple[ToolDependencyDecl, ...] = ()
+    canonical_args: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    confirmation_preview: ConfirmationPreviewBuilder | None = None
+    policy_authorizer: PolicyAuthorizer | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +118,9 @@ def derive_tool_specs(family: ToolFamilySpec) -> list[ToolSpec]:
                 capabilities=merged_caps,
                 block_under_readonly=tool.block_under_readonly,
                 dependencies=tool.dependencies,
+                canonical_args=tool.canonical_args,
+                confirmation_preview=tool.confirmation_preview,
+                policy_authorizer=tool.policy_authorizer,
             )
         )
     return specs

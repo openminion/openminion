@@ -28,7 +28,14 @@ def build_seeded_invalid_workdir_recovery_message() -> str:
     )
 
 
+def build_seeded_original_task_context_message(task: str) -> str:
+    """Render the original task context for a confirmed replay."""
+
+    return f"[ORIGINAL USER TASK]\n{task.strip()}"
+
+
 __all__ = [
     "build_seeded_invalid_workdir_recovery_message",
+    "build_seeded_original_task_context_message",
     "build_seeded_policy_denial_recovery_message",
 ]

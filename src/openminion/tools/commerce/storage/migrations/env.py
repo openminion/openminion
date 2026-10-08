@@ -2,7 +2,7 @@
 
 from openminion.modules.storage.migrations.alembic import run_module_env
 
-from openminion.modules.commerce.storage.migrations import (
+from openminion.tools.commerce.storage.migrations import (
     MODULE_APPLICATION_ID,
     MODULE_ID,
     TARGET_USER_VERSION,

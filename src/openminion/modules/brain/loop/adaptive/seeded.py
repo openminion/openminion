@@ -36,6 +36,9 @@ from openminion.modules.brain.loop.tools import (
     resolve_loop_model,
     run_adaptive_tool_loop,
 )
+from openminion.modules.brain.loop.tools.prompts import (
+    build_seeded_original_task_context_message,
+)
 from openminion.modules.llm.schemas import Message
 from openminion.modules.brain.loop.self_compaction import run_self_compaction_step
 
@@ -165,30 +168,40 @@ class ActLoopSeededMixin:
         raw_snapshot = module_state.pop("adaptive_loop", None)
         if module_state != dict(getattr(ctx.state, STATE_KEY_MODULE_STATE, {}) or {}):
             ctx.state.module_state = module_state
-        if not isinstance(raw_snapshot, dict):
-            return loop_state
+        if isinstance(raw_snapshot, dict):
+            from openminion.modules.brain.loop.tools.snapshot import LoopSnapshot
 
-        from openminion.modules.brain.loop.tools.snapshot import LoopSnapshot
-
-        try:
-            snapshot = LoopSnapshot.from_dict(raw_snapshot)
-        except Exception:  # noqa: BLE001
-            return loop_state
-
-        transcript = [
-            Message(
-                role=cast(Any, str(item.get("role", "") or "").strip() or "system"),
-                content=str(item.get("content", "") or ""),
-            )
-            for item in list(snapshot.message_transcript or [])
-            if isinstance(item, dict)
-        ]
-        tool_results = [
-            item for item in list(snapshot.tool_results or []) if isinstance(item, dict)
-        ]
-        loop_state.messages = transcript
-        if tool_results:
-            loop_state.scratchpad["adaptive.tool_results"] = tool_results
+            try:
+                snapshot = LoopSnapshot.from_dict(raw_snapshot)
+            except Exception:  # noqa: BLE001
+                snapshot = None
+            if snapshot is not None:
+                loop_state.messages = [
+                    Message(
+                        role=cast(
+                            Any,
+                            str(item.get("role", "") or "").strip() or "system",
+                        ),
+                        content=str(item.get("content", "") or ""),
+                    )
+                    for item in list(snapshot.message_transcript or [])
+                    if isinstance(item, dict)
+                ]
+                tool_results = [
+                    item
+                    for item in list(snapshot.tool_results or [])
+                    if isinstance(item, dict)
+                ]
+                if tool_results:
+                    loop_state.scratchpad["adaptive.tool_results"] = tool_results
+        original_goal = self._seeded_original_goal(ctx)
+        if original_goal:
+            task_context = build_seeded_original_task_context_message(original_goal)
+            if not any(
+                message.role == "system" and message.content.strip() == task_context
+                for message in loop_state.messages
+            ):
+                loop_state.messages.append(Message(role="system", content=task_context))
         return loop_state
 
     def _seeded_recoverable_policy_denial_message(
@@ -449,10 +462,8 @@ class ActLoopSeededMixin:
         )
         telemetry_payload = loop_outcome.telemetry_payload()
         telemetry_payload.update(
-            {
-                "completed_intent_ids": list(completed_ids),
-                "remaining_intent_ids": list(remaining_ids),
-            }
+            completed_intent_ids=list(completed_ids),
+            remaining_intent_ids=list(remaining_ids),
         )
         _stage_task_plan_events(ctx, loop_outcome)
         _postprocess_adaptive_response_trailers(
@@ -466,15 +477,15 @@ class ActLoopSeededMixin:
             summary=f"{_public_act_tag()} completed.",
             outputs=telemetry_payload,
         )
-        action_result = action_result.model_copy(
-            update={
-                "outputs": {
-                    **action_result.outputs,
-                    **telemetry_payload,
-                }
-            },
-            deep=True,
-        )
+        outputs = {**action_result.outputs, **telemetry_payload}
+        action_result = action_result.model_copy(update={"outputs": outputs}, deep=True)
+        if ctx.state.pending_confirmation_command is not None:
+            ctx.state.status = BRAIN_STATE_WAITING_USER
+            loop_outcome.action_result = action_result
+            return cast(
+                ExecutionResult,
+                self._result_from_needs_user(ctx, outcome=loop_outcome),
+            )
         ctx.state.last_result = action_result
         continuation_guidance = self._seeded_autonomous_continuation_guidance(
             ctx=ctx, loop_outcome=loop_outcome

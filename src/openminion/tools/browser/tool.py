@@ -229,6 +229,7 @@ BROWSER_TOOL_INPUT_SCHEMA: dict[str, Any] = {
 @dataclass
 class BrowserTool(Tool):
     name = "browser"
+    args_model = BrowserCallArgs
     sidecar = "pinchtab"
     description = (
         "Provider-neutral browser automation for interactive or visual web tasks. "

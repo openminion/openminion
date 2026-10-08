@@ -62,6 +62,16 @@ def test_apply_ask_maps_to_default_permission_plus_action_policy_ask() -> None:
     assert result.message == "permissions → ask"
 
 
+def test_apply_workspace_auto_sets_both_axes() -> None:
+    runtime = _RuntimeDouble()
+
+    result = apply_permission_menu_choice(runtime, PERMISSION_CHOICE_AUTO)
+
+    assert runtime.permission_mode == "auto"
+    assert runtime.action_policy_mode_override == "auto"
+    assert result.message == "permissions → auto"
+
+
 def test_apply_readonly_preserves_existing_action_policy_axis() -> None:
     runtime = _RuntimeDouble()
     runtime.action_policy_mode_override = "auto"
@@ -88,6 +98,9 @@ def test_full_access_requires_explicit_confirmation() -> None:
     assert runtime.permission_mode == "bypass"
     assert runtime.action_policy_mode_override == "bypass"
     assert "full access" in result.message
+    description = permission_choice_for_id("full access").description
+    assert "tool exposure" in description
+    assert "secret/credential boundaries" in description
 
 
 def test_status_label_keeps_permission_and_approval_axes_distinct() -> None:

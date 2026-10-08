@@ -3,9 +3,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+from eth_abi.exceptions import DecodingError
 from web3 import Web3
 from web3.exceptions import TransactionNotFound
 
+from openminion.tools.blockchain.schema_types import FunctionAbi
 from openminion.tools.blockchain.runtime import inspect_blockchain
 
 ADDRESS = Web3.to_checksum_address("0x" + "11" * 20)
@@ -325,3 +327,112 @@ def test_invalid_action_and_disabled_config_fail_without_rpc() -> None:
 
     assert invalid["error"]["code"] == "INVALID_ARGUMENT"
     assert disabled["error"]["code"] == "FEATURE_DISABLED"
+
+
+def test_configured_inspect_requires_the_optional_network_pair() -> None:
+    context = _context()
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain.pop("rpc_url")
+    blockchain.pop("chain_id")
+
+    result = inspect_blockchain({"action": "chain_summary"}, context, web3=_Web3())
+
+    assert result["error"] == {
+        "code": "FEATURE_UNAVAILABLE",
+        "message": "Configured blockchain network is unavailable.",
+        "retryable": False,
+        "details": {"feature": "configured_blockchain_network"},
+    }
+
+
+def test_resolved_contract_read_uses_pinned_record_without_configured_network(
+    monkeypatch,
+) -> None:
+    from openminion.tools.blockchain import resolved_calls
+
+    context = _context()
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain.pop("rpc_url")
+    blockchain.pop("chain_id")
+    context.session_id = "session"
+    context.env = {}
+    resolution_digest = "sha256:" + "12" * 32
+    block_hash = "0x" + "34" * 32
+    function = FunctionAbi.model_validate(
+        {
+            "type": "function",
+            "name": "apr",
+            "inputs": [],
+            "outputs": [{"name": "", "type": "uint256"}],
+            "stateMutability": "view",
+        }
+    )
+    record = {"contract_address": ADDRESS}
+
+    monkeypatch.setattr(resolved_calls, "load_resolution", lambda digest, ctx: record)
+    monkeypatch.setattr(
+        resolved_calls,
+        "revalidate_resolution",
+        lambda value: {"block_number": "42", "block_hash": block_hash},
+    )
+    monkeypatch.setattr(
+        resolved_calls,
+        "function_by_signature",
+        lambda value, signature: function,
+    )
+
+    def rpc_call(_record, method, params):
+        if method == "eth_call":
+            assert params[1] == "0x2a"
+            return "0x" + Web3().codec.encode(["uint256"], [7]).hex()
+        assert method == "eth_getBlockByNumber"
+        return {"number": "0x2a", "hash": block_hash}
+
+    monkeypatch.setattr(resolved_calls, "rpc_call", rpc_call)
+
+    result = inspect_blockchain(
+        {
+            "action": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "apr()",
+            "arguments": [],
+        },
+        context,
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["block_number"] == "42"
+    assert result["data"]["block_hash"] == block_hash
+    assert result["data"]["result"] == ["7"]
+    assert result["data"]["raw_return_digest"].startswith("sha256:")
+
+    def fail_decode(*_args, **_kwargs):
+        raise DecodingError("invalid return data")
+
+    monkeypatch.setattr(resolved_calls, "decode_abi_values", fail_decode)
+    decode_failed = inspect_blockchain(
+        {
+            "action": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "apr()",
+            "arguments": [],
+        },
+        context,
+    )
+    assert decode_failed["error"]["code"] == "ABI_DECODE_FAILED"
+
+    monkeypatch.setattr(
+        resolved_calls,
+        "decode_abi_values",
+        lambda *_args, **_kwargs: ["x" * (256 * 1024)],
+    )
+    too_large = inspect_blockchain(
+        {
+            "action": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "apr()",
+            "arguments": [],
+        },
+        context,
+    )
+    assert too_large["error"]["code"] == "RESULT_TOO_LARGE"

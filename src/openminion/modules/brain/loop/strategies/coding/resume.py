@@ -20,7 +20,6 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionResult,
 )
 from openminion.modules.brain.loop.tools.confirmation import (
-    apply_session_confirmation_grant,
     confirmation_required_user_message,
     extract_confirmation_replay_queue,
     is_session_confirmation_response,
@@ -227,6 +226,47 @@ class CodingResumeMixin:
             self._loop_state.tool_calls_made.append(tool_name)
             self._loop_state.total_tool_calls += 1
 
+    def _prepare_confirmation_replay_commands(
+        self: Any,
+        *,
+        ctx: ExecutionContext,
+        runner: Any,
+        confirmed: Any,
+        session_grant: bool,
+    ) -> tuple[list[Any], ExecutionResult | None]:
+        prepared_commands = []
+        for replay_command in _confirmation_replay_commands(confirmed):
+            replay_inputs = dict(getattr(replay_command, "inputs", {}) or {})
+            policy_grant_required = (
+                session_grant
+                or bool(ctx.state.pending_policy_approval_id)
+                or requires_individual_confirmation(replay_command)
+            )
+            grant_id, grant_supported = ("", False)
+            if policy_grant_required:
+                grant_id, grant_supported = _grant_once_from_confirmation(
+                    runner,
+                    state=ctx.state,
+                    command=replay_command,
+                    logger=ctx.logger,
+                    action="allow_session_exact" if session_grant else "allow_once",
+                )
+            if policy_grant_required and (not grant_supported or not grant_id):
+                return [], _confirmation_grant_failed_response(ctx, confirmed)
+            replay_inputs["confirmation_source"] = "policy_replay"
+            if grant_id:
+                replay_inputs["confirmation_grant_id"] = grant_id
+            elif not grant_supported:
+                replay_inputs["confirmation_grant_id"] = (
+                    f"local-confirmation-{new_uuid()}"
+                )
+            replay_command.inputs = replay_inputs
+            prepared = refresh_command_identity(replay_command)
+            if not policy_grant_required:
+                ctx.state.local_confirmation_command_ids.append(prepared.command_id)
+            prepared_commands.append(prepared)
+        return prepared_commands, None
+
     def _consume_pending_confirmation_reply(
         self: Any,
         ctx: ExecutionContext,
@@ -277,33 +317,14 @@ class CodingResumeMixin:
             )
         confirmed = command.model_copy(deep=True)
         ctx.state.pending_confirmation_command = None
-        replay_commands = _confirmation_replay_commands(confirmed)
-        prepared_commands = []
-        for replay_command in replay_commands:
-            if session_grant:
-                apply_session_confirmation_grant(ctx.state, replay_command)
-            replay_inputs = (
-                dict(replay_command.inputs)
-                if isinstance(getattr(replay_command, "inputs", None), dict)
-                else {}
-            )
-            grant_id, grant_supported = _grant_once_from_confirmation(
-                runner,
-                state=ctx.state,
-                command=replay_command,
-                logger=ctx.logger,
-            )
-            if grant_supported and not grant_id:
-                return _confirmation_grant_failed_response(ctx, confirmed)
-            replay_inputs["confirmation_source"] = "policy_replay"
-            if grant_id:
-                replay_inputs["confirmation_grant_id"] = grant_id
-            elif not grant_supported:
-                replay_inputs["confirmation_grant_id"] = (
-                    f"local-confirmation-{new_uuid()}"
-                )
-            replay_command.inputs = replay_inputs
-            prepared_commands.append(refresh_command_identity(replay_command))
+        prepared_commands, failure = self._prepare_confirmation_replay_commands(
+            ctx=ctx,
+            runner=runner,
+            confirmed=confirmed,
+            session_grant=session_grant,
+        )
+        if failure is not None:
+            return failure
         _clear_pending_confirmation_metadata(ctx.state)
         ctx.state.post_action_user_message = ""
         if ctx.state.status != BRAIN_STATE_ACTIVE:

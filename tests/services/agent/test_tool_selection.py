@@ -23,6 +23,7 @@ from openminion.modules.tool.base import (
 )
 from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.tool.registry import ToolRegistry
+from openminion.tools.code.plugin import CodeGrepArgs
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -690,6 +691,29 @@ def test_sanitize_arguments_for_spec_drops_unknown_fields() -> None:
         spec=spec,
     )
     assert sanitized == {"location": "san francisco"}
+
+
+def test_sanitize_code_grep_preserves_advertised_scope_aliases() -> None:
+    spec = ProviderToolSpec(
+        name="code.grep",
+        description="",
+        parameters=CodeGrepArgs.model_json_schema(),
+    )
+
+    sanitized = AgentService._sanitize_arguments_for_spec(
+        arguments={
+            "pattern": "prepare_order_action",
+            "cwd": "src",
+            "file_pattern": "**/commerce/plugin.py",
+        },
+        spec=spec,
+    )
+
+    assert sanitized == {
+        "pattern": "prepare_order_action",
+        "cwd": "src",
+        "file_pattern": "**/commerce/plugin.py",
+    }
 
 
 def test_forced_search_success_includes_tool_results_metadata(

@@ -156,7 +156,7 @@ async def handle_prompt_safe_output_slash(
     overlay: TerminalOverlayPresenter,
     status_line: TerminalStatusLine,
     working_dir: str,
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
+    approval_callback: Callable[..., Any] | None = None,
 ) -> bool:
     buffer = io.StringIO()
     should_exit = await slash_handler(

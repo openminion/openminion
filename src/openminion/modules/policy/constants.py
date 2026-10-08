@@ -62,6 +62,20 @@ POLICY_RISK_CHOICES: tuple[str, ...] = (
     POLICY_RISK_FINANCIAL,
     POLICY_RISK_SECURITY,
 )
+POLICY_RISK_ORDER: dict[str, int] = {
+    risk: index
+    for index, risk in enumerate(
+        (
+            POLICY_RISK_READ,
+            POLICY_RISK_WRITE,
+            POLICY_RISK_STATE_CHANGE,
+            POLICY_RISK_EXEC,
+            POLICY_RISK_SECURITY,
+            POLICY_RISK_FINANCIAL,
+            POLICY_RISK_DESTRUCTIVE,
+        )
+    )
+}
 POLICY_HIGH_CONFIRM_RISKS: frozenset[str] = frozenset(
     (
         POLICY_RISK_DESTRUCTIVE,
@@ -120,14 +134,15 @@ POLICY_SUBJECT_ID_LOCAL = "local"
 
 BLOCKCHAIN_POLICY_TOOL = "blockchain"
 BLOCKCHAIN_SEND_METHOD = "send_transaction"
-BLOCKCHAIN_CONFIRMATION_TTL_SECONDS = 600
 OPS_COMMAND_POLICY_TOOL = "ops.command"
 OPS_COMMAND_RUN_METHOD = "run"
 OPS_COMMAND_CONFIRMATION_TTL_SECONDS = 600
-COMMERCE_CONFIRMATION_TTL_SECONDS = 600
 EXACT_CONFIRMATION_PAIRS = POLICY_AUTHORIZATION_PAIRS | frozenset(
     {(OPS_COMMAND_POLICY_TOOL, OPS_COMMAND_RUN_METHOD)}
 )
 
 DEFAULT_STANDALONE_SQLITE_SUBPATH = Path(".openminion") / "policy" / "policy.db"
 DEFAULT_INTEGRATED_SQLITE_SUBPATH = Path("policy") / "policy.db"
+BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE = (
+    "Blockchain transaction approval preview could not be verified."
+)

@@ -523,6 +523,7 @@ class BrainConfig(BaseModel):
     )
     model_capability_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
     tool_policy: str | dict[str, Any] | None = None
+    structural_tool_results: bool = False
     memory_read_scopes: list[str] = Field(default_factory=list)
     memory_write_scopes: dict[str, Any] = Field(default_factory=dict)
     default_act_profile: str | None = None
@@ -567,6 +568,7 @@ class BrainConfig(BaseModel):
             llm_profiles=self.llm_profiles,
             model_capability_overrides=self.model_capability_overrides,
             tool_policy=self.tool_policy,
+            structural_tool_results=self.structural_tool_results,
             memory_read_scopes=self.memory_read_scopes,
             memory_write_scopes=self.memory_write_scopes,
             default_act_profile=self.default_act_profile,
@@ -666,6 +668,7 @@ def from_base_config(
         thinking=str(default_profile.thinking or "minimal"),
         llm_profiles=llm_profiles,
         tool_policy=None,
+        structural_tool_results=default_profile.structural_tool_results,
         memory_read_scopes=[],
         memory_write_scopes={},
         default_act_profile=str(default_profile.default_act_profile or "").strip()

@@ -20,6 +20,7 @@ from openminion.base.config.runtime.reasoning import (
 )
 from .profile_overrides import (
     PERMISSION_MODE_BYPASS,
+    PERMISSION_MODE_AUTO,
     PERMISSION_MODE_CYCLE,
     PERMISSION_MODE_DEFAULT,
     PERMISSION_MODE_READONLY,
@@ -45,7 +46,6 @@ def resolve_runtime_profile(
     overrides: RunProfileOverrides | None = None,
 ) -> AgentProfileConfig:
     """Return the effective :class:`AgentProfileConfig` for *agent_id*."""
-
     selected = resolve_agent_config(config, agent_id)
     effective_overrides, _ = _resolve_model_connection(
         selected, overrides or RunProfileOverrides()
@@ -147,7 +147,6 @@ def build_runtime_config(
         ),
         enabled_plugins=list(plugin_resolution.effective_enabled),
     )
-
     provider_config_overrides = _select_profile_provider_config_overrides(
         selected_profile,
         effective_profile,
@@ -374,6 +373,7 @@ def _plugin_resolution_to_dict(resolution: PluginRuntimeResolution) -> dict[str,
 
 __all__ = [
     "PERMISSION_MODE_BYPASS",
+    "PERMISSION_MODE_AUTO",
     "PERMISSION_MODE_CYCLE",
     "PERMISSION_MODE_DEFAULT",
     "PERMISSION_MODE_READONLY",

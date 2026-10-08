@@ -14,7 +14,6 @@ from ...loop.tools.budget_extension import (
     is_pending_extension_expired,
 )
 from ...loop.tools.confirmation import (
-    apply_session_confirmation_grant,
     confirmation_replay_commands,
     is_session_confirmation_response,
     requires_individual_confirmation,
@@ -206,6 +205,41 @@ def _transition_to_replan_after_deny(*, runner, state, reason: str) -> bool:
     return transitioned
 
 
+def _prepare_confirmation_replay_commands(
+    *, runner: Any, state: Any, confirmed: Any, session_grant: bool, logger: Any
+) -> list[Any] | None:
+    prepared_commands = []
+    for replay_command in confirmation_replay_commands(confirmed):
+        replay_inputs = dict(replay_command.inputs)
+        policy_grant_required = (
+            session_grant
+            or bool(state.pending_policy_approval_id)
+            or requires_individual_confirmation(replay_command)
+        )
+        grant_id, grant_supported = ("", False)
+        if policy_grant_required:
+            grant_id, grant_supported = _grant_once_from_confirmation(
+                runner,
+                state=state,
+                command=replay_command,
+                logger=logger,
+                action="allow_session_exact" if session_grant else "allow_once",
+            )
+        if policy_grant_required and (not grant_supported or not grant_id):
+            return None
+        replay_inputs["confirmation_source"] = "policy_replay"
+        if grant_id:
+            replay_inputs["confirmation_grant_id"] = grant_id
+        elif not grant_supported:
+            replay_inputs["confirmation_grant_id"] = f"local-confirmation-{new_uuid()}"
+        replay_command.inputs = replay_inputs
+        prepared = refresh_command_identity(replay_command)
+        if not policy_grant_required:
+            state.local_confirmation_command_ids.append(prepared.command_id)
+        prepared_commands.append(prepared)
+    return prepared_commands
+
+
 def process(*, runner, state, logger, tick_ctx: TickRunContext):
     if (
         state.pending_confirmation_command is not None
@@ -234,40 +268,26 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
             explicit_direct_tool_replay = is_explicit_direct_tool_reason(
                 prior_reason_code
             )
-            replay_commands = confirmation_replay_commands(confirmed)
-            replay_plan_commands = []
-            for replay_command in replay_commands:
-                if session_grant:
-                    apply_session_confirmation_grant(state, replay_command)
-                replay_inputs = dict(replay_command.inputs)
-                grant_id, grant_supported = _grant_once_from_confirmation(
+            replay_plan_commands = _prepare_confirmation_replay_commands(
+                runner=runner,
+                state=state,
+                confirmed=confirmed,
+                session_grant=session_grant,
+                logger=logger,
+            )
+            if replay_plan_commands is None:
+                state.pending_confirmation_command = confirmed
+                return _runner_delegate(
+                    "_respond_with_meta",
                     runner,
                     state=state,
-                    command=replay_command,
                     logger=logger,
+                    message=(
+                        "Session approval is unavailable for this action. "
+                        "Reply yes to allow it once, or no to cancel."
+                    ),
+                    status=BRAIN_STATE_WAITING_USER,
                 )
-                if grant_supported and not grant_id:
-                    state.pending_confirmation_command = confirmed
-                    return _runner_delegate(
-                        "_respond_with_meta",
-                        runner,
-                        state=state,
-                        logger=logger,
-                        message=(
-                            "I could not apply your confirmation yet. "
-                            "Please try again in a moment."
-                        ),
-                        status=BRAIN_STATE_WAITING_USER,
-                    )
-                replay_inputs["confirmation_source"] = "policy_replay"
-                if grant_id:
-                    replay_inputs["confirmation_grant_id"] = grant_id
-                elif not grant_supported:
-                    replay_inputs["confirmation_grant_id"] = (
-                        f"local-confirmation-{new_uuid()}"
-                    )
-                replay_command.inputs = replay_inputs
-                replay_plan_commands.append(refresh_command_identity(replay_command))
             if state.plan is not None and 0 <= state.cursor < len(state.plan.steps):
                 state.plan.steps = (
                     list(state.plan.steps[: state.cursor])

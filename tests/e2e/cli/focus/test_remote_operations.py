@@ -51,11 +51,10 @@ def test_focus_remote_command_shows_exact_effect_and_reprompts(
     overlay = _ApprovalOverlay((False, True, True))
     terminal_approval = build_terminal_approval_callback(
         overlay=overlay,
-        session_grants={"ops.command.run"},
     )
     adapter.set_approval_callback(
-        lambda tool_name, args, call_id: run_async_compat(
-            terminal_approval(tool_name, args, call_id)
+        lambda tool_name, args, call_id, policy_facts: run_async_compat(
+            terminal_approval(tool_name, args, call_id, policy_facts)
         )
     )
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ from pydantic import ValidationError
 
 from openminion.cli.interactive.terminal.shell.approval import (
     build_terminal_approval_callback,
+    format_terminal_approval_prompt,
 )
 from openminion.cli.presentation.tool.progress import build_tool_event_from_progress
 from openminion.modules.brain.adapters.tool.policy_context import (
@@ -18,19 +20,25 @@ from openminion.modules.brain.loop.tools.confirmation import (
     requires_individual_confirmation,
 )
 from openminion.modules.brain.schemas import ToolCommand
-from openminion.modules.commerce.confirmation import (
+from openminion.tools.commerce.confirmation import (
     ExactOrderConfirmationPreview,
     OrderActionConfirmationPreview,
     PreparationIntentConfirmationPreview,
     commerce_confirmation_payload,
     commerce_confirmation_lines,
 )
-from openminion.modules.commerce.models import CommerceHandoff, CommerceLifecycleState
-from openminion.modules.commerce.provider import OrderPlacement
+from openminion.tools.commerce.models import CommerceHandoff, CommerceLifecycleState
+from openminion.tools.commerce.plugin import _result
+from openminion.tools.commerce.registrar import REGISTRAR
+from openminion.tools.commerce.authorization import confirmation_preview
+from openminion.tools.commerce.provider import OrderPlacement
 from openminion.modules.policy.adapters.brain import PolicyCtlBrainAdapter
 from openminion.modules.policy.models import PolicyConfig, RiskSpec
+from openminion.modules.policy.models import build_policy_facts
 from openminion.modules.policy.runtime.action_policy import derive_tool_risk_spec
 from openminion.modules.policy.runtime.service import PolicyCtl
+from openminion.modules.tool.registry import ToolRegistry
+from openminion.modules.tool.plugin_api import stable_invocation_hash
 
 
 _DIGEST = "sha256:" + "a" * 64
@@ -158,8 +166,12 @@ def test_prepare_risk_is_exact_external_reversible_confirmation() -> None:
     )
 
 
-def test_policy_adapter_uses_trusted_resolver_and_returns_typed_preview(
+@pytest.mark.parametrize("preview_fails", [False, True])
+@pytest.mark.parametrize("items_as_json", [False, True], ids=["array", "json-string"])
+def test_policy_adapter_uses_registered_preview_and_trusted_resources(
     tmp_path: Path,
+    preview_fails: bool,
+    items_as_json: bool,
 ) -> None:
     ctl = PolicyCtl.with_sqlite(
         tmp_path / "policy.db", config=PolicyConfig(mode="enforce")
@@ -175,17 +187,25 @@ def test_policy_adapter_uses_trusted_resolver_and_returns_typed_preview(
 
     def resolve_preview(**facts: object) -> PreparationIntentConfirmationPreview:
         seen.update(facts)
+        if preview_fails:
+            raise ValueError("Preview cannot be verified")
         return _preparation_preview()
 
+    registry = ToolRegistry()
+    REGISTRAR.register(registry)
     adapter = PolicyCtlBrainAdapter(
         ctl,
-        commerce_confirmation_resolver=resolve_preview,
+        tool_registry=registry,
+        tool_resources={
+            "commerce": SimpleNamespace(resolve_confirmation_preview=resolve_preview)
+        },
     )
+    items = [{"offer_id": "offer-1", "variant_id": "blue-medium", "quantity": 2}]
     command = ToolCommand(
         kind="tool",
         title="Prepare checkout",
         tool_name="commerce.prepare_order",
-        args={"items": [{"offer_id": "offer-1", "quantity": 2}]},
+        args={"items": json.dumps(items) if items_as_json else items},
         inputs={},
     )
     state = SimpleNamespace(
@@ -200,14 +220,49 @@ def test_policy_adapter_uses_trusted_resolver_and_returns_typed_preview(
             working_state=state,
             session_context={"subject_id": "local", "mode_name": "act"},
         )
-        assert decision.outcome == "REQUIRE_CONFIRMATION"
-        assert decision.confirmation_preview == commerce_confirmation_payload(
-            _preparation_preview()
-        )
+        assert decision.outcome == (
+            "DENY" if preview_fails else "REQUIRE_CONFIRMATION"
+        ), decision.explanation
+        if preview_fails:
+            assert decision.confirmation_preview is None
+            assert ctl.list_grants() == []
+        else:
+            assert decision.confirmation_preview == _preview_payload(
+                _preparation_preview()
+            )
+            canonical_args = registry.get(command.tool_name).canonical_args
+            assert canonical_args is not None
+            expected_args = canonical_args({"items": items})
+            assert seen["args"] == expected_args
+            assert ctl.list_decisions()[0]["invocation_hash"] == stable_invocation_hash(
+                tool="commerce", method="prepare_order", args=expected_args
+            )
+            array_decision = adapter.evaluate(
+                command=command.model_copy(update={"args": {"items": items}}),
+                working_state=state,
+                session_context={"subject_id": "local", "mode_name": "act"},
+            )
+            assert array_decision.confirmation_preview == decision.confirmation_preview
+            assert array_decision.approval_id == decision.approval_id
+            assert ctl.list_grants() == []
         assert seen["subject_id"] == "local"
         assert seen["session_id"] == "session-1"
     finally:
         adapter.close()
+
+
+def _preview_payload(preview, *, tool_name="commerce.prepare_order"):
+    return confirmation_preview(
+        {},
+        tool_name=tool_name,
+        subject_id="local",
+        session_id="session-1",
+        tool_resources={
+            "commerce": SimpleNamespace(
+                resolve_confirmation_preview=lambda **kwargs: preview
+            )
+        },
+    )
 
 
 @pytest.mark.parametrize(
@@ -216,9 +271,10 @@ def test_policy_adapter_uses_trusted_resolver_and_returns_typed_preview(
         "commerce.prepare_order",
         "commerce.place_order",
         "commerce.apply_order_action",
+        "blockchain.send_transaction",
     ],
 )
-def test_commerce_confirmation_is_individual_and_never_auto(
+def test_exact_authorization_is_individual_and_never_auto(
     tool_name: str,
 ) -> None:
     command = ToolCommand(
@@ -262,9 +318,7 @@ def test_shared_confirmation_message_is_one_time_and_escapes_merchant_text() -> 
     )
     rendered = confirmation_required_user_message(
         command,
-        commerce_confirmation_payload(
-            _preparation_preview(merchant="[red]Fake total\n\x1b[2J$0")
-        ),
+        _preview_payload(_preparation_preview(merchant="[red]Fake total\n\x1b[2J$0")),
     )
     assert "Merchant: \\[red]Fake total $0" in rendered
     assert "without placing an order or capturing payment" in rendered
@@ -272,6 +326,59 @@ def test_shared_confirmation_message_is_one_time_and_escapes_merchant_text() -> 
         "Reply exactly yes to allow once, or no to cancel."
     )
     assert "allow this tool for the session" not in rendered
+
+
+def test_generic_confirmation_message_redacts_bearer_token() -> None:
+    command = ToolCommand(
+        kind="tool",
+        title="Run request",
+        tool_name="custom.run",
+        args={"command": "curl -H 'Authorization: Bearer abcdefghijklmnop' /private"},
+        inputs={},
+    )
+
+    message = confirmation_required_user_message(command)
+
+    assert "abcdefghijklmnop" not in message
+    assert "Bearer [REDACTED]" in message
+
+
+def test_generic_and_terminal_confirmation_share_typed_facts_and_redaction() -> None:
+    secret = "abcdefghijklmnop"
+    args = {"command": f"curl -H 'Authorization: Bearer {secret}' /private"}
+    facts = build_policy_facts(
+        canonical_tool="custom.run",
+        reason_code="DEFAULT_CONFIRM",
+        risk={
+            "risk_class": "exec",
+            "side_effects": "local",
+            "reversibility": "unknown",
+        },
+        duration_options=["allow_once", "allow_session", "deny"],
+    )
+    generic = confirmation_required_user_message(
+        ToolCommand(
+            kind="tool",
+            title="Run request",
+            tool_name="custom.run",
+            args=args,
+            inputs={},
+        ),
+        policy_facts=facts,
+    )
+    terminal = format_terminal_approval_prompt("custom.run", args, facts)
+
+    for expected in (
+        "Risk: exec",
+        "Side effects: local",
+        "Reversibility: unknown",
+        "Reason: DEFAULT_CONFIRM",
+        "Choices: allow_once, allow_session, deny",
+        "Bearer [REDACTED]",
+    ):
+        assert expected in generic
+        assert expected in terminal
+    assert secret not in generic + terminal
 
 
 def test_preparation_and_exact_order_approvals_are_separate_snapshots() -> None:
@@ -284,7 +391,7 @@ def test_preparation_and_exact_order_approvals_are_separate_snapshots() -> None:
             args={},
             inputs={},
         ),
-        commerce_confirmation_payload(_preparation_preview(merchant=hostile)),
+        _preview_payload(_preparation_preview(merchant=hostile)),
     )
     place = confirmation_required_user_message(
         ToolCommand(
@@ -294,7 +401,9 @@ def test_preparation_and_exact_order_approvals_are_separate_snapshots() -> None:
             args={},
             inputs={},
         ),
-        commerce_confirmation_payload(_order_preview(merchant=hostile)),
+        _preview_payload(
+            _order_preview(merchant=hostile), tool_name="commerce.place_order"
+        ),
     )
 
     assert "Commerce checkout preparation" in prepare
@@ -325,17 +434,23 @@ def test_receipt_unknown_outcome_and_handoff_have_clear_next_actions() -> None:
     receipt_text = build_tool_event_from_progress(
         {
             "tool_name": "commerce.place_order",
-            "content": receipt.model_dump_json(),
+            "content": _result(
+                "place_order", receipt.state, receipt.model_dump(mode="json")
+            )["content"],
         }
     ).content
     handoff_text = build_tool_event_from_progress(
         {
             "tool_name": "commerce.place_order",
-            "content": CommerceHandoff(
-                reason_code="merchant_support_required",
-                message="Call [red]support\n\x1b[2J before continuing",
-                url="https://shop.test/support",
-            ).model_dump_json(),
+            "content": _result(
+                "place_order",
+                "handoff_required",
+                CommerceHandoff(
+                    reason_code="merchant_support_required",
+                    message="Call [red]support\n\x1b[2J before continuing",
+                    url="https://shop.test/support",
+                ).model_dump(mode="json"),
+            )["content"],
         }
     ).content
 
@@ -362,10 +477,8 @@ async def test_terminal_commerce_callback_offers_allow_once_only() -> None:
         ) -> str:
             raise AssertionError("commerce must not offer session approval")
 
-    session_grants: set[str] = set()
     callback = build_terminal_approval_callback(
         overlay=_Overlay(),
-        session_grants=session_grants,
     )
     assert await callback("commerce.prepare_order", {"items": []}, "a")
     assert await callback("commerce.place_order", {"preparation_ref": "prep-1"}, "b")
@@ -375,4 +488,3 @@ async def test_terminal_commerce_callback_offers_allow_once_only() -> None:
     assert all("allow once or deny" in prompt.lower() for prompt in prompts)
     assert all("session" not in prompt.lower() for prompt in prompts)
     assert all("always" not in prompt.lower() for prompt in prompts)
-    assert session_grants == set()

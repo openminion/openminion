@@ -31,21 +31,23 @@ def test_commerce_interface_contract_is_canonical_and_closed() -> None:
     )
 
 
-def test_policy_factory_wires_commerce_runtime_confirmation_resolver(tmp_path) -> None:
+def test_policy_factory_wires_trusted_tool_resources_and_registry(tmp_path) -> None:
     from openminion.services.brain.factory.adapter import create_policy_api
+    from openminion.modules.tool.registry import ToolRegistry
     from tests.helpers.commerce_runtime import build_fixture_commerce_runtime
 
     runtime, _ = build_fixture_commerce_runtime()
+    registry = ToolRegistry()
     adapter = create_policy_api(
         mode="service",
         db_dir=tmp_path,
         policy_service=object(),
-        commerce_runtime=runtime,
+        tool_registry=registry,
+        tool_resources={"commerce": runtime},
     )
 
-    assert adapter._commerce_confirmation_resolver == (
-        runtime.resolve_confirmation_preview
-    )
+    assert adapter._tool_registry is registry
+    assert adapter._tool_resources == {"commerce": runtime}
 
 
 def test_contract_version_pattern():

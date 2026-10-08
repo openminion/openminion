@@ -1,9 +1,80 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from openminion.base.config import OpenMinionConfig
+from openminion.modules.tool.plugin_api import POLICY_AUTHORIZATION_DESCRIPTORS
 
-from ..models import RiskSpec, policy_config_from_action_policy
+from ..models import (
+    InvocationSummary,
+    PolicyConfig,
+    PolicyDecision,
+    PolicyRule,
+    RiskClass,
+    RiskSpec,
+    policy_config_from_action_policy,
+)
+from ..constants import POLICY_DECISION_DENY
+
+
+def select_policy_rule(
+    *,
+    invocation: InvocationSummary,
+    risk: RiskSpec,
+    config: PolicyConfig,
+    risk_order: Mapping[RiskClass, int],
+) -> PolicyRule | None:
+    tool_name = (
+        invocation.tool
+        if invocation.method == "default"
+        else f"{invocation.tool}.{invocation.method}"
+    )
+    matches = [
+        rule
+        for rule in config.rules
+        if rule.tool_name == tool_name
+        and (
+            not rule.min_risk_class
+            or risk_order[risk.risk_class] >= risk_order[rule.min_risk_class]
+        )
+    ]
+    if not matches:
+        return None
+    priority = {"auto": 0, "ask": 1, "block": 2}
+    return max(matches, key=lambda rule: priority[rule.mode])
+
+
+def blocked_rule_decision(
+    matching_rule: PolicyRule | None, risk: RiskSpec
+) -> PolicyDecision | None:
+    if matching_rule is None or matching_rule.mode != "block":
+        return None
+    return PolicyDecision(
+        decision=POLICY_DECISION_DENY,
+        reason_code="CONFIG_RULE_BLOCK",
+        reason="Denied by configured exact-tool rule",
+        risk=risk,
+        details={"rule_mode": "block", "tool_name": matching_rule.tool_name},
+    )
+
+
+def merge_policy_risk(
+    registered: RiskSpec,
+    command: RiskSpec | None,
+    *,
+    risk_order: Mapping[RiskClass, int],
+) -> RiskSpec:
+    if (
+        command is None
+        or risk_order[command.risk_class] <= risk_order[registered.risk_class]
+    ):
+        return registered
+    return RiskSpec(
+        risk_class=command.risk_class,
+        side_effects=registered.side_effects,
+        reversibility=registered.reversibility,
+        default_confirm=registered.default_confirm,
+        sensitive_targets=list(registered.sensitive_targets),
+    )
 
 
 def resolve_profile_action_policy(config: OpenMinionConfig, profile: Any) -> Any:
@@ -35,33 +106,16 @@ def build_action_policy_service(
 
 
 def derive_tool_risk_spec(*, tool_name: str, tool: Any) -> RiskSpec:
-    if tool_name == "commerce.prepare_order":
-        return RiskSpec(
-            risk_class="state_change",
-            side_effects="external_account",
-            reversibility="reversible",
-            default_confirm=True,
-        )
-    if tool_name == "commerce.place_order":
-        return RiskSpec(
-            risk_class="financial",
-            side_effects="external_account",
-            reversibility="irreversible",
-            default_confirm=True,
-        )
-    if tool_name == "commerce.apply_order_action":
-        return RiskSpec(
-            risk_class="financial",
-            side_effects="external_account",
-            reversibility="partially_reversible",
-            default_confirm=True,
-        )
-    if tool_name == "blockchain.send_transaction":
-        return RiskSpec(
-            risk_class="financial",
-            side_effects="external_account",
-            reversibility="irreversible",
-            default_confirm=True,
+    tool_id, _, method = tool_name.rpartition(".")
+    descriptor = POLICY_AUTHORIZATION_DESCRIPTORS.get((tool_id, method))
+    if descriptor is not None:
+        return RiskSpec.from_dict(
+            {
+                "risk_class": descriptor.risk_class,
+                "side_effects": descriptor.side_effects,
+                "reversibility": descriptor.reversibility,
+                "default_confirm": True,
+            }
         )
 
     min_scope = (
@@ -111,7 +165,10 @@ def derive_tool_risk_spec(*, tool_name: str, tool: Any) -> RiskSpec:
 
 __all__ = (
     "build_action_policy_service",
+    "blocked_rule_decision",
     "derive_tool_risk_spec",
     "policy_config_from_action_policy",
+    "merge_policy_risk",
     "resolve_profile_action_policy",
+    "select_policy_rule",
 )

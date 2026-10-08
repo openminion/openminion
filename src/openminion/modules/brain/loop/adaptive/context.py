@@ -144,6 +144,13 @@ class _AdaptiveLoopContextAdapter:
         )
         self.session_api = getattr(self._runner, "session_api", None)
         self.skill_api = getattr(self._runner, "skill_api", None)
+        self.structural_tool_results = bool(
+            getattr(
+                getattr(self._runner, "profile", None),
+                "structural_tool_results",
+                False,
+            )
+        )
         self.provider_retry_max_attempts = build_provider_retry_policy(
             self._runner.options,
             getattr(self._runner, "llm_api", None),
@@ -232,11 +239,13 @@ class _AdaptiveLoopContextAdapter:
             tool_budget_debited=prepare_outcome.tool_budget_debited,
             policy_approval_id=prepare_outcome.policy_approval_id,
             policy_confirmation_preview=(prepare_outcome.policy_confirmation_preview),
+            policy_facts=dict(prepare_outcome.policy_facts),
         )
         self.state.pending_policy_approval_id = prepare_outcome.policy_approval_id
         self.state.pending_policy_confirmation_preview = (
             prepare_outcome.policy_confirmation_preview
         )
+        self.state.pending_policy_facts = dict(prepare_outcome.policy_facts)
         return self._postprocess_outcome(
             outcome,
             original_command=prepare_outcome.original_command,
@@ -278,6 +287,13 @@ class _AdaptiveLoopContextAdapter:
             )
             self.state.pending_confirmation_command = pending_command
             _store_pending_confirmation_metadata(self.state)
+            self.state.post_action_user_message = str(
+                getattr(approved_command, "question", "") or ""
+            ).strip() or confirmation_required_user_message(
+                pending_command,
+                self.state.pending_policy_confirmation_preview,
+                self.state.pending_policy_facts,
+            )
         if (
             action_result is not None
             and str(getattr(action_result, "status", "") or "").strip() == "needs_user"

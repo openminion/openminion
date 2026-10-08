@@ -147,3 +147,51 @@ def test_shared_renderer_shows_ordered_tuple_call_facts() -> None:
     assert preview.call.function_args == [["0x" + "33" * 20, "7"]]
     assert "Function: swap((address,uint256))" in rendered
     assert 'Arguments: [["0x3333333333333333333333333333333333333333","7"]]' in rendered
+
+
+def test_shared_renderer_redacts_blockchain_function_arguments() -> None:
+    function = FunctionAbi.model_validate(
+        {
+            "type": "function",
+            "name": "note",
+            "inputs": [{"name": "value", "type": "string"}],
+            "outputs": [],
+            "stateMutability": "nonpayable",
+        }
+    )
+    function_args = ["Authorization: Bearer abcdefghijklmnop"]
+    call_context = {
+        "function_abi": function.model_dump(mode="json"),
+        "function_args": function_args,
+        "function_signature": abi_signature(function),
+    }
+    transaction = {
+        "schema_version": "evm-transaction-v1",
+        "transaction_type": "eip1559",
+        "chain_id": 31337,
+        "from_address": "0x" + "11" * 20,
+        "to_address": "0x" + "22" * 20,
+        "value_wei": "0",
+        "nonce": "0",
+        "gas_limit": "50000",
+        "data": encode_function_call(Web3(), function, function_args),
+        "max_fee_per_gas_wei": "2",
+        "max_priority_fee_per_gas_wei": "1",
+        "max_total_fee_wei": "100000",
+    }
+    command = ToolCommand(
+        title="Send string transaction",
+        tool_name="blockchain.send_transaction",
+        args={
+            "transaction": transaction,
+            "call_context": call_context,
+            "preparation_digest": preparation_digest(transaction, call_context),
+        },
+    )
+
+    rendered = confirmation_required_user_message(
+        command, build_blockchain_send_confirmation_preview(command.args)
+    )
+
+    assert "abcdefghijklmnop" not in rendered
+    assert "Bearer [REDACTED]" in rendered
