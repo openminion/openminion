@@ -106,12 +106,12 @@ def _resolve_public_address(
     deadline: float,
 ) -> _AddressInfo:
     resolved: list[Sequence[_AddressInfo]] = []
-    errors: list[Exception] = []
+    errors: list[OSError] = []
 
     def resolve() -> None:
         try:
             resolved.append(resolver(host, port, type=socket.SOCK_STREAM))
-        except Exception as exc:
+        except OSError as exc:
             errors.append(exc)
 
     thread = threading.Thread(target=resolve, daemon=True)
@@ -120,10 +120,7 @@ def _resolve_public_address(
     if thread.is_alive():
         raise PublicHttpsError("TIMEOUT")
     if errors:
-        error = errors[0]
-        if isinstance(error, OSError):
-            raise PublicHttpsError("RESOLUTION_FAILED") from error
-        raise error
+        raise PublicHttpsError("RESOLUTION_FAILED") from errors[0]
     answers = list(resolved[0])
     if not answers:
         raise PublicHttpsError("RESOLUTION_FAILED")
