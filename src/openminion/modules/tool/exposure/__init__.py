@@ -235,8 +235,12 @@ def apply_model_exposure(request: Any, registry: Any) -> None:
     service = getattr(registry, "exposure_service", None)
     if request.tools:
         if isinstance(service, ToolExposureService):
-            request.tools = service.filter_specs(
+            request.tools = service.filter_request_specs(
                 list(request.tools),
+                registered_tool_names=_available_runtime_tool_names(registry),
+                allow_registered_fallback=not get_model_exposure_specs(
+                    registry, metadata=metadata
+                ),
                 **exposure_scope(metadata),
             )
     else:

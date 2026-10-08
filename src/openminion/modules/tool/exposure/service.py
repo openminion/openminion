@@ -280,6 +280,34 @@ class ToolExposureService:
             == "visible"
         ]
 
+    def filter_request_specs(
+        self,
+        specs: Sequence[ProviderToolSpec],
+        *,
+        registered_tool_names: Iterable[str] = (),
+        allow_registered_fallback: bool = False,
+        session_id: str = "",
+        task_id: str = "",
+        target_id: str = "",
+    ) -> list[ProviderToolSpec]:
+        filtered = self.filter_specs(
+            specs,
+            session_id=session_id,
+            task_id=task_id,
+            target_id=target_id,
+        )
+        if filtered or not allow_registered_fallback:
+            return filtered
+        registered = _tokens(registered_tool_names)
+        profiled = frozenset(
+            tool_name for profile in self.profiles for tool_name in profile.tool_names
+        )
+        return [
+            spec
+            for spec in specs
+            if spec.name in registered and spec.name not in profiled
+        ]
+
     def cards(
         self,
         *,
