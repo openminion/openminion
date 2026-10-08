@@ -82,6 +82,7 @@ def test_live_minimax_official_conversational_fact_supersession() -> None:
         agent_id=agent_id,
         config_path=_OFFICIAL_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
     )
 
     run_cli_session(
@@ -95,6 +96,7 @@ def test_live_minimax_official_conversational_fact_supersession() -> None:
         agent_id=agent_id,
         config_path=_OFFICIAL_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
     )
 
     recall = run_cli_session(

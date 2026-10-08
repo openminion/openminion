@@ -291,6 +291,7 @@ def test_live_cli_chat_minimax_official_tool_matrix(
         agent_id=target.agent_id,
         config_path=target.config_path,
         matrix_type="skill_simple",
+        auto_confirm=scenario.id == "exec_run",
         allow_unsandboxed_exec=scenario.id == "exec_run",
     )
 

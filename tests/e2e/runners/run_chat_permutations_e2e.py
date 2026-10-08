@@ -337,6 +337,12 @@ def _read_until_prompt(
     )
 
 
+def _write_line(master_fd: int, text: str) -> None:
+    os.write(master_fd, text.encode("utf-8"))
+    time.sleep(0.05)
+    os.write(master_fd, b"\r")
+
+
 def _resolve_providers() -> list[str]:
     providers = _env_list("OPENMINION_E2E_PROVIDERS")
     if providers:
@@ -609,7 +615,7 @@ def _run_chat(
         if not timeout_reason:
             for raw_message in _conversation_messages(conversation):
                 previous_combined = "".join(transcript)
-                os.write(master_fd, (raw_message + "\n").encode("utf-8"))
+                _write_line(master_fd, raw_message)
                 require_turn_done = not raw_message.lstrip().startswith("/")
                 try:
                     combined = _read_until(
@@ -632,7 +638,7 @@ def _run_chat(
                         timeout_reason = "confirmation_loop_limit"
                         break
                     previous_combined = combined
-                    os.write(master_fd, b"yes\n")
+                    _write_line(master_fd, "yes")
                     try:
                         combined = _read_until(
                             master_fd=master_fd,
@@ -649,7 +655,7 @@ def _run_chat(
                 if timeout_reason:
                     break
         try:
-            os.write(master_fd, b"/exit\n")
+            _write_line(master_fd, "/exit")
         except OSError:
             pass
         try:
