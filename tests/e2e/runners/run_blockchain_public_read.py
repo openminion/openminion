@@ -37,7 +37,10 @@ def validate_evidence(evidence: object) -> None:
     digest = resolution.get("data", {}).get("resolution_digest")
     if resolution.get("ok") is not True or not digest:
         raise ValueError("public resolution evidence is incomplete")
-    if read.get("ok") is not True or read.get("data", {}).get("resolution_digest") != digest:
+    if (
+        read.get("ok") is not True
+        or read.get("data", {}).get("resolution_digest") != digest
+    ):
         raise ValueError("public read does not join to resolution")
 
 

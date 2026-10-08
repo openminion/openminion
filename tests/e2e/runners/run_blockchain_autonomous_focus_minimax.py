@@ -73,7 +73,10 @@ def _successful_blockchain_evidence(events: list[Any]) -> tuple[list[str], list[
     resolution_digests: set[str] = set()
     resolved_reads: list[dict] = []
     for event in events:
-        if event.event_type != "tool.call.completed" or event.data.get("status") != "success":
+        if (
+            event.event_type != "tool.call.completed"
+            or event.data.get("status") != "success"
+        ):
             continue
         output = event.data.get("output")
         payload = output.get("outputs") if isinstance(output, dict) else None
@@ -83,11 +86,17 @@ def _successful_blockchain_evidence(events: list[Any]) -> tuple[list[str], list[
         data = payload.get("data")
         if not isinstance(data, dict):
             continue
-        if tool_name == "blockchain.resolve_contract" and payload.get("action") == "resolve_contract":
+        if (
+            tool_name == "blockchain.resolve_contract"
+            and payload.get("action") == "resolve_contract"
+        ):
             digest = data.get("resolution_digest")
             if isinstance(digest, str):
                 resolution_digests.add(digest)
-        elif tool_name == "blockchain.inspect" and payload.get("action") == "resolved_contract_call":
+        elif (
+            tool_name == "blockchain.inspect"
+            and payload.get("action") == "resolved_contract_call"
+        ):
             resolved_reads.append(dict(data))
     return sorted(resolution_digests), resolved_reads
 

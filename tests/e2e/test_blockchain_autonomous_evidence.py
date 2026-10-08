@@ -31,7 +31,9 @@ def _fail(message: str) -> None:
     raise ValueError(message)
 
 
-def _tool_events(payload: dict) -> tuple[dict[str, tuple[int, dict]], dict[str, tuple[int, dict]]]:
+def _tool_events(
+    payload: dict,
+) -> tuple[dict[str, tuple[int, dict]], dict[str, tuple[int, dict]]]:
     requested: dict[str, tuple[int, dict]] = {}
     completed: dict[str, tuple[int, dict]] = {}
     for index, event in enumerate(payload.get("events", ())):
@@ -82,7 +84,9 @@ def validate_blockchain_autonomous_evidence(payload: object) -> None:
     if not required_tools.issubset(executed_names):
         _fail("research and blockchain tool coverage is incomplete")
     resolver_call = next(
-        item for item in executed if item.get("tool_name") == "blockchain.resolve_contract"
+        item
+        for item in executed
+        if item.get("tool_name") == "blockchain.resolve_contract"
     )
     resources = resolver_call.get("arguments")
     if not isinstance(resources, dict):
@@ -126,7 +130,9 @@ def validate_blockchain_autonomous_evidence(payload: object) -> None:
         ):
             _fail(f"{tool_name} was not exposed through tool.request")
     for call_id in _SUBSTANTIVE_CALL_IDS:
-        if not any(call_id in call.get("tool_result_call_ids", ()) for call in model_calls):
+        if not any(
+            call_id in call.get("tool_result_call_ids", ()) for call in model_calls
+        ):
             _fail(f"the model did not consume the {call_id} result")
 
     requested, completed = _tool_events(payload)
@@ -163,7 +169,10 @@ def validate_blockchain_autonomous_evidence(payload: object) -> None:
         _fail("resolution digest does not join to durable session state")
     if f"{preparation_digest.removeprefix('sha256:')}.json" not in record_files:
         _fail("preparation digest does not join to durable session state")
-    if payload.get("resolution", {}).get("data", {}).get("resolution_digest") != resolution_digest:
+    if (
+        payload.get("resolution", {}).get("data", {}).get("resolution_digest")
+        != resolution_digest
+    ):
         _fail("resolution result digest does not join")
     read = payload.get("read", {})
     if read.get("data", {}).get("resolution_digest") != resolution_digest:
@@ -207,9 +216,10 @@ def validate_blockchain_autonomous_evidence(payload: object) -> None:
     ]
     if len(broadcasts) != 1:
         _fail("the scenario must broadcast exactly once")
-    if payload.get("broadcasts_before_restart") != 1 or payload.get(
-        "broadcasts_after_restart"
-    ) != 1:
+    if (
+        payload.get("broadcasts_before_restart") != 1
+        or payload.get("broadcasts_after_restart") != 1
+    ):
         _fail("restart reconstruction resubmitted the transaction")
     owners = payload.get("execution_owners")
     if owners != {
@@ -233,7 +243,10 @@ def validate_blockchain_autonomous_evidence(payload: object) -> None:
     ):
         _fail("denied proof must use a separate policy session")
     denied_approval = denied.get("approval", {})
-    if denied_approval.get("action") != "deny" or denied_approval.get("grant_id") is not None:
+    if (
+        denied_approval.get("action") != "deny"
+        or denied_approval.get("grant_id") is not None
+    ):
         _fail("denied session lacks an exact denial")
     if not denied_approval.get("preview", {}).get("preparation_digest"):
         _fail("denied session lacks the exact send preview")
@@ -404,5 +417,7 @@ def test_opt_in_runners_fail_clearly_without_required_config(
 ) -> None:
     monkeypatch.setenv(opt_in, "1")
     monkeypatch.delenv(config_env, raising=False)
-    with pytest.raises(RuntimeError, match=rf"^{config_env} is required when {opt_in}=1$"):
+    with pytest.raises(
+        RuntimeError, match=rf"^{config_env} is required when {opt_in}=1$"
+    ):
         runner._required_config()

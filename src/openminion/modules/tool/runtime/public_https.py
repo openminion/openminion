@@ -226,9 +226,7 @@ def request_public_https(
     ):
         raise PublicHttpsError("INVALID_URL")
 
-    address = _resolve_public_address(
-        host, port, resolver=resolver, deadline=deadline
-    )
+    address = _resolve_public_address(host, port, resolver=resolver, deadline=deadline)
     connection = connection_factory(
         host,
         port,

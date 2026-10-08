@@ -57,9 +57,7 @@ def _required_config() -> tuple[Path, dict, str]:
     if not isinstance(payload, dict):
         raise RuntimeError(f"{CONFIG_ENV} must contain an object")
     if payload.get("network_class") != "disposable_testnet":
-        raise RuntimeError(
-            f"{CONFIG_ENV} network_class must be disposable_testnet"
-        )
+        raise RuntimeError(f"{CONFIG_ENV} network_class must be disposable_testnet")
     for field in ("resolve_request", "prepare_request"):
         if not isinstance(payload.get(field), dict):
             raise RuntimeError(f"{CONFIG_ENV} must contain a {field} object")
@@ -122,18 +120,26 @@ def validate_evidence(evidence: object) -> None:
     if not digest or preparation.get("resolution_digest") != digest:
         raise ValueError("testnet preparation does not join to resolution")
     send = evidence.get("send", {})
-    if send.get("ok") is not True or send.get("data", {}).get("preparation_digest") != preparation_digest:
+    if (
+        send.get("ok") is not True
+        or send.get("data", {}).get("preparation_digest") != preparation_digest
+    ):
         raise ValueError("testnet send does not join to preparation")
     if send.get("data", {}).get("broadcast_attempts") != 1:
         raise ValueError("testnet send must prove exactly one broadcast attempt")
     for key in ("operation_status", "restart_status"):
         status = evidence.get(key, {})
-        if status.get("ok") is not True or status.get("data", {}).get("state") != "succeeded":
+        if (
+            status.get("ok") is not True
+            or status.get("data", {}).get("state") != "succeeded"
+        ):
             raise ValueError(f"{key} is not succeeded")
         if status.get("data", {}).get("preparation_digest") != preparation_digest:
             raise ValueError(f"{key} does not join to preparation")
         postconditions = status.get("data", {}).get("postcondition_results", ())
-        if not postconditions or any(item.get("matched") is not True for item in postconditions):
+        if not postconditions or any(
+            item.get("matched") is not True for item in postconditions
+        ):
             raise ValueError(f"{key} lacks matched postcondition evidence")
     audit_events = evidence.get("audit_events")
     if not isinstance(audit_events, list) or len(audit_events) != 1:
@@ -322,9 +328,10 @@ def _run(config_path: Path, payload: dict[str, Any], signer_secret: str) -> dict
             },
             SimpleNamespace(session_id=session_id, env=env, metadata=metadata),
         )
-        if restart_status.get("ok") is not True or restart_status.get(
-            "data", {}
-        ).get("state") != "succeeded":
+        if (
+            restart_status.get("ok") is not True
+            or restart_status.get("data", {}).get("state") != "succeeded"
+        ):
             raise RuntimeError(
                 f"testnet restart reconstruction failed: {restart_status}"
             )

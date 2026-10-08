@@ -389,7 +389,11 @@ def _registry(
     registry = ToolRegistry()
 
     def _search(_args: dict[str, Any], _context: Any) -> dict[str, Any]:
-        return {"results": [{"title": "Protocol deployment", "url": RESEARCH_URL, "rank": 1}]}
+        return {
+            "results": [
+                {"title": "Protocol deployment", "url": RESEARCH_URL, "rank": 1}
+            ]
+        }
 
     def _fetch(_args: dict[str, Any], _context: Any) -> dict[str, Any]:
         return {"url": RESEARCH_URL, "content": research_payload}
@@ -425,8 +429,8 @@ def _registry(
             )
         )
     blockchain_plugin.register(registry)
-    registry.get("blockchain.resolve_contract").handler = lambda args, context: resolve_contract(
-        args, context, https_request=transport
+    registry.get("blockchain.resolve_contract").handler = lambda args, context: (
+        resolve_contract(args, context, https_request=transport)
     )
     return registry
 
@@ -484,7 +488,9 @@ def _wait_for_anvil(web3: Web3, process: subprocess.Popen) -> None:
     raise RuntimeError("Anvil did not become ready")
 
 
-def build_blockchain_policy(workspace: Path, runtime_metadata: dict[str, Any]) -> Policy:
+def build_blockchain_policy(
+    workspace: Path, runtime_metadata: dict[str, Any]
+) -> Policy:
     raw = json.loads(json.dumps(DEFAULT_POLICY))
     raw["scope"] = "POWER_USER"
     raw["workspace_root"] = str(workspace)
@@ -886,9 +892,7 @@ def _run() -> dict[str, Any]:
                 kind="tool",
                 title="blockchain.send_transaction",
                 tool_name="blockchain.send_transaction",
-                args={
-                    "preparation_digest": denied_preparation["preparation_digest"]
-                },
+                args={"preparation_digest": denied_preparation["preparation_digest"]},
                 inputs={},
                 idempotency_key="denied-send",
             ),
@@ -968,9 +972,7 @@ def _run() -> dict[str, Any]:
                 "command_executor": executor.executor.__class__.__name__,
                 "tool_adapter": executor.adapter.__class__.__name__,
                 "policy_adapter": executor.runner.policy_api.__class__.__name__,
-                "send_scope": registry.get(
-                    "blockchain.send_transaction"
-                ).min_scope,
+                "send_scope": registry.get("blockchain.send_transaction").min_scope,
             },
             "denied_policy": {
                 "session_id": denied_session_id,
