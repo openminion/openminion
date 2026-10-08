@@ -17,6 +17,7 @@ from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.tools.code.cache import reset_repo_map_cache_for_tests
 from openminion.tools.code.plugin import (
+    CodeGrepArgs,
     _h_grep,
     _h_patch,
     _h_repo_index,
@@ -186,6 +187,21 @@ def test_grep_returns_structured_matches(tmp_path: Path) -> None:
             "text": "def hello():",
         }
     ]
+
+
+def test_grep_schema_preserves_model_facing_scope_aliases() -> None:
+    schema = CodeGrepArgs.model_json_schema()
+
+    assert {"cwd", "file_pattern"} <= set(schema["properties"])
+    args = CodeGrepArgs.model_validate(
+        {
+            "pattern": "hello",
+            "cwd": "src",
+            "file_pattern": "**/*.py",
+        }
+    )
+    assert args.path == "src"
+    assert args.file_glob == "**/*.py"
 
 
 def test_grep_returns_empty_match_list(tmp_path: Path) -> None:
