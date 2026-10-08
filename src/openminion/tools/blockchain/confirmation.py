@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 import re
-from typing import Any, Mapping, cast
+from typing import Any, Literal, Mapping, cast
 
 from pydantic import ValidationError
 
-from openminion.modules.tool.plugin_api import (
-    BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
-    BlockchainCallPreview,
-    BlockchainSendConfirmationPreview,
-    ResolvedBlockchainSendConfirmationPreview,
-)
+from openminion.modules.tool.plugin_api import ConfirmationPreviewError
 
 from .abi import abi_signature, encode_function_call, normalize_abi_values
 from .transaction_schemas import (
@@ -27,7 +22,9 @@ MAX_APPROVAL_CALLDATA_BYTES = 4096
 MAX_APPROVAL_PREVIEW_BYTES = 16384
 MAX_RESOLVED_APPROVAL_PREVIEW_BYTES = 65536
 PREVIEW_INVALID_CODE = "BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID"
-PREVIEW_INVALID_MESSAGE = BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE
+PREVIEW_INVALID_MESSAGE = (
+    "Blockchain transaction approval preview could not be verified."
+)
 _PREVIEW_FIELDS = {
     "schema_version",
     "chain_id",
@@ -55,10 +52,169 @@ _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _HEX_RE = re.compile(r"^0x(?:[0-9a-f]{2})*$")
 
 
-class BlockchainConfirmationPreviewError(ValueError):
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-        super().__init__(reason)
+@dataclass(frozen=True)
+class BlockchainCallPreview:
+    function_signature: str
+    function_args: list[Any]
+
+
+@dataclass(frozen=True)
+class BlockchainSendConfirmationPreview:
+    schema_version: Literal["blockchain-send-preview-v1"]
+    chain_id: str
+    from_address: str
+    to_address: str
+    value_wei: str
+    transaction_type: str
+    nonce: str
+    gas_limit: str
+    gas_price_wei: str | None
+    max_fee_per_gas_wei: str | None
+    max_priority_fee_per_gas_wei: str | None
+    max_total_fee_wei: str
+    calldata_bytes: str
+    calldata_sha256: str
+    calldata_hex: str | None
+    preparation_digest: str
+    call: BlockchainCallPreview | None
+    opaque_calldata: bool
+
+    @property
+    def display_lines(self) -> list[str]:
+        return _configured_preview_lines(self)
+
+    def to_confirmation_dict(self) -> dict[str, Any]:
+        return {**asdict(self), "display_lines": self.display_lines}
+
+
+@dataclass(frozen=True)
+class ResolvedBlockchainSendConfirmationPreview:
+    schema_version: Literal["blockchain-send-preview-v2"]
+    resolution_digest: str
+    preparation_digest: str
+    expected_chain_id: str
+    observed_chain_id: str
+    expected_genesis_hash: str
+    observed_genesis_hash: str
+    expected_checkpoint: dict[str, Any] | None
+    observed_checkpoint: dict[str, Any] | None
+    resolution_block_number: str
+    resolution_block_hash: str
+    preparation_block_number: str
+    preparation_block_hash: str
+    rpc_origin: str
+    sourcify_target_origin: str
+    sourcify_implementation_origin: str | None
+    contract_address: str
+    proxy_kind: str
+    implementation_address: str | None
+    abi_address: str
+    target_code_hash: str
+    implementation_code_hash: str | None
+    signer_address: str
+    to_address: str
+    value_wei: str
+    transaction_type: str
+    nonce: str
+    gas_limit: str
+    gas_price_wei: str | None
+    max_fee_per_gas_wei: str | None
+    max_priority_fee_per_gas_wei: str | None
+    max_total_fee_wei: str
+    calldata_bytes: str
+    calldata_sha256: str
+    call: BlockchainCallPreview
+    simulation_block_number: str
+    simulation_block_hash: str
+    simulation_return_data: str
+    simulation_decoded_returns: list[Any] | None
+    postconditions: list[dict[str, Any]]
+    fee_note: str
+    evidence_note: str
+
+    @property
+    def display_lines(self) -> list[str]:
+        return _resolved_preview_lines(self)
+
+    def to_confirmation_dict(self) -> dict[str, Any]:
+        return {**asdict(self), "display_lines": self.display_lines}
+
+
+BlockchainConfirmationPreviewError = ConfirmationPreviewError
+
+
+def _configured_preview_lines(
+    preview: BlockchainSendConfirmationPreview,
+) -> list[str]:
+    lines = [
+        f"Chain ID: {preview.chain_id}",
+        f"From: {preview.from_address}",
+        f"To: {preview.to_address}",
+        f"Value (wei): {preview.value_wei}",
+        f"Transaction type: {preview.transaction_type}",
+        f"Nonce: {preview.nonce}",
+        f"Gas limit: {preview.gas_limit}",
+        f"Gas price (wei): {preview.gas_price_wei or '-'}",
+        f"Max fee per gas (wei): {preview.max_fee_per_gas_wei or '-'}",
+        "Max priority fee per gas (wei): "
+        f"{preview.max_priority_fee_per_gas_wei or '-'}",
+        f"Maximum total fee (wei): {preview.max_total_fee_wei}",
+        f"Calldata bytes: {preview.calldata_bytes}",
+        f"Calldata SHA-256: {preview.calldata_sha256}",
+        f"Calldata: {preview.calldata_hex or '-'}",
+        f"Preparation digest: {preview.preparation_digest}",
+        f"Opaque calldata: {'yes' if preview.opaque_calldata else 'no'}",
+    ]
+    if preview.call is not None:
+        lines.extend(
+            [
+                f"Function: {preview.call.function_signature}",
+                "Arguments: "
+                + json.dumps(
+                    preview.call.function_args,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ),
+            ]
+        )
+    return lines
+
+
+def _resolved_preview_lines(
+    preview: ResolvedBlockchainSendConfirmationPreview,
+) -> list[str]:
+    return [
+        f"Chain ID: {preview.observed_chain_id}",
+        f"Genesis hash: {preview.observed_genesis_hash}",
+        f"RPC: {preview.rpc_origin}",
+        f"Contract: {preview.contract_address}",
+        f"Implementation: {preview.implementation_address or '-'}",
+        f"Signer: {preview.signer_address}",
+        f"Function: {preview.call.function_signature}",
+        "Arguments: "
+        + json.dumps(
+            preview.call.function_args,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ),
+        f"Value (wei): {preview.value_wei}",
+        f"Nonce: {preview.nonce}",
+        f"Gas limit: {preview.gas_limit}",
+        f"Maximum total fee (wei): {preview.max_total_fee_wei}",
+        f"Calldata SHA-256: {preview.calldata_sha256}",
+        f"Preparation block: {preview.preparation_block_number}",
+        f"Simulation result: {preview.simulation_return_data}",
+        "Postconditions: "
+        + json.dumps(
+            preview.postconditions,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ),
+        f"Resolution digest: {preview.resolution_digest}",
+        f"Preparation digest: {preview.preparation_digest}",
+        preview.fee_note,
+        preview.evidence_note,
+    ]
 
 
 def preview_to_dict(
@@ -310,6 +466,18 @@ def _build_resolved_confirmation_preview(
     if _serialized_size(preview_to_dict(preview)) > MAX_RESOLVED_APPROVAL_PREVIEW_BYTES:
         raise BlockchainConfirmationPreviewError("preview_limit")
     return preview
+
+
+def build_policy_confirmation_preview(
+    args: dict[str, Any],
+    *,
+    subject_id: str,
+    session_id: str,
+    tool_resources: Mapping[str, Any],
+) -> dict[str, Any]:
+    del subject_id, session_id, tool_resources
+    preview = build_blockchain_send_confirmation_preview(args)
+    return preview.to_confirmation_dict()
 
 
 def _call_preview(value: Any) -> BlockchainCallPreview | None:

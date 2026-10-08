@@ -144,6 +144,13 @@ class _AdaptiveLoopContextAdapter:
         )
         self.session_api = getattr(self._runner, "session_api", None)
         self.skill_api = getattr(self._runner, "skill_api", None)
+        self.structural_tool_results = bool(
+            getattr(
+                getattr(self._runner, "profile", None),
+                "structural_tool_results",
+                False,
+            )
+        )
         self.provider_retry_max_attempts = build_provider_retry_policy(
             self._runner.options,
             getattr(self._runner, "llm_api", None),

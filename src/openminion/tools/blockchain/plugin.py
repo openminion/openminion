@@ -12,9 +12,13 @@ from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 
 from .debug import debug_blockchain
 from .debug_schemas import DebugArgs
+from .confirmation import (
+    build_policy_confirmation_preview,
+    canonical_blockchain_send_args,
+)
 from .resolved_schemas import ResolveContractArgs
-from .runtime import inspect_blockchain, prepare_transaction, send_transaction
 from .resolution import resolve_contract
+from .runtime import inspect_blockchain, prepare_transaction, send_transaction
 from .schemas import InspectArgs, PrepareArgs, SendPreparedTransactionArgs
 
 BLOCKCHAIN_INSPECT_DESCRIPTION = (
@@ -156,6 +160,8 @@ def register(registry: ToolRegistry) -> None:
             tags=("blockchain", "transaction", "financial"),
             capabilities=("blockchain", "transaction", "financial"),
             dependencies=(WEB3_DEPENDENCY,),
+            canonical_args=canonical_blockchain_send_args,
+            confirmation_preview=build_policy_confirmation_preview,
         )
     )
 

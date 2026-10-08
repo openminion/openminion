@@ -9,7 +9,8 @@ from .config import (
     PROMPT_TOOL_REQUIRED_ARG_LIMIT as _PROMPT_TOOL_REQUIRED_ARG_LIMIT,
     PROMPT_TOOL_STUB_LIMIT as _PROMPT_TOOL_STUB_LIMIT,
 )
-from .exposure import get_model_exposure_specs
+from .exposure import ToolExposureService, get_model_exposure_specs
+from .exposure.service import exposure_scope
 
 # Prompt stubs are compact schema summaries for structured phases only. They
 _STRUCTURED_PROMPT_TOOL_STUB_PURPOSES = frozenset(
@@ -63,9 +64,10 @@ class ToolSchemaService:
     ) -> list[dict[str, Any]]:
         if registry is None:
             return []
-
         tool_schemas: list[dict[str, Any]] = []
         seen_names: set[str] = set()
+        exposure_service = getattr(registry, "exposure_service", None)
+        exposure_scope_values = exposure_scope(metadata)
         manager: Any | None = None
         binding_manager_fn = getattr(registry, "_binding_manager", None)
         if callable(binding_manager_fn):
@@ -105,17 +107,14 @@ class ToolSchemaService:
                     else {}
                 )
             tool_schemas.append(
-                {
-                    "name": name,
-                    "description": description or f"Tool `{name}`",
-                    "parameters": parameters,
-                    **self._tool_metadata(registry=registry, tool_name=name),
-                    "tool_lane": "execution",
-                    "dispatchable": True,
-                }
+                self._execution_tool_schema(
+                    registry=registry,
+                    name=name,
+                    description=description,
+                    parameters=parameters,
+                )
             )
             seen_names.add(name)
-
         raw_tools_map = getattr(registry, "_tools", None)
         if isinstance(raw_tools_map, Mapping):
             for raw_name, raw_tool in raw_tools_map.items():
@@ -123,6 +122,12 @@ class ToolSchemaService:
                     continue
                 name = str(raw_name or "").strip()
                 if not name or name in seen_names:
+                    continue
+                if (
+                    isinstance(exposure_service, ToolExposureService)
+                    and exposure_service.decide(name, **exposure_scope_values).state
+                    != "visible"
+                ):
                     continue
                 tags = tuple(
                     str(tag or "").strip().lower()
@@ -141,62 +146,22 @@ class ToolSchemaService:
                 description = self._tool_description(tool=raw_tool)
                 parameters = self._tool_parameters(tool=raw_tool)
                 tool_schemas.append(
-                    {
-                        "name": name,
-                        "description": description or f"Tool `{name}`",
-                        "parameters": parameters,
-                        **self._tool_metadata(registry=registry, tool_name=name),
-                        "tool_lane": "execution",
-                        "dispatchable": True,
-                    }
+                    self._execution_tool_schema(
+                        registry=registry,
+                        name=name,
+                        description=description,
+                        parameters=parameters,
+                    )
                 )
                 seen_names.add(name)
 
         if not tool_schemas:
-            raw_tools: list[Any] = []
-            tools_dict = getattr(registry, "_tools", None)
-            if isinstance(tools_dict, dict):
-                raw_tools = list(tools_dict.values())
-            elif isinstance(tools_dict, (list, tuple)):
-                raw_tools = list(tools_dict)
-            else:
-                alt_tools = getattr(registry, "tools", None)
-                if isinstance(alt_tools, dict):
-                    raw_tools = list(alt_tools.values())
-                elif isinstance(alt_tools, (list, tuple)):
-                    raw_tools = list(alt_tools)
-                elif callable(getattr(registry, "list", None)):
-                    try:
-                        listed = registry.list()
-                        if isinstance(listed, dict):
-                            raw_tools = list(listed.values())
-                        elif isinstance(listed, (list, tuple)):
-                            raw_tools = list(listed)
-                    except Exception:
-                        raw_tools = []
-
-            for tool in raw_tools:
-                raw_name = str(getattr(tool, "name", "")).strip()
-                name = raw_name
-                if callable(normalize_name):
-                    normalized = normalize_name(raw_name)
-                    if normalized:
-                        name = normalized
-                if not name or name in seen_names:
-                    continue
-                description = self._tool_description(tool=tool)
-                parameters = self._tool_parameters(tool=tool)
-                tool_schemas.append(
-                    {
-                        "name": name,
-                        "description": description or f"Tool `{name}`",
-                        "parameters": parameters,
-                        **self._tool_metadata(registry=registry, tool_name=name),
-                        "tool_lane": "execution",
-                        "dispatchable": True,
-                    }
-                )
-                seen_names.add(name)
+            tool_schemas = self._legacy_fallback_tool_schemas(
+                registry=registry,
+                normalize_name=normalize_name,
+                exposure_service=exposure_service,
+                exposure_scope_values=exposure_scope_values,
+            )
 
         tool_schemas.sort(key=lambda entry: str(entry.get("name", "")))
         return tool_schemas
@@ -415,6 +380,87 @@ class ToolSchemaService:
             "metadata_complete": not metadata_warnings,
             "metadata_warnings": metadata_warnings,
         }
+
+    def _execution_tool_schema(
+        self,
+        *,
+        registry: Any,
+        name: str,
+        description: str,
+        parameters: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "description": description or f"Tool `{name}`",
+            "parameters": parameters,
+            **self._tool_metadata(registry=registry, tool_name=name),
+            "tool_lane": "execution",
+            "dispatchable": True,
+        }
+
+    def _legacy_fallback_tool_schemas(
+        self,
+        *,
+        registry: Any,
+        normalize_name: Callable[[str], str | None] | None,
+        exposure_service: Any,
+        exposure_scope_values: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        tools = getattr(registry, "_tools", None)
+        if isinstance(tools, dict):
+            raw_tools = list(tools.values())
+        elif isinstance(tools, (list, tuple)):
+            raw_tools = list(tools)
+        else:
+            listed = getattr(registry, "tools", None)
+            if callable(getattr(registry, "list", None)):
+                listed = registry.list()
+            raw_tools = (
+                list(listed.values())
+                if isinstance(listed, dict)
+                else list(listed)
+                if isinstance(listed, (list, tuple))
+                else []
+            )
+
+        profile_tool_names = (
+            frozenset(
+                tool_name
+                for profile in exposure_service.profiles
+                for tool_name in profile.tool_names
+            )
+            if isinstance(exposure_service, ToolExposureService)
+            else frozenset()
+        )
+        schemas: list[dict[str, Any]] = []
+        seen_names: set[str] = set()
+        for tool in raw_tools:
+            raw_name = str(getattr(tool, "name", "")).strip()
+            name = normalize_name(raw_name) if callable(normalize_name) else raw_name
+            name = name or raw_name
+            if (
+                not name
+                or name in seen_names
+                or bool(getattr(tool, "prompt_visible_runtime_name", False))
+            ):
+                continue
+            if (
+                isinstance(exposure_service, ToolExposureService)
+                and name in profile_tool_names
+                and exposure_service.decide(name, **exposure_scope_values).state
+                != "visible"
+            ):
+                continue
+            schemas.append(
+                self._execution_tool_schema(
+                    registry=registry,
+                    name=name,
+                    description=self._tool_description(tool=tool),
+                    parameters=self._tool_parameters(tool=tool),
+                )
+            )
+            seen_names.add(name)
+        return schemas
 
     def trim_text(self, text: str, max_chars: int) -> str:
         value = " ".join(str(text or "").split()).strip()

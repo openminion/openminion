@@ -7,7 +7,9 @@ from typing import Any, Dict, Iterable, Literal, Optional, cast
 from urllib.parse import urlparse
 
 from openminion.modules.tool.plugin_api import (
+    ConfirmationPreviewInput,
     ToolConfirmationPreview,
+    confirmation_preview_payload,
     is_policy_authorization_pair,
 )
 
@@ -189,10 +191,12 @@ class PolicyCtl:
         *,
         risk_override: Optional[RiskSpec] = None,
         config_overrides: Optional[PolicyConfig] = None,
-        confirmation_preview: ToolConfirmationPreview | None = None,
+        confirmation_preview: ConfirmationPreviewInput | None = None,
         confirmation_preview_error: str | None = None,
     ) -> PolicyDecision:
         inv = self._normalize_invocation(invocation)
+        if confirmation_preview is not None:
+            confirmation_preview = confirmation_preview_payload(confirmation_preview)
         csum = self._normalize_context(ctx)
         exact_policy_authorization = is_policy_authorization_pair(inv.tool, inv.method)
         registered_risk = self._resolve_risk(inv)

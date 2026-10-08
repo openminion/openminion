@@ -7,7 +7,6 @@ from openminion.modules.brain.config import TOOL_TRANSCRIPT_MAX_REPLAYED_CALLS
 from openminion.modules.brain.schemas import ActionError, ActionResult
 from openminion.modules.llm.schemas import Message, ToolCall
 from openminion.modules.tool.diagnostics.events import (
-    is_structural_security_agent,
     is_structural_security_tool,
     structural_result_fields,
 )
@@ -183,9 +182,7 @@ def persist_requested_tool_calls(
     session_api, session_id = _session_writer(loop_ctx)
     if session_api is None:
         return
-    structural_only = is_structural_security_agent(
-        getattr(loop_ctx.state, "agent_id", "")
-    )
+    structural_only = bool(getattr(loop_ctx, "structural_tool_results", False))
     event_ids = dict(loop_state.scratchpad.get(_REQUEST_EVENT_IDS_KEY, {}))
     for batch_index, call in enumerate(tool_calls):
         call_id = str(call.id or "").strip()
@@ -227,9 +224,7 @@ def persist_terminal_tool_result(
     )
     if not request_event_id:
         raise ValueError("canonical tool result has no persisted requested event")
-    structural_only = is_structural_security_agent(
-        getattr(loop_ctx.state, "agent_id", "")
-    )
+    structural_only = bool(getattr(loop_ctx, "structural_tool_results", False))
 
     if action_result.status == "success":
         event_type = "tool.call.completed"

@@ -313,6 +313,7 @@ class BrainRunner:
                 session_id=session_id,
                 agent_id=self.profile.agent_id,
                 llm_api=self.llm_api,
+                structural_tool_results=self.profile.structural_tool_results,
             ),
         )
         error_code = str(report.get("error_code", "") or "").strip()

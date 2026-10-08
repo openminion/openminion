@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 import json
 from typing import Any, Literal, Optional, cast
 
@@ -8,6 +8,7 @@ from openminion.base.redaction import redact_mapping
 from openminion.base.time import utc_now_iso  # noqa: F401
 from openminion.modules.tool.plugin_api import (
     ToolConfirmationPreview,
+    confirmation_preview_payload,
     stable_invocation_hash as stable_invocation_hash,
 )
 
@@ -324,11 +325,7 @@ class PolicyDecision:
             "confirmation_preview": (
                 None
                 if self.confirmation_preview is None
-                else (
-                    dict(self.confirmation_preview)
-                    if isinstance(self.confirmation_preview, dict)
-                    else asdict(self.confirmation_preview)
-                )
+                else confirmation_preview_payload(self.confirmation_preview)
             ),
         }
 

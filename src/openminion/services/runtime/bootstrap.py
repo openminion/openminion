@@ -815,7 +815,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         config,
         override_value=service._resolve_override_value,
     )
-
     pre_resolved_brain_config = service._resolve_brain_config()
     profile_pae_config = _copy_optional_config_section(
         pre_resolved_brain_config,
@@ -841,6 +840,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         skill=default_profile.skill,
         skill_catalog=list(default_profile.skill_catalog or []),
         budgets=budgets,
+        structural_tool_results=bool(default_profile.structural_tool_results),
         model_capability_overrides=dict(
             getattr(default_profile, "model_capability_overrides", {}) or {}
         ),

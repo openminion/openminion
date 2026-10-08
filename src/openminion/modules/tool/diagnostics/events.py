@@ -42,7 +42,6 @@ _RESULT_STATUSES = frozenset(
 _CANONICAL_ARTIFACT_REF = re.compile(r"^artifact://sha256/[0-9a-f]{64}$")
 _ASSESSMENT_ID = re.compile(r"^[0-9a-f]{32}$")
 _STRUCTURAL_SECURITY_TOOLS = frozenset(SECURITY_MODEL_TOOL_IDS)
-_STRUCTURAL_SECURITY_AGENT_ID = "security-researcher-readonly"
 
 
 def emit_module_telemetry(
@@ -132,10 +131,6 @@ def structural_result_fields(data: Mapping[str, Any]) -> dict[str, Any]:
 
 def is_structural_security_tool(tool_name: str) -> bool:
     return tool_name in _STRUCTURAL_SECURITY_TOOLS
-
-
-def is_structural_security_agent(agent_id: str) -> bool:
-    return str(agent_id or "").strip() == _STRUCTURAL_SECURITY_AGENT_ID
 
 
 def structural_security_tool_result(

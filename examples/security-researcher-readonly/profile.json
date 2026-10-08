@@ -11,7 +11,8 @@
     "security-researcher-readonly": {
       "name": "security-researcher-readonly",
       "provider": "echo",
-      "skill": "security-researcher-readonly"
+      "skill": "security-researcher-readonly",
+      "structural_tool_results": true
     }
   }
 }

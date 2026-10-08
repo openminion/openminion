@@ -9,11 +9,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing helpers only
     from .registry.catalog import ToolSpec
 
 
-BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE = (
-    "Blockchain transaction approval preview could not be verified."
-)
-
-
 @dataclass
 class ToolContext:
     """Execution context passed to plugins."""
@@ -55,85 +50,29 @@ class SafetyDecision:
     details: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class BlockchainCallPreview:
-    function_signature: str
-    function_args: list[Any]
+ToolConfirmationPreview = dict[str, Any]
 
 
-@dataclass(frozen=True)
-class BlockchainSendConfirmationPreview:
-    schema_version: Literal["blockchain-send-preview-v1"]
-    chain_id: str
-    from_address: str
-    to_address: str
-    value_wei: str
-    transaction_type: str
-    nonce: str
-    gas_limit: str
-    gas_price_wei: str | None
-    max_fee_per_gas_wei: str | None
-    max_priority_fee_per_gas_wei: str | None
-    max_total_fee_wei: str
-    calldata_bytes: str
-    calldata_sha256: str
-    calldata_hex: str | None
-    preparation_digest: str
-    call: BlockchainCallPreview | None
-    opaque_calldata: bool
+@runtime_checkable
+class SupportsConfirmationPreviewPayload(Protocol):
+    def to_confirmation_dict(self) -> dict[str, Any]: ...
 
 
-@dataclass(frozen=True)
-class ResolvedBlockchainSendConfirmationPreview:
-    schema_version: Literal["blockchain-send-preview-v2"]
-    resolution_digest: str
-    preparation_digest: str
-    expected_chain_id: str
-    observed_chain_id: str
-    expected_genesis_hash: str
-    observed_genesis_hash: str
-    expected_checkpoint: dict[str, Any] | None
-    observed_checkpoint: dict[str, Any] | None
-    resolution_block_number: str
-    resolution_block_hash: str
-    preparation_block_number: str
-    preparation_block_hash: str
-    rpc_origin: str
-    sourcify_target_origin: str
-    sourcify_implementation_origin: str | None
-    contract_address: str
-    proxy_kind: str
-    implementation_address: str | None
-    abi_address: str
-    target_code_hash: str
-    implementation_code_hash: str | None
-    signer_address: str
-    to_address: str
-    value_wei: str
-    transaction_type: str
-    nonce: str
-    gas_limit: str
-    gas_price_wei: str | None
-    max_fee_per_gas_wei: str | None
-    max_priority_fee_per_gas_wei: str | None
-    max_total_fee_wei: str
-    calldata_bytes: str
-    calldata_sha256: str
-    call: BlockchainCallPreview
-    simulation_block_number: str
-    simulation_block_hash: str
-    simulation_return_data: str
-    simulation_decoded_returns: list[Any] | None
-    postconditions: list[dict[str, Any]]
-    fee_note: str
-    evidence_note: str
+ConfirmationPreviewInput = ToolConfirmationPreview | SupportsConfirmationPreviewPayload
 
 
-ToolConfirmationPreview = (
-    BlockchainSendConfirmationPreview
-    | ResolvedBlockchainSendConfirmationPreview
-    | dict[str, Any]
-)
+class ConfirmationPreviewError(ValueError):
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
+def confirmation_preview_payload(
+    preview: ConfirmationPreviewInput,
+) -> dict[str, Any]:
+    if isinstance(preview, Mapping):
+        return dict(preview)
+    return preview.to_confirmation_dict()
 
 
 @dataclass(frozen=True)
@@ -173,7 +112,7 @@ class ConfirmationPreviewBuilder(Protocol):
         subject_id: str,
         session_id: str,
         tool_resources: Mapping[str, Any],
-    ) -> dict[str, Any]: ...
+    ) -> ToolConfirmationPreview: ...
 
 
 def is_policy_authorization_pair(tool: str, method: str) -> bool:

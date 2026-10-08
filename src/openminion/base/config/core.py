@@ -134,6 +134,7 @@ class AgentProfileConfig:
     model_capability_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     action_policy: ActionPolicyConfig | None = None
     command_policy: dict[str, Any] = field(default_factory=dict)
+    structural_tool_results: bool = False
     tool_schema_shortlisting_enabled: bool | None = None
     has_tool_schema_shortlisting_enabled: bool = field(default=False, repr=False)
     allow_background_write_authorization: bool | None = None
@@ -184,14 +185,6 @@ class AgentProfileConfig:
             payload["skill"] = skill_value_to_payload(self.skill)
         if self.skill_catalog_explicit:
             payload["skill_catalog"] = list(self.skill_catalog)
-        if self.provider_config_overrides:
-            payload["provider_config_overrides"] = dict(self.provider_config_overrides)
-        if self.model_connections:
-            payload["model_connections"] = dict(self.model_connections)
-        if self.model_capability_overrides:
-            payload["model_capability_overrides"] = dict(
-                self.model_capability_overrides
-            )
         if self.action_policy is not None:
             payload["action_policy"] = {
                 "mode": self.action_policy.mode.strip().lower() or "auto",
@@ -220,22 +213,28 @@ class AgentProfileConfig:
             payload["tool_schema_shortlisting_enabled"] = bool(
                 self.tool_schema_shortlisting_enabled
             )
-        background_write = self.allow_background_write_authorization
         if self.has_allow_background_write_authorization:
-            payload["allow_background_write_authorization"] = bool(background_write)
-        variant = self.trailer_guidance_variant
+            payload["allow_background_write_authorization"] = bool(
+                self.allow_background_write_authorization
+            )
         if self.has_trailer_guidance_variant:
-            payload["trailer_guidance_variant"] = dict(variant or {})
+            payload["trailer_guidance_variant"] = dict(
+                self.trailer_guidance_variant or {}
+            )
         if turn_usage_display := self.turn_usage_display.strip():
             payload["turn_usage_display"] = turn_usage_display
         for key, value in (
             ("thinking_policy", thinking_runtime_policy_to_dict(self.thinking_policy)),
             ("provider_policy", provider_runtime_policy_to_dict(self.provider_policy)),
+            ("provider_config_overrides", dict(self.provider_config_overrides)),
+            ("model_connections", dict(self.model_connections)),
+            ("model_capability_overrides", dict(self.model_capability_overrides)),
             ("modes", mode_runtime_policy_to_dict(self.modes)),
             ("plugins", plugin_runtime_policy_to_dict(self.plugins)),
             ("tools", tool_runtime_config_to_dict(self.tools)),
             ("mcp_exposure", mcp_exposure_config_to_dict(self.mcp_exposure)),
             ("command_policy", dict(self.command_policy)),
+            ("structural_tool_results", self.structural_tool_results),
         ):
             if value:
                 payload[key] = value

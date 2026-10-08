@@ -6,7 +6,7 @@ from collections.abc import Mapping
 
 from openminion.modules.storage.runtime.sqlite import resolve_database_path
 from openminion.modules.tool.base import ToolExecutionContext
-from openminion.modules.tool.exposure.service import (
+from openminion.tools.security.lab_metadata import (
     project_security_lab_metadata,
     resolve_security_lab_metadata,
 )
