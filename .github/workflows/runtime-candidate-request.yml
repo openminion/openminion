@@ -81,7 +81,7 @@ jobs:
           owner: openminion
           repositories: openminion-packaging
           permission-actions: write
-      - name: Request the exact private runtime candidate
+      - name: Request the exact runtime builds
         env:
           GH_TOKEN: ${{ steps.packaging-token.outputs.token }}
           PRODUCER_TAG: ${{ github.event.workflow_run.head_branch }}
@@ -89,6 +89,13 @@ jobs:
           WHEEL_URL: ${{ steps.release.outputs.wheel_url }}
           WHEEL_SHA256: ${{ steps.release.outputs.wheel_sha256 }}
         run: |
+          gh workflow run runtime-development.yml \
+            --repo openminion/openminion-packaging \
+            --ref main \
+            --field runtime_version="${PRODUCER_TAG#v}" \
+            --field source_commit="$PRODUCER_COMMIT" \
+            --field wheel_url="$WHEEL_URL" \
+            --field wheel_sha256="$WHEEL_SHA256"
           gh workflow run runtime-candidates.yml \
             --repo openminion/openminion-packaging \
             --ref main \
@@ -99,8 +106,9 @@ jobs:
           {
             echo '## Binary release disposition'
             echo
-            echo '- State: private candidate requested'
+            echo '- State: unsigned development build and signed candidate requested'
             echo "- Version: \`${PRODUCER_TAG#v}\`"
             echo "- Source commit: \`$PRODUCER_COMMIT\`"
+            echo '- Required closeout: publish every unsigned development binary and sidecar to an openminion/runtime prerelease, then verify every public download.'
             echo '- Stable publication remains blocked until signing, notarization, native verification, Desktop qualification, and protected manifest publication complete.'
           } >> "$GITHUB_STEP_SUMMARY"
