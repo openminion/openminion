@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import openminion.modules.tool.runtime.public_https as public_https
+import openminion.tools.blockchain.public_https as public_https
 
-from openminion.modules.tool.runtime.public_https import (
+from openminion.tools.blockchain.public_https import (
     PublicHttpsError,
     _PinnedHttpsConnection,
     request_public_https,

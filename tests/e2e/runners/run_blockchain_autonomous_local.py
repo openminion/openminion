@@ -72,7 +72,7 @@ from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E40
 from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec  # noqa: E402
 from openminion.modules.tool.runtime.policy import DEFAULT_POLICY, Policy  # noqa: E402
-from openminion.modules.tool.runtime.public_https import (  # noqa: E402
+from openminion.tools.blockchain.public_https import (  # noqa: E402
     PublicHttpsResponse,
 )
 from openminion.tools.blockchain.resolution import (  # noqa: E402

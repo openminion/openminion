@@ -41,7 +41,7 @@ from openminion.modules.brain.schemas.commands import ToolCommand  # noqa: E402
 from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
 from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
 from openminion.modules.tool.registry import ToolRegistry  # noqa: E402
-from openminion.modules.tool.runtime.public_https import (  # noqa: E402
+from openminion.tools.blockchain.public_https import (  # noqa: E402
     request_public_https,
 )
 from openminion.tools.blockchain import runtime as blockchain_runtime  # noqa: E402

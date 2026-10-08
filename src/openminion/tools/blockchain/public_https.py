@@ -11,8 +11,6 @@ import time
 from typing import Any
 import urllib.parse
 
-from .network import is_forbidden_ip
-
 DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 15.0
 
@@ -23,6 +21,19 @@ _ConnectionFactory = Callable[
     [str, int, _AddressInfo, float], http.client.HTTPSConnection
 ]
 _RESOLUTION_LOCK = threading.Lock()
+
+
+def _is_forbidden_ip(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> bool:
+    return bool(
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +103,7 @@ class _PinnedHttpsConnection(http.client.HTTPSConnection):
         expected_peer = ipaddress.ip_address(str(sockaddr[0]))
         try:
             observed_peer = ipaddress.ip_address(str(raw_socket.getpeername()[0]))
-            if observed_peer != expected_peer or is_forbidden_ip(observed_peer):
+            if observed_peer != expected_peer or _is_forbidden_ip(observed_peer):
                 raise PublicHttpsError("PEER_MISMATCH")
             raw_socket.settimeout(_remaining_seconds(deadline))
             self.sock = self._context.wrap_socket(raw_socket, server_hostname=self.host)
@@ -147,7 +158,7 @@ def _resolve_public_address(
         if (
             isinstance(candidate, ipaddress.IPv6Address)
             and candidate.ipv4_mapped is not None
-        ) or is_forbidden_ip(candidate):
+        ) or _is_forbidden_ip(candidate):
             raise PublicHttpsError("FORBIDDEN_DESTINATION")
     return answers[0]
 

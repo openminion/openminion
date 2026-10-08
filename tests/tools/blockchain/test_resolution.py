@@ -10,7 +10,7 @@ from web3 import Web3
 
 import openminion.tools.blockchain.resolution as resolution_module
 from openminion.base.config.env import EnvironmentConfig
-from openminion.modules.tool.runtime.public_https import PublicHttpsResponse
+from openminion.tools.blockchain.public_https import PublicHttpsResponse
 from openminion.tools.blockchain.preparations import (
     SessionRecordError,
     load_resolution_record,
