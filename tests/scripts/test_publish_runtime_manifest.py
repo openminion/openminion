@@ -32,7 +32,7 @@ def test_observer_skips_testpypi_tags_before_publication_approval():
         )
 
 
-def test_final_release_requests_an_exact_private_runtime_candidate():
+def test_final_release_requests_exact_development_and_signed_runtime_builds():
     workflow = (
         Path(__file__).resolve().parents[2]
         / ".github/workflows/runtime-candidate-request.yml"
@@ -46,6 +46,8 @@ def test_final_release_requests_an_exact_private_runtime_candidate():
         "repositories: openminion-packaging",
         "permission-actions: write",
         "from scripts.ci.release_manifest import official_record",
+        "gh workflow run runtime-development.yml",
+        "gh workflow run runtime-candidates.yml",
         '--field runtime_version="${PRODUCER_TAG#v}"',
         '--field source_commit="$PRODUCER_COMMIT"',
         "WHEEL_URL: ${{ steps.release.outputs.wheel_url }}",

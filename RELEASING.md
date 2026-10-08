@@ -1,7 +1,7 @@
 # OpenMinion Releasing
 
 Status: active
-Last updated: 2026-10-02
+Last updated: 2026-10-08
 
 Purpose: give maintainers a compact package-local release smoke checklist for
 the public `openminion` package surface on the active alpha line defined by
@@ -31,40 +31,48 @@ Existing release records are not rewritten. Binary promotion uses the same
 protected metadata-PR boundary but has an independent manual request and trust
 gate.
 
-Every final source release must also have an explicit binary disposition. The
+Every final source release must also publish complete unsigned development
+binaries and record an explicit stable-binary disposition. The
 `Runtime candidate request` observer verifies the successful production-PyPI
-producer, then uses a repository-scoped GitHub App token to start the private
-`openminion-packaging` candidate workflow with the exact released version,
-source commit, official wheel URL, and SHA-256. The candidate workflow
-independently checks the immutable source tag and production PyPI metadata
-before downloading those bytes. Candidate creation is automatic; stable binary
-promotion remains manual and protected.
+producer, then uses a repository-scoped GitHub App token to start both the
+unsigned development build and the signed candidate workflow in private
+`openminion-packaging`. Both requests receive the exact released version,
+source commit, official wheel URL, and SHA-256 and independently verify the
+immutable source tag and production PyPI metadata before downloading those
+bytes. Build requests are automatic. Public unsigned transfer is a required
+release-closeout step until a dedicated cross-repository publisher is
+configured; stable binary promotion remains manual and protected.
 
 Use these completion labels exactly:
 
 1. **package published**: production PyPI and GitHub source release succeeded,
 2. **source manifest published**: the null-bound production-wheel record is on
    protected main and passes anonymous readback,
-3. **Desktop source update certified**: a later immutable same-wheel record has
+3. **development binaries published**: paired unsigned CLI and daemon binaries
+   for macOS arm64, Linux x86_64 and Windows x86_64 are in a public prerelease
+   and every asset passes anonymous digest readback,
+4. **Desktop source update certified**: a later immutable same-wheel record has
    reviewed compatibility bounds and commit-pinned Desktop qualification,
-4. **binary runtime published**: signed/native-qualified binary assets and their
+5. **binary runtime published**: signed/native-qualified binary assets and their
    record are public, and
-5. **full public E2E passed**: the shipped Desktop completed public discovery,
+6. **full public E2E passed**: the shipped Desktop completed public discovery,
    Prepare update, old-runtime reply, restart activation, same-chat reply and
    owned-daemon shutdown against the public feed.
 
-The first two labels never imply the last three. Runtime metadata verification
+The first three labels never imply the last three. Runtime metadata verification
 cannot report full public E2E because that result requires a separate packaged
 application run.
 
-For each final version, close the release record with one of these binary
+Unsigned development publication does not satisfy stable binary gates. For each
+final version, close the release record with one of these stable-binary
 dispositions; omission is not a valid completed state:
 
 1. **binary runtime published**: the signed, notarized, native-qualified public
    runtime release and binary manifest are complete, or
-2. **binary blocked**: record the private candidate run and the exact unmet
-   gate, such as macOS signing/notarization, Windows signing, native
-   verification, Desktop compatibility, or immutable public-release review.
+2. **binary blocked**: record the public unsigned development prerelease, the
+   private signed-candidate run and the exact unmet gate, such as macOS
+   signing/notarization, Windows signing, native verification, Desktop
+   compatibility, or immutable public-release review.
 
 Do not describe a package/source-only release as a complete runtime release.
 
@@ -110,22 +118,30 @@ local files and passing tests are not deployment evidence. Verify without publis
    proposed feed F to `runtime-publication/<release-id>`, and opens/reuses a PR
    targeting main. `pending_merge` is not published and does not notify clients.
    RC/alpha/beta tag runs and manual TestPyPI runs do not request publication.
-6. Confirm `Runtime candidate request` succeeded and that the corresponding
-   private `Runtime candidates` run accepted the exact version, source commit,
-   production wheel URL, and SHA-256. A failed request, PyPI/tag mismatch, or
-   failed native matrix is a visible **binary blocked** disposition; it must not
-   be omitted from release closeout.
-7. Run the normal PR checks, then merge with a **merge commit**. Keep only one
+6. Confirm `Runtime candidate request` succeeded and that both corresponding
+   private packaging runs accepted the exact version, source commit, production
+   wheel URL, and SHA-256. Require the unsigned development matrix and complete
+   inventory to pass. A failed request, PyPI/tag mismatch, or failed native
+   matrix is a visible release failure; it must not be omitted from closeout.
+7. Transfer every unsigned `openminion` and `openminiond` executable, `.json`
+   metadata file and `.sha256` sidecar to the public
+   `runtime-dev-v<version>-build.<number>` prerelease in `openminion/runtime`.
+   Add `runtime-release.json` and `SHA256SUMS`, mark the Release as a prerelease
+   and explicitly unsigned, then anonymously download every asset and verify
+   all digests. Delete the temporary private draft only after public readback.
+   Never add these bytes to the stable manifest or call them
+   **binary runtime published**.
+8. Run the normal PR checks, then merge with a **merge commit**. Keep only one
    pending runtime metadata PR; rerun another producer's observer after the
    first merges. If main moved while a PR was pending, merge current main into
    that transient branch normally and resolve feed conflicts without dropping
    references; no force/rebase, branch recreation or automatic conflict repair.
-8. The read-only **Runtime manifests / verify-main** job runs after a manifest
+9. The read-only **Runtime manifests / verify-main** job runs after a manifest
    change is merged into main. Manual workflow dispatch also verifies main and
    never publishes. It checks anonymous main feeds, record digests and R-SHA
    ancestry/readback. Record the actual successful job and metadata/merge SHAs;
    a failed readback remains publication-unconfirmed.
-9. Back-merge main into dev through the normal integration process. In a fresh
+10. Back-merge main into dev through the normal integration process. In a fresh
    checkout, verify the manifest trees match:
 
    ```bash
@@ -133,12 +149,12 @@ local files and passing tests are not deployment evidence. Verify without publis
    git diff --exit-code origin/main origin/dev -- releases/runtime/v1
    ```
 
-10. Verify the Desktop reader against both public feeds before offering an update.
+11. Verify the Desktop reader against both public feeds before offering an update.
    Record the exact Desktop revision, source tag, producer run/attempt, R/F/merge
    SHAs and artifact digests in the runtime-distribution tracker. Read-only feed
    consumption and a private Electron fixture are separate from shipped-app
    upgrade acceptance.
-11. Test the shipped Desktop in isolated roots against public URLs: startup
+12. Test the shipped Desktop in isolated roots against public URLs: startup
    and manual checks, explicit **Prepare update**, quit/reopen activation and
    continued replies in the same chat. Source records are initially
    **uncertified** (`desktop_compatibility: null`) and must be skipped, not
@@ -146,7 +162,7 @@ local files and passing tests are not deployment evidence. Verify without publis
    before claiming end-to-end upgrade acceptance; this observer does not
    invent or publish that certification. Binary feed stays empty until its
    packaging/native/trust gates pass.
-12. Treat observer runs as serialized requests, not a durable queue. If a
+13. Treat observer runs as serialized requests, not a durable queue. If a
    publication run was canceled while another metadata PR was pending, rerun
    the observer for the successful final-tag `Release` producer after the
    pending PR merges. Confirm the `source` job actually ran; a skipped
@@ -405,9 +421,11 @@ Routine releases skip that preflight and start here:
    `<OPENMINION_VERSION>`,
 6. complete source-manifest publication and its post-publication `main` to
    `dev` back-merge,
-7. complete the signed/native binary promotion, packaged Desktop qualification,
+7. publish and anonymously verify the complete unsigned development runtime
+   prerelease,
+8. complete the signed/native binary promotion, packaged Desktop qualification,
    binary-manifest publication and public packaged-runtime acceptance, and
-8. perform the final `main` to `dev` back-merge and verify the public source and
+9. perform the final `main` to `dev` back-merge and verify the public source and
    binary feeds.
 
 Do not publish from a dirty local checkout just because the worktree happens to
@@ -474,8 +492,9 @@ Keep an evidence row per release with the selected mode, the RC TestPyPI run
 when used, final TestPyPI run, final producer run and tag SHA, both index hashes
 and install-smoke results, metadata observer run/attempt, metadata PR merge
 commit, successful `verify-main` run, and post-publication back-merge PR. Record
-a private binary candidate separately from a signed final runtime Release and
-public binary-feed verification.
+the unsigned build run, public development-prerelease URL and anonymous digest
+readback separately from the private signed candidate, signed final runtime
+Release and public binary-feed verification.
 
 Historical example (2026-09-21; not proof for later versions): RC
 TestPyPI run `35599400531`, final TestPyPI run `35599893339`, final-tag
