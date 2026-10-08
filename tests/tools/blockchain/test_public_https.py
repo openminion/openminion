@@ -198,6 +198,17 @@ def test_public_https_fails_closed_on_resolution_error() -> None:
     assert excinfo.value.code == "RESOLUTION_FAILED"
 
 
+def test_public_https_normalizes_resolver_encoding_failure() -> None:
+    def resolver(*args, **kwargs):
+        del args, kwargs
+        raise UnicodeError("synthetic")
+
+    with pytest.raises(PublicHttpsError) as excinfo:
+        request_public_https("https://example.com", resolver=resolver)
+
+    assert excinfo.value.code == "RESOLUTION_FAILED"
+
+
 def test_public_https_total_timeout_includes_resolution() -> None:
     release = threading.Event()
 

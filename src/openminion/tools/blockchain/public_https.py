@@ -121,7 +121,7 @@ def _resolve_public_address(
     deadline: float,
 ) -> _AddressInfo:
     resolved: list[Sequence[_AddressInfo]] = []
-    errors: list[OSError] = []
+    errors: list[OSError | UnicodeError] = []
 
     if not _RESOLUTION_LOCK.acquire(timeout=_remaining_seconds(deadline)):
         raise PublicHttpsError("TIMEOUT")
@@ -129,7 +129,7 @@ def _resolve_public_address(
     def resolve() -> None:
         try:
             resolved.append(resolver(host, port, type=socket.SOCK_STREAM))
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
             errors.append(exc)
         finally:
             _RESOLUTION_LOCK.release()
@@ -145,6 +145,8 @@ def _resolve_public_address(
         raise PublicHttpsError("TIMEOUT")
     if errors:
         raise PublicHttpsError("RESOLUTION_FAILED") from errors[0]
+    if not resolved:
+        raise PublicHttpsError("RESOLUTION_FAILED")
     answers = list(resolved[0])
     if not answers:
         raise PublicHttpsError("RESOLUTION_FAILED")
