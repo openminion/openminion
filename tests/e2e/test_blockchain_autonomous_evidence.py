@@ -288,11 +288,43 @@ def test_focus_validator_requires_persisted_tool_evidence() -> None:
             "blockchain.resolve_contract",
             "blockchain.inspect",
         ],
+        "successful_resolution_digests": ["sha256:" + "1" * 64],
+        "successful_resolved_reads": [
+            {
+                "resolution_digest": "sha256:" + "1" * 64,
+                "block_number": "1",
+                "raw_return_digest": "sha256:" + "2" * 64,
+            }
+        ],
         "transcript": "Verified contract at a confirmed block.",
     }
     focus_runner.validate_evidence(payload)
     payload["requested_tools"] = ["web.search"]
     with pytest.raises(ValueError, match="resolution, and read"):
+        focus_runner.validate_evidence(payload)
+
+
+def test_focus_validator_rejects_unjoined_successful_read() -> None:
+    payload = {
+        "protocol": "general_loop_focus_cli",
+        "source_commit": "a" * 40,
+        "persisted_event_count": 4,
+        "requested_tools": [
+            "web.search",
+            "blockchain.resolve_contract",
+            "blockchain.inspect",
+        ],
+        "successful_resolution_digests": ["sha256:" + "1" * 64],
+        "successful_resolved_reads": [
+            {
+                "resolution_digest": "sha256:" + "2" * 64,
+                "block_number": "1",
+                "raw_return_digest": "sha256:" + "3" * 64,
+            }
+        ],
+        "transcript": "Verified contract at a confirmed block.",
+    }
+    with pytest.raises(ValueError, match="does not join"):
         focus_runner.validate_evidence(payload)
 
 
@@ -323,7 +355,7 @@ def test_testnet_validator_joins_full_lifecycle() -> None:
         },
     }
     payload = {
-        "protocol": "direct_runtime_protocol",
+        "protocol": "production_policy_runtime_protocol",
         "source_commit": "a" * 40,
         "confirmation_depth": 1,
         "resolution": {"ok": True, "data": {"resolution_digest": resolution_digest}},
@@ -341,6 +373,17 @@ def test_testnet_validator_joins_full_lifecycle() -> None:
         "operation_status": deepcopy(status),
         "restart_status": deepcopy(status),
         "audit_events": [{"preparation_digest": preparation_digest}],
+        "policy_approval": {
+            "action": "allow_once",
+            "grant_id": "grant-1",
+            "preview": {"preparation_digest": preparation_digest},
+        },
+        "execution_owners": {
+            "command_executor": "RunnerCommandExecutor",
+            "tool_adapter": "ToolAdapter",
+            "policy_adapter": "PolicyCtlBrainAdapter",
+            "send_scope": "POWER_USER",
+        },
     }
     testnet_runner.validate_evidence(payload)
     payload["restart_status"]["data"]["state"] = "pending"

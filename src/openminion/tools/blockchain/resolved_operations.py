@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 from typing import Any
 
 from eth_abi.exceptions import DecodingError
 
 from .abi import decode_abi_values, encode_function_call
 from .preparations import (
+    MAX_OPERATION_RECORD_BYTES,
     SessionRecordError,
     claim_operation_record,
     load_operation_record,
@@ -21,8 +23,10 @@ from .resolution import (
     _url_origin,
     function_by_signature,
     load_resolution,
+    revalidate_chain_identity,
     revalidate_resolution,
     resolution_error_result,
+    resolution_record_error_result,
     rpc_call,
 )
 from .resolved_calls import (
@@ -143,15 +147,23 @@ def _load_validated_send_resolution(
     try:
         record = load_resolution(request.resolution_digest, context)
         pinned = revalidate_resolution(record)
-    except SessionRecordError:
+    except SessionRecordError as exc:
         return (
             None,
             None,
             _resolved_send_failure(
                 context,
                 request,
-                "RESOLUTION_UNAVAILABLE",
-                "Contract resolution is unavailable in this session.",
+                (
+                    "RESOLUTION_UNAVAILABLE"
+                    if exc.reason == "unavailable"
+                    else "RESOLUTION_INVALID"
+                ),
+                (
+                    "Contract resolution is unavailable in this session."
+                    if exc.reason == "unavailable"
+                    else "Stored contract resolution is invalid."
+                ),
             ),
         )
     except ResolutionFailure as exc:
@@ -166,8 +178,14 @@ def _load_validated_send_resolution(
         resolved_function = function_by_signature(
             record, request.call_context.function_signature
         )
-    except ValueError:
-        resolved_function = None
+    except ResolutionFailure as exc:
+        return (
+            None,
+            None,
+            _resolved_send_failure(
+                context, request, exc.code, exc.message, exc.details
+            ),
+        )
     if (
         not _resolution_matches_preparation(record, request)
         or resolved_function != request.call_context.function_abi
@@ -276,7 +294,7 @@ def _live_send_state_error(
     block_tag = hex(block_number)
     try:
         balance = _quantity(
-            rpc_call(record, "eth_getBalance", [sender, "pending"]),
+            rpc_call(record, "eth_getBalance", [sender, "latest"]),
             "eth_getBalance",
         )
         nonce = _quantity(
@@ -572,12 +590,21 @@ def _operation_result(operation: Mapping[str, Any]) -> dict[str, Any]:
             "last_error_code",
         )
     }
-    return {
+    result = {
         "ok": True,
         "state": "succeeded",
         "action": "operation_status",
         "data": data,
     }
+    encoded = json.dumps(
+        result, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    if len(encoded) > MAX_OPERATION_RECORD_BYTES:
+        return _error(
+            "RESULT_TOO_LARGE",
+            "Blockchain operation status exceeds the result limit.",
+        )
+    return result
 
 
 def _persist_operation(operation: Mapping[str, Any], context: Any) -> dict[str, Any]:
@@ -591,8 +618,12 @@ def _persist_operation(operation: Mapping[str, Any], context: Any) -> dict[str, 
     except (OSError, SessionRecordError) as exc:
         reason = exc.reason if isinstance(exc, SessionRecordError) else "unavailable"
         return _error(
-            "OPERATION_UNAVAILABLE",
-            "Blockchain operation status could not be stored.",
+            "RESULT_TOO_LARGE" if reason == "size_limit" else "OPERATION_UNAVAILABLE",
+            (
+                "Blockchain operation status exceeds the result limit."
+                if reason == "size_limit"
+                else "Blockchain operation status could not be stored."
+            ),
             {"reason": reason},
         )
     return _operation_result(operation)
@@ -665,14 +696,26 @@ def _load_operation_status_facts(
             validator=validate_operation_record,
             digester=operation_digest,
         )
-    except SessionRecordError:
+    except SessionRecordError as exc:
+        code = {
+            "unavailable": "OPERATION_UNAVAILABLE",
+            "size_limit": "RESULT_TOO_LARGE",
+        }.get(exc.reason, "OPERATION_INVALID")
         return (
             None,
             None,
             None,
             _error(
-                "OPERATION_UNAVAILABLE",
-                "Blockchain operation is unavailable in this session.",
+                code,
+                (
+                    "Blockchain operation is unavailable in this session."
+                    if exc.reason == "unavailable"
+                    else (
+                        "Blockchain operation status exceeds the result limit."
+                        if exc.reason == "size_limit"
+                        else "Stored blockchain operation is invalid."
+                    )
+                ),
             ),
         )
     try:
@@ -690,16 +733,13 @@ def _load_operation_status_facts(
     prepared_model = RESOLVED_PREPARATION_ADAPTER.validate_python(preparation)
     try:
         record = load_resolution(operation["resolution_digest"], context)
-        pinned = revalidate_resolution(record)
-    except SessionRecordError:
+        pinned = revalidate_chain_identity(record)
+    except SessionRecordError as exc:
         return (
             None,
             None,
             None,
-            _error(
-                "RESOLUTION_UNAVAILABLE",
-                "Contract resolution is unavailable in this session.",
-            ),
+            resolution_record_error_result(exc),
         )
     except ResolutionFailure as exc:
         return None, None, None, resolution_error_result(exc)
@@ -743,7 +783,7 @@ def _observe_operation_receipt(
             {"operation": "eth_getTransactionReceipt"},
         )
     returned_hash = receipt.get("transactionHash")
-    if returned_hash is not None and (
+    if (
         not isinstance(returned_hash, str)
         or returned_hash.lower() != operation["transaction_hash"]
     ):
@@ -889,6 +929,13 @@ def operation_status(preparation_digest_value: str, context: Any) -> dict[str, A
     if error is not None:
         return error
     assert operation is not None and record is not None and pinned is not None
+    if operation["state"] in {
+        "succeeded",
+        "reverted",
+        "reorged",
+        "postcondition_failed",
+    }:
+        return _operation_result(operation)
     head_number = int(pinned["block_number"])
     try:
         observation, error = _observe_operation_receipt(operation, record)

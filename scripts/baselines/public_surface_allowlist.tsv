@@ -158,7 +158,6 @@ tools/browser/runtime.py	openminion.modules.tool.runtime.policy
 tools/browser/runtime.py	openminion.modules.tool.runtime.registry_toolspec
 tools/browser/runtime.py	openminion.modules.tool.runtime.routing
 tools/browser/tool.py	openminion.modules.tool.runtime.context
-tools/blockchain/resolution.py	openminion.modules.tool.runtime.public_https
 tools/code/plugin.py	openminion.modules.tool.runtime
 tools/exec/events.py	openminion.modules.brain.runtime.escalation
 tools/exec/events.py	openminion.modules.tool.runtime.context

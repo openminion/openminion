@@ -19,6 +19,13 @@ from .envelopes import (
     new_run_id,
 )
 from .memory import MemoryToolRuntimeService
+from .public_https import (
+    DEFAULT_MAX_BODY_BYTES,
+    DEFAULT_TIMEOUT_SECONDS,
+    PublicHttpsError,
+    PublicHttpsResponse,
+    request_public_https,
+)
 from .redaction import redact_text
 from .repositories import (
     LazyRepositoryHandle,
@@ -29,9 +36,13 @@ from .repositories import (
 __all__ = [
     "LazyRepositoryHandle",
     "MemoryToolRuntimeService",
+    "PublicHttpsError",
+    "PublicHttpsResponse",
     "RuntimeContext",
     "RuntimeRepositories",
     "ToolRuntimeAuditSink",
+    "DEFAULT_MAX_BODY_BYTES",
+    "DEFAULT_TIMEOUT_SECONDS",
     "build_runtime_repositories",
     "create_run_root",
     "enforce_watch_target_binding",
@@ -40,6 +51,7 @@ __all__ = [
     "make_ok_envelope",
     "new_run_id",
     "preferred_artifact_ref",
+    "request_public_https",
     "redact_text",
     "resolve_audit_repository",
     "resolve_cron_repository",

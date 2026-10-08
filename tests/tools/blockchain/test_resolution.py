@@ -265,6 +265,8 @@ def test_resolution_digest_excludes_display_only_sources(tmp_path) -> None:
     changed["verification_statement"] = "Display text"
 
     assert resolution_digest(changed) == record["resolution_digest"]
+    changed["sourcify_target_match"] = "match"
+    assert resolution_digest(changed) != record["resolution_digest"]
 
 
 def test_resolver_uses_typed_persistence_failure_reason(tmp_path, monkeypatch) -> None:
@@ -289,6 +291,9 @@ def test_runtime_helpers_load_call_select_and_revalidate(tmp_path) -> None:
     record = load_resolution(result["data"]["resolution_digest"], context)
 
     assert function_by_signature(record, "balanceOf(address)").name == "balanceOf"
+    with pytest.raises(ResolutionFailure) as unavailable_function:
+        function_by_signature(record, "allowance(address,address)")
+    assert unavailable_function.value.code == "FUNCTION_UNAVAILABLE"
     assert rpc_call(record, "eth_chainId", [], https_request=FakeHttps()) == "0x1"
     assert revalidate_resolution(record, https_request=FakeHttps()) == {
         "block_number": "16",
@@ -308,6 +313,34 @@ def test_runtime_helpers_load_call_select_and_revalidate(tmp_path) -> None:
             https_request=FakeHttps(stale_recheck=True),
         )
     assert block_error.value.code == "STALE_BLOCK"
+
+
+def test_rpc_simulation_error_is_typed(tmp_path) -> None:
+    context = SimpleNamespace(session_id="session-a", env=_env(tmp_path))
+    result = resolve_contract(_args(), context, https_request=FakeHttps())
+    record = load_resolution(result["data"]["resolution_digest"], context)
+
+    class SimulationErrorHttps(FakeHttps):
+        def __call__(self, url: str, **kwargs: Any) -> PublicHttpsResponse:
+            if kwargs.get("body"):
+                request = json.loads(kwargs["body"])
+                if request["method"] == "eth_call":
+                    return PublicHttpsResponse(
+                        status=200,
+                        headers={},
+                        body=json.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": request["id"],
+                                "error": {"code": 3, "message": "execution reverted"},
+                            }
+                        ).encode(),
+                    )
+            return super().__call__(url, **kwargs)
+
+    with pytest.raises(ResolutionFailure) as reverted:
+        rpc_call(record, "eth_call", [], https_request=SimulationErrorHttps())
+    assert reverted.value.code == "SIMULATION_REVERTED"
 
 
 def test_resolve_contract_records_eip1967_implementation(tmp_path) -> None:

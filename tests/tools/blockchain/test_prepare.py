@@ -387,7 +387,9 @@ def test_resolved_prepare_persists_digest_bound_v2_approval(
         "resolution_digest": resolution_digest,
         "rpc_url": "https://rpc.example/",
         "sourcify_target_url": "https://sourcify.dev/target",
+        "sourcify_target_match": "exact_match",
         "sourcify_implementation_url": None,
+        "sourcify_implementation_match": None,
         "expected_chain_id": 31337,
         "observed_chain_id": 31337,
         "expected_genesis_hash": "0x" + "01" * 32,
@@ -421,7 +423,7 @@ def test_resolved_prepare_persists_digest_bound_v2_approval(
 
     def rpc_call(_record, method, params):
         if method == "eth_getBalance":
-            assert params[1] == "pending"
+            assert params[1] == "latest"
         return {
             "eth_getBalance": rpc_state["balance"],
             "eth_getTransactionCount": "0x9",

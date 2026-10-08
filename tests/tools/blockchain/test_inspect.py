@@ -420,3 +420,19 @@ def test_resolved_contract_read_uses_pinned_record_without_configured_network(
         context,
     )
     assert decode_failed["error"]["code"] == "ABI_DECODE_FAILED"
+
+    monkeypatch.setattr(
+        resolved_calls,
+        "decode_abi_values",
+        lambda *_args, **_kwargs: ["x" * (256 * 1024)],
+    )
+    too_large = inspect_blockchain(
+        {
+            "action": "resolved_contract_call",
+            "resolution_digest": resolution_digest,
+            "function_signature": "apr()",
+            "arguments": [],
+        },
+        context,
+    )
+    assert too_large["error"]["code"] == "RESULT_TOO_LARGE"

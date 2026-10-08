@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
@@ -41,11 +42,51 @@ def validate_evidence(evidence: object) -> None:
         requested
     ):
         raise ValueError("Focus research, resolution, and read evidence is incomplete")
+    resolution_digests = set(evidence.get("successful_resolution_digests", ()))
+    resolved_reads = evidence.get("successful_resolved_reads", ())
+    if not resolution_digests or not isinstance(resolved_reads, list):
+        raise ValueError("Focus successful resolution evidence is missing")
+    if not any(
+        isinstance(read, dict)
+        and read.get("resolution_digest") in resolution_digests
+        and read.get("block_number")
+        and read.get("raw_return_digest")
+        for read in resolved_reads
+    ):
+        raise ValueError("Focus successful resolved read does not join to resolution")
     transcript = str(evidence.get("transcript", "")).lower()
     if not all(marker in transcript for marker in ("contract", "block")):
         raise ValueError("Focus answer lacks meaningful contract and block evidence")
     if any(marker in transcript for marker in ("cannot help", "unable to", "refuse")):
         raise ValueError("Focus refusal is not successful evidence")
+
+
+def _successful_blockchain_evidence(events: list[Any]) -> tuple[list[str], list[dict]]:
+    requests = {
+        str(event.data.get("call_id")): str(event.data.get("canonical_name") or "")
+        for event in events
+        if event.event_type == "tool.call.requested" and event.data.get("call_id")
+    }
+    resolution_digests: set[str] = set()
+    resolved_reads: list[dict] = []
+    for event in events:
+        if event.event_type != "tool.call.completed" or event.data.get("status") != "success":
+            continue
+        output = event.data.get("output")
+        payload = output.get("outputs") if isinstance(output, dict) else None
+        if not isinstance(payload, dict) or payload.get("ok") is not True:
+            continue
+        tool_name = requests.get(str(event.data.get("call_id")), "")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            continue
+        if tool_name == "blockchain.resolve_contract" and payload.get("action") == "resolve_contract":
+            digest = data.get("resolution_digest")
+            if isinstance(digest, str):
+                resolution_digests.add(digest)
+        elif tool_name == "blockchain.inspect" and payload.get("action") == "resolved_contract_call":
+            resolved_reads.append(dict(data))
+    return sorted(resolution_digests), resolved_reads
 
 
 def _required_config() -> Path:
@@ -120,6 +161,9 @@ def main() -> int:
         }
         - {""}
     )
+    successful_resolution_digests, successful_resolved_reads = (
+        _successful_blockchain_evidence(current_events)
+    )
     evidence = {
         "schema_version": "blockchain-autonomous-focus-evidence-v1",
         "protocol": "general_loop_focus_cli",
@@ -136,6 +180,8 @@ def main() -> int:
         "persisted_event_count": len(current_events),
         "persisted_event_types": sorted({event.event_type for event in current_events}),
         "requested_tools": requested_tools,
+        "successful_resolution_digests": successful_resolution_digests,
+        "successful_resolved_reads": successful_resolved_reads,
     }
     validate_evidence(evidence)
     (EVIDENCE_ROOT / "evidence.json").write_text(

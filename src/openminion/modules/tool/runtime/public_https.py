@@ -6,6 +6,7 @@ import http.client
 import ipaddress
 import socket
 import ssl
+import threading
 import time
 from typing import Any
 import urllib.parse
@@ -102,11 +103,28 @@ def _resolve_public_address(
     port: int,
     *,
     resolver: _Resolver,
+    deadline: float,
 ) -> _AddressInfo:
-    try:
-        answers = list(resolver(host, port, type=socket.SOCK_STREAM))
-    except OSError as exc:
-        raise PublicHttpsError("RESOLUTION_FAILED") from exc
+    resolved: list[Sequence[_AddressInfo]] = []
+    errors: list[Exception] = []
+
+    def resolve() -> None:
+        try:
+            resolved.append(resolver(host, port, type=socket.SOCK_STREAM))
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=resolve, daemon=True)
+    thread.start()
+    thread.join(_remaining_seconds(deadline))
+    if thread.is_alive():
+        raise PublicHttpsError("TIMEOUT")
+    if errors:
+        error = errors[0]
+        if isinstance(error, OSError):
+            raise PublicHttpsError("RESOLUTION_FAILED") from error
+        raise error
+    answers = list(resolved[0])
     if not answers:
         raise PublicHttpsError("RESOLUTION_FAILED")
 
@@ -211,7 +229,9 @@ def request_public_https(
     ):
         raise PublicHttpsError("INVALID_URL")
 
-    address = _resolve_public_address(host, port, resolver=resolver)
+    address = _resolve_public_address(
+        host, port, resolver=resolver, deadline=deadline
+    )
     connection = connection_factory(
         host,
         port,

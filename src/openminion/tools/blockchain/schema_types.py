@@ -289,6 +289,8 @@ class BlockchainError(ClosedModel):
         "STALE_BLOCK",
         "STALE_RESOLUTION",
         "RESOLUTION_UNAVAILABLE",
+        "RESOLUTION_INVALID",
+        "FUNCTION_UNAVAILABLE",
         "EMPTY_CONTRACT_CODE",
         "UNSUPPORTED_PROXY",
         "METADATA_UNAVAILABLE",

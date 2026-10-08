@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import hashlib
+import json
 from typing import Any
 
 from eth_abi.exceptions import DecodingError
@@ -13,6 +14,7 @@ from .abi import (
     validate_abi_values,
 )
 from .preparations import (
+    MAX_RESOLUTION_RECORD_BYTES,
     SessionRecordError,
     save_resolved_preparation_record,
 )
@@ -26,6 +28,7 @@ from .resolution import (
     load_resolution,
     revalidate_resolution,
     resolution_error_result,
+    resolution_record_error_result,
     rpc_call,
 )
 from .schemas import CallContext
@@ -91,11 +94,8 @@ def inspect_resolved_contract(
         )
         if block_number is None:
             _recheck_pinned_block(record, selected_number, pinned["block_hash"])
-    except SessionRecordError:
-        return _error(
-            "RESOLUTION_UNAVAILABLE",
-            "Contract resolution is unavailable in this session.",
-        )
+    except SessionRecordError as exc:
+        return resolution_record_error_result(exc)
     except ResolutionFailure as exc:
         return resolution_error_result(exc)
     except (TypeError, ValueError):
@@ -115,7 +115,7 @@ def inspect_resolved_contract(
             "Resolved contract return data could not be decoded.",
             {"function_signature": request.function_signature},
         )
-    return {
+    result = {
         "ok": True,
         "state": "succeeded",
         "action": "resolved_contract_call",
@@ -133,6 +133,15 @@ def inspect_resolved_contract(
             "result": decoded,
         },
     }
+    encoded = json.dumps(
+        result, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    if len(encoded) > MAX_RESOLUTION_RECORD_BYTES:
+        return _error(
+            "RESULT_TOO_LARGE",
+            "Resolved contract read exceeds the result limit.",
+        )
+    return result
 
 
 def _load_resolved_account(config: Any, context: Any) -> Any:
@@ -217,7 +226,7 @@ def _observe_preparation_state(
         "data": data,
     }
     balance = _quantity(
-        rpc_call(record, "eth_getBalance", [sender, "pending"]),
+        rpc_call(record, "eth_getBalance", [sender, "latest"]),
         "eth_getBalance",
     )
     nonce = _quantity(
@@ -386,11 +395,8 @@ def prepare_resolved_transaction(
 
     try:
         record, pinned, function = _load_preparation_facts(request, context)
-    except SessionRecordError:
-        return _error(
-            "RESOLUTION_UNAVAILABLE",
-            "Contract resolution is unavailable in this session.",
-        )
+    except SessionRecordError as exc:
+        return resolution_record_error_result(exc)
     except ResolutionFailure as exc:
         return resolution_error_result(exc)
     except (TypeError, ValueError):

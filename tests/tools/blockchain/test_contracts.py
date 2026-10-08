@@ -132,12 +132,13 @@ def test_manifest_distinguishes_inspect_from_debug() -> None:
 
     assert inspect.description == BLOCKCHAIN_INSPECT_DESCRIPTION
     assert inspect.description == (
-        "Use for read-only contract functions supplied as a function ABI and "
-        "arguments, including quotes and state. Also reads balance, bytecode, "
-        "transaction, or receipt, one fact per call. When asked to verify a receipt, "
-        "use action receipt even if a prior send returned receipt status. Use "
-        "blockchain.debug only for raw calldata, reverts, or event decoding. Never "
-        "signs or sends."
+        "Read blockchain state without signing or sending. For a contract candidate "
+        "discovered through research, first use blockchain.resolve_contract, then use "
+        "action resolved_contract_call with its resolution digest. Contract ABI, "
+        "balance, bytecode, transaction, and receipt actions use the configured "
+        "network. When asked to verify a receipt, use action receipt even if a prior "
+        "send returned receipt status. Use blockchain.debug only for raw calldata, "
+        "reverts, or event decoding."
     )
     assert debug.description == BLOCKCHAIN_DEBUG_DESCRIPTION
     assert debug.description == (
@@ -147,12 +148,12 @@ def test_manifest_distinguishes_inspect_from_debug() -> None:
     )
     assert resolve.description == BLOCKCHAIN_RESOLVE_DESCRIPTION
     assert resolve.description == (
-        "Validate one EVM contract candidate that you already researched. Supply "
-        "its public RPC, expected chain identity, address, and source URLs. This "
-        "tool uses the fixed official Sourcify v2 lookup to verify ABI and runtime "
-        "bytecode. This tool verifies and stores facts; it does not search, choose "
-        "candidates, retry, send a transaction, or prove that a deployment is "
-        "official."
+        "Validate one EVM contract candidate that you already researched so it can "
+        "be read or prepared without a configured network. Supply its public RPC, "
+        "expected chain identity, address, and source URLs. This tool uses the fixed "
+        "official Sourcify v2 lookup to verify ABI and runtime bytecode. It verifies "
+        "and stores facts; it does not search, choose candidates, retry, send a "
+        "transaction, or prove that a deployment is official."
     )
 
 

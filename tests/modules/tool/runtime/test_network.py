@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -195,6 +196,27 @@ def test_public_https_fails_closed_on_resolution_error() -> None:
         request_public_https("https://example.com", resolver=resolver)
 
     assert excinfo.value.code == "RESOLUTION_FAILED"
+
+
+def test_public_https_total_timeout_includes_resolution() -> None:
+    release = threading.Event()
+
+    def resolver(*args, **kwargs):
+        del args, kwargs
+        release.wait(1)
+        return [_answer("93.184.216.34")]
+
+    try:
+        with pytest.raises(PublicHttpsError) as excinfo:
+            request_public_https(
+                "https://example.com",
+                timeout=0.01,
+                resolver=resolver,
+            )
+    finally:
+        release.set()
+
+    assert excinfo.value.code == "TIMEOUT"
 
 
 def test_public_https_returns_redirect_without_following_it() -> None:

@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 from unittest.mock import patch
 
 from pydantic import BaseModel, ConfigDict
@@ -20,7 +20,10 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from tests.helpers.live_e2e_profiles import resolve_live_framework_root  # noqa: E402
-from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+from tests.helpers.runtime_roots import (  # noqa: E402
+    configure_runtime_roots,
+    isolate_runtime_roots,
+)
 
 FRAMEWORK_ROOT = resolve_live_framework_root(ROOT)
 RUNTIME_ROOT = isolate_runtime_roots(prefix="openminion-abo-local-")
@@ -69,7 +72,7 @@ from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E40
 from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec  # noqa: E402
 from openminion.modules.tool.runtime.policy import DEFAULT_POLICY, Policy  # noqa: E402
-from openminion.modules.tool.runtime.public_https import (  # noqa: E402
+from openminion.modules.tool.runtime import (  # noqa: E402
     PublicHttpsResponse,
 )
 from openminion.tools.blockchain.resolution import (  # noqa: E402
@@ -244,13 +247,13 @@ class _AnvilHttpsFixture:
         raise AssertionError(f"unexpected fixture HTTPS request: {method} {url}")
 
 
-class _ProductionExecution:
+class ProductionBlockchainExecution:
     def __init__(
         self,
         *,
         adapter: ToolAdapter,
         policy_ctl: PolicyCtl,
-        transport: _AnvilHttpsFixture,
+        transport: Callable[..., PublicHttpsResponse],
         approval_action: str,
     ) -> None:
         self.adapter = adapter
@@ -308,6 +311,12 @@ class _ProductionExecution:
             https_request=self.transport,
         )
 
+    def _revalidate_chain_identity(self, record: dict[str, Any]) -> dict[str, str]:
+        return resolution_runtime.revalidate_chain_identity(
+            record,
+            https_request=self.transport,
+        )
+
     def _act(self, *, state: WorkingState, command: Any, logger: Any) -> Any:
         del logger
         name = str(command.tool_name)
@@ -350,6 +359,11 @@ class _ProductionExecution:
                 resolved_operations,
                 "revalidate_resolution",
                 self._revalidate,
+            ),
+            patch.object(
+                resolved_operations,
+                "revalidate_chain_identity",
+                self._revalidate_chain_identity,
             ),
         ):
             raw = self.adapter.execute(
@@ -470,7 +484,7 @@ def _wait_for_anvil(web3: Web3, process: subprocess.Popen) -> None:
     raise RuntimeError("Anvil did not become ready")
 
 
-def _policy(workspace: Path, runtime_metadata: dict[str, Any]) -> Policy:
+def build_blockchain_policy(workspace: Path, runtime_metadata: dict[str, Any]) -> Policy:
     raw = json.loads(json.dumps(DEFAULT_POLICY))
     raw["scope"] = "POWER_USER"
     raw["workspace_root"] = str(workspace)
@@ -487,7 +501,7 @@ def _production_execution(
     runtime_metadata: dict[str, Any],
     transport: _AnvilHttpsFixture,
     approval_action: str,
-) -> _ProductionExecution:
+) -> ProductionBlockchainExecution:
     EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
     policy_path = EVIDENCE_ROOT / f"{session_id}-policy.sqlite"
     policy_path.unlink(missing_ok=True)
@@ -518,7 +532,7 @@ def _production_execution(
         workspace_root=EVIDENCE_ROOT,
         runtime_config=runtime_config,
         runtime_registry=registry,
-        policy=_policy(EVIDENCE_ROOT, runtime_metadata),
+        policy=build_blockchain_policy(EVIDENCE_ROOT, runtime_metadata),
         policy_ctl=ctl,
         secret_service=SimpleNamespace(
             get_secret_sync=lambda _key, *, namespace: PRIVATE_KEY,
@@ -526,7 +540,7 @@ def _production_execution(
         ),
         agent_id="abo-local-agent",
     )
-    return _ProductionExecution(
+    return ProductionBlockchainExecution(
         adapter=adapter,
         policy_ctl=ctl,
         transport=transport,
@@ -535,6 +549,7 @@ def _production_execution(
 
 
 def _run() -> dict[str, Any]:
+    configure_runtime_roots(RUNTIME_ROOT.parents[1])
     anvil = shutil.which("anvil")
     if not anvil:
         raise RuntimeError("anvil is required for blockchain autonomous local E2E")

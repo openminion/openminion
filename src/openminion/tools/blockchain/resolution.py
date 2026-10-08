@@ -11,7 +11,7 @@ from pydantic import Field, TypeAdapter, field_validator
 from web3 import Web3
 
 from openminion.base.version import OPENMINION_VERSION
-from openminion.modules.tool.runtime.public_https import (
+from openminion.modules.tool.runtime import (
     DEFAULT_TIMEOUT_SECONDS,
     PublicHttpsError,
     PublicHttpsResponse,
@@ -120,7 +120,9 @@ class ResolvedContractRecord(ClosedModel):
     resolution_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     rpc_url: str
     sourcify_target_url: str
+    sourcify_target_match: Literal["match", "exact_match"]
     sourcify_implementation_url: str | None
+    sourcify_implementation_match: Literal["match", "exact_match"] | None
     expected_chain_id: int = Field(ge=1)
     observed_chain_id: int = Field(ge=1)
     expected_genesis_hash: TransactionHash
@@ -145,6 +147,8 @@ class ResolvedContractData(ClosedModel):
     resolution_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     rpc_origin: str
     sourcify_origin: Literal["https://sourcify.dev"]
+    sourcify_target_match: Literal["match", "exact_match"]
+    sourcify_implementation_match: Literal["match", "exact_match"] | None
     expected_chain_id: int = Field(ge=1)
     observed_chain_id: int = Field(ge=1)
     expected_genesis_hash: TransactionHash
@@ -179,6 +183,9 @@ ResolutionErrorCode = Literal[
     "CHAIN_IDENTITY_MISMATCH",
     "STALE_BLOCK",
     "STALE_RESOLUTION",
+    "RESOLUTION_INVALID",
+    "FUNCTION_UNAVAILABLE",
+    "SIMULATION_REVERTED",
     "EMPTY_CONTRACT_CODE",
     "UNSUPPORTED_PROXY",
     "METADATA_UNAVAILABLE",
@@ -317,6 +324,18 @@ class _RpcClient:
                 "Blockchain RPC returned invalid JSON.",
                 {"operation": method},
             ) from exc
+        if (
+            isinstance(payload, dict)
+            and payload.get("jsonrpc") == "2.0"
+            and payload.get("id") == self.request_id
+            and payload.get("error") is not None
+            and method in {"eth_call", "eth_estimateGas"}
+        ):
+            raise ResolutionFailure(
+                "SIMULATION_REVERTED",
+                "Blockchain call simulation reverted.",
+                {"operation": method},
+            )
         if (
             not isinstance(payload, dict)
             or payload.get("jsonrpc") != "2.0"
@@ -473,7 +492,7 @@ def _sourcify_contract(
     address: str,
     rpc_code: str,
     https_request: _HttpsRequest,
-) -> tuple[str, list[FunctionAbi]]:
+) -> tuple[str, list[FunctionAbi], Literal["match", "exact_match"]]:
     url = _sourcify_url(chain_id, address)
     try:
         response = _request(
@@ -535,8 +554,9 @@ def _sourcify_contract(
             "METADATA_UNAVAILABLE",
             "Verified contract metadata is invalid.",
         ) from exc
+    match = payload.get("match")
     if (
-        payload.get("match") not in {"match", "exact_match"}
+        match not in {"match", "exact_match"}
         or metadata_chain_id != str(chain_id)
         or metadata_address != address
         or _code_hash(metadata_code) != _code_hash(rpc_code)
@@ -545,7 +565,7 @@ def _sourcify_contract(
             "CONTRACT_NOT_VERIFIED",
             "Sourcify metadata does not match the deployed contract.",
         )
-    return url, _canonical_function_abi(payload.get("abi"))
+    return url, _canonical_function_abi(payload.get("abi")), match
 
 
 _DIGEST_EXCLUDED_FIELDS = {
@@ -602,8 +622,28 @@ def function_by_signature(record: Mapping[str, Any], signature: str) -> Function
         if abi_signature(function) == signature:
             matches.append(function)
     if len(matches) != 1:
-        raise ValueError("function signature is not present exactly once")
+        raise ResolutionFailure(
+            "FUNCTION_UNAVAILABLE",
+            "The exact function signature is unavailable in this resolution.",
+            {"function_signature": signature},
+        )
     return matches[0]
+
+
+def resolution_record_error_result(error: SessionRecordError) -> dict[str, Any]:
+    if error.reason == "unavailable":
+        return resolution_error_result(
+            ResolutionFailure(
+                "RESOLUTION_UNAVAILABLE",
+                "Contract resolution is unavailable in this session.",
+            )
+        )
+    return resolution_error_result(
+        ResolutionFailure(
+            "RESOLUTION_INVALID",
+            "Stored contract resolution is invalid.",
+        )
+    )
 
 
 def _observe_chain_identity(
@@ -818,6 +858,35 @@ def revalidate_resolution(
     }
 
 
+def revalidate_chain_identity(
+    record: Mapping[str, Any],
+    *,
+    https_request: _HttpsRequest = request_public_https,
+) -> dict[str, str]:
+    normalized = validate_resolution_record(record)
+    rpc = _RpcClient(normalized["rpc_url"], https_request)
+    _observe_chain_identity(
+        rpc,
+        expected_chain_id=normalized["expected_chain_id"],
+        expected_genesis_hash=normalized["expected_genesis_hash"],
+        expected_checkpoint=normalized["expected_checkpoint"],
+    )
+    block_number, block_hash = _block(
+        rpc.call("eth_getBlockByNumber", ["latest", False]),
+        operation="eth_getBlockByNumber:latest",
+    )
+    repeated_number, repeated_hash = _block(
+        rpc.call("eth_getBlockByNumber", [hex(block_number), False]),
+        operation="eth_getBlockByNumber:recheck",
+    )
+    if repeated_number != block_number or repeated_hash != block_hash:
+        raise ResolutionFailure(
+            "STALE_BLOCK",
+            "Pinned block changed during operation status inspection.",
+        )
+    return {"block_number": str(block_number), "block_hash": block_hash}
+
+
 def _resolve(
     request: ResolveContractArgs,
     *,
@@ -842,17 +911,18 @@ def _resolve(
     implementation_address = facts["implementation_address"]
     implementation_code = facts["implementation_code"]
 
-    target_url, target_abi = _sourcify_contract(
+    target_url, target_abi, target_match = _sourcify_contract(
         observed_chain_id,
         target_address,
         facts["target_code"],
         https_request,
     )
     implementation_url: str | None = None
+    implementation_match: Literal["match", "exact_match"] | None = None
     function_abi = target_abi
     abi_address = target_address
     if implementation_address is not None and implementation_code is not None:
-        implementation_url, function_abi = _sourcify_contract(
+        implementation_url, function_abi, implementation_match = _sourcify_contract(
             observed_chain_id,
             implementation_address,
             implementation_code,
@@ -864,7 +934,9 @@ def _resolve(
         "resolution_digest": "sha256:" + "0" * 64,
         "rpc_url": rpc_url,
         "sourcify_target_url": target_url,
+        "sourcify_target_match": target_match,
         "sourcify_implementation_url": implementation_url,
+        "sourcify_implementation_match": implementation_match,
         "expected_chain_id": request.expected_chain_id,
         "observed_chain_id": observed_chain_id,
         "expected_genesis_hash": request.expected_genesis_hash.lower(),
@@ -978,9 +1050,11 @@ __all__ = [
     "ResolutionFailure",
     "function_by_signature",
     "load_resolution",
+    "revalidate_chain_identity",
     "revalidate_resolution",
     "resolution_digest",
     "resolution_error_result",
+    "resolution_record_error_result",
     "resolve_contract",
     "rpc_call",
     "validate_resolution_record",
