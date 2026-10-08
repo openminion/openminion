@@ -145,26 +145,17 @@ def _validate_blockchain_config(
     ):
         raise ConfigError("runtime.tools.blockchain enabled flags must be booleans.")
     if config.chain_id is not None and (
-        not isinstance(config.chain_id, int)
-        or isinstance(config.chain_id, bool)
-        or config.chain_id < 1
+        type(config.chain_id) is not int or config.chain_id < 1
     ):
         raise ConfigError("runtime.tools.blockchain.chain_id must be an integer >= 1.")
-    timeout = config.receipt_timeout_seconds
-    if (
-        not isinstance(timeout, int)
-        or isinstance(timeout, bool)
-        or not 1 <= timeout <= 300
+    for value, field_name, maximum in (
+        (config.receipt_timeout_seconds, "receipt_timeout_seconds", 300),
+        (config.confirmation_depth, "confirmation_depth", 64),
     ):
-        raise ConfigError(
-            "runtime.tools.blockchain.receipt_timeout_seconds must be an integer "
-            "from 1 through 300."
-        )
-    depth = config.confirmation_depth
-    if type(depth) is not int or not 1 <= depth <= 64:
-        raise ConfigError(
-            "runtime.tools.blockchain.confirmation_depth must be an integer from 1 through 64."
-        )
+        if type(value) is not int or not 1 <= value <= maximum:
+            raise ConfigError(
+                f"runtime.tools.blockchain.{field_name} must be an integer from 1 through {maximum}."
+            )
     if (
         not _CANONICAL_UNSIGNED_DECIMAL_RE.fullmatch(config.max_total_fee_wei)
         or int(config.max_total_fee_wei) <= 0
