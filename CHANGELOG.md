@@ -1,11 +1,27 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-10-07
+Last updated: 2026-10-08
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-10-08
+
+- Compose commerce order care through authored skills and the existing task and
+  tool runtime while preserving exact approvals, persistence, migration history,
+  replay safety, and uncertain-result recovery.
+- Converge four permission postures across configuration, Focus, runtime policy,
+  and status reporting, with automatic read-only approval and durable,
+  revocable session grants.
+- Generalize tool exposure and confirmation ownership without adding a parallel
+  registry or weakening authorization for writes and external effects.
+- Add discovery-only blockchain configuration plus researched-contract
+  resolution and an approval-bound, durable transaction lifecycle with typed
+  transport evidence and race-safe recovery.
+- Harden browser, code, policy, confirmation replay, and Focus smoke paths found
+  during provider-backed MiniMax validation.
 
 ## Current package line - 2026-10-07
 
