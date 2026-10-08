@@ -132,6 +132,7 @@ def _run_generated_project_oracle_pytest(
             from __future__ import annotations
 
             import csv
+            import subprocess
             import sys
             from pathlib import Path
 
@@ -250,6 +251,21 @@ def _run_generated_project_oracle_pytest(
                 )
                 assert cli(None) == 0
                 assert second_output.exists()
+                module_output = tmp_path / "report3.md"
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "task_summary.report",
+                        str(csv_path),
+                        str(module_output),
+                    ],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                assert result.returncode == 0, result.stderr
+                assert module_output.exists()
             """
         ),
         encoding="utf-8",

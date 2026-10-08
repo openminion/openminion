@@ -183,7 +183,13 @@ class TestAllowedEvents:
     def test_active_has_events(self) -> None:
         events = allowed_events(BRAIN_STATE_ACTIVE)
         assert "task_completed" in events
+        assert "confirmation_denied" in events
         assert "fatal_error" in events
+
+    def test_active_confirmation_denied_waits_for_user(self) -> None:
+        state = _make_state(BRAIN_STATE_ACTIVE)
+        transition(state, "confirmation_denied")
+        assert state.status == BRAIN_STATE_WAITING_USER
 
     def test_terminal_error_has_no_events(self) -> None:
         events = allowed_events(BRAIN_STATE_ERROR)

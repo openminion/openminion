@@ -2344,7 +2344,7 @@ def test_act_adaptive_seeded_confirmation_replay_preserves_prior_loop_context() 
     assert "adaptive_loop" not in dict(ctx.state.module_state or {})
 
 
-def test_act_adaptive_seeded_confirmation_replay_does_not_reinject_goal_as_user_turn() -> (
+def test_act_adaptive_seeded_confirmation_replay_preserves_goal_as_system_context() -> (
     None
 ):
     llm_client = _FakeLLMClient()
@@ -2370,6 +2370,7 @@ def test_act_adaptive_seeded_confirmation_replay_does_not_reinject_goal_as_user_
     def _fake_run_adaptive_tool_loop(*args, **kwargs):
         del args
         captured["initial_messages"] = list(kwargs.get("initial_messages") or [])
+        captured["state_messages"] = list(kwargs["initial_state"].messages)
         return AdaptiveToolLoopOutcome(
             profile_name="general_adaptive_v1",
             mode_name="act_loop_adaptive",
@@ -2390,7 +2391,12 @@ def test_act_adaptive_seeded_confirmation_replay_does_not_reinject_goal_as_user_
         result = ActLoopMode().execute(ctx)
 
     assert result.status == "done"
-    assert captured["initial_messages"] == []
+    assert not any(message.role == "user" for message in captured["initial_messages"])
+    assert any(
+        message.role == "system"
+        and "create the scratch project from the original request" in message.content
+        for message in captured["state_messages"]
+    )
 
 
 def test_act_adaptive_confirmation_replay_without_seeded_batch_does_not_reinject_goal() -> (
@@ -3305,6 +3311,7 @@ def test_act_adaptive_seeded_confirmation_replay_exec_failure_reopens_autonomous
         ]
     )
     ctx, _ = _ctx(llm_client, executor)
+    ctx.state.goal = "build and verify the task-summary package"
     ctx.decision.reason_code = "confirmation_replay"
     ctx.decision._seeded_commands = [
         ToolCommand(
@@ -3324,6 +3331,11 @@ def test_act_adaptive_seeded_confirmation_replay_exec_failure_reopens_autonomous
     assert any(
         "confirmed seeded tool command failed" in message.content
         and "Usage: task-summary" in message.content
+        for message in llm_client.calls[0]["messages"]
+    )
+    assert any(
+        message.role == "system"
+        and "build and verify the task-summary package" in message.content
         for message in llm_client.calls[0]["messages"]
     )
 

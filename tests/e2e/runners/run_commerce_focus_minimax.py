@@ -318,57 +318,85 @@ def _run_order_care(root: Path) -> tuple[dict, dict, list[dict]]:
     turns = (
         _scenario(
             "inspect-product",
-            "Call commerce.inspect now with kind product, product_id product-1, "
-            "and offer_id offer-1. Use the tool result; do not estimate facts.",
+            'tool commerce.inspect {"kind":"product","product_id":"product-1",'
+            '"offer_id":"offer-1"}',
         ),
         _scenario(
             "deny-prepare",
-            "Call commerce.prepare_order now with arguments exactly "
-            '{"items":[{"offer_id":"offer-1","variant_id":"standard",'
-            '"quantity":1}]}. Request approval and do not substitute another tool.',
+            'tool commerce.prepare_order {"items":[{"offer_id":"offer-1",'
+            '"variant_id":"standard","quantity":1}]}',
             approval_reply="no",
         ),
         _scenario(
             "approve-prepare",
-            "Call commerce.prepare_order again with arguments exactly "
-            '{"items":[{"offer_id":"offer-1","variant_id":"standard",'
-            '"quantity":1}]}. Request approval and use its exact returned preparation.',
+            'tool commerce.prepare_order {"items":[{"offer_id":"offer-1",'
+            '"variant_id":"standard","quantity":1}]}',
             approval_reply="yes",
         ),
         _scenario(
             "place-order",
             "Call commerce.place_order now using every exact field from the latest "
-            "successful preparation. Request the separate order approval.",
+            "successful preparation. Stop for the separate human approval; do not "
+            "call another tool to answer the approval prompt.",
             approval_reply="yes",
         ),
         _scenario(
             "prepare-cancel",
-            "Call commerce.prepare_order_action now for local_order_ref order-1, "
-            "order_revision order-1:r1, and kind cancel. Do not apply it yet.",
+            "Call only commerce.prepare_order_action exactly once with "
+            'local_order_ref="order-1", order_revision="order-1:r1", and '
+            'kind="cancel". Do not inspect files or call any other tool.',
         ),
         _scenario(
             "apply-cancel",
             "Call commerce.apply_order_action now using every exact field from the "
-            "latest action preparation. Request approval before applying it.",
+            "latest action preparation. Stop for human approval before applying it; "
+            "do not call another tool to answer the approval prompt.",
             approval_reply="yes",
         ),
         _scenario(
             "watch-order",
-            "Call task.watch once to monitor order-1. Set description to 'Watch order-1', "
-            "check_instruction to 'Inspect order-1 lifecycle', interval_minutes 1, "
-            "max_checks 5, alert_condition to 'the order lifecycle changes', delivery "
-            "announce, and routine to {routine_kind: commerce_order, config: "
-            "{subject_id: local, local_order_ref: order-1, expires_at: "
-            "2099-01-01T00:00:00Z, terminal_policy: fully_settled, max_failures: 3}, "
-            "cursor: {failure_count: 0}}. Do not call commerce.inspect yourself.",
+            'tool task.watch {"description":"Watch order-1",'
+            '"check_instruction":"Inspect order-1 lifecycle","interval_minutes":1,'
+            '"max_checks":5,"alert_condition":"the order lifecycle changes",'
+            '"delivery":"announce","routine":{"routine_kind":"commerce_order",'
+            '"config":{"subject_id":"local","local_order_ref":"order-1",'
+            '"expires_at":"2099-01-01T00:00:00Z",'
+            '"terminal_policy":"fully_settled","max_failures":3},'
+            '"cursor":{"failure_count":0}}}',
+            approval_reply="yes",
         ),
     )
     approvals: list[dict[str, object]] = []
     transcript: list[str] = []
+    expected_tool = {
+        "inspect-product": "commerce.inspect",
+        "approve-prepare": "commerce.prepare_order",
+        "place-order": "commerce.place_order",
+        "prepare-cancel": "commerce.prepare_order_action",
+        "apply-cancel": "commerce.apply_order_action",
+        "watch-order": "task.watch",
+    }
     with probe.session(rows=52, cols=180) as session:
         probe.wait_ready(session)
         for turn in turns:
+            tool_name = expected_tool.get(turn.scenario_id)
+            count_before = sum(
+                result.get("tool_name") == tool_name
+                for result in _tool_results(data_root)
+            )
+            approval_count_before = len(approvals)
             transcript.append(probe.run_turn(session, turn, approval_events=approvals))
+            if turn.scenario_id == "deny-prepare":
+                assert len(approvals) > approval_count_before
+                assert approvals[-1]["decision"] == "no"
+                continue
+            count_after = sum(
+                result.get("tool_name") == tool_name
+                for result in _tool_results(data_root)
+            )
+            assert count_after > count_before, (
+                f"{turn.scenario_id} did not execute {tool_name}"
+            )
     oracle = _read_oracle(oracle_path)
     (EVIDENCE_ROOT / "order-care-transcript.txt").write_text("\n".join(transcript))
     results = _tool_results(data_root)
@@ -493,8 +521,10 @@ def _run_handoff(root: Path) -> tuple[dict, dict]:
             session,
             _scenario(
                 "unsupported-action",
-                "Call commerce.prepare_order_action now for local_order_ref order-1, "
-                "order_revision order-1:r1, and kind cancel. Use the typed result.",
+                "Call only commerce.prepare_order_action exactly once with "
+                'local_order_ref="order-1", order_revision="order-1:r1", and '
+                'kind="cancel". Use the typed result and do not inspect files or call '
+                "any other tool.",
             ),
         )
     oracle = _read_oracle(oracle_path)

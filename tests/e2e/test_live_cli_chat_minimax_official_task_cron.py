@@ -282,6 +282,7 @@ def test_tcee_04_minimax_interval_schedule_list_cancel_list_live() -> None:
         agent_id=_AGENT_ID,
         config_path=_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
         user_input=(
             "Use the task.schedule tool to create a recurring task that runs "
             "every 60000 ms (1 minute). Set instruction to "
@@ -312,6 +313,7 @@ def test_tcee_04_minimax_interval_schedule_list_cancel_list_live() -> None:
         agent_id=_AGENT_ID,
         config_path=_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
         user_input=(
             "Use the task.list tool with limit 10 to show all scheduled tasks. "
             "Then report the task_id values verbatim."
@@ -330,6 +332,7 @@ def test_tcee_04_minimax_interval_schedule_list_cancel_list_live() -> None:
         agent_id=_AGENT_ID,
         config_path=_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
         user_input=(
             f"Use the task.cancel tool with task_id={persisted_task_id} to "
             "cancel that scheduled task. Use the exact task_id; do not "
@@ -353,6 +356,7 @@ def test_tcee_04_minimax_interval_schedule_list_cancel_list_live() -> None:
         agent_id=_AGENT_ID,
         config_path=_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
         user_input=(
             "Use the task.list tool with limit 10 to show all scheduled tasks again."
         ),
@@ -382,6 +386,7 @@ def test_tcoh_08_minimax_schedule_show_pause_list_resume_cancel_live() -> None:
         agent_id=_AGENT_ID,
         config_path=_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
         user_input=(
             "Use the task.schedule tool to create a recurring task that runs "
             'every 60000 ms. Set instruction to "tcoh08 operator smoke" and '
@@ -401,6 +406,7 @@ def test_tcoh_08_minimax_schedule_show_pause_list_resume_cancel_live() -> None:
         agent_id=_AGENT_ID,
         config_path=_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
         user_input=(
             f"Use the task.show tool with task_id={persisted_task_id} and "
             "runs_limit=3. Use the exact task_id and report the returned "
@@ -414,6 +420,7 @@ def test_tcoh_08_minimax_schedule_show_pause_list_resume_cancel_live() -> None:
         agent_id=_AGENT_ID,
         config_path=_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
         user_input=(
             f"Use the task.pause tool with task_id={persisted_task_id}. "
             "Use the exact task_id and do not abbreviate it."
@@ -429,6 +436,7 @@ def test_tcoh_08_minimax_schedule_show_pause_list_resume_cancel_live() -> None:
         agent_id=_AGENT_ID,
         config_path=_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
         user_input=(
             "Use the task.list tool with limit 10 to show scheduled tasks. "
             f"Report the enabled state for task_id={persisted_task_id}."
@@ -441,6 +449,7 @@ def test_tcoh_08_minimax_schedule_show_pause_list_resume_cancel_live() -> None:
         agent_id=_AGENT_ID,
         config_path=_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
         user_input=(
             f"Use the task.resume tool with task_id={persisted_task_id}. "
             "Use the exact task_id and report the next_due_at value."
@@ -457,6 +466,7 @@ def test_tcoh_08_minimax_schedule_show_pause_list_resume_cancel_live() -> None:
         agent_id=_AGENT_ID,
         config_path=_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
         user_input=f'tool task.cancel {{"task_id":"{persisted_task_id}"}}',
     )
     assert _trace_proves_tool_execution(cancel_result.trace_root, "task.cancel")
@@ -483,6 +493,7 @@ def test_tcee_05_minimax_cron_expression_schedule_live() -> None:
         agent_id=_AGENT_ID,
         config_path=_CONFIG,
         data_root_override=data_root,
+        auto_confirm=True,
         user_input=(
             "Use the task.schedule tool to create a cron-expression task. "
             'Set schedule to {"kind": "cron", "expr": "*/5 * * * *", '

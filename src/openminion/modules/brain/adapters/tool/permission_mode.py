@@ -114,11 +114,33 @@ def registered_readonly_tool_names() -> frozenset[str]:
     )
 
 
+@lru_cache(maxsize=256)
+def _readonly_runtime_tool_name(tool_name: str) -> str:
+    from openminion.modules.tool.dispatch import resolve_binding_for_call
+
+    resolution = resolve_binding_for_call(
+        raw_tool_name=tool_name,
+        available_tool_names=tuple(registered_readonly_tool_names()),
+    )
+    return str(getattr(resolution, "runtime_tool_name", "") or "").strip().lower()
+
+
+def _is_readonly_tool(tool_name: str) -> bool:
+    normalized = str(tool_name or "").strip().lower()
+    if not normalized:
+        return True
+    readonly_names = registered_readonly_tool_names()
+    return (
+        normalized in readonly_names
+        or _readonly_runtime_tool_name(normalized) in readonly_names
+    )
+
+
 def is_tool_blocked_by_readonly(tool_name: str) -> bool:
     normalized = str(tool_name or "").strip().lower()
     if not normalized:
         return False
-    return normalized not in registered_readonly_tool_names()
+    return not _is_readonly_tool(normalized)
 
 
 def request_outcome_allows_tool(
@@ -134,7 +156,7 @@ def request_outcome_allows_tool(
         return False
     if outcome == "plan_only" and normalized in _PLAN_CONTROL_TOOL_NAMES:
         return True
-    return normalized in registered_readonly_tool_names()
+    return _is_readonly_tool(normalized)
 
 
 __all__ = [

@@ -272,7 +272,7 @@ def test_live_focus_contextual_help_while_busy(
     with focus_probe.session() as session:
         focus_probe.wait_ready(session)
         before_permissions = visible_text(
-            focus_probe.run_slash(session, "/permissions", marker="permissions:")
+            focus_probe.run_slash(session, "/status", marker="permissions:")
         )
         before_mode = re.search(r"permissions: ([a-z]+)", before_permissions)
         assert before_mode is not None
@@ -284,7 +284,7 @@ def test_live_focus_contextual_help_while_busy(
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             screen = session.screen_text
-            if active_turn_busy(screen) or "Type to queue while" in screen:
+            if active_turn_busy(screen) and "Type to queue for the next turn" in screen:
                 break
             time.sleep(0.05)
         else:
@@ -296,7 +296,7 @@ def test_live_focus_contextual_help_while_busy(
         help_offset = len(session.transcript)
         session.type_line("/permissions ?")
         help_transcript = session.wait_for_after(
-            re.escape("Show or set the sandbox approval mode"),
+            re.escape("Choose, inspect, or set the session permission posture"),
             offset=help_offset,
             timeout=60,
         )
@@ -304,7 +304,7 @@ def test_live_focus_contextual_help_while_busy(
             r"Done in \d+(?:m\d{2}s|s)", offset=turn_offset, timeout=300
         )
         after_permissions = visible_text(
-            focus_probe.run_slash(session, "/permissions", marker="permissions:")
+            focus_probe.run_slash(session, "/status", marker="permissions:")
         )
         queue = visible_text(
             focus_probe.run_slash(session, "/queue", marker="No queued messages.")
