@@ -38,6 +38,7 @@ TRANSITIONS: dict[tuple[str, str], str] = {
     (_A, "retries_exhausted"): _W,
     (_A, "rlm_unavailable"): _W,
     (_A, "tool_args_invalid"): _W,
+    (_A, "confirmation_denied"): _W,
     (_A, "task_completed"): _D,
     (_A, "step_advanced"): _A,
     (_A, "step_retrying"): _A,
