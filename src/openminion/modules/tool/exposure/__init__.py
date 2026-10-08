@@ -234,17 +234,15 @@ def apply_model_exposure(request: Any, registry: Any) -> None:
     metadata = getattr(request, "metadata", {}) or {}
     service = getattr(registry, "exposure_service", None)
     if request.tools:
-        requested_tools = list(request.tools)
         if isinstance(service, ToolExposureService):
-            filtered = service.filter_specs(
-                requested_tools,
+            request.tools = service.filter_request_specs(
+                list(request.tools),
+                registered_tool_names=_available_runtime_tool_names(registry),
+                allow_registered_fallback=not get_model_exposure_specs(
+                    registry, metadata=metadata
+                ),
                 **exposure_scope(metadata),
             )
-            request.tools = filtered
-            if not filtered and not get_model_exposure_specs(
-                registry, metadata=metadata
-            ):
-                request.tools = requested_tools
     else:
         request.tools = get_model_exposure_specs(registry, metadata=metadata)
     if not isinstance(service, ToolExposureService):

@@ -13,8 +13,8 @@ from openminion.modules.brain.constants import (
 )
 from openminion.modules.brain.schemas import Command
 from openminion.modules.tool.plugin_api import (
-    BlockchainSendConfirmationPreview,
-    ToolConfirmationPreview,
+    ConfirmationPreviewInput,
+    confirmation_preview_payload,
 )
 from openminion.modules.policy.grants import requires_once_duration
 
@@ -148,9 +148,14 @@ def is_session_confirmation_response(text: str) -> bool:
 
 def confirmation_required_user_message(
     command: Command,
-    confirmation_preview: ToolConfirmationPreview | None = None,
+    confirmation_preview: ConfirmationPreviewInput | None = None,
     policy_facts: dict[str, Any] | None = None,
 ) -> str:
+    preview = (
+        confirmation_preview_payload(confirmation_preview)
+        if confirmation_preview is not None
+        else None
+    )
     tool_name = str(command.tool_name or "tool").strip() or "tool"
     title = str(command.title or "").strip()
     subject = tool_name
@@ -170,45 +175,8 @@ def confirmation_required_user_message(
         lines.append(f"Reason: {facts['reason_code']}")
     if facts.get("duration_options"):
         lines.append(f"Choices: {', '.join(facts['duration_options'])}")
-    if tool_name == "blockchain.send_transaction" and isinstance(
-        confirmation_preview, BlockchainSendConfirmationPreview
-    ):
-        preview = confirmation_preview
-        lines.extend(
-            [
-                f"Chain ID: {preview.chain_id}",
-                f"From: {preview.from_address}",
-                f"To: {preview.to_address}",
-                f"Value (wei): {preview.value_wei}",
-                f"Transaction type: {preview.transaction_type}",
-                f"Nonce: {preview.nonce}",
-                f"Gas limit: {preview.gas_limit}",
-                f"Gas price (wei): {preview.gas_price_wei or '-'}",
-                f"Max fee per gas (wei): {preview.max_fee_per_gas_wei or '-'}",
-                "Max priority fee per gas (wei): "
-                f"{preview.max_priority_fee_per_gas_wei or '-'}",
-                f"Maximum total fee (wei): {preview.max_total_fee_wei}",
-                f"Calldata bytes: {preview.calldata_bytes}",
-                f"Calldata SHA-256: {preview.calldata_sha256}",
-                f"Calldata: {preview.calldata_hex or '-'}",
-                f"Preparation digest: {preview.preparation_digest}",
-                f"Opaque calldata: {'yes' if preview.opaque_calldata else 'no'}",
-            ]
-        )
-        if preview.call is not None:
-            lines.extend(
-                [
-                    f"Function: {preview.call.function_signature}",
-                    "Arguments: "
-                    + json.dumps(
-                        preview.call.function_args,
-                        separators=(",", ":"),
-                        ensure_ascii=True,
-                    ),
-                ]
-            )
-    elif tool_name == "ops.command.run" and isinstance(confirmation_preview, dict):
-        redacted_preview, _ = redact_mapping(confirmation_preview)
+    if tool_name == "ops.command.run" and preview is not None:
+        redacted_preview, _ = redact_mapping(preview)
         lines.append(
             "Effect: "
             + json.dumps(
@@ -217,8 +185,8 @@ def confirmation_required_user_message(
                 ensure_ascii=True,
             )
         )
-    elif isinstance(confirmation_preview, dict):
-        display_lines = confirmation_preview.get("display_lines", [])
+    else:
+        display_lines = preview.get("display_lines", []) if preview is not None else []
         if isinstance(display_lines, list) and all(
             isinstance(line, str) for line in display_lines
         ):

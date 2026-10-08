@@ -66,7 +66,6 @@ _PROHIBITED_FIELDS = frozenset(
         "gen_ai.reasoning",
     }
 )
-_STRUCTURAL_SECURITY_AGENT_ID = "security-researcher-readonly"
 _STRUCTURAL_SECURITY_FIELDS = frozenset(
     {
         "act.allowed_tools",
@@ -187,15 +186,13 @@ def _structural_tool_results(items: list[Any]) -> list[dict[str, Any]]:
     return results
 
 
-def structural_security_payload(
-    payload: dict[str, Any], agent_id: str | None
-) -> dict[str, Any]:
-    if agent_id != _STRUCTURAL_SECURITY_AGENT_ID:
+def structural_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("structural_only") is not True:
         return payload
     structural = {
         key: value
         for key, value in payload.items()
-        if key in _STRUCTURAL_SECURITY_FIELDS
+        if key in _STRUCTURAL_SECURITY_FIELDS or key == "structural_only"
     }
     if "artifact_refs" in structural:
         structural["artifact_refs"] = _canonical_artifact_refs(
@@ -345,5 +342,5 @@ def merge_trace_metadata(
 __all__ = [
     "apply_content_policy",
     "merge_trace_metadata",
-    "structural_security_payload",
+    "structural_tool_payload",
 ]

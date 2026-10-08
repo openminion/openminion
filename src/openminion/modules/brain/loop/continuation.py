@@ -506,6 +506,13 @@ def _emit_continuation_stopped(
             session_id=session_id,
             agent_id=getattr(getattr(runner, "profile", None), "agent_id", "") or "",
             llm_api=getattr(runner, "llm_api", None),
+            structural_tool_results=bool(
+                getattr(
+                    getattr(runner, "profile", None),
+                    "structural_tool_results",
+                    False,
+                )
+            ),
         )
         payload: dict[str, Any] = {
             "reason": str(decision.get("reason") or "unknown"),

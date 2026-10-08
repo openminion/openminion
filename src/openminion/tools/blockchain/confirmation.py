@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 import re
-from typing import Any, Mapping, cast
+from typing import Any, Literal, Mapping, cast
 
 from pydantic import ValidationError
 
-from openminion.modules.tool.plugin_api import (
-    BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
-    BlockchainCallPreview,
-    BlockchainSendConfirmationPreview,
-)
+from openminion.modules.tool.plugin_api import ConfirmationPreviewError
 
 from .runtime import preparation_digest
 from .abi import abi_signature, encode_function_call, normalize_abi_values
@@ -21,7 +17,9 @@ from .transaction_schemas import SEND_REQUEST_ADAPTER
 MAX_APPROVAL_CALLDATA_BYTES = 4096
 MAX_APPROVAL_PREVIEW_BYTES = 16384
 PREVIEW_INVALID_CODE = "BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID"
-PREVIEW_INVALID_MESSAGE = BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE
+PREVIEW_INVALID_MESSAGE = (
+    "Blockchain transaction approval preview could not be verified."
+)
 _PREVIEW_FIELDS = {
     "schema_version",
     "chain_id",
@@ -49,16 +47,85 @@ _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _HEX_RE = re.compile(r"^0x(?:[0-9a-f]{2})*$")
 
 
-class BlockchainConfirmationPreviewError(ValueError):
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-        super().__init__(reason)
+@dataclass(frozen=True)
+class BlockchainCallPreview:
+    function_signature: str
+    function_args: list[Any]
+
+
+@dataclass(frozen=True)
+class BlockchainSendConfirmationPreview:
+    schema_version: Literal["blockchain-send-preview-v1"]
+    chain_id: str
+    from_address: str
+    to_address: str
+    value_wei: str
+    transaction_type: str
+    nonce: str
+    gas_limit: str
+    gas_price_wei: str | None
+    max_fee_per_gas_wei: str | None
+    max_priority_fee_per_gas_wei: str | None
+    max_total_fee_wei: str
+    calldata_bytes: str
+    calldata_sha256: str
+    calldata_hex: str | None
+    preparation_digest: str
+    call: BlockchainCallPreview | None
+    opaque_calldata: bool
+
+    @property
+    def display_lines(self) -> list[str]:
+        return _preview_display_lines(self)
+
+    def to_confirmation_dict(self) -> dict[str, Any]:
+        return {**asdict(self), "display_lines": self.display_lines}
+
+
+BlockchainConfirmationPreviewError = ConfirmationPreviewError
 
 
 def preview_to_dict(
     preview: BlockchainSendConfirmationPreview,
 ) -> dict[str, Any]:
     return asdict(preview)
+
+
+def _preview_display_lines(
+    preview: BlockchainSendConfirmationPreview,
+) -> list[str]:
+    lines = [
+        f"Chain ID: {preview.chain_id}",
+        f"From: {preview.from_address}",
+        f"To: {preview.to_address}",
+        f"Value (wei): {preview.value_wei}",
+        f"Transaction type: {preview.transaction_type}",
+        f"Nonce: {preview.nonce}",
+        f"Gas limit: {preview.gas_limit}",
+        f"Gas price (wei): {preview.gas_price_wei or '-'}",
+        f"Max fee per gas (wei): {preview.max_fee_per_gas_wei or '-'}",
+        "Max priority fee per gas (wei): "
+        f"{preview.max_priority_fee_per_gas_wei or '-'}",
+        f"Maximum total fee (wei): {preview.max_total_fee_wei}",
+        f"Calldata bytes: {preview.calldata_bytes}",
+        f"Calldata SHA-256: {preview.calldata_sha256}",
+        f"Calldata: {preview.calldata_hex or '-'}",
+        f"Preparation digest: {preview.preparation_digest}",
+        f"Opaque calldata: {'yes' if preview.opaque_calldata else 'no'}",
+    ]
+    if preview.call is not None:
+        lines.extend(
+            [
+                f"Function: {preview.call.function_signature}",
+                "Arguments: "
+                + json.dumps(
+                    preview.call.function_args,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ),
+            ]
+        )
+    return lines
 
 
 def canonical_blockchain_send_args(args: Mapping[str, Any]) -> dict[str, Any]:
@@ -159,6 +226,18 @@ def build_blockchain_send_confirmation_preview(
     return preview
 
 
+def build_policy_confirmation_preview(
+    args: dict[str, Any],
+    *,
+    subject_id: str,
+    session_id: str,
+    tool_resources: Mapping[str, Any],
+) -> dict[str, Any]:
+    del subject_id, session_id, tool_resources
+    preview = build_blockchain_send_confirmation_preview(args)
+    return preview.to_confirmation_dict()
+
+
 def _call_preview(value: Any) -> BlockchainCallPreview | None:
     if value is None:
         return None
@@ -181,24 +260,26 @@ def _preview_from_mapping(
     value: Mapping[str, Any], call: BlockchainCallPreview | None
 ) -> BlockchainSendConfirmationPreview:
     return BlockchainSendConfirmationPreview(
-        schema_version=value.get("schema_version"),
-        chain_id=value.get("chain_id"),
-        from_address=value.get("from_address"),
-        to_address=value.get("to_address"),
-        value_wei=value.get("value_wei"),
-        transaction_type=value.get("transaction_type"),
-        nonce=value.get("nonce"),
-        gas_limit=value.get("gas_limit"),
+        schema_version=cast(
+            Literal["blockchain-send-preview-v1"], value["schema_version"]
+        ),
+        chain_id=cast(str, value["chain_id"]),
+        from_address=cast(str, value["from_address"]),
+        to_address=cast(str, value["to_address"]),
+        value_wei=cast(str, value["value_wei"]),
+        transaction_type=cast(str, value["transaction_type"]),
+        nonce=cast(str, value["nonce"]),
+        gas_limit=cast(str, value["gas_limit"]),
         gas_price_wei=value.get("gas_price_wei"),
         max_fee_per_gas_wei=value.get("max_fee_per_gas_wei"),
         max_priority_fee_per_gas_wei=value.get("max_priority_fee_per_gas_wei"),
-        max_total_fee_wei=value.get("max_total_fee_wei"),
-        calldata_bytes=value.get("calldata_bytes"),
-        calldata_sha256=value.get("calldata_sha256"),
+        max_total_fee_wei=cast(str, value["max_total_fee_wei"]),
+        calldata_bytes=cast(str, value["calldata_bytes"]),
+        calldata_sha256=cast(str, value["calldata_sha256"]),
         calldata_hex=value.get("calldata_hex"),
-        preparation_digest=value.get("preparation_digest"),
+        preparation_digest=cast(str, value["preparation_digest"]),
         call=call,
-        opaque_calldata=value.get("opaque_calldata"),
+        opaque_calldata=cast(bool, value["opaque_calldata"]),
     )
 
 

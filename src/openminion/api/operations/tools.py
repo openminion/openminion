@@ -7,7 +7,7 @@ from typing import Any, cast
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
-from openminion.modules.tool.exposure.service import (
+from openminion.tools.security.lab_metadata import (
     SECURITY_LAB_ALLOWED_TOOL_IDS,
     project_security_lab_metadata,
     resolve_security_lab_metadata,

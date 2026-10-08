@@ -263,8 +263,9 @@ def test_security_researcher_telemetry_is_structural_even_with_local_content(
             session_id="security-session",
             turn_id="security-turn",
             event_type="brain.execution_status",
-            agent_id="security-researcher-readonly",
+            agent_id="profile-with-structural-results",
             data={
+                "structural_only": True,
                 "goal": "private target and source",
                 "title": "audit /private/customer/repo",
                 "artifact_refs": [

@@ -162,6 +162,41 @@ def test_collect_execution_tool_schemas_uses_session_exposure() -> None:
     assert [schema["name"] for schema in exposed] == ["security.scan_code"]
 
 
+def test_collect_execution_tool_schemas_hides_inactive_dynamic_tools() -> None:
+    exposure = ToolExposureService(
+        (
+            ToolExposureProfile(
+                profile_id="fixture_dynamic",
+                title="Fixture dynamic tool",
+                summary="One opt-in dynamic tool.",
+                tool_names=frozenset({"mcp.fixture.inspect"}),
+            ),
+        )
+    )
+    dynamic_tool = SimpleNamespace(
+        name="mcp.fixture.inspect",
+        description="Inspect the fixture.",
+        parameters_schema={"type": "object", "properties": {}},
+        prompt_visible_runtime_name=True,
+        tags=("plugin", "mcp"),
+    )
+    registry = SimpleNamespace(
+        _tools={dynamic_tool.name: dynamic_tool},
+        model_provider_specs=lambda: [],
+        exposure_service=exposure,
+    )
+
+    hidden = ToolSchemaService().collect_execution_tool_schemas(registry=registry)
+    exposure.activate("fixture_dynamic", session_id="fixture-session")
+    visible = ToolSchemaService().collect_execution_tool_schemas(
+        registry=registry,
+        metadata={"session_id": "fixture-session"},
+    )
+
+    assert hidden == []
+    assert [schema["name"] for schema in visible] == ["mcp.fixture.inspect"]
+
+
 def test_tool_stub_surfaces_optional_fields_when_no_required_args_exist() -> None:
     service = ToolSchemaService()
     stub = service.tool_stub(

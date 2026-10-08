@@ -9,7 +9,7 @@ from openminion.modules.tool import (
     build_runtime_tool_routing_metadata,
     resolve_runtime_tool_config,
 )
-from openminion.modules.tool.exposure.service import (
+from openminion.tools.security.lab_metadata import (
     project_security_lab_metadata,
     resolve_security_lab_metadata,
 )

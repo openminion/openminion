@@ -16,7 +16,10 @@ from openminion.base.config.action_policy import (
     normalize_action_policy_mode_override,
     overlay_action_policy_mode,
 )
-from openminion.modules.tool.plugin_api import is_policy_authorization_pair
+from openminion.modules.tool.plugin_api import (
+    ConfirmationPreviewError,
+    is_policy_authorization_pair,
+)
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from ..runtime.action_policy import policy_config_from_action_policy
 from ..constants import (
@@ -236,50 +239,30 @@ class PolicyCtlBrainAdapter:
             "ctx": ctx,
             "risk_override": self._risk_override_for_command(command),
         }
-        if str(getattr(command, "tool_name", "") or "") == (
-            "blockchain.send_transaction"
-        ):
-            from openminion.tools.blockchain.confirmation import (
-                BlockchainConfirmationPreviewError,
-                build_blockchain_send_confirmation_preview,
-                canonical_blockchain_send_args,
-            )
-
-            try:
-                check_kwargs["invocation"] = {
-                    **invocation,
-                    "args": canonical_blockchain_send_args(invocation["args"]),
-                }
-                check_kwargs["confirmation_preview"] = (
-                    build_blockchain_send_confirmation_preview(
-                        check_kwargs["invocation"]["args"]
-                    )
-                )
-            except BlockchainConfirmationPreviewError as exc:
-                check_kwargs["confirmation_preview_error"] = exc.reason
         tool_name = str(getattr(command, "tool_name", "") or "").strip()
         tool, method = self._tool_method(tool_name)
-        if tool_name != "blockchain.send_transaction" and is_policy_authorization_pair(
-            tool, method
-        ):
+        if is_policy_authorization_pair(tool, method):
             spec = (
                 self._tool_registry.get(tool_name)
                 if self._tool_registry is not None
                 else None
             )
             if isinstance(spec, ToolSpec) and spec.confirmation_preview is not None:
-                check_kwargs["invocation"] = {
-                    **invocation,
-                    "args": spec.canonical_args(dict(invocation["args"]))
-                    if spec.canonical_args is not None
-                    else dict(invocation["args"]),
-                }
-                check_kwargs["confirmation_preview"] = spec.confirmation_preview(
-                    dict(check_kwargs["invocation"]["args"]),
-                    subject_id=str(ctx.get("subject_id", "") or ""),
-                    session_id=str(ctx.get("session_id", "") or ""),
-                    tool_resources=self._tool_resources,
-                )
+                try:
+                    check_kwargs["invocation"] = {
+                        **invocation,
+                        "args": spec.canonical_args(dict(invocation["args"]))
+                        if spec.canonical_args is not None
+                        else dict(invocation["args"]),
+                    }
+                    check_kwargs["confirmation_preview"] = spec.confirmation_preview(
+                        dict(check_kwargs["invocation"]["args"]),
+                        subject_id=str(ctx.get("subject_id", "") or ""),
+                        session_id=str(ctx.get("session_id", "") or ""),
+                        tool_resources=self._tool_resources,
+                    )
+                except ConfirmationPreviewError as exc:
+                    check_kwargs["confirmation_preview_error"] = exc.reason
         if config_overrides is not None:
             check_kwargs["config_overrides"] = config_overrides
         return self._ctl.check(**check_kwargs)

@@ -12,13 +12,14 @@ from openminion.modules.storage.runtime.module_store import (
     BaseModuleStore,
 )
 from openminion.modules.storage.record_store import RecordStore
-from openminion.modules.tool.plugin_api import (
-    BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
-    POLICY_AUTHORIZATION_DESCRIPTORS,
-)
+from openminion.modules.tool.plugin_api import POLICY_AUTHORIZATION_DESCRIPTORS
 from .base import PolicyStore
 from .migrations import list_migrations
-from ..constants import EXACT_CONFIRMATION_PAIRS, POLICY_DURATION_ONCE
+from ..constants import (
+    BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
+    EXACT_CONFIRMATION_PAIRS,
+    POLICY_DURATION_ONCE,
+)
 from ..models import (
     PendingPolicyConfirmation,
     PolicyControlError,

@@ -205,10 +205,12 @@ def test_exact_send_creates_reusable_server_owned_pending_confirmation(
 
         assert first.decision == "REQUIRE_CONFIRM"
         assert first.approval_id == second.approval_id
+        stored_preview = dict(first.confirmation_preview or {})
+        stored_preview.pop("display_lines", None)
         assert first.confirm_request == {
             "approval_id": first.approval_id,
             "choices": ["allow_once", "deny"],
-            "preview": first.confirmation_preview.__dict__,
+            "preview": stored_preview,
         }
         assert first.invocation_hash == stable_invocation_hash(
             tool="blockchain",

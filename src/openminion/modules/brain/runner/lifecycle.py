@@ -343,4 +343,5 @@ def _event_logger(runner: "BrainRunner", session_id: str) -> CanonicalEventLogge
         session_id=session_id,
         agent_id=runner.profile.agent_id,
         llm_api=runner.llm_api,
+        structural_tool_results=runner.profile.structural_tool_results,
     )

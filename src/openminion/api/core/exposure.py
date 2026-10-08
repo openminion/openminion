@@ -11,7 +11,7 @@ from openminion.modules.tool import (
     evaluate_tool_dependencies,
 )
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.exposure.service import (
+from openminion.tools.security.lab_metadata import (
     SECURITY_LAB_ALLOWED_TOOL_IDS,
     resolve_security_lab_metadata,
     security_lab_scope_fingerprint,

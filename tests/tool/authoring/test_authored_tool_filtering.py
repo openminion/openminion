@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from openminion.modules.tool import ToolRegistry
+from openminion.modules.tool.exposure import ToolExposureProfile
 from openminion.modules.tool.registry import ToolSpec
 from openminion.modules.tool.schema_service import ToolSchemaService
 
@@ -36,8 +37,22 @@ def test_prompt_schemas_exclude_experimental_authored_tools_by_default(
     )
     experimental.description = "experimental tool"
     registry.add(experimental)
+    registry.exposure_service.register_profiles(
+        (
+            ToolExposureProfile(
+                profile_id="authored_test",
+                title="Authored test",
+                summary="Test authored tool exposure.",
+                tool_names=frozenset({"authored.safe@v1", "authored.experimental@v1"}),
+            ),
+        )
+    )
+    registry.exposure_service.activate("authored_test", session_id="authoring")
 
-    schemas = ToolSchemaService().collect_execution_tool_schemas(registry=registry)
+    schemas = ToolSchemaService().collect_execution_tool_schemas(
+        registry=registry,
+        metadata={"session_id": "authoring"},
+    )
     names = {item["name"] for item in schemas}
     assert "authored.safe@v1" in names
     assert "authored.experimental@v1" not in names
@@ -58,7 +73,21 @@ def test_prompt_schemas_include_experimental_authored_tools_when_enabled(
     )
     experimental.description = "experimental tool"
     registry.add(experimental)
+    registry.exposure_service.register_profiles(
+        (
+            ToolExposureProfile(
+                profile_id="authored_test",
+                title="Authored test",
+                summary="Test authored tool exposure.",
+                tool_names=frozenset({"authored.experimental@v1"}),
+            ),
+        )
+    )
+    registry.exposure_service.activate("authored_test", session_id="authoring")
 
-    schemas = ToolSchemaService().collect_execution_tool_schemas(registry=registry)
+    schemas = ToolSchemaService().collect_execution_tool_schemas(
+        registry=registry,
+        metadata={"session_id": "authoring"},
+    )
     names = {item["name"] for item in schemas}
     assert "authored.experimental@v1" in names

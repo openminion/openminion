@@ -69,7 +69,10 @@ def test_run_until_idle_re_dispatches_continue_status() -> None:
             _step_output(status="done", ticks=2),
         ],
         options=SimpleNamespace(plan_max_iterations=4),
-        profile=SimpleNamespace(agent_id="router-agent"),
+        profile=SimpleNamespace(
+            agent_id="router-agent",
+            structural_tool_results=False,
+        ),
         session_api=MagicMock(),
         llm_api=MagicMock(),
     )
@@ -112,7 +115,10 @@ def test_run_until_idle_yields_current_trace_to_plan_continuation() -> None:
             _step_output(status="done", ticks=2),
         ],
         options=SimpleNamespace(plan_max_iterations=4),
-        profile=SimpleNamespace(agent_id="router-agent"),
+        profile=SimpleNamespace(
+            agent_id="router-agent",
+            structural_tool_results=False,
+        ),
         session_api=session_api,
         llm_api=MagicMock(),
     )
@@ -145,7 +151,10 @@ def test_run_until_idle_yields_current_trace_after_plan_completion() -> None:
             _step_output(status="done", ticks=2),
         ],
         options=SimpleNamespace(plan_max_iterations=4),
-        profile=SimpleNamespace(agent_id="router-agent"),
+        profile=SimpleNamespace(
+            agent_id="router-agent",
+            structural_tool_results=False,
+        ),
         session_api=session_api,
         llm_api=MagicMock(),
     )
@@ -167,7 +176,10 @@ def test_run_until_idle_budget_checks_continue_tick() -> None:
     runner = _FakeRunner(
         outputs=[_step_output(status="continue", ticks=0)],
         options=SimpleNamespace(plan_max_iterations=4),
-        profile=SimpleNamespace(agent_id="router-agent"),
+        profile=SimpleNamespace(
+            agent_id="router-agent",
+            structural_tool_results=False,
+        ),
         session_api=MagicMock(),
         llm_api=MagicMock(),
     )
@@ -197,13 +209,14 @@ def test_plan_continuation_refreshes_per_turn_budget_without_resetting_plan() ->
     state.budgets_remaining.time_ms = 0
     runner = SimpleNamespace(
         profile=SimpleNamespace(
+            structural_tool_results=False,
             budgets=SimpleNamespace(
                 max_ticks_per_user_turn=20,
                 max_tool_calls=12,
                 max_a2a_calls=4,
                 max_total_llm_tokens=50000,
                 max_elapsed_ms=480000,
-            )
+            ),
         )
     )
 

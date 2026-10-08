@@ -59,7 +59,6 @@ def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
 
     if not isinstance(value, dict):
         return {}
-
     parsed: dict[str, AgentProfileConfig] = {}
     for agent_id, agent_config in value.items():
         if not isinstance(agent_config, dict):
@@ -95,6 +94,7 @@ def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
                 else None
             ),
             command_policy=_parse_dict(agent_config.get("command_policy")),
+            structural_tool_results=_as_bool(get("structural_tool_results"), False),
             turn_usage_display=(
                 normalize_turn_usage_display(
                     get("turn_usage_display"),
