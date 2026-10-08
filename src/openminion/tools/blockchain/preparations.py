@@ -5,8 +5,9 @@ import json
 import os
 import tempfile
 from collections.abc import Mapping
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
@@ -205,6 +206,32 @@ def _claim_record(path: Path, content: bytes) -> bool:
         return True
     finally:
         temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def _record_lock(path: Path) -> Iterator[None]:
+    descriptor = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    with os.fdopen(descriptor, "r+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+
+            if not handle.read(1):
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _save_session_record(
@@ -430,11 +457,12 @@ def load_operation_record(
 
 def replace_operation_record(
     record: Mapping[str, Any],
+    expected_record: Mapping[str, Any],
     context: Any,
     *,
     validator: RecordValidator,
     digester: RecordDigester,
-) -> None:
+) -> bool:
     session_id = str(getattr(context, "session_id", "") or "")
     env = resolve_environment_config(env=getattr(context, "env", None))
     preparation_digest = str(record.get("preparation_digest", ""))
@@ -444,11 +472,6 @@ def replace_operation_record(
         session_id=session_id,
         env=env,
     )
-    if not path.is_file():
-        raise SessionRecordError(
-            "operation record is unavailable",
-            reason="unavailable",
-        )
     normalized = _validated_record(
         record,
         path_digest=preparation_digest,
@@ -457,9 +480,27 @@ def replace_operation_record(
         validator=validator,
         digester=digester,
     )
-    _replace_record(
-        path, _serialized_record(normalized, max_bytes=MAX_OPERATION_RECORD_BYTES)
+    expected = _validated_record(
+        expected_record,
+        path_digest=preparation_digest,
+        path_digest_field="preparation_digest",
+        integrity_digest_field="operation_digest",
+        validator=validator,
+        digester=digester,
     )
+    serialized = _serialized_record(normalized, max_bytes=MAX_OPERATION_RECORD_BYTES)
+    with _record_lock(path):
+        current = load_operation_record(
+            preparation_digest,
+            session_id=session_id,
+            env=env,
+            validator=validator,
+            digester=digester,
+        )
+        if current != expected:
+            return False
+        _replace_record(path, serialized)
+    return True
 
 
 def _reference_path(

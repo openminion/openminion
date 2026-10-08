@@ -109,8 +109,17 @@ def coerce_tool_family_runtime_config(
 
 
 _BLOCKCHAIN_CONFIG_KEYS = frozenset(
-    "enabled rpc_url chain_id signer_secret_key signer_secret_namespace "
-    "writes_enabled max_total_fee_wei receipt_timeout_seconds confirmation_depth".split()
+    {
+        "enabled",
+        "rpc_url",
+        "chain_id",
+        "signer_secret_key",
+        "signer_secret_namespace",
+        "writes_enabled",
+        "max_total_fee_wei",
+        "receipt_timeout_seconds",
+        "confirmation_depth",
+    }
 )
 _CANONICAL_UNSIGNED_DECIMAL_RE = re.compile(r"^(?:0|[1-9][0-9]*)$")
 

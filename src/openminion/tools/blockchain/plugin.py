@@ -12,8 +12,9 @@ from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 
 from .debug import debug_blockchain
 from .debug_schemas import DebugArgs
+from .resolved_schemas import ResolveContractArgs
 from .runtime import inspect_blockchain, prepare_transaction, send_transaction
-from .resolution import ResolveContractArgs, resolve_contract
+from .resolution import resolve_contract
 from .schemas import InspectArgs, PrepareArgs, SendPreparedTransactionArgs
 
 BLOCKCHAIN_INSPECT_DESCRIPTION = (

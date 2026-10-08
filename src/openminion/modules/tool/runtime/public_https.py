@@ -22,6 +22,7 @@ _Connector = Callable[[int, int, int, tuple[Any, ...], float], Any]
 _ConnectionFactory = Callable[
     [str, int, _AddressInfo, float], http.client.HTTPSConnection
 ]
+_RESOLUTION_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,19 +81,22 @@ class _PinnedHttpsConnection(http.client.HTTPSConnection):
 
     def connect(self) -> None:
         family, socktype, proto, _, sockaddr = self._address
+        deadline = time.monotonic() + self._pinned_timeout
         raw_socket = self._connector(
             family,
             socktype,
             proto,
             sockaddr,
-            self._pinned_timeout,
+            _remaining_seconds(deadline),
         )
         expected_peer = ipaddress.ip_address(str(sockaddr[0]))
         try:
             observed_peer = ipaddress.ip_address(str(raw_socket.getpeername()[0]))
             if observed_peer != expected_peer or is_forbidden_ip(observed_peer):
                 raise PublicHttpsError("PEER_MISMATCH")
+            raw_socket.settimeout(_remaining_seconds(deadline))
             self.sock = self._context.wrap_socket(raw_socket, server_hostname=self.host)
+            _remaining_seconds(deadline)
         except (OSError, ValueError, PublicHttpsError):
             raw_socket.close()
             raise
@@ -108,14 +112,23 @@ def _resolve_public_address(
     resolved: list[Sequence[_AddressInfo]] = []
     errors: list[OSError] = []
 
+    if not _RESOLUTION_LOCK.acquire(timeout=_remaining_seconds(deadline)):
+        raise PublicHttpsError("TIMEOUT")
+
     def resolve() -> None:
         try:
             resolved.append(resolver(host, port, type=socket.SOCK_STREAM))
         except OSError as exc:
             errors.append(exc)
+        finally:
+            _RESOLUTION_LOCK.release()
 
     thread = threading.Thread(target=resolve, daemon=True)
-    thread.start()
+    try:
+        thread.start()
+    except BaseException:
+        _RESOLUTION_LOCK.release()
+        raise
     thread.join(_remaining_seconds(deadline))
     if thread.is_alive():
         raise PublicHttpsError("TIMEOUT")

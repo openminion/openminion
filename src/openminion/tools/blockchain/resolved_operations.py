@@ -423,18 +423,37 @@ def _claim_operation_error(
 
 def _replace_submitted_operation(
     operation: Mapping[str, Any],
+    expected_operation: Mapping[str, Any],
     request: Any,
     context: Any,
     transaction: Mapping[str, Any],
     transaction_hash: str,
 ) -> dict[str, Any] | None:
     try:
-        replace_operation_record(
+        replaced = replace_operation_record(
             operation,
+            expected_operation,
             context,
             validator=validate_operation_record,
             digester=operation_digest,
         )
+        if not replaced:
+            current = load_operation_record(
+                request.preparation_digest,
+                session_id=str(getattr(context, "session_id", "") or ""),
+                env=getattr(context, "env", None),
+                validator=validate_operation_record,
+                digester=operation_digest,
+            )
+            return _send_terminal(
+                context,
+                transaction,
+                request.preparation_digest,
+                str(current["state"]),
+                {"ok": True},
+                transaction_hash=transaction_hash,
+                broadcast_attempts=1,
+            )
     except (OSError, SessionRecordError) as exc:
         reason = exc.reason if isinstance(exc, SessionRecordError) else "unavailable"
         return _send_terminal(
@@ -462,6 +481,7 @@ def _broadcast_claimed_operation(
     raw_transaction: Any,
     transaction_hash: str,
 ) -> dict[str, Any]:
+    expected_operation = dict(operation)
     try:
         submitted_hash = _hex_data(
             rpc_call(
@@ -486,7 +506,12 @@ def _broadcast_claimed_operation(
     if submitted_hash != transaction_hash:
         operation["last_error_code"] = "OPERATION_INVALID"
         storage_error = _replace_submitted_operation(
-            operation, request, context, transaction, transaction_hash
+            operation,
+            expected_operation,
+            request,
+            context,
+            transaction,
+            transaction_hash,
         )
         if storage_error is not None:
             return storage_error
@@ -505,7 +530,12 @@ def _broadcast_claimed_operation(
         )
     operation["state"] = "pending"
     storage_error = _replace_submitted_operation(
-        operation, request, context, transaction, transaction_hash
+        operation,
+        expected_operation,
+        request,
+        context,
+        transaction,
+        transaction_hash,
     )
     if storage_error is not None:
         return storage_error
@@ -607,14 +637,27 @@ def _operation_result(operation: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _persist_operation(operation: Mapping[str, Any], context: Any) -> dict[str, Any]:
+def _persist_operation(
+    operation: Mapping[str, Any],
+    expected_operation: Mapping[str, Any],
+    context: Any,
+) -> dict[str, Any]:
     try:
-        replace_operation_record(
+        replaced = replace_operation_record(
             operation,
+            expected_operation,
             context,
             validator=validate_operation_record,
             digester=operation_digest,
         )
+        if not replaced:
+            operation = load_operation_record(
+                str(operation["preparation_digest"]),
+                session_id=str(getattr(context, "session_id", "") or ""),
+                env=getattr(context, "env", None),
+                validator=validate_operation_record,
+                digester=operation_digest,
+            )
     except (OSError, SessionRecordError) as exc:
         reason = exc.reason if isinstance(exc, SessionRecordError) else "unavailable"
         return _error(
@@ -792,7 +835,9 @@ def _observe_operation_receipt(
             "Receipt transaction hash does not match the stored operation.",
         )
     receipt_number = _quantity(receipt.get("blockNumber"), "receipt:blockNumber")
-    receipt_hash = _hex_data(receipt.get("blockHash"), "receipt:blockHash")
+    receipt_hash = _hex_data(
+        receipt.get("blockHash"), "receipt:blockHash", exact_bytes=32
+    )
     receipt_status = _quantity(receipt.get("status"), "receipt:status")
     if receipt_status not in {0, 1}:
         raise ResolutionFailure(
@@ -822,14 +867,16 @@ def _observe_operation_receipt(
     }, None
 
 
-def _persist_missing_receipt(operation: dict[str, Any], context: Any) -> dict[str, Any]:
+def _persist_missing_receipt(
+    operation: dict[str, Any], expected_operation: Mapping[str, Any], context: Any
+) -> dict[str, Any]:
     if operation["receipt_block_number"] is not None:
         operation["state"] = "reorged"
         operation["last_error_code"] = None
     elif operation["state"] != "broadcast_unknown":
         operation["state"] = "pending"
         operation["last_error_code"] = None
-    return _persist_operation(operation, context)
+    return _persist_operation(operation, expected_operation, context)
 
 
 def _receipt_is_reorged(
@@ -882,6 +929,7 @@ def _update_confirming_operation(
 
 def _finalize_operation(
     operation: dict[str, Any],
+    expected_operation: Mapping[str, Any],
     record: Mapping[str, Any],
     pinned: Mapping[str, Any],
     context: Any,
@@ -900,7 +948,7 @@ def _finalize_operation(
         if observation_error is not None:
             operation["state"] = "confirming"
             operation["last_error_code"] = observation_error
-            return _persist_operation(operation, context)
+            return _persist_operation(operation, expected_operation, context)
         terminal_state = (
             "succeeded"
             if all(result["matched"] for result in results)
@@ -914,12 +962,12 @@ def _finalize_operation(
         operation["state"] = "confirming"
         operation["last_error_code"] = "STALE_BLOCK"
         operation["postcondition_results"] = []
-        return _persist_operation(operation, context)
+        return _persist_operation(operation, expected_operation, context)
     operation["state"] = terminal_state
     operation["last_error_code"] = (
         "POSTCONDITION_FAILED" if terminal_state == "postcondition_failed" else None
     )
-    return _persist_operation(operation, context)
+    return _persist_operation(operation, expected_operation, context)
 
 
 def operation_status(preparation_digest_value: str, context: Any) -> dict[str, Any]:
@@ -936,6 +984,7 @@ def operation_status(preparation_digest_value: str, context: Any) -> dict[str, A
         "postcondition_failed",
     }:
         return _operation_result(operation)
+    expected_operation = dict(operation)
     head_number = int(pinned["block_number"])
     try:
         observation, error = _observe_operation_receipt(operation, record)
@@ -944,15 +993,15 @@ def operation_status(preparation_digest_value: str, context: Any) -> dict[str, A
     if error is not None:
         return error
     if observation is None:
-        return _persist_missing_receipt(operation, context)
+        return _persist_missing_receipt(operation, expected_operation, context)
     if _receipt_is_reorged(operation, observation, head_number):
         operation["state"] = "reorged"
         operation["last_error_code"] = None
-        return _persist_operation(operation, context)
+        return _persist_operation(operation, expected_operation, context)
     try:
         _update_confirming_operation(operation, observation, head_number)
     except ResolutionFailure as exc:
         return resolution_error_result(exc)
     if operation["confirmations"] < int(operation["confirmation_depth"]):
-        return _persist_operation(operation, context)
-    return _finalize_operation(operation, record, pinned, context)
+        return _persist_operation(operation, expected_operation, context)
+    return _finalize_operation(operation, expected_operation, record, pinned, context)

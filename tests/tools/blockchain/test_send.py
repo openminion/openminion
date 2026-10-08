@@ -59,9 +59,11 @@ def test_operation_result_bound_and_preterminal_reorg(monkeypatch) -> None:
     monkeypatch.setattr(
         resolved_operations,
         "_persist_operation",
-        lambda value, _context: dict(value),
+        lambda value, _expected, _context: dict(value),
     )
-    result = resolved_operations._persist_missing_receipt(operation, object())
+    result = resolved_operations._persist_missing_receipt(
+        operation, dict(operation), object()
+    )
     assert result["state"] == "reorged"
 
 
@@ -104,6 +106,30 @@ def test_operation_receipt_requires_matching_transaction_hash(monkeypatch) -> No
     )
 
     assert error["error"]["code"] == "OPERATION_INVALID"
+
+
+def test_operation_receipt_requires_full_block_hash(monkeypatch) -> None:
+    from openminion.tools.blockchain import resolved_operations
+
+    transaction_hash = "0x" + "4" * 64
+    monkeypatch.setattr(
+        resolved_operations,
+        "rpc_call",
+        lambda *_args, **_kwargs: {
+            "transactionHash": transaction_hash,
+            "blockNumber": "0xa",
+            "blockHash": "0x55",
+            "status": "0x1",
+        },
+    )
+
+    with pytest.raises(ResolutionFailure) as excinfo:
+        resolved_operations._observe_operation_receipt(
+            {"transaction_hash": transaction_hash},
+            {},
+        )
+
+    assert excinfo.value.code == "RPC_UNAVAILABLE"
 
 
 class _SecretService:

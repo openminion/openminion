@@ -219,6 +219,31 @@ def test_public_https_total_timeout_includes_resolution() -> None:
     assert excinfo.value.code == "TIMEOUT"
 
 
+def test_public_https_contains_timed_out_resolution_work() -> None:
+    release = threading.Event()
+    calls = 0
+
+    def resolver(*args, **kwargs):
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        release.wait(1)
+        return [_answer("93.184.216.34")]
+
+    try:
+        for _ in range(2):
+            with pytest.raises(PublicHttpsError, match="TIMEOUT"):
+                request_public_https(
+                    "https://example.com",
+                    timeout=0.01,
+                    resolver=resolver,
+                )
+    finally:
+        release.set()
+
+    assert calls == 1
+
+
 def test_public_https_returns_redirect_without_following_it() -> None:
     connection = _Connection(
         _Response(status=302, headers=[("Location", "https://other.example/path")])
@@ -309,9 +334,13 @@ class _RawSocket:
     def __init__(self, peer: str) -> None:
         self.peer = peer
         self.closed = False
+        self.timeout = 0.0
 
     def getpeername(self) -> tuple[str, int]:
         return self.peer, 443
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
 
     def close(self) -> None:
         self.closed = True
@@ -342,6 +371,30 @@ def test_pinned_connection_verifies_peer_then_preserves_tls_hostname() -> None:
 
     assert context.server_hostname == "example.com"
     assert connection.sock.raw_socket is raw_socket
+
+
+def test_pinned_connection_reduces_tls_timeout_after_connect(monkeypatch) -> None:
+    clock = _Clock()
+    raw_socket = _RawSocket("93.184.216.34")
+    context = _TlsContext()
+
+    def connect(*_args):
+        clock.now += 6.0
+        return raw_socket
+
+    monkeypatch.setattr(public_https.time, "monotonic", clock)
+    connection = _PinnedHttpsConnection(
+        "example.com",
+        443,
+        _answer("93.184.216.34"),
+        10.0,
+        connector=connect,
+    )
+    connection._context = context
+
+    connection.connect()
+
+    assert raw_socket.timeout == 4.0
 
 
 @pytest.mark.parametrize("peer", ["127.0.0.1", "93.184.216.35"])

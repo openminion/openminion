@@ -431,6 +431,7 @@ def test_operation_record_replaces_mutable_state_atomically(tmp_path) -> None:
 
     replace_operation_record(
         pending,
+        record,
         context,
         validator=_validate_record,
         digester=_record_digester,
@@ -446,3 +447,41 @@ def test_operation_record_replaces_mutable_state_atomically(tmp_path) -> None:
         )["state"]
         == "pending"
     )
+
+
+def test_operation_record_rejects_stale_replacement(tmp_path) -> None:
+    env = _env(tmp_path)
+    context = SimpleNamespace(session_id="session-a", env=env)
+    record = _operation_record()
+    assert claim_operation_record(
+        record,
+        context,
+        validator=_validate_record,
+        digester=_record_digester,
+    )
+    succeeded = {**record, "state": "succeeded"}
+    stale_pending = {**record, "state": "pending"}
+
+    assert replace_operation_record(
+        succeeded,
+        record,
+        context,
+        validator=_validate_record,
+        digester=_record_digester,
+    )
+    assert not replace_operation_record(
+        stale_pending,
+        record,
+        context,
+        validator=_validate_record,
+        digester=_record_digester,
+    )
+
+    stored = load_operation_record(
+        record["preparation_digest"],
+        session_id="session-a",
+        env=env,
+        validator=_validate_record,
+        digester=_record_digester,
+    )
+    assert stored["state"] == "succeeded"

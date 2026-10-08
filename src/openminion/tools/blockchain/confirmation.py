@@ -15,11 +15,11 @@ from openminion.modules.tool.plugin_api import (
     ResolvedBlockchainSendConfirmationPreview,
 )
 
-from .runtime import preparation_digest
 from .abi import abi_signature, encode_function_call, normalize_abi_values
 from .transaction_schemas import (
     RESOLVED_PREPARATION_ADAPTER,
     SEND_REQUEST_ADAPTER,
+    preparation_digest,
     resolved_preparation_digest,
 )
 

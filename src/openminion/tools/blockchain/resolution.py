@@ -10,7 +10,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from web3 import Web3
 
 from openminion.base.version import OPENMINION_VERSION
-from openminion.modules.tool import (
+from openminion.modules.tool.runtime.public_https import (
     DEFAULT_TIMEOUT_SECONDS,
     PublicHttpsError,
     PublicHttpsResponse,
