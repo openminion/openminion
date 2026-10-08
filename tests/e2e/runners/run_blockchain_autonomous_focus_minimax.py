@@ -26,7 +26,8 @@ PROMPT = (
     "deployment and interface against current on-chain state, and read one current "
     "protocol value directly from the contract. Discover the network, RPC, contract "
     "address, ABI, function, and arguments yourself. Do not report a value from "
-    "articles, search snippets, or explorer pages alone."
+    "articles, search snippets, or explorer pages alone. If a candidate endpoint "
+    "fails verification, research a different public candidate and verify it."
 )
 
 
