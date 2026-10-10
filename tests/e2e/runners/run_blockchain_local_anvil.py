@@ -315,7 +315,9 @@ def _run(runtime_generated_root: Path) -> int:
             if line
         ]
         allowed_audits = [
-            record for record in audits if record["invocation_id"] == "allowed-invocation"
+            record
+            for record in audits
+            if record["invocation_id"] == "allowed-invocation"
         ]
         stale_audits = [
             record for record in audits if record["invocation_id"] == "stale-invocation"
