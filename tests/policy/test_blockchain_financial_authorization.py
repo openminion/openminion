@@ -268,6 +268,10 @@ def test_deny_resolution_is_idempotent_and_opposite_action_fails(
         with pytest.raises(PolicyControlError) as captured:
             ctl.resolve_confirmation(pending.approval_id or "", "allow_once")
         assert captured.value.code == "PENDING_CONFIRMATION_ALREADY_RESOLVED"
+
+        retried = _check(ctl)
+        assert retried.decision == "REQUIRE_CONFIRM"
+        assert retried.approval_id != pending.approval_id
     finally:
         ctl.close()
 

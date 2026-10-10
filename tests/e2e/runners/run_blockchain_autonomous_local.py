@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
+from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -21,12 +24,12 @@ sys.path.insert(0, str(ROOT))
 
 from tests.helpers.live_e2e_profiles import resolve_live_framework_root  # noqa: E402
 from tests.helpers.runtime_roots import (  # noqa: E402
+    RUNTIME_ROOT_ENV_VARS,
     configure_runtime_roots,
     isolate_runtime_roots,
 )
 
 FRAMEWORK_ROOT = resolve_live_framework_root(ROOT)
-RUNTIME_ROOT = isolate_runtime_roots(prefix="openminion-abo-local-")
 EVIDENCE_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "abo-e2e" / "local"
 FIXTURE = ROOT / "tests" / "e2e" / "fixtures" / "blockchain" / "reference_swap.json"
 PUBLIC_RPC_URL = "https://rpc.fixture.test/"
@@ -40,48 +43,81 @@ PROMPT = (
 )
 _SHA256_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
-from openminion.base.config.runtime.tools import (  # noqa: E402
-    BlockchainToolRuntimeConfig,
-    ToolRuntimeConfig,
-)
-from openminion.modules.brain.adapters.tool.runtime import ToolAdapter  # noqa: E402
-from openminion.modules.brain.execution.validation import (  # noqa: E402
-    normalize_execution_result,
-)
-from openminion.modules.brain.runner.delegates import _approve_delegate  # noqa: E402
-from openminion.modules.brain.bootstrap.resolve import (  # noqa: E402
-    apply_resolved_act_route,
-    build_internal_dispatch,
-    resolve_working_act_route,
-)
-from openminion.modules.brain.execution.loop_contracts import (  # noqa: E402
-    ExecutionContext,
-)
-from openminion.modules.brain.schemas import (  # noqa: E402
-    ActionResult,
-    ActDecision,
-    BudgetCounters,
-    WorkingState,
-)
-from openminion.modules.brain.schemas.commands import ToolCommand  # noqa: E402
-from openminion.modules.brain.schemas.closure import ClosureJudgment  # noqa: E402
-from openminion.modules.brain.tools.executor import RunnerCommandExecutor  # noqa: E402
-from openminion.modules.llm.schemas import LLMResponse, ToolCall  # noqa: E402
-from openminion.modules.policy.adapters.brain import PolicyCtlBrainAdapter  # noqa: E402
-from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
-from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
-from openminion.modules.tool.registry import ToolRegistry, ToolSpec  # noqa: E402
-from openminion.modules.tool.runtime.policy import DEFAULT_POLICY, Policy  # noqa: E402
-from openminion.tools.blockchain.public_https import (  # noqa: E402
-    PublicHttpsResponse,
-)
-from openminion.tools.blockchain.resolution import (  # noqa: E402
-    resolve_contract,
-)
-from openminion.tools.blockchain import resolution as resolution_runtime  # noqa: E402
-from openminion.tools.blockchain import resolved_operations  # noqa: E402
-from openminion.tools.blockchain import resolved_calls  # noqa: E402
-from openminion.tools.blockchain import plugin as blockchain_plugin  # noqa: E402
+
+@contextmanager
+def _private_runtime_root() -> Iterator[Path]:
+    previous = {name: os.environ.get(name) for name in RUNTIME_ROOT_ENV_VARS}
+    generated_root = isolate_runtime_roots(prefix="openminion-abo-local-")
+    try:
+        yield generated_root
+    finally:
+        try:
+            shutil.rmtree(generated_root.parents[1])
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
+with _private_runtime_root():
+    from openminion.base.config.runtime.tools import (  # noqa: E402
+        BlockchainToolRuntimeConfig,
+        ToolRuntimeConfig,
+    )
+    from openminion.modules.brain.adapters.tool.runtime import ToolAdapter  # noqa: E402
+    from openminion.modules.brain.execution.validation import (  # noqa: E402
+        normalize_execution_result,
+    )
+    from openminion.modules.brain.runner.delegates import _approve_delegate  # noqa: E402
+    from openminion.modules.brain.bootstrap.resolve import (  # noqa: E402
+        apply_resolved_act_route,
+        build_internal_dispatch,
+        resolve_working_act_route,
+    )
+    from openminion.modules.brain.execution.loop_contracts import (  # noqa: E402
+        ExecutionContext,
+    )
+    from openminion.modules.brain.schemas import (  # noqa: E402
+        ActionResult,
+        ActDecision,
+        BudgetCounters,
+        WorkingState,
+    )
+    from openminion.modules.brain.schemas.commands import ToolCommand  # noqa: E402
+    from openminion.modules.brain.schemas.closure import ClosureJudgment  # noqa: E402
+    from openminion.modules.brain.tools.executor import RunnerCommandExecutor  # noqa: E402
+    from openminion.modules.llm.schemas import LLMResponse, ToolCall  # noqa: E402
+    from openminion.modules.policy.adapters.brain import (  # noqa: E402
+        PolicyCtlBrainAdapter,
+    )
+    from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
+    from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
+    from openminion.modules.tool.registry import ToolRegistry, ToolSpec  # noqa: E402
+    from openminion.modules.tool.bootstrap import (  # noqa: E402
+        wire_default_tool_registry_manager,
+    )
+    from openminion.modules.tool.runtime.dispatch import (  # noqa: E402
+        get_registry,
+        get_registry_manager,
+        set_registry,
+        set_registry_manager,
+    )
+    from openminion.modules.tool.runtime.policy import (  # noqa: E402
+        DEFAULT_POLICY,
+        Policy,
+    )
+    from openminion.tools.blockchain.public_https import (  # noqa: E402
+        PublicHttpsResponse,
+    )
+    from openminion.tools.blockchain.resolution import (  # noqa: E402
+        resolve_contract,
+    )
+    from openminion.tools.blockchain import resolution as resolution_runtime  # noqa: E402
+    from openminion.tools.blockchain import resolved_operations  # noqa: E402
+    from openminion.tools.blockchain import resolved_calls  # noqa: E402
+    from openminion.tools.blockchain import plugin as blockchain_plugin  # noqa: E402
 
 
 class _FixtureArgs(BaseModel):
@@ -553,18 +589,24 @@ def _production_execution(
     )
 
 
-def _run() -> dict[str, Any]:
-    configure_runtime_roots(RUNTIME_ROOT.parents[1])
+def _run_in_runtime(runtime_root: Path) -> dict[str, Any]:
     anvil = shutil.which("anvil")
     if not anvil:
         raise RuntimeError("anvil is required for blockchain autonomous local E2E")
+    configure_runtime_roots(runtime_root.parents[1])
+    if EVIDENCE_ROOT.exists():
+        shutil.rmtree(EVIDENCE_ROOT)
+    EVIDENCE_ROOT.mkdir(parents=True)
     port = _free_port()
     process = subprocess.Popen(
         [anvil, "--port", str(port), "--chain-id", "31337", "--silent"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    previous_manager = get_registry_manager()
+    previous_registry = get_registry()
     try:
+        wire_default_tool_registry_manager()
         web3 = Web3(Web3.HTTPProvider(f"http://127.0.0.1:{port}"))
         _wait_for_anvil(web3, process)
         artifact = json.loads(FIXTURE.read_text(encoding="utf-8"))
@@ -587,8 +629,8 @@ def _run() -> dict[str, Any]:
         }
         transport = _AnvilHttpsFixture(web3, address, artifact["abi"])
 
-        RUNTIME_ROOT.parent.mkdir(parents=True, exist_ok=True)
-        data_root = RUNTIME_ROOT.parent
+        runtime_root.parent.mkdir(parents=True, exist_ok=True)
+        data_root = runtime_root.parent
         session_id = "abo-local-autonomous"
         session_records = data_root / "blockchain" / "sessions"
         records_before = list(session_records.rglob("*.json"))
@@ -925,6 +967,8 @@ def _run() -> dict[str, Any]:
             "source_commit": subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
             ).strip(),
+            "scenario_id": "autonomous-local-anvil",
+            "terminal_result": "completed",
             "session_id": session_id,
             "prompt": PROMPT,
             "hidden_context": {},
@@ -1004,15 +1048,23 @@ def _run() -> dict[str, Any]:
         }
         denied.close()
         executor.close()
-        EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
         (EVIDENCE_ROOT / "evidence.json").write_text(
             json.dumps(evidence, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         return evidence
     finally:
-        process.terminate()
-        process.wait(timeout=10)
+        try:
+            process.terminate()
+            process.wait(timeout=10)
+        finally:
+            set_registry_manager(previous_manager)
+            set_registry(previous_registry)
+
+
+def _run() -> dict[str, Any]:
+    with _private_runtime_root() as runtime_root:
+        return _run_in_runtime(runtime_root)
 
 
 def main() -> int:

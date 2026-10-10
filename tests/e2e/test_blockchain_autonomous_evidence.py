@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+import os
 import re
+import subprocess
 
 import pytest
 
 from tests.e2e.runners import (
     run_blockchain_autonomous_focus_minimax as focus_runner,
 )
+from tests.e2e.runners import run_blockchain_autonomous_local as autonomous_runner
+from tests.e2e.runners import run_blockchain_debug_local_anvil as debug_runner
+from tests.e2e.runners import run_blockchain_local_anvil as configured_runner
 from tests.e2e.runners import run_blockchain_public_read as public_read_runner
 from tests.e2e.runners import run_blockchain_testnet_write as testnet_runner
 from tests.e2e.runners.run_blockchain_autonomous_local import PROMPT, _run
@@ -57,6 +63,10 @@ def validate_blockchain_autonomous_evidence(payload: object) -> None:
         _fail("blockchain evidence schema is missing")
     if not _HEX_COMMIT.fullmatch(str(payload.get("source_commit", ""))):
         _fail("source commit is missing")
+    if payload.get("scenario_id") != "autonomous-local-anvil":
+        _fail("blockchain evidence scenario is missing")
+    if payload.get("terminal_result") != "completed":
+        _fail("blockchain evidence terminal result is missing")
     if payload.get("prompt") != PROMPT or payload.get("hidden_context") != {}:
         _fail("the no-hints task boundary changed")
     route = payload.get("route")
@@ -293,6 +303,8 @@ def test_validator_rejects_denied_broadcast(evidence) -> None:
 
 def test_focus_validator_requires_persisted_tool_evidence() -> None:
     payload = {
+        "schema_version": "blockchain-autonomous-focus-evidence-v2",
+        "scenario_id": "autonomous-public-discovery",
         "protocol": "general_loop_focus_cli",
         "source_commit": "a" * 40,
         "persisted_event_count": 4,
@@ -309,7 +321,15 @@ def test_focus_validator_requires_persisted_tool_evidence() -> None:
                 "raw_return_digest": "sha256:" + "2" * 64,
             }
         ],
-        "transcript": "Verified contract at a confirmed block.",
+        "response_sha256": "3" * 64,
+        "response_bytes": 40,
+        "permission_mode": "readonly",
+        "allow_unsandboxed_exec": False,
+        "approval_prompt_count": 0,
+        "broadcast_count": 0,
+        "elapsed_seconds": 10.0,
+        "max_duration_seconds": 30,
+        "terminal_result": "completed",
     }
     focus_runner.validate_evidence(payload)
     payload["requested_tools"] = ["web.search"]
@@ -319,6 +339,8 @@ def test_focus_validator_requires_persisted_tool_evidence() -> None:
 
 def test_focus_validator_rejects_unjoined_successful_read() -> None:
     payload = {
+        "schema_version": "blockchain-autonomous-focus-evidence-v2",
+        "scenario_id": "autonomous-public-discovery",
         "protocol": "general_loop_focus_cli",
         "source_commit": "a" * 40,
         "persisted_event_count": 4,
@@ -335,7 +357,15 @@ def test_focus_validator_rejects_unjoined_successful_read() -> None:
                 "raw_return_digest": "sha256:" + "3" * 64,
             }
         ],
-        "transcript": "Verified contract at a confirmed block.",
+        "response_sha256": "3" * 64,
+        "response_bytes": 40,
+        "permission_mode": "readonly",
+        "allow_unsandboxed_exec": False,
+        "approval_prompt_count": 0,
+        "broadcast_count": 0,
+        "elapsed_seconds": 10.0,
+        "max_duration_seconds": 30,
+        "terminal_result": "completed",
     }
     with pytest.raises(ValueError, match="does not join"):
         focus_runner.validate_evidence(payload)
@@ -344,16 +374,242 @@ def test_focus_validator_rejects_unjoined_successful_read() -> None:
 def test_public_read_validator_joins_resolution_and_read() -> None:
     digest = "sha256:" + "1" * 64
     payload = {
+        "schema_version": "blockchain-autonomous-public-read-evidence-v2",
+        "scenario_id": "approved-public-contract-read",
         "protocol": "direct_runtime_protocol",
         "source_commit": "a" * 40,
         "write_attempts": 0,
         "resolution": {"ok": True, "data": {"resolution_digest": digest}},
         "read": {"ok": True, "data": {"resolution_digest": digest}},
+        "broadcast_count": 0,
+        "elapsed_seconds": 2.0,
+        "max_duration_seconds": 30,
+        "terminal_result": "completed",
     }
     public_read_runner.validate_evidence(payload)
     payload["read"]["data"]["resolution_digest"] = "sha256:" + "2" * 64
     with pytest.raises(ValueError, match="does not join"):
         public_read_runner.validate_evidence(payload)
+
+
+def test_live_validators_reject_stale_approval_inputs() -> None:
+    focus = {
+        "schema_version": "blockchain-autonomous-focus-evidence-v2",
+        "scenario_id": "autonomous-public-discovery",
+        "protocol": "general_loop_focus_cli",
+        "source_commit": "a" * 40,
+        "persisted_event_count": 1,
+        "requested_tools": [
+            "web.search",
+            "blockchain.resolve_contract",
+            "blockchain.inspect",
+        ],
+        "successful_resolution_digests": ["sha256:" + "1" * 64],
+        "successful_resolved_reads": [
+            {
+                "resolution_digest": "sha256:" + "1" * 64,
+                "block_number": "1",
+                "raw_return_digest": "sha256:" + "2" * 64,
+            }
+        ],
+        "response_sha256": "3" * 64,
+        "response_bytes": 40,
+        "permission_mode": "readonly",
+        "allow_unsandboxed_exec": False,
+        "approval_prompt_count": 0,
+        "broadcast_count": 0,
+        "elapsed_seconds": 1.0,
+        "max_duration_seconds": 30,
+        "terminal_result": "completed",
+    }
+    with pytest.raises(ValueError, match="source_commit does not match"):
+        focus_runner.validate_evidence(focus, {"source_commit": "b" * 40})
+
+
+def test_focus_retained_evidence_scan_rejects_secret(tmp_path) -> None:
+    sentinel = b"fake-sentinel-provider-key"
+    (tmp_path / "evidence.json").write_bytes(b'{"value":"' + sentinel + b'"}')
+    with pytest.raises(RuntimeError, match="credential material"):
+        focus_runner._assert_retained_evidence_safe(tmp_path, {sentinel})
+
+
+def test_focus_private_runtime_root_is_removed_after_success(
+    tmp_path, monkeypatch
+) -> None:
+    home_root = tmp_path / "home"
+    generated_root = home_root / ".openminion" / "runtime"
+    generated_root.mkdir(parents=True)
+    monkeypatch.setattr(
+        focus_runner,
+        "isolate_runtime_roots",
+        lambda **_kwargs: generated_root,
+    )
+
+    with focus_runner._private_runtime_root() as data_root:
+        assert data_root == home_root / ".openminion"
+        assert home_root.exists()
+
+    assert not home_root.exists()
+
+
+def test_focus_private_runtime_root_is_removed_after_failure(
+    tmp_path, monkeypatch
+) -> None:
+    home_root = tmp_path / "home"
+    generated_root = home_root / ".openminion" / "runtime"
+    generated_root.mkdir(parents=True)
+    monkeypatch.setattr(
+        focus_runner,
+        "isolate_runtime_roots",
+        lambda **_kwargs: generated_root,
+    )
+
+    with pytest.raises(RuntimeError, match="scenario failed"):
+        with focus_runner._private_runtime_root():
+            raise RuntimeError("scenario failed")
+
+    assert not home_root.exists()
+
+
+@pytest.mark.parametrize(
+    ("runner", "home_path"),
+    (
+        (configured_runner, lambda runtime: runtime.parents[1]),
+        (debug_runner, lambda runtime: runtime.parent),
+        (autonomous_runner, lambda runtime: runtime.parents[1]),
+        (public_read_runner, lambda runtime: runtime.parents[1]),
+    ),
+)
+def test_blockchain_runner_runtime_root_is_removed_after_inner_failure(
+    monkeypatch, runner, home_path
+) -> None:
+    sentinels = {
+        "OPENMINION_HOME": "/caller/home",
+        "OPENMINION_DATA_ROOT": "/caller/data",
+        "OPENMINION_GENERATED_ROOT": "/caller/generated",
+    }
+    for name, value in sentinels.items():
+        monkeypatch.setenv(name, value)
+    home_root = None
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        with runner._private_runtime_root() as runtime_root:
+            home_root = home_path(runtime_root)
+            assert home_root.exists()
+            raise subprocess.TimeoutExpired("anvil", 5)
+
+    assert home_root is not None
+    assert not home_root.exists()
+    assert {name: os.environ.get(name) for name in sentinels} == sentinels
+
+
+def test_focus_failure_retains_redacted_evidence_and_cleans_runtime(
+    tmp_path, monkeypatch
+) -> None:
+    sentinel = "fake-sentinel-provider-key"
+    evidence_root = tmp_path / "evidence"
+    evidence_root.mkdir()
+    home_root = tmp_path / "home"
+    generated_root = home_root / ".openminion" / "runtime"
+    generated_root.mkdir(parents=True)
+    scans: list[tuple[object, object]] = []
+    scan = focus_runner._assert_retained_evidence_safe
+
+    def record_scan(root, secrets) -> None:
+        scans.append((root, secrets))
+        scan(root, secrets)
+
+    def fail_probe(**_kwargs):
+        raise RuntimeError(sentinel)
+
+    monkeypatch.setenv(focus_runner.OPT_IN, "1")
+    monkeypatch.setattr(
+        focus_runner,
+        "_required_config",
+        lambda: (
+            tmp_path / "source.json",
+            {"runtime": {"env": {"MINIMAX_API_KEY": sentinel}}},
+        ),
+    )
+    monkeypatch.setattr(focus_runner, "_required", lambda _name: "minimax")
+    monkeypatch.setattr(focus_runner, "_source_commit", lambda: "a" * 40)
+    monkeypatch.setattr(focus_runner, "_evidence_root", lambda: evidence_root)
+    monkeypatch.setattr(
+        focus_runner,
+        "isolate_runtime_roots",
+        lambda **_kwargs: generated_root,
+    )
+    monkeypatch.setattr(
+        focus_runner,
+        "_stage_c_inputs",
+        lambda _path, _agent: {"max_duration_seconds": 30},
+    )
+    monkeypatch.setattr(focus_runner, "FocusProbe", fail_probe)
+    monkeypatch.setattr(focus_runner, "_assert_retained_evidence_safe", record_scan)
+
+    with pytest.raises(RuntimeError, match=sentinel):
+        focus_runner.main()
+
+    path = evidence_root / "evidence.json"
+    retained = json.loads(path.read_text())
+    assert retained["terminal_result"] == "failed"
+    assert retained["failure"] == {
+        "error_type": "RuntimeError",
+        "message": "Focus scenario failed; details were not retained.",
+    }
+    assert "requested_tools" not in retained
+    assert sentinel not in path.read_text()
+    assert scans == [(evidence_root, {sentinel.encode()})]
+    assert not home_root.exists()
+
+
+def test_focus_failure_evidence_keeps_observed_runtime_facts() -> None:
+    evidence = focus_runner._failure_evidence(
+        source_commit="a" * 40,
+        agent_id="minimax",
+        approved={"max_duration_seconds": 30},
+        observed={
+            "persisted_event_count": 4,
+            "persisted_event_types": ["tool.call.requested"],
+            "requested_tools": ["shell.exec"],
+            "completed_tools": [],
+            "permission_mode": "readonly",
+            "allow_unsandboxed_exec": False,
+            "approval_prompt_count": 0,
+            "broadcast_count": 0,
+            "elapsed_seconds": 2.0,
+        },
+        error=ValueError("sensitive detail"),
+    )
+
+    assert evidence["terminal_result"] == "failed"
+    assert evidence["requested_tools"] == ["shell.exec"]
+    assert evidence["persisted_event_count"] == 4
+    assert evidence["approval_prompt_count"] == 0
+    assert evidence["broadcast_count"] == 0
+    assert "sensitive detail" not in json.dumps(evidence)
+
+
+@pytest.mark.parametrize("attribute", ("SIGALRM", "setitimer"))
+def test_public_read_deadline_fails_closed_when_unavailable(
+    monkeypatch, attribute: str
+) -> None:
+    monkeypatch.delattr(public_read_runner.signal, attribute)
+
+    with pytest.raises(RuntimeError, match="deadline is unavailable"):
+        with public_read_runner._deadline(1):
+            pytest.fail("deadline context must not start")
+
+
+@pytest.mark.parametrize("attribute", ("SIGALRM", "setitimer"))
+def test_focus_deadline_fails_closed_when_unavailable(
+    monkeypatch, attribute: str
+) -> None:
+    monkeypatch.delattr(focus_runner.signal, attribute)
+
+    with pytest.raises(RuntimeError, match="deadline is unavailable"):
+        with focus_runner._deadline(1):
+            pytest.fail("deadline context must not start")
 
 
 def test_testnet_validator_joins_full_lifecycle() -> None:
@@ -421,3 +677,30 @@ def test_opt_in_runners_fail_clearly_without_required_config(
         RuntimeError, match=rf"^{config_env} is required when {opt_in}=1$"
     ):
         runner._required_config()
+
+
+def test_focus_runner_builds_private_readonly_blockchain_config(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "source.json"
+    source.write_text(
+        json.dumps(
+            {
+                "runtime": {"env": {"MINIMAX_API_KEY": "sentinel-provider-key"}},
+                "agents": {"minimax": {"provider": "openai"}},
+            }
+        )
+    )
+    monkeypatch.setenv(focus_runner.OPT_IN, "1")
+    monkeypatch.setenv(focus_runner.CONFIG_ENV, str(source))
+
+    resolved, payload = focus_runner._required_config()
+    private = focus_runner._write_private_config(payload, tmp_path / "runtime")
+    private_payload = json.loads(private.read_text())
+
+    assert resolved == source
+    assert private.stat().st_mode & 0o777 == 0o600
+    assert private_payload["runtime"]["tools"]["blockchain"] == {"enabled": True}
+    assert private_payload["runtime"]["env"]["MINIMAX_API_KEY"] == (
+        "sentinel-provider-key"
+    )

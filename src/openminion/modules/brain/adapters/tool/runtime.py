@@ -577,7 +577,7 @@ class ToolAdapter:
             tool_spec=spec,
             policy=policy_for_run,
             workspace=effective_workspace_root,
-            confirm=auto_confirm,
+            confirm=auto_confirm or requires_canonical_policy(tool_name),
             extra_adapter=self.policy_adapter,
             approval_satisfied=approval_satisfied,
         )

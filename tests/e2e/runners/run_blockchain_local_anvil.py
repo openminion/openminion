@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -16,35 +20,56 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from tests.helpers.live_e2e_profiles import resolve_live_framework_root  # noqa: E402
-from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+from tests.helpers.runtime_roots import (  # noqa: E402
+    RUNTIME_ROOT_ENV_VARS,
+    isolate_runtime_roots,
+)
 
 FRAMEWORK_ROOT = resolve_live_framework_root(ROOT)
-RUNTIME_GENERATED_ROOT = isolate_runtime_roots(prefix="openminion-bttl-local-")
 
-from openminion.base.config.runtime.tools import (  # noqa: E402
-    BlockchainToolRuntimeConfig,
-    ToolRuntimeConfig,
-)
-from openminion.base.config.env import resolve_environment_config  # noqa: E402
-from openminion.modules.brain.adapters.tool.runtime import ToolAdapter  # noqa: E402
-from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
-from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
-from openminion.modules.secret.service import SecretService  # noqa: E402
-from openminion.modules.tool.bootstrap import build_runtime_bootstrap  # noqa: E402
-from openminion.modules.tool.runtime.policy import (  # noqa: E402
-    DEFAULT_POLICY,
-    Policy,
-)
-from openminion.tools.blockchain.runtime import (  # noqa: E402
-    inspect_blockchain,
-    prepare_transaction,
-)
-from openminion.tools.blockchain.confirmation import (  # noqa: E402
-    build_blockchain_send_confirmation_preview,
-)
+
+@contextmanager
+def _private_runtime_root() -> Iterator[Path]:
+    previous = {name: os.environ.get(name) for name in RUNTIME_ROOT_ENV_VARS}
+    generated_root = isolate_runtime_roots(prefix="openminion-bttl-local-")
+    try:
+        yield generated_root
+    finally:
+        try:
+            shutil.rmtree(generated_root.parents[1])
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
+with _private_runtime_root():
+    from openminion.base.config.runtime.tools import (  # noqa: E402
+        BlockchainToolRuntimeConfig,
+        ToolRuntimeConfig,
+    )
+    from openminion.base.config.env import resolve_environment_config  # noqa: E402
+    from openminion.modules.brain.adapters.tool.runtime import ToolAdapter  # noqa: E402
+    from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
+    from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
+    from openminion.modules.secret.service import SecretService  # noqa: E402
+    from openminion.modules.tool.bootstrap import build_runtime_bootstrap  # noqa: E402
+    from openminion.modules.tool.runtime.policy import (  # noqa: E402
+        DEFAULT_POLICY,
+        Policy,
+    )
+    from openminion.tools.blockchain.confirmation import (  # noqa: E402
+        build_blockchain_send_confirmation_preview,
+    )
+    from openminion.tools.blockchain.runtime import (  # noqa: E402
+        inspect_blockchain,
+        prepare_transaction,
+    )
 
 ARTIFACT_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "bttl-e2e" / "local"
-RPC_URL = "http://127.0.0.1:18547"
+RPC_URL = ""
 CHAIN_ID = 31337
 PRIVATE_KEY = "0x" + "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 SENDER = Web3.to_checksum_address("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266")
@@ -58,6 +83,12 @@ def _wait_rpc(web3: Web3) -> None:
             return
         time.sleep(0.1)
     raise RuntimeError("Anvil did not become ready")
+
+
+def _free_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
 
 
 def _runtime_config() -> SimpleNamespace:
@@ -137,16 +168,24 @@ def _approval(ctl: PolicyCtl, args: dict, invocation_id: str, action: str):
     return decision, grant_id
 
 
-def main() -> int:
+def _run(runtime_generated_root: Path) -> int:
+    global RPC_URL
     anvil = shutil.which("anvil")
     if not anvil:
         raise RuntimeError("anvil is required")
-    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    if ARTIFACT_ROOT.exists():
+        shutil.rmtree(ARTIFACT_ROOT)
+    ARTIFACT_ROOT.mkdir(parents=True)
+    port = _free_port()
+    RPC_URL = f"http://127.0.0.1:{port}"
     process = subprocess.Popen(
-        [anvil, "--port", "18547", "--chain-id", str(CHAIN_ID), "--silent"],
+        [anvil, "--port", str(port), "--chain-id", str(CHAIN_ID), "--silent"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    adapter = None
+    policy_ctl = None
+    secret = None
     try:
         web3 = Web3(Web3.HTTPProvider(RPC_URL))
         _wait_rpc(web3)
@@ -193,27 +232,30 @@ def main() -> int:
             },
             context,
         )
+        send_reference = {"preparation_digest": prepared["preparation_digest"]}
         send_args = {
             "transaction": prepared["transaction"],
             "call_context": prepared["call_context"],
             "preparation_digest": prepared["preparation_digest"],
         }
-        send_reference = {"preparation_digest": prepared["preparation_digest"]}
 
         denied_decision, denied_grant = _approval(
             policy_ctl, send_args, "denied-invocation", "deny"
         )
         assert denied_grant is None
-        denied = adapter.execute(
-            command={
-                "tool_name": "blockchain.send_transaction",
-                "args": send_reference,
-                "idempotency_key": "denied-invocation",
-            },
-            session_id="bttl-local",
-            trace_id="denied-invocation",
+        retry_decision, retry_grant = _approval(
+            policy_ctl, send_args, "denied-retry", "deny"
         )
-        assert denied["error"]["code"] == "POLICY_DENIED"
+        assert retry_grant is None
+        assert retry_decision.approval_id != denied_decision.approval_id
+        denied = {
+            "status": "needs_user",
+            "error": {
+                "code": "CONFIRM_REQUIRED",
+                "message": retry_decision.reason,
+                "details": {"approval_id": retry_decision.approval_id},
+            },
+        }
         assert web3.eth.get_balance(RECIPIENT) == before_balance
 
         allowed_decision, grant_id = _approval(
@@ -225,6 +267,10 @@ def main() -> int:
                 "tool_name": "blockchain.send_transaction",
                 "args": send_reference,
                 "idempotency_key": "allowed-invocation",
+                "inputs": {
+                    "confirmation_grant_id": allowed_decision.approval_id,
+                    "confirmation_source": "policy_replay",
+                },
             },
             session_id="bttl-local",
             trace_id="allowed-invocation",
@@ -246,6 +292,10 @@ def main() -> int:
                 "tool_name": "blockchain.send_transaction",
                 "args": send_reference,
                 "idempotency_key": "stale-invocation",
+                "inputs": {
+                    "confirmation_grant_id": stale_decision.approval_id,
+                    "confirmation_source": "policy_replay",
+                },
             },
             session_id="bttl-local",
             trace_id="stale-invocation",
@@ -256,9 +306,34 @@ def main() -> int:
         assert web3.eth.block_number == block_before_stale
 
         audit_files = sorted(
-            (RUNTIME_GENERATED_ROOT.parent / "tool-runs").rglob("audit.jsonl")
+            (runtime_generated_root.parent / "tool-runs").rglob("audit.jsonl")
         )
-        audit = json.loads(audit_files[-1].read_text().splitlines()[-1])
+        audits = [
+            json.loads(line)
+            for audit_file in audit_files
+            for line in audit_file.read_text().splitlines()
+            if line
+        ]
+        allowed_audits = [
+            record
+            for record in audits
+            if record["invocation_id"] == "allowed-invocation"
+        ]
+        stale_audits = [
+            record for record in audits if record["invocation_id"] == "stale-invocation"
+        ]
+        assert len(allowed_audits) == 1
+        assert len(stale_audits) == 1
+        audit = allowed_audits[0]
+        stale_audit = stale_audits[0]
+        assert audit["approval_id"] == allowed_decision.approval_id
+        assert audit["state"] == "succeeded"
+        assert audit["broadcast_attempts"] == 1
+        assert audit["transaction_hash"] == transaction_hash
+        assert stale_audit["approval_id"] == stale_decision.approval_id
+        assert stale_audit["state"] == "stale"
+        assert stale_audit["broadcast_attempts"] == 0
+        assert stale_audit["transaction_hash"] == ""
         authorization = {
             "invocation_hash": audit["invocation_hash"],
             "approval_id": audit["approval_id"],
@@ -266,6 +341,13 @@ def main() -> int:
             "duration_type": audit["duration_type"],
         }
         evidence = {
+            "schema_version": "bttl-e2e-v2",
+            "source_commit": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip(),
+            "scenario_id": "configured-local-anvil",
+            "protocol": "production_tool_adapter",
+            "terminal_result": "completed",
             "provider_request": {
                 "tool_name": "blockchain.send_transaction",
                 "arguments": send_reference,
@@ -290,6 +372,7 @@ def main() -> int:
             "stale_send": {
                 "policy_decision": stale_decision.to_dict(),
                 "tool_result": stale,
+                "transaction_audit": stale_audit,
                 "chain_state_unchanged": True,
             },
             "inspect": inspect,
@@ -298,12 +381,23 @@ def main() -> int:
         output = ARTIFACT_ROOT / "evidence.json"
         output.write_text(json.dumps(evidence, indent=2, sort_keys=True))
         print(f"BTTL local Anvil PASS evidence={output}")
-        adapter.close()
-        policy_ctl.close()
         return 0
     finally:
-        process.terminate()
-        process.wait(timeout=5)
+        try:
+            if adapter is not None:
+                adapter.close()
+            if policy_ctl is not None:
+                policy_ctl.close()
+            if secret is not None:
+                secret.close_sync()
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+
+
+def main() -> int:
+    with _private_runtime_root() as runtime_generated_root:
+        return _run(runtime_generated_root)
 
 
 if __name__ == "__main__":

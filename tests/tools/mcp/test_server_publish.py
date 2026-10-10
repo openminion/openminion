@@ -375,6 +375,80 @@ def test_runtime_publish_honors_include_exclude_scope() -> None:
     ] == ["file.read"]
 
 
+def test_runtime_publish_omits_tools_requiring_policy_confirmation() -> None:
+    registry = ToolRegistry()
+    registry.add(
+        ToolSpec(
+            name="financial.status",
+            args_model=dict,
+            min_scope="READ_ONLY",
+            handler=lambda _args, _ctx: {"ok": True},
+        )
+    )
+    registry.add(
+        ToolSpec(
+            name="financial.send",
+            args_model=dict,
+            min_scope="POWER_USER",
+            handler=lambda _args, _ctx: {"ok": True},
+            dangerous=True,
+            confirmation_preview=lambda _args: {},
+        )
+    )
+    runtime = SimpleNamespace(
+        config=SimpleNamespace(
+            runtime=SimpleNamespace(
+                mcp_publish={"enabled": True, "include_tools": ["financial.*"]}
+            )
+        ),
+        tools=registry,
+        authored_tools=None,
+        sandbox_runner=None,
+    )
+
+    published = build_runtime_published_tools(runtime)
+
+    assert [tool.runtime_tool_name for tool in published] == ["financial.status"]
+
+
+def test_runtime_publish_uses_canonical_policy_service_predicate(monkeypatch) -> None:
+    from openminion.modules.tool.runtime import registry_toolspec
+
+    registry = ToolRegistry()
+    registry.add(
+        ToolSpec(
+            name="utility.echo",
+            args_model=dict,
+            min_scope="READ_ONLY",
+            handler=lambda _args, _ctx: {"ok": True},
+        )
+    )
+    runtime = SimpleNamespace(
+        config=SimpleNamespace(
+            runtime=SimpleNamespace(
+                mcp_publish={"enabled": True, "include_tools": ["utility.*"]}
+            )
+        ),
+        tools=registry,
+        authored_tools=None,
+        sandbox_runner=None,
+    )
+    observed: list[str] = []
+
+    def requires_policy_service(tool) -> bool:
+        observed.append(tool.name)
+        return True
+
+    monkeypatch.setattr(
+        registry_toolspec,
+        "requires_policy_service",
+        requires_policy_service,
+    )
+
+    assert build_runtime_published_tools(runtime) == []
+    assert observed == ["utility.echo"]
+
+
 def test_published_mcp_jsonrpc_handler_supports_tools_list_and_call() -> None:
     tool = PublishedTool(
         name="custom",

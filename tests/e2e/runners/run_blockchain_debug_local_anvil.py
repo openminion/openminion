@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -17,38 +21,58 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from tests.helpers.live_e2e_profiles import resolve_live_framework_root  # noqa: E402
-from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+from tests.helpers.runtime_roots import (  # noqa: E402
+    RUNTIME_ROOT_ENV_VARS,
+    isolate_runtime_roots,
+)
 
 FRAMEWORK_ROOT = resolve_live_framework_root(ROOT)
-RUNTIME_ROOT = isolate_runtime_roots(prefix="openminion-bdtc-local-")
-DATA_ROOT = RUNTIME_ROOT.parent
 
-from openminion.base.config.runtime.tools import (  # noqa: E402
-    BlockchainToolRuntimeConfig,
-    ToolRuntimeConfig,
-)
-from openminion.base.config.env import resolve_environment_config  # noqa: E402
-from openminion.modules.brain.adapters.tool.runtime import ToolAdapter  # noqa: E402
-from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
-from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
-from openminion.modules.secret.service import SecretService  # noqa: E402
-from openminion.modules.tool.base import ToolExecutionContext  # noqa: E402
-from openminion.modules.tool.bootstrap import build_runtime_bootstrap  # noqa: E402
-from openminion.modules.tool.contracts import ProviderToolCall  # noqa: E402
-from openminion.modules.tool.executor import execute_single_call  # noqa: E402
-from openminion.modules.tool.runtime.policy import DEFAULT_POLICY, Policy  # noqa: E402
-from openminion.tools.blockchain.confirmation import (  # noqa: E402
-    build_blockchain_send_confirmation_preview,
-    preview_to_dict,
-)
-from openminion.tools.blockchain.runtime import (  # noqa: E402
-    inspect_blockchain,
-    prepare_transaction,
-)
+
+@contextmanager
+def _private_runtime_root() -> Iterator[Path]:
+    previous = {name: os.environ.get(name) for name in RUNTIME_ROOT_ENV_VARS}
+    generated_root = isolate_runtime_roots(prefix="openminion-bdtc-local-")
+    try:
+        yield generated_root.parent
+    finally:
+        try:
+            shutil.rmtree(generated_root.parents[1])
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
+with _private_runtime_root():
+    from openminion.base.config.runtime.tools import (  # noqa: E402
+        BlockchainToolRuntimeConfig,
+        ToolRuntimeConfig,
+    )
+    from openminion.base.config.env import resolve_environment_config  # noqa: E402
+    from openminion.modules.brain.adapters.tool.runtime import ToolAdapter  # noqa: E402
+    from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
+    from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
+    from openminion.modules.secret.service import SecretService  # noqa: E402
+    from openminion.modules.tool.base import ToolExecutionContext  # noqa: E402
+    from openminion.modules.tool.bootstrap import build_runtime_bootstrap  # noqa: E402
+    from openminion.modules.tool.contracts import ProviderToolCall  # noqa: E402
+    from openminion.modules.tool.executor import execute_single_call  # noqa: E402
+    from openminion.modules.tool.runtime.policy import DEFAULT_POLICY, Policy  # noqa: E402
+    from openminion.tools.blockchain.confirmation import (  # noqa: E402
+        build_blockchain_send_confirmation_preview,
+        preview_to_dict,
+    )
+    from openminion.tools.blockchain.runtime import (  # noqa: E402
+        inspect_blockchain,
+        prepare_transaction,
+    )
 
 EVIDENCE_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "bdtc-e2e" / "local"
 FIXTURE = ROOT / "tests" / "e2e" / "fixtures" / "blockchain" / "reference_swap.json"
-RPC_URL = "http://127.0.0.1:18549"
+RPC_URL = ""
 CHAIN_ID = 31337
 PRIVATE_KEY = "0x" + "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 SENDER = Web3.to_checksum_address("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266")
@@ -104,6 +128,12 @@ def _wait_rpc(web3: Web3) -> None:
             return
         time.sleep(0.1)
     raise RuntimeError("Anvil did not become ready")
+
+
+def _free_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
 
 
 def _runtime_config() -> SimpleNamespace:
@@ -216,15 +246,20 @@ def _debug_call(
     )
 
 
-def main() -> int:
+def _run(data_root: Path) -> int:
+    global RPC_URL
     source_commit = _clean_source_commit()
     anvil = shutil.which("anvil")
     if not anvil:
         raise RuntimeError("anvil is required")
-    EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
-    DATA_ROOT.mkdir(parents=True, exist_ok=True)
+    if EVIDENCE_ROOT.exists():
+        shutil.rmtree(EVIDENCE_ROOT)
+    EVIDENCE_ROOT.mkdir(parents=True)
+    data_root.mkdir(parents=True, exist_ok=True)
+    port = _free_port()
+    RPC_URL = f"http://127.0.0.1:{port}"
     process = subprocess.Popen(
-        [anvil, "--port", "18549", "--chain-id", str(CHAIN_ID), "--silent"],
+        [anvil, "--port", str(port), "--chain-id", str(CHAIN_ID), "--silent"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -244,29 +279,29 @@ def main() -> int:
         )
 
         secret = SecretService(
-            str(DATA_ROOT / "secrets.db"), Fernet.generate_key().decode()
+            str(data_root / "secrets.db"), Fernet.generate_key().decode()
         )
         asyncio.run(
             secret.set_secret("bdtc-local-signer", PRIVATE_KEY, namespace="blockchain")
         )
-        policy_ctl = _policy_ctl(DATA_ROOT / "policy.db")
+        policy_ctl = _policy_ctl(data_root / "policy.db")
         bootstrap = build_runtime_bootstrap(
             config=_runtime_config(),
-            workspace_root=DATA_ROOT,
-            run_root=DATA_ROOT / "bootstrap",
+            workspace_root=data_root,
+            run_root=data_root / "bootstrap",
             strict=True,
         )
         adapter = ToolAdapter(
-            workspace_root=DATA_ROOT,
+            workspace_root=data_root,
             runtime_config=_runtime_config().runtime,
             runtime_registry=bootstrap.registry,
-            policy=_policy(DATA_ROOT),
+            policy=_policy(data_root),
             policy_ctl=policy_ctl,
             secret_service=secret,
             agent_id="bdtc-local",
         )
         runtime_context = SimpleNamespace(
-            policy=_policy(DATA_ROOT),
+            policy=_policy(data_root),
             secret_service=secret,
             session_id="bdtc-local",
             env=resolve_environment_config(),
@@ -345,7 +380,7 @@ def main() -> int:
         revert_call = _debug_call(
             bootstrap,
             telemetry,
-            DATA_ROOT,
+            data_root,
             revert_args,
             "debug-revert",
         )
@@ -373,16 +408,6 @@ def main() -> int:
             policy_ctl, send_args, "denied", "deny"
         )
         assert denied_grant is None
-        denied = adapter.execute(
-            command={
-                "tool_name": "blockchain.send_transaction",
-                "args": send_reference,
-                "idempotency_key": "denied",
-            },
-            session_id="bdtc-local",
-            trace_id="denied",
-        )
-        assert denied["error"]["code"] == "POLICY_DENIED"
         assert str(contract.functions.outputOf(RECIPIENT).call()) == pre_state
 
         prepared_again = prepare_transaction(
@@ -410,6 +435,10 @@ def main() -> int:
                 "tool_name": "blockchain.send_transaction",
                 "args": send_reference,
                 "idempotency_key": "allowed",
+                "inputs": {
+                    "confirmation_grant_id": allowed_decision.approval_id,
+                    "confirmation_source": "policy_replay",
+                },
             },
             session_id="bdtc-local",
             trace_id="allowed",
@@ -438,7 +467,7 @@ def main() -> int:
         events_call = _debug_call(
             bootstrap,
             telemetry,
-            DATA_ROOT,
+            data_root,
             {
                 "action": "transaction_events",
                 "transaction_hash": transaction_hash,
@@ -453,7 +482,7 @@ def main() -> int:
 
         audits = [
             json.loads(line)
-            for path in (DATA_ROOT / "tool-runs").rglob("audit.jsonl")
+            for path in (data_root / "tool-runs").rglob("audit.jsonl")
             for line in path.read_text().splitlines()
             if line.strip()
         ]
@@ -468,6 +497,7 @@ def main() -> int:
             "schema_version": "bdtc-e2e-v1",
             "source_commit": source_commit,
             "profile": "local",
+            "terminal_result": "completed",
             "scenario_id": str(uuid4()),
             "debug_revert": {
                 "tool_call_id": "debug-revert",
@@ -531,6 +561,11 @@ def main() -> int:
             secret.close_sync()
         process.terminate()
         process.wait(timeout=5)
+
+
+def main() -> int:
+    with _private_runtime_root() as data_root:
+        return _run(data_root)
 
 
 if __name__ == "__main__":

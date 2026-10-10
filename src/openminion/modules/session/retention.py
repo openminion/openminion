@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import sqlite3
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from openminion.base.constants import STATE_KEY_WORKING
 from openminion.modules.session.interfaces import SESSION_RETENTION_PLAN_VERSION
@@ -74,8 +73,14 @@ class SessionRetentionPlan:
 
 
 class SessionRetentionService:
-    def __init__(self, store: Any) -> None:
+    def __init__(
+        self,
+        store: Any,
+        *,
+        purge_session_records: Callable[[str], None] | None = None,
+    ) -> None:
         self.store = store
+        self._purge_session_records = purge_session_records
         self._record_store = getattr(store, "_record_store", None)
         if self._record_store is None:
             raise TypeError(
@@ -159,6 +164,8 @@ class SessionRetentionService:
             raise SessionRetentionBlockedError("retention purge has active blockers")
         deleted: dict[str, int] = {}
         for candidate in fresh.candidates:
+            if self._purge_session_records is not None:
+                self._purge_session_records(candidate.session_id)
             deleted[candidate.session_id] = self._purge_session(candidate.session_id)
         return {
             "schema_version": SESSION_RETENTION_PLAN_VERSION,
@@ -246,10 +253,7 @@ class SessionRetentionService:
         return total
 
     def _delete_from_table(self, table: str, session_id: str) -> int:
-        try:
-            return self._record_store.delete_rows(table, {"session_id": session_id})
-        except (sqlite3.DatabaseError, RuntimeError, ValueError):
-            return 0
+        return self._record_store.delete_rows(table, {"session_id": session_id})
 
     def _ensure_schema(self) -> None:
         for statement in SESSION_RETENTION_SCHEMA:

@@ -122,6 +122,13 @@ class TaskDelegateArgs(BaseModel):
         le=3600,
         description="Per-call timeout for the delegated turn.",
     )
+    child_permission_mode: str = Field(
+        default="",
+        description=(
+            "Optional narrower permission mode for sync/async child work. "
+            "The only explicit value is readonly; omission inherits the parent mode."
+        ),
+    )
     child_artifact: dict[str, Any] = Field(
         default_factory=dict,
         description=(
@@ -174,6 +181,18 @@ class TaskDelegateArgs(BaseModel):
                 "cancel, review, accept, reject"
             )
         self.mode = normalized_mode
+        child_permission_mode = self.child_permission_mode.strip().lower()
+        if child_permission_mode and child_permission_mode != "readonly":
+            raise ValueError("child_permission_mode must be readonly when provided")
+        if child_permission_mode and normalized_mode not in {"sync", "async"}:
+            raise ValueError(
+                "child_permission_mode is only valid for sync/async delegation"
+            )
+        if child_permission_mode and self.code_bearing:
+            raise ValueError(
+                "child_permission_mode is not valid for code-bearing delegation"
+            )
+        self.child_permission_mode = child_permission_mode
         if normalized_mode in {"sync", "async"}:
             if not self.agent_id.strip() or not self.instruction.strip():
                 raise ValueError(
@@ -483,7 +502,8 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
             "agent_id": validated.agent_id,
             "instruction": validated.instruction,
             "timeout_seconds": validated.timeout_seconds,
-            "permission_mode": str(getattr(ctx, "permission_mode", "ask") or "ask"),
+            "permission_mode": validated.child_permission_mode
+            or str(getattr(ctx, "permission_mode", "ask") or "ask"),
             "workspace_root": str(getattr(ctx, "workspace", "") or "").strip(),
             "cwd": str(getattr(ctx, "workspace", "") or "").strip(),
         }
@@ -492,7 +512,7 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         result = seam.delegate(**delegate_kwargs)
 
     if result.ok:
-        return {
+        payload = {
             "ok": True,
             "agent_id": result.target_agent_id or validated.agent_id,
             "mode": validated.mode,
@@ -502,6 +522,9 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
             "trace_id": result.trace_id,
             "task_id": result.task_id,
         }
+        if validated.child_permission_mode:
+            payload["child_permission_mode"] = validated.child_permission_mode
+        return payload
 
     raise ToolRuntimeError(
         _task_delegate_error_code(result.error_code, status=result.status),
