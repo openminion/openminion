@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
@@ -129,7 +131,7 @@ def _successful_blockchain_evidence(events: list[Any]) -> tuple[list[str], list[
     return sorted(resolution_digests), resolved_reads
 
 
-def _required_config() -> Path:
+def _required_config() -> tuple[Path, dict]:
     raw = str(os.getenv(CONFIG_ENV, "") or "").strip()
     if not raw:
         raise RuntimeError(f"{CONFIG_ENV} is required when {OPT_IN}=1")
@@ -142,11 +144,8 @@ def _required_config() -> Path:
         if isinstance(payload, dict)
         else {}
     )
-    if not isinstance(blockchain, dict) or blockchain.get("enabled") is not True:
-        raise RuntimeError(
-            f"{CONFIG_ENV} must enable runtime.tools.blockchain without injecting "
-            "task resources into the prompt"
-        )
+    if not isinstance(blockchain, dict):
+        raise RuntimeError(f"{CONFIG_ENV} blockchain configuration must be an object")
     configured_resources = {
         key for key in ("rpc_url", "chain_id") if blockchain.get(key) not in (None, "")
     }
@@ -155,6 +154,18 @@ def _required_config() -> Path:
             f"{CONFIG_ENV} must not configure blockchain rpc_url or chain_id for "
             "the autonomous Focus proof"
         )
+    return path, payload
+
+
+def _write_private_config(payload: dict, data_root: Path) -> Path:
+    private_payload = json.loads(json.dumps(payload))
+    private_payload.setdefault("runtime", {}).setdefault("tools", {})["blockchain"] = {
+        "enabled": True
+    }
+    path = data_root / "focus-config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(private_payload, indent=2, sort_keys=True) + "\n")
+    path.chmod(0o600)
     return path
 
 
@@ -276,13 +287,14 @@ def _stage_c_inputs(config_path: Path, agent_id: str) -> dict[str, object]:
 def main() -> int:
     if os.getenv(OPT_IN) != "1":
         raise RuntimeError(f"{OPT_IN}=1 is required")
-    config_path = _required_config()
-    config_payload = json.loads(config_path.read_text(encoding="utf-8"))
+    _config_source, config_payload = _required_config()
     agent_id = _required(AGENT_ENV)
-    approved = _stage_c_inputs(config_path, agent_id)
     source_commit = _source_commit()
     evidence_root = _evidence_root()
     data_root = isolate_runtime_roots(prefix="openminion-abo-focus-").parent
+    atexit.register(shutil.rmtree, data_root.parent, ignore_errors=True)
+    config_path = _write_private_config(config_payload, data_root)
+    approved = _stage_c_inputs(config_path, agent_id)
     probe = FocusProbe(
         python_bin=Path(sys.executable),
         openminion_root=ROOT,

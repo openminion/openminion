@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 import re
 
 import pytest
@@ -489,3 +490,30 @@ def test_opt_in_runners_fail_clearly_without_required_config(
         RuntimeError, match=rf"^{config_env} is required when {opt_in}=1$"
     ):
         runner._required_config()
+
+
+def test_focus_runner_builds_private_readonly_blockchain_config(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "source.json"
+    source.write_text(
+        json.dumps(
+            {
+                "runtime": {"env": {"MINIMAX_API_KEY": "sentinel-provider-key"}},
+                "agents": {"minimax": {"provider": "openai"}},
+            }
+        )
+    )
+    monkeypatch.setenv(focus_runner.OPT_IN, "1")
+    monkeypatch.setenv(focus_runner.CONFIG_ENV, str(source))
+
+    resolved, payload = focus_runner._required_config()
+    private = focus_runner._write_private_config(payload, tmp_path / "runtime")
+    private_payload = json.loads(private.read_text())
+
+    assert resolved == source
+    assert private.stat().st_mode & 0o777 == 0o600
+    assert private_payload["runtime"]["tools"]["blockchain"] == {"enabled": True}
+    assert private_payload["runtime"]["env"]["MINIMAX_API_KEY"] == (
+        "sentinel-provider-key"
+    )
