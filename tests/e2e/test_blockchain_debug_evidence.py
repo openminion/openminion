@@ -75,6 +75,7 @@ def _assert_evidence(evidence: dict, *, profile: str, commit: str) -> None:
     assert evidence["source_commit"] == commit
     assert evidence["profile"] == profile
     assert evidence["scenario_id"]
+    assert evidence["terminal_result"] == "completed"
 
     encoded = json.dumps(evidence, sort_keys=True).lower()
     assert "private provider text" not in encoded

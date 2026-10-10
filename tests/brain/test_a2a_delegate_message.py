@@ -203,6 +203,36 @@ def test_configured_agent_handler_uses_current_turn_approval_callback() -> None:
     assert calls[0]["approval_callback"] is current_callback
 
 
+def test_configured_agent_handler_omits_approval_callback_for_readonly_child() -> None:
+    calls: list[dict[str, object]] = []
+
+    class _RuntimeHandle:
+        def run_turn(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {"body": "candidate contract", "metadata": {}}
+
+    handler = A2actlAdapter(
+        agent_id="parent",
+        runtime_resolver=lambda: _RuntimeHandle(),
+        approval_callback=object(),
+    )._configured_agent_handler(agent_id="bogr-readonly-researcher")
+
+    payload = handler(
+        SimpleNamespace(
+            params={"goal": "research", "permission_mode": "readonly"},
+            meta={"session_id": "parent-session"},
+            msg_id="msg-readonly",
+            trace_id="trace-readonly",
+            from_agent="parent",
+            timeout_ms=30_000,
+        )
+    )
+
+    assert payload["body"] == "candidate contract"
+    assert "approval_callback" not in calls[0]
+    assert calls[0]["payload"]["inbound_metadata"]["permission_mode"] == "readonly"
+
+
 def test_configured_agent_handler_rejects_incomplete_child_turn() -> None:
     class _RuntimeHandle:
         def run_turn(self, **_kwargs: object) -> dict[str, object]:

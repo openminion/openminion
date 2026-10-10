@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -48,7 +49,7 @@ from openminion.tools.blockchain.runtime import (  # noqa: E402
 
 EVIDENCE_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "bdtc-e2e" / "local"
 FIXTURE = ROOT / "tests" / "e2e" / "fixtures" / "blockchain" / "reference_swap.json"
-RPC_URL = "http://127.0.0.1:18549"
+RPC_URL = ""
 CHAIN_ID = 31337
 PRIVATE_KEY = "0x" + "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 SENDER = Web3.to_checksum_address("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266")
@@ -104,6 +105,12 @@ def _wait_rpc(web3: Web3) -> None:
             return
         time.sleep(0.1)
     raise RuntimeError("Anvil did not become ready")
+
+
+def _free_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
 
 
 def _runtime_config() -> SimpleNamespace:
@@ -217,14 +224,19 @@ def _debug_call(
 
 
 def main() -> int:
+    global RPC_URL
     source_commit = _clean_source_commit()
     anvil = shutil.which("anvil")
     if not anvil:
         raise RuntimeError("anvil is required")
-    EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
+    if EVIDENCE_ROOT.exists():
+        shutil.rmtree(EVIDENCE_ROOT)
+    EVIDENCE_ROOT.mkdir(parents=True)
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
+    port = _free_port()
+    RPC_URL = f"http://127.0.0.1:{port}"
     process = subprocess.Popen(
-        [anvil, "--port", "18549", "--chain-id", str(CHAIN_ID), "--silent"],
+        [anvil, "--port", str(port), "--chain-id", str(CHAIN_ID), "--silent"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -468,6 +480,7 @@ def main() -> int:
             "schema_version": "bdtc-e2e-v1",
             "source_commit": source_commit,
             "profile": "local",
+            "terminal_result": "completed",
             "scenario_id": str(uuid4()),
             "debug_revert": {
                 "tool_call_id": "debug-revert",
@@ -531,6 +544,7 @@ def main() -> int:
             secret.close_sync()
         process.terminate()
         process.wait(timeout=5)
+        shutil.rmtree(DATA_ROOT.parent, ignore_errors=True)
 
 
 if __name__ == "__main__":

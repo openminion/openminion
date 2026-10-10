@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -44,7 +45,7 @@ from openminion.tools.blockchain.confirmation import (  # noqa: E402
 )
 
 ARTIFACT_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "bttl-e2e" / "local"
-RPC_URL = "http://127.0.0.1:18547"
+RPC_URL = ""
 CHAIN_ID = 31337
 PRIVATE_KEY = "0x" + "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 SENDER = Web3.to_checksum_address("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266")
@@ -58,6 +59,12 @@ def _wait_rpc(web3: Web3) -> None:
             return
         time.sleep(0.1)
     raise RuntimeError("Anvil did not become ready")
+
+
+def _free_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
 
 
 def _runtime_config() -> SimpleNamespace:
@@ -138,12 +145,17 @@ def _approval(ctl: PolicyCtl, args: dict, invocation_id: str, action: str):
 
 
 def main() -> int:
+    global RPC_URL
     anvil = shutil.which("anvil")
     if not anvil:
         raise RuntimeError("anvil is required")
-    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    if ARTIFACT_ROOT.exists():
+        shutil.rmtree(ARTIFACT_ROOT)
+    ARTIFACT_ROOT.mkdir(parents=True)
+    port = _free_port()
+    RPC_URL = f"http://127.0.0.1:{port}"
     process = subprocess.Popen(
-        [anvil, "--port", "18547", "--chain-id", str(CHAIN_ID), "--silent"],
+        [anvil, "--port", str(port), "--chain-id", str(CHAIN_ID), "--silent"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -266,6 +278,13 @@ def main() -> int:
             "duration_type": audit["duration_type"],
         }
         evidence = {
+            "schema_version": "bttl-e2e-v2",
+            "source_commit": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip(),
+            "scenario_id": "configured-local-anvil",
+            "protocol": "production_tool_adapter",
+            "terminal_result": "completed",
             "provider_request": {
                 "tool_name": "blockchain.send_transaction",
                 "arguments": send_reference,
@@ -304,6 +323,7 @@ def main() -> int:
     finally:
         process.terminate()
         process.wait(timeout=5)
+        shutil.rmtree(RUNTIME_GENERATED_ROOT.parent.parent, ignore_errors=True)
 
 
 if __name__ == "__main__":

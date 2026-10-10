@@ -22,6 +22,12 @@ _CONFIRMATION_SOURCE_METADATA_KEY = "confirmation_source"
 _CONFIRMATION_GRANT_ID_METADATA_KEY = "confirmation_grant_id"
 
 
+def requires_policy_service(tool: Any) -> bool:
+    return bool(getattr(tool, "dangerous", False)) and callable(
+        getattr(tool, "confirmation_preview", None)
+    )
+
+
 def _context_confirm_requested(context: ToolExecutionContext) -> bool:
     if bool(getattr(context, "confirm", False)):
         return True
@@ -247,13 +253,13 @@ def execute_tool_spec_call(
     from openminion.modules.tool.errors import ToolRuntimeError
 
     tool_name = str(getattr(tool, "name", "")).strip() or "unknown"
-    if tool_name == "blockchain.send_transaction":
+    if requires_policy_service(tool):
         return ToolExecutionResult(
             tool_name=tool_name,
             ok=False,
             content="",
             verified=False,
-            error="Blockchain transaction send requires the canonical policy service.",
+            error="This tool requires the canonical policy service.",
             data={"error_code": "POLICY_MODE_UNSUPPORTED"},
         )
     args_model = getattr(tool, "args_model", dict)

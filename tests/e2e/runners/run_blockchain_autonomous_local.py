@@ -71,6 +71,15 @@ from openminion.modules.policy.adapters.brain import PolicyCtlBrainAdapter  # no
 from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
 from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec  # noqa: E402
+from openminion.modules.tool.bootstrap import (  # noqa: E402
+    wire_default_tool_registry_manager,
+)
+from openminion.modules.tool.runtime.dispatch import (  # noqa: E402
+    get_registry,
+    get_registry_manager,
+    set_registry,
+    set_registry_manager,
+)
 from openminion.modules.tool.runtime.policy import DEFAULT_POLICY, Policy  # noqa: E402
 from openminion.tools.blockchain.public_https import (  # noqa: E402
     PublicHttpsResponse,
@@ -554,7 +563,13 @@ def _production_execution(
 
 
 def _run() -> dict[str, Any]:
+    previous_manager = get_registry_manager()
+    previous_registry = get_registry()
+    wire_default_tool_registry_manager()
     configure_runtime_roots(RUNTIME_ROOT.parents[1])
+    if EVIDENCE_ROOT.exists():
+        shutil.rmtree(EVIDENCE_ROOT)
+    EVIDENCE_ROOT.mkdir(parents=True)
     anvil = shutil.which("anvil")
     if not anvil:
         raise RuntimeError("anvil is required for blockchain autonomous local E2E")
@@ -925,6 +940,8 @@ def _run() -> dict[str, Any]:
             "source_commit": subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
             ).strip(),
+            "scenario_id": "autonomous-local-anvil",
+            "terminal_result": "completed",
             "session_id": session_id,
             "prompt": PROMPT,
             "hidden_context": {},
@@ -1004,7 +1021,6 @@ def _run() -> dict[str, Any]:
         }
         denied.close()
         executor.close()
-        EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
         (EVIDENCE_ROOT / "evidence.json").write_text(
             json.dumps(evidence, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -1013,6 +1029,9 @@ def _run() -> dict[str, Any]:
     finally:
         process.terminate()
         process.wait(timeout=10)
+        set_registry_manager(previous_manager)
+        set_registry(previous_registry)
+        shutil.rmtree(RUNTIME_ROOT.parents[1], ignore_errors=True)
 
 
 def main() -> int:

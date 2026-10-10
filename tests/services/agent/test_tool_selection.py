@@ -2,7 +2,10 @@ import asyncio
 import json
 import logging
 import threading
+from pathlib import Path
+
 import pytest
+import yaml
 
 from openminion.base.config import OpenMinionConfig
 from openminion.base.types import Message
@@ -23,8 +26,44 @@ from openminion.modules.tool.base import (
 )
 from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.tool.registry import ToolRegistry
+from openminion.modules.tool.selection.service import ToolSelectionService
 from openminion.tools.code.plugin import CodeGrepArgs
 from tests._csc_fixtures import _csc_install_default_agent
+
+
+def test_bogr_readonly_researcher_has_exact_research_allowlist() -> None:
+    profile_path = (
+        Path(__file__).parents[2]
+        / "e2e"
+        / "fixtures"
+        / "blockchain"
+        / "bogr-readonly-researcher.yaml"
+    )
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    tool_filter = profile["tool_posture"]
+    service = ToolSelectionService(
+        OpenMinionConfig().runtime.tool_selection, ToolRegistry()
+    )
+    specs = [
+        ProviderToolSpec(name=name, description=name)
+        for name in (
+            "web.search",
+            "web.fetch",
+            "blockchain.prepare_transaction",
+            "blockchain.send_transaction",
+        )
+    ]
+
+    selected = service._apply_identity_tool_filter(specs, tool_filter)
+
+    assert profile["agent_id"] == "bogr-readonly-researcher"
+    assert tool_filter == {
+        "tool_use": "restricted",
+        "sandbox_root": "",
+        "allowed_tools": ["web.search", "web.fetch"],
+        "blocked_patterns": [],
+    }
+    assert [tool.name for tool in selected.specs] == ["web.search", "web.fetch"]
 
 
 def _run_async(coro):

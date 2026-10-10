@@ -57,6 +57,10 @@ def validate_blockchain_autonomous_evidence(payload: object) -> None:
         _fail("blockchain evidence schema is missing")
     if not _HEX_COMMIT.fullmatch(str(payload.get("source_commit", ""))):
         _fail("source commit is missing")
+    if payload.get("scenario_id") != "autonomous-local-anvil":
+        _fail("blockchain evidence scenario is missing")
+    if payload.get("terminal_result") != "completed":
+        _fail("blockchain evidence terminal result is missing")
     if payload.get("prompt") != PROMPT or payload.get("hidden_context") != {}:
         _fail("the no-hints task boundary changed")
     route = payload.get("route")
@@ -293,6 +297,8 @@ def test_validator_rejects_denied_broadcast(evidence) -> None:
 
 def test_focus_validator_requires_persisted_tool_evidence() -> None:
     payload = {
+        "schema_version": "blockchain-autonomous-focus-evidence-v2",
+        "scenario_id": "autonomous-public-discovery",
         "protocol": "general_loop_focus_cli",
         "source_commit": "a" * 40,
         "persisted_event_count": 4,
@@ -310,6 +316,13 @@ def test_focus_validator_requires_persisted_tool_evidence() -> None:
             }
         ],
         "transcript": "Verified contract at a confirmed block.",
+        "permission_mode": "readonly",
+        "allow_unsandboxed_exec": False,
+        "approval_prompt_count": 0,
+        "broadcast_count": 0,
+        "elapsed_seconds": 10.0,
+        "max_duration_seconds": 30,
+        "terminal_result": "completed",
     }
     focus_runner.validate_evidence(payload)
     payload["requested_tools"] = ["web.search"]
@@ -319,6 +332,8 @@ def test_focus_validator_requires_persisted_tool_evidence() -> None:
 
 def test_focus_validator_rejects_unjoined_successful_read() -> None:
     payload = {
+        "schema_version": "blockchain-autonomous-focus-evidence-v2",
+        "scenario_id": "autonomous-public-discovery",
         "protocol": "general_loop_focus_cli",
         "source_commit": "a" * 40,
         "persisted_event_count": 4,
@@ -336,6 +351,13 @@ def test_focus_validator_rejects_unjoined_successful_read() -> None:
             }
         ],
         "transcript": "Verified contract at a confirmed block.",
+        "permission_mode": "readonly",
+        "allow_unsandboxed_exec": False,
+        "approval_prompt_count": 0,
+        "broadcast_count": 0,
+        "elapsed_seconds": 10.0,
+        "max_duration_seconds": 30,
+        "terminal_result": "completed",
     }
     with pytest.raises(ValueError, match="does not join"):
         focus_runner.validate_evidence(payload)
@@ -344,16 +366,62 @@ def test_focus_validator_rejects_unjoined_successful_read() -> None:
 def test_public_read_validator_joins_resolution_and_read() -> None:
     digest = "sha256:" + "1" * 64
     payload = {
+        "schema_version": "blockchain-autonomous-public-read-evidence-v2",
+        "scenario_id": "approved-public-contract-read",
         "protocol": "direct_runtime_protocol",
         "source_commit": "a" * 40,
         "write_attempts": 0,
         "resolution": {"ok": True, "data": {"resolution_digest": digest}},
         "read": {"ok": True, "data": {"resolution_digest": digest}},
+        "broadcast_count": 0,
+        "elapsed_seconds": 2.0,
+        "max_duration_seconds": 30,
+        "terminal_result": "completed",
     }
     public_read_runner.validate_evidence(payload)
     payload["read"]["data"]["resolution_digest"] = "sha256:" + "2" * 64
     with pytest.raises(ValueError, match="does not join"):
         public_read_runner.validate_evidence(payload)
+
+
+def test_live_validators_reject_stale_approval_inputs() -> None:
+    focus = {
+        "schema_version": "blockchain-autonomous-focus-evidence-v2",
+        "scenario_id": "autonomous-public-discovery",
+        "protocol": "general_loop_focus_cli",
+        "source_commit": "a" * 40,
+        "persisted_event_count": 1,
+        "requested_tools": [
+            "web.search",
+            "blockchain.resolve_contract",
+            "blockchain.inspect",
+        ],
+        "successful_resolution_digests": ["sha256:" + "1" * 64],
+        "successful_resolved_reads": [
+            {
+                "resolution_digest": "sha256:" + "1" * 64,
+                "block_number": "1",
+                "raw_return_digest": "sha256:" + "2" * 64,
+            }
+        ],
+        "transcript": "Verified contract at a confirmed block.",
+        "permission_mode": "readonly",
+        "allow_unsandboxed_exec": False,
+        "approval_prompt_count": 0,
+        "broadcast_count": 0,
+        "elapsed_seconds": 1.0,
+        "max_duration_seconds": 30,
+        "terminal_result": "completed",
+    }
+    with pytest.raises(ValueError, match="source_commit does not match"):
+        focus_runner.validate_evidence(focus, {"source_commit": "b" * 40})
+
+
+def test_focus_retained_evidence_scan_rejects_secret(tmp_path) -> None:
+    sentinel = b"fake-sentinel-provider-key"
+    (tmp_path / "evidence.json").write_bytes(b'{"value":"' + sentinel + b'"}')
+    with pytest.raises(RuntimeError, match="credential material"):
+        focus_runner._assert_retained_evidence_safe(tmp_path, {sentinel})
 
 
 def test_testnet_validator_joins_full_lifecycle() -> None:

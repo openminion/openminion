@@ -27,6 +27,17 @@ from openminion.base.config import resolve_data_root
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.modules.brain.schemas import DelegationContext, DelegationResultSummary
 
+_DELEGATED_RESULT_METADATA_KEYS = (
+    "session_id",
+    "run_id",
+    "brain_status",
+    "error_code",
+    "error_message",
+    "tool_loop_termination_reason",
+    "adaptive.finalization_status",
+    "total_tokens_used",
+)
+
 
 def _typed_delegation_result_summary(value: Any) -> dict[str, Any] | None:
     raw = value
@@ -567,11 +578,12 @@ class A2actlAdapter:
                 "request_id": str(getattr(envelope, "msg_id", "") or "").strip()
                 or None,
             }
-            if self._run_turn_accepts(run_turn, "approval_callback"):
-                run_turn_kwargs["approval_callback"] = self._approval_callback
-            if cancel_event is not None and self._run_turn_accepts(
-                run_turn, "cancel_event"
+            accepts_argument = self._run_turn_accepts
+            if _approval_allowed(params) and accepts_argument(
+                run_turn, "approval_callback"
             ):
+                run_turn_kwargs["approval_callback"] = self._approval_callback
+            if cancel_event is not None and accepts_argument(run_turn, "cancel_event"):
                 run_turn_kwargs["cancel_event"] = cancel_event
             result = run_turn(**run_turn_kwargs)
             metadata = result.get("metadata")
@@ -596,16 +608,7 @@ class A2actlAdapter:
                 )
             projected_metadata = {
                 key: normalized_metadata[key]
-                for key in (
-                    "session_id",
-                    "run_id",
-                    "brain_status",
-                    "error_code",
-                    "error_message",
-                    "tool_loop_termination_reason",
-                    "adaptive.finalization_status",
-                    "total_tokens_used",
-                )
+                for key in _DELEGATED_RESULT_METADATA_KEYS
                 if key in normalized_metadata
             }
             response_payload = {
@@ -730,6 +733,10 @@ def _delegated_session_id(
 ) -> str:
     base = parent_session_id or "a2a"
     return f"{base}::delegate::{target_agent_id}::{message_id}"
+
+
+def _approval_allowed(params: dict[str, Any]) -> bool:
+    return str(params.get("permission_mode", "") or "").strip().lower() != "readonly"
 
 
 def _delegated_inbound_metadata(

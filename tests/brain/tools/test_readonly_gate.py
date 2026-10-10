@@ -108,6 +108,7 @@ def test_tool_lineage_carries_runtime_session_into_tool_metadata() -> None:
         "task.schedule",
         "skill.ingest",
         "tool.author",
+        "blockchain.send_transaction",
     ],
 )
 def test_readonly_blocks_write_tools(tool_name: str) -> None:
@@ -130,6 +131,31 @@ def test_readonly_blocks_write_tools(tool_name: str) -> None:
     assert result.error.details["tool_name"] == tool_name
     assert result.error.details["permission_mode"] == "readonly"
     assert "shift+tab" in result.error.message or "/permissions" in result.error.message
+
+
+def test_readonly_blocks_blockchain_send_before_handler_or_broadcast() -> None:
+    state = _make_state(permission_mode="readonly")
+    command = _make_command(tool_name="blockchain.send_transaction")
+    calls: list[object] = []
+    runner = _make_runner()
+    runner.tool_api = SimpleNamespace(
+        execute=lambda *args, **kwargs: calls.append(args)
+    )
+    logger = SimpleNamespace(emit=lambda *args, **kwargs: None)
+
+    result, job = execute_action_dispatch(
+        runner,
+        state=state,
+        command=command,
+        logger=logger,
+        sanitize_tool_command_args=lambda runner, command: ({}, []),
+        execute_action_fn=None,
+    )
+
+    assert job is None
+    assert result.status == BRAIN_ACTION_STATUS_BLOCKED
+    assert result.error.code == "PERMISSION_DENIED_READONLY"
+    assert calls == []
 
 
 # ── other modes do NOT short-circuit the dispatch at the gate ────

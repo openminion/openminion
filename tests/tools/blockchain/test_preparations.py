@@ -16,6 +16,7 @@ from openminion.tools.blockchain.preparations import (
     load_operation_record,
     load_resolution_record,
     load_resolved_preparation_record,
+    purge_blockchain_session_records,
     replace_operation_record,
     resolve_prepared_transaction,
     save_prepared_transaction,
@@ -43,6 +44,16 @@ def _prepared() -> dict:
     return {
         "transaction": transaction,
         "call_context": None,
+        "preparation_digest": preparation_digest(transaction, None),
+    }
+
+
+def _prepared_with_nonce(nonce: str) -> dict:
+    prepared = _prepared()
+    transaction = {**prepared["transaction"], "nonce": nonce}
+    return {
+        **prepared,
+        "transaction": transaction,
         "preparation_digest": preparation_digest(transaction, None),
     }
 
@@ -129,14 +140,81 @@ def test_prepared_transaction_survives_runtime_recreation(tmp_path) -> None:
 
     assert resolved == prepared
     digest = prepared["preparation_digest"].removeprefix("sha256:")
+    session_key = hashlib.sha256(b"session-a").hexdigest()
     assert (
         tmp_path
         / ".openminion"
         / "blockchain"
-        / "preparations"
-        / "session-a"
+        / "sessions"
+        / session_key
+        / "configured_preparations"
         / f"{digest}.json"
     ).is_file()
+
+
+def test_configured_preparations_use_collision_resistant_session_roots(
+    tmp_path,
+) -> None:
+    prepared = _prepared()
+    env = _env(tmp_path)
+    save_prepared_transaction(
+        prepared,
+        SimpleNamespace(session_id="alpha/beta", env=env),
+    )
+
+    with pytest.raises(PreparationReferenceError, match="unavailable"):
+        resolve_prepared_transaction(
+            {"preparation_digest": prepared["preparation_digest"]},
+            session_id="alpha:beta",
+            env=env,
+        )
+
+
+def test_configured_preparation_concurrent_writes_are_complete(tmp_path) -> None:
+    env = _env(tmp_path)
+    context = SimpleNamespace(session_id="session-a", env=env)
+    prepared = [_prepared_with_nonce(str(index)) for index in range(8)]
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(
+            executor.map(
+                lambda item: save_prepared_transaction(item, context), prepared
+            )
+        )
+
+    stored = resolve_prepared_transaction({}, session_id="session-a", env=env)
+    assert stored in prepared
+    for item in prepared:
+        assert (
+            resolve_prepared_transaction(
+                {"preparation_digest": item["preparation_digest"]},
+                session_id="session-a",
+                env=env,
+            )
+            == item
+        )
+    assert not list((tmp_path / ".openminion").rglob("*.tmp"))
+
+
+def test_ambiguous_legacy_configured_preparation_is_not_read(tmp_path) -> None:
+    prepared = _prepared()
+    env = _env(tmp_path)
+    digest = prepared["preparation_digest"].removeprefix("sha256:")
+    legacy_root = (
+        tmp_path / ".openminion" / "blockchain" / "preparations" / "alpha-beta"
+    )
+    legacy_root.mkdir(parents=True)
+    (legacy_root / f"{digest}.json").write_text(
+        json.dumps(prepared),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PreparationReferenceError, match="unavailable"):
+        resolve_prepared_transaction(
+            {"preparation_digest": prepared["preparation_digest"]},
+            session_id="alpha/beta",
+            env=env,
+        )
 
 
 def test_latest_prepared_transaction_needs_no_model_selector(tmp_path) -> None:
@@ -322,6 +400,28 @@ def test_latest_preparation_tracks_configured_and_resolved_order(
     assert (
         resolve_prepared_transaction({}, session_id="session-a", env=env) == configured
     )
+
+
+def test_purge_removes_only_exact_hashed_session_records(tmp_path) -> None:
+    env = _env(tmp_path)
+    for session_id in ("session-a", "session-b"):
+        save_prepared_transaction(
+            _prepared(),
+            SimpleNamespace(session_id=session_id, env=env),
+        )
+    sessions_root = tmp_path / ".openminion" / "blockchain" / "sessions"
+    first_root = sessions_root / hashlib.sha256(b"session-a").hexdigest()
+    second_root = sessions_root / hashlib.sha256(b"session-b").hexdigest()
+    ambiguous_legacy = sessions_root / "session-a"
+    ambiguous_legacy.mkdir()
+    (ambiguous_legacy / "legacy.json").write_text("{}", encoding="utf-8")
+
+    purge_blockchain_session_records("session-a", env=env)
+    purge_blockchain_session_records("session-a", env=env)
+
+    assert not first_root.exists()
+    assert second_root.is_dir()
+    assert ambiguous_legacy.is_dir()
 
 
 def test_session_record_load_rejects_tampered_content(tmp_path) -> None:

@@ -29,6 +29,7 @@ from .fork_restore.branch import carry_forward_branch_fields, diff_session_branc
 from .retention import SessionRetentionPolicy, SessionRetentionService
 from .sharing import SessionShareService
 from .storage.store import SQLiteSessionStore
+from openminion.tools.blockchain.preparations import purge_blockchain_session_records
 
 
 def _json_arg(raw: str) -> Any:
@@ -758,7 +759,10 @@ def _handle_retention_command(
         inactivity_ttl_seconds=args.inactivity_ttl_seconds,
         closed_retention_seconds=args.closed_retention_seconds,
     )
-    service = SessionRetentionService(store)
+    service = SessionRetentionService(
+        store,
+        purge_session_records=purge_blockchain_session_records,
+    )
     plan = service.dry_run(policy=policy)
     if args.command == "retention-dry-run":
         return _print_result(plan.to_dict())

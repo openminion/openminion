@@ -337,6 +337,10 @@ def build_runtime_published_tools(
     for runtime_name, tool in runtime_tools.items():
         if not _tool_allowed_by_publish_config(runtime_name, config):
             continue
+        if bool(getattr(tool, "dangerous", False)) and callable(
+            getattr(tool, "confirmation_preview", None)
+        ):
+            continue
         provider_spec = registry.provider_spec_for_name(runtime_name)
         if provider_spec is None:
             raise MCPServerError(

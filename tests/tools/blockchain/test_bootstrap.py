@@ -7,6 +7,7 @@ from openminion.base.config.runtime.tools import (
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
 from openminion.modules.tool.base import ToolExecutionContext
+from openminion.modules.tool.registry import ToolSpec
 
 
 def _config(enabled: bool):
@@ -85,3 +86,39 @@ def test_direct_registry_send_is_rejected_before_handler(tmp_path) -> None:
 
     assert result.ok is False
     assert result.data["error_code"] == "POLICY_MODE_UNSUPPORTED"
+
+
+def test_enabled_and_disabled_bootstraps_are_order_independent(tmp_path) -> None:
+    observed: list[bool] = []
+    for index, enabled in enumerate((True, False, True, False)):
+        bootstrap = build_runtime_bootstrap(
+            config=_config(enabled),
+            workspace_root=tmp_path / f"workspace-{index}",
+            run_root=tmp_path / f"run-{index}",
+            strict=False,
+        )
+        observed.append("blockchain.resolve_contract" in set(bootstrap.registry.list()))
+
+    assert observed == [True, False, True, False]
+
+
+def test_direct_registry_rejects_any_policy_service_tool_before_handler() -> None:
+    calls: list[dict] = []
+    tool = ToolSpec(
+        name="financial.send",
+        args_model=dict,
+        min_scope="POWER_USER",
+        handler=lambda args, _ctx: calls.append(args),
+        dangerous=True,
+        confirmation_preview=lambda _args: {},
+    )
+
+    result = execute_tool_spec_call(
+        tool=tool,
+        arguments={"amount": 1},
+        context=ToolExecutionContext(channel="test", target="test"),
+    )
+
+    assert result.ok is False
+    assert result.data["error_code"] == "POLICY_MODE_UNSUPPORTED"
+    assert calls == []

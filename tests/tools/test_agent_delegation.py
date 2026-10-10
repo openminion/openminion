@@ -478,6 +478,61 @@ def test_task_delegate_happy_path_maps_seam_result() -> None:
     }
 
 
+def test_task_delegate_can_narrow_child_permission_to_readonly() -> None:
+    from openminion.modules.tool.runtime.delegation import A2ADelegateResult
+
+    calls: dict[str, Any] = {}
+
+    class _Seam:
+        def delegate(self, **kwargs: Any) -> A2ADelegateResult:
+            calls.update(kwargs)
+            return A2ADelegateResult(ok=True, status="success", content="research")
+
+    context = _ctx_with_seam(_Seam())
+    context.permission_mode = "ask"
+    out = _h_task_delegate(
+        {
+            "agent_id": "bogr-readonly-researcher",
+            "instruction": "find candidate contracts",
+            "child_permission_mode": "readonly",
+        },
+        context,  # type: ignore[arg-type]
+    )
+
+    assert out["content"] == "research"
+    assert calls["permission_mode"] == "readonly"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {
+            "mode": "status",
+            "task_id": "task-1",
+            "child_permission_mode": "readonly",
+        },
+        {
+            "agent_id": "worker",
+            "instruction": "edit code",
+            "code_bearing": True,
+            "child_permission_mode": "readonly",
+        },
+        {
+            "agent_id": "worker",
+            "instruction": "research",
+            "child_permission_mode": "ask",
+        },
+    ],
+)
+def test_task_delegate_rejects_incompatible_child_permission_modes(
+    arguments: dict[str, Any],
+) -> None:
+    from openminion.tools.agent.plugin import TaskDelegateArgs
+
+    with pytest.raises(ValueError, match="child_permission_mode"):
+        TaskDelegateArgs.model_validate(arguments)
+
+
 def test_tool_adapter_binds_code_delegate_to_project_worktree_and_verifier(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

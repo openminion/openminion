@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -28,7 +29,7 @@ from tests.e2e.cli.focus.harness.scenarios import FocusScenario  # noqa: E402
 
 ARTIFACT_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "bttl-e2e" / "focus"
 CONFIG_SOURCE = FRAMEWORK_ROOT / "test-configs" / "per-agent-minimax-official.json"
-RPC_URL = "http://127.0.0.1:18548"
+RPC_URL = ""
 CHAIN_ID = 31337
 PRIVATE_KEY = "0x" + "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 RECIPIENT = Web3.to_checksum_address("0x" + "33" * 20)
@@ -43,8 +44,20 @@ def _wait_rpc(web3: Web3) -> None:
     raise RuntimeError("Anvil did not become ready")
 
 
-def _write_config() -> Path:
+def _free_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _write_config(data_root: Path) -> tuple[Path, set[bytes]]:
     payload = json.loads(CONFIG_SOURCE.read_text(encoding="utf-8"))
+    secret_values = {
+        str(value).encode()
+        for key, value in payload.get("runtime", {}).get("env", {}).items()
+        if any(marker in str(key).lower() for marker in ("key", "token", "secret"))
+        and len(str(value)) >= 8
+    }
     payload["action_policy"] = {
         "mode": "ask",
         "default_action": "require_confirm",
@@ -62,9 +75,16 @@ def _write_config() -> Path:
         "max_total_fee_wei": "10000000000000000",
         "receipt_timeout_seconds": 10,
     }
-    path = ARTIFACT_ROOT / "config.json"
+    path = data_root / "config.json"
     path.write_text(json.dumps(payload, indent=2, sort_keys=True))
-    return path
+    path.chmod(0o600)
+    return path, secret_values
+
+
+def _assert_no_retained_credentials(secrets: set[bytes]) -> None:
+    for path in ARTIFACT_ROOT.rglob("*"):
+        if path.is_file() and any(secret in path.read_bytes() for secret in secrets):
+            raise RuntimeError("retained BTTL evidence contains provider credentials")
 
 
 def _json_rows(database: Path, table: str) -> list[dict]:
@@ -138,16 +158,21 @@ def _telemetry_tool_results(data_root: Path) -> list[dict]:
 
 
 def main() -> int:
+    global RPC_URL
     if os.getenv("OPENMINION_LIVE_CLI_FOCUS_E2E") != "1":
         raise RuntimeError("OPENMINION_LIVE_CLI_FOCUS_E2E=1 is required")
     anvil = shutil.which("anvil")
     if not anvil:
         raise RuntimeError("anvil is required")
-    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    if ARTIFACT_ROOT.exists():
+        shutil.rmtree(ARTIFACT_ROOT)
+    ARTIFACT_ROOT.mkdir(parents=True)
     data_root = RUNTIME_GENERATED_ROOT.parent
     data_root.mkdir(parents=True, exist_ok=True)
+    port = _free_port()
+    RPC_URL = f"http://127.0.0.1:{port}"
     master_key = Fernet.generate_key().decode()
-    config_path = _write_config()
+    config_path, config_secrets = _write_config(data_root)
     secret = SecretService(
         str(data_root / "secret" / "secrets.db"),
         master_key,
@@ -163,7 +188,7 @@ def main() -> int:
     os.environ["OPENMINION_SECRET_KEY"] = master_key
     os.environ["OPENMINION_TRACE_REQUESTS"] = "1"
     process = subprocess.Popen(
-        [anvil, "--port", "18548", "--chain-id", str(CHAIN_ID), "--silent"],
+        [anvil, "--port", str(port), "--chain-id", str(CHAIN_ID), "--silent"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -219,7 +244,7 @@ def main() -> int:
         transcripts: dict[str, str] = {}
         for scenario in scenarios:
             probe = FocusProbe(
-                python_bin=ROOT / ".venv" / "bin" / "python3.11",
+                python_bin=Path(sys.executable),
                 openminion_root=ROOT,
                 framework_root=FRAMEWORK_ROOT,
                 data_root=data_root,
@@ -314,6 +339,13 @@ def main() -> int:
         trace_root = ARTIFACT_ROOT / "traces"
         shutil.copytree(data_root / "traces", trace_root, dirs_exist_ok=True)
         evidence = {
+            "schema_version": "bttl-e2e-v2",
+            "source_commit": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip(),
+            "scenario_id": "configured-focus-minimax",
+            "protocol": "general_loop_focus_cli",
+            "terminal_result": "completed",
             "provider_request": {
                 "trace_files": [
                     str(path.relative_to(ARTIFACT_ROOT))
@@ -344,11 +376,13 @@ def main() -> int:
         }
         output = ARTIFACT_ROOT / "evidence.json"
         output.write_text(json.dumps(evidence, indent=2, sort_keys=True))
+        _assert_no_retained_credentials(config_secrets)
         print(f"BTTL Focus MiniMax PASS evidence={output}")
         return 0
     finally:
         process.terminate()
         process.wait(timeout=5)
+        shutil.rmtree(data_root.parent, ignore_errors=True)
 
 
 if __name__ == "__main__":

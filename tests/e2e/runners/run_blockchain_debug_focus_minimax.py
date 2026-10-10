@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -34,7 +35,7 @@ from tests.e2e.cli.focus.harness.scenarios import FocusScenario  # noqa: E402
 EVIDENCE_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "bdtc-e2e" / "focus"
 CONFIG_SOURCE = FRAMEWORK_ROOT / "test-configs" / "per-agent-minimax-official.json"
 FIXTURE = ROOT / "tests" / "e2e" / "fixtures" / "blockchain" / "reference_swap.json"
-RPC_URL = "http://127.0.0.1:18550"
+RPC_URL = ""
 CHAIN_ID = 31337
 PRIVATE_KEY = "0x" + "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 SENDER = Web3.to_checksum_address("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266")
@@ -113,6 +114,12 @@ def _wait_rpc(web3: Web3) -> None:
     raise RuntimeError("Anvil did not become ready")
 
 
+def _free_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
 def _write_config(data_root: Path) -> Path:
     payload = json.loads(CONFIG_SOURCE.read_text())
     payload["action_policy"] = {
@@ -133,6 +140,7 @@ def _write_config(data_root: Path) -> Path:
     }
     path = data_root / "config.json"
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    path.chmod(0o600)
     return path
 
 
@@ -369,15 +377,20 @@ def _scenario(scenario_id: str, prompt: str, timeout: int = 480) -> FocusScenari
 
 
 def main() -> int:
+    global RPC_URL
     if os.getenv("OPENMINION_LIVE_CLI_FOCUS_E2E") != "1":
         raise RuntimeError("OPENMINION_LIVE_CLI_FOCUS_E2E=1 is required")
     source_commit = _clean_source_commit()
     anvil = shutil.which("anvil")
     if not anvil:
         raise RuntimeError("anvil is required")
-    EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
+    if EVIDENCE_ROOT.exists():
+        shutil.rmtree(EVIDENCE_ROOT)
+    EVIDENCE_ROOT.mkdir(parents=True)
     data_root = RUNTIME_ROOT.parent
     data_root.mkdir(parents=True, exist_ok=True)
+    port = _free_port()
+    RPC_URL = f"http://127.0.0.1:{port}"
     master_key = Fernet.generate_key().decode()
     config_path = _write_config(data_root)
     secret = SecretService(str(data_root / "secret" / "secrets.db"), master_key)
@@ -388,7 +401,7 @@ def main() -> int:
     os.environ["OPENMINION_SECRET_KEY"] = master_key
     os.environ["OPENMINION_TRACE_REQUESTS"] = "1"
     process = subprocess.Popen(
-        [anvil, "--port", "18550", "--chain-id", str(CHAIN_ID), "--silent"],
+        [anvil, "--port", str(port), "--chain-id", str(CHAIN_ID), "--silent"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -595,6 +608,7 @@ def main() -> int:
             "schema_version": "bdtc-e2e-v1",
             "source_commit": source_commit,
             "profile": "focus-minimax",
+            "terminal_result": "completed",
             "scenario_id": str(uuid4()),
             "debug_revert": {
                 "tool_call_id": revert_call_id,
@@ -652,6 +666,7 @@ def main() -> int:
     finally:
         process.terminate()
         process.wait(timeout=5)
+        shutil.rmtree(data_root.parent, ignore_errors=True)
 
 
 if __name__ == "__main__":

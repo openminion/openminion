@@ -4,6 +4,7 @@ import hashlib
 import importlib
 import json
 import os
+import shutil
 import tempfile
 from collections.abc import Mapping
 from contextlib import contextmanager
@@ -39,28 +40,6 @@ MAX_RESOLVED_PREPARATION_RECORD_BYTES = 256 * 1024
 MAX_OPERATION_RECORD_BYTES = 64 * 1024
 
 
-def _safe_session_id(session_id: str) -> str:
-    return (
-        "".join(
-            character if character.isalnum() or character in {"-", "_"} else "-"
-            for character in session_id
-        ).strip("-")
-        or "default"
-    )
-
-
-def _store_root(*, session_id: str, env: EnvironmentConfig) -> Path:
-    home_root = resolve_home_root(env=env)
-    data_root = resolve_data_root(
-        home_root,
-        data_root=env.openminion_data_root or None,
-        env=env.values,
-    )
-    return (
-        Path(data_root) / "blockchain" / "preparations" / _safe_session_id(session_id)
-    )
-
-
 def _session_store_root(*, session_id: str, env: EnvironmentConfig) -> Path:
     if not session_id:
         raise SessionRecordError("session id is required", reason="session_required")
@@ -76,6 +55,18 @@ def _session_store_root(*, session_id: str, env: EnvironmentConfig) -> Path:
 
 def _latest_preparation_path(*, session_id: str, env: EnvironmentConfig) -> Path:
     return _session_store_root(session_id=session_id, env=env) / "latest_preparation"
+
+
+def purge_blockchain_session_records(
+    session_id: str,
+    *,
+    env: EnvironmentConfig | Mapping[str, object] | None = None,
+) -> None:
+    """Remove records owned by one exact hashed blockchain session."""
+    resolved_env = resolve_environment_config(env=env)
+    root = _session_store_root(session_id=session_id, env=resolved_env)
+    if root.exists():
+        shutil.rmtree(root)
 
 
 def _save_latest_preparation(
@@ -510,12 +501,15 @@ def _reference_path(
     session_id: str,
     env: EnvironmentConfig,
 ) -> Path:
-    digest = str(preparation_digest).removeprefix("sha256:")
-    if len(digest) != 64 or any(
-        character not in "0123456789abcdef" for character in digest
-    ):
-        raise PreparationReferenceError("invalid preparation digest")
-    return _store_root(session_id=session_id, env=env) / f"{digest}.json"
+    try:
+        return _session_record_path(
+            "configured_preparations",
+            preparation_digest,
+            session_id=session_id,
+            env=env,
+        )
+    except SessionRecordError as exc:
+        raise PreparationReferenceError("invalid preparation digest") from exc
 
 
 def save_prepared_transaction(
@@ -538,15 +532,10 @@ def save_prepared_transaction(
         session_id=session_id,
         env=env,
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")),
-        encoding="utf-8",
+    _replace_record(
+        path,
+        _serialized_record(payload, max_bytes=MAX_RESOLVED_PREPARATION_RECORD_BYTES),
     )
-    temporary.replace(path)
-    latest = path.parent / "latest"
-    latest.write_text(payload["preparation_digest"], encoding="utf-8")
     _save_latest_preparation(
         payload["preparation_digest"], session_id=session_id, env=env
     )
@@ -577,14 +566,6 @@ def resolve_prepared_transaction(
             ) from exc
         try:
             digest = latest_path.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            store_root = _store_root(session_id=session_id, env=resolved_env)
-            try:
-                digest = (store_root / "latest").read_text(encoding="utf-8").strip()
-            except OSError as exc:
-                raise PreparationReferenceError(
-                    "prepared transaction is unavailable"
-                ) from exc
         except OSError as exc:
             raise PreparationReferenceError(
                 "prepared transaction is unavailable"

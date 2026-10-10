@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -8,11 +9,24 @@ pytestmark = pytest.mark.e2e
 _EVIDENCE_ROOT = Path(__file__).resolve().parents[3] / "workspace-tmp" / "bttl-e2e"
 
 
-def test_local_blockchain_evidence_has_six_typed_records() -> None:
-    path = _EVIDENCE_ROOT / "local" / "evidence.json"
-    if not path.exists():
-        return
+def _load(profile: str) -> dict:
+    if os.getenv("OPENMINION_BTTL_EVIDENCE_E2E") != "1":
+        pytest.skip("BTTL evidence validation requires explicit opt-in")
+    path = _EVIDENCE_ROOT / profile / "evidence.json"
+    assert path.is_file(), f"missing BTTL evidence: {path}"
     evidence = json.loads(path.read_text(encoding="utf-8"))
+    assert evidence["schema_version"] == "bttl-e2e-v2"
+    assert (
+        evidence["scenario_id"]
+        == f"configured-{profile.replace('focus', 'focus-minimax').replace('local', 'local-anvil')}"
+    )
+    assert evidence["terminal_result"] == "completed"
+    assert evidence["source_commit"]
+    return evidence
+
+
+def test_local_blockchain_evidence_has_six_typed_records() -> None:
+    evidence = _load("local")
     assert {
         "provider_request",
         "policy_decision",
@@ -42,10 +56,7 @@ def test_local_blockchain_evidence_has_six_typed_records() -> None:
 
 
 def test_focus_blockchain_evidence_binds_policy_audit_and_chain_state() -> None:
-    path = _EVIDENCE_ROOT / "focus" / "evidence.json"
-    if not path.exists():
-        return
-    evidence = json.loads(path.read_text(encoding="utf-8"))
+    evidence = _load("focus")
     assert evidence["provider_request"]["trace_files"]
     authorization = evidence["execution_authorization"]
     assert (
