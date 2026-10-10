@@ -59,6 +59,7 @@ def handle_slash_delegate(
         mode=request.mode,
         target_agent_id=request.target_agent_id,
         instruction=request.instruction,
+        child_permission_mode=request.child_permission_mode,
         task_id=request.task_id,
         timeout_seconds=request.timeout_seconds,
         limit=request.limit,

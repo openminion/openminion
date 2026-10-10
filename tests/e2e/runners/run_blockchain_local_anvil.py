@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
 import shutil
 import socket
@@ -17,32 +20,53 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from tests.helpers.live_e2e_profiles import resolve_live_framework_root  # noqa: E402
-from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+from tests.helpers.runtime_roots import (  # noqa: E402
+    RUNTIME_ROOT_ENV_VARS,
+    isolate_runtime_roots,
+)
 
 FRAMEWORK_ROOT = resolve_live_framework_root(ROOT)
-RUNTIME_GENERATED_ROOT = isolate_runtime_roots(prefix="openminion-bttl-local-")
 
-from openminion.base.config.runtime.tools import (  # noqa: E402
-    BlockchainToolRuntimeConfig,
-    ToolRuntimeConfig,
-)
-from openminion.base.config.env import resolve_environment_config  # noqa: E402
-from openminion.modules.brain.adapters.tool.runtime import ToolAdapter  # noqa: E402
-from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
-from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
-from openminion.modules.secret.service import SecretService  # noqa: E402
-from openminion.modules.tool.bootstrap import build_runtime_bootstrap  # noqa: E402
-from openminion.modules.tool.runtime.policy import (  # noqa: E402
-    DEFAULT_POLICY,
-    Policy,
-)
-from openminion.tools.blockchain.confirmation import (  # noqa: E402
-    build_blockchain_send_confirmation_preview,
-)
-from openminion.tools.blockchain.runtime import (  # noqa: E402
-    inspect_blockchain,
-    prepare_transaction,
-)
+
+@contextmanager
+def _private_runtime_root() -> Iterator[Path]:
+    previous = {name: os.environ.get(name) for name in RUNTIME_ROOT_ENV_VARS}
+    generated_root = isolate_runtime_roots(prefix="openminion-bttl-local-")
+    try:
+        yield generated_root
+    finally:
+        try:
+            shutil.rmtree(generated_root.parents[1])
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
+with _private_runtime_root():
+    from openminion.base.config.runtime.tools import (  # noqa: E402
+        BlockchainToolRuntimeConfig,
+        ToolRuntimeConfig,
+    )
+    from openminion.base.config.env import resolve_environment_config  # noqa: E402
+    from openminion.modules.brain.adapters.tool.runtime import ToolAdapter  # noqa: E402
+    from openminion.modules.policy.models import PolicyConfig, RiskSpec  # noqa: E402
+    from openminion.modules.policy.runtime.service import PolicyCtl  # noqa: E402
+    from openminion.modules.secret.service import SecretService  # noqa: E402
+    from openminion.modules.tool.bootstrap import build_runtime_bootstrap  # noqa: E402
+    from openminion.modules.tool.runtime.policy import (  # noqa: E402
+        DEFAULT_POLICY,
+        Policy,
+    )
+    from openminion.tools.blockchain.confirmation import (  # noqa: E402
+        build_blockchain_send_confirmation_preview,
+    )
+    from openminion.tools.blockchain.runtime import (  # noqa: E402
+        inspect_blockchain,
+        prepare_transaction,
+    )
 
 ARTIFACT_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "bttl-e2e" / "local"
 RPC_URL = ""
@@ -144,7 +168,7 @@ def _approval(ctl: PolicyCtl, args: dict, invocation_id: str, action: str):
     return decision, grant_id
 
 
-def main() -> int:
+def _run(runtime_generated_root: Path) -> int:
     global RPC_URL
     anvil = shutil.which("anvil")
     if not anvil:
@@ -159,6 +183,9 @@ def main() -> int:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    adapter = None
+    policy_ctl = None
+    secret = None
     try:
         web3 = Web3(Web3.HTTPProvider(RPC_URL))
         _wait_rpc(web3)
@@ -279,7 +306,7 @@ def main() -> int:
         assert web3.eth.block_number == block_before_stale
 
         audit_files = sorted(
-            (RUNTIME_GENERATED_ROOT.parent / "tool-runs").rglob("audit.jsonl")
+            (runtime_generated_root.parent / "tool-runs").rglob("audit.jsonl")
         )
         audit = json.loads(audit_files[-1].read_text().splitlines()[-1])
         authorization = {
@@ -328,13 +355,23 @@ def main() -> int:
         output = ARTIFACT_ROOT / "evidence.json"
         output.write_text(json.dumps(evidence, indent=2, sort_keys=True))
         print(f"BTTL local Anvil PASS evidence={output}")
-        adapter.close()
-        policy_ctl.close()
         return 0
     finally:
-        process.terminate()
-        process.wait(timeout=5)
-        shutil.rmtree(RUNTIME_GENERATED_ROOT.parent.parent, ignore_errors=True)
+        try:
+            if adapter is not None:
+                adapter.close()
+            if policy_ctl is not None:
+                policy_ctl.close()
+            if secret is not None:
+                secret.close_sync()
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+
+
+def main() -> int:
+    with _private_runtime_root() as runtime_generated_root:
+        return _run(runtime_generated_root)
 
 
 if __name__ == "__main__":

@@ -331,15 +331,17 @@ def build_runtime_published_tools(
     config = _resolve_publish_config(runtime, publish_config)
     if not config.enabled:
         return []
+    from openminion.modules.tool.runtime.registry_toolspec import (
+        requires_policy_service,
+    )
+
     registry: ToolRegistry = runtime.tools
     runtime_tools = registry.list()
     published: list[PublishedTool] = []
     for runtime_name, tool in runtime_tools.items():
         if not _tool_allowed_by_publish_config(runtime_name, config):
             continue
-        if bool(getattr(tool, "dangerous", False)) and callable(
-            getattr(tool, "confirmation_preview", None)
-        ):
+        if requires_policy_service(tool):
             continue
         provider_spec = registry.provider_spec_for_name(runtime_name)
         if provider_spec is None:

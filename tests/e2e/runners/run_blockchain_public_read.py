@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -17,16 +19,38 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from tests.helpers.live_e2e_profiles import resolve_live_framework_root  # noqa: E402
-from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+from tests.helpers.runtime_roots import (  # noqa: E402
+    RUNTIME_ROOT_ENV_VARS,
+    isolate_runtime_roots,
+)
 
 FRAMEWORK_ROOT = resolve_live_framework_root(ROOT)
-RUNTIME_ROOT = isolate_runtime_roots(prefix="openminion-abo-public-read-")
 OPT_IN = "OPENMINION_BLOCKCHAIN_PUBLIC_READ_E2E"
 CONFIG_ENV = "OPENMINION_BLOCKCHAIN_PUBLIC_READ_CONFIG"
 
-from openminion.base.config.env import EnvironmentConfig  # noqa: E402
-from openminion.tools.blockchain.runtime import inspect_blockchain  # noqa: E402
-from openminion.tools.blockchain.resolution import resolve_contract  # noqa: E402
+
+@contextmanager
+def _private_runtime_root() -> Iterator[Path]:
+    previous = {name: os.environ.get(name) for name in RUNTIME_ROOT_ENV_VARS}
+    runtime_root = isolate_runtime_roots(prefix="openminion-abo-public-read-")
+    try:
+        runtime_root.parent.mkdir(parents=True, exist_ok=True)
+        yield runtime_root
+    finally:
+        try:
+            shutil.rmtree(runtime_root.parents[1])
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
+with _private_runtime_root():
+    from openminion.base.config.env import EnvironmentConfig  # noqa: E402
+    from openminion.tools.blockchain.runtime import inspect_blockchain  # noqa: E402
+    from openminion.tools.blockchain.resolution import resolve_contract  # noqa: E402
 
 
 def validate_evidence(
@@ -167,9 +191,8 @@ def _stage_c_inputs(config_path: Path, request: dict) -> dict[str, object]:
 
 @contextmanager
 def _deadline(seconds: int):
-    if not hasattr(signal, "SIGALRM"):
-        yield
-        return
+    if not hasattr(signal, "SIGALRM") or not hasattr(signal, "setitimer"):
+        raise RuntimeError("public-read deadline is unavailable on this platform")
 
     def expired(_signum: int, _frame: object) -> None:
         raise TimeoutError("public-read evidence exceeded the approved duration")
@@ -190,36 +213,38 @@ def main() -> int:
     approved = _stage_c_inputs(config_path, request)
     source_commit = _source_commit()
     evidence_root = _evidence_root()
-    RUNTIME_ROOT.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     with _deadline(int(approved["max_duration_seconds"])):
-        with tempfile.TemporaryDirectory(
-            prefix="run-", dir=RUNTIME_ROOT.parent
-        ) as root:
-            data_root = Path(root)
-            context = SimpleNamespace(
-                session_id="abo-public-read",
-                env=EnvironmentConfig(
-                    values={
-                        "OPENMINION_HOME": str(data_root),
-                        "OPENMINION_DATA_ROOT": str(data_root),
-                    }
-                ),
-                metadata={"runtime_tools": {"blockchain": {"enabled": True}}},
-            )
-            resolution = resolve_contract(request, context)
-            if resolution.get("ok") is not True:
-                raise RuntimeError(f"public contract resolution failed: {resolution}")
-            result = inspect_blockchain(
-                {
-                    **read_request,
-                    "action": "resolved_contract_call",
-                    "resolution_digest": resolution["data"]["resolution_digest"],
-                },
-                context,
-            )
-            if result.get("ok") is not True:
-                raise RuntimeError(f"public contract read failed: {result}")
+        with _private_runtime_root() as runtime_root:
+            with tempfile.TemporaryDirectory(
+                prefix="run-", dir=runtime_root.parent
+            ) as root:
+                data_root = Path(root)
+                context = SimpleNamespace(
+                    session_id="abo-public-read",
+                    env=EnvironmentConfig(
+                        values={
+                            "OPENMINION_HOME": str(data_root),
+                            "OPENMINION_DATA_ROOT": str(data_root),
+                        }
+                    ),
+                    metadata={"runtime_tools": {"blockchain": {"enabled": True}}},
+                )
+                resolution = resolve_contract(request, context)
+                if resolution.get("ok") is not True:
+                    raise RuntimeError(
+                        f"public contract resolution failed: {resolution}"
+                    )
+                result = inspect_blockchain(
+                    {
+                        **read_request,
+                        "action": "resolved_contract_call",
+                        "resolution_digest": resolution["data"]["resolution_digest"],
+                    },
+                    context,
+                )
+                if result.get("ok") is not True:
+                    raise RuntimeError(f"public contract read failed: {result}")
     elapsed_seconds = round(time.monotonic() - started, 3)
     evidence = {
         "schema_version": "blockchain-autonomous-public-read-evidence-v2",

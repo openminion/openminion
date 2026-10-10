@@ -512,7 +512,7 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         result = seam.delegate(**delegate_kwargs)
 
     if result.ok:
-        return {
+        payload = {
             "ok": True,
             "agent_id": result.target_agent_id or validated.agent_id,
             "mode": validated.mode,
@@ -522,6 +522,9 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
             "trace_id": result.trace_id,
             "task_id": result.task_id,
         }
+        if validated.child_permission_mode:
+            payload["child_permission_mode"] = validated.child_permission_mode
+        return payload
 
     raise ToolRuntimeError(
         _task_delegate_error_code(result.error_code, status=result.status),

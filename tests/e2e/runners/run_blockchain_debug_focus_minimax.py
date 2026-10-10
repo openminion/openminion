@@ -664,9 +664,11 @@ def main() -> int:
         )
         return 0
     finally:
-        process.terminate()
-        process.wait(timeout=5)
-        shutil.rmtree(data_root.parent, ignore_errors=True)
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        finally:
+            shutil.rmtree(data_root.parent)
 
 
 if __name__ == "__main__":

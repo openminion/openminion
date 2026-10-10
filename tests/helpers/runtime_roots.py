@@ -8,6 +8,13 @@ from pathlib import Path
 import tempfile
 
 
+RUNTIME_ROOT_ENV_VARS = (
+    "OPENMINION_HOME",
+    "OPENMINION_DATA_ROOT",
+    "OPENMINION_GENERATED_ROOT",
+)
+
+
 def configure_runtime_roots(
     home_root: Path,
     environ: MutableMapping[str, str] | None = None,

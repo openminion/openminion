@@ -10,6 +10,10 @@ from openminion.tools.agent.plugin import _h_task_delegate
 
 _RESULT_MODE_ALIASES = frozenset({"result", "results"})
 _STATUS_MODES = frozenset({"status", "resume", "cancel", *_RESULT_MODE_ALIASES})
+_DELEGATE_START_USAGE = (
+    "Usage: /delegate [sync|async] [--child-permission-mode readonly] "
+    "<agent> <instruction...>"
+)
 
 
 @dataclass(frozen=True)
@@ -17,6 +21,7 @@ class AgentDelegateRequest:
     mode: str
     target_agent_id: str = ""
     instruction: str = ""
+    child_permission_mode: str = ""
     task_id: str = ""
     timeout_seconds: int = 120
     child_artifact: dict[str, Any] | None = None
@@ -30,6 +35,7 @@ class AgentDelegateRequest:
             "mode": normalize_delegate_mode(self.mode),
             "agent_id": self.target_agent_id.strip(),
             "instruction": self.instruction.strip(),
+            "child_permission_mode": self.child_permission_mode.strip(),
             "task_id": self.task_id.strip(),
             "timeout_seconds": self.timeout_seconds or 120,
             "child_artifact": dict(self.child_artifact or {}),
@@ -51,6 +57,8 @@ def agent_delegate_usage() -> str:
     return (
         "Usage:\n"
         "  openminion agent delegate --target-agent-id <agent> --instruction <text>\n"
+        "  openminion agent delegate --child-permission-mode readonly "
+        "--target-agent-id <agent> --instruction <text>\n"
         "  openminion agent delegate --mode async --target-agent-id <agent> --instruction <text>\n"
         "  openminion agent delegate-list [--limit 20]\n"
         "  openminion agent delegate-status --task-id <task>\n"
@@ -151,6 +159,7 @@ def render_agent_delegate_result(payload: dict[str, Any]) -> str:
     agent_id = str(payload.get("agent_id", "") or "").strip()
     task_id = str(payload.get("task_id", "") or "").strip()
     trace_id = str(payload.get("trace_id", "") or "").strip()
+    child_permission_mode = str(payload.get("child_permission_mode", "") or "").strip()
     content = str(payload.get("content", "") or "").strip()
     if agent_id:
         lines.append(f"  agent     {agent_id}")
@@ -158,6 +167,8 @@ def render_agent_delegate_result(payload: dict[str, Any]) -> str:
         lines.append(f"  task      {task_id}")
     if trace_id:
         lines.append(f"  trace     {trace_id}")
+    if child_permission_mode:
+        lines.append(f"  child permissions  {child_permission_mode}")
     if content:
         lines.extend(("", content))
     outputs = payload.get("outputs")
@@ -185,9 +196,38 @@ def request_from_operator_args(args: Any) -> AgentDelegateRequest:
         mode=mode,
         target_agent_id=str(getattr(args, "target_agent_id", "") or "").strip(),
         instruction=str(getattr(args, "instruction", "") or "").strip(),
+        child_permission_mode=str(
+            getattr(args, "child_permission_mode", "") or ""
+        ).strip(),
         task_id=str(getattr(args, "task_id", "") or "").strip(),
         timeout_seconds=int(getattr(args, "timeout_seconds", 120) or 120),
         limit=int(getattr(args, "limit", 20) or 20),
+    )
+
+
+def _start_request_from_slash_args(
+    *,
+    raw: str,
+    action: str,
+    remainder: str,
+) -> AgentDelegateRequest:
+    mode = action if action in {"sync", "async"} else "sync"
+    delegate_args = remainder if action in {"sync", "async"} else raw
+    child_permission_mode = ""
+    if delegate_args.startswith("--child-permission-mode "):
+        permission_parts = delegate_args.split(maxsplit=2)
+        if len(permission_parts) != 3 or permission_parts[1] != "readonly":
+            raise ValueError("/delegate --child-permission-mode only supports readonly")
+        child_permission_mode = permission_parts[1]
+        delegate_args = permission_parts[2]
+    target_parts = delegate_args.split(maxsplit=1)
+    if len(target_parts) != 2:
+        raise ValueError(_DELEGATE_START_USAGE)
+    return AgentDelegateRequest(
+        mode=mode,
+        target_agent_id=target_parts[0],
+        instruction=target_parts[1],
+        child_permission_mode=child_permission_mode,
     )
 
 
@@ -195,8 +235,7 @@ def request_from_slash_args(args: str) -> AgentDelegateRequest:
     raw = str(args or "").strip()
     if not raw:
         raise ValueError(
-            "Usage: /delegate <agent> <instruction...> | "
-            "/delegate async <agent> <instruction...> | "
+            f"{_DELEGATE_START_USAGE} | "
             "/delegate list [limit] | "
             "/delegate status|result|resume|cancel <task-id> | "
             "/delegate review '<review-request-json>' | "
@@ -271,20 +310,10 @@ def request_from_slash_args(args: str) -> AgentDelegateRequest:
             review_criteria=tuple(review_criteria),
             repository_instructions=repository_instructions,
         )
-    mode = action if action in {"sync", "async"} else "sync"
-    if action in {"sync", "async"}:
-        target_parts = remainder.split(maxsplit=1)
-        if len(target_parts) != 2:
-            raise ValueError("Usage: /delegate [sync|async] <agent> <instruction...>")
-        target_agent_id, instruction = target_parts
-    else:
-        target_agent_id, instruction = first, remainder
-    if not instruction:
-        raise ValueError("Usage: /delegate [sync|async] <agent> <instruction...>")
-    return AgentDelegateRequest(
-        mode=mode,
-        target_agent_id=target_agent_id,
-        instruction=instruction,
+    return _start_request_from_slash_args(
+        raw=raw,
+        action=action,
+        remainder=remainder,
     )
 
 

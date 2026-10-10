@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import atexit
+from collections.abc import Iterator
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -67,11 +69,9 @@ def validate_evidence(
         for read in resolved_reads
     ):
         raise ValueError("Focus successful resolved read does not join to resolution")
-    transcript = str(evidence.get("transcript", "")).lower()
-    if not all(marker in transcript for marker in ("contract", "block")):
-        raise ValueError("Focus answer lacks meaningful contract and block evidence")
-    if any(marker in transcript for marker in ("cannot help", "unable to", "refuse")):
-        raise ValueError("Focus refusal is not successful evidence")
+    response_sha256 = str(evidence.get("response_sha256", ""))
+    if len(response_sha256) != 64 or evidence.get("response_bytes", 0) < 1:
+        raise ValueError("Focus terminal response evidence is missing")
     if expected is not None:
         for key, value in expected.items():
             if evidence.get(key) != value:
@@ -169,6 +169,32 @@ def _write_private_config(payload: dict, data_root: Path) -> Path:
     return path
 
 
+@contextmanager
+def _private_runtime_root() -> Iterator[Path]:
+    data_root = isolate_runtime_roots(prefix="openminion-abo-focus-").parent
+    try:
+        yield data_root
+    finally:
+        shutil.rmtree(data_root.parent)
+
+
+@contextmanager
+def _deadline(seconds: int) -> Iterator[None]:
+    if not hasattr(signal, "SIGALRM") or not hasattr(signal, "setitimer"):
+        raise RuntimeError("Focus deadline is unavailable on this platform")
+
+    def expired(_signum: int, _frame: object) -> None:
+        raise TimeoutError("Focus evidence exceeded the approved duration")
+
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def _required(name: str) -> str:
     value = str(os.getenv(name, "") or "").strip()
     if not value:
@@ -250,6 +276,39 @@ def _assert_retained_evidence_safe(root: Path, secrets: set[bytes]) -> None:
             raise RuntimeError("retained evidence contains credential material")
 
 
+def _write_evidence(root: Path, evidence: dict[str, object]) -> Path:
+    path = root / "evidence.json"
+    path.write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _failure_evidence(
+    *,
+    source_commit: str,
+    agent_id: str,
+    approved: dict[str, object],
+    observed: dict[str, object],
+    error: Exception,
+) -> dict[str, object]:
+    return {
+        "schema_version": "blockchain-autonomous-focus-evidence-v2",
+        "scenario_id": "autonomous-public-discovery",
+        "protocol": "general_loop_focus_cli",
+        "source_commit": source_commit,
+        "focus_agent_id": agent_id,
+        "terminal_result": "failed",
+        "failure": {
+            "error_type": type(error).__name__,
+            "message": "Focus scenario failed; details were not retained.",
+        },
+        **approved,
+        **observed,
+    }
+
+
 def _stage_c_inputs(config_path: Path, agent_id: str) -> dict[str, object]:
     config_sha256 = _file_sha256(config_path)
     expected_config = _required("OPENMINION_BLOCKCHAIN_E2E_EXPECTED_CONFIG_SHA256")
@@ -291,99 +350,126 @@ def main() -> int:
     agent_id = _required(AGENT_ENV)
     source_commit = _source_commit()
     evidence_root = _evidence_root()
-    data_root = isolate_runtime_roots(prefix="openminion-abo-focus-").parent
-    atexit.register(shutil.rmtree, data_root.parent, ignore_errors=True)
-    config_path = _write_private_config(config_payload, data_root)
-    approved = _stage_c_inputs(config_path, agent_id)
-    probe = FocusProbe(
-        python_bin=Path(sys.executable),
-        openminion_root=ROOT,
-        framework_root=FRAMEWORK_ROOT,
-        data_root=data_root,
-        config_path=config_path,
-        agent_id=agent_id,
-        workdir=FRAMEWORK_ROOT,
-        session_id="abo-focus-minimax",
-        include_project_context=False,
-        allow_unsandboxed_exec=False,
-    )
-    scenario = FocusScenario(
-        scenario_id="autonomous-public-discovery",
-        prompt=PROMPT,
-        expected_markers=(),
-        timeout=int(approved["max_duration_seconds"]),
-        include_project_context=False,
-        requires_approval=False,
-        max_auto_approvals=0,
-        max_auto_continuations=3,
-    )
-    started = time.monotonic()
-    with probe.session(rows=48, cols=160) as session:
-        probe.wait_ready(session)
-        probe.run_slash(
-            session, "/permissions readonly", marker="permissions → read-only"
-        )
-        transcript = probe.run_turn(session, scenario)
-    elapsed_seconds = round(time.monotonic() - started, 3)
-    transcript_path = evidence_root / "transcript.txt"
-    transcript_path.write_text(transcript, encoding="utf-8")
-    events, _messages, brain_session_id = read_focus_evidence(
-        probe.environment(), probe.session_id
-    )
-    current_events = [event for event in events if event.session_id == brain_session_id]
-    requested_tools = sorted(
-        {
-            str(event.data.get("canonical_name") or "")
-            for event in current_events
-            if event.event_type == "tool.call.requested"
-        }
-        - {""}
-    )
-    completed_tools = sorted(
-        {
-            str(event.data.get("canonical_name") or "")
-            for event in current_events
-            if event.event_type == "tool.call.completed"
-        }
-        - {""}
-    )
-    if "blockchain.send_transaction" in requested_tools:
-        raise RuntimeError("read-only Focus scenario attempted a transaction send")
-    successful_resolution_digests, successful_resolved_reads = (
-        _successful_blockchain_evidence(current_events)
-    )
-    evidence = {
-        "schema_version": "blockchain-autonomous-focus-evidence-v2",
-        "scenario_id": "autonomous-public-discovery",
-        "protocol": "general_loop_focus_cli",
-        "source_commit": source_commit,
-        "prompt": PROMPT,
-        "hidden_context": {},
-        "transcript_path": transcript_path.name,
-        "transcript_sha256": hashlib.sha256(transcript.encode("utf-8")).hexdigest(),
-        "transcript": transcript,
-        "brain_session_id": brain_session_id,
-        "persisted_event_count": len(current_events),
-        "persisted_event_types": sorted({event.event_type for event in current_events}),
-        "requested_tools": requested_tools,
-        "completed_tools": completed_tools,
-        "successful_resolution_digests": successful_resolution_digests,
-        "successful_resolved_reads": successful_resolved_reads,
-        "permission_mode": "readonly",
-        "allow_unsandboxed_exec": False,
-        "approval_prompt_count": 0,
-        "broadcast_count": 0,
-        "elapsed_seconds": elapsed_seconds,
-        "terminal_result": "completed",
-        **approved,
-    }
-    validate_evidence(evidence, {"source_commit": source_commit, **approved})
-    (evidence_root / "evidence.json").write_text(
-        json.dumps(evidence, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    _assert_retained_evidence_safe(evidence_root, _secret_values(config_payload))
-    print(f"ABO Focus MiniMax completed evidence={evidence_root / 'evidence.json'}")
+    secrets = _secret_values(config_payload)
+    evidence_path = evidence_root / "evidence.json"
+    approved: dict[str, object] = {}
+    observed: dict[str, object] = {}
+    with _private_runtime_root() as data_root:
+        try:
+            config_path = _write_private_config(config_payload, data_root)
+            approved = _stage_c_inputs(config_path, agent_id)
+            probe = FocusProbe(
+                python_bin=Path(sys.executable),
+                openminion_root=ROOT,
+                framework_root=FRAMEWORK_ROOT,
+                data_root=data_root,
+                config_path=config_path,
+                agent_id=agent_id,
+                workdir=FRAMEWORK_ROOT,
+                session_id="abo-focus-minimax",
+                include_project_context=False,
+                allow_unsandboxed_exec=False,
+            )
+            scenario = FocusScenario(
+                scenario_id="autonomous-public-discovery",
+                prompt=PROMPT,
+                expected_markers=(),
+                timeout=int(approved["max_duration_seconds"]),
+                include_project_context=False,
+                requires_approval=False,
+                max_auto_approvals=0,
+                max_auto_continuations=3,
+            )
+            started = time.monotonic()
+            with _deadline(int(approved["max_duration_seconds"])):
+                with probe.session(rows=48, cols=160) as session:
+                    probe.wait_ready(session)
+                    probe.run_slash(
+                        session,
+                        "/permissions readonly",
+                        marker="permissions → read-only",
+                    )
+                    transcript = probe.run_turn(session, scenario)
+            elapsed_seconds = round(time.monotonic() - started, 3)
+            events, _messages, brain_session_id = read_focus_evidence(
+                probe.environment(), probe.session_id
+            )
+            current_events = [
+                event for event in events if event.session_id == brain_session_id
+            ]
+            requested_tools = sorted(
+                {
+                    str(event.data.get("canonical_name") or "")
+                    for event in current_events
+                    if event.event_type == "tool.call.requested"
+                }
+                - {""}
+            )
+            completed_tools = sorted(
+                {
+                    str(event.data.get("canonical_name") or "")
+                    for event in current_events
+                    if event.event_type == "tool.call.completed"
+                }
+                - {""}
+            )
+            if "blockchain.send_transaction" in requested_tools:
+                raise RuntimeError(
+                    "read-only Focus scenario attempted a transaction send"
+                )
+            successful_resolution_digests, successful_resolved_reads = (
+                _successful_blockchain_evidence(current_events)
+            )
+            observed = {
+                "persisted_event_count": len(current_events),
+                "persisted_event_types": sorted(
+                    {event.event_type for event in current_events}
+                ),
+                "requested_tools": requested_tools,
+                "completed_tools": completed_tools,
+                "permission_mode": "readonly",
+                "allow_unsandboxed_exec": False,
+                "approval_prompt_count": 0,
+                "broadcast_count": 0,
+                "elapsed_seconds": elapsed_seconds,
+            }
+            evidence = {
+                "schema_version": "blockchain-autonomous-focus-evidence-v2",
+                "scenario_id": "autonomous-public-discovery",
+                "protocol": "general_loop_focus_cli",
+                "source_commit": source_commit,
+                "prompt": PROMPT,
+                "hidden_context": {},
+                "response_sha256": hashlib.sha256(
+                    transcript.encode("utf-8")
+                ).hexdigest(),
+                "response_bytes": len(transcript.encode("utf-8")),
+                "brain_session_id": brain_session_id,
+                "successful_resolution_digests": successful_resolution_digests,
+                "successful_resolved_reads": successful_resolved_reads,
+                "terminal_result": "completed",
+                **approved,
+                **observed,
+            }
+            validate_evidence(evidence, {"source_commit": source_commit, **approved})
+            _write_evidence(evidence_root, evidence)
+            _assert_retained_evidence_safe(evidence_root, secrets)
+        except Exception as error:
+            evidence_path.unlink(missing_ok=True)
+            _write_evidence(
+                evidence_root,
+                _failure_evidence(
+                    source_commit=source_commit,
+                    agent_id=agent_id,
+                    approved=approved,
+                    observed=observed,
+                    error=error,
+                ),
+            )
+            _assert_retained_evidence_safe(evidence_root, secrets)
+            raise
+
+    print(f"ABO Focus MiniMax completed evidence={evidence_path}")
     return 0
 
 

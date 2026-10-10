@@ -82,6 +82,33 @@ def test_terminal_slash_delegate_forwards_review_request() -> None:
     assert "status    passed" in console.export_text()
 
 
+def test_terminal_slash_delegate_forwards_readonly_child_permission() -> None:
+    calls: list[dict[str, object]] = []
+
+    class _Runtime:
+        def delegate_task(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "mode": kwargs.get("mode"),
+                "status": "success",
+                "agent_id": kwargs.get("target_agent_id"),
+                "child_permission_mode": kwargs.get("child_permission_mode"),
+                "content": "research complete",
+            }
+
+    console = Console(record=True, force_terminal=False)
+    handle_slash_delegate(
+        "/delegate --child-permission-mode readonly "
+        "bogr-readonly-researcher find candidate contracts",
+        runtime=_Runtime(),
+        console=console,
+    )
+
+    assert calls[0]["child_permission_mode"] == "readonly"
+    assert "child permissions  readonly" in console.export_text()
+
+
 @pytest.mark.asyncio
 async def test_terminal_slash_delegate_keeps_async_approval_responsive() -> None:
     loop = asyncio.get_running_loop()

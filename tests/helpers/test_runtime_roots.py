@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -72,6 +73,34 @@ def test_python_helper_can_isolate_child_environment() -> None:
 
     assert Path(environment["OPENMINION_DATA_ROOT"]) == home_root / ".openminion"
     assert Path(environment["OPENMINION_GENERATED_ROOT"]) == generated_root
+
+
+def test_blockchain_runner_import_preserves_runtime_root_environment() -> None:
+    environment = dict(os.environ)
+    sentinels = {
+        "OPENMINION_HOME": "/caller/home",
+        "OPENMINION_DATA_ROOT": "/caller/data",
+        "OPENMINION_GENERATED_ROOT": "/caller/generated",
+    }
+    environment.update(sentinels)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json, os; "
+                "from tests.e2e.runners import run_blockchain_public_read; "
+                f"print(json.dumps({{name: os.environ.get(name) for name in {tuple(sentinels)!r}}}))"
+            ),
+        ],
+        cwd=OPENMINION_ROOT,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == sentinels
 
 
 def test_shell_helper_replaces_ambient_roots() -> None:

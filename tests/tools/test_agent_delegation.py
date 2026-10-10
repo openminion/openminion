@@ -500,6 +500,7 @@ def test_task_delegate_can_narrow_child_permission_to_readonly() -> None:
     )
 
     assert out["content"] == "research"
+    assert out["child_permission_mode"] == "readonly"
     assert calls["permission_mode"] == "readonly"
 
 

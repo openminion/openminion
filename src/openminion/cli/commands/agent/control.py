@@ -604,6 +604,12 @@ def _add_agent_delegation_subcommands(
         help="Run synchronously or return an inspectable async task handle",
     )
     delegate_cmd.add_argument(
+        "--child-permission-mode",
+        choices=("readonly",),
+        default="",
+        help="Run the child with read-only permissions",
+    )
+    delegate_cmd.add_argument(
         "--timeout-seconds",
         type=int,
         default=120,
