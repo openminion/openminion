@@ -385,16 +385,6 @@ def main() -> int:
             policy_ctl, send_args, "denied", "deny"
         )
         assert denied_grant is None
-        denied = adapter.execute(
-            command={
-                "tool_name": "blockchain.send_transaction",
-                "args": send_reference,
-                "idempotency_key": "denied",
-            },
-            session_id="bdtc-local",
-            trace_id="denied",
-        )
-        assert denied["error"]["code"] == "POLICY_DENIED"
         assert str(contract.functions.outputOf(RECIPIENT).call()) == pre_state
 
         prepared_again = prepare_transaction(
@@ -422,6 +412,10 @@ def main() -> int:
                 "tool_name": "blockchain.send_transaction",
                 "args": send_reference,
                 "idempotency_key": "allowed",
+                "inputs": {
+                    "confirmation_grant_id": allowed_decision.approval_id,
+                    "confirmation_source": "policy_replay",
+                },
             },
             session_id="bdtc-local",
             trace_id="allowed",

@@ -528,7 +528,7 @@ def test_tool_adapter_consumes_grant_for_canonical_invocation(tmp_path) -> None:
             args_model=SendTransactionArgs,
             min_scope="READ_ONLY",
             handler=handler,
-            dangerous=False,
+            dangerous=True,
             idempotent=False,
         )
     )

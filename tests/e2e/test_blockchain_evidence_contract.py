@@ -3,10 +3,12 @@ import os
 from pathlib import Path
 
 import pytest
+from tests.helpers.live_e2e_profiles import resolve_live_framework_root
 
 pytestmark = pytest.mark.e2e
 
-_EVIDENCE_ROOT = Path(__file__).resolve().parents[3] / "workspace-tmp" / "bttl-e2e"
+ROOT = Path(__file__).resolve().parents[2]
+_EVIDENCE_ROOT = resolve_live_framework_root(ROOT) / "workspace-tmp" / "bttl-e2e"
 
 
 def _load(profile: str) -> dict:

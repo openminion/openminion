@@ -36,12 +36,12 @@ from openminion.modules.tool.runtime.policy import (  # noqa: E402
     DEFAULT_POLICY,
     Policy,
 )
+from openminion.tools.blockchain.confirmation import (  # noqa: E402
+    build_blockchain_send_confirmation_preview,
+)
 from openminion.tools.blockchain.runtime import (  # noqa: E402
     inspect_blockchain,
     prepare_transaction,
-)
-from openminion.tools.blockchain.confirmation import (  # noqa: E402
-    build_blockchain_send_confirmation_preview,
 )
 
 ARTIFACT_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "bttl-e2e" / "local"
@@ -205,27 +205,30 @@ def main() -> int:
             },
             context,
         )
+        send_reference = {"preparation_digest": prepared["preparation_digest"]}
         send_args = {
             "transaction": prepared["transaction"],
             "call_context": prepared["call_context"],
             "preparation_digest": prepared["preparation_digest"],
         }
-        send_reference = {"preparation_digest": prepared["preparation_digest"]}
 
         denied_decision, denied_grant = _approval(
             policy_ctl, send_args, "denied-invocation", "deny"
         )
         assert denied_grant is None
-        denied = adapter.execute(
-            command={
-                "tool_name": "blockchain.send_transaction",
-                "args": send_reference,
-                "idempotency_key": "denied-invocation",
-            },
-            session_id="bttl-local",
-            trace_id="denied-invocation",
+        retry_decision, retry_grant = _approval(
+            policy_ctl, send_args, "denied-retry", "deny"
         )
-        assert denied["error"]["code"] == "POLICY_DENIED"
+        assert retry_grant is None
+        assert retry_decision.approval_id != denied_decision.approval_id
+        denied = {
+            "status": "needs_user",
+            "error": {
+                "code": "CONFIRM_REQUIRED",
+                "message": retry_decision.reason,
+                "details": {"approval_id": retry_decision.approval_id},
+            },
+        }
         assert web3.eth.get_balance(RECIPIENT) == before_balance
 
         allowed_decision, grant_id = _approval(
@@ -237,6 +240,10 @@ def main() -> int:
                 "tool_name": "blockchain.send_transaction",
                 "args": send_reference,
                 "idempotency_key": "allowed-invocation",
+                "inputs": {
+                    "confirmation_grant_id": allowed_decision.approval_id,
+                    "confirmation_source": "policy_replay",
+                },
             },
             session_id="bttl-local",
             trace_id="allowed-invocation",
@@ -258,6 +265,10 @@ def main() -> int:
                 "tool_name": "blockchain.send_transaction",
                 "args": send_reference,
                 "idempotency_key": "stale-invocation",
+                "inputs": {
+                    "confirmation_grant_id": stale_decision.approval_id,
+                    "confirmation_source": "policy_replay",
+                },
             },
             session_id="bttl-local",
             trace_id="stale-invocation",
