@@ -308,7 +308,30 @@ def _run(runtime_generated_root: Path) -> int:
         audit_files = sorted(
             (runtime_generated_root.parent / "tool-runs").rglob("audit.jsonl")
         )
-        audit = json.loads(audit_files[-1].read_text().splitlines()[-1])
+        audits = [
+            json.loads(line)
+            for audit_file in audit_files
+            for line in audit_file.read_text().splitlines()
+            if line
+        ]
+        allowed_audits = [
+            record for record in audits if record["invocation_id"] == "allowed-invocation"
+        ]
+        stale_audits = [
+            record for record in audits if record["invocation_id"] == "stale-invocation"
+        ]
+        assert len(allowed_audits) == 1
+        assert len(stale_audits) == 1
+        audit = allowed_audits[0]
+        stale_audit = stale_audits[0]
+        assert audit["approval_id"] == allowed_decision.approval_id
+        assert audit["state"] == "succeeded"
+        assert audit["broadcast_attempts"] == 1
+        assert audit["transaction_hash"] == transaction_hash
+        assert stale_audit["approval_id"] == stale_decision.approval_id
+        assert stale_audit["state"] == "stale"
+        assert stale_audit["broadcast_attempts"] == 0
+        assert stale_audit["transaction_hash"] == ""
         authorization = {
             "invocation_hash": audit["invocation_hash"],
             "approval_id": audit["approval_id"],
@@ -347,6 +370,7 @@ def _run(runtime_generated_root: Path) -> int:
             "stale_send": {
                 "policy_decision": stale_decision.to_dict(),
                 "tool_result": stale,
+                "transaction_audit": stale_audit,
                 "chain_state_unchanged": True,
             },
             "inspect": inspect,

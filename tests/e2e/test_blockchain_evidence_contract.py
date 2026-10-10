@@ -45,6 +45,13 @@ def test_local_blockchain_evidence_has_six_typed_records() -> None:
         evidence["transaction_audit"]["approval_id"]
         == evidence["execution_authorization"]["approval_id"]
     )
+    assert evidence["transaction_audit"]["invocation_id"] == "allowed-invocation"
+    assert evidence["transaction_audit"]["state"] == "succeeded"
+    assert evidence["transaction_audit"]["broadcast_attempts"] == 1
+    assert (
+        evidence["transaction_audit"]["transaction_hash"]
+        == evidence["tool_result"]["data"]["transaction_hash"]
+    )
     assert evidence["chain_state"]["receipt_status"] == 1
     denied = evidence["denied_send"]
     assert denied["execution_authorization"] is None
@@ -54,6 +61,10 @@ def test_local_blockchain_evidence_has_six_typed_records() -> None:
     assert stale["policy_decision"]["decision"] == "REQUIRE_CONFIRM"
     assert stale["tool_result"]["outputs"]["error"]["code"] == ("STALE_PREPARATION")
     assert stale["tool_result"]["outputs"]["data"]["broadcast_attempts"] == 0
+    assert stale["transaction_audit"]["invocation_id"] == "stale-invocation"
+    assert stale["transaction_audit"]["state"] == "stale"
+    assert stale["transaction_audit"]["broadcast_attempts"] == 0
+    assert stale["transaction_audit"]["transaction_hash"] == ""
     assert stale["chain_state_unchanged"] is True
 
 
