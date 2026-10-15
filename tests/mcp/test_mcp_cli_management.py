@@ -73,6 +73,7 @@ def test_mcp_import_redacts_secret_stdout(tmp_path: Path, capsys) -> None:
     output = capsys.readouterr().out
     assert "raw-secret" not in output
     payload = json.loads(output)
+    assert payload["config_path"] == str(config.resolve())
     assert payload["imported"][0]["enabled"] is False
     assert payload["imported"][0]["env"]["API_TOKEN"] == "<redacted>"
     assert payload["imported"][0]["env"]["SAFE_FLAG"] == "<redacted>"
@@ -266,6 +267,7 @@ def test_mcp_config_lifecycle_preserves_unrelated_config(
     )
     added = json.loads(capsys.readouterr().out)
     assert added["applies"] == "next_startup"
+    assert added["config_path"] == str(config.resolve())
     assert added["server"]["name"] == "local_fixture"
     persisted = load_config(str(config))
     assert persisted.runtime.env["KEEP"] == "yes"
@@ -276,24 +278,33 @@ def test_mcp_config_lifecycle_preserves_unrelated_config(
     assert shown["server"]["command"] == ["python", "server.py"]
 
     assert run_mcp(_args("disable", config=str(config), name="local_fixture")) == 0
-    assert json.loads(capsys.readouterr().out)["server"]["enabled"] is False
+    disabled = json.loads(capsys.readouterr().out)
+    assert disabled["server"]["enabled"] is False
+    assert disabled["config_path"] == str(config.resolve())
     assert load_config(str(config)).runtime.mcp_servers[0].enabled is False
 
     assert run_mcp(_args("enable", config=str(config), name="local_fixture")) == 0
-    assert json.loads(capsys.readouterr().out)["server"]["enabled"] is True
+    enabled = json.loads(capsys.readouterr().out)
+    assert enabled["server"]["enabled"] is True
+    assert enabled["config_path"] == str(config.resolve())
     assert load_config(str(config)).runtime.mcp_servers[0].enabled is True
 
     assert run_mcp(_args("untrust", config=str(config), name="local_fixture")) == 0
-    assert json.loads(capsys.readouterr().out)["server"]["trusted"] is False
+    untrusted = json.loads(capsys.readouterr().out)
+    assert untrusted["server"]["trusted"] is False
+    assert untrusted["config_path"] == str(config.resolve())
     assert load_config(str(config)).runtime.mcp_servers[0].trusted is False
 
     assert run_mcp(_args("trust", config=str(config), name="local_fixture")) == 0
-    assert json.loads(capsys.readouterr().out)["server"]["trusted"] is True
+    trusted = json.loads(capsys.readouterr().out)
+    assert trusted["server"]["trusted"] is True
+    assert trusted["config_path"] == str(config.resolve())
     assert load_config(str(config)).runtime.mcp_servers[0].trusted is True
 
     assert run_mcp(_args("remove", config=str(config), name="local_fixture")) == 0
     assert json.loads(capsys.readouterr().out) == {
         "applies": "next_startup",
+        "config_path": str(config.resolve()),
         "ok": True,
         "removed": "local_fixture",
     }

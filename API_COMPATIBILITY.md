@@ -87,13 +87,12 @@ except ProviderError as error:
     print(error.code, error.message)
 ```
 
-### Turn deadlines and approval decisions (unreleased)
+### Turn deadlines and approval decisions (0.1.5)
 
 `TurnTimeoutError` is the existing turn-deadline exception, now exported from
 `openminion` and `openminion.api` as well as `openminion.api.turns`. It is distinct
 from a provider request timeout reported by `ProviderError`. Its `__since__`
-entry is marked `0.1.4+unreleased` until release verification assigns the shipped
-version. The SDK error-handling example catches both errors.
+entry is `0.1.5`. The SDK error-handling example catches both errors.
 
 Turn cancellation propagates through nested worker calls. After cancellation,
 the runtime starts no further provider or tool work and does not append a late

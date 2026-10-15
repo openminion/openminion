@@ -69,12 +69,15 @@ def _mcp_add(args: argparse.Namespace) -> int:
     if any(item.name == server.name for item in config.runtime.mcp_servers):
         raise RuntimeError(f"MCP server already exists: {server.name}")
     config.runtime.mcp_servers.append(server)
-    save_config(config, str(manager.config_path), home_root=manager.home_root)
+    written_path = save_config(
+        config, str(manager.config_path), home_root=manager.home_root
+    )
     print_json_payload(
         {
             "ok": True,
             "server": _redacted_server_payload(server),
             "applies": "next_startup",
+            "config_path": str(written_path),
         }
     )
     return 0
@@ -99,8 +102,17 @@ def _mcp_remove(args: argparse.Namespace) -> int:
     config.runtime.mcp_servers = [
         item for item in config.runtime.mcp_servers if item.name != server.name
     ]
-    save_config(config, str(manager.config_path), home_root=manager.home_root)
-    print_json_payload({"ok": True, "removed": server.name, "applies": "next_startup"})
+    written_path = save_config(
+        config, str(manager.config_path), home_root=manager.home_root
+    )
+    print_json_payload(
+        {
+            "ok": True,
+            "removed": server.name,
+            "applies": "next_startup",
+            "config_path": str(written_path),
+        }
+    )
     return 0
 
 
@@ -132,12 +144,15 @@ def _mcp_set_enabled(args: argparse.Namespace, *, enabled: bool) -> int:
         updated if item.name == server.name else item
         for item in config.runtime.mcp_servers
     ]
-    save_config(config, str(manager.config_path), home_root=manager.home_root)
+    written_path = save_config(
+        config, str(manager.config_path), home_root=manager.home_root
+    )
     print_json_payload(
         {
             "ok": True,
             "server": _redacted_server_payload(updated),
             "applies": "next_startup",
+            "config_path": str(written_path),
         }
     )
     return 0
@@ -157,12 +172,15 @@ def _mcp_set_trusted(args: argparse.Namespace, *, trusted: bool) -> int:
         updated if item.name == server.name else item
         for item in config.runtime.mcp_servers
     ]
-    save_config(config, str(manager.config_path), home_root=manager.home_root)
+    written_path = save_config(
+        config, str(manager.config_path), home_root=manager.home_root
+    )
     print_json_payload(
         {
             "ok": True,
             "server": _redacted_server_payload(updated),
             "applies": "next_startup",
+            "config_path": str(written_path),
         }
     )
     return 0
@@ -174,21 +192,26 @@ def _mcp_import(args: argparse.Namespace) -> int:
     source_path = Path(str(getattr(args, "source", "") or "")).expanduser()
     payload = json.loads(source_path.read_text(encoding="utf-8"))
     imported = _servers_from_external_payload(payload)
-    if bool(getattr(args, "write", False)):
+    write = bool(getattr(args, "write", False))
+    written_path: Path | None = None
+    if write:
         manager = _load_writable_config_manager(args)
         config = manager.base_config
         existing = {server.name: server for server in config.runtime.mcp_servers}
         for server in imported:
             existing[server.name] = server
         config.runtime.mcp_servers = list(existing.values())
-        save_config(config, str(manager.config_path), home_root=manager.home_root)
-    print_json_payload(
-        {
-            "ok": True,
-            "imported": [_redacted_server_payload(server) for server in imported],
-            "written": bool(getattr(args, "write", False)),
-        }
-    )
+        written_path = save_config(
+            config, str(manager.config_path), home_root=manager.home_root
+        )
+    output = {
+        "ok": True,
+        "imported": [_redacted_server_payload(server) for server in imported],
+        "written": write,
+    }
+    if written_path is not None:
+        output["config_path"] = str(written_path)
+    print_json_payload(output)
     return 0
 
 

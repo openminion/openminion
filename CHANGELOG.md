@@ -10,6 +10,7 @@ This file tracks package-facing release notes for `openminion`.
 - Keep MCP CLI configuration aligned with the SDK's project-scoped default,
   enable approval events for submitted SDK turns, and pin the public
   `TurnTimeoutError` introduction to 0.1.5.
+- Report the resolved configuration path after MCP commands write changes.
 
 ## Current package line - 2026-10-14
 
