@@ -92,8 +92,9 @@ local files and passing tests are not deployment evidence. Verify without publis
 ### Runtime metadata checklist
 
 1. Install a GitHub App on `openminion/openminion-packaging` with only Actions
-   write access. Store its app ID as the `RUNTIME_PACKAGING_APP_ID` repository
-   variable and its private key as the `RUNTIME_PACKAGING_APP_PRIVATE_KEY`
+   write access. Store its client ID as the
+   `RUNTIME_PACKAGING_CLIENT_ID` repository variable and its private key as the
+   `RUNTIME_PACKAGING_APP_PRIVATE_KEY`
    repository secret in `openminion/openminion`. The app token is minted only
    after the final source producer is verified and is scoped to that one
    private repository.

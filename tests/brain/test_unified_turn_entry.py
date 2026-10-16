@@ -554,6 +554,36 @@ def test_unified_entry_coding_control_preserves_project_handoff(tmp_path: Path) 
     ]
 
 
+def test_unified_entry_accepts_exact_durable_request_without_keyword(
+    tmp_path: Path,
+) -> None:
+    response = _tool_response(
+        "coding",
+        {
+            "project_handoff": {
+                "goal": "Finish the calculator",
+                "success_criteria": ["Tests pass"],
+                "verification_commands": ["python -m pytest -q"],
+                "verification_domain": "coding",
+                "user_request_quote": "keep working until it is finished",
+                "max_iterations": 3,
+            },
+            "sub_intents": ["Inspect the failure", "Implement and verify the fix"],
+        },
+    )
+    runner = _build_runner(tmp_path, llm_api=_RecordingEntryLLM(response))
+
+    decision = runner._decide(
+        state=_state("entry-coding-durable-request"),
+        user_input="keep working until it is finished and verify the result",
+        logger=fake_logger(),
+    )
+
+    assert decision.request_readiness is not None
+    assert decision.request_readiness.project_handoff is not None
+    assert decision.request_readiness.project_handoff.goal == "Finish the calculator"
+
+
 @pytest.mark.parametrize("sub_intents", [None, [], "Inspect and implement"])
 def test_unified_entry_rejects_project_handoff_without_valid_sub_intents(
     tmp_path: Path, sub_intents
@@ -625,7 +655,9 @@ def test_research_control_preserves_durable_project_handoff(tmp_path: Path) -> N
     assert decision.request_readiness.project_handoff.max_iterations == 3
 
 
-def test_research_control_rejects_ungrounded_project_handoff(tmp_path: Path) -> None:
+def test_research_control_rejects_project_handoff_with_fabricated_quote(
+    tmp_path: Path,
+) -> None:
     response = _tool_response(
         "research",
         {
@@ -634,7 +666,7 @@ def test_research_control_rejects_ungrounded_project_handoff(tmp_path: Path) -> 
                 "success_criteria": ["Every route has evidence"],
                 "verification_commands": ["test -f routes_report.md"],
                 "verification_domain": "research",
-                "user_request_quote": "current train routes",
+                "user_request_quote": "keep working on this later",
                 "max_iterations": 3,
             },
             "sub_intents": ["Collect routes", "Reconcile fares"],

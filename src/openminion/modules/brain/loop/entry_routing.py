@@ -1,4 +1,3 @@
-import re
 from typing import Any
 
 from pydantic import ValidationError
@@ -138,9 +137,7 @@ def _grounded_project_handoff(
         str(handoff_payload.get("user_request_quote", "") or "").split()
     ).casefold()
     request = " ".join(str(user_input or "").split()).casefold()
-    explicit_words = {"background", "persist", "persistent", "project", "restart"}
-    quote_words = set(re.findall(r"[a-z]+", quote))
-    return handoff if quote in request and quote_words & explicit_words else None
+    return handoff if quote and quote in request else None
 
 
 def _subtasks_from_decompose_payload(
