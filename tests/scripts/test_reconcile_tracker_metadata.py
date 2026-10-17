@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -9,9 +10,12 @@ import pytest
 pytestmark = pytest.mark.package_integration
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-RECONCILER_PATH = REPO_ROOT / "docs" / "scripts" / "reconcile_tracker_metadata.py"
-VALIDATOR_PATH = REPO_ROOT / "docs" / "scripts" / "validate_tracker_docs.py"
+OPENMINION_ROOT = Path(__file__).resolve().parents[2]
+DOCS_ROOT = Path(
+    os.environ.get("OPENMINION_DOCS_ROOT", OPENMINION_ROOT.parent / "docs")
+).expanduser()
+RECONCILER_PATH = DOCS_ROOT / "scripts" / "reconcile_tracker_metadata.py"
+VALIDATOR_PATH = DOCS_ROOT / "scripts" / "validate_tracker_docs.py"
 
 
 def _load_module(name: str, path: Path):
@@ -32,6 +36,13 @@ def reconciler():
 @pytest.fixture(scope="module")
 def validator():
     return _load_module("tmri_validator", VALIDATOR_PATH)
+
+
+def test_paired_docs_scripts_load_with_matching_row_parser(reconciler, validator):
+    line = "| A | `code with | pipe` | rest |"
+    expected = ["A", "`code with | pipe`", "rest"]
+    assert reconciler.split_markdown_row(line) == expected
+    assert validator.split_markdown_row(line) == expected
 
 
 def test_split_well_formed_row_returns_expected_cells(reconciler):
