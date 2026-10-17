@@ -514,7 +514,11 @@ def _handle_visible_parity_slash(
     elif cmd == "/browser":
         console.print(
             Text(
-                render_browser_command(arg, working_dir=working_dir),
+                render_browser_command(
+                    arg,
+                    working_dir=working_dir,
+                    runtime=runtime,
+                ),
                 style=_system_style(),
             )
         )

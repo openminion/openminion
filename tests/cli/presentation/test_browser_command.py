@@ -18,9 +18,12 @@ from openminion.tools.browser.constants import (
 class _Tool:
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        self.contexts: list[object] = []
+        self.session_state_store = None
 
     def execute(self, payload, ctx):
         self.calls.append(dict(payload))
+        self.contexts.append(ctx)
         data = {"data": {"op": payload["op"]}}
         if payload["op"] == "tab.list":
             data["tabs"] = [{"id": "t1", "title": "Example", "url": "https://e.test"}]
@@ -92,6 +95,51 @@ def test_browser_status_reports_selected_playwright_context(monkeypatch) -> None
     }
 
 
+def test_focus_browser_status_uses_runtime_config_path_and_env(
+    monkeypatch, tmp_path
+) -> None:
+    manager_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        browser_ui,
+        "provider_registry",
+        lambda: SimpleNamespace(
+            list_provider_ids=lambda: ["pinchtab"],
+            get=lambda _provider_id: SimpleNamespace(provider_id="pinchtab"),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_ui,
+        "default_sidecar_manager",
+        lambda **kwargs: (
+            manager_calls.append(kwargs)
+            or SimpleNamespace(status=lambda _name: {"ready": True})
+        ),
+    )
+    runtime_env = {"OPENMINION_DATA_ROOT": str(tmp_path / "data")}
+    config_path = tmp_path / "openminion.toml"
+    runtime = SimpleNamespace(
+        session_id="focus-session",
+        agent_id="researcher",
+        api_runtime=SimpleNamespace(
+            config_path=config_path,
+            config=SimpleNamespace(
+                agents={},
+                runtime=SimpleNamespace(
+                    env=runtime_env,
+                    tools=SimpleNamespace(browser=ToolFamilyRuntimeConfig()),
+                ),
+            ),
+        ),
+    )
+
+    body = browser_ui.render_browser_command("status", runtime=runtime)
+
+    assert "selected=pinchtab status=ready" in body
+    assert manager_calls == [
+        {"config_path": str(config_path), "runtime_env": runtime_env}
+    ]
+
+
 def test_browser_status_keeps_unavailable_selected_provider_visible(
     monkeypatch,
 ) -> None:
@@ -144,6 +192,79 @@ def test_browser_tabs_and_navigate_use_browser_tool(monkeypatch, tmp_path) -> No
     assert tool.calls == [
         {"op": "tab.list"},
         {"op": "tab.navigate", "url": "https://example.com", "tab_id": "t1"},
+    ]
+
+
+def test_focus_browser_tabs_use_runtime_context_and_mark_active_tab(
+    monkeypatch, tmp_path
+) -> None:
+    state_calls: list[dict[str, object]] = []
+    profile_calls: list[tuple[object, str | None]] = []
+
+    class _Store:
+        def preferred_state_for_session(self, **kwargs):
+            state_calls.append(kwargs)
+            return "playwright", SimpleNamespace(tab_id="t1")
+
+    tool = _Tool()
+    tool.session_state_store = _Store()
+    monkeypatch.setattr(browser_ui, "default_browser_tool", lambda: tool)
+    browser_config = ToolFamilyRuntimeConfig(
+        enabled_providers=["playwright"],
+        default_provider="playwright",
+        provider_order=["playwright"],
+    )
+    config = SimpleNamespace(
+        agents={"researcher": object()},
+        runtime=SimpleNamespace(
+            env={"OPENMINION_DATA_ROOT": str(tmp_path / "data")},
+            tools=SimpleNamespace(browser=ToolFamilyRuntimeConfig()),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_ui,
+        "resolve_runtime_profile",
+        lambda resolved_config, *, agent_id: (
+            profile_calls.append((resolved_config, agent_id))
+            or SimpleNamespace(tools=SimpleNamespace(browser=browser_config))
+        ),
+    )
+    runtime = SimpleNamespace(
+        session_id="focus-session",
+        agent_id="researcher",
+        api_runtime=SimpleNamespace(
+            config_path=tmp_path / "openminion.toml",
+            config=config,
+        ),
+    )
+
+    body = browser_ui.render_browser_command(
+        "tabs",
+        working_dir=str(tmp_path),
+        runtime=runtime,
+    )
+
+    assert body == "Browser tabs:\n- [active] t1 Example https://e.test"
+    assert profile_calls == [(config, "researcher")]
+    context = tool.contexts[0]
+    assert context.session_id == "focus-session"
+    assert context.metadata["agent_id"] == "researcher"
+    assert context.metadata["runtime_env"] == {
+        "OPENMINION_DATA_ROOT": str(tmp_path / "data")
+    }
+    assert context.metadata["runtime_tools"] == {
+        "browser": {
+            "enabled_providers": ["playwright"],
+            "default_provider": "playwright",
+            "provider_order": ["playwright"],
+        }
+    }
+    assert state_calls == [
+        {
+            "session_id": "focus-session",
+            "workspace_root": str(tmp_path.resolve()),
+            "env": {"OPENMINION_DATA_ROOT": str(tmp_path / "data")},
+        }
     ]
 
 

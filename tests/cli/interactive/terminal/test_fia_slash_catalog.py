@@ -555,7 +555,7 @@ def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr(
         actions,
         "render_browser_command",
-        lambda _arg, *, working_dir: "Browser: providers=pinchtab sidecar=ready",
+        lambda _arg, **_kwargs: "Browser: providers=pinchtab sidecar=ready",
     )
 
     for slash in sorted(PROMPT_SAFE_OUTPUT_SLASHES):
@@ -797,7 +797,7 @@ def test_prompt_loop_routes_output_slashes_through_transcript(
     monkeypatch.setattr(
         actions,
         "render_browser_command",
-        lambda _arg, *, working_dir: "Browser: providers=pinchtab sidecar=ready",
+        lambda _arg, **_kwargs: "Browser: providers=pinchtab sidecar=ready",
     )
     buf = io.StringIO()
     console = Console(file=buf, force_terminal=False, width=160)

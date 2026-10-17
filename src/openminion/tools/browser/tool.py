@@ -2,6 +2,7 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
@@ -395,7 +396,7 @@ class BrowserTool(Tool):
                 ctx=ctx,
             )
             self._enforce_capabilities(provider=provider, call=call)
-            self._ensure_upload_confirmed(call=call, ctx=ctx)
+            self._ensure_upload_confirmed(provider, provider_ctx, call, ctx, args)
             payload = self._dispatch(
                 provider=provider, provider_ctx=provider_ctx, call=call
             )
@@ -472,19 +473,61 @@ class BrowserTool(Tool):
                 },
             }
 
-    @staticmethod
     def _ensure_upload_confirmed(
-        *, call: BrowserCallArgs, ctx: _BrowserExecutionContext
+        self,
+        provider: BrowserProvider,
+        provider_ctx: BrowserProviderContext,
+        call: BrowserCallArgs,
+        ctx: _BrowserExecutionContext,
+        approval_args: Mapping[str, Any],
     ) -> None:
         if call.op != BrowserOp.TAB_UPLOAD.value or bool(
             getattr(ctx.runtime, "confirm", False)
         ):
             return
+        tab_id = str(call.tab_id or "").strip()
+        tabs = extract_tabs(
+            provider.tab_list(provider_ctx, instance_id=call.instance_id),
+            to_tab_info=self._tab_info,
+        )
+        current_tab = next((tab for tab in tabs if tab.id == tab_id), None)
+        origin = self._page_origin(current_tab.url if current_tab is not None else "")
+        if not origin:
+            raise BrowserToolError(
+                "origin_unavailable",
+                "Unable to read the current page origin for upload approval.",
+                {"op": call.op, "tab_id": tab_id},
+            )
+        preview = dict(approval_args)
+        preview.update(
+            {
+                "op": call.op,
+                "action": "upload",
+                "tab_id": tab_id,
+                "origin": origin,
+                "files": list(call.files),
+            }
+        )
         raise BrowserToolError(
             TOOL_ERROR_CONFIRM_REQUIRED,
             "Uploading files requires operator confirmation.",
-            {"requires_confirm": True, "op": call.op, "files": list(call.files)},
+            {"requires_confirm": True, **preview, "preview": preview},
         )
+
+    @staticmethod
+    def _page_origin(url: str) -> str:
+        parsed = urlsplit(str(url or "").strip())
+        host = str(parsed.hostname or "").strip()
+        if parsed.scheme and host:
+            if ":" in host:
+                host = f"[{host}]"
+            port = parsed.port
+            default_port = {"http": 80, "https": 443}.get(parsed.scheme.lower())
+            port_label = f":{port}" if port and port != default_port else ""
+            return f"{parsed.scheme.lower()}://{host}{port_label}"
+        if parsed.scheme in {"about", "data", "file"}:
+            return "null"
+        return ""
 
     def _select_provider_for_call(
         self,

@@ -954,7 +954,7 @@ class ToolAdapter:
             replay = self._replay_inline_approval(
                 command={"tool_name": tool_name, "args": args},
                 tool_name=tool_name,
-                args=args,
+                args=dict(error_details.get("preview") or args),
                 approval_id=approval_id,
                 session_id=session_id,
                 trace_id=trace_id,

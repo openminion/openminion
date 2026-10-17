@@ -29,6 +29,9 @@ def format_terminal_approval_prompt(
         label = ", ".join(files) or "selected files"
         tab_id = str(args.get("tab_id", "") or "").strip()
         destination = f"browser tab {tab_id}" if tab_id else "the current browser tab"
+        origin = str(args.get("origin", "") or "").strip()
+        if origin:
+            destination = f"{destination} at {origin}"
         first_line = f"Approval required: upload {label} to {destination}"
     else:
         full_command = (

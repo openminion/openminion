@@ -462,6 +462,23 @@ def test_browser_upload_requires_confirmation() -> None:
 
     assert blocked.ok is False
     assert blocked.data["error_code"] == "CONFIRM_REQUIRED"
+    assert blocked.data["details"] == {
+        "requires_confirm": True,
+        "op": "tab.upload",
+        "action": "upload",
+        "tab_id": "t1",
+        "origin": "https://example.com",
+        "files": ["input/report.pdf"],
+        "target": {"selector": "#upload"},
+        "preview": {
+            "op": "tab.upload",
+            "action": "upload",
+            "tab_id": "t1",
+            "origin": "https://example.com",
+            "files": ["input/report.pdf"],
+            "target": {"selector": "#upload"},
+        },
+    }
     assert provider.tab_upload_calls == []
 
     confirmed = tool.execute(

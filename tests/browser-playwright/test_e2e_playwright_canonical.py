@@ -202,13 +202,27 @@ def test_canonical_browser_navigate_text_screenshot_against_local_file(
         assert changed.ok is True, changed.error
         assert "browser action complete" in changed.data["text"]["content"]
 
+        upload_payload = {
+            "op": "tab.upload",
+            "tab_id": tab_id,
+            "files": [upload_file.name],
+            "target": {"selector": "#file"},
+        }
+        approval = tool.execute(upload_payload, context)
+        assert approval.ok is False
+        assert approval.data["error_code"] == "CONFIRM_REQUIRED"
+        assert approval.data["details"]["origin"] == "null"
+        assert approval.data["details"]["preview"] == {
+            "op": "tab.upload",
+            "action": "upload",
+            "tab_id": tab_id,
+            "origin": "null",
+            "files": [upload_file.name],
+            "target": {"selector": "#file"},
+        }
+
         uploaded = tool.execute(
-            {
-                "op": "tab.upload",
-                "tab_id": tab_id,
-                "files": [upload_file.name],
-                "target": {"selector": "#file"},
-            },
+            upload_payload,
             confirmed_context,
         )
         assert uploaded.ok is True, uploaded.error

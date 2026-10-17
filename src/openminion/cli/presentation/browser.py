@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
+from openminion.base.config import resolve_runtime_profile
+from openminion.modules.tool import build_runtime_tool_routing_metadata
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.services.runtime.sidecars import default_sidecar_manager
 from openminion.tools.browser import (
@@ -29,6 +31,9 @@ def browser_command_payload(
     working_dir: str | None = None,
     runtime_env: Mapping[str, object] | None = None,
     browser_config: Any | None = None,
+    config_path: str | None = None,
+    session_id: str = "cli-browser",
+    agent_id: str = "",
 ) -> dict[str, Any]:
     tokens = shlex.split(str(args or ""))
     action = tokens[0].lower() if tokens else "status"
@@ -37,10 +42,16 @@ def browser_command_payload(
         return _browser_status_payload(
             runtime_env=runtime_env,
             browser_config=browser_config,
+            config_path=config_path,
         )
     if action == "tabs":
         return _execute_browser_tool(
-            {"op": "tab.list", **_provider_args(options)}, working_dir
+            {"op": "tab.list", **_provider_args(options)},
+            working_dir,
+            runtime_env=runtime_env,
+            browser_config=browser_config,
+            session_id=session_id,
+            agent_id=agent_id,
         )
     if action == "navigate":
         url = options.get("url") or (tokens[1] if len(tokens) > 1 else "")
@@ -49,10 +60,20 @@ def browser_command_payload(
         payload = {"op": "tab.navigate", "url": url, **_provider_args(options)}
         if options.get("tab"):
             payload["tab_id"] = options["tab"]
-        return _execute_browser_tool(payload, working_dir)
+        return _execute_browser_tool(
+            payload,
+            working_dir,
+            runtime_env=runtime_env,
+            browser_config=browser_config,
+            session_id=session_id,
+            agent_id=agent_id,
+        )
     if action == "stop":
         if _is_truthy(options.get("sidecar", "1")):
-            result = _default_browser_sidecar_manager().stop(
+            result = _default_browser_sidecar_manager(
+                config_path=config_path,
+                runtime_env=runtime_env,
+            ).stop(
                 name="pinchtab",
                 kill=_is_truthy(options.get("kill", "0")),
             )
@@ -72,6 +93,10 @@ def browser_command_payload(
                 **_provider_args(options),
             },
             working_dir,
+            runtime_env=runtime_env,
+            browser_config=browser_config,
+            session_id=session_id,
+            agent_id=agent_id,
         )
     return _error_payload("usage: /browser [status|tabs|navigate|stop]")
 
@@ -81,9 +106,14 @@ def render_browser_command(
     *,
     working_dir: str | None = None,
     payload: dict[str, Any] | None = None,
+    runtime: Any | None = None,
 ) -> str:
     if payload is None:
-        payload = browser_command_payload(args, working_dir=working_dir)
+        payload = browser_command_payload(
+            args,
+            working_dir=working_dir,
+            **_runtime_browser_context(runtime),
+        )
     if not payload.get("ok"):
         return f"Browser: error: {payload.get('error', 'unknown error')}"
     action = str(payload.get("action") or "").strip()
@@ -111,8 +141,9 @@ def render_browser_command(
     data = payload.get("data", {})
     if action == "tabs":
         tabs = data.get("tabs", []) if isinstance(data, dict) else []
+        active_tab_id = str(payload.get("active_tab_id") or "").strip()
         rows = [
-            f"- {tab.get('id', '')} {tab.get('title', '')} {tab.get('url', '')}"
+            _format_tab_row(tab, active_tab_id=active_tab_id)
             for tab in tabs
             if isinstance(tab, dict)
         ]
@@ -130,10 +161,14 @@ def _browser_status_payload(
     *,
     runtime_env: Mapping[str, object] | None = None,
     browser_config: Any | None = None,
+    config_path: str | None = None,
 ) -> dict[str, Any]:
     registry = provider_registry()
     providers = registry.list_provider_ids()
-    sidecar = _default_browser_sidecar_manager().status("pinchtab")
+    sidecar = _default_browser_sidecar_manager(
+        config_path=config_path,
+        runtime_env=runtime_env,
+    ).status("pinchtab")
     env = resolve_tool_env(runtime_env=runtime_env)
     runtime_default = (
         str(getattr(browser_config, "default_provider", "") or "").strip()
@@ -224,26 +259,106 @@ def _playwright_readiness_reason(payload: Mapping[str, Any]) -> str:
     return str(error.get("message") or "").strip()
 
 
-def _default_browser_sidecar_manager() -> Any:
-    return default_sidecar_manager(config_path=None, runtime_env=None)
+def _default_browser_sidecar_manager(
+    *,
+    config_path: str | None = None,
+    runtime_env: Mapping[str, object] | None = None,
+) -> Any:
+    return default_sidecar_manager(
+        config_path=config_path,
+        runtime_env=cast(Mapping[str, str] | None, runtime_env),
+    )
 
 
 def _execute_browser_tool(
     payload: dict[str, Any],
     working_dir: str | None,
+    *,
+    runtime_env: Mapping[str, object] | None = None,
+    browser_config: Any | None = None,
+    session_id: str = "cli-browser",
+    agent_id: str = "",
 ) -> dict[str, Any]:
+    workspace_root = str(Path(working_dir or Path.cwd()).resolve())
+    metadata: dict[str, Any] = {
+        "workspace_root": workspace_root,
+        "runtime_env": dict(runtime_env or {}),
+    }
+    if browser_config is not None:
+        metadata.update(
+            build_runtime_tool_routing_metadata({"browser": browser_config})
+        )
+    if agent_id:
+        metadata["agent_id"] = agent_id
+    tool = default_browser_tool()
     ctx = ToolExecutionContext(
         channel="cli",
         target="browser",
-        session_id="cli-browser",
-        metadata={
-            "workspace_root": str(Path(working_dir or Path.cwd()).resolve()),
-        },
+        session_id=str(session_id or "cli-browser"),
+        metadata=cast(dict[str, str], metadata),
     )
-    result = default_browser_tool().execute(payload, ctx)
+    result = tool.execute(payload, ctx)
     if not result.ok:
         return {"ok": False, "action": _action_name(payload), "error": result.error}
-    return {"ok": True, "action": _action_name(payload), "data": result.data}
+    response = {"ok": True, "action": _action_name(payload), "data": result.data}
+    if payload.get("op") == "tab.list":
+        response["active_tab_id"] = _active_tab_id(
+            tool,
+            session_id=str(session_id or "cli-browser"),
+            workspace_root=workspace_root,
+            runtime_env=runtime_env,
+        )
+    return response
+
+
+def _active_tab_id(
+    tool: Any,
+    *,
+    session_id: str,
+    workspace_root: str,
+    runtime_env: Mapping[str, object] | None,
+) -> str:
+    store = getattr(tool, "session_state_store", None)
+    if store is None:
+        return ""
+    preferred = store.preferred_state_for_session(
+        session_id=session_id,
+        workspace_root=workspace_root,
+        env=runtime_env,
+    )
+    if preferred is None:
+        return ""
+    return str(preferred[1].tab_id or "").strip()
+
+
+def _runtime_browser_context(runtime: Any | None) -> dict[str, Any]:
+    if runtime is None:
+        return {}
+    api_runtime = getattr(runtime, "api_runtime", None)
+    config = getattr(api_runtime, "config", None)
+    runtime_config = getattr(config, "runtime", None)
+    agent_id = str(getattr(runtime, "agent_id", "") or "").strip()
+    browser_config = getattr(getattr(runtime_config, "tools", None), "browser", None)
+    if config is not None and getattr(config, "agents", None):
+        browser_config = resolve_runtime_profile(
+            config,
+            agent_id=agent_id or None,
+        ).tools.browser
+    return {
+        "runtime_env": getattr(runtime_config, "env", None),
+        "browser_config": browser_config,
+        "config_path": str(getattr(api_runtime, "config_path", "") or "") or None,
+        "session_id": str(getattr(runtime, "session_id", "") or "cli-browser"),
+        "agent_id": agent_id,
+    }
+
+
+def _format_tab_row(tab: Mapping[str, Any], *, active_tab_id: str) -> str:
+    tab_id = str(tab.get("id", "") or "").strip()
+    active = "[active] " if tab_id and tab_id == active_tab_id else ""
+    title = str(tab.get("title", "") or "").strip() or "(untitled)"
+    url = str(tab.get("url", "") or "").strip() or "(no URL)"
+    return f"- {active}{tab_id} {title} {url}"
 
 
 def _error_payload(message: str) -> dict[str, Any]:

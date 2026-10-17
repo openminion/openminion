@@ -1076,12 +1076,14 @@ def test_terminal_approval_prompt_explains_browser_upload() -> None:
         {
             "op": "tab.upload",
             "tab_id": "tab-7",
+            "origin": "https://example.com",
             "files": ["reports/final.pdf"],
         },
     )
 
     assert prompt == (
-        "Approval required: upload reports/final.pdf to browser tab tab-7"
+        "Approval required: upload reports/final.pdf to browser tab tab-7 "
+        "at https://example.com"
     )
 
 
