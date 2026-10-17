@@ -370,6 +370,23 @@ def test_mismatched_progress_summary_is_reported_and_reconciled(
     assert not any("Progress summary" in error for error in reconciled_errors)
 
 
+def test_overall_metadata_mismatch_is_reported(validator, tmp_path):
+    tracker = _progress_tracker(tmp_path, summary=MATCHING_PROGRESS_SUMMARY)
+    text = tracker.read_text(encoding="utf-8")
+    tracker.write_text(
+        text.replace("Overall status: `in_progress`", "Overall status: `done`").replace(
+            "Overall completion: 50% (1/2 done).",
+            "Overall completion: 100% (2/2 done).",
+        ),
+        encoding="utf-8",
+    )
+
+    errors, _warnings = validator.validate_file(tracker)
+
+    assert "Overall status 'done' does not match task board 'in_progress'" in errors
+    assert any("Overall completion does not match task board" in error for error in errors)
+
+
 def test_dp4_shape_status_drift_is_flagged(validator, tmp_path):
     evidence_rows = [
         (

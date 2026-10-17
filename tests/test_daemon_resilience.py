@@ -534,6 +534,9 @@ def test_attach_cron_scheduler_injects_cron_metadata_into_turn_request(
         def __init__(self, db_path: Path) -> None:
             self.db_path = db_path
 
+        def get_cron_job(self, _job_id: str):
+            return None
+
         def add_cron_job(self, **_kwargs):  # noqa: ANN003
             return "system-cron-cleanup"
 
@@ -645,6 +648,9 @@ def test_attach_cron_scheduler_rejects_unknown_job_agent(
     class _FakeCronStore:
         def __init__(self, db_path: Path) -> None:
             self.db_path = db_path
+
+        def get_cron_job(self, _job_id: str):
+            return None
 
         def add_cron_job(self, **_kwargs):  # noqa: ANN003
             return "system-cron-cleanup"
@@ -787,6 +793,9 @@ def test_attach_cron_scheduler_announce_delivery_writes_session_surface(
     class _FakeCronStore:
         def __init__(self, db_path: Path) -> None:
             self.db_path = db_path
+
+        def get_cron_job(self, _job_id: str):
+            return None
 
         def add_cron_job(self, **_kwargs):  # noqa: ANN003
             return "system-cron-cleanup"
