@@ -196,6 +196,7 @@ class RuntimeRoomTaskMixin:
                     await asyncio.to_thread(
                         self._rt.run_turn,
                         payload=payload,
+                        request_id=cast(str | None, payload.get("request_id")),
                         progress_callback=progress_from_worker,
                         approval_callback=approval_from_worker,
                         cancel_event=cancel_event,

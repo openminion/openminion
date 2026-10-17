@@ -553,6 +553,7 @@ async def test_openminion_runtime_room_turn_uses_canonical_off_loop_payload() ->
         ),
         approval_callback=approve,
         cancel_event=threading.Event(),
+        request_id="queue-trace-1",
     )
     await asyncio.sleep(0)
 
@@ -564,6 +565,7 @@ async def test_openminion_runtime_room_turn_uses_canonical_off_loop_payload() ->
     payload = calls[0]["payload"]
     assert payload["session_id"] == room.id
     assert payload["deliver"] is False
+    assert calls[0]["request_id"] == "queue-trace-1"
     assert payload["inbound_metadata"]["participant_id"] == "owner-local"
     assert payload["inbound_metadata"]["caller_handles_delivery"] == "true"
     assert "conversation_id" not in payload["inbound_metadata"]
