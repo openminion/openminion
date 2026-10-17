@@ -624,8 +624,7 @@ def test_seed_cron_cleanup_job_is_idempotent_with_sqlite(
     assert first["wake_mode"] == "now"
     assert second == first
     assert not any(
-        "cron.cleanup.seed_failed" in record.getMessage()
-        for record in caplog.records
+        "cron.cleanup.seed_failed" in record.getMessage() for record in caplog.records
     )
 
 
