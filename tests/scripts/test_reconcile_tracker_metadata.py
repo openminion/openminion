@@ -16,6 +16,8 @@ DOCS_ROOT = Path(
 ).expanduser()
 RECONCILER_PATH = DOCS_ROOT / "scripts" / "reconcile_tracker_metadata.py"
 VALIDATOR_PATH = DOCS_ROOT / "scripts" / "validate_tracker_docs.py"
+CLOSEOUT_PATH = DOCS_ROOT / "scripts" / "validate_tracker_closeout.py"
+REVIEW_PATH = DOCS_ROOT / "scripts" / "review_wip_trackers.py"
 
 
 def _load_module(name: str, path: Path):
@@ -36,6 +38,16 @@ def reconciler():
 @pytest.fixture(scope="module")
 def validator():
     return _load_module("tmri_validator", VALIDATOR_PATH)
+
+
+@pytest.fixture(scope="module")
+def closeout():
+    return _load_module("tmri_closeout", CLOSEOUT_PATH)
+
+
+@pytest.fixture(scope="module")
+def review():
+    return _load_module("tmri_review", REVIEW_PATH)
 
 
 def test_paired_docs_scripts_load_with_matching_row_parser(reconciler, validator):
@@ -102,6 +114,11 @@ def _write_synthetic_tracker(
     name: str,
     rows: list[str],
     extra_evidence_lines: list[str] | None = None,
+    *,
+    header: str = CLEAN_HEADER,
+    overall_status: str = "todo",
+    overall_completion: str = "0% (0/0 done).",
+    extra_sections: list[str] | None = None,
 ) -> Path:
     bucket = tmp_path / "wip"
     bucket.mkdir(parents=True, exist_ok=True)
@@ -111,8 +128,8 @@ def _write_synthetic_tracker(
         "",
         "Original report: 2026-05-04",
         "Last updated: 2026-05-04",
-        "Overall status: `todo`",
-        "Overall completion: 0% (0/0 done).",
+        f"Overall status: `{overall_status}`",
+        f"Overall completion: {overall_completion}",
         "",
         "## Dependencies",
         "",
@@ -124,10 +141,11 @@ def _write_synthetic_tracker(
         "",
         "## Task board",
         "",
-        CLEAN_HEADER,
+        header,
         CLEAN_SEP,
         *rows,
         "",
+        *(extra_sections or []),
         "## Mandatory Execution Protocol",
         "",
         "1. Synthetic.",
@@ -187,6 +205,171 @@ def test_well_formed_rows_have_no_malformed_warning(reconciler, tmp_path):
     assert result.malformed_row_warnings == []
 
 
+@pytest.mark.parametrize(
+    ("task_label", "exit_label"),
+    [
+        ("Task (implementation detail)", "Exit criteria (validation detail)"),
+        ("Task", "Exit criteria"),
+        ("Task description", "Evidence / acceptance criteria"),
+    ],
+)
+def test_task_header_aliases_are_recognized(
+    reconciler,
+    validator,
+    tmp_path,
+    task_label,
+    exit_label,
+):
+    header = (
+        f"| ID | Priority | Status | Module(s) | {task_label} | "
+        f"{exit_label} | Validation scope |"
+    )
+    tracker = _write_synthetic_tracker(
+        tmp_path,
+        f"synthetic-{task_label.lower().replace(' ', '-')}",
+        [CLEAN_TODO_ROW],
+        header=header,
+        overall_completion="0% (0/1 done).",
+    )
+
+    result = reconciler.reconcile_file(
+        tracker,
+        write=False,
+        touch_last_updated=False,
+    )
+    errors, _warnings = validator.validate_file(tracker)
+
+    assert result.counts["todo"] == 1
+    assert not any(
+        "no recognized task table" in warning
+        for warning in result.malformed_row_warnings
+    )
+    assert not any("no recognized task table" in error for error in errors)
+
+
+def test_task_board_without_recognized_table_reports_observed_labels(
+    reconciler,
+    validator,
+    tmp_path,
+):
+    header = (
+        "| ID | Priority | Status | Module(s) | Work item | Completion proof | "
+        "Validation scope |"
+    )
+    tracker = _write_synthetic_tracker(
+        tmp_path,
+        "synthetic-unsupported-header",
+        [CLEAN_TODO_ROW],
+        header=header,
+    )
+
+    result = reconciler.reconcile_file(
+        tracker,
+        write=False,
+        touch_last_updated=False,
+    )
+    errors, _warnings = validator.validate_file(tracker)
+    observed = (
+        "ID | Priority | Status | Module(s) | Work item | Completion proof | "
+        "Validation scope"
+    )
+
+    assert result.total_tasks == 0
+    assert any(
+        "Task board has no recognized task table" in warning and observed in warning
+        for warning in result.malformed_row_warnings
+    )
+    assert any(
+        "Task board` but no recognized task table" in error and observed in error
+        for error in errors
+    )
+
+
+MATCHING_PROGRESS_SUMMARY = [
+    "## Progress summary",
+    "",
+    "| Priority | Done | In Progress | Todo | Blocked | Total |",
+    "| --- | --- | --- | --- | --- | --- |",
+    "| P0 | 1 | 0 | 0 | 0 | 1 |",
+    "| P1 | 0 | 0 | 1 | 0 | 1 |",
+    "| **Total** | **1** | **0** | **1** | **0** | **2** |",
+    "",
+]
+
+
+def _progress_tracker(tmp_path: Path, *, summary: list[str]) -> Path:
+    rows = [
+        (
+            "| TLVF-01 | P0 | done | scripts | "
+            "Verify canonical tracker parsing with current labels. | "
+            "Exact focused package integration test passes cleanly. | unit |"
+        ),
+        (
+            "| TLVF-02 | P1 | todo | scripts | "
+            "Verify progress summary counts against task rows. | "
+            "Mismatched status and total counts fail visibly. | unit |"
+        ),
+    ]
+    return _write_synthetic_tracker(
+        tmp_path,
+        "synthetic-progress-summary",
+        rows,
+        overall_status="in_progress",
+        overall_completion="50% (1/2 done).",
+        extra_sections=summary,
+    )
+
+
+def test_matching_progress_summary_including_total_passes(
+    reconciler,
+    validator,
+    tmp_path,
+):
+    tracker = _progress_tracker(tmp_path, summary=MATCHING_PROGRESS_SUMMARY)
+
+    result = reconciler.reconcile_file(
+        tracker,
+        write=True,
+        touch_last_updated=False,
+    )
+    errors, _warnings = validator.validate_file(tracker)
+
+    assert result.changed is False
+    assert not any("Progress summary" in error for error in errors)
+
+
+def test_mismatched_progress_summary_is_reported_and_reconciled(
+    reconciler,
+    validator,
+    tmp_path,
+):
+    mismatched = [
+        "## Progress summary",
+        "",
+        "| Priority | Done | In Progress | Todo | Blocked | Total |",
+        "| --- | --- | --- | --- | --- | --- |",
+        "| P0 | 0 | 0 | 1 | 0 | 2 |",
+        "| P1 | 0 | 0 | 1 | 0 | 1 |",
+        "| **Total** | **0** | **0** | **2** | **0** | **3** |",
+        "",
+    ]
+    tracker = _progress_tracker(tmp_path, summary=mismatched)
+
+    errors, _warnings = validator.validate_file(tracker)
+    result = reconciler.reconcile_file(
+        tracker,
+        write=True,
+        touch_last_updated=False,
+    )
+    reconciled_errors, _warnings = validator.validate_file(tracker)
+
+    assert any("Progress summary P0 done=0" in error for error in errors)
+    assert any("Progress summary P0 total=2" in error for error in errors)
+    assert any("Progress summary TOTAL total=3" in error for error in errors)
+    assert result.changed is True
+    assert not any("Progress summary" in error for error in reconciled_errors)
+
+
 def test_dp4_shape_status_drift_is_flagged(validator, tmp_path):
     evidence_rows = [
         (
@@ -228,3 +411,50 @@ def test_validator_flags_ccrs_shape_row_width(validator, tmp_path):
     errors, warnings = validator.validate_file(tracker)
     width_warnings = [w for w in warnings if "9 cells, expected 7" in w]
     assert width_warnings, f"expected row-width-mismatch warning, got: {warnings!r}"
+
+
+def test_qa_closeout_includes_qa_tracker_validation(
+    closeout,
+    tmp_path,
+    monkeypatch,
+):
+    tracker_root = tmp_path / "trackers"
+    tracker_root.mkdir()
+    commands: list[list[str]] = []
+
+    def record_step(_label, command, *, cwd):
+        del cwd
+        commands.append(command)
+        return 0
+
+    monkeypatch.setattr(closeout, "_run_step", record_step)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate_tracker_closeout.py",
+            "--bucket",
+            "qa",
+            "--tracker-root",
+            str(tracker_root),
+            "--skip-metadata-reconcile",
+            "--skip-env-guard",
+        ],
+    )
+
+    assert closeout.main() == 0
+    assert len(commands) == 1
+    assert "--include-qa" in commands[0]
+
+
+def test_review_helper_rejects_direct_done_destination(review, monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["review_wip_trackers.py", "--destination", "done"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        review.main()
+
+    assert exc_info.value.code == 2
