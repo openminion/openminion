@@ -10,6 +10,7 @@ import threading
 import pytest
 
 import openminion.daemon as daemon_mod
+from openminion.services.runtime import daemon as runtime_daemon_mod
 from openminion.cli.transport.daemon_client import (
     DaemonEndpoint,
     daemon_is_reachable,
@@ -19,6 +20,7 @@ from openminion.cli.transport.daemon_client import (
 )
 from openminion.cli.commands import daemon as daemon_cmd
 from openminion.modules.task import TaskLifecycleState, TaskManager
+from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 from openminion.modules.telemetry.lifecycle import build_component_identity
 from openminion.modules.task.scheduling.schedule import to_iso_utc, utc_now
 from openminion.services.supervision import SupervisionObservation, SupervisionService
@@ -599,6 +601,29 @@ def test_attach_cron_scheduler_injects_cron_metadata_into_turn_request(
     assert runtime_manager.submitted.meta.get("cron_job_id") == "job-abc"
     assert runtime_manager.submitted.meta.get("cron_run_id") == "run-def"
     assert runtime_manager.submitted.meta.get("scheduled_for") == "2026-03-20T00:00:00Z"
+
+
+def test_seed_cron_cleanup_job_is_idempotent_with_sqlite(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    try:
+        with caplog.at_level(logging.WARNING):
+            runtime_daemon_mod._seed_cron_cleanup_job(store)
+            first = store.get_cron_job("system-cron-cleanup")
+            runtime_daemon_mod._seed_cron_cleanup_job(store)
+            second = store.get_cron_job("system-cron-cleanup")
+    finally:
+        store.close()
+
+    assert first is not None
+    assert first["wake_mode"] == "now"
+    assert second == first
+    assert not any(
+        "cron.cleanup.seed_failed" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_attach_cron_scheduler_rejects_unknown_job_agent(
