@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+from types import SimpleNamespace
 
 import pytest
 from rich.console import Console
@@ -18,6 +19,18 @@ from openminion.cli.interactive.terminal.transcript import (
 from openminion.modules.llm import ProviderError
 from openminion.modules.policy.models import PolicyConfig, PolicyGrantInput, PolicyRule
 from openminion.modules.policy.runtime.service import PolicyCtl
+from openminion.services.runtime.turn_input import (
+    QUEUE_EVENT_CANCELLED,
+    QUEUE_EVENT_COMPLETED,
+    QUEUE_EVENT_DEQUEUED,
+    QUEUE_EVENT_DROPPED,
+    QUEUE_EVENT_ENQUEUED,
+    QUEUE_EVENT_FAILED,
+    QUEUE_EVENT_RUNNING,
+    TurnInputQueue,
+    TurnInputQueueError,
+    TurnInputQueueStatus,
+)
 
 
 @pytest.fixture
@@ -30,8 +43,32 @@ def policy_ctl(tmp_path):
     ctl.close()
 
 
+class _SessionEvents:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, dict[str, object]]] = []
+
+    def append_event(
+        self,
+        *,
+        session_id: str,
+        event_type: str,
+        payload: dict[str, object],
+    ) -> None:
+        self.events.append((session_id, event_type, dict(payload)))
+
+
 class _RuntimeUsage:
     turn_usage_display = "total"
+    session_id = "session-1"
+
+    def __init__(self, *, max_pending: int = 20) -> None:
+        self.session_events = _SessionEvents()
+        self.api_runtime = SimpleNamespace(
+            turn_input_queue=TurnInputQueue(
+                max_pending_per_session=max_pending,
+            ),
+            sessions=self.session_events,
+        )
 
     def token_usage_snapshot(self) -> None:
         return None
@@ -44,6 +81,7 @@ class _QueueRuntime(_RuntimeUsage):
     permission_mode = "default"
 
     def __init__(self) -> None:
+        super().__init__()
         self.sent_texts: list[str] = []
         self.first_chunk_sent = asyncio.Event()
         self.release_first_turn = asyncio.Event()
@@ -112,6 +150,7 @@ class _MultiQueueRuntime(_RuntimeUsage):
     permission_mode = "default"
 
     def __init__(self) -> None:
+        super().__init__()
         self.sent_texts: list[str] = []
         self.first_chunk_sent = asyncio.Event()
         self.release_turns = asyncio.Event()
@@ -168,6 +207,7 @@ class _BusyCommandRuntime(_RuntimeUsage):
     permission_mode = "default"
 
     def __init__(self) -> None:
+        super().__init__()
         self.sent_texts: list[str] = []
         self.first_chunk_sent = asyncio.Event()
         self.release_turn = asyncio.Event()
@@ -251,7 +291,8 @@ class _QueueCommandRuntime(_RuntimeUsage):
     model_name = "gpt-4.1-mini"
     permission_mode = "default"
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_pending: int = 20) -> None:
+        super().__init__(max_pending=max_pending)
         self.sent_texts: list[str] = []
         self.first_chunk_sent = asyncio.Event()
         self.release_turn = asyncio.Event()
@@ -267,6 +308,59 @@ class _QueueCommandRuntime(_RuntimeUsage):
         else:
             yield f"{text} reply"
         await asyncio.sleep(0)
+
+
+class _QueuedInterruptRuntime(_RuntimeUsage):
+    agent_id = "alpha"
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    permission_mode = "default"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent_texts: list[str] = []
+        self.first_chunk_sent = asyncio.Event()
+        self.release_first_turn = asyncio.Event()
+        self.queued_turn_started = asyncio.Event()
+
+    async def send_message(self, text: str, **kwargs):
+        del kwargs
+        self.sent_texts.append(text)
+        if text == "first":
+            yield "first chunk"
+            self.first_chunk_sent.set()
+            await self.release_first_turn.wait()
+            yield " done"
+            return
+        self.queued_turn_started.set()
+        await asyncio.Event().wait()
+        yield "unreachable"
+
+
+class _QueuedFailureRuntime(_RuntimeUsage):
+    agent_id = "alpha"
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    permission_mode = "default"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent_texts: list[str] = []
+        self.first_chunk_sent = asyncio.Event()
+        self.release_first_turn = asyncio.Event()
+
+    async def send_message(self, text: str, **kwargs):
+        del kwargs
+        self.sent_texts.append(text)
+        if text == "first":
+            yield "first chunk"
+            self.first_chunk_sent.set()
+            await self.release_first_turn.wait()
+            yield " done"
+            return
+        if text == "fail":
+            raise ProviderError("queued failure", code="QUEUED_FAILURE")
+        yield "next reply"
 
 
 class _QueueCommandComposer(_StubComposerRows):
@@ -333,6 +427,7 @@ class _TypedFailureThenResumeRuntime(_RuntimeUsage):
     permission_mode = "default"
 
     def __init__(self) -> None:
+        super().__init__()
         self.sent_texts: list[str] = []
 
     async def send_message(self, text: str, **kwargs):
@@ -358,6 +453,7 @@ class _ReplayRuntime(_RuntimeUsage):
     permission_mode = "default"
 
     def __init__(self) -> None:
+        super().__init__()
         self.sent_texts: list[str] = []
         self.turn_done = asyncio.Event()
 
@@ -505,6 +601,28 @@ async def test_terminal_focus_drains_multiple_queued_inputs_fifo(
 
     assert result == 0
     assert runtime.sent_texts == ["first", "second", "third"]
+    entries = runtime.api_runtime.turn_input_queue.list_entries(
+        session_id=runtime.session_id,
+        agent_id=runtime.agent_id,
+    )
+    assert [entry.text for entry in entries] == ["second", "third"]
+    assert [entry.status for entry in entries] == [
+        TurnInputQueueStatus.COMPLETED,
+        TurnInputQueueStatus.COMPLETED,
+    ]
+    assert [
+        event_type
+        for _session_id, event_type, _payload in runtime.session_events.events
+    ] == [
+        QUEUE_EVENT_ENQUEUED,
+        QUEUE_EVENT_ENQUEUED,
+        QUEUE_EVENT_DEQUEUED,
+        QUEUE_EVENT_RUNNING,
+        QUEUE_EVENT_COMPLETED,
+        QUEUE_EVENT_DEQUEUED,
+        QUEUE_EVENT_RUNNING,
+        QUEUE_EVENT_COMPLETED,
+    ]
 
     transcript = _CapturedTranscript.last_instance
     assert transcript is not None
@@ -711,6 +829,173 @@ async def test_terminal_focus_queue_commands_work_while_turn_streams(
         msg.kind == MessageKind.USER and msg.body in {"/queue", "/queue clear"}
         for msg in transcript._messages
     )
+    assert [
+        entry.status
+        for entry in runtime.api_runtime.turn_input_queue.list_entries(
+            session_id=runtime.session_id,
+            agent_id=runtime.agent_id,
+        )
+    ] == [TurnInputQueueStatus.DROPPED, TurnInputQueueStatus.DROPPED]
+    assert [
+        event_type
+        for _session_id, event_type, _payload in runtime.session_events.events
+    ] == [
+        QUEUE_EVENT_ENQUEUED,
+        QUEUE_EVENT_DROPPED,
+        QUEUE_EVENT_ENQUEUED,
+        QUEUE_EVENT_DROPPED,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_honors_shared_queue_move_and_advances_once() -> None:
+    runtime = _QueueCommandRuntime()
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=runtime,
+        console=console,
+        transcript=transcript,
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=_LoopComposer(),
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-shared-move",
+        custom_commands={},
+    )
+
+    await loop.start_turn("first")
+    await runtime.first_chunk_sent.wait()
+    await loop.handle_busy_input("second")
+    await loop.handle_busy_input("third")
+    second, third = loop._queued_entries()
+    runtime.api_runtime.turn_input_queue.move(
+        session_id=runtime.session_id,
+        queue_id=third.queue_id,
+        status_version=third.status_version,
+        before_queue_id=second.queue_id,
+    )
+
+    runtime.release_turn.set()
+    await loop.handle_turn_completion()
+    await loop.handle_turn_completion()
+    await loop.handle_turn_completion()
+    await loop.cancel_read_task()
+
+    assert runtime.sent_texts == ["first", "third", "second"]
+    entries = runtime.api_runtime.turn_input_queue.list_entries(
+        session_id=runtime.session_id,
+        agent_id=runtime.agent_id,
+    )
+    assert [entry.text for entry in entries] == ["third", "second"]
+    assert all(entry.status == TurnInputQueueStatus.COMPLETED for entry in entries)
+    event_types = [
+        event_type
+        for _session_id, event_type, _payload in runtime.session_events.events
+    ]
+    assert event_types.count(QUEUE_EVENT_RUNNING) == 2
+    assert event_types.count(QUEUE_EVENT_COMPLETED) == 2
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_advances_after_failed_queued_turn() -> None:
+    runtime = _QueuedFailureRuntime()
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=runtime,
+        console=console,
+        transcript=transcript,
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=_LoopComposer(),
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-queue-failure",
+        custom_commands={},
+    )
+
+    await loop.start_turn("first")
+    await runtime.first_chunk_sent.wait()
+    await loop.handle_busy_input("fail")
+    await loop.handle_busy_input("third")
+    runtime.release_first_turn.set()
+
+    await loop.handle_turn_completion()
+    await loop.handle_turn_completion()
+    await loop.handle_turn_completion()
+    await loop.cancel_read_task()
+
+    assert runtime.sent_texts == ["first", "fail", "third"]
+    entries = runtime.api_runtime.turn_input_queue.list_entries(
+        session_id=runtime.session_id,
+        agent_id=runtime.agent_id,
+    )
+    assert [entry.status for entry in entries] == [
+        TurnInputQueueStatus.FAILED,
+        TurnInputQueueStatus.COMPLETED,
+    ]
+    event_types = [
+        event_type
+        for _session_id, event_type, _payload in runtime.session_events.events
+    ]
+    assert event_types.count(QUEUE_EVENT_FAILED) == 1
+    assert event_types.count(QUEUE_EVENT_COMPLETED) == 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_queue_full_version_and_scope_errors_stay_structured() -> (
+    None
+):
+    runtime = _QueueCommandRuntime(max_pending=1)
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=runtime,
+        console=console,
+        transcript=transcript,
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=_LoopComposer(),
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-queue-errors",
+        custom_commands={},
+    )
+
+    await loop.start_turn("first")
+    await runtime.first_chunk_sent.wait()
+    await loop.handle_busy_input("second")
+    entry = loop._queued_entries()[0]
+    await loop.handle_busy_input("third")
+
+    with pytest.raises(TurnInputQueueError) as stale:
+        runtime.api_runtime.turn_input_queue.drop(
+            session_id=runtime.session_id,
+            queue_id=entry.queue_id,
+            status_version=entry.status_version + 1,
+        )
+    assert stale.value.code == "QUEUE_CONFLICT"
+
+    with pytest.raises(TurnInputQueueError) as wrong_scope:
+        runtime.api_runtime.turn_input_queue.drop(
+            session_id="another-session",
+            queue_id=entry.queue_id,
+            status_version=entry.status_version,
+        )
+    assert wrong_scope.value.code == "QUEUE_ENTRY_NOT_FOUND"
+    assert any(
+        message.kind == MessageKind.ERROR
+        and message.body == "QUEUE_FULL: Turn input queue is full."
+        for message in transcript._messages
+    )
+    assert [
+        event_type
+        for _session_id, event_type, _payload in runtime.session_events.events
+    ] == [QUEUE_EVENT_ENQUEUED]
+
+    runtime.release_turn.set()
+    await loop.handle_turn_completion()
+    await loop.handle_turn_completion()
+    await loop.cancel_read_task()
 
 
 @pytest.mark.asyncio
@@ -740,7 +1025,7 @@ async def test_terminal_focus_interrupt_preserves_queue_until_run_next() -> None
     await loop.handle_turn_completion()
 
     assert runtime.sent_texts == ["first"]
-    assert list(loop.pending_turns) == [queued_text]
+    assert [entry.text for entry in loop._queued_entries()] == [queued_text]
     assert loop.queue_auto_drain_paused is True
     assert loop.active_turn_task is None
     assert any(
@@ -753,13 +1038,73 @@ async def test_terminal_focus_interrupt_preserves_queue_until_run_next() -> None
     await loop.cancel_read_task()
 
     assert runtime.sent_texts == ["first", queued_text]
-    assert list(loop.pending_turns) == []
+    assert loop._queued_entries() == []
     assert loop.queue_auto_drain_paused is False
+    queued_entry = runtime.api_runtime.turn_input_queue.list_entries(
+        session_id=runtime.session_id,
+        agent_id=runtime.agent_id,
+    )[0]
+    assert queued_entry.status == TurnInputQueueStatus.COMPLETED
+    assert [
+        event_type
+        for _session_id, event_type, _payload in runtime.session_events.events
+    ] == [
+        QUEUE_EVENT_ENQUEUED,
+        QUEUE_EVENT_DEQUEUED,
+        QUEUE_EVENT_RUNNING,
+        QUEUE_EVENT_COMPLETED,
+    ]
     assert any(
         msg.kind == MessageKind.SYSTEM
         and msg.body == "Running queued message: second third"
         for msg in transcript._messages
     )
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_interrupt_terminalizes_running_queue_entry_once() -> None:
+    runtime = _QueuedInterruptRuntime()
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=runtime,
+        console=console,
+        transcript=transcript,
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=_LoopComposer(),
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-queued-interrupt",
+        custom_commands={},
+    )
+
+    await loop.start_turn("first")
+    await runtime.first_chunk_sent.wait()
+    await loop.handle_busy_input("second")
+    runtime.release_first_turn.set()
+    await loop.handle_turn_completion()
+    await runtime.queued_turn_started.wait()
+
+    loop.request_turn_interrupt()
+    await loop.handle_turn_completion()
+    assert await loop.handle_turn_completion() is None
+    await loop.cancel_read_task()
+
+    entry = runtime.api_runtime.turn_input_queue.list_entries(
+        session_id=runtime.session_id,
+        agent_id=runtime.agent_id,
+    )[0]
+    assert entry.status == TurnInputQueueStatus.CANCELLED
+    assert runtime.sent_texts == ["first", "second"]
+    assert [
+        event_type
+        for _session_id, event_type, _payload in runtime.session_events.events
+    ] == [
+        QUEUE_EVENT_ENQUEUED,
+        QUEUE_EVENT_DEQUEUED,
+        QUEUE_EVENT_RUNNING,
+        QUEUE_EVENT_CANCELLED,
+    ]
 
 
 @pytest.mark.asyncio

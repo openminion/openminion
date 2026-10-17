@@ -1,12 +1,9 @@
 import asyncio
-from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
 import logging
-import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 try:
     import termios
@@ -27,6 +24,13 @@ from openminion.cli.presentation.queue import (
 )
 from openminion.modules.runtime.sync import run_async_compat
 from openminion.modules.telemetry.trace.phase_timing import mark_active_chat_first_text
+from openminion.cli.status import PhaseStatusController
+from openminion.services.runtime.turn_input import (
+    TurnInputQueue,
+    TurnInputQueueEntry,
+    TurnInputQueueError,
+    TurnInputQueueStatus,
+)
 from ..composer import TerminalComposer
 from ..overlays import TerminalOverlayPresenter
 from ..prompt_output import build_prompt_safe_terminal_writer
@@ -35,7 +39,18 @@ from ..transcript import TerminalTranscript
 from .labels import _runtime_label
 from .approval import build_terminal_approval_callback as _build_approval_callback
 from . import progress as _progress
-from .queue_control import apply_queue_command
+from .queue_control import (
+    apply_queue_command,
+    enqueue_entry,
+    reserve_next_entry,
+    terminalize_entry,
+)
+from .interrupts import (
+    EscapeInterruptWatcher,
+    confirm_terminal_exit as _confirm_terminal_exit,
+    run_interruptible_agent_turn,
+    start_escape_interrupt_watcher as _start_escape_interrupt_watcher,
+)
 from .startup import (
     build_terminal_console as _build_terminal_console,
     cancel_startup_notice as _cancel_startup_notice,
@@ -85,86 +100,9 @@ from openminion.cli.presentation.slash_commands import (
 from openminion.cli.presentation.visible_parity import statusline_label
 
 _LOGGER = logging.getLogger(__name__)
-_ESCAPE_BYTE = b"\x1b"
 _TYPEAHEAD_REOPEN_DELAY_SECONDS = 0.05
 _PROMPT_REPLAY_DEDUP_WINDOW_SECONDS = 0.35
-
-
-@dataclass(frozen=True)
-class _EscapeInterruptWatcher:
-    stop: Callable[[], None]
-    interrupted: Callable[[], bool]
-
-
-async def _confirm_terminal_exit(
-    *, console: Console, overlay: TerminalOverlayPresenter
-) -> bool:
-    should_exit = await overlay.present_confirm_async("Exit the interactive CLI?")
-    if not should_exit:
-        console.print(
-            Text(
-                "(exit cancelled)",
-                style=token_rich_style(StyleToken.MUTED, italic=True),
-            )
-        )
-    return should_exit
-
-
-def _start_escape_interrupt_watcher(
-    turn_task: asyncio.Task[None],
-    *,
-    stdin: Any = None,
-) -> _EscapeInterruptWatcher | None:
-    stream = stdin if stdin is not None else sys.stdin
-    isatty = getattr(stream, "isatty", None)
-    fileno = getattr(stream, "fileno", None)
-    if termios is None or tty is None or not callable(isatty) or not isatty():
-        return None
-    if not callable(fileno):
-        return None
-    try:
-        fd = int(fileno())
-        previous_attrs = termios.tcgetattr(fd)
-    except (OSError, RuntimeError, TypeError, ValueError):
-        return None
-
-    interrupted = False
-    loop = asyncio.get_running_loop()
-
-    def _restore_terminal() -> None:
-        try:
-            loop.remove_reader(fd)
-        except (OSError, RuntimeError, ValueError):
-            pass
-        try:
-            termios.tcsetattr(fd, termios.TCSADRAIN, previous_attrs)
-        except (OSError, RuntimeError, TypeError, ValueError):
-            pass
-
-    def _read_keypress() -> None:
-        nonlocal interrupted
-        try:
-            data = os.read(fd, 1)
-        except BlockingIOError:
-            return
-        except OSError:
-            _restore_terminal()
-            return
-        if data == _ESCAPE_BYTE and not turn_task.done():
-            interrupted = True
-            turn_task.cancel()
-
-    try:
-        tty.setcbreak(fd)
-        loop.add_reader(fd, _read_keypress)
-    except (OSError, RuntimeError, ValueError, NotImplementedError):
-        _restore_terminal()
-        return None
-
-    return _EscapeInterruptWatcher(
-        stop=_restore_terminal,
-        interrupted=lambda: interrupted,
-    )
+_EscapeInterruptWatcher = EscapeInterruptWatcher
 
 
 def run_terminal_focus(
@@ -314,8 +252,11 @@ class _TerminalFocusLoop:
         self.working_dir = working_dir
         self.custom_commands = custom_commands
         self.startup_notice_task = startup_notice_task
-        self.pending_turns: deque[str] = deque()
-        self.active_turn_task: asyncio.Task[None] | None = None
+        self.turn_input_queue = cast(
+            TurnInputQueue, runtime.api_runtime.turn_input_queue
+        )
+        self.active_turn_task: asyncio.Task[bool] | None = None
+        self.active_queue_id: str | None = None
         self.read_task: asyncio.Task[str] | None = None
         self.exit_after_turn = False
         self.turn_cancel_requested = False
@@ -332,8 +273,27 @@ class _TerminalFocusLoop:
             permission_mode=_runtime_permission_mode(self.runtime),
             action_policy_mode=_runtime_action_policy_mode(self.runtime),
             custom=statusline_label(self.runtime),
-            queued_count=len(self.pending_turns),
+            queued_count=len(self._queued_entries()),
             state=state,
+        )
+
+    def _queued_entries(self) -> list[TurnInputQueueEntry]:
+        return cast(
+            list[TurnInputQueueEntry],
+            self.turn_input_queue.list_entries(
+                session_id=self.runtime.session_id,
+                agent_id=self.runtime.agent_id,
+                statuses={TurnInputQueueStatus.QUEUED},
+            ),
+        )
+
+    def _push_queue_error(self, exc: TurnInputQueueError) -> None:
+        self.transcript.push_message(
+            ChatMessage(
+                kind=MessageKind.ERROR,
+                sender="error",
+                body=f"{exc.code}: {exc}",
+            )
         )
 
     def start_read_task(
@@ -375,7 +335,20 @@ class _TerminalFocusLoop:
         )
 
     async def handle_queue_command(self, text: str) -> None:
-        result = apply_queue_command(text, self.pending_turns)
+        try:
+            result = apply_queue_command(
+                text,
+                queue=self.turn_input_queue,
+                sessions=self.runtime.api_runtime.sessions,
+                session_id=self.runtime.session_id,
+                agent_id=self.runtime.agent_id,
+            )
+        except TurnInputQueueError as exc:
+            self._push_queue_error(exc)
+            self.refresh_status_line(
+                state="responding" if self.active_turn_task is not None else "idle"
+            )
+            return
         if result.kind == "run_next":
             await self._run_next_queued_turn()
             return
@@ -388,7 +361,7 @@ class _TerminalFocusLoop:
         )
 
     async def _run_next_queued_turn(self) -> None:
-        if not self.pending_turns:
+        if not self._queued_entries():
             self._push_system_message(queue_run_next_empty_notice())
             return
         if self.active_turn_task is not None and not self.active_turn_task.done():
@@ -397,11 +370,43 @@ class _TerminalFocusLoop:
             self.turn_cancel_requested = True
             self.active_turn_task.cancel()
             return
-        next_text = self.pending_turns.popleft()
         self.queue_auto_drain_paused = False
-        self._push_system_message(queue_run_next_notice(next_text))
+        await self._start_next_queued_turn()
+
+    async def _start_next_queued_turn(self) -> bool:
+        try:
+            running = reserve_next_entry(
+                queue=self.turn_input_queue,
+                sessions=self.runtime.api_runtime.sessions,
+                session_id=self.runtime.session_id,
+                agent_id=self.runtime.agent_id,
+            )
+            if running is None:
+                return False
+        except TurnInputQueueError as exc:
+            self._push_queue_error(exc)
+            return False
+        self.active_queue_id = running.queue_id
+        self._push_system_message(queue_run_next_notice(running.text))
         self.refresh_status_line(state="responding")
-        await self.start_turn(next_text)
+        await self.start_turn(running.text)
+        return True
+
+    def _finish_active_queue_entry(self, status: TurnInputQueueStatus) -> None:
+        queue_id = self.active_queue_id
+        self.active_queue_id = None
+        if queue_id is None:
+            return
+        try:
+            terminalize_entry(
+                queue=self.turn_input_queue,
+                sessions=self.runtime.api_runtime.sessions,
+                queue_id=queue_id,
+                status=status,
+            )
+        except TurnInputQueueError as exc:
+            self._push_queue_error(exc)
+            return
 
     async def start_turn(self, text: str) -> None:
         self.active_turn_text = str(text or "")
@@ -460,13 +465,24 @@ class _TerminalFocusLoop:
                 "or press Esc to interrupt."
             )
             return
-        self.pending_turns.append(text)
+        try:
+            enqueue_entry(
+                queue=self.turn_input_queue,
+                sessions=self.runtime.api_runtime.sessions,
+                session_id=self.runtime.session_id,
+                agent_id=self.runtime.agent_id,
+                text=text,
+            )
+        except TurnInputQueueError as exc:
+            self._push_queue_error(exc)
+            self.refresh_status_line(state="responding")
+            return
         self.transcript.push_message(
             ChatMessage(kind=MessageKind.USER, sender="you", body=text),
             render=False,
         )
         self.queue_auto_drain_paused = False
-        self._push_system_message(queued_message_notice(len(self.pending_turns)))
+        self._push_system_message(queued_message_notice(len(self._queued_entries())))
         self.refresh_status_line(state="responding")
 
     async def handle_turn_completion(self) -> int | None:
@@ -474,25 +490,31 @@ class _TerminalFocusLoop:
         self.active_turn_task = None
         if finished_turn is None:
             return None
+        terminal_status = TurnInputQueueStatus.COMPLETED
         try:
-            await finished_turn
+            turn_succeeded = await finished_turn
+            if not turn_succeeded:
+                terminal_status = TurnInputQueueStatus.FAILED
         except asyncio.CancelledError:
+            terminal_status = TurnInputQueueStatus.CANCELLED
             if self.turn_cancel_requested:
-                if self.pending_turns and not self.run_next_after_interrupt:
+                queued_entries = self._queued_entries()
+                if queued_entries and not self.run_next_after_interrupt:
                     self.queue_auto_drain_paused = True
                     self._push_system_message(
-                        queue_preserved_after_interrupt_notice(len(self.pending_turns))
+                        queue_preserved_after_interrupt_notice(len(queued_entries))
                     )
                 else:
                     self._push_system_message("Interrupted current turn.")
             else:
                 raise
         finally:
+            self._finish_active_queue_entry(terminal_status)
             self.turn_cancel_requested = False
             run_next = self.run_next_after_interrupt
             self.run_next_after_interrupt = False
             queued_next = (
-                bool(self.pending_turns)
+                bool(self._queued_entries())
                 and not self.exit_after_turn
                 and not self.queue_auto_drain_paused
             )
@@ -502,11 +524,8 @@ class _TerminalFocusLoop:
         if self.exit_after_turn:
             self.console.print(Text("(exit)", style=token_rich_style(StyleToken.MUTED)))
             return 0
-        if self.pending_turns and (run_next or not self.queue_auto_drain_paused):
-            next_text = self.pending_turns.popleft()
-            self._push_system_message(queue_run_next_notice(next_text))
-            self.refresh_status_line()
-            await self.start_turn(next_text)
+        if self._queued_entries() and (run_next or not self.queue_auto_drain_paused):
+            await self._start_next_queued_turn()
         return None
 
     async def handle_idle_input(self, text: str) -> int | None:
@@ -861,33 +880,16 @@ async def _run_interruptible_agent_turn(
     approval_callback: Callable[..., Any] | None = None,
     invalidate_prompt: Callable[[], None] | None = None,
 ) -> None:
-    turn_task = asyncio.create_task(
-        _run_agent_turn(
-            text=text,
-            runtime=runtime,
-            transcript=transcript,
-            status_line=status_line,
-            approval_callback=approval_callback,
-            invalidate_prompt=invalidate_prompt,
-        )
+    await run_interruptible_agent_turn(
+        turn_runner=_run_agent_turn,
+        watcher_factory=_start_escape_interrupt_watcher,
+        text=text,
+        runtime=runtime,
+        transcript=transcript,
+        status_line=status_line,
+        approval_callback=approval_callback,
+        invalidate_prompt=invalidate_prompt,
     )
-    watcher = _start_escape_interrupt_watcher(turn_task)
-    try:
-        await turn_task
-    except asyncio.CancelledError:
-        if watcher is not None and watcher.interrupted():
-            transcript.push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body="Interrupted current turn.",
-                )
-            )
-            return
-        raise
-    finally:
-        if watcher is not None:
-            watcher.stop()
 
 
 async def _run_agent_turn(
@@ -898,7 +900,7 @@ async def _run_agent_turn(
     status_line: TerminalStatusLine | None,
     approval_callback: Callable[..., Any] | None = None,
     invalidate_prompt: Callable[[], None] | None = None,
-) -> None:
+) -> bool:
     if status_line is not None:
         status_line.set_state(state="responding", elapsed_seconds=0.0, turn_status="")
     status_tick_task: asyncio.Task[None] | None = None
@@ -916,8 +918,6 @@ async def _run_agent_turn(
         else None,
     )
     reply = ""
-    from openminion.cli.status import PhaseStatusController
-
     status_controller = PhaseStatusController(fallback_label="Working...")
     status_controller.start_turn()
 
@@ -972,6 +972,7 @@ async def _run_agent_turn(
         await _settle_status()
         handle.complete(final_text=reply)
         push_phase_timing_report_if_enabled(runtime=runtime, transcript=transcript)
+        return True
     except asyncio.CancelledError:
         try:
             await _settle_status()
@@ -988,5 +989,6 @@ async def _run_agent_turn(
         transcript.push_message(
             ChatMessage(kind=MessageKind.ERROR, sender="error", body=str(exc))
         )
+        return False
     finally:
         await _settle_status()
