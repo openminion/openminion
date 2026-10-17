@@ -481,9 +481,15 @@ class BrowserTool(Tool):
         ctx: _BrowserExecutionContext,
         approval_args: Mapping[str, Any],
     ) -> None:
-        if call.op != BrowserOp.TAB_UPLOAD.value or bool(
-            getattr(ctx.runtime, "confirm", False)
-        ):
+        if call.op != BrowserOp.TAB_UPLOAD.value:
+            return
+        metadata = ctx.extras
+        replayed = (
+            isinstance(metadata, Mapping)
+            and metadata.get("confirmation_source") == "policy_replay"
+            and bool(str(metadata.get("confirmation_grant_id", "") or "").strip())
+        )
+        if bool(getattr(ctx.runtime, "confirm", False)) and not replayed:
             return
         tab_id = str(call.tab_id or "").strip()
         tabs = extract_tabs(
@@ -498,6 +504,20 @@ class BrowserTool(Tool):
                 "Unable to read the current page origin for upload approval.",
                 {"op": call.op, "tab_id": tab_id},
             )
+        if replayed:
+            approved_origin = str(approval_args.get("approved_origin", "") or "")
+            if approved_origin == origin:
+                return
+            raise BrowserToolError(
+                "approval_stale",
+                "The page origin changed after upload approval.",
+                {
+                    "op": call.op,
+                    "tab_id": tab_id,
+                    "approved_origin": approved_origin,
+                    "current_origin": origin,
+                },
+            )
         preview = dict(approval_args)
         preview.update(
             {
@@ -508,10 +528,17 @@ class BrowserTool(Tool):
                 "files": list(call.files),
             }
         )
+        replay_args = dict(approval_args)
+        replay_args["approved_origin"] = origin
         raise BrowserToolError(
             TOOL_ERROR_CONFIRM_REQUIRED,
             "Uploading files requires operator confirmation.",
-            {"requires_confirm": True, **preview, "preview": preview},
+            {
+                "requires_confirm": True,
+                **preview,
+                "preview": preview,
+                "replay_args": replay_args,
+            },
         )
 
     @staticmethod

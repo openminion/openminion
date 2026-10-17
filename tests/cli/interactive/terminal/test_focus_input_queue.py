@@ -294,12 +294,13 @@ class _QueueCommandRuntime(_RuntimeUsage):
     def __init__(self, *, max_pending: int = 20) -> None:
         super().__init__(max_pending=max_pending)
         self.sent_texts: list[str] = []
+        self.request_ids: list[str | None] = []
         self.first_chunk_sent = asyncio.Event()
         self.release_turn = asyncio.Event()
 
     async def send_message(self, text: str, **kwargs):
-        del kwargs
         self.sent_texts.append(text)
+        self.request_ids.append(kwargs.get("request_id"))
         if text == "first":
             yield "first chunk"
             self.first_chunk_sent.set()
@@ -889,6 +890,7 @@ async def test_terminal_focus_honors_shared_queue_move_and_advances_once() -> No
     )
     assert [entry.text for entry in entries] == ["third", "second"]
     assert all(entry.status == TurnInputQueueStatus.COMPLETED for entry in entries)
+    assert runtime.request_ids == [None, entries[0].trace_id, entries[1].trace_id]
     event_types = [
         event_type
         for _session_id, event_type, _payload in runtime.session_events.events

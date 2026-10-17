@@ -17,6 +17,7 @@ from openminion.cli.interactive.terminal.shell import (
 )
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
+from openminion.services.runtime.turn_input import TurnInputQueue
 
 
 def test_external_editor_uses_argument_vector_and_removes_scratch(
@@ -141,7 +142,9 @@ def test_idle_editor_save_prefills_next_read_without_starting_turn(monkeypatch) 
     console = Console(force_terminal=False)
     transcript = TerminalTranscript(console, plain_spinner=True)
     loop = _TerminalFocusLoop(
-        runtime=SimpleNamespace(),
+        runtime=SimpleNamespace(
+            api_runtime=SimpleNamespace(turn_input_queue=TurnInputQueue())
+        ),
         console=console,
         transcript=transcript,
         status_line=TerminalStatusLine(),

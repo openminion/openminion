@@ -25,6 +25,7 @@ async def run_room_turn_if_bound(
     approval_callback: Callable[..., Any] | None,
     transcript: TerminalTranscript,
     handle: Any,
+    request_id: str | None = None,
 ) -> str | None:
     room_runner = getattr(runtime, "run_room_turn", None)
     room_detector = getattr(runtime, "is_room_session", None)
@@ -38,6 +39,7 @@ async def run_room_turn_if_bound(
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
                 cancel_event=cancel_event,
+                request_id=request_id,
             )
         )
     except asyncio.CancelledError:
@@ -67,10 +69,14 @@ def runtime_message_stream(
     text: str,
     progress_callback: Callable[[dict[str, Any]], None],
     approval_callback: Callable[..., Any] | None,
+    *,
+    request_id: str | None = None,
 ) -> Any:
     kwargs: dict[str, Any] = {"progress_callback": progress_callback}
     if approval_callback is not None:
         kwargs["approval_callback"] = approval_callback
+    if request_id:
+        kwargs["request_id"] = request_id
     return runtime.send_message(text, **kwargs)
 
 

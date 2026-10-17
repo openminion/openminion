@@ -304,6 +304,7 @@ def _execute_browser_tool(
     if payload.get("op") == "tab.list":
         response["active_tab_id"] = _active_tab_id(
             tool,
+            provider_id=str(result.data.get("provider") or ""),
             session_id=str(session_id or "cli-browser"),
             workspace_root=workspace_root,
             runtime_env=runtime_env,
@@ -314,21 +315,22 @@ def _execute_browser_tool(
 def _active_tab_id(
     tool: Any,
     *,
+    provider_id: str,
     session_id: str,
     workspace_root: str,
     runtime_env: Mapping[str, object] | None,
 ) -> str:
     store = getattr(tool, "session_state_store", None)
-    if store is None:
+    if store is None or not provider_id:
         return ""
-    preferred = store.preferred_state_for_session(
+    state = store.state_for(
+        provider_id=provider_id,
         session_id=session_id,
         workspace_root=workspace_root,
+        extras={},
         env=runtime_env,
     )
-    if preferred is None:
-        return ""
-    return str(preferred[1].tab_id or "").strip()
+    return str(state.tab_id or "").strip()
 
 
 def _runtime_browser_context(runtime: Any | None) -> dict[str, Any]:

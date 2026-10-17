@@ -304,24 +304,22 @@ def _cron_turn_executor_for_runtime(
 
 
 def _seed_cron_cleanup_job(cron_store: Any) -> None:
-    job_id = "system-cron-cleanup"
     try:
-        if cron_store.get_cron_job(job_id) is not None:
-            return
-        cron_store.add_cron_job(
-            name=job_id,
-            description="Prune old cron history",
-            schedule={"kind": "every", "every_ms": 86_400_000},
-            payload={
-                "kind": "systemEvent",
-                "event_text": "prune_cron_runs",
-                "kwargs": {"days": 7},
-            },
-            agent_id="system",
-            session_target="main",
-            delete_after_run=False,
-            job_id=job_id,
-        )
+        if cron_store.get_cron_job("system-cron-cleanup") is None:
+            cron_store.add_cron_job(
+                name="system-cron-cleanup",
+                description="Prune old cron history",
+                schedule={"kind": "every", "every_ms": 86_400_000},
+                payload={
+                    "kind": "systemEvent",
+                    "event_text": "prune_cron_runs",
+                    "kwargs": {"days": 7},
+                },
+                agent_id="system",
+                session_target="main",
+                delete_after_run=False,
+                job_id="system-cron-cleanup",
+            )
     except Exception as exc:  # noqa: BLE001
         _DAEMON_LOGGER.warning(
             format_structured_event(

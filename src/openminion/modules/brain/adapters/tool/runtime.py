@@ -938,9 +938,7 @@ class ToolAdapter:
                 "source": str(getattr(result, "source", "") or "openminion"),
             }
         )
-        summary = error_message or content or "Tool execution failed"
-        if ok:
-            summary = content
+        summary = content if ok else error_message or content or "Tool execution failed"
         error_code = ""
         error_details: dict[str, Any] = {}
         if isinstance(data, Mapping):
@@ -951,8 +949,10 @@ class ToolAdapter:
         requires_confirm = _is_confirm_required_code(error_code)
         if requires_confirm and not replay_confirmation_metadata:
             approval_id = str(error_details.get("approval_id", "") or new_run_id())
+            replay_args = error_details.get("replay_args", args)
+            replay_args = replay_args if isinstance(replay_args, Mapping) else args
             replay = self._replay_inline_approval(
-                command={"tool_name": tool_name, "args": args},
+                command={"tool_name": tool_name, "args": dict(replay_args)},
                 tool_name=tool_name,
                 args=dict(error_details.get("preview") or args),
                 approval_id=approval_id,

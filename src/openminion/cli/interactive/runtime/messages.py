@@ -523,6 +523,7 @@ class RuntimeMessageMixin:
         inbound_metadata: dict[str, str] | None = None,
         approval_callback: Callable[..., Awaitable[bool]] | None = None,
         cancel_event: Any,
+        request_id: str | None = None,
     ) -> dict[str, object]:
         session, actor = self._room_session_and_actor()
         if actor.role not in {"owner", "participant"}:
@@ -540,6 +541,8 @@ class RuntimeMessageMixin:
             "inbound_metadata": merged_metadata,
             "deliver": False,
         }
+        if request_id:
+            payload["request_id"] = request_id
         return await self._run_off_loop_turn(
             payload,
             progress_callback=progress_callback,

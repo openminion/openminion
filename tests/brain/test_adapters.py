@@ -4056,6 +4056,7 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
         from openminion.modules.tool.base import Tool, ToolExecutionResult
 
         confirmations: list[bool] = []
+        executed_args: list[dict[str, object]] = []
         approval_args: list[dict[str, object]] = []
 
         class _ConfirmingTool(Tool):
@@ -4063,7 +4064,7 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
             description = "browser"
 
             def execute(self, arguments, context):
-                del arguments
+                executed_args.append(dict(arguments))
                 confirmations.append(context.confirm)
                 if not context.confirm:
                     return ToolExecutionResult(
@@ -4080,6 +4081,10 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
                                     "tab_id": "tab-7",
                                     "origin": "https://example.com",
                                     "files": ["final.pdf"],
+                                },
+                                "replay_args": {
+                                    "op": "tab.upload",
+                                    "approved_origin": "https://example.com",
                                 },
                             },
                         },
@@ -4111,6 +4116,16 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(confirmations, [False, True])
+        self.assertEqual(
+            executed_args,
+            [
+                {"op": "tab.upload"},
+                {
+                    "op": "tab.upload",
+                    "approved_origin": "https://example.com",
+                },
+            ],
+        )
         self.assertEqual(
             approval_args,
             [

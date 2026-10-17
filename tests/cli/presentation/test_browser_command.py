@@ -26,6 +26,7 @@ class _Tool:
         self.contexts.append(ctx)
         data = {"data": {"op": payload["op"]}}
         if payload["op"] == "tab.list":
+            data["provider"] = "playwright"
             data["tabs"] = [{"id": "t1", "title": "Example", "url": "https://e.test"}]
         elif payload["op"] == "tab.navigate":
             data["tab"] = {"id": payload.get("tab_id", "t1"), "url": payload["url"]}
@@ -202,9 +203,9 @@ def test_focus_browser_tabs_use_runtime_context_and_mark_active_tab(
     profile_calls: list[tuple[object, str | None]] = []
 
     class _Store:
-        def preferred_state_for_session(self, **kwargs):
+        def state_for(self, **kwargs):
             state_calls.append(kwargs)
-            return "playwright", SimpleNamespace(tab_id="t1")
+            return SimpleNamespace(tab_id="t1")
 
     tool = _Tool()
     tool.session_state_store = _Store()
@@ -261,8 +262,10 @@ def test_focus_browser_tabs_use_runtime_context_and_mark_active_tab(
     }
     assert state_calls == [
         {
+            "provider_id": "playwright",
             "session_id": "focus-session",
             "workspace_root": str(tmp_path.resolve()),
+            "extras": {},
             "env": {"OPENMINION_DATA_ROOT": str(tmp_path / "data")},
         }
     ]

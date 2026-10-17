@@ -478,6 +478,13 @@ def test_browser_upload_requires_confirmation() -> None:
             "files": ["input/report.pdf"],
             "target": {"selector": "#upload"},
         },
+        "replay_args": {
+            "op": "tab.upload",
+            "tab_id": "t1",
+            "files": ["input/report.pdf"],
+            "target": {"selector": "#upload"},
+            "approved_origin": "https://example.com",
+        },
     }
     assert provider.tab_upload_calls == []
 
@@ -493,6 +500,43 @@ def test_browser_upload_requires_confirmation() -> None:
 
     assert confirmed.ok is True
     assert provider.tab_upload_calls[0][0:2] == ("t1", ["input/report.pdf"])
+
+
+def test_browser_upload_replay_rejects_changed_origin() -> None:
+    provider = _Provider()
+    reg = BrowserProviderRegistry()
+    reg.register(provider)
+    tool = BrowserTool(
+        router=BrowserRouter(reg, config=BrowserRoutingConfig(default_provider="mock"))
+    )
+    payload = {
+        "op": "tab.upload",
+        "tab_id": "t1",
+        "files": ["input/report.pdf"],
+        "target": {"selector": "#upload"},
+        "approved_origin": "https://example.com",
+    }
+    provider.tabs_payload[0]["url"] = "https://redirected.example/upload"
+
+    result = tool.execute(
+        payload,
+        ToolExecutionContext(
+            channel="console",
+            target="test",
+            session_id="browser-upload",
+            confirm=True,
+            metadata={
+                "confirmation_source": "policy_replay",
+                "confirmation_grant_id": "upload-grant",
+            },
+        ),
+    )
+
+    assert result.ok is False
+    assert result.data["error_code"] == "approval_stale"
+    assert result.data["details"]["approved_origin"] == "https://example.com"
+    assert result.data["details"]["current_origin"] == "https://redirected.example"
+    assert provider.tab_upload_calls == []
 
 
 def test_browser_screenshot_without_output_path_retains_inline_image() -> None:

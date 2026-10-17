@@ -597,9 +597,10 @@ class OpenMinionRuntime(
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
         inbound_metadata: dict[str, str] | None = None,
         approval_callback: ApprovalCallback | None = None,
+        request_id: str | None = None,
     ) -> AsyncIterator[str]:
         timer = phase_timing.ChatPhaseTimer(cold_start=False)
-        turn_id = uuid4().hex
+        turn_id = str(request_id or "").strip() or uuid4().hex
         with phase_timing.use_chat_phase_timer(timer):
             try:
                 async for chunk in self._send_message_impl(
@@ -607,6 +608,7 @@ class OpenMinionRuntime(
                     progress_callback=progress_callback,
                     inbound_metadata=inbound_metadata,
                     approval_callback=approval_callback,
+                    request_id=turn_id,
                 ):
                     if str(chunk or ""):
                         phase_timing.mark_active_chat_first_text()
@@ -718,6 +720,7 @@ class OpenMinionRuntime(
         progress_callback: Callable[[dict[str, Any]], None] | None,
         inbound_metadata: dict[str, str] | None,
         approval_callback: ApprovalCallback | None,
+        request_id: str | None,
     ) -> tuple[dict[str, Any], Callable[..., Any] | None, Callable[..., Any]]:
         kwargs: dict[str, Any] = {
             "channel": self._channel,
@@ -740,6 +743,8 @@ class OpenMinionRuntime(
             kwargs["progress_callback"] = wrapped_progress
         if approval_callback is not None and "approval_callback" in parameters:
             kwargs["approval_callback"] = approval_callback
+        if request_id and "request_id" in parameters:
+            kwargs["request_id"] = request_id
         return kwargs, stream_handler, wrapped_progress
 
     async def _handle_gateway_message(self, kwargs: dict[str, Any]) -> Message:
@@ -756,6 +761,7 @@ class OpenMinionRuntime(
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
         inbound_metadata: dict[str, str] | None = None,
         approval_callback: ApprovalCallback | None = None,
+        request_id: str | None = None,
     ) -> AsyncIterator[str]:
         self._ensure_agent_resolved()
         if not self.is_bound:
@@ -767,6 +773,7 @@ class OpenMinionRuntime(
             progress_callback=progress_callback,
             inbound_metadata=inbound_metadata,
             approval_callback=policy_approval_callback,
+            request_id=request_id,
         )
         if stream_handler is not None:
             final_text = ""

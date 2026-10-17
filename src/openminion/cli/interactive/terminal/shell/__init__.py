@@ -389,7 +389,7 @@ class _TerminalFocusLoop:
         self.active_queue_id = running.queue_id
         self._push_system_message(queue_run_next_notice(running.text))
         self.refresh_status_line(state="responding")
-        await self.start_turn(running.text)
+        await self.start_turn(running.text, request_id=running.trace_id)
         return True
 
     def _finish_active_queue_entry(self, status: TurnInputQueueStatus) -> None:
@@ -408,7 +408,7 @@ class _TerminalFocusLoop:
             self._push_queue_error(exc)
             return
 
-    async def start_turn(self, text: str) -> None:
+    async def start_turn(self, text: str, *, request_id: str | None = None) -> None:
         self.active_turn_text = str(text or "")
         self.active_turn_started_at = asyncio.get_running_loop().time()
         self.active_turn_task = asyncio.create_task(
@@ -417,6 +417,7 @@ class _TerminalFocusLoop:
                 runtime=self.runtime,
                 transcript=self.transcript,
                 status_line=self.status_line,
+                request_id=request_id,
                 approval_callback=_build_approval_callback(
                     overlay=self.overlay,
                     runtime=self.runtime,
@@ -898,6 +899,7 @@ async def _run_agent_turn(
     runtime: Any,
     transcript: TerminalTranscript,
     status_line: TerminalStatusLine | None,
+    request_id: str | None = None,
     approval_callback: Callable[..., Any] | None = None,
     invalidate_prompt: Callable[[], None] | None = None,
 ) -> bool:
@@ -911,12 +913,8 @@ async def _run_agent_turn(
                 invalidate_prompt=invalidate_prompt,
             )
         )
-    handle = transcript.begin_turn(
-        role="assistant",
-        footer_provider=status_line.live_turn_footer
-        if status_line is not None
-        else None,
-    )
+    footer_provider = status_line.live_turn_footer if status_line is not None else None
+    handle = transcript.begin_turn(role="assistant", footer_provider=footer_provider)
     reply = ""
     status_controller = PhaseStatusController(fallback_label="Working...")
     status_controller.start_turn()
@@ -953,6 +951,7 @@ async def _run_agent_turn(
             approval_callback=approval_callback,
             transcript=transcript,
             handle=handle,
+            request_id=request_id,
         )
         if room_reply is not None:
             reply = room_reply
@@ -962,6 +961,7 @@ async def _run_agent_turn(
                 text,
                 progress_callback,
                 approval_callback,
+                request_id=request_id,
             ):
                 chunk_str = str(chunk or "")
                 if not chunk_str:
