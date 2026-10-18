@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threading import Lock
 from typing import Any, Callable, Literal, Mapping
 
 from openminion.base.errors import error_dict_from_exception
@@ -138,7 +139,8 @@ class BrainRunner:
         self._call_order_tracker: dict[str, dict[str, Any]] = {}
         self._progress_callback: Callable[[PhaseStatus], None] | None = None
         self._approval_callback: Any | None = None
-        self._telemetry_turn_active = False
+        self._telemetry_turn_lock = Lock()
+        self._telemetry_active_runs = 0
         configure_runtime_controls_runner_lifecycle(
             self,
             meta_api=meta_api,
@@ -520,7 +522,6 @@ class BrainRunner:
         capture_id: str | None = None,
     ) -> StepOutput:
         previous_callback = self._progress_callback
-        previous_telemetry_turn_active = self._telemetry_turn_active
         previous_policy_callback = self._approval_callback
         self._approval_callback = approval_callback
         approval_setter = getattr(self.tool_api, "set_approval_callback", None)
@@ -538,7 +539,6 @@ class BrainRunner:
         self._trace_id = effective_trace_id
         self._hydrate_goal_session(session_id)
         self._progress_callback = progress_callback or previous_callback
-        self._telemetry_turn_active = True
         self._emit_brain_operation(
             session_id=session_id,
             turn_id=effective_trace_id,
@@ -550,6 +550,8 @@ class BrainRunner:
                 "trigger": str(trigger or "user_input"),
             },
         )
+        with self._telemetry_turn_lock:
+            self._telemetry_active_runs += 1
         result: StepOutput | None = None
         try:
             result = run_until_idle_runner_lifecycle(
@@ -568,10 +570,7 @@ class BrainRunner:
                 turn_id=_result_trace_id(result, effective_trace_id),
                 operation="turn_finish",
                 status="error" if result.status in {"error", "failed"} else "ok",
-                extra={
-                    "entrypoint": "run",
-                    "brain_status": result.status,
-                },
+                extra={"entrypoint": "run", "brain_status": result.status},
             )
             self._emit_turn_outcome(
                 session_id=session_id,
@@ -597,7 +596,8 @@ class BrainRunner:
                 )
             raise
         finally:
-            self._telemetry_turn_active = previous_telemetry_turn_active
+            with self._telemetry_turn_lock:
+                self._telemetry_active_runs -= 1
             self._progress_callback = previous_callback
             self._approval_callback = previous_policy_callback
             if callable(approval_setter):
@@ -624,7 +624,9 @@ class BrainRunner:
         self._trace_id = effective_trace_id
         if progress_callback is not None:
             self._progress_callback = progress_callback
-        if not self._telemetry_turn_active:
+        with self._telemetry_turn_lock:
+            run_owns_turn_outcome = self._telemetry_active_runs > 0
+        if not run_owns_turn_outcome:
             self._emit_brain_operation(
                 session_id=session_id,
                 turn_id=effective_trace_id,
@@ -647,7 +649,7 @@ class BrainRunner:
                 capture_identity=identity,
                 runtime_conversation_id=runtime_conversation_id,
             )
-            if not self._telemetry_turn_active:
+            if not run_owns_turn_outcome:
                 turn_id = (
                     str(result.working_state.trace_id or "").strip()
                     or effective_trace_id
@@ -670,7 +672,7 @@ class BrainRunner:
                 )
             return result
         except ProviderError as exc:
-            if not self._telemetry_turn_active:
+            if not run_owns_turn_outcome:
                 self._emit_brain_operation(
                     session_id=session_id,
                     turn_id=effective_trace_id,

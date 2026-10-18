@@ -1,3 +1,5 @@
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -340,7 +342,7 @@ class RunnerTests(unittest.TestCase):
 
         self.assertEqual(goal_runtime.calls, [("sess-lgmh", runner.session_api)])
 
-    def test_nested_run_restores_outer_turn_telemetry_scope(self) -> None:
+    def test_run_owns_terminal_outcome_for_internal_steps(self) -> None:
         runner = BrainRunner(profile=_profile(), session_api=MagicMock())
         output = SimpleNamespace(
             status="done",
@@ -358,24 +360,105 @@ class RunnerTests(unittest.TestCase):
                 ),
             ),
         )
-        nested = False
+        emitted_entrypoints: list[str] = []
 
         def run_lifecycle(*_args, **_kwargs):
-            nonlocal nested
-            self.assertTrue(runner._telemetry_turn_active)
-            if not nested:
-                nested = True
-                runner.run(session_id="child", user_input="review")
-                self.assertTrue(runner._telemetry_turn_active)
+            runner.step(
+                session_id="parent",
+                user_input="continue",
+            )
             return output
 
-        with unittest.mock.patch(
-            "openminion.modules.brain.runner.coordinator.run_until_idle_runner_lifecycle",
-            side_effect=run_lifecycle,
+        with (
+            unittest.mock.patch(
+                "openminion.modules.brain.runner.coordinator.run_until_idle_runner_lifecycle",
+                side_effect=run_lifecycle,
+            ),
+            unittest.mock.patch(
+                "openminion.modules.brain.runner.coordinator.run_step",
+                return_value=output,
+            ),
+            unittest.mock.patch.object(
+                runner,
+                "_emit_turn_outcome",
+                side_effect=lambda **kwargs: emitted_entrypoints.append(
+                    kwargs["entrypoint"]
+                ),
+            ),
         ):
             runner.run(session_id="parent", user_input="delegate review")
 
-        self.assertFalse(runner._telemetry_turn_active)
+        self.assertEqual(emitted_entrypoints, ["run"])
+
+    def test_overlapping_runs_keep_turn_telemetry_scopes_isolated(self) -> None:
+        runner = BrainRunner(profile=_profile(), session_api=MagicMock())
+        first_started = threading.Event()
+        second_started = threading.Event()
+        release_first = threading.Event()
+        first_finished = threading.Event()
+        emitted_entrypoints: list[str] = []
+
+        def output(session_id: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                status="done",
+                response="ok",
+                action_result=None,
+                working_state=WorkingState(
+                    session_id=session_id,
+                    agent_id="router-agent",
+                    budgets_remaining=BudgetCounters(
+                        ticks=10,
+                        tool_calls=5,
+                        a2a_calls=5,
+                        tokens=1000,
+                        time_ms=10000,
+                    ),
+                ),
+            )
+
+        def run_lifecycle(_runner, *, session_id, **_kwargs):
+            if session_id == "first":
+                first_started.set()
+                self.assertTrue(release_first.wait(timeout=5))
+                return output(session_id)
+            second_started.set()
+            self.assertTrue(first_finished.wait(timeout=5))
+            runner.step(
+                session_id=session_id,
+                user_input="continue",
+            )
+            return output(session_id)
+
+        with (
+            unittest.mock.patch(
+                "openminion.modules.brain.runner.coordinator.run_until_idle_runner_lifecycle",
+                side_effect=run_lifecycle,
+            ),
+            unittest.mock.patch(
+                "openminion.modules.brain.runner.coordinator.run_step",
+                side_effect=lambda _runner, *, session_id, **_kwargs: output(
+                    session_id
+                ),
+            ),
+            unittest.mock.patch.object(
+                runner,
+                "_emit_turn_outcome",
+                side_effect=lambda **kwargs: emitted_entrypoints.append(
+                    kwargs["entrypoint"]
+                ),
+            ),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            first = pool.submit(runner.run, session_id="first", user_input="one")
+            self.assertTrue(first_started.wait(timeout=5))
+            second = pool.submit(runner.run, session_id="second", user_input="two")
+            self.assertTrue(second_started.wait(timeout=5))
+            release_first.set()
+            first.result(timeout=5)
+            first_finished.set()
+            second.result(timeout=5)
+
+        self.assertEqual(emitted_entrypoints, ["run", "run"])
 
     def test_idempotency_cache_reuses_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
