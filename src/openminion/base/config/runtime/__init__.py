@@ -37,6 +37,7 @@ from openminion.base.config.tool_selection import ToolSelectionConfig
 @dataclass
 class ToolPolicyConfig:
     default_required_scopes: list[str] = field(default_factory=lambda: ["tool.execute"])
+    internal_actor_scopes: list[str] = field(default_factory=list)
     max_calls_per_run: int = 100
     max_calls_per_tool: int = 50
     max_budget_cost_per_run: int = 200

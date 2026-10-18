@@ -105,6 +105,9 @@ def _build_gateway_security_sections(
                     ),
                     ["tool.execute"],
                 ),
+                internal_actor_scopes=_normalized_tokens(
+                    _list_payload(tool_policy_payload, "internal_actor_scopes", [])
+                ),
                 **{
                     name: max(1, _as_int(tool_policy_payload.get(name), default))
                     for name, default in (
@@ -152,6 +155,9 @@ def _gateway_security_to_payload(config: OpenMinionConfig) -> dict[str, Any]:
             "tool_policy": {
                 "default_required_scopes": list(
                     config.security.tool_policy.default_required_scopes
+                ),
+                "internal_actor_scopes": list(
+                    config.security.tool_policy.internal_actor_scopes
                 ),
                 "max_calls_per_run": config.security.tool_policy.max_calls_per_run,
                 "max_calls_per_tool": config.security.tool_policy.max_calls_per_tool,

@@ -290,6 +290,9 @@ def collect_health_snapshot(
                 default_tool_required_scopes=frozenset(
                     config.security.tool_policy.default_required_scopes
                 ),
+                internal_actor_scopes=frozenset(
+                    config.security.tool_policy.internal_actor_scopes
+                ),
             )
             extension_runtime = extension_manager.build(
                 security_policy=security_policy,

@@ -63,6 +63,23 @@ def test_budget_envelope_constants_are_operator_overridable() -> None:
     assert pol.max_calls_per_run == 8
 
 
+def test_internal_actor_scope_grants_round_trip_through_system_config() -> None:
+    config = openminion_config_from_dict(
+        {
+            "agents": {"default": {"provider": "echo"}},
+            "security": {
+                "tool_policy": {"internal_actor_scopes": ["tool.execute.elevated"]}
+            },
+        }
+    )
+
+    restored = openminion_config_from_dict(openminion_config_to_dict(config))
+
+    assert restored.security.tool_policy.internal_actor_scopes == [
+        "tool.execute.elevated"
+    ]
+
+
 @pytest.mark.parametrize(
     ("runtime", "policy", "expected"),
     [

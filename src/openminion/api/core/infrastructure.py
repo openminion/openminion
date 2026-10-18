@@ -223,6 +223,7 @@ def _build_security_policy(
             max_budget_cost_per_run=tool_policy.max_budget_cost_per_run,
         ),
         default_tool_required_scopes=frozenset(tool_policy.default_required_scopes),
+        internal_actor_scopes=frozenset(tool_policy.internal_actor_scopes),
         telemetryctl=telemetryctl,
     )
 

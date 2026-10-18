@@ -46,10 +46,7 @@ def build_policy_adapter(
 
     inbound = runtime.inbound
     actor = default_internal_actor(service_port.identity_agent_id)
-    list_tools = getattr(tools, "list", None)
-    if callable(list_tools):
-        for tool_name in list_tools():
-            actor.scopes.update(tools.policy_for(tool_name).required_scopes_all)
+    actor.scopes.update(service_port.security_policy.internal_actor_scopes)
     return build_execution_boundary_policy_adapter(
         policy=service_port.security_policy,
         actor=actor,
@@ -165,6 +162,3 @@ async def filter_allowed_tool_calls(
         )
         break
     return allowed_calls, security_events, denied_results, runtime_env_overrides
-
-
-__all__ = ["build_policy_adapter", "filter_allowed_tool_calls"]

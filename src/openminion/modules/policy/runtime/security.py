@@ -224,6 +224,7 @@ class SecurityPolicyEngine:
         identity_constraints: list[str] = [],
         tool_budget_policy: ToolBudgetPolicy | None = None,
         default_tool_required_scopes: frozenset[str] | None = None,
+        internal_actor_scopes: frozenset[str] | None = None,
         telemetryctl: Any | None = None,
     ) -> None:
         self._policy_version = str(policy_version).strip() or "v1"
@@ -236,6 +237,11 @@ class SecurityPolicyEngine:
             if _normalize_token(scope)
         }
         self._default_tool_required_scopes = frozenset(normalized_default_scopes)
+        self._internal_actor_scopes = frozenset(
+            _normalize_token(scope)
+            for scope in (internal_actor_scopes or frozenset())
+            if _normalize_token(scope)
+        )
         self._telemetryctl = telemetryctl
 
     @property
@@ -245,6 +251,10 @@ class SecurityPolicyEngine:
     @property
     def tool_budget_policy(self) -> ToolBudgetPolicy:
         return self._tool_budget_policy
+
+    @property
+    def internal_actor_scopes(self) -> frozenset[str]:
+        return self._internal_actor_scopes
 
     def evaluate_tool_budget(
         self,
