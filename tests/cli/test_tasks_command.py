@@ -105,6 +105,12 @@ def test_tasks_cli_shows_live_scheduler_readiness_for_scheduled_task(
     assert "scheduler: paused (daemon: ready)" in inventory
     assert "scheduler_reason: Provider maintenance" in inventory
 
+    args.tasks_command = "show"
+    assert run_tasks(args, app) == 0
+    detail = capsys.readouterr().out
+    assert "scheduler: paused (daemon: ready)" in detail
+    assert "scheduler_reason: Provider maintenance" in detail
+
 
 def test_tasks_cli_uses_configured_default_agent(capsys) -> None:
     ctl = InMemoryTaskCtl()

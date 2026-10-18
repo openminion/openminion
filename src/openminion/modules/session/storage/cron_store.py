@@ -258,6 +258,7 @@ class CronStore(CronCoordinationStore):
         enabled: bool,
         *,
         cancel_queued: bool = False,
+        next_due_at_override: str | None = None,
     ) -> None:
         job = self.get_cron_job(job_id)
         if job is None:
@@ -266,7 +267,9 @@ class CronStore(CronCoordinationStore):
         now_dt = utc_now()
         now = to_iso_utc(now_dt)
         next_due: str | None = None
-        if enabled:
+        if enabled and next_due_at_override is not None:
+            next_due = next_due_at_override
+        elif enabled:
             schedule = normalize_schedule(job["schedule"])
             if str(schedule["kind"]) == "at":
                 next_due = str(schedule["at"])

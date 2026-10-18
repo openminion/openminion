@@ -70,18 +70,17 @@ def run_tasks(args: argparse.Namespace, app: APIRuntime) -> int:
         and callable(scheduler_readiness)
     ):
         payload["scheduler"] = scheduler_readiness()
-        if action == "list":
-            task_manager = resolve_task_surface_source(app)
-            scheduler_control_status = getattr(
-                task_manager, "scheduler_control_status", None
-            )
-            if callable(scheduler_control_status):
-                control = scheduler_control_status()
-                payload["scheduler"] = {
-                    **payload["scheduler"],
-                    **control,
-                    "updated_by": control.get("actor"),
-                }
+        task_manager = resolve_task_surface_source(app)
+        scheduler_control_status = getattr(
+            task_manager, "scheduler_control_status", None
+        )
+        if callable(scheduler_control_status):
+            control = scheduler_control_status()
+            payload["scheduler"] = {
+                **payload["scheduler"],
+                **control,
+                "updated_by": control.get("actor"),
+            }
 
     if bool(getattr(args, "json", False)):
         print_json_payload(payload, sort_keys=False, default=str)
@@ -233,7 +232,15 @@ def _print_human(*, action: str, payload: dict[str, Any]) -> None:
             print(f"schedule: {task.get('schedule_summary')}")
         if task.get("daemon_required"):
             scheduler = dict(payload.get("scheduler") or {})
-            print(f"scheduler: {scheduler.get('state', 'unknown')}")
+            if scheduler.get("paused"):
+                print(
+                    "scheduler: paused "
+                    f"(daemon: {scheduler.get('state', 'unknown')})"
+                )
+                if scheduler.get("reason"):
+                    print(f"scheduler_reason: {scheduler['reason']}")
+            else:
+                print(f"scheduler: {scheduler.get('state', 'unknown')}")
             if scheduler.get("check_command"):
                 print(f"scheduler_check: {scheduler['check_command']}")
         if task.get("last_run"):

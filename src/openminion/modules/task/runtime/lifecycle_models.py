@@ -34,6 +34,7 @@ class TaskCronStoreProtocol(Protocol):
         enabled: bool,
         *,
         cancel_queued: bool = False,
+        next_due_at_override: str | None = None,
     ) -> None: ...
 
     def list_cron_runs(
@@ -225,8 +226,9 @@ class _NullCronRepository:
         enabled: bool,
         *,
         cancel_queued: bool = False,
+        next_due_at_override: str | None = None,
     ) -> None:
-        del cancel_queued
+        del cancel_queued, next_due_at_override
         pass
 
     def list_cron_runs(

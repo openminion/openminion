@@ -345,10 +345,16 @@ def _render_task_detail(runtime: Any, task: dict[str, Any]) -> str:
         lines.append(f"schedule: {task.get('schedule_summary')}")
     if task.get("daemon_required"):
         scheduler = _runtime_scheduler_readiness(runtime)
-        scheduler_line = f"scheduler: {scheduler['state']}"
+        scheduler_line = (
+            f"scheduler: paused (daemon: {scheduler['state']})"
+            if scheduler.get("paused")
+            else f"scheduler: {scheduler['state']}"
+        )
         if scheduler.get("check_command"):
             scheduler_line += f" (check: {scheduler['check_command']})"
         lines.append(scheduler_line)
+        if scheduler.get("paused") and scheduler.get("reason"):
+            lines.append(f"scheduler_reason: {scheduler['reason']}")
     _append_task_run_detail(lines, task)
     actions = task.get("valid_actions")
     if actions:

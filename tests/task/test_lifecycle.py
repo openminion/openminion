@@ -485,6 +485,7 @@ def test_pause_restores_cron_state_when_lifecycle_transition_fails(
     run_id = getattr(manager, "_cron_repository").trigger_cron_run(
         created.cron_job_id
     )
+    original_due_at = manager.get_scheduled_job(created.cron_job_id)["next_due_at"]
 
     def _fail_transition(**_kwargs):
         raise RuntimeError("lifecycle unavailable")
@@ -496,6 +497,7 @@ def test_pause_restores_cron_state_when_lifecycle_transition_fails(
     job = manager.get_scheduled_job(created.cron_job_id)
     assert job is not None
     assert job["enabled"] is True
+    assert job["next_due_at"] == original_due_at
     run = manager.list_scheduled_runs(job_id=created.cron_job_id, limit=1)[0]
     assert run["run_id"] == run_id
     assert run["state"] == "queued"
@@ -511,6 +513,7 @@ def test_cancel_restores_cron_state_when_lifecycle_transition_fails(
         payload={"kind": "agentTurn", "message": "cancel"},
         agent_id="agent-a",
     )
+    original_due_at = manager.get_scheduled_job(created.cron_job_id)["next_due_at"]
     run_id = getattr(manager, "_cron_repository").trigger_cron_run(
         created.cron_job_id
     )
@@ -525,6 +528,7 @@ def test_cancel_restores_cron_state_when_lifecycle_transition_fails(
     job = manager.get_scheduled_job(created.cron_job_id)
     assert job is not None
     assert job["enabled"] is True
+    assert job["next_due_at"] == original_due_at
     run = manager.list_scheduled_runs(job_id=created.cron_job_id, limit=1)[0]
     assert run["run_id"] == run_id
     assert run["state"] == "queued"

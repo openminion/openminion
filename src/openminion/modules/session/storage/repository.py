@@ -95,11 +95,13 @@ class SQLiteCronRepository:
         enabled: bool,
         *,
         cancel_queued: bool = False,
+        next_due_at_override: str | None = None,
     ) -> None:
         self._store.set_cron_job_enabled(
             job_id,
             enabled,
             cancel_queued=cancel_queued,
+            next_due_at_override=next_due_at_override,
         )
 
     def trigger_cron_run(

@@ -403,6 +403,9 @@ class TaskManagerScheduleMixin:
 
     def cancel_task(self, task_id: str) -> TaskLifecycleRecord:
         record = self._require_scheduled_record(task_id)
+        job = self.get_scheduled_job(record.cron_job_id)
+        if job is None:
+            raise KeyError(f"task not found: {task_id}")
         self._cron_repository.set_cron_job_enabled(
             record.cron_job_id,
             False,
@@ -414,7 +417,11 @@ class TaskManagerScheduleMixin:
                 to_state=TaskLifecycleState.CANCELLED,
             )
         except Exception:  # noqa: BLE001 - compensate the cross-database update
-            self._cron_repository.set_cron_job_enabled(record.cron_job_id, True)
+            self._cron_repository.set_cron_job_enabled(
+                record.cron_job_id,
+                True,
+                next_due_at_override=job.get("next_due_at"),
+            )
             raise
         self._cron_repository.set_cron_job_enabled(
             record.cron_job_id,
@@ -425,6 +432,9 @@ class TaskManagerScheduleMixin:
 
     def pause_task(self, task_id: str) -> tuple[TaskLifecycleRecord, dict[str, Any]]:
         record = self._require_scheduled_record(task_id)
+        job = self.get_scheduled_job(record.cron_job_id)
+        if job is None:
+            raise KeyError(f"task not found: {task_id}")
         self._cron_repository.set_cron_job_enabled(
             record.cron_job_id,
             False,
@@ -436,7 +446,11 @@ class TaskManagerScheduleMixin:
                 to_state=TaskLifecycleState.PAUSED,
             )
         except Exception:  # noqa: BLE001 - compensate the cross-database update
-            self._cron_repository.set_cron_job_enabled(record.cron_job_id, True)
+            self._cron_repository.set_cron_job_enabled(
+                record.cron_job_id,
+                True,
+                next_due_at_override=job.get("next_due_at"),
+            )
             raise
         self._cron_repository.set_cron_job_enabled(
             record.cron_job_id,

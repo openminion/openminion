@@ -94,11 +94,13 @@ def set_cron_job_enabled(
     enabled: bool,
     *,
     cancel_queued: bool = False,
+    next_due_at_override: str | None = None,
 ) -> None:
     store._cron_store.set_cron_job_enabled(
         job_id,
         enabled,
         cancel_queued=cancel_queued,
+        next_due_at_override=next_due_at_override,
     )
 
 

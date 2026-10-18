@@ -388,6 +388,12 @@ def test_render_tasks_report_prioritizes_paused_scheduler_state(tmp_path) -> Non
     manager = TaskManager.from_cron_repository(
         create_sqlite_cron_repository(db_path=tmp_path / "scheduled.db")
     )
+    record = manager.schedule_task(
+        name="scheduled",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "work"},
+        agent_id="agent-1",
+    )
     control = manager.scheduler_control_status()
     manager.pause_scheduler(
         reason="Provider maintenance",
@@ -413,6 +419,10 @@ def test_render_tasks_report_prioritizes_paused_scheduler_state(tmp_path) -> Non
 
     assert "scheduler: paused (daemon: ready)" in inventory
     assert "scheduler_reason: Provider maintenance" in inventory
+
+    detail = render_tasks_report(runtime, record.task_id)
+    assert "scheduler: paused (daemon: ready)" in detail
+    assert "scheduler_reason: Provider maintenance" in detail
 
 
 def test_render_tasks_report_lists_scheduler_and_exact_pending_actions() -> None:

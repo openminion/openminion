@@ -1,5 +1,6 @@
 """Security policy filtering for agent tool execution."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -45,9 +46,18 @@ def build_policy_adapter(
         )
 
     inbound = runtime.inbound
+    actor = default_internal_actor(service_port.identity_agent_id)
+    list_tools = getattr(tools, "list", None)
+    if callable(list_tools):
+        granted_scopes = {
+            scope
+            for tool_name in list_tools()
+            for scope in tools.policy_for(tool_name).required_scopes_all
+        }
+        actor = replace(actor, scopes=actor.scopes | granted_scopes)
     return build_execution_boundary_policy_adapter(
         policy=service_port.security_policy,
-        actor=default_internal_actor(service_port.identity_agent_id),
+        actor=actor,
         context=SecurityPolicyContext(
             channel=inbound.channel,
             target=inbound.target,

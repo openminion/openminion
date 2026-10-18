@@ -233,6 +233,7 @@ class SessionStore(ABC):
         enabled: bool,
         *,
         cancel_queued: bool = False,
+        next_due_at_override: str | None = None,
     ) -> None: ...
 
     @abstractmethod
