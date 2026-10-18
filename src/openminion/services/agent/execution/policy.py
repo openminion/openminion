@@ -39,7 +39,7 @@ def build_policy_adapter(
     def policy_lookup(tool_name: str) -> Any:
         profile = tools.policy_for(tool_name)
         return SimpleNamespace(
-            required_scopes_all=(),
+            required_scopes_all=profile.required_scopes_all,
             risk=getattr(profile, "risk", "medium"),
             budget_cost=getattr(profile, "budget_cost", 1),
         )

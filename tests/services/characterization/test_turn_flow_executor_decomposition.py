@@ -61,7 +61,7 @@ class _BudgetWeatherTool(Tool):
     name = "weather.openmeteo.current"
     description = "Lookup weather by city"
     policy = ToolExecutionPolicy(
-        required_scopes_all=("tool.execute", "tool.weather.read"),
+        required_scopes_all=("tool.execute",),
         risk="medium",
         budget_cost=2,
     )
