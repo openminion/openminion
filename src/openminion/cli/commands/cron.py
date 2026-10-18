@@ -271,9 +271,9 @@ def _register_cron_simple_subcommand(
 
 def _register_cron_run_subcommand(cron_subcommands) -> None:
     parser = cron_subcommands.add_parser(
-        "run", help="Manually enqueue a run for a cron job"
+        "run", help="Run one exact owned task now"
     )
-    parser.add_argument("--job-id", required=True, help="Job ID to run")
+    parser.add_argument("--job-id", required=True, help="Exact owned task ID to run")
     parser.add_argument("--agent-id", default=None)
     _add_cron_session_and_json_args(parser)
     _finalize_cron_subcommand(parser)
@@ -290,7 +290,7 @@ def _register_cron_family(
 
     _register_cron_create_subcommand(cron_subcommands)
     _register_cron_simple_subcommand(
-        cron_subcommands, name="status", help_text="Show scheduled cron jobs"
+        cron_subcommands, name="status", help_text="Show cron scheduler health"
     )
     _register_cron_task_action_subcommand(
         cron_subcommands,

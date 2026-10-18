@@ -94,8 +94,16 @@ def test_tasks_cli_shows_live_scheduler_readiness_for_scheduled_task(
     assert "delivery_targets: session:origin" in detail
 
     args.tasks_command = "list"
+    control = manager.scheduler_control_status()
+    manager.pause_scheduler(
+        reason="Provider maintenance",
+        expected_updated_at=control["updated_at"],
+        actor="operator",
+    )
     assert run_tasks(args, app) == 0
-    assert "scheduler: ready" in capsys.readouterr().out
+    inventory = capsys.readouterr().out
+    assert "scheduler: paused (daemon: ready)" in inventory
+    assert "scheduler_reason: Provider maintenance" in inventory
 
 
 def test_tasks_cli_uses_configured_default_agent(capsys) -> None:

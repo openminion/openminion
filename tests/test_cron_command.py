@@ -4,12 +4,14 @@ import io
 import json
 import sys
 import unittest
+from contextlib import redirect_stdout
 from argparse import Namespace
 from types import SimpleNamespace
 from unittest import mock
 
 from openminion.cli.commands.cron import run_cron
 from openminion.cli.commands.task_tools import build_schedule_payload
+from openminion.cli.parser.base import build_parser
 
 
 class CronCommandTests(unittest.TestCase):
@@ -51,6 +53,15 @@ class CronCommandTests(unittest.TestCase):
             build_schedule_payload(args),
             {"kind": "every", "every_ms": 60_000},
         )
+
+    def test_cron_help_describes_task_run_and_scheduler_status(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaises(SystemExit):
+            build_parser().parse_args(["cron", "--help"])
+
+        help_text = output.getvalue()
+        self.assertIn("run                 Run one exact owned task now", help_text)
+        self.assertIn("status              Show cron scheduler health", help_text)
 
     def test_build_schedule_payload_cron_with_tz(self) -> None:
         args = Namespace(

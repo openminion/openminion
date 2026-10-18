@@ -390,10 +390,16 @@ def _append_task_run_detail(lines: list[str], task: dict[str, Any]) -> None:
 def _render_task_inventory(runtime: Any, payload: dict[str, Any]) -> str:
     lines = ["Tasks", "====="]
     scheduler = _runtime_scheduler_readiness(runtime)
-    scheduler_line = f"scheduler: {scheduler['state']}"
+    scheduler_line = (
+        f"scheduler: paused (daemon: {scheduler['state']})"
+        if scheduler.get("paused")
+        else f"scheduler: {scheduler['state']}"
+    )
     if scheduler.get("check_command"):
         scheduler_line += f" (check: {scheduler['check_command']})"
     lines.append(scheduler_line)
+    if scheduler.get("paused") and scheduler.get("reason"):
+        lines.append(f"scheduler_reason: {scheduler['reason']}")
     tasks = list(payload.get("tasks", []))
     if not tasks:
         lines.append("No tasks found.")
@@ -427,11 +433,23 @@ def _task_failure_text(prefix: str, exc: Exception) -> str:
 
 
 def _runtime_scheduler_readiness(runtime: Any) -> dict[str, Any]:
+    from openminion.modules.task.surface import resolve_task_surface_source
+
     api_runtime = getattr(runtime, "api_runtime", runtime)
     readiness = getattr(api_runtime, "scheduler_readiness", None)
-    if not callable(readiness):
-        return {"state": "unknown"}
-    return cast(dict[str, Any], readiness())
+    scheduler = (
+        cast(dict[str, Any], readiness())
+        if callable(readiness)
+        else {"state": "unknown"}
+    )
+    source = resolve_task_surface_source(runtime)
+    control_status = getattr(source, "scheduler_control_status", None)
+    if callable(control_status):
+        try:
+            scheduler = {**scheduler, **cast(dict[str, Any], control_status())}
+        except NotImplementedError:
+            pass
+    return scheduler
 
 
 def handle_effort_command(runtime: Any, arg: str) -> str:

@@ -366,7 +366,6 @@ def test_render_tasks_report_applies_exact_lifecycle_actions(tmp_path) -> None:
             },
         },
     )()
-
     paused = render_tasks_report(runtime, f"pause {record.task_id}")
     resumed = render_tasks_report(runtime, f"resume {record.task_id}")
     cancelled = render_tasks_report(runtime, f"cancel {record.task_id}")
@@ -379,6 +378,41 @@ def test_render_tasks_report_applies_exact_lifecycle_actions(tmp_path) -> None:
     assert "delivery_targets: session:origin" in paused
     assert "status: ACTIVE" in resumed
     assert "status: CANCELED" in cancelled
+
+
+def test_render_tasks_report_prioritizes_paused_scheduler_state(tmp_path) -> None:
+    from openminion.modules.session.storage.repository import (
+        create_sqlite_cron_repository,
+    )
+
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "scheduled.db")
+    )
+    control = manager.scheduler_control_status()
+    manager.pause_scheduler(
+        reason="Provider maintenance",
+        expected_updated_at=control["updated_at"],
+        actor="operator",
+    )
+    runtime = type(
+        "Runtime",
+        (),
+        {
+            "task_manager": manager,
+            "agent_id": "agent-1",
+            "session_id": "session-1",
+            "scheduler_readiness": lambda self: {
+                "state": "ready",
+                "hosted_by": "daemon",
+                "reason": None,
+            },
+        },
+    )()
+
+    inventory = render_tasks_report(runtime)
+
+    assert "scheduler: paused (daemon: ready)" in inventory
+    assert "scheduler_reason: Provider maintenance" in inventory
 
 
 def test_render_tasks_report_lists_scheduler_and_exact_pending_actions() -> None:

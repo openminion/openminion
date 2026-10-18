@@ -185,7 +185,13 @@ def _print_human(*, action: str, payload: dict[str, Any]) -> None:
         print("=====")
         scheduler = dict(payload.get("scheduler") or {})
         if scheduler:
-            print(f"scheduler: {scheduler.get('state', 'unknown')}")
+            state = scheduler.get("state", "unknown")
+            if scheduler.get("paused"):
+                print(f"scheduler: paused (daemon: {state})")
+                if scheduler.get("reason"):
+                    print(f"scheduler_reason: {scheduler['reason']}")
+            else:
+                print(f"scheduler: {state}")
             if scheduler.get("check_command"):
                 print(f"scheduler_check: {scheduler['check_command']}")
         if not tasks:
