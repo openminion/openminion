@@ -530,6 +530,52 @@ def test_cancel_restores_cron_state_when_lifecycle_transition_fails(
     assert run["state"] == "queued"
 
 
+def test_cancel_failure_preserves_paused_job_state(tmp_path: Path, monkeypatch) -> None:
+    manager = _manager(tmp_path)
+    created = manager.schedule_task(
+        name="paused-cancel-failure",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "cancel"},
+        agent_id="agent-a",
+    )
+    manager.pause_task(created.task_id)
+
+    def _fail_transition(**_kwargs):
+        raise RuntimeError("lifecycle unavailable")
+
+    monkeypatch.setattr(manager, "transition_task", _fail_transition)
+    with pytest.raises(RuntimeError, match="lifecycle unavailable"):
+        manager.cancel_task(created.task_id)
+
+    job = manager.get_scheduled_job(created.cron_job_id)
+    assert job is not None
+    assert job["enabled"] is False
+    assert job["next_due_at"] is None
+
+
+def test_cancel_rejection_preserves_terminal_job_state(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    created = manager.schedule_task(
+        name="terminal-cancel-rejection",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "cancel"},
+        agent_id="agent-a",
+    )
+    manager.transition_task(
+        task_id=created.task_id,
+        to_state=TaskLifecycleState.DONE,
+    )
+    manager.set_scheduled_job_enabled(created.task_id, enabled=False)
+
+    with pytest.raises(ValueError, match="invalid task state transition"):
+        manager.cancel_task(created.task_id)
+
+    job = manager.get_scheduled_job(created.cron_job_id)
+    assert job is not None
+    assert job["enabled"] is False
+    assert job["next_due_at"] is None
+
+
 def test_resume_restores_cron_state_when_lifecycle_transition_fails(
     tmp_path: Path, monkeypatch
 ) -> None:

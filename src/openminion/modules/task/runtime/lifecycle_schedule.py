@@ -419,7 +419,7 @@ class TaskManagerScheduleMixin:
         except Exception:  # noqa: BLE001 - compensate the cross-database update
             self._cron_repository.set_cron_job_enabled(
                 record.cron_job_id,
-                True,
+                bool(job.get("enabled")),
                 next_due_at_override=job.get("next_due_at"),
             )
             raise
@@ -448,7 +448,7 @@ class TaskManagerScheduleMixin:
         except Exception:  # noqa: BLE001 - compensate the cross-database update
             self._cron_repository.set_cron_job_enabled(
                 record.cron_job_id,
-                True,
+                bool(job.get("enabled")),
                 next_due_at_override=job.get("next_due_at"),
             )
             raise
