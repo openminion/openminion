@@ -234,8 +234,7 @@ def _print_human(*, action: str, payload: dict[str, Any]) -> None:
             scheduler = dict(payload.get("scheduler") or {})
             if scheduler.get("paused"):
                 print(
-                    "scheduler: paused "
-                    f"(daemon: {scheduler.get('state', 'unknown')})"
+                    f"scheduler: paused (daemon: {scheduler.get('state', 'unknown')})"
                 )
                 if scheduler.get("reason"):
                     print(f"scheduler_reason: {scheduler['reason']}")

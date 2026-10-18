@@ -482,9 +482,7 @@ def test_pause_restores_cron_state_when_lifecycle_transition_fails(
         payload={"kind": "agentTurn", "message": "pause"},
         agent_id="agent-a",
     )
-    run_id = getattr(manager, "_cron_repository").trigger_cron_run(
-        created.cron_job_id
-    )
+    run_id = getattr(manager, "_cron_repository").trigger_cron_run(created.cron_job_id)
     original_due_at = manager.get_scheduled_job(created.cron_job_id)["next_due_at"]
 
     def _fail_transition(**_kwargs):
@@ -514,9 +512,7 @@ def test_cancel_restores_cron_state_when_lifecycle_transition_fails(
         agent_id="agent-a",
     )
     original_due_at = manager.get_scheduled_job(created.cron_job_id)["next_due_at"]
-    run_id = getattr(manager, "_cron_repository").trigger_cron_run(
-        created.cron_job_id
-    )
+    run_id = getattr(manager, "_cron_repository").trigger_cron_run(created.cron_job_id)
 
     def _fail_transition(**_kwargs):
         raise RuntimeError("lifecycle unavailable")

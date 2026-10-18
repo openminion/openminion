@@ -270,9 +270,7 @@ def _register_cron_simple_subcommand(
 
 
 def _register_cron_run_subcommand(cron_subcommands) -> None:
-    parser = cron_subcommands.add_parser(
-        "run", help="Run one exact owned task now"
-    )
+    parser = cron_subcommands.add_parser("run", help="Run one exact owned task now")
     parser.add_argument("--job-id", required=True, help="Exact owned task ID to run")
     parser.add_argument("--agent-id", default=None)
     _add_cron_session_and_json_args(parser)
