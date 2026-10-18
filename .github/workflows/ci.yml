@@ -519,14 +519,14 @@ jobs:
           .venv/bin/python3.11 -m pip install -e ".[dev]"
       - name: Run pinned Collector transport proof
         env:
-          OTEL_E2E_ARTIFACT_ROOT: .ci-artifacts/telemetry-collector
+          OTEL_E2E_ARTIFACT_ROOT: ci-artifacts/telemetry-collector
         run: make test-telemetry-collector-ci
       - name: Upload Collector evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: telemetry-collector-evidence
-          path: .ci-artifacts/telemetry-collector/
+          path: ci-artifacts/telemetry-collector/
           if-no-files-found: error
           retention-days: 14
 

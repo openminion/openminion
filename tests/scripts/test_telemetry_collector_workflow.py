@@ -19,14 +19,14 @@ def test_collector_ci_is_independent_and_preserves_evidence() -> None:
         if step.get("run") == "make test-telemetry-collector-ci"
     )
     assert proof["env"]["OTEL_E2E_ARTIFACT_ROOT"] == (
-        ".ci-artifacts/telemetry-collector"
+        "ci-artifacts/telemetry-collector"
     )
 
     upload = job["steps"][-1]
     assert upload["if"] == "always()"
     assert upload["with"]["if-no-files-found"] == "error"
     assert upload["with"]["retention-days"] == "14"
-    assert upload["with"]["path"] == ".ci-artifacts/telemetry-collector/"
+    assert upload["with"]["path"] == "ci-artifacts/telemetry-collector/"
 
 
 def test_collector_make_target_requires_docker_and_real_transport_tests() -> None:

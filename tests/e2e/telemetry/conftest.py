@@ -23,7 +23,7 @@ ARTIFACT_ROOT = Path(
         / "agent-observability-e2e"
         / "current",
     )
-)
+).resolve()
 
 
 def _require_docker_daemon() -> None:
