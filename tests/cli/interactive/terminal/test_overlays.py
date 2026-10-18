@@ -183,6 +183,19 @@ def test_confirm_keyboard_interrupt_returns_false() -> None:
     assert overlay.present_confirm("Exit focus mode?") is False
 
 
+def test_confirm_reprompts_after_invalid_choice() -> None:
+    console, output = _make_console()
+    session = _StubSession(["a", "y"])
+    overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
+
+    assert overlay.present_confirm("Start project?") is True
+    assert session.prompts == [
+        "Start project?\n[y/N]: ",
+        "Start project?\n[y/N]: ",
+    ]
+    assert "enter y or n" in output.getvalue()
+
+
 def test_prompt_masks_secret_input() -> None:
     console, _ = _make_console()
     session = _StubSession(["secret"])

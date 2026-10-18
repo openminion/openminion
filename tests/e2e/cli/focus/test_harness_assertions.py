@@ -1260,6 +1260,37 @@ asyncio.run(main())
     assert "FIRST:y" in transcript
 
 
+def test_terminal_confirmation_maps_session_request_to_available_allow_once(
+    tmp_path: Path,
+) -> None:
+    script = """
+import asyncio
+from prompt_toolkit import PromptSession
+
+async def main():
+    session = PromptSession()
+    answer = await session.prompt_async(
+        'Approval required: project.start()\\n'
+        'Choices: allow_once, deny\\n'
+        '[y/N]: '
+    )
+    print(f'ANSWER:{answer}', flush=True)
+
+asyncio.run(main())
+"""
+    with PtySession(
+        argv=(sys.executable, "-c", script),
+        cwd=tmp_path,
+        rows=20,
+        cols=100,
+    ) as session:
+        session.wait_for_after(r"project\.start", offset=0, timeout=5)
+        FocusProbe._submit_terminal_confirmation(session, "session")
+        transcript = session.wait_for_after(r"ANSWER:y", offset=0, timeout=5)
+
+    assert "ANSWER:y" in transcript
+
+
 def test_bracketed_paste_payload_wraps_multiline_prompt() -> None:
     assert bracketed_paste_payload("line one\nline two") == (
         "\x1b[200~line one\nline two\x1b[201~"

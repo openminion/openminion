@@ -133,14 +133,24 @@ class TerminalOverlayPresenter:
         self, prompt: str, *, default: bool = False
     ) -> bool:
         suffix = "[Y/n]: " if default else "[y/N]: "
-        try:
-            text = await self._session.prompt_async(f"{prompt}\n{suffix}")
-        except (EOFError, KeyboardInterrupt):
-            return False
-        normalized = str(text or "").strip().lower()
-        if not normalized:
-            return default
-        return normalized in {"y", "yes"}
+        while True:
+            try:
+                text = await self._session.prompt_async(f"{prompt}\n{suffix}")
+            except (EOFError, KeyboardInterrupt):
+                return False
+            normalized = str(text or "").strip().lower()
+            if not normalized:
+                return default
+            if normalized in {"y", "yes"}:
+                return True
+            if normalized in {"n", "no"}:
+                return False
+            self._console.print(
+                Text(
+                    "(enter y or n)",
+                    style=token_rich_style(StyleToken.ERROR),
+                )
+            )
 
     async def present_prompt_async(
         self,

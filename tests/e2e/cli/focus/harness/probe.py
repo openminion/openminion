@@ -794,8 +794,6 @@ class FocusProbe:
         decision = str(reply or "").strip().lower()
         if decision in {"no", "deny", "denied"}:
             key = "n"
-        elif decision in {"session", "a", "always"}:
-            key = "a"
         else:
             key = "y"
         session.send(f"{key}\r")
