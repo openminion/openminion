@@ -236,10 +236,11 @@ def test_path7b_cli_tools_wires_adapter_on_context() -> None:
     )
 
 
-def test_path7c_cli_cron_wires_adapter_on_context() -> None:
+def test_path7c_cli_task_tools_wires_adapter_on_context() -> None:
     _assert_module_source_contains(
-        "openminion.cli.commands.cron",
+        "openminion.cli.commands.task_tools",
         "SEAM_CLI_CRON",
+        "SEAM_CLI_TASKS",
         "build_default_composition_boundary_adapter",
         "blast_radius_adapter=",
     )

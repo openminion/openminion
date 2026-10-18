@@ -200,8 +200,7 @@ def _resolve_task_manager(ctx: RuntimeContext) -> TaskManager:
         return TaskManager.from_cron_repository(
             store,
             db_path=(
-                resolve_tool_data_root(context=ctx)
-                / DEFAULT_INTEGRATED_SQLITE_SUBPATH
+                resolve_tool_data_root(context=ctx) / DEFAULT_INTEGRATED_SQLITE_SUBPATH
             ).resolve(),
         )
     except ToolRuntimeError:

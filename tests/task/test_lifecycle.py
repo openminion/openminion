@@ -473,6 +473,65 @@ def test_pause_resume_updates_lifecycle_without_deleting_job(tmp_path: Path) -> 
     assert resumed_job["next_due_at"] is not None
 
 
+def test_pause_restores_cron_state_when_lifecycle_transition_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manager = _manager(tmp_path)
+    created = manager.schedule_task(
+        name="pause-failure",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "pause"},
+        agent_id="agent-a",
+    )
+
+    def _fail_transition(**_kwargs):
+        raise RuntimeError("lifecycle unavailable")
+
+    monkeypatch.setattr(manager, "transition_task", _fail_transition)
+    with pytest.raises(RuntimeError, match="lifecycle unavailable"):
+        manager.pause_task(created.task_id)
+
+    job = manager.get_scheduled_job(created.cron_job_id)
+    assert job is not None
+    assert job["enabled"] is True
+
+
+def test_resume_restores_cron_state_when_lifecycle_transition_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manager = _manager(tmp_path)
+    created = manager.schedule_task(
+        name="resume-failure",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={
+            "kind": "agentTurn",
+            "message": "resume",
+            "_openminion_pause_reason": "operator",
+            "_openminion_pause_source": "cli",
+        },
+        agent_id="agent-a",
+        enabled=False,
+    )
+    manager.transition_task(
+        task_id=created.task_id,
+        to_state=TaskLifecycleState.PAUSED,
+    )
+    before = manager.get_scheduled_job(created.cron_job_id)
+    assert before is not None
+
+    def _fail_transition(**_kwargs):
+        raise RuntimeError("lifecycle unavailable")
+
+    monkeypatch.setattr(manager, "transition_task", _fail_transition)
+    with pytest.raises(RuntimeError, match="lifecycle unavailable"):
+        manager.resume_task(created.task_id)
+
+    job = manager.get_scheduled_job(created.cron_job_id)
+    assert job is not None
+    assert job["enabled"] is False
+    assert job["payload"] == before["payload"]
+
+
 def test_lifecycle_and_cron_queries_filter_before_limit(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     owned = manager.schedule_task(

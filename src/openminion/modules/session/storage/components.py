@@ -395,11 +395,13 @@ def unmark_cron_delivery_target(
     daemon_id: str | None = None,
     expected_attempts: int | None = None,
 ) -> bool:
-    return store._cron_store.unmark_cron_delivery_target(
-        run_id,
-        target=target,
-        daemon_id=daemon_id,
-        expected_attempts=expected_attempts,
+    return bool(
+        store._cron_store.unmark_cron_delivery_target(
+            run_id,
+            target=target,
+            daemon_id=daemon_id,
+            expected_attempts=expected_attempts,
+        )
     )
 
 

@@ -420,10 +420,14 @@ class TaskManagerScheduleMixin:
             False,
             cancel_queued=True,
         )
-        record = self.transition_task(
-            task_id=record.task_id,
-            to_state=TaskLifecycleState.PAUSED,
-        )
+        try:
+            record = self.transition_task(
+                task_id=record.task_id,
+                to_state=TaskLifecycleState.PAUSED,
+            )
+        except Exception:  # noqa: BLE001 - compensate the cross-database update
+            self._cron_repository.set_cron_job_enabled(record.cron_job_id, True)
+            raise
         refreshed = self.get_scheduled_job(record.cron_job_id)
         if refreshed is None:
             raise KeyError(f"task not found: {task_id}")
@@ -452,10 +456,18 @@ class TaskManagerScheduleMixin:
         if payload != dict(job.get("payload") or {}):
             self.replace_cron_job_payload(record.cron_job_id, payload)
         self._cron_repository.set_cron_job_enabled(record.cron_job_id, True)
-        record = self.transition_task(
-            task_id=record.task_id,
-            to_state=TaskLifecycleState.ACTIVE,
-        )
+        try:
+            record = self.transition_task(
+                task_id=record.task_id,
+                to_state=TaskLifecycleState.ACTIVE,
+            )
+        except Exception:  # noqa: BLE001 - compensate the cross-database update
+            self._cron_repository.set_cron_job_enabled(record.cron_job_id, False)
+            self.replace_cron_job_payload(
+                record.cron_job_id,
+                dict(job.get("payload") or {}),
+            )
+            raise
         refreshed = self.get_scheduled_job(record.cron_job_id)
         if refreshed is None:
             raise KeyError(f"task not found: {task_id}")
@@ -486,16 +498,12 @@ class TaskManagerScheduleMixin:
                 "task is not active or paused",
                 task_id=record.task_id,
             )
-        job = self._cron_repository.update_task_cron_job(
+        return self._cron_repository.update_task_cron_job(
             record.cron_job_id,
             instruction=instruction,
             schedule=schedule,
             expected_updated_at=expected_updated_at,
         )
-        metadata = dict(record.metadata)
-        metadata["title"] = str(job.get("name") or record.task_id)
-        self.update_task_metadata(task_id=record.task_id, metadata=metadata)
-        return job
 
     def delete_terminal_run_history(self, task_id: str) -> int:
         record = self._require_scheduled_record(task_id)

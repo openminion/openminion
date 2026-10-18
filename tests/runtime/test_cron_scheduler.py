@@ -272,7 +272,7 @@ def test_scheduler_executes_agent_turn_and_calls_delivery() -> None:
         return {"summary": f"done:{run['run_id']}", "isolated_session_id": "sess-iso-1"}
 
     def _deliver(mode: str, to_value: str, job: dict, run: dict, result) -> None:  # noqa: ANN001
-        assert store.delivery_targets[run["run_id"]] == {"announce:cli:ops"}
+        assert run["run_id"] not in store.delivery_targets
         del job, result
         deliveries.append((mode, to_value))
 
@@ -296,6 +296,7 @@ def test_scheduler_executes_agent_turn_and_calls_delivery() -> None:
     assert run["state"] == "finished"
     assert run["summary"].startswith("done:")
     assert deliveries == [("announce", "cli:ops")]
+    assert store.delivery_targets[run["run_id"]] == {"announce:cli:ops"}
     assert run["output"]["delivery"] == {
         "state": "succeeded",
         "mode": "announce",
@@ -369,6 +370,7 @@ def test_scheduler_reconciles_task_outcomes_on_tick_and_completion() -> None:
         scheduler.shutdown(grace_s=1.0)
 
     assert None in reconciled
+    assert reconciled.count(None) == 1
     assert "job-task" in reconciled
     reconciliation = next(
         payload
@@ -492,7 +494,46 @@ def test_stale_worker_cannot_deliver_after_lease_takeover() -> None:
     assert outcome == {"state": "not_requested", "mode": "announce", "targets": []}
     assert deliveries == []
     assert store.delivery_targets == {}
-    assert any(name == "cron.delivery.duplicate" for name, _payload in events)
+    assert any(name == "cron.delivery.fence_rejected" for name, _payload in events)
+
+
+def test_delivery_lease_takeover_during_sink_leaves_no_marker() -> None:
+    from openminion.modules.task.scheduling.coordination import deliver_cron_run
+    from openminion.services.cron.scheduler import CronExecutionResult
+
+    store = FakeCronStore()
+    store.add_job(
+        job_id="job-takeover",
+        payload={"kind": "agentTurn", "message": "task"},
+        delivery={"mode": "announce", "to": "cli:ops"},
+    )
+    run_id = "run-takeover-during-sink"
+    store.runs[run_id] = {
+        "run_id": run_id,
+        "job_id": "job-takeover",
+        "state": "running",
+        "attempts": 1,
+        "lease_owner": "daemon-old",
+    }
+
+    def _deliver(*_args) -> None:
+        store.runs[run_id]["lease_owner"] = "daemon-new"
+        store.runs[run_id]["attempts"] = 2
+
+    outcome = deliver_cron_run(
+        store=store,
+        job=store.jobs["job-takeover"],
+        run=dict(store.runs[run_id]),
+        result=CronExecutionResult(summary="done"),
+        delivery_handler=_deliver,
+        daemon_id="daemon-old",
+        expected_attempts=1,
+        emit=lambda _name, _payload: None,
+    )
+
+    assert outcome["state"] == "failed"
+    assert outcome["error"]["message"] == "delivery marker was rejected"
+    assert store.delivery_targets == {}
 
 
 def test_delivery_fails_closed_without_delivery_fence() -> None:
@@ -728,7 +769,7 @@ def test_delivery_failure_does_not_retry_execution_after_claiming_target() -> No
     assert run["output"]["delivery"]["state"] == "failed"
     assert run["output"]["delivery"]["targets"] == []
     assert len(run["output"]["delivery"]["error"]["message"]) == 500
-    assert store.delivery_targets[run["run_id"]] == set()
+    assert run["run_id"] not in store.delivery_targets
     assert any(name == "cron.delivery.failed" for name, _payload in events)
     finished = next(payload for name, payload in events if name == "cron.run.finished")
     assert finished["state"] == "finished"

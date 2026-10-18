@@ -482,6 +482,7 @@ def test_merge_pr_runtime_invocation_validates_and_dispatches(
             target="local",
             session_id="github-merge-runtime",
             metadata={"workspace_root": str(tmp_path)},
+            confirm=True,
         ),
     )
 

@@ -211,7 +211,6 @@ class CronScheduler:
                         can_start_background_work=self._can_start_background_work,
                         emit=self._emit,
                     )
-                    self._record_task_outcome(None)
                     for run in runs:
                         self._start_worker(run)
                 except Exception as exc:
@@ -399,6 +398,7 @@ class CronScheduler:
             delivery_handler=self._delivery_handler,
             daemon_id=self._daemon_id,
             expected_attempts=expected_attempts,
+            lease_ttl_seconds=self._lease_ttl_seconds,
             emit=self._emit,
         )
         return job, CronExecutionResult(
