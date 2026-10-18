@@ -329,9 +329,6 @@ def run_extensions_status(args, *, config) -> int:
         default_tool_required_scopes=frozenset(
             config.security.tool_policy.default_required_scopes
         ),
-        internal_actor_scopes=frozenset(
-            config.security.tool_policy.internal_actor_scopes
-        ),
     )
     manager = LifecycleService.from_config(
         config,
