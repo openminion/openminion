@@ -15,8 +15,14 @@ COLLECTOR_IMAGE = (
     "sha256:125bdbeb7590cc1952c5b3430ecf14063568980c2c93d5b38676cc0446ed8108"
 )
 COMPOSE_FILE = Path(__file__).with_name("compose.yaml")
-ARTIFACT_ROOT = (
-    Path(__file__).parents[4] / "workspace-tmp" / "agent-observability-e2e" / "current"
+ARTIFACT_ROOT = Path(
+    os.environ.get(
+        "OTEL_E2E_ARTIFACT_ROOT",
+        Path(__file__).parents[4]
+        / "workspace-tmp"
+        / "agent-observability-e2e"
+        / "current",
+    )
 )
 
 
