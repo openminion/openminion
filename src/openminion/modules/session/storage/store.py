@@ -69,6 +69,7 @@ from .components import (
     list_run_records_by_invocation as _list_run_records_by_invocation_facade,
     list_run_records_by_thread as _list_run_records_by_thread_facade,
     mark_cron_delivery_target as _mark_cron_delivery_target_facade,
+    unmark_cron_delivery_target as _unmark_cron_delivery_target_facade,
     reindex_sidecars as _reindex_sidecars_facade,
     renew_cron_run_lease as _renew_cron_run_lease_facade,
     recover_expired_cron_runs as _recover_expired_cron_runs_facade,
@@ -81,6 +82,11 @@ from .components import (
     set_cron_job_enabled as _set_cron_job_enabled_facade,
     storage_status as _storage_status_facade,
     trigger_cron_run as _trigger_cron_run_facade,
+    trigger_task_run_now as _trigger_task_run_now_facade,
+    update_task_cron_job as _update_task_cron_job_facade,
+    delete_terminal_cron_runs as _delete_terminal_cron_runs_facade,
+    get_cron_scheduler_control as _get_cron_scheduler_control_facade,
+    set_cron_scheduler_control as _set_cron_scheduler_control_facade,
     update_derived_views as _update_derived_views_facade,
     assert_session_turn_fence as _assert_session_turn_fence_facade,
 )
@@ -387,6 +393,11 @@ class SQLiteSessionStore(SessionStore):
     replace_cron_job_payload = _replace_cron_job_payload_facade
     delete_cron_job = _delete_cron_job_facade
     trigger_cron_run = _trigger_cron_run_facade
+    trigger_task_run_now = _trigger_task_run_now_facade
+    update_task_cron_job = _update_task_cron_job_facade
+    delete_terminal_cron_runs = _delete_terminal_cron_runs_facade
+    get_cron_scheduler_control = _get_cron_scheduler_control_facade
+    set_cron_scheduler_control = _set_cron_scheduler_control_facade
     list_cron_runs = _list_cron_runs_facade
     list_unresolved_task_runs = _list_unresolved_task_runs_facade
     enqueue_due_cron_runs = _enqueue_due_cron_runs_facade
@@ -402,6 +413,7 @@ class SQLiteSessionStore(SessionStore):
     finish_cron_run = _finish_cron_run_facade
     delete_old_cron_runs = _delete_old_cron_runs_facade
     mark_cron_delivery_target = _mark_cron_delivery_target_facade
+    unmark_cron_delivery_target = _unmark_cron_delivery_target_facade
     storage_status = _storage_status_facade
     reindex_sidecars = _reindex_sidecars_facade
     create_prompt_context = _create_prompt_context_facade

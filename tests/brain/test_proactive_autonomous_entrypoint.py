@@ -1156,7 +1156,6 @@ class ReviewRoundTwoFixesTests(unittest.TestCase):
             cron_store=_FakeStore(),
             request_builder=lambda payload, agent_id: None,
             timeout_s=10.0,
-            max_attempts=1,
         )
         resolved = executor._resolve_session_api(agent_id="a1")
         self.assertIs(resolved, executor._cron_store)
@@ -1184,7 +1183,6 @@ class ReviewRoundTwoFixesTests(unittest.TestCase):
             cron_store=store,
             request_builder=lambda payload, agent_id: None,
             timeout_s=10.0,
-            max_attempts=1,
         )
         suppressed = executor._check_idle_tick_user_activity_gate(
             agent_id="a1",

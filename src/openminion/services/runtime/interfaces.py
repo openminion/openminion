@@ -7,6 +7,7 @@ class RuntimeFacade(Protocol):
     config: Any
     config_path: Any
     config_manager: Any
+    data_root: Any
     home_root: Any
     channels: Any
     plugins: Any

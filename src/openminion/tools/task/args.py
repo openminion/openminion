@@ -108,6 +108,52 @@ class TaskShowArgs(_TaskIdArgs):
         return int(value)
 
 
+class TaskRunNowArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(..., min_length=1, description="Exact task identifier")
+
+
+class TaskUpdateArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(..., min_length=1, description="Exact task identifier")
+    instruction: str = Field(..., min_length=1, description="Replacement instruction")
+    schedule: dict[str, Any] = Field(..., description="Replacement schedule")
+    expected_updated_at: str = Field(
+        ...,
+        min_length=1,
+        description="Opaque schedule_revision from task.show",
+    )
+
+
+class TaskDeleteHistoryArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(..., min_length=1, description="Exact task identifier")
+
+
+class TaskSchedulerStatusArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class TaskSchedulerPauseArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(..., min_length=1, description="Operator pause reason")
+    expected_updated_at: str = Field(
+        ..., min_length=1, description="Opaque scheduler revision"
+    )
+
+
+class TaskSchedulerResumeArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_updated_at: str = Field(
+        ..., min_length=1, description="Opaque scheduler revision"
+    )
+
+
 class TaskWatchArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 

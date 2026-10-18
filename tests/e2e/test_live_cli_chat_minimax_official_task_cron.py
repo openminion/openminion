@@ -480,6 +480,162 @@ def test_tcoh_08_minimax_schedule_show_pause_list_resume_cancel_live() -> None:
     not _CONFIG.exists(),
     reason=f"missing live config: {_CONFIG}",
 )
+def test_taoc_minimax_operational_controls_live() -> None:
+    require_live_flag()
+
+    run_id = "taoc-operational-controls"
+    data_root = artifact_dir() / "data-roots" / run_id
+    shutil.rmtree(data_root, ignore_errors=True)
+    data_root.mkdir(parents=True, exist_ok=True)
+
+    schedule_result = run_cli_session(
+        session_id_prefix=run_id + "-schedule",
+        agent_id=_AGENT_ID,
+        config_path=_CONFIG,
+        data_root_override=data_root,
+        auto_confirm=True,
+        user_input=(
+            "Use task.schedule exactly once to create a recurring task named "
+            "'taoc-live' that runs every 600000 ms with instruction "
+            "'first instruction'. Also use task.scheduler_status exactly once. "
+            "Report the exact task_id and scheduler status."
+        ),
+    )
+    assert _trace_proves_tool_execution(schedule_result.trace_root, "task.schedule")
+    assert _trace_proves_tool_execution(
+        schedule_result.trace_root, "task.scheduler_status"
+    ), f"TAOC live scheduler status did not execute: {schedule_result.transcript}"
+
+    db_path = _cron_jobs_db(data_root)
+    scheduled_jobs = _read_cron_jobs(db_path)
+    assert len(scheduled_jobs) == 1
+    task_id = str(scheduled_jobs[0]["job_id"])
+    schedule_revision = str(scheduled_jobs[0]["updated_at"])
+    lifecycle_result = run_cli_session(
+        session_id_prefix=run_id + "-lifecycle",
+        agent_id=_AGENT_ID,
+        config_path=_CONFIG,
+        data_root_override=data_root,
+        auto_confirm=True,
+        user_input=(
+            f"Use task.show with exact task_id {task_id}. Then use task.update "
+            f"with exact task_id {task_id}, exact expected_updated_at "
+            f"'{schedule_revision}', instruction 'updated instruction', and schedule "
+            "kind every with every_ms 120000. Finally use task.run_now with that "
+            "exact task_id. Do not substitute or shorten either exact value."
+        ),
+    )
+    for tool_name in ("task.show", "task.update", "task.run_now"):
+        assert _trace_proves_tool_execution(lifecycle_result.trace_root, tool_name), (
+            f"TAOC live lifecycle did not execute {tool_name}; transcript: "
+            f"{lifecycle_result.transcript_path}"
+        )
+
+    jobs = _read_cron_jobs(db_path)
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert str(job["job_id"]) == task_id
+    assert json.loads(job["schedule_json"]) == {
+        "kind": "every",
+        "every_ms": 120_000,
+        "jitter_ms": 0,
+    }
+    assert json.loads(job["payload_json"])["message"] == "updated instruction"
+    with sqlite3.connect(str(db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        runs = list(
+            connection.execute(
+                "SELECT * FROM cron_runs WHERE job_id = ? ORDER BY created_at",
+                (task_id,),
+            ).fetchall()
+        )
+    assert len(runs) == 1
+    assert runs[0]["state"] == "queued"
+
+    with sqlite3.connect(str(db_path)) as connection:
+        scheduler_revision = connection.execute(
+            "SELECT updated_at FROM cron_scheduler_control WHERE singleton_id = 1"
+        ).fetchone()
+    assert scheduler_revision is not None
+    scheduler_pause_result = run_cli_session(
+        session_id_prefix=run_id + "-scheduler-pause",
+        agent_id=_AGENT_ID,
+        config_path=_CONFIG,
+        data_root_override=data_root,
+        auto_confirm=True,
+        user_input=(
+            "Use task.scheduler_pause with exact expected_updated_at "
+            f"'{scheduler_revision[0]}' and reason 'TAOC live maintenance'. "
+            "Do not substitute or shorten the exact value."
+        ),
+    )
+    assert _trace_proves_tool_execution(
+        scheduler_pause_result.trace_root, "task.scheduler_pause"
+    ), f"TAOC live scheduler pause did not execute: {scheduler_pause_result.transcript}"
+    with sqlite3.connect(str(db_path)) as connection:
+        paused_control = connection.execute(
+            "SELECT paused, reason, updated_at FROM cron_scheduler_control "
+            "WHERE singleton_id = 1"
+        ).fetchone()
+    assert paused_control is not None
+    assert paused_control[0:2] == (1, "TAOC live maintenance"), (
+        f"scheduler pause was not persisted: {scheduler_pause_result.transcript}"
+    )
+    scheduler_resume_result = run_cli_session(
+        session_id_prefix=run_id + "-scheduler-resume",
+        agent_id=_AGENT_ID,
+        config_path=_CONFIG,
+        data_root_override=data_root,
+        auto_confirm=True,
+        user_input=(
+            "Use task.scheduler_resume with exact expected_updated_at "
+            f"'{paused_control[2]}'. Do not substitute or shorten that value."
+        ),
+    )
+    assert _trace_proves_tool_execution(
+        scheduler_resume_result.trace_root, "task.scheduler_resume"
+    )
+    with sqlite3.connect(str(db_path)) as connection:
+        scheduler_control = connection.execute(
+            "SELECT paused, reason FROM cron_scheduler_control WHERE singleton_id = 1"
+        ).fetchone()
+    assert scheduler_control == (0, None)
+
+    with sqlite3.connect(str(db_path)) as connection:
+        connection.execute(
+            "UPDATE cron_runs SET state = 'finished', finished_at = updated_at "
+            "WHERE job_id = ? AND state = 'queued'",
+            (task_id,),
+        )
+        connection.commit()
+    history_result = run_cli_session(
+        session_id_prefix=run_id + "-history",
+        agent_id=_AGENT_ID,
+        config_path=_CONFIG,
+        data_root_override=data_root,
+        auto_confirm=True,
+        user_input=(
+            f"Use task.delete_history with the exact task_id {task_id}. "
+            "Approve the requested destructive action and report deleted_count."
+        ),
+    )
+    assert _trace_proves_tool_execution(
+        history_result.trace_root, "task.delete_history"
+    ), (
+        f"TAOC live history deletion did not execute; transcript: {history_result.transcript_path}"
+    )
+    with sqlite3.connect(str(db_path)) as connection:
+        remaining = connection.execute(
+            "SELECT COUNT(1) FROM cron_runs WHERE job_id = ?",
+            (task_id,),
+        ).fetchone()
+    assert remaining == (0,)
+
+
+@pytest.mark.skipif(
+    not _CONFIG.exists(),
+    reason=f"missing live config: {_CONFIG}",
+)
 def test_tcee_05_minimax_cron_expression_schedule_live() -> None:
     require_live_flag()
 

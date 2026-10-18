@@ -152,6 +152,12 @@ RUNTIME_TASK_LIST = "runtime.task.list"
 RUNTIME_TASK_PAUSE = "runtime.task.pause"
 RUNTIME_TASK_RESUME = "runtime.task.resume"
 RUNTIME_TASK_SHOW = "runtime.task.show"
+RUNTIME_TASK_RUN_NOW = "runtime.task.run_now"
+RUNTIME_TASK_UPDATE = "runtime.task.update"
+RUNTIME_TASK_DELETE_HISTORY = "runtime.task.delete_history"
+RUNTIME_TASK_SCHEDULER_STATUS = "runtime.task.scheduler_status"
+RUNTIME_TASK_SCHEDULER_PAUSE = "runtime.task.scheduler_pause"
+RUNTIME_TASK_SCHEDULER_RESUME = "runtime.task.scheduler_resume"
 RUNTIME_GITHUB_LIST_PRS = "runtime.github.list_prs"
 RUNTIME_GITHUB_FETCH_PR = "runtime.github.fetch_pr"
 RUNTIME_GITHUB_FETCH_DIFF = "runtime.github.fetch_diff"
@@ -267,6 +273,12 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_TASK_PAUSE,
     RUNTIME_TASK_RESUME,
     RUNTIME_TASK_SHOW,
+    RUNTIME_TASK_RUN_NOW,
+    RUNTIME_TASK_UPDATE,
+    RUNTIME_TASK_DELETE_HISTORY,
+    RUNTIME_TASK_SCHEDULER_STATUS,
+    RUNTIME_TASK_SCHEDULER_PAUSE,
+    RUNTIME_TASK_SCHEDULER_RESUME,
     RUNTIME_GITHUB_LIST_PRS,
     RUNTIME_GITHUB_FETCH_PR,
     RUNTIME_GITHUB_FETCH_DIFF,

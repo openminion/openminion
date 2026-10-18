@@ -8,17 +8,7 @@ from openminion.cli.parser.flags import (
     add_tool_session_arg,
 )
 from openminion.cli.presentation.json_output import print_json_payload
-from openminion.modules.llm.providers.base import ProviderToolCall
-from openminion.modules.tool.base import ToolExecutionContext
-from openminion.modules.brain.paths import resolve_brain_sessions_db_path
-from openminion.modules.policy.adapters.composition import (
-    SEAM_CLI_CRON,
-    build_default_composition_boundary_adapter,
-)
-from openminion.modules.tool.selection import ToolSelectionService
-from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
-from openminion.modules.task.constants import DEFAULT_TASK_MIN_EVERY_MS
-from openminion.modules.task.surface import resolve_task_surface_source
+from .task_tools import build_schedule_payload, execute_task_tool
 
 
 def run_cron(args, app: APIRuntime) -> int:
@@ -35,135 +25,24 @@ def run_cron(args, app: APIRuntime) -> int:
     if action == "status":
         return _cron_status(app)
     if action == "run":
-        job_id = getattr(args, "job_id", None)
-        return _cron_run(app, job_id=job_id)
-    if action == "tick":
-        return _cron_tick(app)
+        return _cron_run(app, args)
     print(f"Unknown cron command: {action}")
     return 1
 
 
-def _open_cron_store(app: APIRuntime):
-    from openminion.modules.storage.runtime.sqlite import resolve_database_path
-    from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
-
-    storage_path = resolve_database_path(app.config.storage.path)
-    db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
-    return SQLiteSessionStore(db_path)
-
-
 def _cron_status(app: APIRuntime) -> int:
-    try:
-        store = _open_cron_store(app)
-    except ImportError:
-        print("openminion-session is required for cron state")
-        return 1
-
-    jobs = store.list_cron_jobs()
-
-    print("Scheduled Task Status")
-    print("=====================")
-    print(f"Registered scheduled tasks: {len(jobs)}")
-    for j in jobs:
-        schedule = j.get("schedule_json") or j.get("schedule", {})
-        if isinstance(schedule, dict):
-            schedule_summary = f"{schedule.get('kind')}:{schedule.get('expr') or schedule.get('every_ms') or schedule.get('at', '')}"
-        else:
-            schedule_summary = str(schedule)
-        print(
-            f"  [{j.get('job_id')}] schedule={schedule_summary} "
-            f"next_due_at={j.get('next_due_at')}"
-        )
-
-    return 0
-
-
-def _build_schedule_payload(args) -> dict:
-    every_ms = getattr(args, "every_ms", None)
-    cron_expr = str(getattr(args, "cron_expr", "") or "").strip()
-    at_iso = str(getattr(args, "at_iso", "") or "").strip()
-    tz_name = str(getattr(args, "timezone", "") or "").strip()
-
-    if every_ms is not None:
-        interval = int(every_ms)
-        if interval < DEFAULT_TASK_MIN_EVERY_MS:
-            raise ValueError(f"--every-ms must be at least {DEFAULT_TASK_MIN_EVERY_MS}")
-        return {"kind": "every", "every_ms": interval}
-
-    if cron_expr:
-        payload = {"kind": "cron", "expr": cron_expr}
-        if tz_name:
-            payload["tz"] = tz_name
-        return payload
-
-    if at_iso:
-        return {"kind": "at", "at": at_iso}
-
-    raise ValueError("one schedule selector is required: --every-ms, --cron, or --at")
-
-
-def _tool_execution_metadata(app: APIRuntime, args) -> tuple[dict[str, object], str]:
-    runtime_config = app.config.runtime
-    metadata: dict[str, object] = {
-        "origin": "openminion.cron",
-        "tool_call_origin": "cli",
-        "allow_runtime_direct": "1",
-        "runtime_env": dict(getattr(runtime_config, "env", {}) or {}),
-        **build_runtime_tool_routing_metadata(getattr(runtime_config, "tools", None)),
-        **ToolSelectionService(
-            getattr(runtime_config, "tool_selection", None),
-            app.tools,
-        ).runtime_binding_policy_metadata(),
-    }
-    agent_id = str(getattr(args, "agent_id", "") or "").strip()
-    if agent_id:
-        metadata["agent_id"] = agent_id
-    session_id = str(getattr(args, "session", "") or "").strip() or "cron"
-    return metadata, session_id
-
-
-def _execute_task_tool(
-    app: APIRuntime,
-    args,
-    *,
-    tool_name: str,
-    payload: dict[str, object],
-) -> dict[str, object]:
-    metadata, session_id = _tool_execution_metadata(app, args)
-    batch = app.tools.execute_calls(
-        [
-            ProviderToolCall(
-                name=tool_name,
-                arguments=payload,
-                source="cli-cron",
-            )
-        ],
-        context=ToolExecutionContext(
-            channel="console",
-            target="cli-cron",
-            session_id=session_id,
-            metadata=metadata,
-            task_manager=resolve_task_surface_source(app),
-            scheduler_readiness=app.scheduler_readiness,
-            blast_radius_adapter=build_default_composition_boundary_adapter(
-                seam_id=SEAM_CLI_CRON,
-            ),
-        ),
-    )
-    result = batch.results[0] if batch.results else None
-    if result is None:
-        return {
-            "ok": False,
-            "tool": tool_name,
-            "error": f"{tool_name} produced no result",
-            "data": {},
-        }
-    return {
-        "ok": bool(result.ok),
-        "tool": tool_name,
-        "error": str(result.error or ""),
-        "data": dict(result.data or {}),
-    }
+    readiness = dict(app.scheduler_readiness())
+    state = str(readiness.get("state") or "unavailable")
+    print("Scheduler Status")
+    print("================")
+    print(f"State: {state}")
+    if reason := str(readiness.get("reason") or "").strip():
+        print(f"Reason: {reason}")
+    if heartbeat := str(readiness.get("last_heartbeat_at") or "").strip():
+        print(f"Last heartbeat: {heartbeat}")
+    if command := str(readiness.get("check_command") or "").strip():
+        print(f"Check: {command}")
+    return 0 if state == "ready" else 1
 
 
 def _cron_create(app: APIRuntime, args) -> int:
@@ -173,7 +52,7 @@ def _cron_create(app: APIRuntime, args) -> int:
         return 1
 
     try:
-        schedule = _build_schedule_payload(args)
+        schedule = build_schedule_payload(args)
     except (TypeError, ValueError) as exc:
         print(f"Error: {exc}")
         return 1
@@ -186,7 +65,9 @@ def _cron_create(app: APIRuntime, args) -> int:
     if name:
         payload["name"] = name
 
-    output = _execute_task_tool(app, args, tool_name="task.schedule", payload=payload)
+    output = execute_task_tool(
+        app, args, tool_name="task.schedule", payload=payload, owner="cron"
+    )
 
     if bool(getattr(args, "json", False)):
         print_json_payload(output)
@@ -212,11 +93,12 @@ def _cron_pause(app: APIRuntime, args) -> int:
     if not task_id:
         print("Error: task_id is required")
         return 1
-    output = _execute_task_tool(
+    output = execute_task_tool(
         app,
         args,
         tool_name="task.pause",
         payload={"task_id": task_id},
+        owner="cron",
     )
     if bool(getattr(args, "json", False)):
         print_json_payload(output)
@@ -237,11 +119,12 @@ def _cron_resume(app: APIRuntime, args) -> int:
     if not task_id:
         print("Error: task_id is required")
         return 1
-    output = _execute_task_tool(
+    output = execute_task_tool(
         app,
         args,
         tool_name="task.resume",
         payload={"task_id": task_id},
+        owner="cron",
     )
     if bool(getattr(args, "json", False)):
         print_json_payload(output)
@@ -266,7 +149,9 @@ def _cron_show(app: APIRuntime, args) -> int:
     runs_limit = getattr(args, "runs_limit", None)
     if runs_limit is not None:
         payload["runs_limit"] = int(runs_limit)
-    output = _execute_task_tool(app, args, tool_name="task.show", payload=payload)
+    output = execute_task_tool(
+        app, args, tool_name="task.show", payload=payload, owner="cron"
+    )
     if bool(getattr(args, "json", False)):
         print_json_payload(output)
         return 0 if output["ok"] else 1
@@ -285,88 +170,28 @@ def _cron_show(app: APIRuntime, args) -> int:
     return 0
 
 
-def _cron_run(app: APIRuntime, *, job_id: str | None) -> int:
+def _cron_run(app: APIRuntime, args) -> int:
+    job_id = str(getattr(args, "job_id", "") or "").strip()
     if not job_id:
         print("Error: job-id is required for run")
         return 1
-
-    try:
-        store = _open_cron_store(app)
-    except ImportError:
-        print("openminion-session is required for cron run")
+    output = execute_task_tool(
+        app,
+        args,
+        tool_name="task.run_now",
+        payload={"task_id": job_id},
+        owner="cron",
+    )
+    if bool(getattr(args, "json", False)):
+        print_json_payload(output)
+        return 0 if output["ok"] else 1
+    if not output["ok"]:
+        print(f"Error: {output['error'] or 'task.run_now failed'}")
         return 1
-
-    job = store.get_cron_job(job_id)
-    if not job:
-        print(f"Error: cron job {job_id} not found")
-        return 1
-
-    print(f"Manually enqueueing cron job: {job_id}")
-    run_id = store.trigger_cron_run(job_id=job_id, due_at=job.get("next_due_at"))
-    print(f"Enqueued run_id: {run_id}")
+    print("Scheduled task queued")
+    print(f"  task_id: {job_id}")
+    print(f"  run_id: {output['data'].get('run_id')}")
     return 0
-
-
-def _cron_tick(app: APIRuntime) -> int:
-    try:
-        from openminion.modules.storage.runtime.sqlite import resolve_database_path
-        from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
-    except Exception as exc:
-        print(f"Failed to import scheduler dependencies: {exc}")
-        return 1
-
-    try:
-        storage_path = resolve_database_path(app.config.storage.path)
-        db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
-        store = SQLiteSessionStore(db_path)
-    except Exception as exc:
-        print(f"Failed to resolve cron store: {exc}")
-        return 1
-
-    def _execute_turn(job: dict, run: dict) -> dict:
-        print(f"Tick executing run {run['run_id']} for job {job['job_id']}")
-        return {"summary": "Manual tick execution", "status": "completed"}
-
-    try:
-        store.enqueue_due_cron_runs("cli-manual-tick", lease_ttl_s=60, max_jobs=50)
-        acquired = store.acquire_cron_runs("cli-manual-tick", limit=1)
-    except Exception as exc:
-        print(f"Failed to enqueue/acquire cron runs: {exc}")
-        return 1
-
-    if not acquired:
-        print("No cron runs acquired.")
-        return 0
-
-    errors = 0
-    for run in acquired:
-        run_id = run.get("run_id", "?")
-        job_id = run.get("job_id", "?")
-        try:
-            job = store.get_cron_job(job_id)
-            if not job:
-                print(f"Skipping run {run_id}: job {job_id} not found")
-                store.finish_cron_run(
-                    run_id=run_id, state="failed", summary="Job not found"
-                )
-                errors += 1
-                continue
-            print(f"Acquired run: {run_id} for job: {job_id}")
-            res = _execute_turn(job, run)
-            store.finish_cron_run(
-                run_id=run_id,
-                state="finished",
-                summary=res.get("summary", "Done"),
-            )
-        except Exception as exc:
-            print(f"Error processing run {run_id}: {exc}")
-            try:
-                store.finish_cron_run(run_id=run_id, state="failed", summary=str(exc))
-            except Exception:
-                pass
-            errors += 1
-
-    return 1 if errors else 0
 
 
 def _add_cron_session_and_json_args(parser: argparse.ArgumentParser) -> None:
@@ -449,6 +274,8 @@ def _register_cron_run_subcommand(cron_subcommands) -> None:
         "run", help="Manually enqueue a run for a cron job"
     )
     parser.add_argument("--job-id", required=True, help="Job ID to run")
+    parser.add_argument("--agent-id", default=None)
+    _add_cron_session_and_json_args(parser)
     _finalize_cron_subcommand(parser)
 
 
@@ -482,9 +309,6 @@ def _register_cron_family(
         add_extra_args=_add_cron_show_extra_args,
     )
     _register_cron_run_subcommand(cron_subcommands)
-    _register_cron_simple_subcommand(
-        cron_subcommands, name="tick", help_text="Manually tick the cron scheduler once"
-    )
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

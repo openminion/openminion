@@ -126,7 +126,6 @@ def _exercise_order_watch(runtime) -> list[dict[str, object]]:
             cron_store=store,
             request_builder=lambda payload, agent_id: (payload, agent_id),
             timeout_s=10,
-            max_attempts=1,
         )
         task_id = str(matching[0]["job_id"])
         task_runs = []

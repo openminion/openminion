@@ -44,6 +44,17 @@ class _ConfirmRequiredTool:
         return {"ok": True, "content": "confirmed"}
 
 
+class _DangerousTool:
+    name = "test.dangerous"
+    args_model = dict
+    dangerous = True
+
+    @staticmethod
+    def handler(arguments, ctx):
+        del arguments, ctx
+        return {"ok": True, "content": "confirmed"}
+
+
 class _EchoWorkspaceTool:
     name = "test.echo_workspace"
     args_model = dict
@@ -251,6 +262,37 @@ def test_execute_tool_spec_call_requires_confirm_without_replay_metadata(
 
     assert result.ok is False
     assert result.data["error_code"] == "CONFIRM_REQUIRED"
+
+
+def test_execute_tool_spec_call_enforces_dangerous_flag(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+
+    denied = execute_tool_spec_call(
+        tool=_DangerousTool(),
+        arguments={},
+        context=ToolExecutionContext(
+            channel="api",
+            target="tests",
+            session_id="session-dangerous",
+            metadata={"workspace_root": str(tmp_path)},
+        ),
+    )
+    confirmed = execute_tool_spec_call(
+        tool=_DangerousTool(),
+        arguments={},
+        context=ToolExecutionContext(
+            channel="api",
+            target="tests",
+            session_id="session-dangerous",
+            metadata={"workspace_root": str(tmp_path)},
+            confirm=True,
+        ),
+    )
+
+    assert denied.ok is False
+    assert denied.data["error_code"] == "CONFIRM_REQUIRED"
+    assert confirmed.ok is True
 
 
 def test_execute_tool_spec_call_honors_policy_replay_confirmation_metadata(

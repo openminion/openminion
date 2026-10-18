@@ -11,6 +11,7 @@ import time
 import pytest
 
 from openminion.cli.commands.daemon import daemon_start, daemon_stop
+from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus.harness.scenarios import FocusScenario
 from tests.e2e.test_live_cli_chat_minimax_official_task_cron import (
@@ -157,7 +158,7 @@ def test_official_minimax_focus_daemon_preserves_conversation_delivery(
             "targets": ["announce:last"],
         }
         completed_task = _rows(
-            db_path,
+            data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH,
             "SELECT state FROM scheduled_tasks WHERE cron_job_id = ?",
             (job["job_id"],),
         )

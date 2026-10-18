@@ -89,7 +89,10 @@ def test_enqueue_acquire_and_finish_recurring_job(store: SQLiteSessionStore) -> 
     run = acquired[0]
     assert run["state"] == "running"
     assert store.renew_cron_run_lease(
-        run["run_id"], daemon_id="daemon-a", lease_ttl_s=30
+        run["run_id"],
+        daemon_id="daemon-a",
+        expected_attempts=run["attempts"],
+        lease_ttl_s=30,
     )
     finished = store.finish_cron_run(run["run_id"], state="finished", summary="ok")
     assert finished is not None
@@ -193,6 +196,8 @@ def test_delivery_target_dedup(store: SQLiteSessionStore) -> None:
     run_id = store.trigger_cron_run(job_id)
     assert store.mark_cron_delivery_target(run_id, target="cli:ops") is True
     assert store.mark_cron_delivery_target(run_id, target="cli:ops") is False
+    assert store.unmark_cron_delivery_target(run_id, target="cli:ops") is True
+    assert store.unmark_cron_delivery_target(run_id, target="cli:ops") is False
 
 
 def test_pause_resume_preserves_history_and_resumes_without_burst(
@@ -380,6 +385,84 @@ def test_worker_failure_uses_same_persisted_retry_policy(
     assert retried["error"]["code"] == "cron_failed"
     assert retried["error"]["retry_delay_s"] == 10
     assert store.acquire_cron_runs("daemon-worker", limit=1, now_iso=failed_at) == []
+
+
+def test_stale_cron_attempt_cannot_renew_retry_or_finish(
+    store: SQLiteSessionStore,
+) -> None:
+    job_id = store.add_cron_job(
+        name="fenced-run",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "run"},
+        max_attempts=3,
+    )
+    run_id = store.trigger_cron_run(job_id)
+    first_acquired_at = utc_now()
+    first = store.acquire_cron_runs(
+        "daemon-stale",
+        lease_ttl_s=1,
+        limit=1,
+        now_iso=to_iso_utc(first_acquired_at),
+    )[0]
+    stale_attempt = int(first["attempts"])
+    recovered_at = first_acquired_at + timedelta(seconds=2)
+    recovered = store.recover_expired_cron_runs(now_iso=to_iso_utc(recovered_at))
+    reacquired_at = parse_iso_datetime(str(recovered[0]["available_at"]))
+    current = store.acquire_cron_runs(
+        "daemon-current",
+        limit=1,
+        now_iso=to_iso_utc(reacquired_at),
+    )[0]
+    current_attempt = int(current["attempts"])
+    assert current_attempt == stale_attempt + 1
+
+    assert store.mark_cron_delivery_target(
+        run_id,
+        target="announce:current",
+        daemon_id="daemon-current",
+        expected_attempts=current_attempt,
+    )
+    assert not store.unmark_cron_delivery_target(
+        run_id,
+        target="announce:current",
+        daemon_id="daemon-stale",
+        expected_attempts=stale_attempt,
+    )
+    assert not store.mark_cron_delivery_target(
+        run_id,
+        target="announce:current",
+        daemon_id="daemon-current",
+        expected_attempts=current_attempt,
+    )
+
+    assert not store.renew_cron_run_lease(
+        run_id,
+        daemon_id="daemon-stale",
+        expected_attempts=stale_attempt,
+    )
+    assert (
+        store.retry_cron_run(
+            run_id,
+            error={"code": "provider_unavailable", "retryable": True},
+            daemon_id="daemon-stale",
+            expected_attempts=stale_attempt,
+        )
+        is None
+    )
+    assert (
+        store.finish_cron_run(
+            run_id,
+            state="finished",
+            daemon_id="daemon-stale",
+            expected_attempts=stale_attempt,
+        )
+        is None
+    )
+
+    persisted = store.list_cron_runs(job_id=job_id, limit=1)[0]
+    assert persisted["state"] == "running"
+    assert persisted["lease_owner"] == "daemon-current"
+    assert persisted["attempts"] == current_attempt
 
 
 def test_disabled_job_does_not_reacquire_worker_retry(

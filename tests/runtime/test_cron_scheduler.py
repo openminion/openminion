@@ -5,6 +5,7 @@ import threading
 from time import sleep
 from uuid import uuid4
 
+from openminion.modules.task.scheduling import CronError
 from openminion.services.cron.scheduler import CronScheduler
 
 
@@ -18,6 +19,9 @@ class FakeCronStore:
         self.finished = threading.Event()
         self.finished_count = 0
         self.delivery_targets: dict[str, set[str]] = {}
+        self.disabled_job_ids: list[str] = []
+        self.retry_calls: list[dict] = []
+        self.scheduler_paused = False
 
     def add_job(
         self, *, job_id: str, payload: dict, delivery: dict | None = None
@@ -85,6 +89,7 @@ class FakeCronStore:
         run_id: str,
         *,
         daemon_id: str,
+        expected_attempts: int,
         lease_ttl_s: int = 60,
         now_iso: str | None = None,
     ) -> bool:
@@ -95,6 +100,7 @@ class FakeCronStore:
                 run is None
                 or run.get("state") != "running"
                 or run.get("lease_owner") != daemon_id
+                or run.get("attempts") != expected_attempts
             ):
                 return False
             self.renew_counts[run_id] = self.renew_counts.get(run_id, 0) + 1
@@ -106,15 +112,37 @@ class FakeCronStore:
         del now_iso, limit
         return []
 
+    def get_cron_scheduler_control(self) -> dict:
+        return {"paused": self.scheduler_paused, "updated_at": "test"}
+
     def retry_cron_run(
         self,
         run_id: str,
         *,
         error: dict,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
         now_iso: str | None = None,
     ) -> dict | None:
-        del run_id, error, now_iso
-        return None
+        del now_iso
+        with self._lock:
+            run = self.runs.get(run_id)
+            if (
+                run is None
+                or run.get("state") != "running"
+                or run.get("lease_owner") != daemon_id
+                or run.get("attempts") != expected_attempts
+            ):
+                return None
+            self.retry_calls.append(dict(error))
+            run["state"] = "queued"
+            run["error"] = dict(error)
+            run["lease_owner"] = None
+            run["available_at"] = "later"
+            self.scheduler_paused = True
+            self.finished_count += 1
+            self.finished.set()
+            return dict(run)
 
     def get_cron_job(self, job_id: str) -> dict | None:
         with self._lock:
@@ -131,12 +159,21 @@ class FakeCronStore:
         error: dict | None = None,
         output: dict | None = None,
         isolated_session_id: str | None = None,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
         now_iso: str | None = None,
     ) -> dict | None:
         del artifact_refs, now_iso
         with self._lock:
             run = self.runs.get(run_id)
-            if run is None:
+            if (
+                run is None
+                or (daemon_id is not None and run.get("lease_owner") != daemon_id)
+                or (
+                    expected_attempts is not None
+                    and run.get("attempts") != expected_attempts
+                )
+            ):
                 return None
             run["state"] = state
             run["summary"] = summary
@@ -147,12 +184,64 @@ class FakeCronStore:
             self.finished.set()
             return dict(run)
 
-    def mark_cron_delivery_target(self, run_id: str, *, target: str) -> bool:
+    def set_cron_job_enabled(
+        self,
+        job_id: str,
+        enabled: bool,
+        *,
+        cancel_queued: bool = False,
+    ) -> None:
+        del cancel_queued
         with self._lock:
+            if job_id in self.jobs:
+                self.jobs[job_id]["enabled"] = enabled
+            if not enabled:
+                self.disabled_job_ids.append(job_id)
+
+    def mark_cron_delivery_target(
+        self,
+        run_id: str,
+        *,
+        target: str,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
+    ) -> bool:
+        with self._lock:
+            run = self.runs.get(run_id)
+            if run is None:
+                return False
+            if daemon_id is not None and (
+                run.get("lease_owner") != daemon_id
+                or run.get("attempts") != expected_attempts
+            ):
+                return False
             seen = self.delivery_targets.setdefault(run_id, set())
             if target in seen:
                 return False
             seen.add(target)
+            return True
+
+    def unmark_cron_delivery_target(
+        self,
+        run_id: str,
+        *,
+        target: str,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
+    ) -> bool:
+        with self._lock:
+            run = self.runs.get(run_id)
+            if run is None:
+                return False
+            if daemon_id is not None and (
+                run.get("lease_owner") != daemon_id
+                or run.get("attempts") != expected_attempts
+            ):
+                return False
+            seen = self.delivery_targets.setdefault(run_id, set())
+            if target not in seen:
+                return False
+            seen.remove(target)
             return True
 
     # --- methods consumed by CronTurnExecutor (TCEE-06 integration) ---
@@ -183,8 +272,8 @@ def test_scheduler_executes_agent_turn_and_calls_delivery() -> None:
         return {"summary": f"done:{run['run_id']}", "isolated_session_id": "sess-iso-1"}
 
     def _deliver(mode: str, to_value: str, job: dict, run: dict, result) -> None:  # noqa: ANN001
-        del job, run, result
-        assert store.delivery_targets == {}
+        assert store.delivery_targets[run["run_id"]] == {"announce:cli:ops"}
+        del job, result
         deliveries.append((mode, to_value))
 
     scheduler = CronScheduler(
@@ -323,6 +412,114 @@ def test_execution_failure_remains_distinct_from_delivery_failure() -> None:
     assert finished["state"] == "failed"
     assert finished["error"]["code"] == "cron_failed"
     assert not any(name.startswith("cron.delivery.") for name, _payload in events)
+    assert store.retry_calls == []
+
+
+def test_scheduler_retries_only_typed_retryable_failure() -> None:
+    store = FakeCronStore()
+    store.add_job(
+        job_id="job-retryable",
+        payload={"kind": "agentTurn", "message": "task"},
+    )
+    store.seed_due("job-retryable")
+    events: list[tuple[str, dict]] = []
+
+    def _execute(_job: dict, _run: dict) -> str:
+        raise CronError(
+            "provider_unavailable",
+            "provider unavailable",
+            retryable=True,
+            details={"provider": "test"},
+        )
+
+    scheduler = CronScheduler(
+        store=store,
+        daemon_id="daemon-retryable",
+        tick_seconds=0.05,
+        execute_agent_turn=_execute,
+        on_event=lambda name, payload: events.append((name, payload)),
+    )
+    scheduler.start()
+    try:
+        assert store.finished.wait(timeout=3.0)
+    finally:
+        scheduler.shutdown(grace_s=1.0)
+
+    assert store.retry_calls == [
+        {
+            "code": "provider_unavailable",
+            "message": "provider unavailable",
+            "retryable": True,
+            "details": {"provider": "test"},
+        }
+    ]
+    assert any(name == "cron.run.retry_scheduled" for name, _payload in events)
+    assert not any(name == "cron.run.finished" for name, _payload in events)
+
+
+def test_stale_worker_cannot_deliver_after_lease_takeover() -> None:
+    from openminion.modules.task.scheduling.coordination import deliver_cron_run
+    from openminion.services.cron.scheduler import CronExecutionResult
+
+    store = FakeCronStore()
+    store.add_job(
+        job_id="job-takeover",
+        payload={"kind": "agentTurn", "message": "task"},
+        delivery={"mode": "announce", "to": "cli:ops"},
+    )
+    run_id = "run-takeover"
+    store.runs[run_id] = {
+        "run_id": run_id,
+        "job_id": "job-takeover",
+        "state": "running",
+        "attempts": 2,
+        "lease_owner": "daemon-new",
+    }
+    deliveries: list[str] = []
+    events: list[tuple[str, dict]] = []
+
+    outcome = deliver_cron_run(
+        store=store,
+        job=store.jobs["job-takeover"],
+        run=dict(store.runs[run_id]),
+        result=CronExecutionResult(summary="done"),
+        delivery_handler=lambda *_args: deliveries.append("called"),
+        daemon_id="daemon-old",
+        expected_attempts=1,
+        emit=lambda name, payload: events.append((name, payload)),
+    )
+
+    assert outcome == {"state": "not_requested", "mode": "announce", "targets": []}
+    assert deliveries == []
+    assert store.delivery_targets == {}
+    assert any(name == "cron.delivery.duplicate" for name, _payload in events)
+
+
+def test_delivery_fails_closed_without_delivery_fence() -> None:
+    from openminion.modules.task.scheduling.coordination import deliver_cron_run
+    from openminion.services.cron.scheduler import CronExecutionResult
+
+    class NoFenceStore:
+        pass
+
+    deliveries: list[str] = []
+    outcome = deliver_cron_run(
+        store=NoFenceStore(),  # type: ignore[arg-type]
+        job={
+            "job_id": "job-1",
+            "payload": {},
+            "delivery": {"mode": "announce", "to": "cli:ops"},
+        },
+        run={"run_id": "run-1"},
+        result=CronExecutionResult(summary="done"),
+        delivery_handler=lambda *_args: deliveries.append("called"),
+        daemon_id="daemon-1",
+        expected_attempts=1,
+        emit=lambda _name, _payload: None,
+    )
+
+    assert outcome["state"] == "failed"
+    assert deliveries == []
 
 
 def test_scheduler_preserves_terminal_run_when_task_outcome_callback_fails() -> None:
@@ -482,7 +679,7 @@ def test_delivery_failure_records_best_effort_metadata_without_failing_run() -> 
     assert failure_event["error"]["code"] == "cron_delivery_failed"
 
 
-def test_delivery_failure_does_not_retry_execution_or_mark_target() -> None:
+def test_delivery_failure_does_not_retry_execution_after_claiming_target() -> None:
     store = FakeCronStore()
     store.add_job(
         job_id="job-delivery-failure",
@@ -531,7 +728,7 @@ def test_delivery_failure_does_not_retry_execution_or_mark_target() -> None:
     assert run["output"]["delivery"]["state"] == "failed"
     assert run["output"]["delivery"]["targets"] == []
     assert len(run["output"]["delivery"]["error"]["message"]) == 500
-    assert store.delivery_targets == {}
+    assert store.delivery_targets[run["run_id"]] == set()
     assert any(name == "cron.delivery.failed" for name, _payload in events)
     finished = next(payload for name, payload in events if name == "cron.run.finished")
     assert finished["state"] == "finished"
@@ -540,8 +737,15 @@ def test_delivery_failure_does_not_retry_execution_or_mark_target() -> None:
 
 def test_delivery_marker_failure_does_not_retry_execution() -> None:
     class MarkerFailingStore(FakeCronStore):
-        def mark_cron_delivery_target(self, run_id: str, *, target: str) -> bool:
-            del run_id, target
+        def mark_cron_delivery_target(
+            self,
+            run_id: str,
+            *,
+            target: str,
+            daemon_id: str | None = None,
+            expected_attempts: int | None = None,
+        ) -> bool:
+            del run_id, target, daemon_id, expected_attempts
             raise sqlite3.OperationalError("marker store unavailable")
 
     store = MarkerFailingStore()
@@ -744,7 +948,6 @@ def test_tcee_06_scheduler_invokes_real_cron_turn_executor_end_to_end() -> None:
         cron_store=store,
         request_builder=_request_builder,
         timeout_s=10.0,
-        max_attempts=1,
     )
 
     scheduler = CronScheduler(

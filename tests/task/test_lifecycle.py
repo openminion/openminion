@@ -197,6 +197,41 @@ def test_one_time_terminal_outcome_updates_lifecycle_and_retains_job(
     assert reopened_record.state == TaskLifecycleState.DONE
 
 
+def test_terminal_watch_outcome_completes_lifecycle_and_retains_history(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    created = manager.schedule_task(
+        name="terminal-watch",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={
+            "kind": "agentTurn",
+            "message": "check health",
+            "_openminion_watch": {"description": "health"},
+        },
+        agent_id="agent-a",
+    )
+    repository = getattr(manager, "_cron_repository")
+    run_id = repository.trigger_cron_run(created.cron_job_id)
+    repository.finish_cron_run(
+        run_id,
+        state="finished",
+        summary="Condition met.",
+        output={"watch_terminal": True, "watch_terminal_reason": "condition_met"},
+    )
+
+    assert manager.reconcile_scheduled_outcomes(created.cron_job_id) == 1
+    record = manager.get_task(created.task_id)
+    assert record is not None
+    assert record.state == TaskLifecycleState.DONE
+    job = manager.get_scheduled_job(created.cron_job_id)
+    assert job is not None
+    assert job["enabled"] is False
+    runs = manager.list_scheduled_runs(job_id=created.cron_job_id, limit=10)
+    assert runs[0]["run_id"] == run_id
+    assert runs[0]["state"] == "finished"
+
+
 @pytest.mark.parametrize(
     ("schedule", "run_state", "expected_state"),
     [
@@ -543,6 +578,34 @@ def test_reconcile_selects_oldest_unresolved_run_before_limit(tmp_path: Path) ->
     assert reconciled.state == TaskLifecycleState.DONE
     assert reconciled.metadata["last_run"]["run_id"] == oldest_run
     assert manager.reconcile_scheduled_outcomes(oldest.cron_job_id) == 0
+
+
+def test_reconcile_pages_past_one_thousand_completed_jobs(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    repository = getattr(manager, "_cron_repository")
+    records = []
+    for index in range(1001):
+        record = manager.schedule_task(
+            name=f"paged-{index}",
+            schedule={"kind": "every", "every_ms": 60_000},
+            payload={"kind": "agentTurn", "message": f"paged-{index}"},
+            agent_id="agent-a",
+        )
+        records.append(record)
+        run_id = repository.trigger_cron_run(record.cron_job_id)
+        repository.finish_cron_run(
+            run_id,
+            state="finished",
+            summary=f"result-{index}",
+            now_iso=f"2026-01-{1 + index // 864:02d}T{(index // 36) % 24:02d}:"
+            f"{(index // 6) % 60:02d}:{(index * 10) % 60:02d}+00:00",
+        )
+
+    assert manager.reconcile_scheduled_outcomes(limit=1000) == 1000
+    assert manager.reconcile_scheduled_outcomes(limit=1) == 1
+    last = manager.get_task(records[-1].task_id)
+    assert last is not None
+    assert last.metadata["last_run"]["summary"] == "result-1000"
 
 
 def test_schedule_rolls_back_cron_job_when_lifecycle_insert_fails(

@@ -19,7 +19,7 @@ from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.tools.ops.service import local_ops_service
-from openminion.tools.task.args import TaskScheduleArgs
+from openminion.tools.task.args import TaskRunNowArgs, TaskScheduleArgs
 from openminion.tools.task.plugin import (
     _h_task_cancel,
     _h_task_consolidate_memory,
@@ -28,9 +28,100 @@ from openminion.tools.task.plugin import (
     _h_task_resume,
     _h_task_schedule,
     _h_task_show,
+    _h_task_run_now,
+    _h_task_update,
+    _h_task_delete_history,
+    _h_task_scheduler_status,
+    _h_task_scheduler_pause,
     _h_task_watch,
     _resolve_cron_store,
 )
+
+
+def test_operational_control_args_forbid_unknown_fields() -> None:
+    with pytest.raises(ValueError):
+        TaskRunNowArgs.model_validate({"task_id": "task-1", "alias": "task"})
+
+
+def test_operational_control_handlers_use_exact_owned_task(tmp_path: Path) -> None:
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "tasks.db")
+    )
+    created = manager.schedule_user_task(
+        name="check",
+        instruction="check status",
+        schedule={"kind": "every", "every_ms": 60_000},
+        agent_id="agent-a",
+    )
+    task_id = created["record"].task_id
+    ctx = _ctx(tmp_path, agent_id="agent-a")
+    ctx.task_manager = manager
+
+    run = _h_task_run_now({"task_id": task_id}, ctx)
+    manager._cron_repository.finish_cron_run(
+        run["run_id"], state="finished", summary="done"
+    )
+    current = manager.get_scheduled_job(task_id)
+    assert current is not None
+    updated = _h_task_update(
+        {
+            "task_id": task_id,
+            "instruction": "check status and report",
+            "schedule": {"kind": "every", "every_ms": 120_000},
+            "expected_updated_at": current["updated_at"],
+        },
+        ctx,
+    )
+    assert updated["task"]["payload"]["message"] == "check status and report"
+    assert _h_task_delete_history({"task_id": task_id}, ctx)["deleted_count"] == 1
+
+    scheduler = _h_task_scheduler_status({}, ctx)["scheduler_control"]
+    paused = _h_task_scheduler_pause(
+        {
+            "reason": "maintenance",
+            "expected_updated_at": scheduler["updated_at"],
+        },
+        ctx,
+    )
+    assert paused["scheduler_control"]["paused"] is True
+
+
+def test_operational_controls_reject_unowned_raw_jobs(tmp_path: Path) -> None:
+    repository = create_sqlite_cron_repository(db_path=tmp_path / "tasks.db")
+    manager = TaskManager.from_cron_repository(repository)
+    task_id = repository.add_cron_job(
+        name="legacy unowned",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "legacy"},
+        agent_id=None,
+    )
+    job = repository.get_cron_job(task_id)
+    assert job is not None
+    ctx = _ctx(tmp_path, agent_id="agent-a")
+    ctx.task_manager = manager
+
+    calls = (
+        (_h_task_cancel, {"task_id": task_id}),
+        (_h_task_run_now, {"task_id": task_id}),
+        (
+            _h_task_update,
+            {
+                "task_id": task_id,
+                "instruction": "replacement",
+                "schedule": {"kind": "every", "every_ms": 120_000},
+                "expected_updated_at": job["updated_at"],
+            },
+        ),
+        (_h_task_delete_history, {"task_id": task_id}),
+    )
+    for handler, arguments in calls:
+        with pytest.raises(ToolRuntimeError) as raised:
+            handler(arguments, ctx)
+        assert raised.value.code == "POLICY_DENIED"
+        assert raised.value.details["reason_code"] == "task_ownership_denied"
+
+    assert repository.list_cron_runs(job_id=task_id) == []
+    assert repository.get_cron_job(task_id) == job
 
 
 def _ctx(
@@ -76,8 +167,9 @@ def test_schedule_persists_agent_and_retains_user_task_jobs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    data_root = tmp_path / "data"
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
-    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
 
     ctx = _ctx(tmp_path, agent_id="agent-a")
     ctx.scheduler_readiness = lambda: {
@@ -130,6 +222,48 @@ def test_schedule_persists_agent_and_retains_user_task_jobs(
     assert "check_command" not in every["scheduler"]
     assert "daemon" in every["scheduler_note"].lower()
     assert "openminion daemon start" not in every["scheduler_note"]
+
+
+def test_generic_tool_context_uses_canonical_task_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    cron_db = tmp_path / "cron" / "sessions.db"
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
+    cron_repository = create_sqlite_cron_repository(db_path=cron_db)
+    monkeypatch.setattr(
+        "openminion.tools.task.plugin.resolve_cron_repository",
+        lambda _ctx: cron_repository,
+    )
+    ctx = _ctx(tmp_path, agent_id="agent-a")
+    ctx.scheduler_readiness = lambda: {
+        "state": "ready",
+        "hosted_by": "daemon",
+        "reason": None,
+    }
+
+    created = _h_task_schedule(
+        {
+            "instruction": "canonical lifecycle storage",
+            "schedule": {"kind": "every", "every_ms": 60_000},
+        },
+        ctx,
+    )
+
+    canonical_db = data_root / "task" / "task.db"
+    with sqlite3.connect(canonical_db) as connection:
+        row = connection.execute(
+            "SELECT task_id FROM scheduled_tasks WHERE task_id = ?",
+            (created["task_id"],),
+        ).fetchone()
+    assert row == (created["task_id"],)
+    with sqlite3.connect(cron_db) as connection:
+        lifecycle_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_tasks'"
+        ).fetchone()
+    assert lifecycle_table is None
 
 
 def test_schedule_relative_one_time_uses_runtime_clock(
@@ -494,7 +628,12 @@ def test_pause_resume_and_show_preserve_runs_and_exact_id(
     assert task["task_id"] == task_id
     assert task["lifecycle_state"] == "paused"
     assert task["task_kind"] == "scheduled_recurring"
-    assert task["valid_actions"] == ["resume", "cancel"]
+    assert task["valid_actions"] == [
+        "resume",
+        "cancel",
+        "update",
+        "delete-history",
+    ]
     assert task["enabled"] is False
     assert task["failure_count"] == 1
     assert len(task["runs"]) == 1
@@ -1197,7 +1336,13 @@ def test_list_shape_scope_and_limit_clamp(
     assert first["task_id"] == owner_task["task_id"]
     assert first["lifecycle_state"] == "active"
     assert first["task_kind"] == "scheduled_recurring"
-    assert first["valid_actions"] == ["pause", "cancel"]
+    assert first["valid_actions"] == [
+        "pause",
+        "cancel",
+        "run-now",
+        "update",
+        "delete-history",
+    ]
     assert "summary" in first["schedule"]
     assert first["last_run_state"] == "pending"
     assert first["last_run_at"] is None
@@ -1263,11 +1408,11 @@ def test_task_handlers_route_through_task_manager_lifecycle_table(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    data_root = tmp_path / "data"
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
-    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
 
     owner_ctx = _ctx(tmp_path, agent_id="agent-owner")
-    store = _resolve_cron_store(owner_ctx)
 
     created = _h_task_schedule(
         {
@@ -1278,10 +1423,7 @@ def test_task_handlers_route_through_task_manager_lifecycle_table(
         owner_ctx,
     )
 
-    db_path = getattr(store, "db_path", None)
-    assert db_path is not None
-
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(data_root / "task" / "task.db"))
     active_row = conn.execute(
         "SELECT state FROM scheduled_tasks WHERE task_id = ?",
         (created["task_id"],),

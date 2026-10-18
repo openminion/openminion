@@ -27,6 +27,30 @@ def test_cron_service_status_uses_daemon_scheduler_readiness(monkeypatch) -> Non
     assert payload["hosted_by"] == "daemon"
 
 
+def test_cron_service_status_returns_failure_when_scheduler_is_unreachable(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        daemon_command,
+        "build_daemon_status_payload",
+        lambda *_args, **_kwargs: {"scheduler": {"state": "unreachable"}},
+    )
+
+    code = run_service(
+        Namespace(
+            service_command="status",
+            service="cron",
+            config=None,
+            home_root=None,
+            data_root=None,
+            json=True,
+        )
+    )
+
+    assert code == 1
+    assert '"ok": false' in capsys.readouterr().out.lower()
+
+
 def test_cron_service_start_directs_operator_to_daemon(capsys) -> None:
     code = run_service(
         Namespace(

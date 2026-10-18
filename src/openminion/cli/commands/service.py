@@ -42,7 +42,7 @@ def _service_status(args: Any) -> int:
         ],
     }
     _print_service_payload(payload, as_json=bool(getattr(args, "json", False)))
-    return 0
+    return 0 if all(item.get("ok") for item in payload["services"]) else 1
 
 
 def _service_lifecycle(args: Any, *, action: str) -> int:

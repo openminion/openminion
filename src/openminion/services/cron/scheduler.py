@@ -7,6 +7,7 @@ from uuid import uuid4
 from openminion.modules.task.scheduling.constants import ALLOWED_PAYLOAD_KINDS
 from openminion.modules.task.scheduling.interfaces import (
     CRON_INTERFACE_VERSION,
+    CronError,
     CronStoreProtocol,
 )
 from openminion.modules.task.scheduling.coordination import (
@@ -272,9 +273,14 @@ class CronScheduler:
     def _worker_main(self, *, run: dict[str, Any], stop_event: Event) -> None:
         run_id = str(run.get("run_id", "")).strip()
         job_id = str(run.get("job_id", "")).strip()
+        expected_attempts = int(run.get("attempts") or 0)
         renew_thread = Thread(
             target=self._lease_renewer,
-            kwargs={"run_id": run_id, "stop_event": stop_event},
+            kwargs={
+                "run_id": run_id,
+                "expected_attempts": expected_attempts,
+                "stop_event": stop_event,
+            },
             name=f"openminion-cron-lease-{run_id[:8]}",
             daemon=True,
         )
@@ -286,49 +292,34 @@ class CronScheduler:
         job: dict[str, Any] | None = None
 
         try:
-            if not job_id:
-                raise RuntimeError("cron run missing job_id")
-            job = self._store.get_cron_job(job_id)
-            if job is None:
-                raise RuntimeError(f"cron job not found: {job_id}")
-            payload = job.get("payload", {})
-            if not isinstance(payload, dict):
-                raise RuntimeError("cron job payload is invalid")
-            kind = str(payload.get("kind", "")).strip()
-            if kind == "systemEvent":
-                result = self._normalize_result(self._execute_system_event(job, run))
-            elif kind in ALLOWED_PAYLOAD_KINDS:
-                result = self._normalize_result(self._execute_agent_turn(job, run))
-                if not (result.isolated_session_id or "").strip():
-                    result = CronExecutionResult(
-                        summary=result.summary,
-                        artifact_refs=list(result.artifact_refs),
-                        output=dict(result.output),
-                        isolated_session_id=f"cron:{job_id}:{run_id}",
-                    )
-            else:
-                raise RuntimeError(f"unsupported cron payload kind: {kind}")
-
-            delivery = deliver_cron_run(
-                store=self._store,
-                job=job,
+            job, result = self._execute_claimed_run(
                 run=run,
-                result=result,
-                delivery_handler=self._delivery_handler,
-                emit=self._emit,
-            )
-            result = CronExecutionResult(
-                summary=result.summary,
-                artifact_refs=list(result.artifact_refs),
-                output={**result.output, "delivery": delivery},
-                isolated_session_id=result.isolated_session_id,
+                job_id=job_id,
+                run_id=run_id,
+                expected_attempts=expected_attempts,
             )
         except TimeoutError as exc:
             state = "timed_out"
-            error = {"code": "cron_timeout", "message": str(exc)}
+            error = {
+                "code": "cron_timeout",
+                "message": str(exc),
+                "retryable": False,
+            }
+        except CronError as exc:
+            state = "failed"
+            error = {
+                "code": exc.code,
+                "message": exc.message,
+                "retryable": exc.retryable,
+                "details": dict(exc.details),
+            }
         except Exception as exc:
             state = "failed"
-            error = {"code": "cron_failed", "message": str(exc)}
+            error = {
+                "code": "cron_failed",
+                "message": str(exc),
+                "retryable": False,
+            }
         finally:
             stop_event.set()
             if renew_thread.is_alive():
@@ -345,26 +336,77 @@ class CronScheduler:
                     output=result.output,
                     error=error,
                     isolated_session_id=result.isolated_session_id,
+                    daemon_id=self._daemon_id,
+                    expected_attempts=expected_attempts,
                     emit=self._emit,
                 )
                 if persisted_state in {"finished", "failed", "cancelled", "timed_out"}:
+                    self._disable_terminal_watch(job=job, result=result)
                     self._record_task_outcome(job_id)
             except Exception as exc:
                 self._emit(
                     "cron.run.finish_error",
                     {"run_id": run_id, "error": str(exc)},
                 )
-            self._cleanup_if_requested(job=job, result=result)
-            self._emit(
-                "cron.run.finished",
-                {
-                    "run_id": run_id,
-                    "job_id": job_id,
-                    "state": persisted_state,
-                    "summary": result.summary,
-                    "error": error,
-                },
-            )
+            if persisted_state in {"finished", "failed", "cancelled", "timed_out"}:
+                self._emit(
+                    "cron.run.finished",
+                    {
+                        "run_id": run_id,
+                        "job_id": job_id,
+                        "state": persisted_state,
+                        "summary": result.summary,
+                        "error": error,
+                    },
+                )
+
+    def _execute_claimed_run(
+        self,
+        *,
+        run: dict[str, Any],
+        job_id: str,
+        run_id: str,
+        expected_attempts: int,
+    ) -> tuple[dict[str, Any], CronExecutionResult]:
+        if not job_id:
+            raise RuntimeError("cron run missing job_id")
+        job = self._store.get_cron_job(job_id)
+        if job is None:
+            raise RuntimeError(f"cron job not found: {job_id}")
+        payload = job.get("payload", {})
+        if not isinstance(payload, dict):
+            raise RuntimeError("cron job payload is invalid")
+        kind = str(payload.get("kind", "")).strip()
+        if kind == "systemEvent":
+            result = self._normalize_result(self._execute_system_event(job, run))
+        elif kind in ALLOWED_PAYLOAD_KINDS:
+            result = self._normalize_result(self._execute_agent_turn(job, run))
+            if not (result.isolated_session_id or "").strip():
+                result = CronExecutionResult(
+                    summary=result.summary,
+                    artifact_refs=list(result.artifact_refs),
+                    output=dict(result.output),
+                    isolated_session_id=f"cron:{job_id}:{run_id}",
+                )
+        else:
+            raise RuntimeError(f"unsupported cron payload kind: {kind}")
+
+        delivery = deliver_cron_run(
+            store=self._store,
+            job=job,
+            run=run,
+            result=result,
+            delivery_handler=self._delivery_handler,
+            daemon_id=self._daemon_id,
+            expected_attempts=expected_attempts,
+            emit=self._emit,
+        )
+        return job, CronExecutionResult(
+            summary=result.summary,
+            artifact_refs=list(result.artifact_refs),
+            output={**result.output, "delivery": delivery},
+            isolated_session_id=result.isolated_session_id,
+        )
 
     def _record_task_outcome(self, job_id: str | None) -> None:
         if self._record_task_outcomes is None:
@@ -376,13 +418,20 @@ class CronScheduler:
                 {"job_id": job_id, "count": reconciled},
             )
 
-    def _lease_renewer(self, *, run_id: str, stop_event: Event) -> None:
+    def _lease_renewer(
+        self,
+        *,
+        run_id: str,
+        expected_attempts: int,
+        stop_event: Event,
+    ) -> None:
         interval_s = max(1.0, self._lease_ttl_seconds / 2.0)
         while not stop_event.wait(interval_s):
             try:
                 refreshed = self._store.renew_cron_run_lease(
                     run_id,
                     daemon_id=self._daemon_id,
+                    expected_attempts=expected_attempts,
                     lease_ttl_s=self._lease_ttl_seconds,
                 )
             except Exception as exc:
@@ -398,7 +447,7 @@ class CronScheduler:
                 )
                 break
 
-    def _cleanup_if_requested(
+    def _disable_terminal_watch(
         self,
         *,
         job: dict[str, Any] | None,
@@ -412,10 +461,10 @@ class CronScheduler:
         if not job_id:
             return
         try:
-            self._store.delete_cron_job(job_id)
+            self._store.set_cron_job_enabled(job_id, False)
         except Exception as exc:
             self._emit(
-                "cron.watch.cleanup_error",
+                "cron.watch.disable_error",
                 {"job_id": job_id, "error": str(exc)},
             )
 

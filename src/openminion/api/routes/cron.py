@@ -100,9 +100,12 @@ def _trigger_job(ctx: APIRouteContext, *, job_id: str) -> RouteResult:
         run_id = trigger_cron_job(runtime=ctx.runtime, job_id=job_id)
         return RouteResult(status=HTTPStatus.OK, payload={"ok": True, "run_id": run_id})
     except ValueError as exc:
+        code = str(getattr(exc, "code", "") or "cron_job_not_found")
         return exception_route_result(
-            HTTPStatus.NOT_FOUND,
-            code="cron_job_not_found",
+            HTTPStatus.CONFLICT
+            if code == "task_owned_cron_job"
+            else HTTPStatus.NOT_FOUND,
+            code=code,
             exc=exc,
             details={"job_id": job_id},
             retryable=False,
@@ -124,9 +127,12 @@ def _delete_job(ctx: APIRouteContext, *, job_id: str) -> RouteResult:
         delete_cron_job(runtime=ctx.runtime, job_id=job_id)
         return RouteResult(status=HTTPStatus.OK, payload={"ok": True})
     except ValueError as exc:
+        code = str(getattr(exc, "code", "") or "cron_job_not_found")
         return exception_route_result(
-            HTTPStatus.NOT_FOUND,
-            code="cron_job_not_found",
+            HTTPStatus.CONFLICT
+            if code == "task_owned_cron_job"
+            else HTTPStatus.NOT_FOUND,
+            code=code,
             exc=exc,
             details={"job_id": job_id},
             retryable=False,

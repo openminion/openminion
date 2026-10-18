@@ -78,6 +78,7 @@ def test_task_surface_lists_and_controls_lifecycle_tasks() -> None:
     assert shown["title"] == "finish long task"
     assert shown["operator_state"] == "running"
     assert shown["resume_action"] == "continue"
+    assert shown["valid_actions"] == ["pause", "cancel"]
     assert shown["activity"] == {
         "session_id": "s1",
         "session_events_path": "/sessions/s1/events",
@@ -185,7 +186,13 @@ def test_task_surface_projects_schedule_and_bounded_runs(tmp_path) -> None:
     }
     assert task["last_run"]["delivery_targets"] == ["session:origin"]
     assert task["session_target"] == "isolated"
-    assert task["valid_actions"] == ["pause", "cancel"]
+    assert task["valid_actions"] == [
+        "pause",
+        "cancel",
+        "run-now",
+        "update",
+        "delete-history",
+    ]
 
 
 def test_task_surface_merges_digest_and_lifecycle_sources(tmp_path) -> None:
@@ -283,6 +290,28 @@ def test_task_surface_applies_limit_after_merging_sources(tmp_path) -> None:
     assert len(tasks) == 2
 
 
+def test_task_surface_does_not_advertise_update_for_specialized_watch(tmp_path) -> None:
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "watch.db")
+    )
+    record = manager.schedule_task(
+        name="watch",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={
+            "kind": "agentTurn",
+            "message": "check status",
+            "_openminion_watch": {"mode": "check"},
+        },
+        agent_id="agent-a",
+        delete_after_run=False,
+    )
+
+    task = build_task_surface(manager, agent_id="agent-a").show_task(record.task_id)
+
+    assert task is not None
+    assert task["valid_actions"] == ["pause", "cancel", "run-now", "delete-history"]
+
+
 def test_task_surface_distinguishes_backend_failure_from_empty_inventory() -> None:
     class BrokenRepository:
         def list(self, **kwargs):
@@ -296,6 +325,20 @@ def test_task_surface_distinguishes_backend_failure_from_empty_inventory() -> No
         build_task_surface(Source(), agent_id="agent-a").inventory()
 
     assert getattr(excinfo.value, "code", None) == "TASK_INVENTORY_UNAVAILABLE"
+
+
+def test_task_surface_caps_list_limit_for_all_entry_points() -> None:
+    seen: dict[str, int] = {}
+
+    class Source:
+        def get_digest(self, *, agent_id: str, session_id: str, limit: int):
+            del agent_id, session_id
+            seen["limit"] = limit
+            return {"tasks_active": [], "tasks_ready": []}
+
+    build_task_surface(Source(), agent_id="agent-a", limit=5_000).inventory()
+
+    assert seen["limit"] == 100
 
 
 def _cursor(task_id: str):

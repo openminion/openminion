@@ -41,9 +41,15 @@ def test_enqueue_acquire_renew_finish_and_delete_old(store: SQLiteSessionStore) 
 
     acquired = store.acquire_cron_runs("daemon-a", lease_ttl_s=15, limit=5)
     assert acquired
-    run_id = acquired[0]["run_id"]
+    run = acquired[0]
+    run_id = run["run_id"]
 
-    assert store.renew_cron_run_lease(run_id, daemon_id="daemon-a", lease_ttl_s=15)
+    assert store.renew_cron_run_lease(
+        run_id,
+        daemon_id="daemon-a",
+        expected_attempts=run["attempts"],
+        lease_ttl_s=15,
+    )
 
     finished = store.finish_cron_run(run_id, state="finished", summary="ok")
     assert finished is not None

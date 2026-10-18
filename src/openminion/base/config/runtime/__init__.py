@@ -70,7 +70,6 @@ class RuntimeConfig:
     brain_turn_timeout_seconds: int = 300
     provider_retry_max_attempts: int = 3
     chat_turn_timeout_seconds: float = 90.0
-    chat_turn_max_attempts: int = 2
     memory_enabled: bool = True
     memory_root_path: str = ""
     tool_workspace_root: str = ""

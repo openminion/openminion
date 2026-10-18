@@ -285,6 +285,56 @@ print(json.dumps(results, sort_keys=True))
         self.assertTrue(args.json)
         self.assertTrue(callable(args.handler))
 
+    def test_cron_run_parse(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            ["cron", "run", "--job-id", "job-123", "--agent-id", "ops"]
+        )
+        self.assertEqual(args.cron_command, "run")
+        self.assertEqual(args.job_id, "job-123")
+        self.assertEqual(args.agent_id, "ops")
+
+    def test_cron_tick_is_not_a_public_command(self) -> None:
+        parser = build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["cron", "tick"])
+
+    def test_tasks_update_parse(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "tasks",
+                "update",
+                "task-1",
+                "--instruction",
+                "check status",
+                "--every-ms",
+                "60000",
+                "--expected-updated-at",
+                "r1",
+            ]
+        )
+        self.assertEqual(args.tasks_command, "update")
+        self.assertEqual(args.task_id, "task-1")
+        self.assertEqual(args.expected_updated_at, "r1")
+
+    def test_tasks_scheduler_pause_parse(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "tasks",
+                "scheduler",
+                "pause",
+                "--reason",
+                "maintenance",
+                "--expected-updated-at",
+                "r1",
+                "--confirm",
+            ]
+        )
+        self.assertEqual(args.tasks_command, "scheduler-pause")
+        self.assertTrue(args.confirm)
+
     def test_run_parse(self) -> None:
         parser = build_parser()
         args = parser.parse_args(

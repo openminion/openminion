@@ -4,6 +4,8 @@ import json
 from sqlite3 import Error as SQLiteError
 from typing import Any, Mapping
 
+from openminion.modules.task.scheduling.interfaces import CronError
+
 from openminion.tools.task.constants import (
     DEFAULT_CONSOLIDATION_BATCH_LIMIT,
     DEFAULT_CONSOLIDATION_MAX_ITERATIONS,
@@ -39,15 +41,7 @@ def build_cron_turn_result(
     consolidation: Mapping[str, Any] | None,
     completed_at: str,
 ) -> dict[str, Any]:
-    errors = getattr(result, "errors", None)
-    if errors:
-        first_error = errors[0]
-        raise RuntimeError(
-            str(
-                getattr(first_error, "message", "cron turn failed")
-                or "cron turn failed"
-            )
-        )
+    raise_for_cron_turn_errors(result)
     metadata = getattr(result, "metadata", {}) or {}
     metadata_dict = dict(metadata) if isinstance(metadata, dict) else {}
     response: dict[str, Any] = {
@@ -79,6 +73,21 @@ def build_cron_turn_result(
         }
     }
     return response
+
+
+def raise_for_cron_turn_errors(result: Any) -> None:
+    errors = getattr(result, "errors", None)
+    if errors:
+        first_error = errors[0]
+        raise CronError(
+            str(getattr(first_error, "code", "cron_turn_failed") or "cron_turn_failed"),
+            str(
+                getattr(first_error, "message", "cron turn failed")
+                or "cron turn failed"
+            ),
+            retryable=bool(getattr(first_error, "retryable", False)),
+            details=dict(getattr(first_error, "details", {}) or {}),
+        )
 
 
 def build_expired_watch_result(

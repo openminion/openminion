@@ -1,6 +1,20 @@
 from typing import Any
 
 from openminion.api.queries.cron import resolve_cron_store
+from openminion.modules.task.surface import resolve_task_surface_source
+
+
+class TaskOwnedCronJobError(ValueError):
+    code = "task_owned_cron_job"
+
+
+def _reject_task_owned_job(*, runtime: Any, job_id: str) -> None:
+    owner = resolve_task_surface_source(runtime)
+    get_task = getattr(owner, "get_task_by_job", None)
+    if callable(get_task) and get_task(job_id) is not None:
+        raise TaskOwnedCronJobError(
+            "task-owned cron jobs must be controlled through /v1/tasks"
+        )
 
 
 def create_cron_job(*, runtime, body: dict[str, Any]) -> str:
@@ -24,10 +38,12 @@ def create_cron_job(*, runtime, body: dict[str, Any]) -> str:
 
 
 def trigger_cron_job(*, runtime, job_id: str) -> str:
+    _reject_task_owned_job(runtime=runtime, job_id=job_id)
     store = resolve_cron_store(runtime)
     return store.trigger_cron_run(job_id=job_id)
 
 
 def delete_cron_job(*, runtime, job_id: str) -> None:
+    _reject_task_owned_job(runtime=runtime, job_id=job_id)
     store = resolve_cron_store(runtime)
     store.delete_cron_job(job_id=job_id)

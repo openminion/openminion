@@ -7,12 +7,21 @@ CRON_INTERFACE_VERSION = "v2"
 
 
 class CronError(Exception):
-    """Cron compatibility validation error."""
+    """Typed cron execution or compatibility error."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.retryable = retryable
+        self.details = dict(details or {})
 
 
 class CronSchedulerInterface(Protocol):
@@ -97,6 +106,7 @@ class CronStoreProtocol(Protocol):
         run_id: str,
         *,
         daemon_id: str,
+        expected_attempts: int,
         lease_ttl_s: int = 60,
         now_iso: str | None = None,
     ) -> bool: ...
@@ -113,10 +123,36 @@ class CronStoreProtocol(Protocol):
         run_id: str,
         *,
         error: dict[str, Any],
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
         now_iso: str | None = None,
     ) -> dict[str, Any] | None: ...
 
     def get_cron_scope_state(self, concurrency_key: str) -> dict[str, Any] | None: ...
+
+    def trigger_task_run_now(self, job_id: str) -> dict[str, Any]: ...
+
+    def update_task_cron_job(
+        self,
+        job_id: str,
+        *,
+        instruction: str,
+        schedule: Mapping[str, Any],
+        expected_updated_at: str,
+    ) -> dict[str, Any]: ...
+
+    def delete_terminal_cron_runs(self, job_id: str) -> int: ...
+
+    def get_cron_scheduler_control(self) -> dict[str, Any]: ...
+
+    def set_cron_scheduler_control(
+        self,
+        *,
+        paused: bool,
+        reason: str | None,
+        actor: str,
+        expected_updated_at: str,
+    ) -> dict[str, Any]: ...
 
     def get_cron_job(self, job_id: str) -> dict[str, Any] | None: ...
 
@@ -130,10 +166,18 @@ class CronStoreProtocol(Protocol):
     ) -> list[dict[str, Any]]: ...
 
     def list_unresolved_task_runs(
-        self, *, limit: int = 100
+        self, *, limit: int = 100, offset: int = 0
     ) -> list[dict[str, Any]]: ...
 
     def delete_cron_job(self, job_id: str) -> None: ...
+
+    def set_cron_job_enabled(
+        self,
+        job_id: str,
+        enabled: bool,
+        *,
+        cancel_queued: bool = False,
+    ) -> None: ...
 
     def finish_cron_run(
         self,
@@ -145,8 +189,28 @@ class CronStoreProtocol(Protocol):
         error: dict[str, Any] | None = None,
         output: dict[str, Any] | None = None,
         isolated_session_id: str | None = None,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
         now_iso: str | None = None,
     ) -> dict[str, Any] | None: ...
+
+    def mark_cron_delivery_target(
+        self,
+        run_id: str,
+        *,
+        target: str,
+        daemon_id: str,
+        expected_attempts: int,
+    ) -> bool: ...
+
+    def unmark_cron_delivery_target(
+        self,
+        run_id: str,
+        *,
+        target: str,
+        daemon_id: str,
+        expected_attempts: int,
+    ) -> bool: ...
 
     def list_cron_runs(
         self,
@@ -163,6 +227,7 @@ _REQUIRED_CRON_STORE_METHODS = (
     "add_cron_job",
     "get_cron_job",
     "list_cron_jobs",
+    "set_cron_job_enabled",
     "delete_cron_job",
     "list_cron_runs",
     "enqueue_due_cron_runs",
@@ -171,7 +236,13 @@ _REQUIRED_CRON_STORE_METHODS = (
     "recover_expired_cron_runs",
     "retry_cron_run",
     "get_cron_scope_state",
+    "trigger_task_run_now",
+    "update_task_cron_job",
+    "delete_terminal_cron_runs",
+    "get_cron_scheduler_control",
+    "set_cron_scheduler_control",
     "finish_cron_run",
+    "mark_cron_delivery_target",
 )
 
 

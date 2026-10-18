@@ -101,6 +101,12 @@ def test_project_allowlists_match_the_accepted_repository_sets() -> None:
         "task.pause",
         "task.resume",
         "task.show",
+        "task.update",
+        "task.run_now",
+        "task.delete_history",
+        "task.scheduler_status",
+        "task.scheduler_pause",
+        "task.scheduler_resume",
     }
     expected_release = {
         "github.dispatch_workflow",

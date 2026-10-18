@@ -79,10 +79,12 @@ def list_cron_jobs(
     )
 
 
-def list_unresolved_task_runs(store: Any, *, limit: int = 100) -> list[dict[str, Any]]:
+def list_unresolved_task_runs(
+    store: Any, *, limit: int = 100, offset: int = 0
+) -> list[dict[str, Any]]:
     return cast(
         list[dict[str, Any]],
-        store._cron_store.list_unresolved_task_runs(limit=limit),
+        store._cron_store.list_unresolved_task_runs(limit=limit, offset=offset),
     )
 
 
@@ -125,6 +127,56 @@ def trigger_cron_run(
         due_at=due_at,
         lease_owner=lease_owner,
         lease_ttl_s=lease_ttl_s,
+    )
+
+
+def trigger_task_run_now(store: Any, job_id: str) -> dict[str, Any]:
+    return cast(dict[str, Any], store._cron_store.trigger_task_run_now(job_id))
+
+
+def update_task_cron_job(
+    store: Any,
+    job_id: str,
+    *,
+    instruction: str,
+    schedule: Mapping[str, Any],
+    expected_updated_at: str,
+) -> dict[str, Any]:
+    return cast(
+        dict[str, Any],
+        store._cron_store.update_task_cron_job(
+            job_id,
+            instruction=instruction,
+            schedule=schedule,
+            expected_updated_at=expected_updated_at,
+        ),
+    )
+
+
+def delete_terminal_cron_runs(store: Any, job_id: str) -> int:
+    return int(store._cron_store.delete_terminal_cron_runs(job_id))
+
+
+def get_cron_scheduler_control(store: Any) -> dict[str, Any]:
+    return cast(dict[str, Any], store._cron_store.get_cron_scheduler_control())
+
+
+def set_cron_scheduler_control(
+    store: Any,
+    *,
+    paused: bool,
+    reason: str | None,
+    actor: str,
+    expected_updated_at: str,
+) -> dict[str, Any]:
+    return cast(
+        dict[str, Any],
+        store._cron_store.set_cron_scheduler_control(
+            paused=paused,
+            reason=reason,
+            actor=actor,
+            expected_updated_at=expected_updated_at,
+        ),
     )
 
 
@@ -179,12 +231,14 @@ def renew_cron_run_lease(
     run_id: str,
     *,
     daemon_id: str,
+    expected_attempts: int,
     lease_ttl_s: int = 60,
     now_iso: str | None = None,
 ) -> bool:
     return store._cron_store.renew_cron_run_lease(
         run_id,
         daemon_id=daemon_id,
+        expected_attempts=expected_attempts,
         lease_ttl_s=lease_ttl_s,
         now_iso=now_iso,
     )
@@ -207,11 +261,15 @@ def retry_cron_run(
     run_id: str,
     *,
     error: dict[str, Any],
+    daemon_id: str | None = None,
+    expected_attempts: int | None = None,
     now_iso: str | None = None,
 ) -> dict[str, Any] | None:
     return store._cron_store.retry_cron_run(
         run_id,
         error=error,
+        daemon_id=daemon_id,
+        expected_attempts=expected_attempts,
         now_iso=now_iso,
     )
 
@@ -291,6 +349,8 @@ def finish_cron_run(
     error: dict[str, Any] | None = None,
     output: dict[str, Any] | None = None,
     isolated_session_id: str | None = None,
+    daemon_id: str | None = None,
+    expected_attempts: int | None = None,
     now_iso: str | None = None,
 ) -> dict[str, Any] | None:
     return store._cron_store.finish_cron_run(
@@ -301,6 +361,8 @@ def finish_cron_run(
         error=error,
         output=output,
         isolated_session_id=isolated_session_id,
+        daemon_id=daemon_id,
+        expected_attempts=expected_attempts,
         now_iso=now_iso,
     )
 
@@ -309,8 +371,36 @@ def delete_old_cron_runs(store: Any, before_iso: str) -> int:
     return store._cron_store.delete_old_cron_runs(before_iso)
 
 
-def mark_cron_delivery_target(store: Any, run_id: str, *, target: str) -> bool:
-    return store._cron_store.mark_cron_delivery_target(run_id, target=target)
+def mark_cron_delivery_target(
+    store: Any,
+    run_id: str,
+    *,
+    target: str,
+    daemon_id: str | None = None,
+    expected_attempts: int | None = None,
+) -> bool:
+    return store._cron_store.mark_cron_delivery_target(
+        run_id,
+        target=target,
+        daemon_id=daemon_id,
+        expected_attempts=expected_attempts,
+    )
+
+
+def unmark_cron_delivery_target(
+    store: Any,
+    run_id: str,
+    *,
+    target: str,
+    daemon_id: str | None = None,
+    expected_attempts: int | None = None,
+) -> bool:
+    return store._cron_store.unmark_cron_delivery_target(
+        run_id,
+        target=target,
+        daemon_id=daemon_id,
+        expected_attempts=expected_attempts,
+    )
 
 
 def storage_status(store: Any) -> dict[str, Any]:
@@ -647,6 +737,11 @@ __all__ = [
     "enqueue_due_cron_runs",
     "enforce_context_manifest",
     "finish_cron_run",
+    "trigger_task_run_now",
+    "update_task_cron_job",
+    "delete_terminal_cron_runs",
+    "get_cron_scheduler_control",
+    "set_cron_scheduler_control",
     "finish_run_record",
     "get_active_prompt_context",
     "get_cron_job",
@@ -662,6 +757,7 @@ __all__ = [
     "list_unresolved_task_runs",
     "list_run_records",
     "mark_cron_delivery_target",
+    "unmark_cron_delivery_target",
     "reindex_sidecars",
     "renew_cron_run_lease",
     "renew_session_turn_lease",

@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from openminion.modules.runtime.contracts import TurnError, TurnResponse
+from openminion.modules.task.scheduling import CronError
 from openminion.services.runtime.cron.delivery import CronDeliveryBridge
 from openminion.services.runtime.cron.executor import CronTurnExecutor
 from openminion.modules.tool import build_default_tool_registry
@@ -188,7 +190,6 @@ def test_cron_turn_executor_success_injects_metadata() -> None:
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=2,
     )
 
     result = executor.execute(
@@ -238,7 +239,6 @@ def test_cron_turn_executor_builds_typed_consolidation_watermark() -> None:
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
 
     result = executor.execute(
@@ -277,7 +277,6 @@ def test_cron_turn_executor_prefers_payload_session_and_forwards_linked_task_id(
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
 
     executor.execute(
@@ -315,7 +314,6 @@ def test_cron_turn_executor_preloads_goal_context_and_forwards_ids() -> None:
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
 
     executor.execute(
@@ -360,7 +358,6 @@ def test_cron_turn_executor_forwards_memory_consolidation_metadata() -> None:
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
 
     executor.execute(
@@ -390,7 +387,7 @@ def test_cron_turn_executor_forwards_memory_consolidation_metadata() -> None:
     assert request.meta["memory_consolidation_timeout_seconds"] == "30"
 
 
-def test_cron_turn_executor_retries_until_success() -> None:
+def test_cron_turn_executor_submits_once_per_acquired_attempt() -> None:
     runtime, runtime_manager = _runtime(
         [RuntimeError("transient"), SimpleNamespace(final_text="second try")],
         registered_agents=["agent-main"],
@@ -400,22 +397,21 @@ def test_cron_turn_executor_retries_until_success() -> None:
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=10.0,
-        max_attempts=2,
     )
 
-    result = executor.execute(
-        {
-            "job_id": "job-retry",
-            "payload": {"kind": "agentTurn", "message": "retry me"},
-        },
-        {"run_id": "run-retry", "due_at": "2026-03-20T00:00:00Z"},
-    )
+    with pytest.raises(RuntimeError, match="transient"):
+        executor.execute(
+            {
+                "job_id": "job-retry",
+                "payload": {"kind": "agentTurn", "message": "retry me"},
+            },
+            {"run_id": "run-retry", "due_at": "2026-03-20T00:00:00Z"},
+        )
 
-    assert result["summary"] == "second try"
-    assert len(runtime_manager.submitted) == 2
+    assert len(runtime_manager.submitted) == 1
 
 
-def test_cron_turn_executor_returns_error_after_final_failure() -> None:
+def test_cron_turn_executor_propagates_failure_after_one_submission() -> None:
     runtime, runtime_manager = _runtime(
         [RuntimeError("transient"), RuntimeError("boom")],
         registered_agents=["agent-main"],
@@ -425,20 +421,57 @@ def test_cron_turn_executor_returns_error_after_final_failure() -> None:
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=10.0,
-        max_attempts=2,
     )
 
-    result = executor.execute(
-        {
-            "job_id": "job-fail",
-            "payload": {"kind": "agentTurn", "message": "fail"},
-        },
-        {"run_id": "run-fail", "due_at": "2026-03-20T00:00:00Z"},
+    with pytest.raises(RuntimeError, match="transient"):
+        executor.execute(
+            {
+                "job_id": "job-fail",
+                "payload": {"kind": "agentTurn", "message": "fail"},
+            },
+            {"run_id": "run-fail", "due_at": "2026-03-20T00:00:00Z"},
+        )
+
+    assert len(runtime_manager.submitted) == 1
+
+
+def test_cron_turn_executor_preserves_typed_turn_error_retryability() -> None:
+    runtime, runtime_manager = _runtime(
+        [
+            TurnResponse(
+                final_text="",
+                errors=[
+                    TurnError(
+                        code="provider_unavailable",
+                        message="provider unavailable",
+                        retryable=True,
+                        details={"provider": "test"},
+                    )
+                ],
+            )
+        ],
+        registered_agents=["agent-main"],
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=_FakeCronStore(),
+        request_builder=_request_builder,
+        timeout_s=10.0,
     )
 
-    assert result["error"] is True
-    assert "after 2 attempt" in result["summary"]
-    assert len(runtime_manager.submitted) == 2
+    with pytest.raises(CronError) as excinfo:
+        executor.execute(
+            {
+                "job_id": "job-typed-error",
+                "payload": {"kind": "agentTurn", "message": "retry later"},
+            },
+            {"run_id": "run-typed-error", "due_at": "2026-03-20T00:00:00Z"},
+        )
+
+    assert excinfo.value.code == "provider_unavailable"
+    assert excinfo.value.retryable is True
+    assert excinfo.value.details == {"provider": "test"}
+    assert len(runtime_manager.submitted) == 1
 
 
 def test_cron_turn_executor_preserves_final_timeout() -> None:
@@ -451,7 +484,6 @@ def test_cron_turn_executor_preserves_final_timeout() -> None:
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=10.0,
-        max_attempts=2,
     )
 
     with pytest.raises(TimeoutError, match="slow"):
@@ -479,7 +511,6 @@ def test_cron_turn_executor_waits_for_request_timeout_plus_allowance(
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=2,
     )
 
     result = executor.execute(
@@ -505,15 +536,12 @@ def test_idle_tick_waits_for_request_timeout_plus_allowance() -> None:
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=2,
     )
 
     result = executor._submit_idle_tick_turn(
         manager=runtime_manager,
         request_payload={"timeout_seconds": 300, "session_id": "session-1"},
         agent_id="agent-main",
-        cron_job_id="job-idle",
-        session_id="session-1",
     )
 
     assert result["summary"] == "completed"
@@ -527,7 +555,6 @@ def test_idle_tick_timeout_is_not_resubmitted() -> None:
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=2,
     )
 
     with pytest.raises(TimeoutError, match="slow"):
@@ -535,8 +562,6 @@ def test_idle_tick_timeout_is_not_resubmitted() -> None:
             manager=runtime_manager,
             request_payload={"timeout_seconds": 300, "session_id": "session-1"},
             agent_id="agent-main",
-            cron_job_id="job-idle",
-            session_id="session-1",
         )
 
     assert len(runtime_manager.submitted) == 1
@@ -551,7 +576,6 @@ def test_cron_turn_executor_handles_system_cleanup_event() -> None:
         cron_store=store,
         request_builder=_request_builder,
         timeout_s=10.0,
-        max_attempts=1,
     )
 
     result = executor.execute(
@@ -581,7 +605,6 @@ def test_cron_turn_executor_rejects_unregistered_agent() -> None:
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=10.0,
-        max_attempts=1,
     )
 
     result = executor.execute(
@@ -636,7 +659,6 @@ def test_cron_turn_executor_watch_forwards_bounds_and_stages_progress() -> None:
         cron_store=store,
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
 
     created_at = datetime.now(timezone.utc).isoformat()
@@ -709,7 +731,6 @@ def test_cron_turn_executor_watch_without_trailer_fails_closed() -> None:
         cron_store=store,
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
 
     created_at = datetime.now(timezone.utc).isoformat()
@@ -756,7 +777,6 @@ def test_monitoring_watch_uses_exact_default_profile_and_stays_active() -> None:
         cron_store=store,
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
 
     result = executor.execute(
@@ -830,7 +850,6 @@ def test_monitoring_watch_repeat_cooldown_and_resolution() -> None:
             cron_store=store,
             request_builder=_request_builder,
             timeout_s=90.0,
-            max_attempts=1,
         )
 
         result = executor.execute(
@@ -863,7 +882,6 @@ def test_monitoring_watch_invalid_result_preserves_condition_state() -> None:
         cron_store=store,
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
 
     result = executor.execute(
@@ -891,7 +909,6 @@ def test_monitoring_watch_unavailable_target_preserves_state_before_turn() -> No
         cron_store=store,
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
 
     result = executor.execute(
@@ -925,7 +942,6 @@ def test_monitoring_watch_max_checks_closes_without_resolution() -> None:
         cron_store=store,
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
 
     result = executor.execute(
@@ -953,7 +969,6 @@ def test_monitoring_watch_ttl_closure_preserves_open_condition() -> None:
         cron_store=_FakeCronStore(),
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
     job = _monitoring_job(last_condition_met=True)
     job["created_at"] = "2020-01-01T00:00:00+00:00"
@@ -996,7 +1011,6 @@ def test_monitoring_watch_reconstructs_hidden_profile_activation() -> None:
         cron_store=store,
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
 
     executor.execute(
@@ -1042,7 +1056,6 @@ def test_cron_turn_executor_watch_does_not_fire_action_when_condition_is_false()
         cron_store=store,
         request_builder=_request_builder,
         timeout_s=90.0,
-        max_attempts=1,
     )
 
     created_at = datetime.now(timezone.utc).isoformat()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from threading import RLock
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 from uuid import uuid4
 
 from openminion.modules.task.scheduling.schedule import (
@@ -24,9 +24,6 @@ from openminion.modules.task.scheduling.schedule import (
 )
 from openminion.modules.task.constants import (
     DEFAULT_TASK_MIN_EVERY_MS,
-    TASK_INTERNAL_PAUSE_REASON_KEY,
-    TASK_INTERNAL_PAUSE_SOURCE_KEY,
-    TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
 )
 from openminion.modules.session.constants import (
     MAX_CRON_ATTEMPTS,
@@ -34,23 +31,9 @@ from openminion.modules.session.constants import (
 )
 from openminion.modules.storage.record_store import RecordStore
 
-from .cron_coordination import CronCoordinationStore
+from .cron_coordination import CronCoordinationStore, _initial_next_due
 from .json_utils import parse_json, to_json
 from .rows import row_to_cron_job, row_to_cron_run
-
-
-def _initial_next_due(
-    schedule: Mapping[str, Any], *, now: datetime, job_id: str
-) -> str | None:
-    if str(schedule["kind"]) == "at":
-        return str(schedule["at"])
-    next_due = compute_next_due(
-        schedule=schedule,
-        after=now,
-        job_id=job_id,
-        last_due=None,
-    )
-    return to_iso_utc(next_due) if next_due is not None else None
 
 
 def _due_job_rows(
@@ -344,93 +327,6 @@ class CronStore(CronCoordinationStore):
         if updated <= 0:
             raise ValueError(f"cron job not found: {jid}")
 
-    def _auto_pause_legacy_short_interval_job(
-        self,
-        *,
-        job: Mapping[str, Any],
-        now_iso: str,
-    ) -> None:
-        payload = dict(job.get("payload") or {})
-        payload[TASK_INTERNAL_PAUSE_REASON_KEY] = (
-            TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT
-        )
-        payload[TASK_INTERNAL_PAUSE_SOURCE_KEY] = "scheduler"
-        self._execute_count(
-            """
-            UPDATE cron_jobs
-            SET enabled = 0,
-                next_due_at = NULL,
-                payload_json = ?,
-                updated_at = ?
-            WHERE job_id = ?
-            """,
-            (
-                to_json(payload),
-                now_iso,
-                str(job["job_id"]),
-            ),
-        )
-
-    def trigger_cron_run(
-        self,
-        job_id: str,
-        *,
-        due_at: str | None = None,
-        lease_owner: str | None = None,
-        lease_ttl_s: int = 60,
-    ) -> str:
-        job = self.get_cron_job(job_id)
-        if job is None:
-            raise ValueError(f"cron job not found: {job_id}")
-
-        now_dt = utc_now()
-        now = to_iso_utc(now_dt)
-        due_dt = parse_iso_datetime(due_at) if due_at else now_dt
-        expires_dt = now_dt
-        if lease_owner:
-            expires_dt = now_dt + timedelta(seconds=max(1, lease_ttl_s))
-        run_id = uuid4().hex
-        with self._lock, self._record_store.transaction():
-            coordination_key = str(job.get("concurrency_key") or "").strip()
-            if coordination_key:
-                active = self._query_one(
-                    """
-                    SELECT COUNT(1) AS c
-                    FROM cron_runs AS r
-                    JOIN cron_jobs AS j ON j.job_id = r.job_id
-                    WHERE j.concurrency_key = ?
-                      AND r.state IN ('queued', 'running')
-                    """,
-                    (coordination_key,),
-                )
-                if active is not None and int(active["c"]) > 0:
-                    raise ValueError(
-                        f"cron coordination scope is busy: {coordination_key}"
-                    )
-            self._execute_count(
-                """
-                INSERT INTO cron_runs(
-                  run_id, job_id, state, due_at, available_at, started_at, finished_at,
-                  isolated_session_id, summary, artifact_refs_json, error_json, output_json,
-                  lease_owner, lease_expires_at,
-                  delivery_targets_json, attempts, created_at, updated_at
-                )
-                VALUES (?, ?, 'queued', ?, ?, NULL, NULL, NULL, NULL, '[]', NULL, '{}',
-                        ?, ?, '[]', 0, ?, ?)
-                """,
-                (
-                    run_id,
-                    str(job["job_id"]),
-                    to_iso_utc(due_dt),
-                    to_iso_utc(due_dt),
-                    str(lease_owner or "").strip() or None,
-                    to_iso_utc(expires_dt) if lease_owner else None,
-                    now,
-                    now,
-                ),
-            )
-        return run_id
-
     def list_cron_runs(
         self,
         *,
@@ -466,8 +362,11 @@ class CronStore(CronCoordinationStore):
             )
         return [row_to_cron_run(row) for row in rows]
 
-    def list_unresolved_task_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_unresolved_task_runs(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> list[dict[str, Any]]:
         safe_limit = max(1, min(limit, 1000))
+        safe_offset = max(0, offset)
         with self._lock:
             rows = self._record_store.query_dicts(
                 """
@@ -486,22 +385,12 @@ class CronStore(CronCoordinationStore):
                 )
                 SELECT r.*
                 FROM newest_terminal AS r
-                JOIN scheduled_tasks AS t ON t.cron_job_id = r.job_id
-                LEFT JOIN cron_jobs AS j ON j.job_id = r.job_id
                 WHERE r.row_number = 1
-                  AND (
-                    json_extract(t.metadata, '$.last_run.run_id') IS NULL
-                    OR json_extract(t.metadata, '$.last_run.run_id') != r.run_id
-                    OR (
-                        json_extract(j.schedule_json, '$.kind') = 'at'
-                        AND t.state IN ('active', 'paused')
-                    )
-                  )
                 ORDER BY COALESCE(r.finished_at, r.updated_at, r.created_at) ASC,
                          r.run_id ASC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (safe_limit,),
+                (safe_limit, safe_offset),
             )
         return [row_to_cron_run(row) for row in rows]
 
@@ -591,6 +480,8 @@ class CronStore(CronCoordinationStore):
                 now_iso=now,
                 limit=max(100, safe_limit * 2),
             )
+            if self._scheduler_is_paused_locked():
+                return []
             rows = _due_job_rows(
                 self._record_store, now_iso=now, now=now_dt, limit=safe_limit
             )
@@ -606,28 +497,10 @@ class CronStore(CronCoordinationStore):
                     self._auto_pause_legacy_short_interval_job(job=job, now_iso=now)
                     continue
                 coordination_key = str(job.get("concurrency_key") or "").strip()
-                if coordination_key:
-                    active = self._query_one(
-                        """
-                        SELECT COUNT(1) AS c
-                        FROM cron_runs AS r
-                        JOIN cron_jobs AS j ON j.job_id = r.job_id
-                        WHERE j.concurrency_key = ?
-                          AND r.state IN ('queued', 'running')
-                        """,
-                        (coordination_key,),
-                    )
-                else:
-                    active = self._query_one(
-                        """
-                        SELECT COUNT(1) AS c
-                        FROM cron_runs
-                        WHERE job_id = ?
-                          AND state IN ('queued', 'running')
-                        """,
-                        (str(job["job_id"]),),
-                    )
-                active_count = int(active["c"]) if active is not None else 0
+                active_count = self._active_cron_run_count(
+                    job_id=str(job["job_id"]),
+                    coordination_key=coordination_key,
+                )
                 max_for_job = (
                     1
                     if coordination_key
@@ -695,6 +568,35 @@ class CronStore(CronCoordinationStore):
                     )
         return queued
 
+    def _active_cron_run_count(
+        self,
+        *,
+        job_id: str,
+        coordination_key: str,
+    ) -> int:
+        if coordination_key:
+            row = self._query_one(
+                """
+                SELECT COUNT(1) AS c
+                FROM cron_runs AS r
+                JOIN cron_jobs AS j ON j.job_id = r.job_id
+                WHERE j.concurrency_key = ?
+                  AND r.state IN ('queued', 'running')
+                """,
+                (coordination_key,),
+            )
+        else:
+            row = self._query_one(
+                """
+                SELECT COUNT(1) AS c
+                FROM cron_runs
+                WHERE job_id = ?
+                  AND state IN ('queued', 'running')
+                """,
+                (job_id,),
+            )
+        return int(row["c"]) if row is not None else 0
+
     def acquire_cron_runs(
         self,
         daemon_id: str,
@@ -718,6 +620,8 @@ class CronStore(CronCoordinationStore):
                 now_iso=now,
                 limit=max(100, safe_limit * 2),
             )
+            if self._scheduler_is_paused_locked():
+                return []
             candidates = self._record_store.query_dicts(
                 """
                 SELECT r.*
@@ -790,6 +694,7 @@ class CronStore(CronCoordinationStore):
         run_id: str,
         *,
         daemon_id: str,
+        expected_attempts: int,
         lease_ttl_s: int = 60,
         now_iso: str | None = None,
     ) -> bool:
@@ -810,8 +715,9 @@ class CronStore(CronCoordinationStore):
                 WHERE run_id = ?
                   AND state = 'running'
                   AND lease_owner = ?
+                  AND attempts = ?
                 """,
-                (lease_expires, now, rid, owner),
+                (lease_expires, now, rid, owner, int(expected_attempts)),
             )
             return updated > 0
 
@@ -825,6 +731,8 @@ class CronStore(CronCoordinationStore):
         error: dict[str, Any] | None = None,
         output: dict[str, Any] | None = None,
         isolated_session_id: str | None = None,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
         now_iso: str | None = None,
     ) -> dict[str, Any] | None:
         terminal = {"finished", "failed", "cancelled", "timed_out"}
@@ -835,84 +743,111 @@ class CronStore(CronCoordinationStore):
         rid = str(run_id or "").strip()
         if not rid:
             raise ValueError("run_id is required")
+        if (daemon_id is None) != (expected_attempts is None):
+            raise ValueError(
+                "daemon_id and expected_attempts must be provided together"
+            )
 
         now_dt = parse_iso_datetime(now_iso) if now_iso else utc_now()
         now = to_iso_utc(now_dt)
 
         with self._lock, self._record_store.transaction():
-            row = self._query_one(
-                """
-                SELECT r.*, j.schedule_json, j.delete_after_run, j.concurrency_key
-                FROM cron_runs AS r
-                LEFT JOIN cron_jobs AS j ON j.job_id = r.job_id
-                WHERE r.run_id = ?
-                """,
-                (rid,),
-            )
-            if row is None:
-                return None
-
-            self._execute_count(
-                """
-                UPDATE cron_runs
-                SET state = ?,
-                    summary = ?,
-                    artifact_refs_json = ?,
-                    error_json = ?,
-                    output_json = ?,
-                    isolated_session_id = ?,
-                    lease_owner = NULL,
-                    lease_expires_at = NULL,
-                    finished_at = ?,
-                    updated_at = ?
-                WHERE run_id = ?
-                """,
-                (
-                    normalized_state,
-                    summary,
-                    to_json(artifact_refs or []),
-                    to_json(error) if error is not None else None,
-                    to_json(output or {}),
-                    str(isolated_session_id or "").strip() or None,
-                    now,
-                    now,
-                    rid,
-                ),
-            )
-
-            job_id_raw = row["job_id"]
-            if job_id_raw is not None:
-                job_id = str(job_id_raw)
-                self._execute_count(
-                    """
-                    UPDATE cron_jobs
-                    SET last_run_at = ?, updated_at = ?
-                    WHERE job_id = ?
-                    """,
-                    (now, now, job_id),
-                )
-
-                self._persist_scope_watermark_locked(
-                    row=row,
-                    state=normalized_state,
-                    output=output,
-                    run_id=rid,
-                    now_iso=now,
-                )
-                self._finalize_one_time_job_locked(
-                    row=row,
-                    state=normalized_state,
-                    job_id=job_id,
-                    now_iso=now,
-                )
-
-            updated_row = self._query_one(
-                "SELECT * FROM cron_runs WHERE run_id = ?",
-                (rid,),
+            updated_row = self._finish_cron_run_locked(
+                run_id=rid,
+                state=normalized_state,
+                summary=summary,
+                artifact_refs=artifact_refs,
+                error=error,
+                output=output,
+                isolated_session_id=isolated_session_id,
+                daemon_id=daemon_id,
+                expected_attempts=expected_attempts,
+                now_iso=now,
             )
         if updated_row is None:
             return None
         return row_to_cron_run(updated_row)
+
+    def _finish_cron_run_locked(
+        self,
+        *,
+        run_id: str,
+        state: str,
+        summary: str | None,
+        artifact_refs: list[dict[str, Any]] | None,
+        error: dict[str, Any] | None,
+        output: dict[str, Any] | None,
+        isolated_session_id: str | None,
+        daemon_id: str | None,
+        expected_attempts: int | None,
+        now_iso: str,
+    ) -> Any | None:
+        fence_sql = ""
+        fence_params: tuple[Any, ...] = ()
+        if daemon_id is not None:
+            fence_sql = (
+                " AND r.state = 'running' AND r.lease_owner = ? AND r.attempts = ?"
+            )
+            fence_params = (str(daemon_id).strip(), cast(int, expected_attempts))
+        row = self._query_one(
+            f"""
+            SELECT r.*, j.schedule_json, j.delete_after_run, j.concurrency_key
+            FROM cron_runs AS r
+            LEFT JOIN cron_jobs AS j ON j.job_id = r.job_id
+            WHERE r.run_id = ?
+            {fence_sql}
+            """,
+            (run_id, *fence_params),
+        )
+        if row is None:
+            return None
+
+        updated = self._execute_count(
+            f"""
+            UPDATE cron_runs
+            SET state = ?, summary = ?, artifact_refs_json = ?, error_json = ?,
+                output_json = ?, isolated_session_id = ?, lease_owner = NULL,
+                lease_expires_at = NULL, finished_at = ?, updated_at = ?
+            WHERE run_id = ?
+            {fence_sql.replace("r.", "")}
+            """,
+            (
+                state,
+                summary,
+                to_json(artifact_refs or []),
+                to_json(error) if error is not None else None,
+                to_json(output or {}),
+                str(isolated_session_id or "").strip() or None,
+                now_iso,
+                now_iso,
+                run_id,
+                *fence_params,
+            ),
+        )
+        if updated <= 0:
+            return None
+
+        job_id_raw = row["job_id"]
+        if job_id_raw is not None:
+            job_id = str(job_id_raw)
+            self._execute_count(
+                "UPDATE cron_jobs SET last_run_at = ?, updated_at = ? WHERE job_id = ?",
+                (now_iso, now_iso, job_id),
+            )
+            self._persist_scope_watermark_locked(
+                row=row,
+                state=state,
+                output=output,
+                run_id=run_id,
+                now_iso=now_iso,
+            )
+            self._finalize_one_time_job_locked(
+                row=row,
+                state=state,
+                job_id=job_id,
+                now_iso=now_iso,
+            )
+        return self._query_one("SELECT * FROM cron_runs WHERE run_id = ?", (run_id,))
 
     def delete_old_cron_runs(self, before_iso: str) -> int:
         cutoff = str(before_iso or "").strip()
@@ -928,26 +863,98 @@ class CronStore(CronCoordinationStore):
                 (cutoff,),
             )
 
-    def mark_cron_delivery_target(self, run_id: str, *, target: str) -> bool:
+    def _scheduler_is_paused_locked(self) -> bool:
+        row = self._query_one(
+            "SELECT paused FROM cron_scheduler_control WHERE singleton_id = 1"
+        )
+        return row is not None and bool(row["paused"])
+
+    def mark_cron_delivery_target(
+        self,
+        run_id: str,
+        *,
+        target: str,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
+    ) -> bool:
         rid = str(run_id or "").strip()
         normalized_target = str(target or "").strip()
         if not rid:
             raise ValueError("run_id is required")
         if not normalized_target:
             raise ValueError("target is required")
+        if (daemon_id is None) != (expected_attempts is None):
+            raise ValueError(
+                "daemon_id and expected_attempts must be provided together"
+            )
         with self._lock, self._record_store.transaction():
+            fence_sql = ""
+            fence_params: tuple[Any, ...] = ()
+            if daemon_id is not None:
+                fence_sql = (
+                    " AND state = 'running' AND lease_owner = ? AND attempts = ?"
+                )
+                fence_params = (str(daemon_id).strip(), cast(int, expected_attempts))
             row = self._query_one(
-                "SELECT delivery_targets_json FROM cron_runs WHERE run_id = ?",
-                (rid,),
+                f"SELECT delivery_targets_json FROM cron_runs WHERE run_id = ?{fence_sql}",
+                (rid, *fence_params),
             )
             if row is None:
+                if daemon_id is not None:
+                    return False
                 raise ValueError(f"cron run not found: {rid}")
             targets = parse_json(row["delivery_targets_json"], [])
             if normalized_target in targets:
                 return False
             targets.append(normalized_target)
-            self._execute_count(
-                "UPDATE cron_runs SET delivery_targets_json = ?, updated_at = ? WHERE run_id = ?",
-                (to_json(targets), to_iso_utc(utc_now()), rid),
+            updated = self._execute_count(
+                f"UPDATE cron_runs SET delivery_targets_json = ?, updated_at = ? "
+                f"WHERE run_id = ?{fence_sql}",
+                (to_json(targets), to_iso_utc(utc_now()), rid, *fence_params),
             )
-        return True
+        return updated > 0
+
+    def unmark_cron_delivery_target(
+        self,
+        run_id: str,
+        *,
+        target: str,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
+    ) -> bool:
+        rid = str(run_id or "").strip()
+        normalized_target = str(target or "").strip()
+        if not rid:
+            raise ValueError("run_id is required")
+        if not normalized_target:
+            raise ValueError("target is required")
+        if (daemon_id is None) != (expected_attempts is None):
+            raise ValueError(
+                "daemon_id and expected_attempts must be provided together"
+            )
+        with self._lock, self._record_store.transaction():
+            fence_sql = ""
+            fence_params: tuple[Any, ...] = ()
+            if daemon_id is not None:
+                fence_sql = (
+                    " AND state = 'running' AND lease_owner = ? AND attempts = ?"
+                )
+                fence_params = (str(daemon_id).strip(), cast(int, expected_attempts))
+            row = self._query_one(
+                f"SELECT delivery_targets_json FROM cron_runs WHERE run_id = ?{fence_sql}",
+                (rid, *fence_params),
+            )
+            if row is None:
+                if daemon_id is not None:
+                    return False
+                raise ValueError(f"cron run not found: {rid}")
+            targets = parse_json(row["delivery_targets_json"], [])
+            if normalized_target not in targets:
+                return False
+            targets.remove(normalized_target)
+            updated = self._execute_count(
+                f"UPDATE cron_runs SET delivery_targets_json = ?, updated_at = ? "
+                f"WHERE run_id = ?{fence_sql}",
+                (to_json(targets), to_iso_utc(utc_now()), rid, *fence_params),
+            )
+        return updated > 0

@@ -188,9 +188,6 @@ def _runtime_special_values(payload: dict[str, Any]) -> dict[str, Any]:
         "chat_turn_timeout_seconds": max(
             10.0, float(payload.get("chat_turn_timeout_seconds") or 90.0)
         ),
-        "chat_turn_max_attempts": max(
-            1, _as_int(payload.get("chat_turn_max_attempts"), 2)
-        ),
         "memory_provider": _normalize_memory_provider(payload.get("memory_provider")),
         "memory_capsule_strategy": _normalize_memory_capsule_strategy(
             payload.get("memory_capsule_strategy")
@@ -287,7 +284,6 @@ def _runtime_config_to_payload(
             "process_mode": _normalize_process_mode(config.process_mode),
             "session_context_chars_per_token": config.session_context_chars_per_token,
             "chat_turn_timeout_seconds": config.chat_turn_timeout_seconds,
-            "chat_turn_max_attempts": config.chat_turn_max_attempts,
             "memory_provider": _normalize_memory_provider(config.memory_provider),
             "memory_capsule_strategy": _normalize_memory_capsule_strategy(
                 config.memory_capsule_strategy

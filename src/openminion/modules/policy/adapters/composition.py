@@ -19,6 +19,7 @@ SEAM_AGENT_REQUIRED_LANE_RETRY = "services.agent.execution.required.completion"
 SEAM_API_TOOLS = "api.operations.tools"
 SEAM_CLI_TOOLS = "cli.commands.tools"
 SEAM_CLI_CRON = "cli.commands.cron"
+SEAM_CLI_TASKS = "cli.commands.tasks"
 SEAM_RUNTIME_ENGINE = "services.runtime.engine"
 
 
@@ -41,6 +42,7 @@ __all__ = [
     "SEAM_API_TOOLS",
     "SEAM_BRAIN_RUNTIME_TOOL_API",
     "SEAM_CLI_CRON",
+    "SEAM_CLI_TASKS",
     "SEAM_CLI_TOOLS",
     "SEAM_RUNTIME_ENGINE",
     "SEAM_TOOL_EXECUTOR",

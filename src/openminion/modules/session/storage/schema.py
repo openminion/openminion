@@ -261,6 +261,15 @@ SESSION_RETENTION_SCHEMA: tuple[str, ...] = (
 
 CRON_SCHEMA: tuple[str, ...] = (
     """
+    CREATE TABLE IF NOT EXISTS cron_scheduler_control (
+      singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
+      paused       INTEGER NOT NULL DEFAULT 0,
+      reason       TEXT,
+      actor        TEXT,
+      updated_at   TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS cron_jobs (
       job_id             TEXT PRIMARY KEY,
       name               TEXT NOT NULL,

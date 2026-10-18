@@ -117,6 +117,45 @@ class SQLiteCronRepository:
             lease_ttl_s=lease_ttl_s,
         )
 
+    def trigger_task_run_now(self, job_id: str) -> dict[str, Any]:
+        return self._store.trigger_task_run_now(job_id)
+
+    def update_task_cron_job(
+        self,
+        job_id: str,
+        *,
+        instruction: str,
+        schedule: Mapping[str, Any],
+        expected_updated_at: str,
+    ) -> dict[str, Any]:
+        return self._store.update_task_cron_job(
+            job_id,
+            instruction=instruction,
+            schedule=schedule,
+            expected_updated_at=expected_updated_at,
+        )
+
+    def delete_terminal_cron_runs(self, job_id: str) -> int:
+        return self._store.delete_terminal_cron_runs(job_id)
+
+    def get_cron_scheduler_control(self) -> dict[str, Any]:
+        return self._store.get_cron_scheduler_control()
+
+    def set_cron_scheduler_control(
+        self,
+        *,
+        paused: bool,
+        reason: str | None,
+        actor: str,
+        expected_updated_at: str,
+    ) -> dict[str, Any]:
+        return self._store.set_cron_scheduler_control(
+            paused=paused,
+            reason=reason,
+            actor=actor,
+            expected_updated_at=expected_updated_at,
+        )
+
     def list_cron_runs(
         self,
         *,
@@ -126,11 +165,40 @@ class SQLiteCronRepository:
     ) -> list[dict[str, Any]]:
         return self._store.list_cron_runs(job_id=job_id, limit=limit, states=states)
 
-    def list_unresolved_task_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
-        return self._store.list_unresolved_task_runs(limit=limit)
+    def list_unresolved_task_runs(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        return self._store.list_unresolved_task_runs(limit=limit, offset=offset)
 
-    def mark_cron_delivery_target(self, run_id: str, *, target: str) -> bool:
-        return self._store.mark_cron_delivery_target(run_id, target=target)
+    def mark_cron_delivery_target(
+        self,
+        run_id: str,
+        *,
+        target: str,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
+    ) -> bool:
+        return self._store.mark_cron_delivery_target(
+            run_id,
+            target=target,
+            daemon_id=daemon_id,
+            expected_attempts=expected_attempts,
+        )
+
+    def unmark_cron_delivery_target(
+        self,
+        run_id: str,
+        *,
+        target: str,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
+    ) -> bool:
+        return self._store.unmark_cron_delivery_target(
+            run_id,
+            target=target,
+            daemon_id=daemon_id,
+            expected_attempts=expected_attempts,
+        )
 
     def enqueue_due_cron_runs(
         self,
@@ -167,12 +235,14 @@ class SQLiteCronRepository:
         run_id: str,
         *,
         daemon_id: str,
+        expected_attempts: int,
         lease_ttl_s: int = 60,
         now_iso: str | None = None,
     ) -> bool:
         return self._store.renew_cron_run_lease(
             run_id,
             daemon_id=daemon_id,
+            expected_attempts=expected_attempts,
             lease_ttl_s=lease_ttl_s,
             now_iso=now_iso,
         )
@@ -190,9 +260,17 @@ class SQLiteCronRepository:
         run_id: str,
         *,
         error: dict[str, Any],
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
         now_iso: str | None = None,
     ) -> dict[str, Any] | None:
-        return self._store.retry_cron_run(run_id, error=error, now_iso=now_iso)
+        return self._store.retry_cron_run(
+            run_id,
+            error=error,
+            daemon_id=daemon_id,
+            expected_attempts=expected_attempts,
+            now_iso=now_iso,
+        )
 
     def get_cron_scope_state(self, concurrency_key: str) -> dict[str, Any] | None:
         return self._store.get_cron_scope_state(concurrency_key)
@@ -207,6 +285,8 @@ class SQLiteCronRepository:
         error: dict[str, Any] | None = None,
         output: dict[str, Any] | None = None,
         isolated_session_id: str | None = None,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
         now_iso: str | None = None,
     ) -> dict[str, Any] | None:
         return self._store.finish_cron_run(
@@ -217,6 +297,8 @@ class SQLiteCronRepository:
             error=error,
             output=output,
             isolated_session_id=isolated_session_id,
+            daemon_id=daemon_id,
+            expected_attempts=expected_attempts,
             now_iso=now_iso,
         )
 

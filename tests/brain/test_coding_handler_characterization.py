@@ -584,8 +584,8 @@ class TestCodingProfileRunnerMethods:
 class TestCodingHandlerPureHelperBehavior:
     def test_current_coding_ceiling_sizes(self) -> None:
         assert len(CODING_ALLOWED_TOOLS) == 19
-        assert len(PROJECT_CODING_ALLOWED_TOOLS) == 46
-        assert len(PROJECT_RELEASE_ALLOWED_TOOLS) == 49
+        assert len(PROJECT_CODING_ALLOWED_TOOLS) == 52
+        assert len(PROJECT_RELEASE_ALLOWED_TOOLS) == 55
 
     def test_build_error_result_shape(self) -> None:
         result = handler._build_error_result("oops", "TEST_CODE")

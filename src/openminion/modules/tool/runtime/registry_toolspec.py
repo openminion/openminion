@@ -302,6 +302,12 @@ def execute_tool_spec_call(
                 enforce_tool_dependencies,
             )
 
+            runtime_ctx.policy.ensure_confirm_if_required(
+                tool_name=tool_name,
+                args=validated_args,
+                confirm=runtime_ctx.confirm,
+                dangerous_default=bool(getattr(tool, "dangerous", False)),
+            )
             enforce_tool_dependencies(tool, runtime_context=runtime_ctx)
             payload = invoke_tool_spec_handler(
                 handler=handler,

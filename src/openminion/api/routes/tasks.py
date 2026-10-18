@@ -17,7 +17,12 @@ from .contracts import (
     exception_route_result,
     runtime_unavailable_route_result,
 )
-from .task_responses import task_runtime_error, task_scope_denied
+from .task_controls import handle_task_control_request
+from .task_responses import (
+    task_agent_id_required,
+    task_runtime_error,
+    task_scope_denied,
+)
 
 _TASKS_RE = re.compile(r"/v1/tasks")
 _TASK_ACTION_RE = re.compile(r"/v1/tasks/([^/]+)/(pause|resume|cancel)")
@@ -39,6 +44,17 @@ def handle_request(
     body: dict[str, object] | None,
     query: str | None,
 ) -> RouteResult | None:
+    options = _query_options(query)
+    control_result = handle_task_control_request(
+        ctx,
+        method_name=method_name,
+        path=path,
+        body=body,
+        agent_id=options.agent_id,
+        session_id=options.session_id,
+    )
+    if control_result is not None:
+        return control_result
     if method_name == "POST" and _TASKS_RE.fullmatch(path):
         return _create_task(ctx, path=path, body=body, query=query)
     if method_name == "GET" and _TASKS_RE.fullmatch(path):
@@ -67,7 +83,7 @@ def _create_task(
         return runtime_unavailable_route_result(path=path, exc="Runtime not available.")
     options = _query_options(query)
     if not options.agent_id:
-        return _agent_id_required()
+        return task_agent_id_required()
     try:
         payload = create_task(
             runtime=ctx.runtime,
@@ -105,7 +121,7 @@ def _list_tasks(ctx: APIRouteContext, *, path: str, query: str | None) -> RouteR
         return runtime_unavailable_route_result(path=path, exc="Runtime not available.")
     options = _query_options(query)
     if not options.agent_id:
-        return _agent_id_required()
+        return task_agent_id_required()
     try:
         return RouteResult(
             status=HTTPStatus.OK,
@@ -127,7 +143,7 @@ def _show_task(
         return runtime_unavailable_route_result(path=path, exc="Runtime not available.")
     options = _query_options(query)
     if not options.agent_id:
-        return _agent_id_required()
+        return task_agent_id_required()
     try:
         task = show_task(
             runtime=ctx.runtime,
@@ -163,7 +179,7 @@ def _apply_task_action(
         return runtime_unavailable_route_result(path=path, exc="Runtime not available.")
     options = _query_options(query)
     if not options.agent_id:
-        return _agent_id_required()
+        return task_agent_id_required()
     try:
         payload = apply_task_action(
             runtime=ctx.runtime,
@@ -204,16 +220,6 @@ def _apply_task_action(
 
 def _first_query_value(params: dict[str, list[str]], key: str) -> str:
     return (params.get(key) or [""])[0].strip()
-
-
-def _agent_id_required() -> RouteResult:
-    return exception_route_result(
-        HTTPStatus.BAD_REQUEST,
-        code="agent_id_required",
-        exc=ValueError("agent_id query parameter is required"),
-        details={},
-        retryable=False,
-    )
 
 
 def _safe_int(value: str, *, default: int) -> int:

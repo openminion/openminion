@@ -18,6 +18,7 @@ class FakeCronStore:
         self.finished_count = 0
         self.delivery_targets: dict[str, set[str]] = {}
         self.deleted_job_ids: list[str] = []
+        self.disabled_job_ids: list[str] = []
 
     def add_job(
         self, *, job_id: str, payload: dict, delivery: dict | None = None
@@ -85,6 +86,7 @@ class FakeCronStore:
         run_id: str,
         *,
         daemon_id: str,
+        expected_attempts: int,
         lease_ttl_s: int = 60,
         now_iso: str | None = None,
     ) -> bool:
@@ -95,6 +97,7 @@ class FakeCronStore:
                 run is None
                 or run.get("state") != "running"
                 or run.get("lease_owner") != daemon_id
+                or run.get("attempts") != expected_attempts
             ):
                 return False
             self.renew_counts[run_id] = self.renew_counts.get(run_id, 0) + 1
@@ -106,11 +109,16 @@ class FakeCronStore:
         del now_iso, limit
         return []
 
+    def get_cron_scheduler_control(self) -> dict:
+        return {"paused": False, "updated_at": "test"}
+
     def retry_cron_run(
         self,
         run_id: str,
         *,
         error: dict,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
         now_iso: str | None = None,
     ) -> dict | None:
         del run_id, error, now_iso
@@ -131,12 +139,21 @@ class FakeCronStore:
         error: dict | None = None,
         output: dict | None = None,
         isolated_session_id: str | None = None,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
         now_iso: str | None = None,
     ) -> dict | None:
         del artifact_refs, now_iso
         with self._lock:
             run = self.runs.get(run_id)
-            if run is None:
+            if (
+                run is None
+                or (daemon_id is not None and run.get("lease_owner") != daemon_id)
+                or (
+                    expected_attempts is not None
+                    and run.get("attempts") != expected_attempts
+                )
+            ):
                 return None
             run["state"] = state
             run["summary"] = summary
@@ -147,8 +164,37 @@ class FakeCronStore:
             self.finished.set()
             return dict(run)
 
-    def mark_cron_delivery_target(self, run_id: str, *, target: str) -> bool:
+    def set_cron_job_enabled(
+        self,
+        job_id: str,
+        enabled: bool,
+        *,
+        cancel_queued: bool = False,
+    ) -> None:
+        del cancel_queued
         with self._lock:
+            if job_id in self.jobs:
+                self.jobs[job_id]["enabled"] = enabled
+            if not enabled:
+                self.disabled_job_ids.append(job_id)
+
+    def mark_cron_delivery_target(
+        self,
+        run_id: str,
+        *,
+        target: str,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
+    ) -> bool:
+        with self._lock:
+            run = self.runs.get(run_id)
+            if run is None:
+                return False
+            if daemon_id is not None and (
+                run.get("lease_owner") != daemon_id
+                or run.get("attempts") != expected_attempts
+            ):
+                return False
             seen = self.delivery_targets.setdefault(run_id, set())
             if target in seen:
                 return False
@@ -435,7 +481,7 @@ def test_scheduler_delivers_nonterminal_watch_without_deleting_it() -> None:
     assert store.deleted_job_ids == []
 
 
-def test_scheduler_deletes_terminal_watch_after_delivery() -> None:
+def test_scheduler_disables_terminal_watch_after_delivery() -> None:
     store = FakeCronStore()
     store.add_job(
         job_id="job-watch-terminal",
@@ -476,7 +522,10 @@ def test_scheduler_deletes_terminal_watch_after_delivery() -> None:
         scheduler.shutdown(grace_s=1.0)
 
     assert deliveries == [("announce", "cli:ops")]
-    assert store.deleted_job_ids == ["job-watch-terminal"]
+    assert store.disabled_job_ids == ["job-watch-terminal"]
+    assert store.jobs["job-watch-terminal"]["enabled"] is False
+    assert "job-watch-terminal" in store.jobs
+    assert store.deleted_job_ids == []
 
 
 def test_scheduler_defaults_isolated_session_id_for_agent_turn() -> None:

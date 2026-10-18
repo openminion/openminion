@@ -25,7 +25,7 @@ class TaskCronStoreProtocol(Protocol):
     ) -> list[dict[str, Any]]: ...
 
     def list_unresolved_task_runs(
-        self, *, limit: int = 100
+        self, *, limit: int = 100, offset: int = 0
     ) -> list[dict[str, Any]]: ...
 
     def set_cron_job_enabled(
@@ -43,6 +43,30 @@ class TaskCronStoreProtocol(Protocol):
         limit: int = 100,
         states: list[str] | None = None,
     ) -> list[dict[str, Any]]: ...
+
+    def trigger_task_run_now(self, job_id: str) -> dict[str, Any]: ...
+
+    def update_task_cron_job(
+        self,
+        job_id: str,
+        *,
+        instruction: str,
+        schedule: Mapping[str, Any],
+        expected_updated_at: str,
+    ) -> dict[str, Any]: ...
+
+    def delete_terminal_cron_runs(self, job_id: str) -> int: ...
+
+    def get_cron_scheduler_control(self) -> dict[str, Any]: ...
+
+    def set_cron_scheduler_control(
+        self,
+        *,
+        paused: bool,
+        reason: str | None,
+        actor: str,
+        expected_updated_at: str,
+    ) -> dict[str, Any]: ...
 
 
 class TaskLifecycleState(StrEnum):
@@ -189,8 +213,10 @@ class _NullCronRepository:
         del agent_id, include_unowned
         return []
 
-    def list_unresolved_task_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
-        del limit
+    def list_unresolved_task_runs(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        del limit, offset
         return []
 
     def set_cron_job_enabled(
@@ -211,6 +237,21 @@ class _NullCronRepository:
         states: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         return []
+
+    def trigger_task_run_now(self, job_id: str) -> dict[str, Any]:
+        raise NotImplementedError("Cron scheduling is unavailable")
+
+    def update_task_cron_job(self, job_id: str, **kwargs: Any) -> dict[str, Any]:
+        raise NotImplementedError("Cron scheduling is unavailable")
+
+    def delete_terminal_cron_runs(self, job_id: str) -> int:
+        raise NotImplementedError("Cron scheduling is unavailable")
+
+    def get_cron_scheduler_control(self) -> dict[str, Any]:
+        raise NotImplementedError("Cron scheduling is unavailable")
+
+    def set_cron_scheduler_control(self, **kwargs: Any) -> dict[str, Any]:
+        raise NotImplementedError("Cron scheduling is unavailable")
 
 
 __all__ = [

@@ -8,6 +8,38 @@ from openminion.api.routes.tasks import handle_request
 from openminion.modules.task import InMemoryTaskCtl, TaskCreateInput
 from openminion.modules.session.storage.repository import create_sqlite_cron_repository
 from openminion.modules.task import TaskManager
+from openminion.modules.tool.registry import ToolRegistry
+from openminion.tools.task.plugin import register as register_task_tools
+
+
+def _control_ctx(tmp_path) -> tuple[APIRouteContext, TaskManager, str]:
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "controls.db")
+    )
+    created = manager.schedule_user_task(
+        name="check",
+        instruction="check status",
+        schedule={"kind": "every", "every_ms": 60_000},
+        agent_id="agent-a",
+    )
+    registry = ToolRegistry()
+    register_task_tools(registry)
+    runtime = SimpleNamespace(
+        task_manager=manager,
+        tools=registry,
+        scheduler_readiness=lambda: {"state": "ready"},
+    )
+    return (
+        APIRouteContext(
+            config_path=None,
+            runtime=runtime,
+            runtime_bootstrap_error=None,
+            request_headers=None,
+            request_id="control-request",
+        ),
+        manager,
+        created["record"].task_id,
+    )
 
 
 def _ctx() -> APIRouteContext:
@@ -236,6 +268,116 @@ def test_tasks_route_filters_owner_before_limit(tmp_path) -> None:
     assert result is not None
     assert result.status == HTTPStatus.OK
     assert [task["id"] for task in result.payload["tasks"]] == [owned.task_id]
+
+
+def test_tasks_route_runs_and_updates_exact_task(tmp_path) -> None:
+    ctx, manager, task_id = _control_ctx(tmp_path)
+    run = handle_request(
+        ctx,
+        method_name="POST",
+        path=f"/v1/tasks/{task_id}/run-now",
+        body={},
+        query="agent_id=agent-a",
+    )
+    assert run is not None and run.status == HTTPStatus.OK
+    manager._cron_repository.finish_cron_run(
+        run.payload["run_id"], state="finished", summary="done"
+    )
+    current = manager.get_scheduled_job(task_id)
+    assert current is not None
+    updated = handle_request(
+        ctx,
+        method_name="PATCH",
+        path=f"/v1/tasks/{task_id}",
+        body={
+            "instruction": "check and report",
+            "schedule": {"kind": "every", "every_ms": 120_000},
+            "expected_updated_at": current["updated_at"],
+        },
+        query="agent_id=agent-a",
+    )
+    assert updated is not None and updated.status == HTTPStatus.OK
+    assert updated.payload["task"]["payload"]["message"] == "check and report"
+
+
+def test_tasks_route_requires_confirmation_for_history_delete(tmp_path) -> None:
+    ctx, manager, task_id = _control_ctx(tmp_path)
+    run = manager.run_task_now(task_id)
+    manager._cron_repository.finish_cron_run(
+        run["run_id"], state="finished", summary="done"
+    )
+
+    denied = handle_request(
+        ctx,
+        method_name="POST",
+        path=f"/v1/tasks/{task_id}/history/delete",
+        body={},
+        query="agent_id=agent-a",
+    )
+    assert denied is not None and denied.status == HTTPStatus.FORBIDDEN
+    assert len(manager.list_scheduled_runs(job_id=task_id)) == 1
+
+    string_denied = handle_request(
+        ctx,
+        method_name="POST",
+        path=f"/v1/tasks/{task_id}/history/delete",
+        body={"confirm": "false"},
+        query="agent_id=agent-a",
+    )
+    assert string_denied is not None
+    assert string_denied.status == HTTPStatus.FORBIDDEN
+    assert len(manager.list_scheduled_runs(job_id=task_id)) == 1
+
+    approved = handle_request(
+        ctx,
+        method_name="POST",
+        path=f"/v1/tasks/{task_id}/history/delete",
+        body={"confirm": True},
+        query="agent_id=agent-a",
+    )
+    assert approved is not None and approved.status == HTTPStatus.OK
+    assert approved.payload["deleted_count"] == 1
+
+
+def test_tasks_route_scheduler_control_uses_revision(tmp_path) -> None:
+    ctx, _, _ = _control_ctx(tmp_path)
+    status = handle_request(
+        ctx,
+        method_name="GET",
+        path="/v1/tasks/scheduler",
+        body=None,
+        query="agent_id=agent-a",
+    )
+    assert status is not None and status.status == HTTPStatus.OK
+    revision = status.payload["scheduler_control"]["updated_at"]
+    paused = handle_request(
+        ctx,
+        method_name="POST",
+        path="/v1/tasks/scheduler/pause",
+        body={
+            "reason": "maintenance",
+            "expected_updated_at": revision,
+            "confirm": True,
+        },
+        query="agent_id=agent-a",
+    )
+    assert paused is not None and paused.status == HTTPStatus.OK
+    assert paused.payload["scheduler_control"]["paused"] is True
+
+    malformed_resume = handle_request(
+        ctx,
+        method_name="POST",
+        path="/v1/tasks/scheduler/resume",
+        body={
+            "reason": "must not be ignored",
+            "expected_updated_at": paused.payload["scheduler_control"]["updated_at"],
+            "confirm": True,
+        },
+        query="agent_id=agent-a",
+    )
+    assert malformed_resume is not None
+    assert malformed_resume.status == HTTPStatus.BAD_REQUEST
+    assert malformed_resume.payload["error"]["code"] == "invalid_arguments"
 
 
 def test_tasks_route_uses_shared_relative_schedule_contract(tmp_path) -> None:

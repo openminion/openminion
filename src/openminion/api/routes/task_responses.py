@@ -3,6 +3,16 @@ from http import HTTPStatus
 from .contracts import RouteResult, exception_route_result
 
 
+def task_agent_id_required() -> RouteResult:
+    return exception_route_result(
+        HTTPStatus.BAD_REQUEST,
+        code="agent_id_required",
+        exc=ValueError("agent_id query parameter is required"),
+        details={},
+        retryable=False,
+    )
+
+
 def task_runtime_error(exc: Exception) -> RouteResult:
     code = str(getattr(exc, "code", "") or "")
     inventory_unavailable = code == "TASK_INVENTORY_UNAVAILABLE"

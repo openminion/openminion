@@ -170,7 +170,6 @@ def test_lgmh_smoke_cross_session_cron_and_goal_cli(tmp_path, monkeypatch) -> No
         cron_store=cron_store,
         request_builder=_request_builder,
         timeout_s=30.0,
-        max_attempts=1,
     )
 
     result = executor.execute(

@@ -2,11 +2,10 @@ api/core/infrastructure.py	openminion.modules.llm.providers.factory
 api/core/infrastructure.py	openminion.modules.storage.runtime
 api/core/profiles.py	openminion.modules.storage.runtime
 api/operations/skill.py	openminion.modules.skill.runtime.skill
+api/operations/tasks.py	openminion.modules.llm.providers
 api/operations/tools.py	openminion.modules.llm.providers.base
 api/operations/tools.py	openminion.modules.tool.runtime.routing
 cli/commands/agent/control.py	openminion.modules.storage.runtime.registry_store
-cli/commands/cron.py	openminion.modules.llm.providers.base
-cli/commands/cron.py	openminion.modules.tool.runtime.routing
 cli/commands/doctor.py	openminion.modules.llm.providers.factory
 cli/commands/doctor.py	openminion.modules.storage.runtime.sqlite
 cli/commands/export.py	openminion.modules.storage.runtime.context
@@ -24,6 +23,8 @@ cli/commands/status/identity.py	openminion.modules.identity.runtime.service
 cli/commands/status/identity.py	openminion.modules.identity.storage.store
 cli/commands/status/session_store.py	openminion.modules.session.runtime.factory
 cli/commands/status/session_store.py	openminion.modules.storage.runtime.sqlite
+cli/commands/task_tools.py	openminion.modules.llm.providers
+cli/commands/task_tools.py	openminion.modules.tool.runtime.routing
 cli/commands/tools.py	openminion.modules.llm.providers.base
 cli/commands/tools.py	openminion.modules.tool.runtime.routing
 modules/a2a/storage/store.py	openminion.modules.storage.runtime.module_store
@@ -147,12 +148,12 @@ services/runtime/turn_router.py	openminion.modules.storage.runtime.session_store
 tools/agent/plugin.py	openminion.modules.tool.runtime
 tools/agent/plugin.py	openminion.modules.tool.runtime.environment
 tools/browser/payloads.py	openminion.modules.tool.runtime.resource_selectors
-tools/browser/providers/registry.py	openminion.modules.tool.runtime
-tools/browser/providers/registry.py	openminion.modules.tool.runtime.resource_selectors
 tools/browser/providers/pinchtab/provider.py	openminion.modules.tool.runtime
 tools/browser/providers/pinchtab/provider.py	openminion.modules.tool.runtime.resource_selectors
 tools/browser/providers/playwright/provider.py	openminion.modules.tool.runtime.resource_selectors
 tools/browser/providers/playwright/runtime.py	openminion.modules.tool.runtime.resource_selectors
+tools/browser/providers/registry.py	openminion.modules.tool.runtime
+tools/browser/providers/registry.py	openminion.modules.tool.runtime.resource_selectors
 tools/browser/runtime.py	openminion.modules.tool.runtime.context
 tools/browser/runtime.py	openminion.modules.tool.runtime.policy
 tools/browser/runtime.py	openminion.modules.tool.runtime.registry_toolspec

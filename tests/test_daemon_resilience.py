@@ -558,6 +558,7 @@ def test_attach_cron_scheduler_injects_cron_metadata_into_turn_request(
             storage=SimpleNamespace(path=str(tmp_path / "api.db")),
             agent=SimpleNamespace(name="agent-cron"),
         ),
+        data_root=tmp_path / "data",
         runtime_manager=runtime_manager,
         list_registered_agents=lambda: ["agent-cron", "cron-agent-explicit"],
     )
@@ -671,6 +672,7 @@ def test_attach_cron_scheduler_rejects_unknown_job_agent(
             storage=SimpleNamespace(path=str(tmp_path / "api.db")),
             agent=SimpleNamespace(name="agent-cron"),
         ),
+        data_root=tmp_path / "data",
         runtime_manager=runtime_manager,
         list_registered_agents=lambda: ["agent-cron"],
     )
@@ -725,12 +727,15 @@ def test_attach_cron_scheduler_reconciles_one_time_task_in_runtime_database(
             return None
 
     database = tmp_path / "sessions.db"
+    data_root = tmp_path / "data"
+    task_database = data_root / "task" / "task.db"
     runtime = SimpleNamespace(
         config=SimpleNamespace(
             runtime=SimpleNamespace(env={}),
             storage=SimpleNamespace(path=str(database)),
             agent=SimpleNamespace(name="agent-cron"),
         ),
+        data_root=data_root,
         runtime_manager=None,
     )
     monkeypatch.setattr(
@@ -752,7 +757,10 @@ def test_attach_cron_scheduler_reconciles_one_time_task_in_runtime_database(
     )
     assert scheduler is not None
 
-    manager = TaskManager.from_cron_repository(scheduler.store, db_path=database)
+    manager = TaskManager.from_cron_repository(
+        scheduler.store,
+        db_path=task_database,
+    )
     record = manager.schedule_task(
         name="one-time",
         schedule={
@@ -815,6 +823,7 @@ def test_attach_cron_scheduler_announce_delivery_writes_session_surface(
             storage=SimpleNamespace(path=str(tmp_path / "api.db")),
             agent=SimpleNamespace(name="agent-cron"),
         ),
+        data_root=tmp_path / "data",
         runtime_manager=SimpleNamespace(submit_turn=lambda _req: None),
         sessions=_FakeSessions(),
     )

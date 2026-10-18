@@ -5,6 +5,7 @@ from dataclasses import asdict
 from functools import partial
 import hashlib
 import sqlite3
+from pathlib import Path
 from threading import Lock
 from time import monotonic, perf_counter
 from typing import Any
@@ -26,6 +27,7 @@ from openminion.modules.telemetry.lifecycle import (
 )
 from openminion.modules.telemetry.service import TelemetryService
 from openminion.modules.telemetry.trace import phase_timing
+from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.base.logging import format_structured_event, get_logger
 from openminion.services.runtime.turn_input.lifecycle import (
     project_terminal_runtime_event,
@@ -200,7 +202,7 @@ def attach_cron_scheduler(
 
     try:
         lifecycle_bridge = getattr(runtime, "_lifecycle_event_bridge", None)
-        cron_store, cron_db_path = _cron_store_for_runtime(
+        cron_store = _cron_store_for_runtime(
             runtime=runtime,
             resolve_database_path=resolve_database_path,
             resolve_brain_sessions_db_path=resolve_brain_sessions_db_path,
@@ -212,7 +214,9 @@ def attach_cron_scheduler(
 
         task_manager = TaskManager.from_cron_repository(
             cron_store,
-            db_path=cron_db_path,
+            db_path=(
+                Path(runtime.data_root) / DEFAULT_INTEGRATED_SQLITE_SUBPATH
+            ).resolve(),
         )
 
         scheduler = CronScheduler(
@@ -269,13 +273,13 @@ def _cron_store_for_runtime(
     resolve_database_path: Any,
     resolve_brain_sessions_db_path: Any,
     sqlite_session_store: Any,
-) -> tuple[Any, Any]:
+) -> Any:
     storage_path = resolve_database_path(
         runtime.config.storage.path,
         env=getattr(runtime.config.runtime, "env", None),
     )
     db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
-    return sqlite_session_store(db_path), db_path
+    return sqlite_session_store(db_path)
 
 
 def _cron_turn_executor_for_runtime(
@@ -287,10 +291,6 @@ def _cron_turn_executor_for_runtime(
         10.0,
         float(getattr(runtime.config.runtime, "chat_turn_timeout_seconds", 0) or 90.0),
     )
-    cron_max_attempts: int = max(
-        1,
-        int(getattr(runtime.config.runtime, "chat_turn_max_attempts", 0) or 2),
-    )
     return CronTurnExecutor(
         runtime=runtime,
         cron_store=cron_store,
@@ -299,7 +299,6 @@ def _cron_turn_executor_for_runtime(
             default_agent_id=agent_id,
         ),
         timeout_s=cron_timeout_s,
-        max_attempts=cron_max_attempts,
     )
 
 

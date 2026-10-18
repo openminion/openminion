@@ -96,7 +96,6 @@ def test_scheduled_consolidation_rejects_off_batch_then_preserves_valid_counts(
         cron_store=cron_store,
         request_builder=MagicMock(),
         timeout_s=30,
-        max_attempts=1,
     )
     request_payload = cron_executor._request_payload(
         job=job,

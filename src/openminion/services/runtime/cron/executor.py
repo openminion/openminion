@@ -30,6 +30,7 @@ from openminion.modules.task.cron_payloads import (
     build_expired_watch_result,
     finalize_watch_turn,
     mark_idle_tick_request,
+    raise_for_cron_turn_errors,
     turn_wait_timeout as wait,
     watch_condition_value,
     watch_output,
@@ -66,7 +67,6 @@ class CronTurnExecutor:
         cron_store: Any,
         request_builder: Callable[[dict[str, Any], str], Any],
         timeout_s: float,
-        max_attempts: int,
         routine_dispatcher: RoutineDispatcher | None = None,
         artifactctl_factory: Callable[[], Any] = create_default_artifactctl,
     ) -> None:
@@ -74,7 +74,6 @@ class CronTurnExecutor:
         self._cron_store = cron_store
         self._request_builder = request_builder
         self._timeout_s = max(10.0, float(timeout_s))
-        self._max_attempts = max(1, int(max_attempts))
         self._routine_dispatcher = routine_dispatcher or build_default_dispatcher()
         self._artifactctl_factory = artifactctl_factory
 
@@ -511,37 +510,15 @@ class CronTurnExecutor:
                     request_meta["goal_context_preloaded"] = "true"
             except Exception:
                 pass
-        cron_job_id = str(job.get("job_id", "") or "").strip()
-        for attempt in range(1, self._max_attempts + 1):
-            request = self._request_builder(request_payload, agent_id)
-            handle = manager.submit_turn(request)
-            try:
-                result = handle.result(timeout_s=wait(self._timeout_s, request_payload))
-            except Exception as exc:  # noqa: BLE001
-                _CRON_LOGGER.warning(
-                    format_structured_event(
-                        "cron.turn.attempt_failed",
-                        attempt=attempt,
-                        max_attempts=self._max_attempts,
-                        job_id=cron_job_id,
-                        error=str(exc),
-                    )
-                )
-                if isinstance(exc, TimeoutError):
-                    raise
-                if attempt < self._max_attempts:
-                    continue
-                return {
-                    "summary": f"Agent turn failed after {self._max_attempts} attempt(s): {exc}",
-                    "error": True,
-                }
-            return build_cron_turn_result(
-                result=result,
-                session_id=request.session_id,
-                consolidation=self._consolidation_metadata(payload),
-                completed_at=datetime.now(timezone.utc).isoformat(),
-            )
-        raise AssertionError("unreachable: max attempts is at least one")
+        request = self._request_builder(request_payload, agent_id)
+        handle = manager.submit_turn(request)
+        result = handle.result(timeout_s=wait(self._timeout_s, request_payload))
+        return build_cron_turn_result(
+            result=result,
+            session_id=request.session_id,
+            consolidation=self._consolidation_metadata(payload),
+            completed_at=datetime.now(timezone.utc).isoformat(),
+        )
 
     def _execute_idle_tick_turn(
         self,
@@ -599,8 +576,6 @@ class CronTurnExecutor:
             manager=manager,
             request_payload=request_payload,
             agent_id=agent_id,
-            cron_job_id=str(job.get("job_id", "") or "").strip(),
-            session_id=session_id,
         )
 
     def _submit_idle_tick_turn(
@@ -609,53 +584,24 @@ class CronTurnExecutor:
         manager: Any,
         request_payload: dict[str, Any],
         agent_id: str,
-        cron_job_id: str,
-        session_id: str,
     ) -> dict[str, Any]:
-        for attempt in range(1, self._max_attempts + 1):
-            request = self._request_builder(request_payload, agent_id)
-            handle = manager.submit_turn(request)
-            try:
-                result = handle.result(timeout_s=wait(self._timeout_s, request_payload))
-            except Exception as exc:  # noqa: BLE001
-                _CRON_LOGGER.warning(
-                    format_structured_event(
-                        "pae.idle_tick.attempt_failed",
-                        attempt=attempt,
-                        max_attempts=self._max_attempts,
-                        job_id=cron_job_id,
-                        session_id=session_id,
-                        error=str(exc),
-                    )
-                )
-                if isinstance(exc, TimeoutError):
-                    raise
-                if attempt < self._max_attempts:
-                    continue
-                return {
-                    "summary": (
-                        f"PAE idle tick failed after {self._max_attempts} "
-                        f"attempt(s): {exc}"
-                    ),
-                    "error": True,
-                }
-            metadata = getattr(result, "metadata", {}) or {}
-            metadata_dict = dict(metadata) if isinstance(metadata, dict) else {}
-            final_text = str(getattr(result, "final_text", "") or "").strip()
-            if (
-                str(metadata_dict.get("pae_idle_tick_noop", "")).strip().lower()
-                == "true"
-            ):
-                summary = "PAE idle tick: no-op"
-            elif final_text:
-                summary = final_text
-            else:
-                summary = "PAE idle tick completed."
-            return {
-                "summary": summary,
-                "metadata": metadata_dict,
-            }
-        raise AssertionError("unreachable: max attempts is at least one")
+        request = self._request_builder(request_payload, agent_id)
+        handle = manager.submit_turn(request)
+        result = handle.result(timeout_s=wait(self._timeout_s, request_payload))
+        raise_for_cron_turn_errors(result)
+        metadata = getattr(result, "metadata", {}) or {}
+        metadata_dict = dict(metadata) if isinstance(metadata, dict) else {}
+        final_text = str(getattr(result, "final_text", "") or "").strip()
+        if str(metadata_dict.get("pae_idle_tick_noop", "")).strip().lower() == "true":
+            summary = "PAE idle tick: no-op"
+        elif final_text:
+            summary = final_text
+        else:
+            summary = "PAE idle tick completed."
+        return {
+            "summary": summary,
+            "metadata": metadata_dict,
+        }
 
     def _check_idle_tick_user_activity_gate(
         self,

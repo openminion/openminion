@@ -204,6 +204,56 @@ Read-only diagnosis does not authorize a patch, process signal, service
 restart, package install, or remote change. Those actions remain separately
 owned and approved.
 
+## Scheduled task operations
+
+Use `openminion tasks` for user-owned one-time and recurring work. The task
+surface keeps lifecycle state, run history, delivery facts, and scheduler
+readiness together without exposing raw cron rows:
+
+```bash
+openminion tasks list --json
+openminion tasks show TASK_ID --json
+openminion tasks run-now TASK_ID --json
+openminion tasks update TASK_ID --instruction "New instruction" \
+  --every-ms 3600000 --expected-updated-at SCHEDULE_REVISION --json
+openminion tasks pause TASK_ID --json
+openminion tasks resume TASK_ID --json
+openminion tasks cancel TASK_ID --json
+```
+
+`tasks show` returns the opaque `schedule_revision` required by `tasks update`.
+Run-now queues an ordinary run without changing the recurring deadline. Paused,
+terminal, busy, foreign, and specialized watch/consolidation tasks are rejected
+rather than guessed or rewritten.
+
+Terminal history deletion and global scheduler pause/resume are dangerous
+controls. They require explicit confirmation unless the active policy provides
+a trusted-operator override:
+
+```bash
+openminion tasks delete-history TASK_ID --confirm --json
+openminion tasks scheduler status --json
+openminion tasks scheduler pause --reason maintenance \
+  --expected-updated-at SCHEDULER_REVISION --confirm --json
+openminion tasks scheduler resume \
+  --expected-updated-at SCHEDULER_REVISION --confirm --json
+```
+
+Scheduler pause blocks new due enqueue, acquisition, and manual run-now while
+allowing already-running work to finish. `openminion cron status` is a health
+check and exits nonzero when the scheduler is not ready. `openminion service
+status cron --json` provides the same operator-facing health truth. The daemon
+must be running for queued work to execute; management commands do not silently
+install or start an OS service.
+
+`openminion cron run --job-id TASK_ID` remains a compatibility facade over the
+exact task run-now contract. Raw cron HTTP trigger/delete operations reject
+task-owned rows. Run details include the isolated result session when one was
+created, and compatible Desktop builds can open that exact conversation.
+
+These controls do not promise cloud execution, webhook triggers, external
+exactly-once delivery, or cancellation of work already in flight.
+
 ## Long-running project execution
 
 `openminion autonomy start` runs a bounded project through durable task

@@ -10,16 +10,6 @@ from openminion.modules.task.errors import (
 )
 from openminion.modules.task.scheduling.schedule import utc_now
 from openminion.modules.task.scheduling.user_schedule import normalize_user_schedule
-from openminion.modules.tool.contracts.model_ids import (
-    MODEL_TASK_CONSOLIDATE_MEMORY,
-    MODEL_TASK_CANCEL,
-    MODEL_TASK_LIST,
-    MODEL_TASK_PAUSE,
-    MODEL_TASK_RESUME,
-    MODEL_TASK_SCHEDULE,
-    MODEL_TASK_SHOW,
-    MODEL_TASK_WATCH,
-)
 from openminion.modules.tool.runtime.environment import (
     agent_id_from_context as _agent_id_from_context,
 )
@@ -30,14 +20,16 @@ from openminion.modules.tool.runtime.context import (
 from openminion.modules.tool.contracts.schemas import ErrorCode
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry
-from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.task import TaskManager
 from openminion.modules.task.constants import (
+    DEFAULT_INTEGRATED_SQLITE_SUBPATH,
+    TASK_LIST_MAX_LIMIT,
     TASK_INTERNAL_PAUSE_REASON_KEY,
     TASK_INTERNAL_PAUSE_SOURCE_KEY,
     TASK_REASON_RESUME_EXPIRED_ONE_SHOT,
     TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
 )
+from openminion.tools.config import resolve_tool_data_root
 from openminion.modules.task.scheduling.coordination import (
     scheduler_readiness_from_health,
 )
@@ -54,6 +46,8 @@ from .constants import (
     TASK_REASON_STORAGE_EXEC_ERROR,
     TASK_REASON_STORAGE_UNAVAILABLE,
     TASK_REASON_STORAGE_UNCONFIGURED,
+    TASK_REASON_OWNERSHIP_DENIED,
+    TASK_REASON_SCHEDULER_REVISION_CONFLICT,
     WATCH_PAYLOAD_KEY,
     WATCH_TURN_KIND_CHECK,
 )
@@ -65,6 +59,12 @@ from .args import (
     TaskResumeArgs,
     TaskScheduleArgs,
     TaskShowArgs,
+    TaskRunNowArgs,
+    TaskUpdateArgs,
+    TaskDeleteHistoryArgs,
+    TaskSchedulerStatusArgs,
+    TaskSchedulerPauseArgs,
+    TaskSchedulerResumeArgs,
     TaskWatchArgs,
 )
 from .scheduled_task.runtime import (
@@ -199,7 +199,10 @@ def _resolve_task_manager(ctx: RuntimeContext) -> TaskManager:
     try:
         return TaskManager.from_cron_repository(
             store,
-            db_path=getattr(store, "db_path", None),
+            db_path=(
+                resolve_tool_data_root(context=ctx)
+                / DEFAULT_INTEGRATED_SQLITE_SUBPATH
+            ).resolve(),
         )
     except ToolRuntimeError:
         raise
@@ -287,11 +290,12 @@ def _owned_job_or_error(
             details={"task_id": task_id},
         )
     owner = _safe_str(job, "agent_id")
-    if owner and owner != caller_agent_id:
-        raise ToolRuntimeError(
+    if not owner or owner != caller_agent_id:
+        raise _tool_error(
             "POLICY_DENIED",
-            "Scheduled task is owned by another agent",
-            {"task_id": task_id},
+            message="Scheduled task is not owned by the current agent",
+            reason_code=TASK_REASON_OWNERSHIP_DENIED,
+            details={"task_id": task_id},
         )
     return job
 
@@ -579,26 +583,11 @@ def _h_task_cancel(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     task_id = validated.task_id
     caller_agent_id = _agent_id_from_context(ctx)
     manager = _resolve_task_manager(ctx)
-    with _storage_operation(
-        message="Failed to resolve scheduled task",
-        details={"task_id": task_id},
-    ):
-        job = manager.get_scheduled_job(task_id)
-    if job is None:
-        raise _tool_error(
-            "NOT_FOUND",
-            message="Scheduled task not found",
-            reason_code=TASK_REASON_RECORD_NOT_FOUND,
-            details={"task_id": validated.task_id},
-        )
-
-    owner = _safe_str(job, "agent_id")
-    if owner and owner != caller_agent_id:
-        raise ToolRuntimeError(
-            "POLICY_DENIED",
-            "Scheduled task is owned by another agent",
-            {"task_id": task_id},
-        )
+    _owned_job_or_error(
+        manager=manager,
+        task_id=task_id,
+        caller_agent_id=caller_agent_id,
+    )
 
     with _storage_operation(
         message="Failed to cancel scheduled task",
@@ -737,7 +726,7 @@ def _task_list_policy(ctx: RuntimeContext) -> tuple[bool, bool]:
 def _h_task_list(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = TaskListArgs.model_validate(args)
     requested_limit = int(validated.limit)
-    effective_limit = max(1, min(requested_limit, 100))
+    effective_limit = max(1, min(requested_limit, TASK_LIST_MAX_LIMIT))
 
     caller_agent_id = _agent_id_from_context(ctx)
     allow_cross_agent, include_unowned = _task_list_policy(ctx)
@@ -768,97 +757,139 @@ def _h_task_list(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     }
 
 
-def _task_tool_specs() -> tuple[ToolSpec, ...]:
-    return (
-        ToolSpec(
-            name=MODEL_TASK_SCHEDULE,
-            args_model=TaskScheduleArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_task_schedule,
-            dangerous=False,
-            idempotent=False,
-            tags=("plugin", "task", "schedule"),
-            capabilities=("task", "schedule"),
-            block_under_readonly=True,
-        ),
-        ToolSpec(
-            name=MODEL_TASK_CONSOLIDATE_MEMORY,
-            args_model=TaskConsolidateMemoryArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_task_consolidate_memory,
-            dangerous=False,
-            idempotent=False,
-            tags=("plugin", "task", "memory"),
-            capabilities=("task", "schedule"),
-        ),
-        ToolSpec(
-            name=MODEL_TASK_CANCEL,
-            args_model=TaskCancelArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_task_cancel,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "task", "schedule"),
-            capabilities=("task", "schedule"),
-            block_under_readonly=True,
-        ),
-        ToolSpec(
-            name=MODEL_TASK_WATCH,
-            args_model=TaskWatchArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_task_watch,
-            dangerous=False,
-            idempotent=False,
-            tags=("plugin", "task", "watch"),
-            capabilities=("task", "schedule"),
-        ),
-        ToolSpec(
-            name=MODEL_TASK_LIST,
-            args_model=TaskListArgs,
-            min_scope="READ_ONLY",
-            handler=_h_task_list,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "task", "schedule"),
-            capabilities=("task", "schedule"),
-        ),
-        ToolSpec(
-            name=MODEL_TASK_PAUSE,
-            args_model=TaskPauseArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_task_pause,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "task", "schedule"),
-            capabilities=("task", "schedule"),
-            block_under_readonly=True,
-        ),
-        ToolSpec(
-            name=MODEL_TASK_RESUME,
-            args_model=TaskResumeArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_task_resume,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "task", "schedule"),
-            capabilities=("task", "schedule"),
-            block_under_readonly=True,
-        ),
-        ToolSpec(
-            name=MODEL_TASK_SHOW,
-            args_model=TaskShowArgs,
-            min_scope="READ_ONLY",
-            handler=_h_task_show,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "task", "schedule"),
-            capabilities=("task", "schedule"),
-        ),
+def _raise_task_control_error(exc: ValueError) -> None:
+    reason_code = str(getattr(exc, "code", "") or "invalid_task_action")
+    details = getattr(exc, "details", None)
+    raise _tool_error(
+        "INVALID_ARGUMENT",
+        message=str(exc),
+        reason_code=reason_code,
+        details=dict(details) if isinstance(details, Mapping) else None,
+    ) from exc
+
+
+def _h_task_run_now(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
+    validated = TaskRunNowArgs.model_validate(args)
+    manager = _resolve_task_manager(ctx)
+    _owned_job_or_error(
+        manager=manager,
+        task_id=validated.task_id,
+        caller_agent_id=_agent_id_from_context(ctx),
     )
+    try:
+        with _storage_operation(
+            message="Failed to queue scheduled task",
+            details={"task_id": validated.task_id},
+            passthrough=(ValueError,),
+        ):
+            run = manager.run_task_now(validated.task_id)
+    except ValueError as exc:
+        _raise_task_control_error(exc)
+    return {"ok": True, "task_id": validated.task_id, **dict(run)}
+
+
+def _h_task_update(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
+    validated = TaskUpdateArgs.model_validate(args)
+    manager = _resolve_task_manager(ctx)
+    _owned_job_or_error(
+        manager=manager,
+        task_id=validated.task_id,
+        caller_agent_id=_agent_id_from_context(ctx),
+    )
+    try:
+        normalized_schedule = normalize_user_schedule(validated.schedule, now=utc_now())
+        with _storage_operation(
+            message="Failed to update scheduled task",
+            details={"task_id": validated.task_id},
+            passthrough=(ValueError,),
+        ):
+            job = manager.update_scheduled_task(
+                validated.task_id,
+                instruction=validated.instruction,
+                schedule=normalized_schedule,
+                expected_updated_at=validated.expected_updated_at,
+            )
+    except ValueError as exc:
+        _raise_task_control_error(exc)
+    return {"ok": True, "task_id": validated.task_id, "task": dict(job)}
+
+
+def _h_task_delete_history(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
+    validated = TaskDeleteHistoryArgs.model_validate(args)
+    manager = _resolve_task_manager(ctx)
+    _owned_job_or_error(
+        manager=manager,
+        task_id=validated.task_id,
+        caller_agent_id=_agent_id_from_context(ctx),
+    )
+    with _storage_operation(
+        message="Failed to delete scheduled task history",
+        details={"task_id": validated.task_id},
+    ):
+        deleted_count = manager.delete_terminal_run_history(validated.task_id)
+    return {
+        "ok": True,
+        "task_id": validated.task_id,
+        "deleted_count": deleted_count,
+    }
+
+
+def _scheduler_control_error(exc: ValueError) -> None:
+    reason = str(getattr(exc, "code", "") or TASK_REASON_SCHEDULER_REVISION_CONFLICT)
+    raise _tool_error(
+        "INVALID_ARGUMENT",
+        message=str(exc),
+        reason_code=reason,
+    ) from exc
+
+
+def _h_task_scheduler_status(
+    args: dict[str, Any], ctx: RuntimeContext
+) -> dict[str, Any]:
+    TaskSchedulerStatusArgs.model_validate(args)
+    manager = _resolve_task_manager(ctx)
+    return {
+        "ok": True,
+        "scheduler_control": manager.scheduler_control_status(),
+        "scheduler": _scheduler_readiness(ctx),
+    }
+
+
+def _h_task_scheduler_pause(
+    args: dict[str, Any], ctx: RuntimeContext
+) -> dict[str, Any]:
+    validated = TaskSchedulerPauseArgs.model_validate(args)
+    manager = _resolve_task_manager(ctx)
+    try:
+        state = manager.pause_scheduler(
+            reason=validated.reason,
+            expected_updated_at=validated.expected_updated_at,
+            actor=_agent_id_from_context(ctx),
+        )
+    except ValueError as exc:
+        _scheduler_control_error(exc)
+    return {"ok": True, "scheduler_control": state}
+
+
+def _h_task_scheduler_resume(
+    args: dict[str, Any], ctx: RuntimeContext
+) -> dict[str, Any]:
+    validated = TaskSchedulerResumeArgs.model_validate(args)
+    manager = _resolve_task_manager(ctx)
+    try:
+        state = manager.resume_scheduler(
+            expected_updated_at=validated.expected_updated_at,
+            actor=_agent_id_from_context(ctx),
+        )
+    except ValueError as exc:
+        _scheduler_control_error(exc)
+    return {"ok": True, "scheduler_control": state}
 
 
 def register(registry: ToolRegistry) -> None:
-    for spec in _task_tool_specs():
+    from .registration import task_tool_specs
+
+    for spec in task_tool_specs():
         registry.add(spec)
 
 
@@ -870,6 +901,12 @@ __all__ = [
     "TaskResumeArgs",
     "TaskScheduleArgs",
     "TaskShowArgs",
+    "TaskRunNowArgs",
+    "TaskUpdateArgs",
+    "TaskDeleteHistoryArgs",
+    "TaskSchedulerStatusArgs",
+    "TaskSchedulerPauseArgs",
+    "TaskSchedulerResumeArgs",
     "TaskWatchArgs",
     "_h_task_cancel",
     "_h_task_consolidate_memory",

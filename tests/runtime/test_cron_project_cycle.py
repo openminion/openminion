@@ -274,7 +274,6 @@ def _seed_project(
         cron_store=cron_store,
         request_builder=_request_builder,
         timeout_s=10,
-        max_attempts=1,
     )
     job = {
         "job_id": "prun_1:wake:0",
@@ -412,7 +411,6 @@ def test_focus_created_wake_advances_then_cancelled_stale_wake_is_inert(
         cron_store=cron_store,
         request_builder=_request_builder,
         timeout_s=10,
-        max_attempts=1,
     )
 
     first = executor.execute(initial_job, {"run_id": "cron-focus-1"})

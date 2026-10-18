@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Mapping
 from urllib.parse import quote
 
+from .constants import TASK_LIST_MAX_LIMIT
 from .errors import TaskInventoryUnavailableError
 from .project.operator import ProjectOperatorResumeAction, ProjectOperatorWorkState
 from .runtime.lifecycle import TaskLifecycleState
@@ -139,7 +140,7 @@ def build_task_surface(
         source=source,
         agent_id=str(agent_id or "").strip(),
         session_id=str(session_id or "").strip(),
-        limit=max(1, int(limit)),
+        limit=max(1, min(int(limit), TASK_LIST_MAX_LIMIT)),
         event_limit=max(1, int(event_limit)),
     )
 
@@ -352,10 +353,26 @@ def _lifecycle_record_payload(source: Any | None, record: Any) -> dict[str, Any]
     payload["valid_actions"] = _valid_lifecycle_actions(payload["lifecycle_state"])
     if job is not None:
         schedule = job.get("schedule") or job.get("schedule_json") or {}
+        job_payload = dict(job.get("payload") or {})
+        actions = list(payload["valid_actions"])
+        if payload["lifecycle_state"] == TaskLifecycleState.ACTIVE.value:
+            actions.append("run-now")
+        if (
+            payload["lifecycle_state"]
+            in {TaskLifecycleState.ACTIVE.value, TaskLifecycleState.PAUSED.value}
+            and str(job_payload.get("kind") or "") == "agentTurn"
+            and "_openminion_watch" not in job_payload
+            and "_openminion_memory_consolidation" not in job_payload
+        ):
+            actions.append("update")
+        actions.append("delete-history")
+        payload["valid_actions"] = actions
         payload["schedule"] = schedule
         payload["schedule_summary"] = _schedule_summary(schedule)
+        payload["schedule_revision"] = job.get("updated_at")
         payload["enabled"] = bool(job.get("enabled", True))
         payload["task_kind"] = _scheduled_task_kind(schedule)
+        payload["instruction"] = str(job_payload.get("message") or "")
         payload["session_target"] = job.get("session_target")
         runs = _safe_list_runs(source, str(payload["cron_job_id"]), limit=5)
         payload["recent_runs"] = runs

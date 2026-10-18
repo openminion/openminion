@@ -134,7 +134,6 @@ def _executor(
         cron_store=cron_store,
         request_builder=lambda payload, agent_id: (payload, agent_id),
         timeout_s=10,
-        max_attempts=1,
     )
 
 

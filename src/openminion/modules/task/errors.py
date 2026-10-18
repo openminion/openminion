@@ -37,8 +37,16 @@ class TaskScheduleIntervalTooShortError(ValueError):
         super().__init__(f"recurring interval must be at least {minimum_every_ms} ms")
 
 
+class TaskControlError(ValueError):
+    def __init__(self, code: str, message: str, **details: Any) -> None:
+        self.code = code
+        self.details = details
+        super().__init__(message)
+
+
 __all__ = [
     "TaskInventoryUnavailableError",
     "TaskResumeExpiredError",
     "TaskScheduleIntervalTooShortError",
+    "TaskControlError",
 ]

@@ -32,13 +32,14 @@ def build_policy_adapter(
     tool_budget_state: ToolBudgetState | None,
     turn_boundary_adapter: Any,
 ) -> Any | None:
-    if service_port.security_policy is None or service_port.tools is None:
+    tools = service_port.tools
+    if service_port.security_policy is None or tools is None:
         return None
 
     def policy_lookup(tool_name: str) -> Any:
-        profile = service_port.tools.policy_for(tool_name)
+        profile = tools.policy_for(tool_name)
         return SimpleNamespace(
-            required_scopes_all=(),
+            required_scopes_all=profile.required_scopes_all,
             risk=getattr(profile, "risk", "medium"),
             budget_cost=getattr(profile, "budget_cost", 1),
         )

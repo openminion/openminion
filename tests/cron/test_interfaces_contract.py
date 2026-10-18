@@ -36,6 +36,7 @@ class TestCronStoreCompatibilityValidator:
         mock_store.renew_cron_run_lease = Mock(return_value=True)
         mock_store.get_cron_job = Mock(return_value=None)
         mock_store.list_cron_jobs = Mock(return_value=[])
+        mock_store.set_cron_job_enabled = Mock(return_value=None)
         mock_store.delete_cron_job = Mock(return_value=None)
         mock_store.list_cron_runs = Mock(return_value=[])
         mock_store.finish_cron_run = Mock(return_value=None)

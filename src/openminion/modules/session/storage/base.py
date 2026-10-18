@@ -254,6 +254,35 @@ class SessionStore(ABC):
     ) -> str: ...
 
     @abstractmethod
+    def trigger_task_run_now(self, job_id: str) -> dict[str, Any]: ...
+
+    @abstractmethod
+    def update_task_cron_job(
+        self,
+        job_id: str,
+        *,
+        instruction: str,
+        schedule: Mapping[str, Any],
+        expected_updated_at: str,
+    ) -> dict[str, Any]: ...
+
+    @abstractmethod
+    def delete_terminal_cron_runs(self, job_id: str) -> int: ...
+
+    @abstractmethod
+    def get_cron_scheduler_control(self) -> dict[str, Any]: ...
+
+    @abstractmethod
+    def set_cron_scheduler_control(
+        self,
+        *,
+        paused: bool,
+        reason: str | None,
+        actor: str,
+        expected_updated_at: str,
+    ) -> dict[str, Any]: ...
+
+    @abstractmethod
     def list_cron_runs(
         self,
         *,
@@ -264,7 +293,7 @@ class SessionStore(ABC):
 
     @abstractmethod
     def list_unresolved_task_runs(
-        self, *, limit: int = 100
+        self, *, limit: int = 100, offset: int = 0
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
@@ -293,6 +322,7 @@ class SessionStore(ABC):
         run_id: str,
         *,
         daemon_id: str,
+        expected_attempts: int,
         lease_ttl_s: int = 60,
         now_iso: str | None = None,
     ) -> bool: ...
@@ -311,6 +341,8 @@ class SessionStore(ABC):
         run_id: str,
         *,
         error: dict[str, Any],
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
         now_iso: str | None = None,
     ) -> dict[str, Any] | None: ...
 
@@ -368,6 +400,8 @@ class SessionStore(ABC):
         error: dict[str, Any] | None = None,
         output: dict[str, Any] | None = None,
         isolated_session_id: str | None = None,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
         now_iso: str | None = None,
     ) -> dict[str, Any] | None: ...
 
@@ -375,7 +409,24 @@ class SessionStore(ABC):
     def delete_old_cron_runs(self, before_iso: str) -> int: ...
 
     @abstractmethod
-    def mark_cron_delivery_target(self, run_id: str, *, target: str) -> bool: ...
+    def mark_cron_delivery_target(
+        self,
+        run_id: str,
+        *,
+        target: str,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
+    ) -> bool: ...
+
+    @abstractmethod
+    def unmark_cron_delivery_target(
+        self,
+        run_id: str,
+        *,
+        target: str,
+        daemon_id: str | None = None,
+        expected_attempts: int | None = None,
+    ) -> bool: ...
 
     @abstractmethod
     def create_prompt_context(

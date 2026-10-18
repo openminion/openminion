@@ -13,6 +13,12 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_TASK_RESUME,
     MODEL_TASK_SCHEDULE,
     MODEL_TASK_SHOW,
+    MODEL_TASK_RUN_NOW,
+    MODEL_TASK_UPDATE,
+    MODEL_TASK_DELETE_HISTORY,
+    MODEL_TASK_SCHEDULER_STATUS,
+    MODEL_TASK_SCHEDULER_PAUSE,
+    MODEL_TASK_SCHEDULER_RESUME,
     MODEL_TASK_WATCH,
 )
 from openminion.modules.tool.contracts.runtime_ids import (
@@ -23,6 +29,12 @@ from openminion.modules.tool.contracts.runtime_ids import (
     RUNTIME_TASK_RESUME,
     RUNTIME_TASK_SCHEDULE,
     RUNTIME_TASK_SHOW,
+    RUNTIME_TASK_RUN_NOW,
+    RUNTIME_TASK_UPDATE,
+    RUNTIME_TASK_DELETE_HISTORY,
+    RUNTIME_TASK_SCHEDULER_STATUS,
+    RUNTIME_TASK_SCHEDULER_PAUSE,
+    RUNTIME_TASK_SCHEDULER_RESUME,
     RUNTIME_TASK_WATCH,
 )
 
@@ -42,6 +54,85 @@ _WATCH_DESCRIPTION = (
 )
 
 
+def _model_tools() -> tuple[ModelToolDef, ...]:
+    descriptions = (
+        (MODEL_TASK_SCHEDULE, "Schedule an agent instruction for later execution"),
+        (
+            MODEL_TASK_CONSOLIDATE_MEMORY,
+            "Create a recurring memory-consolidation task backed by the cron scheduler",
+        ),
+        (MODEL_TASK_WATCH, _WATCH_DESCRIPTION),
+        (MODEL_TASK_CANCEL, "Cancel a previously scheduled task"),
+        (MODEL_TASK_LIST, "List scheduled tasks visible to the current agent scope"),
+        (MODEL_TASK_PAUSE, "Pause a scheduled task by exact task identifier"),
+        (MODEL_TASK_RESUME, "Resume a paused scheduled task by exact task identifier"),
+        (
+            MODEL_TASK_SHOW,
+            "Show one scheduled task and recent run history by exact task identifier",
+        ),
+        (
+            MODEL_TASK_RUN_NOW,
+            "Queue one immediate run of an active task by exact identifier",
+        ),
+        (
+            MODEL_TASK_UPDATE,
+            "Update an idle scheduled task using its exact revision",
+        ),
+        (
+            MODEL_TASK_DELETE_HISTORY,
+            "Delete terminal run history for one exact task identifier",
+        ),
+        (
+            MODEL_TASK_SCHEDULER_STATUS,
+            "Show persisted scheduler pause state and daemon readiness",
+        ),
+        (
+            MODEL_TASK_SCHEDULER_PAUSE,
+            "Pause future scheduled task dispatch using an exact revision",
+        ),
+        (
+            MODEL_TASK_SCHEDULER_RESUME,
+            "Resume scheduled task dispatch using an exact revision",
+        ),
+    )
+    return tuple(
+        ModelToolDef(
+            model_tool_id=model_tool_id,
+            description=description,
+            parameters={},
+            aliases=(),
+        )
+        for model_tool_id, description in descriptions
+    )
+
+
+def _runtime_bindings() -> tuple[RuntimeBindingDef, ...]:
+    bindings = (
+        (RUNTIME_TASK_SCHEDULE, MODEL_TASK_SCHEDULE),
+        (RUNTIME_TASK_CONSOLIDATE_MEMORY, MODEL_TASK_CONSOLIDATE_MEMORY),
+        (RUNTIME_TASK_WATCH, MODEL_TASK_WATCH),
+        (RUNTIME_TASK_CANCEL, MODEL_TASK_CANCEL),
+        (RUNTIME_TASK_LIST, MODEL_TASK_LIST),
+        (RUNTIME_TASK_PAUSE, MODEL_TASK_PAUSE),
+        (RUNTIME_TASK_RESUME, MODEL_TASK_RESUME),
+        (RUNTIME_TASK_SHOW, MODEL_TASK_SHOW),
+        (RUNTIME_TASK_RUN_NOW, MODEL_TASK_RUN_NOW),
+        (RUNTIME_TASK_UPDATE, MODEL_TASK_UPDATE),
+        (RUNTIME_TASK_DELETE_HISTORY, MODEL_TASK_DELETE_HISTORY),
+        (RUNTIME_TASK_SCHEDULER_STATUS, MODEL_TASK_SCHEDULER_STATUS),
+        (RUNTIME_TASK_SCHEDULER_PAUSE, MODEL_TASK_SCHEDULER_PAUSE),
+        (RUNTIME_TASK_SCHEDULER_RESUME, MODEL_TASK_SCHEDULER_RESUME),
+    )
+    return tuple(
+        RuntimeBindingDef(
+            runtime_binding_id=runtime_binding_id,
+            model_tool_id=model_tool_id,
+            runtime_candidates=(model_tool_id,),
+        )
+        for runtime_binding_id, model_tool_id in bindings
+    )
+
+
 class TaskRegistrar:
     module_id = "task"
     is_provider_only = False
@@ -58,98 +149,8 @@ class TaskRegistrar:
         del ctx
         return ToolBindingManifest(
             module_id=self.module_id,
-            model_tools=(
-                ModelToolDef(
-                    model_tool_id=MODEL_TASK_SCHEDULE,
-                    description="Schedule an agent instruction for later execution",
-                    parameters={},
-                    aliases=(),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_TASK_CONSOLIDATE_MEMORY,
-                    description="Create a recurring memory-consolidation task backed by the cron scheduler",
-                    parameters={},
-                    aliases=(),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_TASK_WATCH,
-                    description=_WATCH_DESCRIPTION,
-                    parameters={},
-                    aliases=(),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_TASK_CANCEL,
-                    description="Cancel a previously scheduled task",
-                    parameters={},
-                    aliases=(),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_TASK_LIST,
-                    description="List scheduled tasks visible to the current agent scope",
-                    parameters={},
-                    aliases=(),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_TASK_PAUSE,
-                    description="Pause a scheduled task by exact task identifier",
-                    parameters={},
-                    aliases=(),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_TASK_RESUME,
-                    description="Resume a paused scheduled task by exact task identifier",
-                    parameters={},
-                    aliases=(),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_TASK_SHOW,
-                    description="Show one scheduled task and recent run history by exact task identifier",
-                    parameters={},
-                    aliases=(),
-                ),
-            ),
-            runtime_bindings=(
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_TASK_SCHEDULE,
-                    model_tool_id=MODEL_TASK_SCHEDULE,
-                    runtime_candidates=("task.schedule",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_TASK_CONSOLIDATE_MEMORY,
-                    model_tool_id=MODEL_TASK_CONSOLIDATE_MEMORY,
-                    runtime_candidates=("task.consolidate_memory",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_TASK_WATCH,
-                    model_tool_id=MODEL_TASK_WATCH,
-                    runtime_candidates=("task.watch",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_TASK_CANCEL,
-                    model_tool_id=MODEL_TASK_CANCEL,
-                    runtime_candidates=("task.cancel",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_TASK_LIST,
-                    model_tool_id=MODEL_TASK_LIST,
-                    runtime_candidates=("task.list",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_TASK_PAUSE,
-                    model_tool_id=MODEL_TASK_PAUSE,
-                    runtime_candidates=("task.pause",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_TASK_RESUME,
-                    model_tool_id=MODEL_TASK_RESUME,
-                    runtime_candidates=("task.resume",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_TASK_SHOW,
-                    model_tool_id=MODEL_TASK_SHOW,
-                    runtime_candidates=("task.show",),
-                ),
-            ),
+            model_tools=_model_tools(),
+            runtime_bindings=_runtime_bindings(),
         )
 
 

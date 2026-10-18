@@ -11,6 +11,23 @@ from openminion.modules.task.surface import (
     build_task_surface,
     resolve_task_surface_source,
 )
+from .task_tools import build_schedule_payload, execute_task_tool
+
+
+def _execute_task_tool(
+    app: APIRuntime,
+    args: argparse.Namespace,
+    *,
+    tool_name: str,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    return execute_task_tool(
+        app,
+        args,
+        tool_name=tool_name,
+        payload=payload,
+        owner="tasks",
+    )
 
 
 def run_tasks(args: argparse.Namespace, app: APIRuntime) -> int:
@@ -18,6 +35,7 @@ def run_tasks(args: argparse.Namespace, app: APIRuntime) -> int:
     agent_id = str(getattr(args, "agent_id", "") or "").strip()
     if not agent_id:
         agent_id = resolve_default_agent_id(app.config)
+    args.agent_id = agent_id
     surface = build_task_surface(
         resolve_task_surface_source(app),
         agent_id=agent_id,
@@ -33,6 +51,10 @@ def run_tasks(args: argparse.Namespace, app: APIRuntime) -> int:
             payload = surface.apply_action(
                 task_id=getattr(args, "task_id", ""), action=action
             )
+        elif action in {"run-now", "update", "delete-history"}:
+            payload = _tool_action_payload(app, args, action=action)
+        elif action in {"scheduler-status", "scheduler-pause", "scheduler-resume"}:
+            payload = _scheduler_tool_payload(app, args, action=action)
         else:
             print(f"Unknown tasks command: {action}")
             return 1
@@ -48,6 +70,18 @@ def run_tasks(args: argparse.Namespace, app: APIRuntime) -> int:
         and callable(scheduler_readiness)
     ):
         payload["scheduler"] = scheduler_readiness()
+        if action == "list":
+            task_manager = resolve_task_surface_source(app)
+            scheduler_control_status = getattr(
+                task_manager, "scheduler_control_status", None
+            )
+            if callable(scheduler_control_status):
+                control = scheduler_control_status()
+                payload["scheduler"] = {
+                    **payload["scheduler"],
+                    **control,
+                    "updated_by": control.get("actor"),
+                }
 
     if bool(getattr(args, "json", False)):
         print_json_payload(payload, sort_keys=False, default=str)
@@ -61,6 +95,64 @@ def _show_payload(surface: Any, task_id: str) -> dict[str, Any]:
     if task is None:
         return {"ok": False, "error": f"task not found: {task_id}"}
     return {"ok": True, "task": task}
+
+
+def _tool_action_payload(
+    app: APIRuntime,
+    args: argparse.Namespace,
+    *,
+    action: str,
+) -> dict[str, Any]:
+    task_id = str(getattr(args, "task_id", "") or "").strip()
+    tool_name = f"task.{action.replace('-', '_')}"
+    arguments: dict[str, object] = {"task_id": task_id}
+    if action == "update":
+        arguments.update(
+            {
+                "instruction": str(getattr(args, "instruction", "") or "").strip(),
+                "schedule": build_schedule_payload(args),
+                "expected_updated_at": str(
+                    getattr(args, "expected_updated_at", "") or ""
+                ).strip(),
+            }
+        )
+    result = _execute_task_tool(
+        app,
+        args,
+        tool_name=tool_name,
+        payload=arguments,
+    )
+    return {
+        "ok": result["ok"],
+        "action": action,
+        "error": result["error"],
+        **result["data"],
+    }
+
+
+def _scheduler_tool_payload(
+    app: APIRuntime, args: argparse.Namespace, *, action: str
+) -> dict[str, Any]:
+    tool_name = f"task.{action.replace('-', '_')}"
+    arguments: dict[str, object] = {}
+    if action == "scheduler-pause":
+        arguments["reason"] = str(getattr(args, "reason", "") or "").strip()
+    if action != "scheduler-status":
+        arguments["expected_updated_at"] = str(
+            getattr(args, "expected_updated_at", "") or ""
+        ).strip()
+    result = _execute_task_tool(
+        app,
+        args,
+        tool_name=tool_name,
+        payload=arguments,
+    )
+    return {
+        "ok": result["ok"],
+        "action": action,
+        "error": result["error"],
+        **result["data"],
+    }
 
 
 def _payload_requires_daemon(payload: dict[str, Any]) -> bool:
@@ -109,6 +201,17 @@ def _print_human(*, action: str, payload: dict[str, Any]) -> None:
                 f"schedule={task.get('schedule_summary', '-')} "
                 f"next={due} last={last_run.get('state') or '-'}"
             )
+        return
+    if action.startswith("scheduler-"):
+        control = dict(payload.get("scheduler_control") or {})
+        print("Task scheduler")
+        print("==============")
+        print(f"paused: {str(bool(control.get('paused'))).lower()}")
+        print(f"updated_at: {control.get('updated_at') or '-'}")
+        if control.get("reason"):
+            print(f"reason: {control['reason']}")
+        if control.get("actor"):
+            print(f"actor: {control['actor']}")
         return
     task = payload.get("task")
     if isinstance(task, dict):
@@ -174,6 +277,37 @@ def _register_task_action(
     _add_common_args(parser)
 
 
+def _add_update_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--instruction", required=True)
+    schedule = parser.add_mutually_exclusive_group(required=True)
+    schedule.add_argument("--every-ms", dest="every_ms", type=int)
+    schedule.add_argument("--cron", dest="cron_expr")
+    schedule.add_argument("--at", dest="at_iso")
+    parser.add_argument("--tz", dest="timezone", default=None)
+    parser.add_argument("--expected-updated-at", required=True)
+
+
+def _register_scheduler_commands(
+    subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    scheduler = subcommands.add_parser("scheduler", help="Task scheduler controls")
+    scheduler_subcommands = scheduler.add_subparsers(dest="scheduler_command")
+    status = scheduler_subcommands.add_parser("status", help="Show scheduler state")
+    _add_common_args(status)
+    status.set_defaults(tasks_command="scheduler-status")
+    pause = scheduler_subcommands.add_parser("pause", help="Pause new task dispatch")
+    pause.add_argument("--reason", required=True)
+    pause.add_argument("--expected-updated-at", required=True)
+    pause.add_argument("--confirm", action="store_true")
+    _add_common_args(pause)
+    pause.set_defaults(tasks_command="scheduler-pause")
+    resume = scheduler_subcommands.add_parser("resume", help="Resume task dispatch")
+    resume.add_argument("--expected-updated-at", required=True)
+    resume.add_argument("--confirm", action="store_true")
+    _add_common_args(resume)
+    resume.set_defaults(tasks_command="scheduler-resume")
+
+
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     tasks = subparsers.add_parser("tasks", help="Task inventory and controls")
     task_subcommands = tasks.add_subparsers(dest="tasks_command")
@@ -187,4 +321,16 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
     for name in ("pause", "resume", "cancel"):
         _register_task_action(task_subcommands, name)
+    _register_task_action(task_subcommands, "run-now")
+    update = task_subcommands.add_parser("update", help="Update a scheduled task")
+    update.add_argument("task_id", help="Exact task id")
+    _add_update_args(update)
+    _add_common_args(update)
+    delete_history = task_subcommands.add_parser(
+        "delete-history", help="Delete terminal run history"
+    )
+    delete_history.add_argument("task_id", help="Exact task id")
+    delete_history.add_argument("--confirm", action="store_true")
+    _add_common_args(delete_history)
+    _register_scheduler_commands(task_subcommands)
     tasks.set_defaults(handler=run_tasks, needs_app=True, tasks_command="list")

@@ -75,6 +75,17 @@ def recover_and_acquire_cron_runs(
             else "cron.run.lease_recovered"
         )
         emit(event_type, dict(item))
+    control = store.get_cron_scheduler_control()
+    if bool(control.get("paused")):
+        emit(
+            "cron.scheduler.paused",
+            {
+                "reason": control.get("reason"),
+                "actor": control.get("actor"),
+                "updated_at": control.get("updated_at"),
+            },
+        )
+        return []
     store.enqueue_due_cron_runs(
         daemon_id,
         lease_ttl_s=lease_ttl_seconds,
@@ -101,10 +112,17 @@ def persist_cron_run_outcome(
     output: dict[str, Any],
     error: dict[str, Any] | None,
     isolated_session_id: str | None,
+    daemon_id: str,
+    expected_attempts: int,
     emit: CronEventHook,
 ) -> str:
-    if error is not None:
-        retried = store.retry_cron_run(run_id, error=error)
+    if error is not None and error.get("retryable") is True:
+        retried = store.retry_cron_run(
+            run_id,
+            error=error,
+            daemon_id=daemon_id,
+            expected_attempts=expected_attempts,
+        )
         if retried is not None:
             persisted_state = str(retried.get("state") or state)
             emit(
@@ -122,23 +140,40 @@ def persist_cron_run_outcome(
                 },
             )
             return persisted_state
-        store.finish_cron_run(
-            run_id,
-            state=state,
-            error=error,
-            isolated_session_id=isolated_session_id,
+        emit(
+            "cron.run.fence_rejected",
+            {
+                "run_id": run_id,
+                "job_id": job_id,
+                "daemon_id": daemon_id,
+                "attempts": expected_attempts,
+            },
         )
-        return state
+        return "lease_lost"
 
-    store.finish_cron_run(
+    finished = store.finish_cron_run(
         run_id,
         state=state,
         summary=summary or None,
         artifact_refs=artifact_refs,
+        error=error,
         output=output,
         isolated_session_id=isolated_session_id,
+        daemon_id=daemon_id,
+        expected_attempts=expected_attempts,
     )
-    return state
+    if finished is not None:
+        return state
+    emit(
+        "cron.run.fence_rejected",
+        {
+            "run_id": run_id,
+            "job_id": job_id,
+            "daemon_id": daemon_id,
+            "attempts": expected_attempts,
+        },
+    )
+    return "lease_lost"
 
 
 def deliver_cron_run(
@@ -148,6 +183,8 @@ def deliver_cron_run(
     run: dict[str, Any],
     result: Any,
     delivery_handler: CronDeliveryHandler | None,
+    daemon_id: str,
+    expected_attempts: int,
     emit: CronEventHook,
 ) -> dict[str, Any]:
     payload = job.get("payload", {})
@@ -167,6 +204,7 @@ def deliver_cron_run(
 
     to_value = str(delivery.get("to", "") or "").strip()
     marker = f"{mode}:{to_value or str(delivery.get('channel', '') or '').strip()}"
+    marked = False
     try:
         if delivery_handler is None:
             raise RuntimeError(
@@ -174,15 +212,19 @@ def deliver_cron_run(
             )
         if not to_value and mode in {"announce", "webhook"}:
             raise RuntimeError("delivery target is required")
-        delivery_handler(mode, to_value, job, run, result)
-        marker_fn = getattr(store, "mark_cron_delivery_target", None)
-        if callable(marker_fn) and not marker_fn(
-            str(run.get("run_id", "")), target=marker
-        ):
+        marked = store.mark_cron_delivery_target(
+            str(run.get("run_id", "")),
+            target=marker,
+            daemon_id=daemon_id,
+            expected_attempts=expected_attempts,
+        )
+        if not marked:
             emit(
                 "cron.delivery.duplicate",
                 {"run_id": run.get("run_id"), "target": marker},
             )
+            return {"state": "not_requested", "mode": mode, "targets": []}
+        delivery_handler(mode, to_value, job, run, result)
         outcome = {"state": "succeeded", "mode": mode, "targets": [marker]}
         emit(
             "cron.delivery.succeeded",
@@ -199,6 +241,18 @@ def deliver_cron_run(
             "code": "cron_delivery_failed",
             "message": str(exc)[:TASK_DELIVERY_ERROR_MESSAGE_LIMIT],
         }
+        if marked:
+            try:
+                store.unmark_cron_delivery_target(
+                    str(run.get("run_id", "")),
+                    target=marker,
+                    daemon_id=daemon_id,
+                    expected_attempts=expected_attempts,
+                )
+            except Exception as cleanup_exc:  # noqa: BLE001 - preserve sink failure
+                error["marker_cleanup_error"] = str(cleanup_exc)[
+                    :TASK_DELIVERY_ERROR_MESSAGE_LIMIT
+                ]
         emit(
             "cron.delivery.failed",
             {

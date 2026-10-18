@@ -58,4 +58,5 @@ def list_migrations() -> list[str]:
         "0002_run_invocation",
         "0003_cron_coordination",
         "0004_task_plan_step_start",
+        "0005_cron_scheduler_control",
     ]

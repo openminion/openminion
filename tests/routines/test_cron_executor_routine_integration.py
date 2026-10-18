@@ -203,7 +203,6 @@ def _build_executor(
             meta=payload.get("meta"),
         ),
         timeout_s=10.0,
-        max_attempts=1,
         artifactctl_factory=lambda: artifactctl or _FakeArtifactCtl(),
     )
 
