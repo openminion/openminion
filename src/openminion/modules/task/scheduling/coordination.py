@@ -224,7 +224,6 @@ def deliver_cron_run(
                 {"run_id": run.get("run_id"), "target": marker},
             )
             return {"state": "not_requested", "mode": mode, "targets": []}
-        delivery_handler(mode, to_value, job, run, result)
         marked = store.mark_cron_delivery_target(
             str(run.get("run_id", "")),
             target=marker,
@@ -232,7 +231,12 @@ def deliver_cron_run(
             expected_attempts=expected_attempts,
         )
         if not marked:
-            raise RuntimeError("delivery marker was rejected")
+            emit(
+                "cron.delivery.ambiguous",
+                {"run_id": run.get("run_id"), "target": marker},
+            )
+            return {"state": "ambiguous", "mode": mode, "targets": [marker]}
+        delivery_handler(mode, to_value, job, run, result)
         outcome = {"state": "succeeded", "mode": mode, "targets": [marker]}
         emit(
             "cron.delivery.succeeded",

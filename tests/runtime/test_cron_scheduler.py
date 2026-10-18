@@ -272,7 +272,7 @@ def test_scheduler_executes_agent_turn_and_calls_delivery() -> None:
         return {"summary": f"done:{run['run_id']}", "isolated_session_id": "sess-iso-1"}
 
     def _deliver(mode: str, to_value: str, job: dict, run: dict, result) -> None:  # noqa: ANN001
-        assert run["run_id"] not in store.delivery_targets
+        assert store.delivery_targets[run["run_id"]] == {"announce:cli:ops"}
         del job, result
         deliveries.append((mode, to_value))
 
@@ -497,7 +497,7 @@ def test_stale_worker_cannot_deliver_after_lease_takeover() -> None:
     assert any(name == "cron.delivery.fence_rejected" for name, _payload in events)
 
 
-def test_delivery_lease_takeover_during_sink_leaves_no_marker() -> None:
+def test_delivery_lease_takeover_during_sink_does_not_deliver_twice() -> None:
     from openminion.modules.task.scheduling.coordination import deliver_cron_run
     from openminion.services.cron.scheduler import CronExecutionResult
 
@@ -516,7 +516,10 @@ def test_delivery_lease_takeover_during_sink_leaves_no_marker() -> None:
         "lease_owner": "daemon-old",
     }
 
+    deliveries: list[str] = []
+
     def _deliver(*_args) -> None:
+        deliveries.append("called")
         store.runs[run_id]["lease_owner"] = "daemon-new"
         store.runs[run_id]["attempts"] = 2
 
@@ -531,9 +534,25 @@ def test_delivery_lease_takeover_during_sink_leaves_no_marker() -> None:
         emit=lambda _name, _payload: None,
     )
 
-    assert outcome["state"] == "failed"
-    assert outcome["error"]["message"] == "delivery marker was rejected"
-    assert store.delivery_targets == {}
+    assert outcome["state"] == "succeeded"
+    second_outcome = deliver_cron_run(
+        store=store,
+        job=store.jobs["job-takeover"],
+        run=dict(store.runs[run_id]),
+        result=CronExecutionResult(summary="done"),
+        delivery_handler=_deliver,
+        daemon_id="daemon-new",
+        expected_attempts=2,
+        emit=lambda _name, _payload: None,
+    )
+
+    assert second_outcome == {
+        "state": "ambiguous",
+        "mode": "announce",
+        "targets": ["announce:cli:ops"],
+    }
+    assert deliveries == ["called"]
+    assert store.delivery_targets[run_id] == {"announce:cli:ops"}
 
 
 def test_delivery_fails_closed_without_delivery_fence() -> None:
@@ -769,7 +788,7 @@ def test_delivery_failure_does_not_retry_execution_after_claiming_target() -> No
     assert run["output"]["delivery"]["state"] == "failed"
     assert run["output"]["delivery"]["targets"] == []
     assert len(run["output"]["delivery"]["error"]["message"]) == 500
-    assert run["run_id"] not in store.delivery_targets
+    assert store.delivery_targets[run["run_id"]] == {"announce:cli:ops"}
     assert any(name == "cron.delivery.failed" for name, _payload in events)
     finished = next(payload for name, payload in events if name == "cron.run.finished")
     assert finished["state"] == "finished"

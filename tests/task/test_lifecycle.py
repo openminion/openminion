@@ -99,7 +99,6 @@ def test_lifecycle_state_transitions_and_terminal_guard(tmp_path: Path) -> None:
         payload={"kind": "agentTurn", "message": "flow"},
         agent_id="agent-a",
     )
-
     paused = manager.transition_task(
         task_id=created.task_id, to_state=TaskLifecycleState.PAUSED
     )
@@ -483,6 +482,9 @@ def test_pause_restores_cron_state_when_lifecycle_transition_fails(
         payload={"kind": "agentTurn", "message": "pause"},
         agent_id="agent-a",
     )
+    run_id = getattr(manager, "_cron_repository").trigger_cron_run(
+        created.cron_job_id
+    )
 
     def _fail_transition(**_kwargs):
         raise RuntimeError("lifecycle unavailable")
@@ -494,6 +496,38 @@ def test_pause_restores_cron_state_when_lifecycle_transition_fails(
     job = manager.get_scheduled_job(created.cron_job_id)
     assert job is not None
     assert job["enabled"] is True
+    run = manager.list_scheduled_runs(job_id=created.cron_job_id, limit=1)[0]
+    assert run["run_id"] == run_id
+    assert run["state"] == "queued"
+
+
+def test_cancel_restores_cron_state_when_lifecycle_transition_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manager = _manager(tmp_path)
+    created = manager.schedule_task(
+        name="cancel-failure",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "cancel"},
+        agent_id="agent-a",
+    )
+    run_id = getattr(manager, "_cron_repository").trigger_cron_run(
+        created.cron_job_id
+    )
+
+    def _fail_transition(**_kwargs):
+        raise RuntimeError("lifecycle unavailable")
+
+    monkeypatch.setattr(manager, "transition_task", _fail_transition)
+    with pytest.raises(RuntimeError, match="lifecycle unavailable"):
+        manager.cancel_task(created.task_id)
+
+    job = manager.get_scheduled_job(created.cron_job_id)
+    assert job is not None
+    assert job["enabled"] is True
+    run = manager.list_scheduled_runs(job_id=created.cron_job_id, limit=1)[0]
+    assert run["run_id"] == run_id
+    assert run["state"] == "queued"
 
 
 def test_resume_restores_cron_state_when_lifecycle_transition_fails(

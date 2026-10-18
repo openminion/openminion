@@ -406,19 +406,29 @@ class TaskManagerScheduleMixin:
         self._cron_repository.set_cron_job_enabled(
             record.cron_job_id,
             False,
+            cancel_queued=False,
+        )
+        try:
+            cancelled = self.transition_task(
+                task_id=record.task_id,
+                to_state=TaskLifecycleState.CANCELLED,
+            )
+        except Exception:  # noqa: BLE001 - compensate the cross-database update
+            self._cron_repository.set_cron_job_enabled(record.cron_job_id, True)
+            raise
+        self._cron_repository.set_cron_job_enabled(
+            record.cron_job_id,
+            False,
             cancel_queued=True,
         )
-        return self.transition_task(
-            task_id=record.task_id,
-            to_state=TaskLifecycleState.CANCELLED,
-        )
+        return cancelled
 
     def pause_task(self, task_id: str) -> tuple[TaskLifecycleRecord, dict[str, Any]]:
         record = self._require_scheduled_record(task_id)
         self._cron_repository.set_cron_job_enabled(
             record.cron_job_id,
             False,
-            cancel_queued=True,
+            cancel_queued=False,
         )
         try:
             record = self.transition_task(
@@ -428,6 +438,11 @@ class TaskManagerScheduleMixin:
         except Exception:  # noqa: BLE001 - compensate the cross-database update
             self._cron_repository.set_cron_job_enabled(record.cron_job_id, True)
             raise
+        self._cron_repository.set_cron_job_enabled(
+            record.cron_job_id,
+            False,
+            cancel_queued=True,
+        )
         refreshed = self.get_scheduled_job(record.cron_job_id)
         if refreshed is None:
             raise KeyError(f"task not found: {task_id}")

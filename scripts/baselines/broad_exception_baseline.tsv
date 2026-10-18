@@ -282,7 +282,7 @@ src/openminion/modules/storage/runtime/validation.py	4	2	current broad-handler b
 src/openminion/modules/storage/runtime/vector_index.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/storage/runtime/vector_sync.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/task/events.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/task/runtime/lifecycle_schedule.py	5	2	cron creation and control compensation must restore cross-database state before propagating failures
+src/openminion/modules/task/runtime/lifecycle_schedule.py	6	2	cron creation and control compensation must restore cross-database state before propagating failures
 src/openminion/modules/task/scheduling/coordination.py	1	0	delivery boundary must record sink or marker failure without retrying completed execution
 src/openminion/modules/telemetry/events/module.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/telemetry/export/otel.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
