@@ -96,13 +96,14 @@ def test_debug_exit_contract_and_missing_store_no_create(
     assert not path.exists()
     assert list(parent.iterdir()) == []
 
-    unavailable = tmp_path / ".openminion" / "missing" / "telemetry.db"
+    unavailable = tmp_path / "blocked" / "telemetry.db"
+    unavailable.parent.write_text("not a directory", encoding="utf-8")
     assert main(["debug", "latest", "--db", str(unavailable)]) == 3
     assert (
         json.loads(capsys.readouterr().out)["error"]["code"]
         == "TELEMETRY_STORAGE_UNAVAILABLE"
     )
-    assert not unavailable.parent.exists()
+    assert unavailable.parent.is_file()
 
 
 def test_debug_rejects_unreviewed_format_flag_in_subprocess(tmp_path: Path) -> None:
@@ -130,11 +131,13 @@ def test_installed_debug_subprocess_preserves_all_exit_codes(tmp_path: Path) -> 
     parent = tmp_path / ".openminion" / "existing"
     parent.mkdir(parents=True)
     empty_path = parent / "telemetry.db"
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory", encoding="utf-8")
     cases = (
         (["debug", "latest", "--db", str(empty_path)], 0),
         (["debug", "invocation", "missing", "--db", str(empty_path)], 1),
         (["debug", "invocation", "../bad", "--db", str(empty_path)], 2),
-        (["debug", "latest", "--db", str(tmp_path / ".openminion/missing/db")], 3),
+        (["debug", "latest", "--db", str(blocked / "telemetry.db")], 3),
     )
     for arguments, expected in cases:
         result = subprocess.run(

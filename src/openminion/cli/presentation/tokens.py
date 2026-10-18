@@ -214,7 +214,7 @@ def format_interactive_token_history(
                 f"    session {_short_label(summary.session_id)}",
             )
         )
-    lines.append(f"All sessions: openminion status tokens --recent {requested}")
+    lines.append(f"More history: openminion status tokens --recent {requested}")
     return "\n".join(lines)
 
 

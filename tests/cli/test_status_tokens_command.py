@@ -9,12 +9,16 @@ import pytest
 
 from openminion.base.config import OpenMinionConfig
 from openminion.cli.commands.status.session_store import build_status_session_store
-from openminion.cli.commands.status.token_report import token_rollup_json_payload
+from openminion.cli.commands.status.token_report import (
+    format_token_rollup,
+    token_rollup_json_payload,
+)
 from openminion.cli.commands.status.tokens import run_tokens_status
 from openminion.cli.parser.base import build_parser
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 from openminion.modules.telemetry.usage import (
     TokenUsageCoverage,
+    TokenUsageEventRef,
     TokenUsageRecord,
     TokenUsageSummary,
 )
@@ -28,6 +32,29 @@ _ROLLUP_FIXTURE_PATH = (
     / "token_usage"
     / "openminion_token_usage_rollup_v1.json"
 )
+
+
+def test_token_rollup_normalizes_observation_window_to_utc() -> None:
+    summary = TokenUsageSummary(
+        "session-offset",
+        records=(
+            TokenUsageRecord(
+                session_id="session-offset",
+                surface=SURFACE_LLM_TOTAL,
+                total_source="provider",
+                total_tokens=1,
+            ),
+        ),
+        first_source_event=TokenUsageEventRef(observed_at="2026-09-09T01:00:00-07:00"),
+        last_source_event=TokenUsageEventRef(observed_at="2026-09-09T10:00:00+02:00"),
+    )
+
+    output = format_token_rollup((summary,))
+
+    assert (
+        "observation window (UTC): 2026-09-09T08:00:00+00:00 "
+        "to 2026-09-09T08:00:00+00:00"
+    ) in output
 
 
 def _args(
@@ -422,6 +449,7 @@ def test_status_tokens_recent_rollup_shows_cross_session_insights(
         "context_share=77% cache_read/write=0%"
     ) in output
     assert "session trends:" in output
+    assert "observation window (UTC):" in output
     assert "context:20" in output
     assert "llm_delta:-6" in output
     assert "top sessions:" in output

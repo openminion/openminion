@@ -104,7 +104,12 @@ def open_telemetry_inspection(
     if not path.is_file():
         if path.exists():
             raise IsADirectoryError(str(path))
-        if not path.parent.is_dir() or not os.access(path.parent, os.R_OK | os.X_OK):
+        if path.parent.exists():
+            if not path.parent.is_dir() or not os.access(
+                path.parent, os.R_OK | os.X_OK
+            ):
+                raise PermissionError(str(path.parent))
+        elif not _has_writable_ancestor(path.parent):
             raise PermissionError(str(path.parent))
         yield None
         return

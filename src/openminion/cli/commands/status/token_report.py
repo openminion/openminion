@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from openminion.modules.telemetry.trace.turn_cost import TurnCostEnvelope
 from openminion.modules.telemetry.usage import (
@@ -636,6 +637,22 @@ def _format_session_trends(summaries: tuple[TokenUsageSummary, ...]) -> list[str
     return ["session trends: " + "; ".join(parts)]
 
 
+def _format_observation_window(items: tuple[TokenUsageSummary, ...]) -> list[str]:
+    values = []
+    for summary in items:
+        for ref in (summary.first_source_event, summary.last_source_event):
+            try:
+                value = datetime.fromisoformat(_observed_at(ref).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=UTC)
+            values.append(value.astimezone(UTC).isoformat())
+    return (
+        [f"observation window (UTC): {min(values)} to {max(values)}"] if values else []
+    )
+
+
 def _rollup_totals_payload(
     summaries: tuple[TokenUsageSummary, ...],
 ) -> TokenUsageRollupTotalsPayload:
@@ -801,6 +818,7 @@ def format_token_rollup(
     if context_buckets:
         lines.append(_format_ranked_totals("context buckets", context_buckets))
     lines.extend(_format_rollup_efficiency(token_summaries))
+    lines.extend(_format_observation_window(token_summaries))
     lines.extend(_format_session_trends(token_summaries))
     top_sessions = sorted(
         (

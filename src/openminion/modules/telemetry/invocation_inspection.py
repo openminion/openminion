@@ -25,6 +25,11 @@ _STRUCTURAL_RESULT_FIELDS = (
     "artifact_count",
     "artifact_refs",
 )
+_TERMINAL_OUTCOMES = {
+    "agent.invocation.completed": (1, "completed"),
+    "agent.invocation.cancelled": (2, "cancelled"),
+    "agent.invocation.failed": (3, "failed"),
+}
 
 
 def _safe_structural_tool_result(item: dict[str, Any]) -> dict[str, Any] | None:
@@ -291,6 +296,7 @@ def build_invocation_snapshot(
     return (
         {
             "invocation_id": invocation_id,
+            "status": invocation.outcome,
             "event_count": len(events),
             "segments": [executions[key] for key in sorted(executions)],
             "summary": {
@@ -329,43 +335,70 @@ def select_invocation_snapshots(
     agent_id: str = "",
     status: str = "",
     event_type: str = "",
+    session_id: str = "",
 ) -> tuple[list[dict[str, Any]], int]:
     high_water = service._store.event_high_water()
     latest_matches: dict[str, float] = {}
+    active_invocations: set[str] = set()
+    terminal_outcomes: dict[str, tuple[tuple[float, int, str, int], str]] = {}
     legacy_count = 0
-    for row in iter_event_rows(service._store, high_water=high_water):
+    for row in iter_event_rows(
+        service._store,
+        high_water=high_water,
+        session_id=session_id or None,
+    ):
         event = row.event
         invocation_id = str(event.invocation_id or "")
         if not invocation_id:
             legacy_count += 1
             continue
+        if event.event_type == "agent.invocation.started" and row.timestamp_valid:
+            active_invocations.add(invocation_id)
+        terminal = _TERMINAL_OUTCOMES.get(event.event_type)
+        if terminal is not None and row.timestamp_valid:
+            rank, outcome = terminal
+            key = (event.timestamp, rank, str(event.event_id or ""), row.row_id)
+            current_terminal = terminal_outcomes.get(invocation_id)
+            if current_terminal is None or key > current_terminal[0]:
+                terminal_outcomes[invocation_id] = (key, outcome)
         if event_type and event.event_type != event_type:
             continue
         if agent_id and event.agent_id != agent_id:
-            continue
-        if status and str(event.data.get("status") or "") != status:
             continue
         latest_matches[invocation_id] = max(
             latest_matches.get(invocation_id, -math.inf),
             event.timestamp,
         )
-    selected = [
+    candidates = [
         invocation_id
         for invocation_id, _timestamp in sorted(
             latest_matches.items(),
             key=lambda item: (item[1], item[0]),
             reverse=True,
-        )[:limit]
+        )
     ]
+    selected = []
+    for invocation_id in candidates:
+        winner = terminal_outcomes.get(invocation_id)
+        outcome = (
+            winner[1]
+            if winner is not None
+            else "active"
+            if invocation_id in active_invocations
+            else "unknown"
+        )
+        if status and outcome != status:
+            continue
+        snapshot = build_invocation_snapshot(
+            service,
+            invocation_id,
+            high_water=high_water,
+        )[0]
+        selected.append(snapshot)
+        if len(selected) == limit:
+            break
     return (
-        [
-            build_invocation_snapshot(
-                service,
-                invocation_id,
-                high_water=high_water,
-            )[0]
-            for invocation_id in selected
-        ],
+        selected,
         legacy_count,
     )
 

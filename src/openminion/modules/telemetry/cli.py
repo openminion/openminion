@@ -77,6 +77,7 @@ def _add_debug_and_inspection_commands(sub: Any) -> None:
     debug_sub = debug.add_subparsers(dest="debug_command", required=True)
     for command in ("latest", "failed"):
         route = debug_sub.add_parser(command, help=f"Show the {command} invocation.")
+        route.add_argument("--session-id", default="")
         route.add_argument(
             "--db", default=None, help="Explicit telemetry SQLite path override."
         )
@@ -118,6 +119,7 @@ def _add_debug_and_inspection_commands(sub: Any) -> None:
     invocation_list.add_argument("--agent-id", default="")
     invocation_list.add_argument("--status", default="")
     invocation_list.add_argument("--event-type", default="")
+    invocation_list.add_argument("--session-id", default="")
     invocation_list.add_argument("--db", default=None)
     for command in ("show", "graph"):
         route = invocation_sub.add_parser(
@@ -246,6 +248,7 @@ async def _print_invocation(*, args, db_path) -> int:
                     event_type=str(args.event_type or "").strip(),
                     agent_id=str(args.agent_id or "").strip(),
                     status=str(args.status or "").strip(),
+                    session_id=str(args.session_id or "").strip(),
                 )
         payload = {
             "count": len(rows),
@@ -547,6 +550,7 @@ def _print_debug(*, args: Any, db_path: Path, home_root: str | None) -> int:
                 selector_kind=selector_kind,
                 invocation_id=getattr(args, "invocation_id", None),
                 trace_root=_trace_root_from_args(args),
+                session_id=str(getattr(args, "session_id", "") or "").strip() or None,
             )
     except TELEMETRY_INSPECTION_EXCEPTIONS as exc:
         report = build_telemetry_debug_error(

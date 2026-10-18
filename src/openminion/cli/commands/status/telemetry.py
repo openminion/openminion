@@ -24,6 +24,9 @@ def register_telemetry_subcommand(subcommands: Any, *, handler: Any) -> None:
     selectors.add_argument("--latest", action="store_true")
     selectors.add_argument("--failed", action="store_true")
     selectors.add_argument("--invocation-id")
+    parser.add_argument(
+        "--session-id", default="", help="Limit selection to one session"
+    )
     add_json_output_flag(parser)
     parser.set_defaults(handler=handler, needs_app=False)
 
@@ -45,6 +48,7 @@ def run_telemetry_status(args: Any) -> int:
                 selector_kind=selector_kind,
                 invocation_id=getattr(args, "invocation_id", None),
                 trace_root=resolve_trace_root(home_root=home_root),
+                session_id=str(getattr(args, "session_id", "") or "").strip() or None,
             )
     except TELEMETRY_INSPECTION_EXCEPTIONS as exc:
         report = build_telemetry_debug_error(
@@ -64,6 +68,14 @@ def _render_report(report: TelemetryDebugReport, *, as_json: bool) -> None:
         print(f"error: {report.error.code}")
         return
     if report.invocation is None:
+        codes = {item.code for item in report.diagnostics}
+        if "NO_INVOCATIONS" in codes:
+            print("No model invocations recorded yet.")
+            print("next: run a model turn, then retry `openminion status telemetry`.")
+            return
+        if "NO_FAILED_INVOCATION" in codes:
+            print("No failed model invocations found.")
+            return
         for diagnostic in report.diagnostics:
             print(f"diagnostic: {diagnostic.code}")
         return

@@ -502,6 +502,32 @@ jobs:
             'tests/e2e/cli/focus/test_local.py::test_focus_pty_multiline_paste_waits_for_enter_and_submits_once[plain-cr]' \
             'tests/e2e/cli/focus/test_local.py::test_focus_pty_multiline_paste_waits_for_enter_and_submits_once[bracketed]'
 
+  telemetry-collector-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Bootstrap telemetry test environment
+        run: |
+          python -m venv .venv
+          .venv/bin/python3.11 -m pip install --upgrade pip setuptools wheel
+          .venv/bin/python3.11 -m pip install -e ".[dev]"
+      - name: Run pinned Collector transport proof
+        run: make test-telemetry-collector-ci
+      - name: Upload Collector evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: telemetry-collector-evidence
+          path: ../workspace-tmp/agent-observability-e2e/current/
+          if-no-files-found: error
+          retention-days: 14
+
   postgres-memory-retrieval:
     runs-on: ubuntu-latest
     services:

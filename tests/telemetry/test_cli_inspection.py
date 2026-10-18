@@ -10,6 +10,9 @@ import pytest
 from openminion.modules.telemetry.cli import main
 from openminion.modules.telemetry.events import catalog
 from openminion.modules.telemetry.invocation_inspection import structural_error_code
+from openminion.modules.telemetry.invocation_inspection import (
+    select_invocation_snapshots,
+)
 from openminion.modules.telemetry.schemas import TelemetryEvent
 from openminion.modules.telemetry.service import TelemetryService
 
@@ -307,7 +310,6 @@ def test_telemetryctl_invocation_list_show_and_graph_are_structural(
             turn_id="turn-1",
             invocation_id=invocation_id,
             execution_id=execution_id,
-            agent_id="agent-1",
             event_type="agent.invocation.failed",
             event_id="failed-1",
             timestamp=3.0,
@@ -328,6 +330,42 @@ def test_telemetryctl_invocation_list_show_and_graph_are_structural(
     listing = json.loads(capsys.readouterr().out)
     assert listing["count"] == 1
     assert listing["invocations"][0]["invocation_id"] == invocation_id
+    assert listing["invocations"][0]["status"] == "failed"
+
+    service = TelemetryService(str(db_path))
+    service.record_event_sync(
+        TelemetryEvent(
+            session_id="session-2",
+            turn_id="turn-2",
+            invocation_id="invocation-session-2",
+            event_type="agent.invocation.failed",
+            event_id="failed-session-2",
+            timestamp=4.0,
+        )
+    )
+    service.close_sync()
+
+    assert (
+        main(
+            [
+                "invocation",
+                "list",
+                "--status",
+                "failed",
+                "--agent-id",
+                "agent-1",
+                "--session-id",
+                "session-1",
+                "--db",
+                str(db_path),
+            ]
+        )
+        == 0
+    )
+    filtered = json.loads(capsys.readouterr().out)
+    assert filtered["count"] == 1
+    assert main(["invocation", "list", "--status", "deny", "--db", str(db_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["count"] == 0
 
     assert main(["invocation", "show", invocation_id, "--db", str(db_path)]) == 0
     shown_text = capsys.readouterr().out
@@ -368,6 +406,42 @@ def test_telemetryctl_invocation_list_show_and_graph_are_structural(
     assert "events" not in graph
 
 
+def test_invocation_status_filter_does_not_build_nonmatching_snapshots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = TelemetryService(str(tmp_path / "telemetry.db"))
+    try:
+        for index in range(25):
+            service.record_event_sync(
+                TelemetryEvent(
+                    session_id="session-1",
+                    turn_id=f"turn-{index}",
+                    invocation_id=f"invocation-{index}",
+                    event_type="agent.invocation.completed",
+                    event_id=f"completed-{index}",
+                    timestamp=float(index),
+                )
+            )
+        monkeypatch.setattr(
+            "openminion.modules.telemetry.invocation_inspection.build_invocation_snapshot",
+            lambda *_args, **_kwargs: pytest.fail(
+                "nonmatching invocation snapshot was built"
+            ),
+        )
+
+        snapshots, legacy_count = select_invocation_snapshots(
+            service,
+            limit=20,
+            status="failed",
+        )
+    finally:
+        service.close_sync()
+
+    assert snapshots == []
+    assert legacy_count == 0
+
+
 def test_telemetryctl_invocation_rejects_out_of_grammar_identifier(
     capsys,
     tmp_path: Path,
@@ -385,3 +459,60 @@ def test_telemetryctl_invocation_rejects_out_of_grammar_identifier(
         == 2
     )
     assert json.loads(capsys.readouterr().out)["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_telemetryctl_debug_latest_and_failed_are_session_scoped(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "telemetry.db"
+    service = TelemetryService(str(db_path))
+    try:
+        for timestamp, session_id, invocation_id in (
+            (1.0, "session-a", "invocation-a"),
+            (2.0, "session-b", "invocation-b"),
+        ):
+            service.record_event_sync(
+                TelemetryEvent(
+                    session_id=session_id,
+                    turn_id="turn-1",
+                    invocation_id=invocation_id,
+                    event_type="agent.invocation.failed",
+                    event_id=f"failed-{invocation_id}",
+                    timestamp=timestamp,
+                )
+            )
+    finally:
+        service.close_sync()
+
+    assert (
+        main(
+            [
+                "debug",
+                "latest",
+                "--session-id",
+                "session-a",
+                "--db",
+                str(db_path),
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["invocation"]["invocation_id"] == "invocation-a"
+
+    assert (
+        main(
+            [
+                "debug",
+                "failed",
+                "--session-id",
+                "session-a",
+                "--db",
+                str(db_path),
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["invocation"]["invocation_id"] == "invocation-a"

@@ -36,12 +36,13 @@ def _record_invocation(
     *,
     terminal: str = "completed",
     timestamp: float = 1.0,
+    session_id: str = "session-1",
 ) -> None:
     service = TelemetryService(str(_db_path(tmp_path)))
     try:
         service.record_event_sync(
             TelemetryEvent(
-                session_id="session-1",
+                session_id=session_id,
                 turn_id="turn-1",
                 event_type="agent.invocation.started",
                 event_id=f"start-{invocation_id}",
@@ -52,7 +53,7 @@ def _record_invocation(
         )
         service.record_event_sync(
             TelemetryEvent(
-                session_id="session-1",
+                session_id=session_id,
                 turn_id="turn-1",
                 event_type=f"agent.invocation.{terminal}",
                 event_id=f"terminal-{invocation_id}",
@@ -157,6 +158,14 @@ def test_status_telemetry_empty_not_found_and_invalid_exits_without_creation(
     assert not _db_path(tmp_path).exists()
     assert sorted(path.name for path in parent.iterdir()) == []
 
+    assert main(_args(tmp_path)) == 0
+    text = capsys.readouterr().out
+    assert "No model invocations recorded yet." in text
+    assert "run a model turn" in text
+
+    assert main(_args(tmp_path, "--failed")) == 0
+    assert "No failed model invocations found." in capsys.readouterr().out
+
     with pytest.raises(SystemExit) as exc_info:
         main(_args(tmp_path, "--latest", "--failed"))
     assert exc_info.value.code == 2
@@ -165,11 +174,20 @@ def test_status_telemetry_empty_not_found_and_invalid_exits_without_creation(
 def test_status_telemetry_distinguishes_unavailable_corrupt_and_schema(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    assert main(_args(tmp_path, "--json")) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "empty"
+    assert not (tmp_path / "data").exists()
+
+    monkeypatch.setattr(
+        "openminion.modules.telemetry.inspection._has_writable_ancestor",
+        lambda _path: False,
+    )
     assert main(_args(tmp_path, "--json")) == 3
     unavailable = json.loads(capsys.readouterr().out)
     assert unavailable["error"]["code"] == "TELEMETRY_STORAGE_UNAVAILABLE"
-    assert not (tmp_path / "data").exists()
+    monkeypatch.undo()
 
     path = _db_path(tmp_path)
     path.parent.mkdir(parents=True)
@@ -208,3 +226,45 @@ def test_status_telemetry_unreadable_database_is_normalized(
     assert main(_args(tmp_path, "--json")) == 3
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"]["code"] == "TELEMETRY_STORAGE_UNAVAILABLE"
+
+
+def test_status_telemetry_can_select_latest_within_one_session(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _record_invocation(
+        tmp_path,
+        "invocation-a",
+        timestamp=1.0,
+        session_id="session-a",
+    )
+    _record_invocation(
+        tmp_path,
+        "invocation-b",
+        terminal="failed",
+        timestamp=2.0,
+        session_id="session-b",
+    )
+
+    assert main(_args(tmp_path, "--session-id", "session-a", "--json")) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["invocation"]["invocation_id"] == "invocation-a"
+
+    assert (
+        main(
+            _args(
+                tmp_path,
+                "--failed",
+                "--session-id",
+                "session-a",
+                "--json",
+            )
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["invocation"] is None
+    assert any(
+        diagnostic["code"] == "NO_FAILED_INVOCATION"
+        for diagnostic in payload["diagnostics"]
+    )

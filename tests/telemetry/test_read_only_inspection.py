@@ -56,14 +56,22 @@ def test_missing_database_returns_empty_without_creating_parent(tmp_path: Path) 
     assert not path.exists()
 
 
-def test_missing_parent_fails_without_creation(tmp_path: Path) -> None:
+def test_missing_parent_returns_empty_without_creation(tmp_path: Path) -> None:
     path = tmp_path / ".openminion" / "missing" / "telemetry.db"
 
-    with pytest.raises(PermissionError):
-        with open_telemetry_inspection(db_path=path):
-            pass
+    with open_telemetry_inspection(db_path=path) as service:
+        assert service is None
 
     assert not path.parent.exists()
+
+
+def test_missing_database_below_file_fails_without_creation(tmp_path: Path) -> None:
+    blocker = tmp_path / "blocked"
+    blocker.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(PermissionError):
+        with open_telemetry_inspection(db_path=blocker / "telemetry.db"):
+            pass
 
 
 def test_read_only_query_preserves_database_and_sidecars(tmp_path: Path) -> None:

@@ -168,7 +168,6 @@ def test_missing_store_is_empty_and_creates_nothing(
 ) -> None:
     data_root = tmp_path / "data"
     db_path = data_root / "missing" / "telemetry.db"
-    db_path.parent.mkdir(parents=True)
 
     exit_code, payload = _run(data_root, db_path, ["--keep-last", "2"], capsys)
 
@@ -177,3 +176,4 @@ def test_missing_store_is_empty_and_creates_nothing(
     assert payload["high_water_storage_sequence"] is None
     assert payload["candidates"] == []
     assert not db_path.exists()
+    assert not db_path.parent.exists()

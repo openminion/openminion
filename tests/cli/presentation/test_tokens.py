@@ -170,6 +170,8 @@ def test_interactive_token_history_uses_readable_rows_and_deltas() -> None:
     assert "100 output" in output
     assert "change +500" in output
     assert "openminion status tokens --recent 10" in output
+    assert "More history:" in output
+    assert "All sessions:" not in output
     assert "::conv:" not in output
     assert max(map(len, output.splitlines())) <= 90
 

@@ -1,6 +1,6 @@
 from collections import Counter
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from openminion.modules.telemetry.trace.turn_cost import (
@@ -45,6 +45,17 @@ def _normalize_iso_datetime(value: Any) -> datetime | None:
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _observation_timestamp(summary: TokenUsageSummary) -> float:
+    if summary.last_source_event is None:
+        return float("-inf")
+    observed = _normalize_iso_datetime(summary.last_source_event.observed_at)
+    if observed is None:
+        return float("-inf")
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=UTC)
+    return observed.timestamp()
 
 
 def _usage_stats_from_payload(payload: dict[str, Any]) -> RunStats:
@@ -379,7 +390,13 @@ class StatsService:
                         event_limit=event_limit,
                     )
                 )
-        return tuple(summaries)
+        return tuple(
+            sorted(
+                summaries,
+                key=_observation_timestamp,
+                reverse=True,
+            )
+        )
 
     def get_run_stats(self, run_id: str) -> RunStatsSummary | None:
         if not hasattr(self._store, "get_run_record"):

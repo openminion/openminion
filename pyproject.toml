@@ -219,7 +219,7 @@ where = ["src"]
 addopts = "--import-mode=importlib"
 timeout = 60
 markers = [
-  "e2e: live end-to-end tests gated on OPENMINION_LIVE_CLI_CHAT_E2E=1",
+  "e2e: end-to-end tests that may require an explicit live gate or local service",
   "postgres: requires OPENMINION_TEST_POSTGRES_URL and postgres extras",
   "benchmark: explicit benchmark / regression harness tests",
   "memory_eval: lightweight memory evaluation scenarios",

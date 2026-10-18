@@ -102,6 +102,13 @@ and multiline-paste cases on macOS. These are PTY checks, not native
 Terminal.app coverage. Required merge checks remain a repository setting,
 verified separately from workflow presence.
 
+The independent `telemetry-collector-e2e` job runs
+`make test-telemetry-collector-ci` against the digest-pinned OpenTelemetry
+Collector. It proves the public live-export probe plus real OTLP traces, metrics,
+and logs, then retains the Collector files as workflow artifacts. Docker is
+required for this target; an unavailable daemon fails instead of skipping the
+proof.
+
 For an authorized real-provider baseline, the existing runner selects exactly
 four cases: an exact final reply, active type-ahead in the inline composer,
 a correlated current-time acquisition, and durable memory recall in a distinct

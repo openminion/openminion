@@ -120,7 +120,7 @@ VALIDATE_PATTERN_SCRIPTS := \
 
 _VP_TARGETS := $(addprefix _vp-, $(VALIDATE_PATTERN_MODULES)) _vp-validate.direct_env_calls _vp-direct-env-calls
 
-.PHONY: help venv dev-install run-local hooks-install hooks-run fix format format-check workflow-check lint lint-advisory validate-patterns typecheck typecheck-strict test test-critical test-ci test-e2e-ci ci-check bench check release-check eval $(_VP_TARGETS)
+.PHONY: help venv dev-install run-local hooks-install hooks-run fix format format-check workflow-check lint lint-advisory validate-patterns typecheck typecheck-strict test test-critical test-ci test-e2e-ci test-telemetry-collector-ci ci-check bench check release-check eval $(_VP_TARGETS)
 
 help:
 	@printf '%s\n' \
@@ -145,6 +145,7 @@ help:
 		'  make test-critical Run the fast cross-component regression suite' \
 		'  make test-ci       Run the provider-free Python 3.11 pull-request suite' \
 		'  make test-e2e-ci   Run the bounded provider-free E2E regression slice' \
+		'  make test-telemetry-collector-ci Run the required OTLP Collector transport proof' \
 		'  make ci-check      Run workflow, format, lint, critical, provider-free, and E2E gates' \
 		'  make bench         Run storage benchmark regression harness' \
 		'  make check         Run format-check, lint, and test' \
@@ -285,6 +286,13 @@ test-e2e-ci: $(DEV_STAMP)
 		"$(REPO_ROOT)/tests/e2e/cli/focus/test_runner_summary.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/test_harness_assertions.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/harness/test_provider_session_resilience.py"
+
+test-telemetry-collector-ci: $(DEV_STAMP)
+	docker info >/dev/null
+	PYTHONPATH="$(REPO_ROOT)/src" \
+	$(PYTEST) -q \
+		"$(REPO_ROOT)/tests/e2e/telemetry/test_export_probe_collector.py::test_live_export_probe_reaches_pinned_collector" \
+		"$(REPO_ROOT)/tests/e2e/telemetry/test_otlp_http_transport.py::test_otlp_http_routes_traces_metrics_and_logs"
 
 ci-check: format-check workflow-check lint test-critical test-ci test-e2e-ci
 

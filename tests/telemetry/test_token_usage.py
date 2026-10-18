@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 from openminion.modules.storage.runtime.session_store.models import EventRecord
 from openminion.modules.telemetry.usage import (
@@ -23,6 +25,42 @@ _FIXTURE_PATH = (
     / "token_usage"
     / "openminion_token_usage_v1.json"
 )
+
+
+def test_recent_token_usage_is_ordered_by_observation_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Store:
+        def list_sessions(self, **_kwargs):
+            return [{"session_id": "reopened-old"}, {"session_id": "newer-usage"}]
+
+    summaries = {
+        "reopened-old": TokenUsageSummary(
+            "reopened-old",
+            last_source_event=TokenUsageEventRef(
+                observed_at="2026-09-09T07:30:00+00:00"
+            ),
+        ),
+        "newer-usage": TokenUsageSummary(
+            "newer-usage",
+            last_source_event=TokenUsageEventRef(
+                observed_at="2026-09-09T01:00:00-07:00"
+            ),
+        ),
+    }
+    service = StatsService(Store())
+    monkeypatch.setattr(
+        service,
+        "get_session_token_usage",
+        lambda session_id, **_kwargs: summaries[session_id],
+    )
+
+    result = service.get_recent_session_token_usage(limit=2)
+
+    assert [summary.session_id for summary in result] == [
+        "newer-usage",
+        "reopened-old",
+    ]
 
 
 def test_provider_total_is_emitted_once_and_cache_diagnostic_is_non_additive() -> None:
