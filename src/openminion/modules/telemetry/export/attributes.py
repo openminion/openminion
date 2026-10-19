@@ -274,8 +274,7 @@ def _flatten_payload(
     key_name = prefix.rsplit(".", 1)[-1].lower()
     payload_name = prefix[len("openminion.payload") :].lstrip(".").lower()
     field_allowed = (
-        key_name in allowed_sensitive_fields
-        or payload_name in allowed_sensitive_fields
+        key_name in allowed_sensitive_fields or payload_name in allowed_sensitive_fields
     )
     path_parts = tuple(part.lower() for part in prefix.split("."))
     if key_name == "sensitive_content" and "_telemetry_policy" in path_parts:
@@ -342,9 +341,7 @@ def _flatten_payload(
     if value is None:
         return
     text = str(value)
-    parent_allows_field = (
-        parent_sensitive_allowed and key_name in _INHERITED_PROSE_KEYS
-    )
+    parent_allows_field = parent_sensitive_allowed and key_name in _INHERITED_PROSE_KEYS
     if (
         not include_assistant_body
         and key_name in _PROSE_KEYS

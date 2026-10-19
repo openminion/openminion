@@ -251,9 +251,7 @@ class RuntimeTokenUsageMixin:
         self._completed_session_usage = TokenUsageTotals(
             prompt_tokens=summary.total_input_tokens,
             completion_tokens=summary.total_output_tokens,
-            total_tokens=(
-                summary.total_provider_tokens + summary.total_derived_tokens
-            ),
+            total_tokens=(summary.total_provider_tokens + summary.total_derived_tokens),
             cached_tokens=summary.total_cache_read_tokens,
             max_single_call_prompt_tokens=max(
                 record.input_tokens for record in summary.records

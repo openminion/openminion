@@ -235,7 +235,9 @@ def read_trace_file(
 ) -> dict[str, Any]:
     root = trace_root.expanduser()
     if not _safe_trace_path(root, trace_path, missing_raises=True):
-        raise ValueError("trace path must name a readable, non-symlinked trace artifact")
+        raise ValueError(
+            "trace path must name a readable, non-symlinked trace artifact"
+        )
     candidate = root.joinpath(*PurePosixPath(trace_path).parts)
     stat = candidate.stat()
     payload: dict[str, Any] = {
@@ -376,7 +378,6 @@ def build_telemetry_debug_report(
         )
     if selected_id is None:
         return _empty_debug_report(selector_kind, export_health, diagnostics)
-
     try:
         high_water = store.event_high_water(invocation_id=selected_id)
         rows = list(
@@ -540,7 +541,6 @@ def _select_invocation(
         if not failed:
             return None, "canonical"
         return max(failed)[1], "canonical"
-
     starts = _iter_event_rows(
         store,
         high_water=high_water,

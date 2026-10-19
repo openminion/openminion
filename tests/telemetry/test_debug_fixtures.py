@@ -76,7 +76,6 @@ def test_fixture_structural_fields_remain_usable() -> None:
     assert rich_body.startswith("latest invocation\n")
     assert (
         "next: /telemetry events | /telemetry failed | "
-        "/telemetry invocation invocation-synthetic-1"
-        in rich_body
+        "/telemetry invocation invocation-synthetic-1" in rich_body
     )
     assert "shell: telemetryctl debug bundle invocation-synthetic-1" in rich_body
