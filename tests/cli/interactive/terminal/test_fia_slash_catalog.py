@@ -141,7 +141,8 @@ class _VisibleRuntime:
     def token_usage_snapshot(self) -> None:
         return None
 
-    def token_usage_report(self) -> str:
+    def token_usage_report(self, *, recent: int | None = None) -> str:
+        del recent
         return "no token usage data"
 
     def effort_level(self) -> str:

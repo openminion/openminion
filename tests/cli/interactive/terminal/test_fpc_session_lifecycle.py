@@ -117,7 +117,7 @@ def _permission_runtime(
     runtime._project_context = None
     runtime._project_context_pending = False
     runtime.restore_session_model_selection = lambda _record: None
-    runtime._reset_token_usage_accounting = lambda: None
+    runtime._restore_token_usage_accounting = lambda: None
     runtime._clear_model_selection = lambda: None
     runtime._rebind_model_gateway = lambda: None
     return runtime
