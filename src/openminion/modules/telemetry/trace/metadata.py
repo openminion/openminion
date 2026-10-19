@@ -38,21 +38,7 @@ _SENSITIVE_FIELDS = frozenset(
         "gen_ai.tool.definitions",
     }
 )
-_SCOPED_SENSITIVE_FIELDS = frozenset(
-    {
-        "gen_ai.input.messages",
-        "gen_ai.output.messages",
-        "history",
-        "input_messages",
-        "output_messages",
-        "output_text",
-        "prompt",
-        "raw_prompt",
-        "raw_response",
-        "response",
-        "user_message",
-    }
-)
+_INHERITED_SENSITIVE_FIELDS = frozenset({"content"})
 _PROHIBITED_FIELDS = frozenset(
     {
         "api_key",
@@ -272,7 +258,7 @@ def apply_content_policy(
                     continue
                 field_allowed = field in allowed_sensitive_fields
                 parent_allows_field = (
-                    parent_sensitive_allowed and field not in _SCOPED_SENSITIVE_FIELDS
+                    parent_sensitive_allowed and field in _INHERITED_SENSITIVE_FIELDS
                 )
                 if (
                     field in _SENSITIVE_FIELDS
