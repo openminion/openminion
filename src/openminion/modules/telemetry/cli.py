@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 from pathlib import Path
-from pathlib import PurePosixPath
 import time
 from typing import Any
 from uuid import uuid4
@@ -610,20 +609,15 @@ def _print_trace_show(args) -> int:
             trace_path=args.path,
             include_content=bool(args.raw),
         )
-    except ValueError:
-        relative = PurePosixPath(args.path)
-        missing = (
-            args.path
-            and "\\" not in args.path
-            and not relative.is_absolute()
-            and ".." not in relative.parts
-            and (args.path.endswith(".json") or args.path.endswith("-raw.txt"))
-            and not _trace_root_from_args(args).joinpath(*relative.parts).exists()
-        )
+    except FileNotFoundError:
         report = build_telemetry_debug_error(
-            "TRACE_ARTIFACT_NOT_FOUND" if missing else "INVALID_ARGUMENT",
-            "not_found" if missing else "argument",
+            "TRACE_ARTIFACT_NOT_FOUND",
+            "not_found",
         )
+        print_json_payload(report.to_dict())
+        return telemetry_debug_exit(report)
+    except ValueError:
+        report = build_telemetry_debug_error("INVALID_ARGUMENT", "argument")
         print_json_payload(report.to_dict())
         return telemetry_debug_exit(report)
     except OSError as exc:

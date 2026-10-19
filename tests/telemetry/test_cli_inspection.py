@@ -256,6 +256,32 @@ def test_telemetryctl_trace_show_rejects_symlinked_artifacts(
     assert json.loads(capsys.readouterr().out)["error"]["code"] == "INVALID_ARGUMENT"
 
 
+def test_telemetryctl_trace_show_rejects_dangling_symlinked_artifacts(
+    capsys,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
+    linked = data_root / "traces" / "llm" / "dangling.json"
+    linked.parent.mkdir(parents=True)
+    linked.symlink_to(tmp_path / "missing.json")
+
+    assert (
+        main(
+            [
+                "--home-root",
+                str(tmp_path / "home"),
+                "trace",
+                "show",
+                "llm/dangling.json",
+            ]
+        )
+        == 2
+    )
+    assert json.loads(capsys.readouterr().out)["error"]["code"] == "INVALID_ARGUMENT"
+
+
 def test_telemetryctl_trace_show_reports_missing_artifact(
     capsys,
     tmp_path: Path,

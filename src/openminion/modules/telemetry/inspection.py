@@ -12,8 +12,7 @@ import uuid
 from contextlib import contextmanager
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from pathlib import Path
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from openminion.base.config import OTELExporterConfig
@@ -235,10 +234,8 @@ def read_trace_file(
     include_content: bool = False,
 ) -> dict[str, Any]:
     root = trace_root.expanduser()
-    if not _safe_trace_path(root, trace_path):
-        raise ValueError(
-            "trace path must name a readable, non-symlinked trace artifact"
-        )
+    if not _safe_trace_path(root, trace_path, missing_raises=True):
+        raise ValueError("trace path must name a readable, non-symlinked trace artifact")
     candidate = root.joinpath(*PurePosixPath(trace_path).parts)
     stat = candidate.stat()
     payload: dict[str, Any] = {
@@ -353,7 +350,6 @@ def build_telemetry_debug_report(
         return argument_error
     if service is None:
         return _empty_debug_report(selector_kind, export_health)
-
     store = service._store
     try:
         global_high_water = store.event_high_water()
@@ -829,7 +825,9 @@ def _trace_facts(
     return trace_count, verified[:100]
 
 
-def _safe_trace_path(trace_root: Path | None, value: str) -> bool:
+def _safe_trace_path(
+    trace_root: Path | None, value: str, *, missing_raises: bool = False
+) -> bool:
     if not value or "\\" in value:
         return False
     relative = PurePosixPath(value)
@@ -848,7 +846,11 @@ def _safe_trace_path(trace_root: Path | None, value: str) -> bool:
             return False
     try:
         candidate.resolve(strict=True).relative_to(root.resolve(strict=True))
-    except (FileNotFoundError, ValueError, OSError):
+    except FileNotFoundError:
+        if missing_raises:
+            raise
+        return False
+    except (ValueError, OSError):
         return False
     return candidate.is_file() and os.access(candidate, os.R_OK)
 

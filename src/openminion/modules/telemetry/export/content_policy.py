@@ -7,10 +7,25 @@ def external_sensitive_fields(config: OTELExporterConfig) -> frozenset[str]:
     fields: set[str] = set()
     if config.include_input_messages:
         fields.update(
-            {"user_message", "history", "input_messages", "gen_ai.input.messages"}
+            {
+                "user_message",
+                "history",
+                "input_messages",
+                "gen_ai.input.messages",
+                "prompt",
+                "raw_prompt",
+            }
         )
     if config.include_output_messages:
-        fields.update({"output_messages", "output_text", "gen_ai.output.messages"})
+        fields.update(
+            {
+                "output_messages",
+                "output_text",
+                "gen_ai.output.messages",
+                "response",
+                "raw_response",
+            }
+        )
     if config.include_assistant_body:
         fields.add("content")
     if config.include_tool_content:
