@@ -711,8 +711,19 @@ def _summarize_invocation(
     usage = aggregate_debug_usage(valid_rows, diagnostics)
     trace_count, trace_paths = _trace_facts(valid_rows, trace_root, diagnostics)
     terminal_data = terminal.event.data if terminal else {}
-    provider = str(terminal_data.get("provider") or "").strip() or None
-    model = str(terminal_data.get("model") or "").strip() or None
+    model_row = max(
+        (row for row in valid_rows if row.event.event_type.startswith("llm.call.")),
+        key=telemetry_event_sort_key,
+        default=None,
+    )
+    model_data = model_row.event.data if model_row else {}
+    provider = (
+        str(terminal_data.get("provider") or model_data.get("provider") or "").strip()
+        or None
+    )
+    model = (
+        str(terminal_data.get("model") or model_data.get("model") or "").strip() or None
+    )
     return (
         TelemetryDebugInvocation(
             invocation_id=invocation_id,

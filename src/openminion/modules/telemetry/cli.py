@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 from pathlib import Path
+from pathlib import PurePosixPath
 import time
 from typing import Any
 from uuid import uuid4
@@ -218,14 +219,13 @@ def _normalize_summary_output(
     return normalized
 
 
-async def _print_summary(*, db_path, session_id: str) -> int:
-    service = TelemetryService(db_path)
-    try:
-        payload = _normalize_summary_output(
-            await service.get_module_summary(session_id)
+async def _print_summary(*, db_path, home_root: str | None, session_id: str) -> int:
+    with open_telemetry_inspection(db_path=db_path, home_root=home_root) as service:
+        payload = (
+            _normalize_summary_output(await service.get_module_summary(session_id))
+            if service is not None
+            else {}
         )
-    finally:
-        await service.close()
     print_json_payload(payload)
     return 0
 
@@ -604,13 +604,36 @@ def _print_trace_list(args) -> int:
 
 
 def _print_trace_show(args) -> int:
-    print_json_payload(
-        read_trace_file(
+    try:
+        payload = read_trace_file(
             trace_root=_trace_root_from_args(args),
             trace_path=args.path,
             include_content=bool(args.raw),
         )
-    )
+    except ValueError:
+        relative = PurePosixPath(args.path)
+        missing = (
+            args.path
+            and "\\" not in args.path
+            and not relative.is_absolute()
+            and ".." not in relative.parts
+            and (args.path.endswith(".json") or args.path.endswith("-raw.txt"))
+            and not _trace_root_from_args(args).joinpath(*relative.parts).exists()
+        )
+        report = build_telemetry_debug_error(
+            "TRACE_ARTIFACT_NOT_FOUND" if missing else "INVALID_ARGUMENT",
+            "not_found" if missing else "argument",
+        )
+        print_json_payload(report.to_dict())
+        return telemetry_debug_exit(report)
+    except OSError as exc:
+        report = build_telemetry_debug_error(
+            telemetry_storage_error_code(exc),
+            "storage",
+        )
+        print_json_payload(report.to_dict())
+        return telemetry_debug_exit(report)
+    print_json_payload(payload)
     return 0
 
 
@@ -733,6 +756,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(
             _print_summary(
                 db_path=db_path,
+                home_root=home_root or None,
                 session_id=args.session_id.strip(),
             )
         )

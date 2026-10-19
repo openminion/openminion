@@ -10,6 +10,10 @@ _SENSITIVE_FIELDS = frozenset(
     {
         "content",
         "error_text",
+        "prompt",
+        "raw_prompt",
+        "raw_response",
+        "response",
         "system_prompt",
         "system_instructions",
         "user_message",

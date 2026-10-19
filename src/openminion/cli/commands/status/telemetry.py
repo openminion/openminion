@@ -21,9 +21,15 @@ def register_telemetry_subcommand(subcommands: Any, *, handler: Any) -> None:
         help="Show the latest, failed, or selected telemetry invocation",
     )
     selectors = parser.add_mutually_exclusive_group()
-    selectors.add_argument("--latest", action="store_true")
-    selectors.add_argument("--failed", action="store_true")
-    selectors.add_argument("--invocation-id")
+    selectors.add_argument(
+        "--latest", action="store_true", help="Show the latest invocation (default)"
+    )
+    selectors.add_argument(
+        "--failed", action="store_true", help="Show the latest failed invocation"
+    )
+    selectors.add_argument(
+        "--invocation-id", help="Show one invocation by its identifier"
+    )
     parser.add_argument(
         "--session-id", default="", help="Limit selection to one session"
     )
@@ -75,6 +81,7 @@ def _render_report(report: TelemetryDebugReport, *, as_json: bool) -> None:
             return
         if "NO_FAILED_INVOCATION" in codes:
             print("No failed model invocations found.")
+            print("next: inspect the latest run with `openminion status telemetry`.")
             return
         for diagnostic in report.diagnostics:
             print(f"diagnostic: {diagnostic.code}")

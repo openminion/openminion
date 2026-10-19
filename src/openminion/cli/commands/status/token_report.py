@@ -913,6 +913,7 @@ def format_token_summary(
     ]
     if not summary.records:
         lines.append("no token usage events")
+        lines.append("next: run a model turn if no model call is shown below")
     else:
         lines.append(
             "totals: "

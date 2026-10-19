@@ -67,6 +67,17 @@ def test_telemetryctl_summary_prints_sorted_module_and_metric_keys(
     assert list(payload["openminion-tool"]["operation_counts"].keys()) == ["completed"]
 
 
+def test_telemetryctl_summary_does_not_create_a_missing_database(
+    capsys, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "missing" / "telemetry.db"
+
+    assert main(["summary", "--db", str(db_path), "sess-cli"]) == 0
+
+    assert json.loads(capsys.readouterr().out) == {}
+    assert not db_path.parent.exists()
+
+
 def test_invocation_summary_reports_legacy_orphan_and_propagation_diagnostics(
     tmp_path: Path,
 ) -> None:

@@ -152,6 +152,110 @@ def test_status_tokens_json_is_raw_versioned_envelope(
     assert payload["coverage"]["cache_read_tokens"]["missing"] == 1
 
 
+def test_status_tokens_resolves_focus_session_event_stream(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "focus-tokens.db")
+    session_id = store.create_session(
+        initial_agent_id="agent.main",
+        profile_version="v1",
+        session_id="focus-parent",
+        meta={"target": "focus", "conversation_id": "focus-focus-parent"},
+    )
+    store.create_session(session_id="focus-parent::conv:focus-focus-parent")
+    store.append_event(
+        "focus-parent::conv:focus-focus-parent",
+        event_type="llm.call.completed",
+        payload={
+            "provider": "minimax",
+            "model": "MiniMax-M2.7",
+            "usage": {"input_tokens": 8, "output_tokens": 5, "total_tokens": 13},
+        },
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.tokens.build_status_session_store",
+        lambda _args, _config: store,
+    )
+
+    code = run_tokens_status(
+        _args(session_id=session_id, as_json=True),
+        config=OpenMinionConfig(),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["session_id"] == "focus-parent"
+    assert payload["totals"]["provider_tokens"] == 13
+
+
+def test_status_tokens_accepts_focus_parent_with_child_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "focus-run-tokens.db")
+    parent_id = store.create_session(
+        session_id="focus-parent",
+        meta={"target": "focus", "conversation_id": "focus-focus-parent"},
+    )
+    child_id = store.create_session(session_id="focus-parent::conv:focus-focus-parent")
+    run_id = store.create_run_record(child_id, run_type="llm", run_id="run-1")
+    store.finish_run_record(run_id, status="completed")
+    store.append_event(
+        child_id,
+        event_type="llm.call.completed",
+        payload={"run_id": run_id, "usage": {"total_tokens": 13}},
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.tokens.build_status_session_store",
+        lambda _args, _config: store,
+    )
+
+    code = run_tokens_status(
+        _args(session_id=parent_id, run_id=run_id, as_json=True),
+        config=OpenMinionConfig(),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["session_id"] == parent_id
+    assert payload["run_id"] == run_id
+    assert payload["totals"]["provider_tokens"] == 13
+
+
+def test_status_tokens_recent_does_not_duplicate_focus_child_usage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "focus-recent-tokens.db")
+    store.create_session(
+        session_id="focus-parent",
+        meta={"target": "focus", "conversation_id": "focus-focus-parent"},
+    )
+    child_id = store.create_session(session_id="focus-parent::conv:focus-focus-parent")
+    store.append_event(
+        child_id,
+        event_type="llm.call.completed",
+        payload={"usage": {"total_tokens": 13}},
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.tokens.build_status_session_store",
+        lambda _args, _config: store,
+    )
+
+    code = run_tokens_status(
+        _args(session_id="", recent=2, as_json=True),
+        config=OpenMinionConfig(),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["totals"]["provider_tokens"] == 13
+
+
 def test_status_tokens_text_reports_empty_and_incomplete_states(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -173,7 +277,9 @@ def test_status_tokens_text_reports_empty_and_incomplete_states(
         )
         == 0
     )
-    assert "no token usage events" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "no token usage events" in output
+    assert "run a model turn" in output
 
     store = SQLiteSessionStore(tmp_path / "tokens-incomplete.db")
     session_id = store.create_session(
@@ -401,6 +507,7 @@ def test_status_tokens_shows_unmetered_failed_calls(
     assert code == 0
     assert "llm_calls=1 metered=0 unmetered=1 failed=1" in output
     assert "[unmetered_llm_calls]" in output
+    assert "if no model call is shown below" in output
 
 
 def test_status_tokens_recent_rollup_shows_cross_session_insights(

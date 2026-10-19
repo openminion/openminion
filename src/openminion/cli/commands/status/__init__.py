@@ -289,7 +289,7 @@ def _register_status_tokens_subcommand(status_subcommands: StatusSubcommands) ->
         help="Session identifier (default: newest session, or run owner with --run-id)",
     )
     parser.add_argument("--run-id", default="", help="Optional run identifier")
-    parser.add_argument("--recent", type=int, default=None, help="Recently updated")
+    parser.add_argument("--recent", type=int, default=None, help="Recent session count")
     parser.add_argument("--agent-id", default="", help="Limit --recent to one agent")
     parser.add_argument(
         "--only-warnings",

@@ -189,7 +189,10 @@ def test_live_focus_basic_turn(
         )
         assert "status: completed" in telemetry
         assert foreign_invocation_id not in telemetry
-        assert "next: /telemetry failed | /telemetry invocation " in telemetry
+        assert (
+            "next: /telemetry events | /telemetry failed | /telemetry invocation "
+            in telemetry
+        )
         assert "shell: telemetryctl invocation show " in telemetry
 
         events = visible_text(

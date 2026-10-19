@@ -79,7 +79,13 @@ def render_trace_slash(args: str, *, runtime: Any) -> str:
             return f"telemetry: error\nerror: {report.error.code}"
         paths = report.links.trace_paths[:limit]
         if not paths:
-            return "trace files: none"
+            next_step = (
+                "run a model turn, then retry /trace list."
+                if _runtime_trace_capture_enabled(runtime)
+                else "restart with OPENMINION_TRACE_REQUESTS=1, run a model turn, "
+                "then retry /trace list."
+            )
+            return f"trace files: none\nnext: {next_step}"
         return "trace files:\n" + "\n".join(f"  {path}" for path in paths)
     if len(parts) == 2 and parts[0] == "show":
         report = _selected_report(runtime)
@@ -336,13 +342,15 @@ def _card_title(report: TelemetryDebugReport) -> str:
 def _next_actions(report: TelemetryDebugReport) -> str:
     kind = report.selection.kind if report.selection else "latest"
     actions = []
+    invocation_id = (
+        report.selection.selected_invocation_id if report.selection else None
+    )
+    if invocation_id:
+        actions.append("/telemetry events")
     if kind != "latest":
         actions.append("/telemetry latest")
     if kind != "failed":
         actions.append("/telemetry failed")
-    invocation_id = (
-        report.selection.selected_invocation_id if report.selection else None
-    )
     if invocation_id and kind != "invocation_id":
         actions.append(f"/telemetry invocation {invocation_id}")
     if report.links.trace_paths:

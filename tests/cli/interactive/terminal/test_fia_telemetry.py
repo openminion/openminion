@@ -94,6 +94,7 @@ def _record_invocation(
                     data={
                         "status": "ok",
                         "operation": "chat",
+                        "provider": "minimax",
                         "model": "model-1",
                         "llm_call_id": f"call-{invocation_id}",
                         "provider_round_trip_ms": 12,
@@ -168,7 +169,8 @@ def test_terminal_telemetry_labels_latest_completed_invocation(
     assert output.startswith("latest invocation")
     assert "latest failed invocation" not in output
     assert (
-        "next: /telemetry failed | /telemetry invocation invocation-completed" in output
+        "next: /telemetry events | /telemetry failed | "
+        "/telemetry invocation invocation-completed" in output
     )
     assert "shell: telemetryctl invocation show invocation-completed" in output
     assert "next: telemetryctl" not in output
@@ -266,6 +268,23 @@ def test_terminal_telemetry_usage_and_missing_store_do_not_fall_through(
     assert set(tmp_path.iterdir()) == before
 
 
+def test_terminal_trace_list_explains_how_to_enable_and_populate_capture(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "telemetry").mkdir()
+
+    disabled = _run_slash("/trace list", _Runtime(tmp_path), tmp_path)
+    enabled = _run_slash(
+        "/trace list",
+        _Runtime(tmp_path, trace_requests=True),
+        tmp_path,
+    )
+
+    assert "restart with OPENMINION_TRACE_REQUESTS=1" in disabled
+    assert "run a model turn" in enabled
+    assert "OPENMINION_TRACE_REQUESTS" not in enabled
+
+
 def test_terminal_telemetry_explains_empty_session(tmp_path: Path) -> None:
     (tmp_path / "telemetry").mkdir()
     output = _run_slash(
@@ -345,6 +364,7 @@ def test_terminal_telemetry_includes_correlated_child_session_traces(
     traces = _run_slash("/trace list", runtime, tmp_path)
 
     assert "trace files: 1" in telemetry
+    assert "model: minimax/model-1" in telemetry
     assert "llm.call.completed" in events
     assert "session-1::conv:focus-session-1" in events
     assert relative in traces

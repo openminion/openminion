@@ -164,7 +164,9 @@ def test_status_telemetry_empty_not_found_and_invalid_exits_without_creation(
     assert "run a model turn" in text
 
     assert main(_args(tmp_path, "--failed")) == 0
-    assert "No failed model invocations found." in capsys.readouterr().out
+    text = capsys.readouterr().out
+    assert "No failed model invocations found." in text
+    assert "inspect the latest run" in text
 
     with pytest.raises(SystemExit) as exc_info:
         main(_args(tmp_path, "--latest", "--failed"))

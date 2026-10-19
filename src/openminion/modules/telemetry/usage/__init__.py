@@ -11,7 +11,7 @@ from .contracts import (
 )
 from .coverage import TokenUsageCoverage, TokenUsageDimensionCoverage
 from .formatting import format_run_stats_footer, format_session_stats_summary
-from .service import StatsService
+from .service import StatsService, usage_event_session_id
 from .token_usage import (
     TokenUsageEventRef,
     TokenUsageRecord,
@@ -41,4 +41,5 @@ __all__ = [
     "format_run_stats_footer",
     "format_session_stats_summary",
     "summary_to_json_payload",
+    "usage_event_session_id",
 ]

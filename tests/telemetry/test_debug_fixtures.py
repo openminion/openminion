@@ -75,7 +75,8 @@ def test_fixture_structural_fields_remain_usable() -> None:
     rich_body = fixtures["rich-card.json"]["body"]
     assert rich_body.startswith("latest invocation\n")
     assert (
-        "next: /telemetry failed | /telemetry invocation invocation-synthetic-1"
+        "next: /telemetry events | /telemetry failed | "
+        "/telemetry invocation invocation-synthetic-1"
         in rich_body
     )
     assert "shell: telemetryctl debug bundle invocation-synthetic-1" in rich_body

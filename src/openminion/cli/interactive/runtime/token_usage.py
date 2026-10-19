@@ -76,7 +76,10 @@ class RuntimeTokenUsageMixin:
             format_interactive_token_history,
             format_interactive_token_summary,
         )
-        from openminion.modules.telemetry.usage import StatsService
+        from openminion.modules.telemetry.usage import (
+            StatsService,
+            usage_event_session_id,
+        )
 
         store, owns_store = self._token_usage_store()
         try:
@@ -89,9 +92,7 @@ class RuntimeTokenUsageMixin:
                 )
             summaries = tuple(
                 replace(
-                    service.get_session_token_usage(
-                        self._usage_event_session_id(session)
-                    ),
+                    service.get_session_token_usage(usage_event_session_id(session)),
                     session_id=str(getattr(session, "id", "") or ""),
                 )
                 for session in self._recent_surface_sessions(recent)
@@ -154,17 +155,6 @@ class RuntimeTokenUsageMixin:
                 channel=self._channel,
                 target=self._target,
             )
-        )
-
-    @staticmethod
-    def _usage_event_session_id(session: Any) -> str:
-        session_id = str(getattr(session, "id", "") or "").strip()
-        metadata = getattr(session, "metadata", {}) or {}
-        conversation_id = str(metadata.get("conversation_id", "") or "").strip()
-        if not conversation_id and str(getattr(session, "target", "")) == "focus":
-            conversation_id = f"focus-{session_id}"
-        return (
-            f"{session_id}::conv:{conversation_id}" if conversation_id else session_id
         )
 
     def _begin_turn_usage_tracking(self) -> None:

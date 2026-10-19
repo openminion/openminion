@@ -53,13 +53,31 @@ _CREDENTIAL_QUERY_NAMES = {
     "x-amz-signature",
     "x-amz-security-token",
 }
+_CREDENTIAL_NAME_SUFFIXES = (
+    "_credential",
+    "_key",
+    "_password",
+    "_secret",
+    "_signature",
+    "_token",
+)
+_NORMALIZED_CREDENTIAL_HEADERS = {
+    name.replace("-", "_") for name in _CREDENTIAL_HEADERS
+}
+_NORMALIZED_CREDENTIAL_QUERY_NAMES = {
+    name.replace("-", "_") for name in _CREDENTIAL_QUERY_NAMES
+}
+
+
+def _is_credential_name(name: str, *, known_names: set[str]) -> bool:
+    normalized = name.strip().lower().replace("-", "_").replace(".", "_")
+    return normalized in known_names or normalized.endswith(_CREDENTIAL_NAME_SUFFIXES)
 
 
 def _redact_headers(headers: dict[str, str]) -> dict[str, str]:
     redacted: dict[str, str] = {}
     for key, value in headers.items():
-        lowered = key.strip().lower()
-        if lowered in _CREDENTIAL_HEADERS:
+        if _is_credential_name(key, known_names=_NORMALIZED_CREDENTIAL_HEADERS):
             redacted[key] = "<redacted>"
         else:
             redacted[key] = value
@@ -80,7 +98,10 @@ def _redact_url(url: str) -> str:
             (
                 key,
                 "<redacted>"
-                if key.strip().lower() in _CREDENTIAL_QUERY_NAMES
+                if _is_credential_name(
+                    key,
+                    known_names=_NORMALIZED_CREDENTIAL_QUERY_NAMES,
+                )
                 else value,
             )
             for key, value in parse_qsl(parsed.query, keep_blank_values=True)

@@ -215,16 +215,21 @@ def test_telemetryctl_trace_list_and_show(
 
 
 def test_telemetryctl_trace_show_rejects_paths_outside_trace_root(
+    capsys,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
 
-    with pytest.raises(ValueError, match="non-symlinked trace artifact"):
+    assert (
         main(["--home-root", str(tmp_path / "home"), "trace", "show", "../secret.json"])
+        == 2
+    )
+    assert json.loads(capsys.readouterr().out)["error"]["code"] == "INVALID_ARGUMENT"
 
 
 def test_telemetryctl_trace_show_rejects_symlinked_artifacts(
+    capsys,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -236,7 +241,7 @@ def test_telemetryctl_trace_show_rejects_symlinked_artifacts(
     linked.parent.mkdir(parents=True)
     linked.symlink_to(outside)
 
-    with pytest.raises(ValueError, match="non-symlinked trace artifact"):
+    assert (
         main(
             [
                 "--home-root",
@@ -246,6 +251,34 @@ def test_telemetryctl_trace_show_rejects_symlinked_artifacts(
                 "llm/linked.json",
             ]
         )
+        == 2
+    )
+    assert json.loads(capsys.readouterr().out)["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_telemetryctl_trace_show_reports_missing_artifact(
+    capsys,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
+
+    assert (
+        main(
+            [
+                "--home-root",
+                str(tmp_path / "home"),
+                "trace",
+                "show",
+                "llm/missing.json",
+            ]
+        )
+        == 1
+    )
+    assert (
+        json.loads(capsys.readouterr().out)["error"]["code"]
+        == "TRACE_ARTIFACT_NOT_FOUND"
+    )
 
 
 def test_telemetryctl_invocation_list_show_and_graph_are_structural(

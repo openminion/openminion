@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import sqlite3
 from typing import Any
 
 from rich.console import Console
@@ -17,10 +18,14 @@ from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 
 class _FakeRuntime:
     def __init__(
-        self, report: str = "Cost\nAmount: unavailable", raises: bool = False
+        self,
+        report: str = "Cost\nAmount: unavailable",
+        raises: bool = False,
+        usage_raises: bool = False,
     ) -> None:
         self._report = report
         self._raises = raises
+        self._usage_raises = usage_raises
 
     def token_cost_report(self) -> str:
         if self._raises:
@@ -28,6 +33,8 @@ class _FakeRuntime:
         return self._report
 
     def token_usage_report(self, *, recent: int | None = None) -> str:
+        if self._usage_raises:
+            raise sqlite3.OperationalError("usage storage failed")
         if recent is not None:
             return f"Token history · requested={recent}"
         return "Token usage\nTokens: 42 total"
@@ -113,3 +120,10 @@ def test_slash_tokens_supports_recent_history() -> None:
     assert "requested=10" in default
     assert "requested=5" in explicit
     assert invalid.strip() == "usage: /tokens [recent [1..20]]"
+
+
+def test_slash_tokens_reports_storage_failure_without_exiting() -> None:
+    out = asyncio.run(_dispatch(_FakeRuntime(usage_raises=True), "/tokens"))
+
+    assert "Unavailable: session storage could not be read." in out
+    assert "openminion debug modules" in out

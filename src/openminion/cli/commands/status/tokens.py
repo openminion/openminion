@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from openminion.base.config import OpenMinionConfig
@@ -13,6 +14,7 @@ from openminion.cli.presentation.json_output import print_json_payload
 from openminion.modules.telemetry.usage import (
     StatsService,
     summary_to_json_payload,
+    usage_event_session_id,
 )
 
 
@@ -116,21 +118,27 @@ def run_tokens_status(args: Any, *, config: OpenMinionConfig) -> int:
                 raise RuntimeError(f"Session '{summary.session_id}' was not found.")
         else:
             session_id = _resolve_session_id(args, store)
-            if store.get_session(session_id) is None:
+            session = store.get_session(session_id)
+            if session is None:
                 raise RuntimeError(f"Session '{session_id}' was not found.")
+            event_session_id = usage_event_session_id(session)
             if not run_id:
-                summary = service.get_session_token_usage(
-                    session_id,
-                    event_limit=event_limit,
+                summary = replace(
+                    service.get_session_token_usage(
+                        event_session_id,
+                        event_limit=event_limit,
+                    ),
+                    session_id=session_id,
                 )
             else:
                 summary = service.get_run_token_usage(run_id, event_limit=event_limit)
                 if summary is None:
                     raise RuntimeError(f"Run '{run_id}' was not found.")
-                if summary.session_id != session_id:
+                if summary.session_id != event_session_id:
                     raise RuntimeError(
                         f"Run '{run_id}' does not belong to session '{session_id}'."
                     )
+                summary = replace(summary, session_id=session_id)
         cost = (
             service.get_run_turn_cost(run_id, event_limit=event_limit)
             if run_id

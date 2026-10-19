@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 import shlex
+import sqlite3
 from typing import Any
 
 from openminion.cli.commands.status.token_costs import format_optional_cost_usd
@@ -25,7 +26,7 @@ def render_tokens_slash(args: str, *, runtime: Any) -> str:
     except ValueError:
         return TOKENS_USAGE
     if not parts:
-        return str(runtime.token_usage_report()).strip()
+        return _token_usage_report(runtime)
     if parts[0] != "recent" or len(parts) > 2:
         return TOKENS_USAGE
     if len(parts) == 1:
@@ -37,7 +38,20 @@ def render_tokens_slash(args: str, *, runtime: Any) -> str:
             return TOKENS_USAGE
         if not 1 <= limit <= MAX_RECENT_SESSIONS:
             return TOKENS_USAGE
-    return str(runtime.token_usage_report(recent=limit)).strip()
+    return _token_usage_report(runtime, recent=limit)
+
+
+def _token_usage_report(runtime: Any, *, recent: int | None = None) -> str:
+    try:
+        return str(runtime.token_usage_report(recent=recent)).strip()
+    except (OSError, sqlite3.Error):
+        return "\n".join(
+            (
+                "Token usage",
+                "Unavailable: session storage could not be read.",
+                "Next: run `openminion debug modules` to inspect local module health.",
+            )
+        )
 
 
 def format_interactive_token_summary(summary: TokenUsageSummary) -> str:

@@ -184,6 +184,8 @@ def test_http_trace_redacts_fixed_credential_surfaces(tmp_path, monkeypatch) -> 
         "X-Amz-Security-Token",
         "X-Goog-Api-Key",
         "CF-Access-Client-Secret",
+        "Vendor-Session-Token",
+        "Vendor.Client.Secret",
     ]
     query_names = [
         "access_token",
@@ -201,6 +203,8 @@ def test_http_trace_redacts_fixed_credential_surfaces(tmp_path, monkeypatch) -> 
         "x-amz-credential",
         "x-amz-signature",
         "x-amz-security-token",
+        "vendor_session_token",
+        "vendor.client.secret",
     ]
     query = "&".join(
         [
