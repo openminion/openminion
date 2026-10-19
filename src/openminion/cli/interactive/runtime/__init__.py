@@ -142,6 +142,7 @@ class OpenMinionRuntime(
             self._sync_conversation_id()
             self.restore_session_model_selection(session)
             self.restore_session_permission_posture(session)
+            self._restore_token_usage_accounting()
         elif self._prompt_on_resume:
             self._ensure_agent_resolved()
             if normalized_session_id:
@@ -478,6 +479,7 @@ class OpenMinionRuntime(
             self._sync_conversation_id()
             self.restore_session_model_selection(session)
             self.restore_session_permission_posture(session)
+            self._restore_token_usage_accounting()
 
     def new_session(self) -> str:
         return self.create_new_session()
@@ -498,7 +500,7 @@ class OpenMinionRuntime(
         self.restore_session_model_selection(record)
         self.restore_session_permission_posture(record)
         self._project_context_pending = False
-        self._reset_token_usage_accounting()
+        self._restore_token_usage_accounting()
 
     def _resolve_startup_session(self, session_id: str) -> None:
         self._ensure_agent_resolved()
@@ -523,7 +525,7 @@ class OpenMinionRuntime(
         self.restore_session_model_selection(session)
         self.restore_session_permission_posture(session)
         self._project_context_pending = False
-        self._reset_token_usage_accounting()
+        self._restore_token_usage_accounting()
 
     def create_new_session(self) -> str:
         self._ensure_agent_resolved()

@@ -1,3 +1,4 @@
+import sqlite3
 import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Mapping
@@ -229,6 +230,39 @@ class RuntimeTokenUsageMixin:
         self._last_chat_phase_timing_payload = None
         self._last_live_usage_update_at = None
         self._usage_updated_at_monotonic = None
+
+    def _restore_token_usage_accounting(self) -> None:
+        from openminion.modules.telemetry.usage import StatsService
+
+        self._reset_token_usage_accounting()
+        store, owns_store = self._token_usage_store()
+        try:
+            try:
+                summary = StatsService(store).get_session_token_usage(
+                    self._turn_session_id()
+                )
+            except (OSError, RuntimeError, sqlite3.Error):
+                return
+        finally:
+            if owns_store:
+                store.close()
+        if not summary.records:
+            return
+        self._completed_session_usage = TokenUsageTotals(
+            prompt_tokens=summary.total_input_tokens,
+            completion_tokens=summary.total_output_tokens,
+            total_tokens=(
+                summary.total_provider_tokens + summary.total_derived_tokens
+            ),
+            cached_tokens=summary.total_cache_read_tokens,
+            max_single_call_prompt_tokens=max(
+                record.input_tokens for record in summary.records
+            ),
+            max_single_call_total_tokens=max(
+                record.total_tokens for record in summary.records
+            ),
+            llm_calls=summary.coverage.observed_llm_call_events,
+        )
 
     def _context_limit_tokens(self) -> int | None:
         runtime_cfg = getattr(getattr(self._rt, "config", None), "runtime", None)
