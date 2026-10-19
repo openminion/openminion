@@ -235,17 +235,17 @@ class RuntimeTokenUsageMixin:
         from openminion.modules.telemetry.usage import StatsService
 
         self._reset_token_usage_accounting()
-        store, owns_store = self._token_usage_store()
         try:
+            store, owns_store = self._token_usage_store()
             try:
                 summary = StatsService(store).get_session_token_usage(
                     self._turn_session_id()
                 )
-            except (OSError, RuntimeError, sqlite3.Error):
-                return
-        finally:
-            if owns_store:
-                store.close()
+            finally:
+                if owns_store:
+                    store.close()
+        except (OSError, RuntimeError, sqlite3.Error):
+            return
         if not summary.records:
             return
         self._completed_session_usage = TokenUsageTotals(

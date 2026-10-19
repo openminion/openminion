@@ -17,6 +17,7 @@ from openminion.cli.parser.contracts import ensure_cli_component_compatibility
 from openminion.cli.interactive.project_context import ProjectContextInfo
 from openminion.cli.interactive.runtime import OpenMinionRuntime
 from openminion.cli.interactive.runtime.messages import room_result_chat_messages
+from openminion.cli.interactive.runtime.token_usage import RuntimeTokenUsageMixin
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.presentation.models import MessageKind
 from openminion.base.config.core import OpenMinionConfig
@@ -1909,13 +1910,34 @@ async def test_openminion_runtime_resets_session_usage_on_new_session_and_bind()
     assert tui_rt.token_usage_snapshot().session_total_tokens == 15
 
 
-def test_openminion_runtime_usage_restore_is_nonfatal() -> None:
+@pytest.mark.parametrize("failure_stage", ["open", "read", "close"])
+def test_openminion_runtime_usage_restore_is_nonfatal(
+    failure_stage: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     rt = _FakeRuntime()
 
     def unavailable(*_args: object, **_kwargs: object) -> list[object]:
-        raise RuntimeError("telemetry unavailable")
+        raise OSError("telemetry unavailable")
 
-    rt.context_trace_store.list_events = unavailable
+    if failure_stage == "open":
+        monkeypatch.setattr(
+            RuntimeTokenUsageMixin,
+            "_token_usage_store",
+            lambda _self: unavailable(),
+        )
+    elif failure_stage == "read":
+        rt.context_trace_store.list_events = unavailable
+    else:
+        store = SimpleNamespace(
+            list_events=lambda *_args, **_kwargs: [],
+            close=unavailable,
+        )
+        monkeypatch.setattr(
+            RuntimeTokenUsageMixin,
+            "_token_usage_store",
+            lambda _self: (store, True),
+        )
 
     tui_rt = OpenMinionRuntime(rt)
 
