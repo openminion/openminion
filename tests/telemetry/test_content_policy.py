@@ -31,16 +31,29 @@ class _Exporter:
 
 _EXTERNAL_CONTENT = {
     "user_message": "input-user",
-    "input_messages": [{"role": "user", "content": "input-list"}],
+    "input_messages": [
+        {
+            "role": "user",
+            "content": "input-list",
+            "assistant_text": "nested-output-under-input-list",
+        }
+    ],
     "prompt": {
         "content": "input-prompt",
+        "final_text": "nested-output-under-input",
         "response": "nested-output-under-input",
         "result": {"content": "nested-tool-under-input"},
         "system_prompt": "nested-system-under-input",
     },
     "raw_prompt": "input-raw-prompt",
     "output_text": "output-text",
-    "output_messages": [{"role": "assistant", "content": "output-list"}],
+    "output_messages": [
+        {
+            "role": "assistant",
+            "content": "output-list",
+            "user_message": "nested-input-under-output-list",
+        }
+    ],
     "response": {
         "arguments": {"query": "nested-tool-under-output"},
         "content": "output-response",
@@ -73,6 +86,7 @@ _EXTERNAL_CONTENT = {
                 "output-response",
                 "output-raw-response",
                 "nested-output-under-input",
+                "nested-output-under-input-list",
                 "nested-tool-under-input",
                 "nested-system-under-input",
                 "assistant-body",
@@ -93,6 +107,7 @@ _EXTERNAL_CONTENT = {
                 "input-prompt",
                 "input-raw-prompt",
                 "nested-input-under-output",
+                "nested-input-under-output-list",
                 "nested-tool-under-output",
                 "nested-system-under-output",
                 "assistant-body",

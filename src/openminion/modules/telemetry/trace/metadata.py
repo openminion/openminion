@@ -8,14 +8,21 @@ from typing import Any, cast
 
 _SENSITIVE_FIELDS = frozenset(
     {
+        "assistant_body",
+        "assistant_text",
+        "body",
         "content",
         "error_text",
+        "final_text",
+        "message",
         "prompt",
         "raw_prompt",
         "raw_response",
         "response",
+        "summary",
         "system_prompt",
         "system_instructions",
+        "text",
         "user_message",
         "history",
         "input_messages",
@@ -38,7 +45,7 @@ _SENSITIVE_FIELDS = frozenset(
         "gen_ai.tool.definitions",
     }
 )
-_INHERITED_SENSITIVE_FIELDS = frozenset({"content"})
+_INHERITED_SENSITIVE_FIELDS = frozenset({"content", "text"})
 _PROHIBITED_FIELDS = frozenset(
     {
         "api_key",

@@ -27,7 +27,18 @@ def external_sensitive_fields(config: OTELExporterConfig) -> frozenset[str]:
             }
         )
     if config.include_assistant_body:
-        fields.add("content")
+        fields.update(
+            {
+                "assistant_body",
+                "assistant_text",
+                "body",
+                "content",
+                "final_text",
+                "message",
+                "summary",
+                "text",
+            }
+        )
     if config.include_tool_content:
         fields.update(
             {
