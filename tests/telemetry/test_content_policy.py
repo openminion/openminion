@@ -30,6 +30,22 @@ class _Exporter:
 
 
 _EXTERNAL_CONTENT = {
+    "gen_ai.input.messages": [
+        {
+            "role": "user",
+            "content": "canonical-input-content",
+            "text": "canonical-input-text",
+            "final_text": "nested-output-under-canonical-input",
+        }
+    ],
+    "gen_ai.output.messages": [
+        {
+            "role": "assistant",
+            "content": "canonical-output-content",
+            "text": "canonical-output-text",
+            "user_message": "nested-input-under-canonical-output",
+        }
+    ],
     "user_message": "input-user",
     "input_messages": [
         {
@@ -79,8 +95,18 @@ _EXTERNAL_CONTENT = {
     [
         (
             "include_input_messages",
-            ("input-user", "input-list", "input-prompt", "input-raw-prompt"),
             (
+                "canonical-input-content",
+                "canonical-input-text",
+                "input-user",
+                "input-list",
+                "input-prompt",
+                "input-raw-prompt",
+            ),
+            (
+                "canonical-output-content",
+                "canonical-output-text",
+                "nested-output-under-canonical-input",
                 "output-text",
                 "output-list",
                 "output-response",
@@ -96,18 +122,23 @@ _EXTERNAL_CONTENT = {
         (
             "include_output_messages",
             (
+                "canonical-output-content",
+                "canonical-output-text",
                 "output-text",
                 "output-list",
                 "output-response",
                 "output-raw-response",
             ),
             (
+                "canonical-input-content",
+                "canonical-input-text",
                 "input-user",
                 "input-list",
                 "input-prompt",
                 "input-raw-prompt",
                 "nested-input-under-output",
                 "nested-input-under-output-list",
+                "nested-input-under-canonical-output",
                 "nested-tool-under-output",
                 "nested-system-under-output",
                 "assistant-body",
