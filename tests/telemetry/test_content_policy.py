@@ -32,11 +32,17 @@ class _Exporter:
 _EXTERNAL_CONTENT = {
     "user_message": "input-user",
     "input_messages": [{"role": "user", "content": "input-list"}],
-    "prompt": "input-prompt",
+    "prompt": {
+        "content": "input-prompt",
+        "response": "nested-output-under-input",
+    },
     "raw_prompt": "input-raw-prompt",
     "output_text": "output-text",
     "output_messages": [{"role": "assistant", "content": "output-list"}],
-    "response": "output-response",
+    "response": {
+        "content": "output-response",
+        "history": "nested-input-under-output",
+    },
     "raw_response": "output-raw-response",
     "content": "assistant-body",
     "result": {
@@ -62,6 +68,7 @@ _EXTERNAL_CONTENT = {
                 "output-list",
                 "output-response",
                 "output-raw-response",
+                "nested-output-under-input",
                 "assistant-body",
                 "tool-result",
             ),
@@ -79,6 +86,7 @@ _EXTERNAL_CONTENT = {
                 "input-list",
                 "input-prompt",
                 "input-raw-prompt",
+                "nested-input-under-output",
                 "assistant-body",
                 "tool-result",
             ),
