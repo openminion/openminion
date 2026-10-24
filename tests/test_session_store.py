@@ -29,6 +29,15 @@ from openminion.modules.storage.runtime.session_store import (
 )
 from openminion.modules.storage.runtime.session_store import run_facts
 from openminion.modules.storage.runtime.sqlite import connect_database
+from tests._room_participant_scenarios import (
+    check_concurrent_joins,
+    check_explicit_active_agent,
+    check_join_place_on_upsert_and_rejoin,
+    check_leave_and_rejoin_wait_for_each_other,
+    check_joins_write_no_session_value,
+    check_legacy_owner_join_order,
+    check_tied_join_order,
+)
 from tests._run_status_scenarios import (
     check_event_facts,
     check_fact_writes,
@@ -732,7 +741,7 @@ class SessionStoreTests(unittest.TestCase):
             legacy_path, migrations=recorded_backfill_migrations(batches)
         )
 
-        self.assertEqual(result.applied_versions, (13,))
+        self.assertEqual(result.applied_versions, (13, 14))
         self.assertEqual(batches, [1000, 1000, 345, 0])
         with closing(connect_database(legacy_path)) as conn:
             store = SessionStore(conn)
@@ -799,7 +808,7 @@ class SessionStoreTests(unittest.TestCase):
         with closing(connect_database(legacy_path)) as conn:
             conn.execute("UPDATE events SET payload_json = '{}' WHERE id = 1400")
             conn.commit()
-        self.assertEqual(migrate_database(legacy_path).applied_versions, (13,))
+        self.assertEqual(migrate_database(legacy_path).applied_versions, (13, 14))
         with closing(connect_database(legacy_path)) as conn:
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) FROM event_run_facts").fetchone()[0], 1500
@@ -1857,6 +1866,45 @@ class SessionStoreTests(unittest.TestCase):
         )
         self.assertEqual(resolved.id, session.id)
         self.assertEqual(resolved.active_agent_id, "agent-b")
+
+    def test_tied_joins_list_in_join_order_and_fallback_selects_next_join(
+        self,
+    ) -> None:
+        check_tied_join_order(self.store)
+
+    def test_active_upsert_keeps_join_place_and_rejoin_renews_it(self) -> None:
+        check_join_place_on_upsert_and_rejoin(self.store)
+
+    def test_explicit_active_agent_is_kept_and_fallback_follows_join_order(
+        self,
+    ) -> None:
+        check_explicit_active_agent(self.store)
+
+    def test_legacy_owner_lists_before_agent_invited_on_same_tick(self) -> None:
+        check_legacy_owner_join_order(self.store)
+
+    def test_participant_joins_write_no_session_value(self) -> None:
+        check_joins_write_no_session_value(self.store)
+
+    def test_concurrent_joins_to_one_room_allocate_distinct_join_order(
+        self,
+    ) -> None:
+        peers = [build_runtime_storage(self.database_path) for _ in range(4)]
+        try:
+            check_concurrent_joins(self.store, [peer.sessions for peer in peers])
+        finally:
+            for peer in peers:
+                peer.close()
+
+    def test_leave_and_rejoin_on_two_connections_wait_for_each_other(self) -> None:
+        leaver, joiner = (build_runtime_storage(self.database_path) for _ in range(2))
+        try:
+            check_leave_and_rejoin_wait_for_each_other(
+                self.store, leaver.sessions, joiner.sessions
+            )
+        finally:
+            leaver.close()
+            joiner.close()
 
     # --- RSSD-01 characterization tests ---
 

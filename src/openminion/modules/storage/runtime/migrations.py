@@ -548,6 +548,39 @@ DEFAULT_MIGRATIONS: Tuple[Migration, ...] = (
         ),
         backfill=backfill_event_run_facts,
     ),
+    Migration(
+        version=14,
+        name="add_room_participant_join_seq",
+        statements=(
+            """
+            ALTER TABLE room_participants
+            ADD COLUMN join_seq INTEGER NOT NULL DEFAULT 0
+            """,
+            # Existing participants keep the order they listed in before the
+            # upgrade: each session's rows are numbered in (joined_at, id)
+            # order, on both backends (UPDATE ... FROM needs SQLite 3.33).
+            # Which of two participants with one joined_at joined first was
+            # not stored, so ties keep their id order.
+            """
+            UPDATE room_participants
+            SET join_seq = numbered.join_seq
+            FROM (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY session_id
+                        ORDER BY joined_at ASC, id ASC
+                    ) AS join_seq
+                FROM room_participants
+            ) AS numbered
+            WHERE room_participants.id = numbered.id
+            """,
+            """
+            CREATE UNIQUE INDEX idx_room_participants_session_join_seq
+            ON room_participants(session_id, join_seq)
+            """,
+        ),
+    ),
 )
 
 

@@ -358,7 +358,7 @@ def test_default_window_boundary_keeps_both_runs_whole(
             ],
         )
         connection.commit()
-        assert migrate_database(database_path).applied_versions == (13,)
+        assert migrate_database(database_path).applied_versions == (13, 14)
         monkeypatch.setattr(lifecycle, "utc_now_iso", lambda: next(stamps))
         new_queued, new_failed = (
             append_run_state_event(

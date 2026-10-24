@@ -13,6 +13,22 @@ This file tracks package-facing release notes for `openminion`.
   exposed in the args schema are evaluated (return, `self`/`cls` and
   `*args`/`**kwargs` annotations are left alone), and decoration fails with a
   clear `TypeError` when an exposed argument annotation cannot be resolved.
+- Keep room participants that join with the same timestamp in join order, with
+  a per-session join sequence that runtime migration 14 adds on SQLite and
+  Postgres. `list_participants`, and the agent selected when the active agent
+  leaves, no longer depend on random participant row ids. A participant added
+  again while active keeps its place and join time; one that leaves and
+  rejoins takes a new place after every earlier join. Explicit active-agent
+  selection is unchanged. On upgrade, existing participants keep the order
+  they listed in before, so participants that already share a timestamp keep
+  their row id order (#364).
+- Upgrade note for runtime migration 14 (#364): as for migration 13, upgrade
+  every process that shares a runtime database together, keep a pre-upgrade
+  backup, and do not run a binary from before this change against the
+  upgraded database. An older writer stores no join place: the first
+  participant it adds to a session after the upgrade lists before other joins
+  with the same timestamp, adding a second one to that session fails, and a
+  participant it rejoins keeps its earlier place.
 
 ## Current package line - 2026-10-24
 

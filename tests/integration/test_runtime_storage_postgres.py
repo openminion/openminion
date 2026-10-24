@@ -30,6 +30,20 @@ from openminion.modules.task.run import (
     resolve_invocation_terminal,
     resolve_thread_lifecycle,
 )
+from tests._room_participant_scenarios import (
+    COUNTED_JOIN_SEQ_SQL,
+    LEGACY_ORDER,
+    PRE_UPGRADE_ORDER_SQL,
+    check_concurrent_joins,
+    check_explicit_active_agent,
+    check_join_place_on_upsert_and_rejoin,
+    check_leave_and_rejoin_wait_for_each_other,
+    check_joins_write_no_session_value,
+    check_legacy_owner_join_order,
+    check_tied_join_order,
+    check_upgraded_join_order,
+    legacy_participant_rows,
+)
 from tests._run_status_scenarios import (
     append_nonstandard_values,
     append_payload_variants,
@@ -458,7 +472,7 @@ def test_postgres_append_seq_migration_uses_fallback_order_and_moves_tied_bounda
             )
 
             result = migrate_record_store(record_store, backend_type="postgres")
-            assert result.applied_versions == (12, 13)
+            assert result.applied_versions == (12, 13, 14)
 
             seq_rows = record_store.query_dicts(
                 "SELECT body, append_seq FROM messages ORDER BY append_seq"
@@ -745,7 +759,7 @@ def test_postgres_event_facts_migration_backfills_existing_history(
                 backend_type="postgres",
                 migrations=recorded_backfill_migrations(batches),
             )
-            assert result.applied_versions == (13,)
+            assert result.applied_versions == (13, 14)
             assert batches == [1000, 1000, 345, 0]
         with _postgres_sessions(tmp_path, url) as sessions:
             check_upgraded_history(
@@ -789,7 +803,120 @@ def test_postgres_event_facts_migration_rolls_back_when_the_backfill_fails(
                 "UPDATE events SET payload_json = '{}' WHERE id = 1400"
             )
             result = migrate_record_store(record_store, backend_type="postgres")
-            assert result.applied_versions == (13,)
+            assert result.applied_versions == (13, 14)
             assert record_store.query_dicts(
                 "SELECT COUNT(*) AS facts FROM event_run_facts"
             ) == [{"facts": 1500}]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "check",
+    [
+        check_tied_join_order,
+        check_join_place_on_upsert_and_rejoin,
+        check_explicit_active_agent,
+        check_legacy_owner_join_order,
+        check_joins_write_no_session_value,
+    ],
+)
+def test_postgres_participants_keep_join_order_on_tied_timestamps(
+    tmp_path: Path, check: Callable[[SessionStore], None]
+) -> None:
+    pytest.importorskip("sqlalchemy")
+    with _postgres_schema("om364_join_order") as url:
+        with _postgres_sessions(tmp_path, url) as sessions:
+            check(sessions)
+
+
+@pytest.mark.postgres
+def test_postgres_concurrent_joins_allocate_distinct_join_order(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("sqlalchemy")
+    with _postgres_schema("om364_concurrent") as url:
+        peers = [
+            build_runtime_storage(
+                tmp_path / f"state/peer-{index}.db",
+                env={},
+                record_backend="record.postgres",
+                record_backend_options={"url": url},
+            )
+            for index in range(4)
+        ]
+        try:
+            with _postgres_sessions(tmp_path, url) as sessions:
+                check_concurrent_joins(sessions, [peer.sessions for peer in peers])
+        finally:
+            for peer in peers:
+                peer.close()
+
+
+@pytest.mark.postgres
+def test_postgres_leave_and_rejoin_on_two_connections_wait_for_each_other(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("sqlalchemy")
+    with _postgres_schema("om364_leave_rejoin") as url:
+        leaver, joiner = (
+            build_runtime_storage(
+                tmp_path / f"state/{name}.db",
+                env={},
+                record_backend="record.postgres",
+                record_backend_options={"url": url},
+            )
+            for name in ("leaver", "joiner")
+        )
+        try:
+            with _postgres_sessions(tmp_path, url) as sessions:
+                check_leave_and_rejoin_wait_for_each_other(
+                    sessions, leaver.sessions, joiner.sessions
+                )
+        finally:
+            leaver.close()
+            joiner.close()
+
+
+@pytest.mark.postgres
+def test_postgres_join_seq_migration_numbers_participants_in_pre_upgrade_order(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("sqlalchemy")
+    from openminion.modules.storage.backends.postgres import RecordStorePostgres
+
+    with _postgres_schema("om364_upgrade") as url:
+        record_store = RecordStorePostgres(url)
+        try:
+            migrate_record_store(
+                record_store,
+                backend_type="postgres",
+                migrations=tuple(
+                    item for item in DEFAULT_MIGRATIONS if item.version < 14
+                ),
+            )
+            sessions, participants = legacy_participant_rows()
+            record_store.insert_many("sessions", sessions)
+            record_store.insert_many("room_participants", participants)
+            for session_id, order in LEGACY_ORDER.items():
+                assert [
+                    row["participant_id"]
+                    for row in record_store.query_dicts(
+                        PRE_UPGRADE_ORDER_SQL, (session_id,)
+                    )
+                ] == order
+            counted = {
+                str(row["id"]): int(row["join_seq"])
+                for row in record_store.query_dicts(COUNTED_JOIN_SEQ_SQL)
+            }
+
+            result = migrate_record_store(record_store, backend_type="postgres")
+            assert result.applied_versions == (14,)
+            assert record_store.query_dicts(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE schemaname = current_schema() "
+                "AND tablename = 'room_participants' "
+                "AND indexdef LIKE 'CREATE UNIQUE INDEX%(session_id, join_seq)'"
+            ) == [{"indexname": "idx_room_participants_session_join_seq"}]
+            check_upgraded_join_order(SessionStore(record_store), counted)
+        finally:
+            record_store.close()

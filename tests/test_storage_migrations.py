@@ -16,6 +16,13 @@ from openminion.modules.storage.runtime.migrations import (
 )
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.storage.runtime.sqlite import connect_database
+from tests._room_participant_scenarios import (
+    COUNTED_JOIN_SEQ_SQL,
+    LEGACY_ORDER,
+    PRE_UPGRADE_ORDER_SQL,
+    check_upgraded_join_order,
+    legacy_participant_rows,
+)
 
 PRE_APPEND_SEQ_MIGRATIONS = tuple(
     migration for migration in DEFAULT_MIGRATIONS if migration.version < 12
@@ -36,10 +43,10 @@ class StorageMigrationTests(unittest.TestCase):
             database_path = Path(tmp) / "state" / "openminion.db"
 
             result = migrate_database(database_path)
-            self.assertEqual(result.current_version, 13)
+            self.assertEqual(result.current_version, 14)
             self.assertEqual(
                 result.applied_versions,
-                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13),
+                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14),
             )
 
             with sqlite3.connect(str(database_path)) as conn:
@@ -72,6 +79,7 @@ class StorageMigrationTests(unittest.TestCase):
                 }
                 self.assertIn("idx_event_run_facts_session", indexes)
                 self.assertIn("idx_event_run_facts_run", indexes)
+                self.assertIn("idx_room_participants_session_join_seq", indexes)
 
                 session_columns = {
                     row[1]
@@ -98,6 +106,13 @@ class StorageMigrationTests(unittest.TestCase):
                     for row in conn.execute("PRAGMA table_info(messages)").fetchall()
                 }
                 self.assertIn("append_seq", message_columns)
+                participant_columns = {
+                    row[1]
+                    for row in conn.execute(
+                        "PRAGMA table_info(room_participants)"
+                    ).fetchall()
+                }
+                self.assertIn("join_seq", participant_columns)
 
                 migration_rows = conn.execute(
                     "SELECT version, name FROM migrations"
@@ -118,6 +133,7 @@ class StorageMigrationTests(unittest.TestCase):
                         (11, "add_canonical_events_and_capture_holds"),
                         (12, "add_message_append_seq"),
                         (13, "add_event_run_facts"),
+                        (14, "add_room_participant_join_seq"),
                     ],
                 )
 
@@ -128,19 +144,19 @@ class StorageMigrationTests(unittest.TestCase):
             first = migrate_database(database_path)
             second = migrate_database(database_path)
 
-            self.assertEqual(first.current_version, 13)
+            self.assertEqual(first.current_version, 14)
             self.assertEqual(
                 first.applied_versions,
-                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13),
+                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14),
             )
-            self.assertEqual(second.current_version, 13)
+            self.assertEqual(second.current_version, 14)
             self.assertEqual(second.applied_versions, ())
 
             with sqlite3.connect(str(database_path)) as conn:
                 migration_count = conn.execute(
                     "SELECT COUNT(*) FROM migrations"
                 ).fetchone()[0]
-                self.assertEqual(migration_count, 13)
+                self.assertEqual(migration_count, 14)
 
     def test_run_migrations_rolls_back_failed_migration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -296,8 +312,9 @@ def test_append_seq_migration_backfills_migration_time_rowid_order(
     ]
     _legacy_runtime_database(path, messages=messages)
 
-    # Migration 13 (run facts) runs after it; the append-order checks below are migration 12's.
-    assert migrate_database(path).applied_versions == (12, 13)
+    # Migrations 13 (run facts) and 14 (participant join order) run after it;
+    # the append-order checks below are migration 12's.
+    assert migrate_database(path).applied_versions == (12, 13, 14)
 
     with closing(sqlite3.connect(str(path))) as conn:
         rows = conn.execute(
@@ -429,3 +446,44 @@ def test_append_seq_migration_moves_boundary_before_missing_anchor(
 
     assert _context_row(path, "s")[:6] == ("s", "summary", 1, T0, "5" * 32, 1)
     assert _visible_bodies(path, "s") == ["g1"]
+
+
+def test_join_seq_migration_numbers_participants_in_pre_upgrade_order(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "openminion.db"
+    migrate_database(
+        path,
+        migrations=tuple(item for item in DEFAULT_MIGRATIONS if item.version < 14),
+    )
+    sessions, participants = legacy_participant_rows()
+    with closing(sqlite3.connect(str(path))) as conn:
+        conn.executemany(
+            "INSERT INTO sessions(id, session_key, channel, target, active_agent_id) "
+            "VALUES (:id, :session_key, :channel, :target, :active_agent_id)",
+            sessions,
+        )
+        conn.executemany(
+            "INSERT INTO room_participants(id, session_id, participant_type, "
+            "participant_id, joined_at, left_at) VALUES (:id, :session_id, "
+            ":participant_type, :participant_id, :joined_at, :left_at)",
+            participants,
+        )
+        conn.commit()
+        for session_id, order in LEGACY_ORDER.items():
+            assert [
+                row[0] for row in conn.execute(PRE_UPGRADE_ORDER_SQL, (session_id,))
+            ] == order
+        counted = {row[0]: row[1] for row in conn.execute(COUNTED_JOIN_SEQ_SQL)}
+
+    assert migrate_database(path).applied_versions == (14,)
+
+    with closing(connect_database(path)) as conn:
+        assert [
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' "
+                "AND tbl_name = 'room_participants' AND sql LIKE 'CREATE UNIQUE%'"
+            )
+        ] == ["idx_room_participants_session_join_seq"]
+        check_upgraded_join_order(SessionStore(conn), counted)

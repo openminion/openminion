@@ -126,6 +126,13 @@ class RuntimeSessionStoreParticipants:
         return None if row is None else row_to_participant(row)
 
     def list_participants(self, session_id: str) -> list[RoomParticipant]:
+        """List the session's active participants in join order.
+
+        The order is `joined_at`, then `join_seq`, the per-session sequence
+        `upsert_participant_record` allocates, so participants that join with
+        the same `joined_at` keep the order they joined in. The active-agent
+        fallbacks pick the first agent in this order.
+        """
         session = self._get_session(session_id)
         if session is None:
             return []
@@ -135,7 +142,7 @@ class RuntimeSessionStoreParticipants:
             SELECT {PARTICIPANT_COLUMNS}
             FROM room_participants
             WHERE session_id = ? AND left_at IS NULL
-            ORDER BY joined_at ASC, id ASC
+            ORDER BY joined_at ASC, join_seq ASC
             """,
             (session_id,),
         )
@@ -155,6 +162,7 @@ class RuntimeSessionStoreParticipants:
         normalized_id = normalize_identity(participant_id)
         now = utc_now_iso()
         with self._backend.transaction():
+            self._lock_session_row(session_id)
             updated = self._backend.execute_count(
                 """
                 UPDATE room_participants
@@ -255,6 +263,19 @@ class RuntimeSessionStoreParticipants:
             display_name=legacy_agent,
         )
 
+    def _lock_session_row(self, session_id: str) -> None:
+        """Lock the session row until the open transaction ends.
+
+        Participant writes take this lock first: the write changes no value,
+        and the lock it takes (the session row on Postgres, the database write
+        lock on SQLite) is held until commit. A join and a leave in one session
+        then wait for each other, in the same order.
+        """
+        self._backend.execute_count(
+            "UPDATE sessions SET updated_at = updated_at WHERE id = ?",
+            (session_id,),
+        )
+
     def upsert_participant_record(
         self,
         *,
@@ -268,6 +289,11 @@ class RuntimeSessionStoreParticipants:
         now = utc_now_iso()
         participant_row_id = uuid4().hex
         with self._backend.transaction():
+            # Locked before reading the session's last join_seq, so joins to
+            # one session allocate one at a time.
+            self._lock_session_row(session_id)
+            # A new or returning participant takes the next join_seq, with
+            # the new joined_at; an active participant keeps both.
             self._backend.execute_count(
                 """
                 INSERT INTO room_participants(
@@ -279,9 +305,14 @@ class RuntimeSessionStoreParticipants:
                     role,
                     display_name,
                     joined_at,
-                    left_at
+                    left_at,
+                    join_seq
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, (
+                    SELECT COALESCE(MAX(join_seq), 0) + 1
+                    FROM room_participants
+                    WHERE session_id = ?
+                ))
                 ON CONFLICT(session_id, participant_type, participant_id)
                 DO UPDATE SET
                     channel = excluded.channel,
@@ -290,6 +321,10 @@ class RuntimeSessionStoreParticipants:
                     joined_at = CASE
                         WHEN room_participants.left_at IS NULL THEN room_participants.joined_at
                         ELSE excluded.joined_at
+                    END,
+                    join_seq = CASE
+                        WHEN room_participants.left_at IS NULL THEN room_participants.join_seq
+                        ELSE excluded.join_seq
                     END,
                     left_at = NULL
                 """,
@@ -302,5 +337,6 @@ class RuntimeSessionStoreParticipants:
                     role,
                     display_name,
                     now,
+                    session_id,
                 ),
             )
