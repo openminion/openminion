@@ -199,9 +199,9 @@ def test_official_live_minimax_config_inherits_long_horizon_budgets() -> None:
     assert config.runtime.session_context_token_budget == 32_000
     assert config.runtime.chat_turn_timeout_seconds == 300
     assert budgets.max_ticks_per_user_turn == 100
-    assert budgets.max_tool_calls == 100
+    assert budgets.max_tool_calls == 160
     assert budgets.max_total_llm_tokens == 250_000
     assert budgets.max_elapsed_ms == 300_000
-    assert config.security.tool_policy.max_calls_per_run == 100
-    assert config.security.tool_policy.max_calls_per_tool == 50
-    assert config.security.tool_policy.max_budget_cost_per_run == 200
+    assert config.security.tool_policy.max_calls_per_run == 160
+    assert config.security.tool_policy.max_calls_per_tool == 80
+    assert config.security.tool_policy.max_budget_cost_per_run == 320

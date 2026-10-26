@@ -1144,7 +1144,7 @@ def test_confirmation_replay_seeded_path_gets_recovery_budget(
     profile = captured["profile"]
     assert profile.allow_llm_recovery_after_tool_failure is False
     assert profile.max_iterations == 24
-    assert profile.max_tool_calls_per_loop == 32
+    assert profile.max_tool_calls_per_loop == 64
 
 
 def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(

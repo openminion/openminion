@@ -2090,7 +2090,7 @@ def test_act_adaptive_seeded_confirmation_replay_preserves_autonomous_budget() -
     assert result.status == "done"
     profile = captured["profile"]
     assert getattr(profile, "max_iterations", None) == 24
-    assert getattr(profile, "max_tool_calls_per_loop", None) == 32
+    assert getattr(profile, "max_tool_calls_per_loop", None) == 64
 
 
 def test_act_adaptive_seeded_non_autonomous_replay_keeps_batch_budget() -> None:

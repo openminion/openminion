@@ -83,8 +83,8 @@ def test_internal_actor_scope_grants_round_trip_through_system_config() -> None:
 @pytest.mark.parametrize(
     ("runtime", "policy", "expected"),
     [
-        ({}, {}, (100, 300, 100, 50, 200)),
-        ({}, {"max_calls_per_tool": 2}, (100, 300, 100, 2, 200)),
+        ({}, {}, (100, 300, 160, 80, 320)),
+        ({}, {"max_calls_per_tool": 2}, (100, 300, 160, 2, 320)),
         (
             {"agent_loop_max_steps": 4, "brain_turn_timeout_seconds": 120},
             {
@@ -125,11 +125,11 @@ def test_parsed_budget_defaults_and_overrides_reach_brain(
 def test_direct_and_standalone_defaults_match_shared_budget() -> None:
     assert RuntimeConfig().agent_loop_max_steps == 100
     assert RuntimeConfig().brain_turn_timeout_seconds == 300
-    assert ToolPolicyConfig().max_calls_per_run == 100
-    assert ToolPolicyConfig().max_calls_per_tool == 50
-    assert ToolPolicyConfig().max_budget_cost_per_run == 200
+    assert ToolPolicyConfig().max_calls_per_run == 160
+    assert ToolPolicyConfig().max_calls_per_tool == 80
+    assert ToolPolicyConfig().max_budget_cost_per_run == 320
     assert ToolBudgetPolicy() == ToolBudgetPolicy(
-        max_calls_per_run=100, max_calls_per_tool=50, max_budget_cost_per_run=200
+        max_calls_per_run=160, max_calls_per_tool=80, max_budget_cost_per_run=320
     )
 
 

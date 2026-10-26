@@ -26,10 +26,11 @@ capability-specific proof.
 ## Runtime budget configuration
 
 Long work passes through several independently enforced limits. A minimal
-profile inherits the shared defaults: 100 agent-loop steps, 100 brain tool
+profile inherits the shared defaults: 100 agent-loop steps, 160 brain tool
 calls, 100,000 total LLM tokens, and 300 seconds per brain turn. Tool policy
-also allows 100 calls per run, 50 calls per tool, and 200 weighted cost units.
-The first limit reached stops that turn or tool run.
+also allows 160 calls per run, 80 calls per tool, and 320 weighted cost units.
+Adaptive loops allow up to 64 tool calls per loop. The first limit reached
+stops that turn or tool run.
 
 Configure the shared limits with `runtime.agent_loop_max_steps`,
 `runtime.brain_turn_timeout_seconds`, and

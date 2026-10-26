@@ -19,8 +19,8 @@ class DefaultAdaptiveCapConstantsTests(unittest.TestCase):
     def test_adaptive_max_iterations_is_24(self) -> None:
         self.assertEqual(ADAPTIVE_MAX_ITERATIONS, 24)
 
-    def test_adaptive_max_tool_calls_is_32(self) -> None:
-        self.assertEqual(ADAPTIVE_MAX_TOOL_CALLS, 32)
+    def test_adaptive_max_tool_calls_is_64(self) -> None:
+        self.assertEqual(ADAPTIVE_MAX_TOOL_CALLS, 64)
 
     def test_coding_max_iterations_is_40(self) -> None:
         self.assertEqual(CODING_MAX_ITERATIONS, 40)

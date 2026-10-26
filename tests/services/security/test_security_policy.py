@@ -35,9 +35,9 @@ def test_service_policy_surface_is_canonical_module_owner() -> None:
 @pytest.mark.parametrize(
     "state",
     [
-        ToolBudgetState(tool_calls_total=99),
-        ToolBudgetState(per_tool_calls={"file.read": 49}),
-        ToolBudgetState(budget_cost_total=199),
+        ToolBudgetState(tool_calls_total=159),
+        ToolBudgetState(per_tool_calls={"file.read": 79}),
+        ToolBudgetState(budget_cost_total=319),
     ],
 )
 def test_default_tool_budget_allows_then_denies_at_each_limit(state) -> None:
