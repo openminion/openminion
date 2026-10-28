@@ -38,9 +38,7 @@ from openminion.tools.mcp.transport import MCPProtocolError, StdioMCPTransport
 
 
 class _ModernTransport:
-    def __init__(
-        self, responses: dict[str, list[dict[str, Any] | Exception]]
-    ) -> None:
+    def __init__(self, responses: dict[str, list[dict[str, Any] | Exception]]) -> None:
         self.responses = {method: deque(items) for method, items in responses.items()}
         self.requests: list[tuple[str, dict[str, Any]]] = []
         self.notifications: list[tuple[str, dict[str, Any]]] = []
@@ -277,9 +275,10 @@ def test_modern_http_header_mismatch_is_retried_only_once() -> None:
         session.call_tool(remote_name="echo", arguments={})
 
     assert excinfo.value.details["code"] == MCP_HEADER_MISMATCH_ERROR
-    assert sum(
-        method == MCP_TOOLS_CALL_METHOD for method, _params in transport.requests
-    ) == 2
+    assert (
+        sum(method == MCP_TOOLS_CALL_METHOD for method, _params in transport.requests)
+        == 2
+    )
 
 
 def test_unadvertised_discovery_primitives_make_no_wire_calls() -> None:
