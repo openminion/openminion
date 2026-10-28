@@ -5,6 +5,7 @@ import json
 from collections.abc import Iterable, Iterator
 from typing import Any, Callable, Never
 
+from .constants import MCP_MAX_SSE_EVENT_BYTES
 from .contracts import MCP_PROTOCOL_VERSION
 from .errors import MCPProtocolError
 
@@ -172,6 +173,7 @@ def iter_sse_messages(
 
     sse_kind = "message"
     data_lines: list[str] = []
+    event_bytes = 0
 
     def decode_event() -> dict[str, Any] | None:
         nonlocal sse_kind, data_lines
@@ -197,6 +199,13 @@ def iter_sse_messages(
         return decoded
 
     for raw_line in lines:
+        event_bytes += len(raw_line)
+        if event_bytes > MCP_MAX_SSE_EVENT_BYTES:
+            raise MCPProtocolError(
+                f"MCP server '{server_name}' returned an SSE event larger than "
+                f"{MCP_MAX_SSE_EVENT_BYTES} bytes.",
+                reason_code="mcp_sse_event_too_large",
+            )
         try:
             line = raw_line.decode("utf-8").rstrip("\r\n")
         except UnicodeDecodeError as exc:
@@ -205,6 +214,7 @@ def iter_sse_messages(
                 reason_code="mcp_sse_invalid_encoding",
             ) from exc
         if not line:
+            event_bytes = 0
             if sse_kind == "end":
                 return
             message = decode_event()

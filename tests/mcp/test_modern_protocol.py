@@ -22,7 +22,10 @@ from openminion.tools.mcp.constants import (
     MCP_TOOLS_CALL_METHOD,
     MCP_TOOLS_LIST_METHOD,
 )
-from openminion.tools.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
+from openminion.tools.mcp.contracts import (
+    MCP_HEADER_MISMATCH_ERROR,
+    MCP_MODERN_PROTOCOL_VERSION,
+)
 from openminion.tools.mcp.interfaces import MCPClientCapabilityState
 from openminion.tools.mcp.modern import (
     MCPModernFlowError,
@@ -35,12 +38,15 @@ from openminion.tools.mcp.transport import MCPProtocolError, StdioMCPTransport
 
 
 class _ModernTransport:
-    def __init__(self, responses: dict[str, list[dict[str, Any]]]) -> None:
+    def __init__(
+        self, responses: dict[str, list[dict[str, Any] | Exception]]
+    ) -> None:
         self.responses = {method: deque(items) for method, items in responses.items()}
         self.requests: list[tuple[str, dict[str, Any]]] = []
         self.notifications: list[tuple[str, dict[str, Any]]] = []
         self.cancelled_requests: list[int] = []
         self.running = False
+        self.header_bindings: dict[str, tuple[Any, ...]] = {}
 
     @property
     def authorization_identity(self) -> str:
@@ -68,13 +74,21 @@ class _ModernTransport:
         self.requests.append((method, dict(params)))
         if method == MCP_INITIALIZE_METHOD:
             raise MCPProtocolError("method not found")
-        return dict(self.responses[method].popleft())
+        response = self.responses[method].popleft()
+        if isinstance(response, Exception):
+            raise response
+        return dict(response)
 
     def notify(self, method: str, params: dict[str, Any]) -> None:
         self.notifications.append((method, dict(params)))
 
     def cancel_request(self, request_id: int) -> None:
         self.cancelled_requests.append(request_id)
+
+    def set_tool_header_bindings(
+        self, tool_name: str, bindings: tuple[Any, ...]
+    ) -> None:
+        self.header_bindings[tool_name] = bindings
 
     def close(self) -> None:
         self.running = False
@@ -104,19 +118,22 @@ class _LegacyFallbackTransport(_ModernTransport):
 
 
 def _session(
-    responses: dict[str, list[dict[str, Any]]],
+    responses: dict[str, list[dict[str, Any] | Exception]],
     *,
     capabilities: MCPClientCapabilityState | None = None,
     server_capabilities: dict[str, Any] | None = None,
+    server_transport: str = "stdio",
 ) -> tuple[MCPServerSession, _ModernTransport]:
+    server = MCPServerConfig(
+        name="Modern",
+        transport=server_transport,
+        command=["modern-fixture"] if server_transport == "stdio" else [],
+        url="https://example.test/mcp" if server_transport == "streamable_http" else "",
+        startup_timeout_seconds=1.0,
+        request_timeout_seconds=1.0,
+    )
     session = MCPServerSession(
-        MCPServerConfig(
-            name="Modern",
-            transport="stdio",
-            command=["modern-fixture"],
-            startup_timeout_seconds=1.0,
-            request_timeout_seconds=1.0,
-        ),
+        server,
         client_capability_state=capabilities,
     )
     transport = _ModernTransport(
@@ -151,6 +168,26 @@ def _task(status: str, **values: Any) -> dict[str, Any]:
         "lastUpdatedAt": "2026-09-30T00:00:01Z",
         "ttlMs": 60_000,
         **values,
+    }
+
+
+def _header_tool_list(header_name: str = "") -> dict[str, Any]:
+    property_schema: dict[str, Any] = {"type": "string"}
+    if header_name:
+        property_schema["x-mcp-header"] = header_name
+    return {
+        "resultType": "complete",
+        "ttlMs": 60_000,
+        "cacheScope": "private",
+        "tools": [
+            {
+                "name": "echo",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"text": property_schema},
+                },
+            }
+        ],
     }
 
 
@@ -190,6 +227,59 @@ def test_modern_discovery_replaces_initialize_session_handshake() -> None:
     assert session.server_capabilities == {"tools": {}}
     assert session.server_instructions == "Diagnostic guidance only."
     assert transport.notifications == []
+
+
+def test_modern_http_header_mismatch_relists_tools_and_retries_once() -> None:
+    mismatch = MCPProtocolError(
+        "header mismatch", details={"code": MCP_HEADER_MISMATCH_ERROR}
+    )
+    session, transport = _session(
+        {
+            MCP_TOOLS_LIST_METHOD: [
+                _header_tool_list("Old"),
+                _header_tool_list("Current"),
+            ],
+            MCP_TOOLS_CALL_METHOD: [
+                mismatch,
+                {
+                    "resultType": "complete",
+                    "content": [{"type": "text", "text": "retried"}],
+                    "isError": False,
+                },
+            ],
+        },
+        server_transport="streamable_http",
+    )
+
+    session.list_tools()
+    result = session.call_tool(remote_name="echo", arguments={"text": "hello"})
+
+    assert result["content"] == "retried"
+    methods = [method for method, _params in transport.requests]
+    assert methods.count(MCP_TOOLS_CALL_METHOD) == 2
+    assert methods.count(MCP_TOOLS_LIST_METHOD) == 2
+    assert transport.header_bindings["echo"][0].header_name == "Current"
+
+
+def test_modern_http_header_mismatch_is_retried_only_once() -> None:
+    mismatch = MCPProtocolError(
+        "header mismatch", details={"code": MCP_HEADER_MISMATCH_ERROR}
+    )
+    session, transport = _session(
+        {
+            MCP_TOOLS_LIST_METHOD: [_header_tool_list()],
+            MCP_TOOLS_CALL_METHOD: [mismatch, mismatch],
+        },
+        server_transport="streamable_http",
+    )
+
+    with pytest.raises(MCPProtocolError) as excinfo:
+        session.call_tool(remote_name="echo", arguments={})
+
+    assert excinfo.value.details["code"] == MCP_HEADER_MISMATCH_ERROR
+    assert sum(
+        method == MCP_TOOLS_CALL_METHOD for method, _params in transport.requests
+    ) == 2
 
 
 def test_unadvertised_discovery_primitives_make_no_wire_calls() -> None:

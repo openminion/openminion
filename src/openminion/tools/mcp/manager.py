@@ -8,7 +8,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -113,18 +113,9 @@ class MCPFleetManager:
                 client_capability_state=(
                     self._client_capability_state
                     if explicit_client_capabilities
-                    else MCPClientCapabilityState(
+                    else replace(
+                        self._client_capability_state,
                         roots=_default_client_capability_state([server]).roots,
-                        sampling_handler=self._client_capability_state.sampling_handler,
-                        elicitation_handler=(
-                            self._client_capability_state.elicitation_handler
-                        ),
-                        sampling_tools_supported=(
-                            self._client_capability_state.sampling_tools_supported
-                        ),
-                        elicitation_url_supported=(
-                            self._client_capability_state.elicitation_url_supported
-                        ),
                     )
                 ),
                 capability_change_handler=self._on_capability_change,

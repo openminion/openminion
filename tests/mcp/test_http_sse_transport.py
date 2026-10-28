@@ -13,6 +13,7 @@ from openminion.base.config.runtime import RuntimeConfig
 from openminion.tools.mcp.manager import MCPFleetManager
 from openminion.tools.mcp.transport import MCPProtocolError
 from openminion.tools.mcp.transport_protocol import iter_sse_messages
+from openminion.tools.mcp.constants import MCP_MAX_SSE_EVENT_BYTES
 
 
 class _SSEHandler(BaseHTTPRequestHandler):
@@ -198,3 +199,15 @@ def test_sse_parser_ignores_standard_resume_fields_and_comments() -> None:
     )
 
     assert messages == [{"jsonrpc": "2.0", "id": 1, "result": {}}]
+
+
+def test_sse_parser_rejects_oversized_event() -> None:
+    with pytest.raises(MCPProtocolError) as excinfo:
+        list(
+            iter_sse_messages(
+                lines=[b"data: " + (b"x" * MCP_MAX_SSE_EVENT_BYTES) + b"\n"],
+                server_name="fixture",
+            )
+        )
+
+    assert excinfo.value.reason_code == "mcp_sse_event_too_large"

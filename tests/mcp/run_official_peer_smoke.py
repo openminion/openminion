@@ -25,7 +25,7 @@ from openminion.tools.mcp.server import (  # noqa: E402
 )
 
 
-EXPECTED_SDK_VERSION = "2.2.0"
+EXPECTED_SDK_VERSION = "2.3.0"
 SCRIPT_PATH = Path(__file__).resolve()
 
 

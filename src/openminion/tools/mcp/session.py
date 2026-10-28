@@ -38,6 +38,7 @@ from .constants import (
     MCP_TOOLS_LIST_METHOD,
 )
 from .contracts import (
+    MCP_HEADER_MISMATCH_ERROR,
     MCP_PROTOCOL_VERSION,
     MCP_SUPPORTED_PROTOCOL_VERSIONS,
     MCP_UNSUPPORTED_PROTOCOL_VERSION_ERROR,
@@ -62,7 +63,7 @@ from .results import (
     normalize_resource_result,
     normalize_tool_result,
 )
-from .interfaces import MCPClientCapabilityState, MCPProgressListener, MCPTransport
+from .interfaces import MCPClientCapabilityState, MCPProgressListener
 from .risk import resolve_mcp_tool_posture
 from .schemas import (
     MCPElicitationRequest,
@@ -80,7 +81,7 @@ from .schemas import (
     build_mcp_resource_template_arguments_schema,
     extract_mcp_header_bindings,
 )
-from .transport import StdioMCPTransport, StreamableHTTPMCPTransport
+from .transport import build_mcp_transport
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ class MCPServerSession:
     ) -> None:
         self._server = server
         self._response_cache = MCPModernResponseCache()
-        self._transport = _build_transport(
+        self._transport = build_mcp_transport(
             server,
             token_store=token_store,
             auth_change_handler=self._response_cache.clear,
@@ -501,11 +502,26 @@ class MCPServerSession:
         if self._initialized and not self._transport.is_running():
             self._restart_transport(observed_restart_total=self._restart_total)
         try:
-            result = self._request_with_recovery(
-                method=MCP_TOOLS_CALL_METHOD,
-                params=self._with_client_meta(params),
-                retry_on_unavailable=False,
-            )
+            try:
+                result = self._request_with_recovery(
+                    method=MCP_TOOLS_CALL_METHOD,
+                    params=self._with_client_meta(params),
+                    retry_on_unavailable=False,
+                )
+            except MCPProtocolError as exc:
+                if not (
+                    self._modern_protocol
+                    and self._server.transport == "streamable_http"
+                    and exc.details.get("code") == MCP_HEADER_MISMATCH_ERROR
+                ):
+                    raise
+                self._response_cache.clear()
+                self.list_tools()
+                result = self._request_with_recovery(
+                    method=MCP_TOOLS_CALL_METHOD,
+                    params=self._with_client_meta(params),
+                    retry_on_unavailable=False,
+                )
         except MCPServerUnavailableError as exc:
             raise MCPCallError(
                 f"MCP tool '{self.server_name}.{remote_name}' may have run before the connection was lost.",
@@ -979,18 +995,3 @@ def _coerce_icons(value: Any) -> tuple[dict[str, Any], ...]:
     if not isinstance(value, list):
         return ()
     return tuple(dict(item) for item in value if isinstance(item, dict))
-
-
-def _build_transport(
-    server: MCPServerConfig,
-    *,
-    token_store: MCPTokenStore | None = None,
-    auth_change_handler: Any | None = None,
-) -> MCPTransport:
-    if server.transport == "streamable_http":
-        return StreamableHTTPMCPTransport(
-            server,
-            token_store=token_store,
-            auth_change_handler=auth_change_handler,
-        )
-    return StdioMCPTransport(server, token_store=token_store)

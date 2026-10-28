@@ -30,6 +30,7 @@ from .http_transport import (
     parse_www_authenticate,
     probe_oauth_challenge,
 )
+from .interfaces import MCPTransport
 from .transport_protocol import (
     build_server_request_response,
     dispatch_server_notification,
@@ -549,6 +550,21 @@ class StdioMCPTransport:
                 self._stderr_condition.notify_all()
 
 
+def build_mcp_transport(
+    server: MCPServerConfig,
+    *,
+    token_store: MCPTokenStore | None = None,
+    auth_change_handler: Any | None = None,
+) -> MCPTransport:
+    if server.transport == "streamable_http":
+        return StreamableHTTPMCPTransport(
+            server,
+            token_store=token_store,
+            auth_change_handler=auth_change_handler,
+        )
+    return StdioMCPTransport(server, token_store=token_store)
+
+
 __all__ = [
     "MCPAuthorizationError",
     "MCPProtocolError",
@@ -559,6 +575,7 @@ __all__ = [
     "StdioMCPTransport",
     "StreamableHTTPSessionState",
     "StreamableHTTPMCPTransport",
+    "build_mcp_transport",
     "parse_www_authenticate",
     "probe_oauth_challenge",
 ]

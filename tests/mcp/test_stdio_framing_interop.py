@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from openminion.base.config.mcp import MCPServerConfig
+from openminion.base.config.mcp import MCPServerConfig, MCPStdioSandboxConfig
 from openminion.base.config.runtime import RuntimeConfig
 from openminion.tools.mcp.manager import MCPFleetManager
 
@@ -18,7 +18,10 @@ FIXTURE_SERVER_PATH = (
 
 
 def _runtime_config(
-    *, env: dict[str, str] | None = None, command: list[str] | None = None
+    *,
+    env: dict[str, str] | None = None,
+    command: list[str] | None = None,
+    inherit_env: list[str] | None = None,
 ) -> RuntimeConfig:
     return RuntimeConfig(
         mcp_servers=[
@@ -28,6 +31,9 @@ def _runtime_config(
                 trusted=True,
                 command=command or [sys.executable, str(FIXTURE_SERVER_PATH)],
                 env=dict(env or {}),
+                stdio_sandbox=MCPStdioSandboxConfig(
+                    inherit_env_allowlist=list(inherit_env or [])
+                ),
                 request_timeout_seconds=10.0,
                 startup_timeout_seconds=10.0,
             )
@@ -81,6 +87,7 @@ def test_stdio_transport_smoke_against_official_server_everything() -> None:
     manager = MCPFleetManager.from_runtime_config(
         _runtime_config(
             command=["npx", "-y", "@modelcontextprotocol/server-everything"],
+            inherit_env=["HOME", "PATH"],
         )
     )
     try:
