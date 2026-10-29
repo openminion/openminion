@@ -11,6 +11,8 @@ This file tracks package-facing release notes for `openminion`.
 
 - Forward the query string on POST requests, so query-parameter POST routes resolve their parameters. (Refs #486)
 
+- Expand cron day-of-week ranges before normalizing Sunday-as-7, so ranges that contain Sunday parse correctly. (Refs #488)
+
 ## Current package line - 2026-11-04
 
 - Add a reviewed learning lifecycle that can retain successful substantive
