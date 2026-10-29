@@ -199,6 +199,13 @@ def _decorate(
     args_model = _build_args_model(func, f"{resolved_name.replace('.', '_')}Args")
 
     validate_args = _alias_or_name_validator(args_model)
+    signature = inspect.signature(func)
+    positional_fields = tuple(
+        name
+        for name, param in signature.parameters.items()
+        if param.kind is inspect.Parameter.POSITIONAL_ONLY
+        and name in args_model.model_fields
+    )
 
     def _handler(
         args: BaseModel | Mapping[str, Any],
@@ -216,8 +223,13 @@ def _decorate(
                 args.model_dump() if isinstance(args, BaseModel) else dict(args)
             )
         )
-        values = {name: getattr(validated, name) for name in args_model.model_fields}
-        return func(**values)
+        positional = [getattr(validated, name) for name in positional_fields]
+        keywords = {
+            name: getattr(validated, name)
+            for name in args_model.model_fields
+            if name not in positional_fields
+        }
+        return func(*positional, **keywords)
 
     decl = ToolDecl(
         name=resolved_name,
