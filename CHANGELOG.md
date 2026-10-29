@@ -157,6 +157,9 @@ This file tracks package-facing release notes for `openminion`.
   database the baseline created, where it failed with a duplicate
   `next_attempt_at` column, on SQLite too. The SQLite DDL and the revisions
   are unchanged (Refs #494).
+- Respect directory boundaries in `find`/`search` file globs: a single `*`
+  no longer crosses directories, `**` recurses to any depth, and a leading
+  `**/` matches files under any number of parent directories (Refs #492).
 
 ## Current package line - 2026-10-28
 
