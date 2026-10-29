@@ -7,6 +7,7 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Make identity `clear_cache` prefix matching case-sensitive, so it no longer deletes other agents' snippets through a case-insensitive `LIKE`. (Refs #485)
 ## Current package line - 2026-11-04
 
 - Add a reviewed learning lifecycle that can retain successful substantive
