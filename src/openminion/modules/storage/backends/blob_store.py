@@ -104,6 +104,10 @@ class BlobStoreFS(BlobStore):
         meta: dict[str, Any] | None = None,
     ) -> BlobRef:
         hash_value = _normalize_hash(digest)
+        existing = self._existing_ref(hash_value)
+        if existing is not None:
+            return existing
+
         ext_value = _normalize_ext(ext)
         target = self._target_path(hash_value, ext=ext_value)
         created_at = iso_now()
@@ -172,6 +176,10 @@ class BlobStoreFS(BlobStore):
     ) -> BlobRef:
         src = Path(path).expanduser().resolve(strict=True)
         hash_value = _normalize_hash(digest)
+        existing = self._existing_ref(hash_value)
+        if existing is not None:
+            return existing
+
         ext_value = _normalize_ext(ext)
         target = self._target_path(hash_value, ext=ext_value)
         created_at = iso_now()
@@ -235,10 +243,10 @@ class BlobStoreFS(BlobStore):
             return False
 
     def delete(self, ref: BlobRef | str) -> None:
-        path = self._resolve_path(ref)
         hash_value = _ref_to_hash(ref)
-        path.unlink(missing_ok=True)
         self._meta_path(hash_value).unlink(missing_ok=True)
+        for path in self._owned_payload_paths(hash_value):
+            path.unlink(missing_ok=True)
 
     def path_for(self, digest: str) -> str:
         hash_value = _normalize_hash(digest)
@@ -288,20 +296,34 @@ class BlobStoreFS(BlobStore):
                     candidates.append(path)
                 running -= int(path.stat().st_size)
 
+        # Evict each candidate hash's whole owned representation so the digest
+        # is not left reachable through a sibling payload (e.g. a legacy
+        # <hash>.bin alongside <hash>.txt). Unrelated <hash>suffix files and the
+        # .meta.json sidecar are not owned payloads.
+        evicting: list[Path] = []
+        seen_hashes: set[str] = set()
         deleted_bytes = 0
         for path in candidates:
-            deleted_bytes += int(path.stat().st_size)
+            hash_value = path.stem
+            if hash_value in seen_hashes:
+                continue
+            seen_hashes.add(hash_value)
+            owned = self._owned_payload_paths(hash_value)
+            if not owned:
+                continue
+            evicting.extend(owned)
+            deleted_bytes += sum(int(item.stat().st_size) for item in owned)
             if not dry_run:
-                path.unlink(missing_ok=True)
-                hash_value = path.stem
+                for item in owned:
+                    item.unlink(missing_ok=True)
                 self._meta_path(hash_value).unlink(missing_ok=True)
 
         return {
             "dry_run": dry_run,
             "total_files": len(files),
             "total_bytes": total_bytes,
-            "candidates": [str(path) for path in candidates],
-            "deleted_files": 0 if dry_run else len(candidates),
+            "candidates": [str(path) for path in evicting],
+            "deleted_files": 0 if dry_run else len(evicting),
             "deleted_bytes": 0 if dry_run else deleted_bytes,
         }
 
@@ -359,6 +381,28 @@ class BlobStoreFS(BlobStore):
             },
         )
 
+    def _existing_ref(self, hash_value: str) -> BlobRef | None:
+        sidecar = self._meta_path(hash_value)
+        if not sidecar.exists():
+            return None
+        try:
+            meta = json.loads(sidecar.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        recorded_ext = _normalize_ext(meta.get("ext"))
+        target = self._target_path(hash_value, ext=recorded_ext)
+        if not target.exists():
+            return None
+        return BlobRef(
+            algo="sha256",
+            hash=hash_value,
+            path=str(target),
+            size=int(meta.get("size", target.stat().st_size)),
+            media_type=str(meta.get("media_type", "application/octet-stream")),
+            created_at=str(meta.get("created_at", "")),
+            ext=recorded_ext or None,
+        )
+
     def _write_meta(self, hash_value: str, payload: dict[str, Any]) -> None:
         sidecar = self._meta_path(hash_value)
         atomic_write_text(
@@ -366,6 +410,17 @@ class BlobStoreFS(BlobStore):
             json.dumps(
                 payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
             ),
+        )
+
+    def _owned_payload_paths(self, hash_value: str) -> list[Path]:
+        prefix = hash_value[:2]
+        root = self.blob_root / prefix
+        return sorted(
+            path
+            for path in root.glob(f"{hash_value}*")
+            if path.is_file()
+            and not path.name.endswith(".meta.json")
+            and path.stem == hash_value
         )
 
     def _resolve_path(self, ref: BlobRef | str) -> Path:

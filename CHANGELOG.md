@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Make the filesystem blob store's repeated put of the same bytes idempotent:
+  `put_bytes` and `put_file` reuse the existing representation and preserve its
+  first-write metadata, and `gc` evicts every owned payload of an evicted
+  digest together with its metadata sidecar so the digest is not left reachable
+  through a sibling representation (Refs #484).
+
 - Keep native structured-output instructions limited to formatting so research
   synthesis can answer from supplied evidence. Preserve forced `submit_output`,
   schema validation, and caller-owned routing/judgment contracts (Refs #530).
