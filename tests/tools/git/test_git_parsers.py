@@ -44,6 +44,36 @@ class StatusParserTests(unittest.TestCase):
         self.assertEqual(untracked.index_status, "?")
         self.assertEqual(untracked.worktree_status, "?")
 
+    def test_rename_and_copy_records(self) -> None:
+        # Porcelain v2 rename/copy records are `2 <XY> <sub> ... <X><score>
+        # <path>\t<origPath>`. The destination path must exclude the score
+        # prefix and the tab-separated original path.
+        stdout = (
+            "# branch.head main\n"
+            "2 R. N... 100644 100644 100644 abc def R100 new_name.txt\told_name.txt\n"
+            "2 C. N... 100644 100644 100644 abc def C75 copied.py\tsrc.py\n"
+        )
+        status = parse_status_porcelain_v2(stdout)
+        self.assertEqual(len(status.files), 2)
+        rename = next(entry for entry in status.files if entry.index_status == "R")
+        self.assertEqual(rename.path, "new_name.txt")
+        self.assertEqual(rename.worktree_status, ".")
+        copy = next(entry for entry in status.files if entry.index_status == "C")
+        self.assertEqual(copy.path, "copied.py")
+        self.assertEqual(copy.worktree_status, ".")
+
+    def test_rename_with_ordinary_and_untracked_controls(self) -> None:
+        stdout = (
+            "# branch.head main\n"
+            "1 .M N... 100644 100644 100644 abc def README.md\n"
+            "2 R. N... 100644 100644 100644 abc def R100 new_name.txt\told_name.txt\n"
+            "? notes.txt\n"
+        )
+        status = parse_status_porcelain_v2(stdout)
+        self.assertEqual(len(status.files), 3)
+        paths = sorted(entry.path for entry in status.files)
+        self.assertEqual(paths, ["README.md", "new_name.txt", "notes.txt"])
+
     def test_ahead_behind_parsed(self) -> None:
         stdout = "# branch.head main\n# branch.ab +3 -2\n"
         status = parse_status_porcelain_v2(stdout)
