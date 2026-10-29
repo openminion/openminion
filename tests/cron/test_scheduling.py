@@ -15,7 +15,11 @@ from openminion.services.cron import (
     to_iso_utc,
     utc_now,
 )
-from openminion.modules.task.scheduling.schedule import _select_due_points_for_job
+from openminion.modules.task.scheduling.schedule import (
+    _next_cron_occurrence,
+    _parse_cron_expression,
+    _select_due_points_for_job,
+)
 
 
 def test_normalize_schedule_at_every_cron() -> None:
@@ -218,3 +222,34 @@ def test_select_due_points_for_job_stale_past_due_dates() -> None:
     assert [to_iso_utc(item) for item in selected] == ["2026-03-25T12:00:00+00:00"]
     assert next_due is not None
     assert to_iso_utc(next_due) == "2026-03-25T12:01:00+00:00"
+
+
+def test_cron_dow_range_ending_at_sunday_7() -> None:
+    spec = _parse_cron_expression("0 9 * * 5-7")
+    assert spec.days_of_week == {0, 5, 6}
+
+
+def test_cron_dow_range_1_to_7_covers_full_week() -> None:
+    spec = _parse_cron_expression("0 9 * * 1-7")
+    assert spec.days_of_week == {0, 1, 2, 3, 4, 5, 6}
+
+
+def test_cron_dow_range_0_to_7_covers_full_week() -> None:
+    spec = _parse_cron_expression("0 9 * * 0-7")
+    assert spec.days_of_week == {0, 1, 2, 3, 4, 5, 6}
+
+
+def test_cron_dow_sunday_7_alone_maps_to_0() -> None:
+    spec = _parse_cron_expression("0 9 * * 7")
+    assert spec.days_of_week == {0}
+
+
+def test_cron_dow_stepped_range_ending_at_7() -> None:
+    spec = _parse_cron_expression("0 9 * * 1-7/2")
+    assert spec.days_of_week == {0, 1, 3, 5}
+
+
+def test_cron_dow_range_ending_at_7_next_occurrence() -> None:
+    after = parse_iso_datetime("2026-10-23T09:30:00Z")  # Friday
+    nxt = _next_cron_occurrence(expr="0 9 * * 5-7", tz_name="UTC", after=after)
+    assert nxt == parse_iso_datetime("2026-10-24T09:00:00Z")  # Saturday
