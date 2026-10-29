@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Honor `since_ts`/`until_ts` in the in-memory audit store. `MemoryAuditStore`
+  ignored the time-window filters when listing audit records; it now filters
+  by `since_ts` and `until_ts` the same way the SQLite store does (Refs #489).
+
 - Keep native structured-output instructions limited to formatting so research
   synthesis can answer from supplied evidence. Preserve forced `submit_output`,
   schema validation, and caller-owned routing/judgment contracts (Refs #530).

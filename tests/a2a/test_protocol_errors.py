@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from openminion.modules.a2a.errors import (
     ERROR_CODE_HANDLER_ERROR,
     ERROR_CODE_INTERNAL_ERROR,
 )
-from openminion.modules.a2a.models import Envelope
+from openminion.modules.a2a.models import AuditRecord, Envelope
 from openminion.modules.a2a.runtime import A2ARuntime
 from openminion.modules.a2a.storage import MemoryAuditStore, SQLiteStateStore
 
@@ -60,6 +61,30 @@ def test_runtime_call_wraps_unexpected_handler_error(runtime: A2ARuntime) -> Non
     assert resp.params["ok"] is False
     assert resp.params["status"] == ERROR_CODE_HANDLER_ERROR
     assert resp.params["error"]["code"] == ERROR_CODE_HANDLER_ERROR
+
+
+def test_query_errors_honors_since_seconds(runtime: A2ARuntime) -> None:
+    old_ts = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    recent_ts = datetime.now(timezone.utc).isoformat()
+    for ts, suffix in ((old_ts, "old"), (recent_ts, "recent")):
+        runtime.audit_store.append_audit(
+            AuditRecord(
+                ts=ts,
+                msg_id=f"msg-{suffix}",
+                trace_id=f"trace-{suffix}",
+                from_agent="tester",
+                to_agent="err",
+                to_capability=None,
+                type="call",
+                method="fail.now",
+                status="FAILED",
+                error_code=ERROR_CODE_HANDLER_ERROR,
+            )
+        )
+
+    assert [row["msg_id"] for row in runtime.query_errors(since_seconds=3600)] == [
+        "msg-recent"
+    ]
 
 
 def test_job_cancel_returns_standard_code(runtime: A2ARuntime) -> None:
