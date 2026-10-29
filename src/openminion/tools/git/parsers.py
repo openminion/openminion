@@ -201,9 +201,17 @@ def parse_status_porcelain_v2(stdout: str) -> StatusOutput:
             if len(tokens) < 9:
                 continue
             xy = tokens[1]
-            path = tokens[-1]
             index_status = xy[0] if len(xy) >= 1 else "?"
             worktree_status = xy[1] if len(xy) >= 2 else "?"
+            if line.startswith("2 "):
+                # Rename/copy record: the trailing token is
+                # `<X><score> <new_path>\t<orig_path>`. Peel the tab-separated
+                # tail, then drop the leading `<X><score> ` prefix to recover
+                # the destination path.
+                score_and_new, _, _ = tokens[-1].partition("\t")
+                _, _, path = score_and_new.partition(" ")
+            else:
+                path = tokens[-1]
             files.append(
                 StatusEntry(
                     path=path,
