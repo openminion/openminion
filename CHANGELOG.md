@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Declare `lookup_order` in `examples/sdk/tool_agent.py` as a read-only,
+  idempotent tool. Since 0.1.11 the bare `@tool` was classified as
+  `write`/unknown reversibility, so the example stopped at a confirmation
+  prompt under the default action policy (#464). Approval logic and the
+  unknown-risk default are unchanged.
+
 ## Current package line - 2026-10-28
 
 - Start `APIRuntime` with PostgreSQL runtime storage (`storage.backend:

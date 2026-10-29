@@ -7,9 +7,15 @@ import shutil
 import subprocess
 import sys
 
+import pytest
 import yaml
 
+from openminion import tool
+from openminion.base.config import OpenMinionConfig
 from openminion.base.version import OPENMINION_VERSION
+from openminion.modules.policy.runtime.action_policy import build_action_policy_service
+from openminion.modules.tool.framework import build_registrar
+from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool import ToolExecutionContext
 from openminion.modules.tool.contracts import ALL_MODEL_TOOL_IDS_SET
 from openminion.services.runtime.plugins import discover_plugin_manifests
@@ -158,6 +164,61 @@ def test_sdk_tool_example_uses_public_decorator_contract() -> None:
 
     assert tool_decl.name == "lookup_order"
     assert "order" in tool_decl.description.lower()
+
+
+def _default_policy_decision(tool_fn, tmp_path: Path):
+    registry = ToolRegistry()
+    build_registrar(tool_fn.tool_family_spec()).register(registry)
+    policy = build_action_policy_service(
+        config=OpenMinionConfig(), tool_registry=registry, data_root=tmp_path
+    )
+    try:
+        return policy.check(
+            {
+                "tool": "lookup_order",
+                "method": "default",
+                "args": {"order_id": "A-104"},
+            },
+            {},
+        )
+    finally:
+        policy.close()
+
+
+def _undeclared_lookup_order():
+    @tool
+    def lookup_order(order_id: str) -> str:
+        """Return the current status for one order."""
+
+        return f"order {order_id}: ready"
+
+    return lookup_order
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("example", ("ALLOW", "READ_ONLY_ALLOW", "read", "reversible")),
+        (
+            "undeclared",
+            ("REQUIRE_CONFIRM", "UNKNOWN_REVERSIBILITY", "write", "unknown"),
+        ),
+    ],
+)
+def test_sdk_tool_example_declares_read_only_lookup(tmp_path, source, expected):
+    tool_fn = (
+        run_path(str(SDK_EXAMPLES / "tool_agent.py"))["lookup_order"]
+        if source == "example"
+        else _undeclared_lookup_order()
+    )
+    decision = _default_policy_decision(tool_fn, tmp_path)
+
+    assert (
+        decision.decision,
+        decision.reason_code,
+        decision.risk.risk_class,
+        decision.risk.reversibility,
+    ) == expected
 
 
 def test_sdk_error_example_handles_existing_turn_timeout(monkeypatch, capsys):
