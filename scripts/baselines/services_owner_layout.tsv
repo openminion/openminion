@@ -85,7 +85,10 @@ scope	max_python_files	max_loc
 # and derives the capture authorization from it (+2 LOC in
 # services/brain/post_execution/mixin.py; measured on dev 2df62d9b (after #448)
 # with this change: 209 files, 42316 LOC).
-services	209	42316
+# Issue 487 (2026-10-31) closes the call-owned storage probe on every health
+# service exit so the probe's storage handle is released on every exit path
+# (+9 LOC over dev 6119be2a at 42325; file count unchanged at 209).
+services	209	42325
 services/security	6	187
 services/stats	1	25
 services/tool	3	50
