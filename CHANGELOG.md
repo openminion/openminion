@@ -21,6 +21,8 @@ This file tracks package-facing release notes for `openminion`.
 
 - Parse porcelain v2 rename/copy records without the rename score and old-path suffix, keeping the destination path (including spaces). (Refs #491)
 
+- Reject unsupported arithmetic in `calculate_expression` — zero to a negative power and complex-valued results now use the structured `INVALID_ARGUMENT` path instead of raising raw exceptions. (Refs #490)
+
 - Record the memory-consolidation marker only when the review resolved every
   candidate with a terminal decision (keep/promote/discard) and nothing was
   deferred or failed to write. A cycle that deferred any candidate, or whose

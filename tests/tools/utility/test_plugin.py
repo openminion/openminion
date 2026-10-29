@@ -73,6 +73,32 @@ def test_calculate_expression_rejects_divide_by_zero(tmp_path: Path):
         _h_calculate_expression({"expression": "10 / 0"}, ctx)
 
 
+def test_calculate_expression_rejects_zero_to_negative_power(tmp_path: Path):
+    ctx = _ctx(tmp_path)
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_calculate_expression({"expression": "0 ** -1"}, ctx)
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+
+
+def test_calculate_expression_rejects_complex_result(tmp_path: Path):
+    ctx = _ctx(tmp_path)
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_calculate_expression({"expression": "(-1) ** 0.5"}, ctx)
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+
+
+def test_calculate_expression_rejects_large_exponent(tmp_path: Path):
+    ctx = _ctx(tmp_path)
+    with pytest.raises(ToolRuntimeError):
+        _h_calculate_expression({"expression": "2 ** 100"}, ctx)
+
+
+def test_calculate_expression_allows_negative_power(tmp_path: Path):
+    ctx = _ctx(tmp_path)
+    payload = _h_calculate_expression({"expression": "2 ** -1"}, ctx)
+    assert payload["result"] == 0.5
+
+
 def test_text_stats_counts(tmp_path: Path):
     ctx = _ctx(tmp_path)
     payload = _h_text_stats({"text": "One line.\nTwo words"}, ctx)
