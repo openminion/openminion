@@ -7,6 +7,8 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Normalize raw SQLite bm25 scores in the correct direction, so a stronger match scores higher instead of lower. (Refs #479)
+
 - Keep runtime migration 14 portable to SQLite older than 3.33: the
   join-sequence backfill now uses a correlated subquery instead of
   `UPDATE ... FROM`, preserving the per-session `(joined_at, id)` numbering on
