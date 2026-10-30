@@ -158,6 +158,12 @@ This file tracks package-facing release notes for `openminion`.
   `next_attempt_at` column, on SQLite too. The SQLite DDL and the revisions
   are unchanged (Refs #494).
 
+- Apply the recent-window mode budget bias (respond halving / act -120) only
+  once. The recent-window trimmer read the already-biased budget and applied
+  the mode adjustment a second time, halving the respond budget or subtracting
+  120 tokens from the act budget again; it now reads the biased budget
+  directly, so the adjustment lands exactly once (Refs #482).
+
 ## Current package line - 2026-10-28
 
 - Start `APIRuntime` with PostgreSQL runtime storage (`storage.backend:
