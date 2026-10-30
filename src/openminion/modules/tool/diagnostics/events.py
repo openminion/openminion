@@ -1,4 +1,5 @@
 import re
+import json
 import hashlib
 import logging
 from collections.abc import Mapping
@@ -386,3 +387,23 @@ def emit_tool_execution_event(
         status=status,
         error=dict(error) if error else None,
     )
+
+
+def dedupe_tool_results(
+    tool_results_payload: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in tool_results_payload:
+        if not isinstance(item, dict):
+            continue
+        stable_id = str(
+            item.get("call_id", "") or item.get("id", "") or item.get("command_id", "")
+        ).strip()
+        if not stable_id:
+            stable_id = json.dumps(item, sort_keys=True, default=str)
+        if stable_id in seen:
+            continue
+        seen.add(stable_id)
+        deduped.append(item)
+    return deduped

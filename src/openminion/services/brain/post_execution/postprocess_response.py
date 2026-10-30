@@ -221,6 +221,15 @@ def _attach_postprocess_action_metadata(
         )
         tool_results_payload = project(tool_results_payload)
         cumulative_tool_results_payload = project(cumulative_tool_results_payload)
+    research_results = step_out.working_state.module_state.get("research", {}).get(
+        "tool_results", []
+    )
+    if any(
+        isinstance(item, dict)
+        and item.get("turn_scope_id") == step_out.working_state.trace_id
+        for item in research_results
+    ):
+        tool_results_payload = cumulative_tool_results_payload
     self._attach_tool_result_metadata(
         metadata=metadata,
         termination_reason=termination_reason,

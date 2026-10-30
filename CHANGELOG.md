@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Reconcile research child budget consumption before allocating the next pass,
+  and include their terminal tool results in the turn's tool/error statistics.
+  Preserve isolated child state and settle consumption on partial, failed and
+  cancelled execution; resumed findings do not charge completed work again.
+  Whole-turn LLM response reporting continues to use the existing canonical
+  event projection introduced by #596 (Refs #531, Refs #542).
+
 - Make identity `clear_cache` prefix matching case-sensitive, so it no longer deletes other agents' snippets through a case-insensitive `LIKE`. (Refs #485)
 
 - Forward the query string on POST requests, so query-parameter POST routes resolve their parameters. (Refs #486)
