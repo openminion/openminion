@@ -288,7 +288,8 @@ class V15PackingBehaviorTests(unittest.TestCase):
 
     def test_decide_budget_scales_by_canonical_turn_depth(self) -> None:
         cases = [
-            (1, 1500, 1000, 0),
+            (1, 2200, 1000, 0),
+            (2, 2200, 1000, 0),
             (3, 2200, 1400, 300),
             (7, 2800, 1600, 500),
             (15, 3200, 1600, 800),

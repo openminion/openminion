@@ -21,6 +21,13 @@ configuration and stop reason before attributing an early stop to a default.
 Do not remove approval requirements or automatically extend a turn to hide a
 budget failure.
 
+The decision-context target is `2,200` tokens for turns 1 through 5, `2,800`
+for turns 6 through 10 and `3,200` after turn 10. The first two turns retain a
+smaller recent-turn bucket because there is little history to include, but no
+longer use a smaller overall target. Judge and validation requests retain their
+separate `3,000`-token targets. These are context-pack targets, not provider
+output limits or complete request sizes.
+
 ## Catalog size is not request size
 
 The ordinary entry path offers control schemas and `tool.request`. The model

@@ -144,7 +144,7 @@ def decide_budget_for_turn_depth(turn_count: int) -> ContextBudgets:
     safe_count = max(0, int(turn_count))
     if safe_count <= 2:
         return ContextBudgets(
-            total_max_tokens=1500,
+            total_max_tokens=2200,
             identity_tokens=160,
             summary_tokens=300,
             conversation_summary_tokens=0,

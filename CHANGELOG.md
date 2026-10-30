@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Give the first two decision turns the normal `2,200`-token context-pack
+  target instead of the former `1,500`-token target. This leaves more room for
+  the user's initial request, instructions and early clarification without
+  changing later-turn scaling, completion budgets, provider output limits or
+  saved agent profiles.
+
 - Stage no `tool_outcome` memory candidate for an outcome classified as
   `policy_denied`. When the user denied a tool call, or the call was still
   waiting for the user's confirmation, the brain staged a `policy_denied`
