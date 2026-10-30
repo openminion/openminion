@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Retain a completed research child's answer ahead of raw tool-output prefixes,
+  with the existing source URLs and evidence references. Use a successful
+  action summary when the completed message is empty and usable tool evidence
+  exists. Keep partial-child evidence salvage and the 200/800-character prompt
+  projections unchanged (Refs #543).
+
 - Give the first two decision turns the normal `2,200`-token context-pack
   target instead of the former `1,500`-token target. This leaves more room for
   the user's initial request, instructions and early clarification without
