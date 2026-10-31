@@ -158,6 +158,10 @@ This file tracks package-facing release notes for `openminion`.
   `next_attempt_at` column, on SQLite too. The SQLite DDL and the revisions
   are unchanged (Refs #494).
 
+- Order the `memory` and `self_awareness` context segments before
+  `turn_input` so that recalled memories and the self model render ahead of
+  the final user input (Refs #483).
+
 ## Current package line - 2026-10-28
 
 - Start `APIRuntime` with PostgreSQL runtime storage (`storage.backend:
