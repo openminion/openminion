@@ -80,6 +80,14 @@ This file tracks package-facing release notes for `openminion`.
   thread, and `AgentRunResult.thread_id` returns the turn's thread. Omitted or
   blank, it changes nothing (Refs #541).
 
+- Preserve `Field` defaults, `default_factory`, aliases and constraints when a
+  `@tool` argument declares them as its Python default (e.g.
+  `x: int = Field(default=7, alias="external", ge=1)` or
+  `x: list[int] = Field(default_factory=list)`). The previous fix only honoured
+  `Field` metadata inside `Annotated` and, when a Python default was present,
+  stored the `FieldInfo` object itself as the default, dropping the alias and
+  constraints and breaking `default_factory` (Refs #475).
+
 ## Current package line - 2026-10-29
 
 - Ask the agent's `memory.write` authorization before a turn captures memory.

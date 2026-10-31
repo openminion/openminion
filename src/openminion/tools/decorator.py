@@ -4,6 +4,7 @@ from typing import Any, Optional, cast, get_type_hints, overload
 from collections.abc import Callable, Mapping
 
 from pydantic import BaseModel, ConfigDict, create_model
+from pydantic.fields import FieldInfo
 
 
 def _exposed_parameters(signature: inspect.Signature) -> dict[str, inspect.Parameter]:
@@ -53,13 +54,24 @@ def _build_args_model(func: Callable[..., Any], model_name: str) -> type[BaseMod
     signature = inspect.signature(func)
     parameters = _exposed_parameters(signature)
     resolved_annotations = _resolve_postponed_annotations(func, parameters)
-    fields: dict[str, tuple[Any, Any]] = {}
+    fields: dict[str, Any] = {}
     for name, param in parameters.items():
         annotation = resolved_annotations.get(name, param.annotation)
         if annotation is inspect.Parameter.empty:
             annotation = Any
-        default = param.default if param.default is not inspect.Parameter.empty else ...
-        fields[name] = (annotation, default)
+        if param.default is inspect.Parameter.empty:
+            # No Python default: build the field info from the annotation so a
+            # pydantic ``Field(default=...)`` / ``Field(default_factory=...)``
+            # inside ``Annotated`` is honoured instead of being overridden by
+            # the ``...`` required marker. ``from_annotation`` keeps any
+            # constraints, description and alias declared by that ``Field``.
+            field_info = FieldInfo.from_annotation(annotation)
+            fields[name] = (field_info.annotation, field_info)
+        else:
+            # A Python default (plain value or ``Field(...)``) is handed to
+            # pydantic ``create_model`` unchanged so it resolves Field
+            # defaults/default_factories/aliases/constraints natively.
+            fields[name] = (annotation, param.default)
     return create_model(
         model_name,
         __config__=ConfigDict(extra="forbid"),
