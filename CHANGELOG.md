@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Resolve reasoning-effort support by the execution route actually selected.
+  The direct OpenAI/Anthropic/Groq/Cerebras/OpenRouter adapters never carry the
+  effort in their request payloads, so they no longer claim `supported=true`
+  for it; the llmctl bridge and the ollama adapter (which maps the effort to an
+  explicit `think` flag) still do, and echo is never labeled as transmitted
+  effort (Refs #481).
+
 - Keep native structured-output instructions limited to formatting so research
   synthesis can answer from supplied evidence. Preserve forced `submit_output`,
   schema validation, and caller-owned routing/judgment contracts (Refs #530).

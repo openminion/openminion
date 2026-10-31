@@ -150,6 +150,7 @@ def resolve_mode_aware_thinking(
             provider_name=request.provider,
             model_name=request.model,
             provider_effort=provider_effort,
+            route=request.route,
         )
     )
     if support_degrade_reason:

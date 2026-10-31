@@ -154,7 +154,7 @@ def resolve_provider_retry_override(
     normalized_provider = provider_name.strip().lower()
     normalized_model = model_name.strip().lower()
     normalized_purpose = purpose.strip().lower()
-    has_thinking = bool(thinking and thinking.strip())
+    has_thinking = _requested_thinking_active(thinking=thinking, metadata=metadata)
     submit_output_only = _submit_output_only_tools(tool_names)
 
     for item in candidates:
@@ -181,6 +181,25 @@ def resolve_provider_retry_override(
         )
 
     return ProviderRetryOverrideResolution(matched=False)
+
+
+def _requested_thinking_active(
+    *,
+    thinking: str | None,
+    metadata: Mapping[str, Any] | None = None,
+) -> bool:
+    """Return whether the request has active thinking.
+
+    ``thinking`` carries the resolved (transmitted) effort and is empty both
+    when thinking is off and when the selected route does not transmit effort
+    (issue #481). Fall back to the resolved reasoning profile carried in the
+    request metadata so a thinking request is still recognized on routes whose
+    adapters do not transmit the effort.
+    """
+    if thinking and thinking.strip():
+        return True
+    profile = str((metadata or {}).get("thinking_reasoning_profile", "") or "").strip()
+    return bool(profile) and profile != "off"
 
 
 def _provider_overrides_disabled(
