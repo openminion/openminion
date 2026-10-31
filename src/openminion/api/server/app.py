@@ -57,7 +57,8 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         self._write_json(status, payload)
 
     def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
         if not authorize_ipc_request(
@@ -84,6 +85,7 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             path,
             self.config_path,
             body=payload,
+            query=parsed.query,
             runtime=self.runtime,
             runtime_bootstrap_error=self.runtime_bootstrap_error,
             request_headers=dict(self.headers.items()),
