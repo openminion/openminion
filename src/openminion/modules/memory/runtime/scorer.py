@@ -32,6 +32,8 @@ def normalize_relevance(value: Any) -> float:
         return 0.0
     if 0.0 <= numeric <= 1.0:
         return clamp01(numeric)
+    if numeric < 0.0:
+        return clamp01(1.0 - math.exp(numeric))
     return clamp01(1.0 / (1.0 + abs(numeric)))
 
 

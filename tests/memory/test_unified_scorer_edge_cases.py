@@ -8,6 +8,7 @@ from openminion.modules.memory.config import RankingConfig
 from openminion.modules.memory.runtime.scorer import (
     RankingWeights,
     _type_multiplier,
+    normalize_relevance,
     recency_score,
     score_records,
 )
@@ -49,3 +50,15 @@ def test_ranking_weights_non_summing_values_auto_normalize() -> None:
 
 def test_recency_score_zero_half_life_returns_one() -> None:
     assert recency_score(age_days=0, half_life_days=0) == 1.0
+
+
+def test_normalize_relevance_bm25_negative_ranks_stronger_match_higher() -> None:
+    # Raw SQLite bm25 scores are non-positive; more negative == stronger match.
+    # They must map to higher relevance, not be inverted.
+    assert normalize_relevance(-8.0) > normalize_relevance(-0.5)
+
+
+def test_normalize_relevance_passes_through_unit_interval() -> None:
+    assert normalize_relevance(0.0) == 0.0
+    assert normalize_relevance(0.5) == 0.5
+    assert normalize_relevance(1.0) == 1.0
