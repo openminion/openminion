@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Skip the memory-consolidation marker when no candidate advances to a
+  terminal state (promote/discard/keep). A cycle that only deferred candidates,
+  returned no usable merge decisions, or whose requested terminal writes all
+  failed now leaves `last_consolidation_state_hash` untouched, so the candidate
+  set stays eligible for the next consolidation cycle instead of being blocked
+  as already consolidated (Refs #477).
+
 - Keep native structured-output instructions limited to formatting so research
   synthesis can answer from supplied evidence. Preserve forced `submit_output`,
   schema validation, and caller-owned routing/judgment contracts (Refs #530).
