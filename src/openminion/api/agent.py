@@ -122,8 +122,12 @@ class Agent(Generic[InputT, OutputT]):
         self._owns_runtime = runtime is None
 
         if self.handoffs:
-            from openminion.api.handoff import build_delegate_tool
+            from openminion.api.handoff import (
+                _validate_unique_resolved_names,
+                build_delegate_tool,
+            )
 
+            _validate_unique_resolved_names(self.handoffs)
             self.handoff_tool_names: list[str] = [
                 build_delegate_tool(h).name for h in self.handoffs
             ]

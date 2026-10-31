@@ -273,6 +273,54 @@ def test_build_delegate_family_spec_returns_none_when_no_handoffs() -> None:
     assert build_delegate_family_spec([]) is None
 
 
+def test_two_explicitly_distinct_handoff_names_work() -> None:
+    runtime = _FakeRuntime(tools=ToolRegistry())
+    target_a = Agent(runtime=_FakeRuntime("A"), name="refund_agent")
+    target_b = Agent(runtime=_FakeRuntime("B"), name="support_agent")
+    parent = Agent(
+        runtime=runtime,
+        name="parent",
+        handoffs=[
+            Handoff(target=target_a, name="transfer_to_refunds"),
+            Handoff(target=target_b, name="transfer_to_support"),
+        ],
+    )
+
+    assert parent.handoff_tool_names == [
+        "transfer_to_refunds",
+        "transfer_to_support",
+    ]
+    parent.run("delegate")
+    registered = runtime.seen_tool_names_during_run
+    assert "transfer_to_refunds" in registered
+    assert "transfer_to_support" in registered
+
+
+def test_duplicate_default_handoff_names_raise_value_error() -> None:
+    runtime = _FakeRuntime()
+    target_a = Agent(runtime=runtime)
+    target_b = Agent(runtime=runtime)
+
+    with pytest.raises(
+        ValueError, match='duplicate Handoff resolved name "transfer_to_agent"'
+    ):
+        Agent(
+            runtime=runtime,
+            handoffs=[Handoff(target=target_a), Handoff(target=target_b)],
+        )
+
+
+def test_build_delegate_family_spec_rejects_duplicate_resolved_names() -> None:
+    runtime = _FakeRuntime()
+    target_a = Agent(runtime=runtime)
+    target_b = Agent(runtime=runtime)
+
+    with pytest.raises(
+        ValueError, match='duplicate Handoff resolved name "transfer_to_agent"'
+    ):
+        build_delegate_family_spec([Handoff(target=target_a), Handoff(target=target_b)])
+
+
 def test_subagent_reuses_parent_runtime() -> None:
     runtime = _FakeRuntime()
     parent = Agent(runtime=runtime, name="parent")

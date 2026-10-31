@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Reject duplicate Handoff resolved names when an agent is built or a delegate
+  family is compiled, so two handoffs resolving to the same name fail with an
+  actionable message instead of a `profile_id values must be unique` error at
+  registration time (Refs #476).
+
 - Keep native structured-output instructions limited to formatting so research
   synthesis can answer from supplied evidence. Preserve forced `submit_output`,
   schema validation, and caller-owned routing/judgment contracts (Refs #530).
