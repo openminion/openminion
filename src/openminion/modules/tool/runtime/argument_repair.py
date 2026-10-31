@@ -1,7 +1,9 @@
 import json
 import re
 from typing import Any, cast
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
+
+from pydantic import BaseModel, ValidationError
 
 from ..contracts.model_ids import (
     MODEL_LOCATION,
@@ -170,12 +172,47 @@ def validate_model_tool_args(
         args_model=args_model,
         channel_name=f"model_tool:{tool_name}.args",
     )
-    return cast(dict[str, Any], args_model.model_validate(repaired).model_dump())
+    return accepted_tool_args(args_model.model_validate(repaired), repaired)
+
+
+def accepted_tool_args(
+    validated: BaseModel,
+    accepted: Any,
+    *,
+    input_keys: Collection[str] | None = None,
+) -> dict[str, Any]:
+    """Arguments to hand on after ``validated`` was built from ``accepted``.
+
+    The canonical ``model_dump()`` is handed on, as before, when it is itself
+    an input the tool accepts: it validates again under the args model's own
+    configuration and, when ``input_keys`` (the schema keys) is given, uses
+    only those keys. Otherwise the provider mapping the model has just
+    accepted is handed on unchanged, keeping its keys and shape. No second
+    serializer is involved and model configuration is never changed.
+    """
+    dumped = validated.model_dump()
+    if not isinstance(accepted, Mapping):
+        return cast(dict[str, Any], dumped)
+    if input_keys is None or (
+        isinstance(dumped, Mapping) and set(dumped) <= set(input_keys)
+    ):
+        try:
+            type(validated).model_validate(dumped)
+        except ValidationError:
+            pass
+        else:
+            return cast(dict[str, Any], dumped)
+    return dict(accepted)
 
 
 def _model_alias_map(args_model: Any) -> dict[str, str]:
     fields = getattr(args_model, "model_fields", None)
     if not isinstance(fields, Mapping):
+        return {}
+    # Renaming an alias to its field name only helps a model that accepts
+    # field names; an alias-only model would reject the renamed key.
+    config = getattr(args_model, "model_config", None) or {}
+    if not (config.get("populate_by_name") or config.get("validate_by_name")):
         return {}
     alias_map: dict[str, str] = {}
     for field_name, field_info in fields.items():
@@ -287,6 +324,7 @@ def _sanitize_weather_location_candidate(raw: str) -> str:
 
 
 __all__ = [
+    "accepted_tool_args",
     "extract_single_weather_location",
     "missing_simple_required_fields",
     "repair_model_tool_arguments",

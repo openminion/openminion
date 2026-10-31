@@ -65,16 +65,25 @@ def sanitize_tool_command_args(
     tool_name = str(getattr(command, "tool_name", "") or "")
     catalog = RunnerToolCatalog(runner)
     args_model = catalog.get_tool_args_model(tool_name)
-    model_validate = getattr(args_model, "model_validate", None)
-    if callable(model_validate):
-        try:
-            existing_args = model_validate(existing_args).model_dump()
-            command.args = dict(existing_args)
-        except ValidationError:
-            pass
     known_keys = _parameter_keys_from_spec_payload(
         resolve_tool_spec_payload(runner, tool_name=tool_name)
     )
+    model_validate = getattr(args_model, "model_validate", None)
+    if callable(model_validate):
+        # Lazy import: tool -> brain -> tool circular import.
+        from openminion.modules.tool.runtime.argument_repair import (
+            accepted_tool_args,
+        )
+
+        try:
+            existing_args = accepted_tool_args(
+                model_validate(existing_args),
+                existing_args,
+                input_keys=known_keys or None,
+            )
+            command.args = dict(existing_args)
+        except ValidationError:
+            pass
     if not known_keys:
         return dict(existing_args), []
     sanitized = {

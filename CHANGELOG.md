@@ -7,6 +7,18 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Keep an `@tool` argument's accepted input keys and shape through tool-call
+  sanitizing and the brain tool adapter. Both previously handed on the args
+  model's field-name `model_dump()`; the schema-key filter then dropped a
+  top-level argument accepted under its alias (including `gws.call`'s `json`),
+  and an alias-only model, top-level or nested, rejected the field names when
+  the dump was validated again. The canonical dump is still handed on whenever
+  the args model accepts it back as input with only schema keys; otherwise the
+  provider arguments the model has just accepted are handed on unchanged.
+  Alias-to-field-name repair now applies only to a model that accepts field
+  names. Model configuration, validation and the Pydantic floor are unchanged
+  (Refs #454).
+
 - Keep native structured-output instructions limited to formatting so research
   synthesis can answer from supplied evidence. Preserve forced `submit_output`,
   schema validation, and caller-owned routing/judgment contracts (Refs #530).

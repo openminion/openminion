@@ -4,9 +4,11 @@ import json
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Event, Thread
+from typing import Annotated
 
 import pytest
-from pydantic import BaseModel, Field
+import pydantic
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from openminion import Agent, APIRuntime, Handoff, tool
 from openminion.modules.tool.framework import build_registrar
@@ -454,19 +456,12 @@ class _AliasedFilter(BaseModel):
     status: str = "open"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Shared runtime, not the @tool handler: tool-command sanitizing "
-        "replaces the model's arguments with the args model's canonical "
-        "model_dump(), and the brain tool adapter then re-validates that "
-        "mapping alias-only, so an aliased argument is rejected as "
-        "INVALID_ARGUMENT before the handler runs. Pre-existing on dev; "
-        "tracked in https://github.com/openminion/openminion/issues/454 "
-        "(#454). A pass here does not mean the SDK alias path is fixed "
-        "until #454 is resolved."
-    ),
-)
+class _StrictAliasedFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    min_total: int = Field(alias="minTotal", ge=0)
+
+
 def test_sdk_tool_receives_nested_alias_model_argument(sdk_tools):
     runtime, _requests, state = sdk_tools
     runtime.config.action_policy.rules = []
@@ -487,3 +482,214 @@ def test_sdk_tool_receives_nested_alias_model_argument(sdk_tools):
     assert received == [_AliasedFilter(minTotal=7)]
     assert type(received[0]) is _AliasedFilter
     assert "FILTER min=7 status=open" in result.text
+
+
+def _run_alias_tool(sdk_tools, tool_name, arguments, fn):
+    runtime, _requests, state = sdk_tools
+    runtime.config.action_policy.rules = []
+    state.update(tool_name=tool_name, echo_tool_result=True, tool_arguments=arguments)
+    return Agent(runtime=runtime, tools=[fn]).run("Run.")
+
+
+def test_sdk_tool_receives_top_level_alias_argument(sdk_tools):
+    received = []
+
+    @tool(name="scale_value", min_scope="READ_ONLY", idempotent=True)
+    def scale_value(value: Annotated[int, Field(alias="external_value")]) -> str:
+        received.append(value)
+        return f"VALUE {value}"
+
+    result = _run_alias_tool(
+        sdk_tools, "scale_value", {"external_value": 3}, scale_value
+    )
+
+    assert received == [3]
+    assert "VALUE 3" in result.text
+
+
+def test_sdk_tool_without_aliases_keeps_name_keyed_arguments(sdk_tools):
+    received = []
+
+    @tool(name="plain_value", min_scope="READ_ONLY", idempotent=True)
+    def plain_value(value: int, label: str = "x") -> str:
+        received.append((value, label))
+        return f"PLAIN {value} {label}"
+
+    result = _run_alias_tool(sdk_tools, "plain_value", {"value": 5}, plain_value)
+
+    assert received == [(5, "x")]
+    assert "PLAIN 5 x" in result.text
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param({"query": {"minTotal": -1}}, id="constraint"),
+        pytest.param({"query": {"minTotal": 7, "extra": 1}}, id="nested-extra"),
+        pytest.param({"query": {}}, id="missing-nested"),
+        pytest.param({"query": {"min_total": 7}}, id="field-name-not-alias"),
+    ],
+)
+def test_sdk_tool_rejects_invalid_nested_alias_argument(sdk_tools, arguments):
+    received = []
+
+    @tool(name="filter_orders", min_scope="READ_ONLY", idempotent=True)
+    def filter_orders(query: _StrictAliasedFilter) -> str:
+        received.append(query)
+        return "FILTER_RAN"
+
+    result = _run_alias_tool(sdk_tools, "filter_orders", arguments, filter_orders)
+
+    assert received == []
+    assert "FILTER_RAN" not in result.text
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param({"external_value": "not-an-int"}, id="type"),
+        pytest.param({}, id="missing"),
+        pytest.param({"value": 3}, id="field-name-not-alias"),
+    ],
+)
+def test_sdk_tool_rejects_invalid_top_level_alias_argument(sdk_tools, arguments):
+    received = []
+
+    @tool(name="scale_value", min_scope="READ_ONLY", idempotent=True)
+    def scale_value(value: Annotated[int, Field(alias="external_value")]) -> str:
+        received.append(value)
+        return "VALUE_RAN"
+
+    result = _run_alias_tool(sdk_tools, "scale_value", arguments, scale_value)
+
+    assert received == []
+    assert "VALUE_RAN" not in result.text
+
+
+class _SerializationAliasedQuery(BaseModel):
+    value: int = Field(serialization_alias="output_value")
+
+
+class _SplitAliasedQuery(BaseModel):
+    value: int = Field(
+        validation_alias="in_value", serialization_alias="out_value", ge=0
+    )
+
+
+def test_sdk_tool_serialization_alias_is_not_an_input_key(sdk_tools):
+    received = []
+
+    @tool(name="serialization_probe", min_scope="READ_ONLY", idempotent=True)
+    def operation(
+        value: Annotated[int, Field(serialization_alias="output_value")],
+    ) -> str:
+        received.append(value)
+        return f"VALUE {value}"
+
+    result = _run_alias_tool(sdk_tools, "serialization_probe", {"value": 7}, operation)
+
+    assert received == [7]
+    assert "VALUE 7" in result.text
+
+
+def test_sdk_tool_nested_serialization_alias_is_not_an_input_key(sdk_tools):
+    received = []
+
+    @tool(name="nested_serialization_probe", min_scope="READ_ONLY", idempotent=True)
+    def operation(query: _SerializationAliasedQuery) -> str:
+        received.append(query)
+        return f"VALUE {query.value}"
+
+    result = _run_alias_tool(
+        sdk_tools, "nested_serialization_probe", {"query": {"value": 7}}, operation
+    )
+
+    assert received == [_SerializationAliasedQuery(value=7)]
+    assert "VALUE 7" in result.text
+
+
+def test_sdk_tool_validation_and_serialization_alias_top_level(sdk_tools):
+    received = []
+
+    @tool(name="split_alias_probe", min_scope="READ_ONLY", idempotent=True)
+    def operation(
+        value: Annotated[
+            int, Field(validation_alias="in_value", serialization_alias="out_value")
+        ],
+    ) -> str:
+        received.append(value)
+        return f"VALUE {value}"
+
+    result = _run_alias_tool(sdk_tools, "split_alias_probe", {"in_value": 4}, operation)
+
+    assert received == [4]
+    assert "VALUE 4" in result.text
+
+
+def test_sdk_tool_validation_and_serialization_alias_nested(sdk_tools):
+    received = []
+
+    @tool(name="nested_split_alias_probe", min_scope="READ_ONLY", idempotent=True)
+    def operation(query: _SplitAliasedQuery) -> str:
+        received.append(query)
+        return f"VALUE {query.value}"
+
+    result = _run_alias_tool(
+        sdk_tools, "nested_split_alias_probe", {"query": {"in_value": 4}}, operation
+    )
+
+    assert received == [_SplitAliasedQuery(in_value=4)]
+    assert "VALUE 4" in result.text
+
+
+class _Numbers(RootModel[list[int]]):
+    pass
+
+
+def test_sdk_tool_receives_nested_root_model_argument_shape(sdk_tools):
+    received = []
+
+    @tool(name="root_model_probe", min_scope="READ_ONLY", idempotent=True)
+    def operation(query: _Numbers) -> str:
+        received.append(query)
+        return f"SUM {sum(query.root)}"
+
+    result = _run_alias_tool(
+        sdk_tools, "root_model_probe", {"query": [1, 2]}, operation
+    )
+
+    assert received == [_Numbers([1, 2])]
+    assert type(received[0]) is _Numbers
+    assert "SUM 3" in result.text
+
+
+_VALIDATE_BY_CONFIG = tuple(int(part) for part in pydantic.VERSION.split(".")[:2]) >= (
+    2,
+    11,
+)
+
+
+@pytest.mark.skipif(
+    not _VALIDATE_BY_CONFIG,
+    reason="validate_by_alias/validate_by_name config exists from pydantic 2.11",
+)
+def test_sdk_tool_honours_nested_name_only_validation_config(sdk_tools):
+    class _NameOnly(BaseModel):
+        model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
+
+        value: int = Field(alias="external")
+
+    received = []
+
+    @tool(name="name_only_probe", min_scope="READ_ONLY", idempotent=True)
+    def operation(query: _NameOnly) -> str:
+        received.append(query)
+        return f"VALUE {query.value}"
+
+    result = _run_alias_tool(
+        sdk_tools, "name_only_probe", {"query": {"value": 7}}, operation
+    )
+
+    assert [item.value for item in received] == [7]
+    assert type(received[0]) is _NameOnly
+    assert "VALUE 7" in result.text
