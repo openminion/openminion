@@ -191,6 +191,8 @@ class MemoryAuditStore(AuditStore):
             _as_text(filter_by.get(key))
             for key in ("trace_id", "from_agent", "to_agent", "method", "status")
         )
+        since_ts = _as_text(filter_by.get("since_ts"))
+        until_ts = _as_text(filter_by.get("until_ts"))
         error_only = bool(filter_by.get("error_only"))
         limit = max(1, min(int(filter_by.get("limit", 1000)), 50_000))
 
@@ -205,6 +207,10 @@ class MemoryAuditStore(AuditStore):
             if method and row.method != method:
                 continue
             if status and row.status != status:
+                continue
+            if since_ts and row.ts < since_ts:
+                continue
+            if until_ts and row.ts > until_ts:
                 continue
             if error_only and not row.error_code:
                 continue
