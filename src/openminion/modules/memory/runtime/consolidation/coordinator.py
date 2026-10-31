@@ -78,6 +78,65 @@ class ConsolidationCycleResult:
     marker_result: MarkerWriteResult | None = None
 
 
+_TERMINAL_CONSOLIDATION_COUNT_KEYS = ("promoted_count", "discarded_count", "kept_count")
+PARTIAL_CONSOLIDATION_REASON = "PARTIALLY_CONSOLIDATED"
+
+
+def _terminal_write_count(write_result: dict[str, Any]) -> int:
+    """Candidates whose review finished with a terminal keep/promote/discard."""
+    return sum(
+        int(write_result.get(key, 0) or 0) for key in _TERMINAL_CONSOLIDATION_COUNT_KEYS
+    )
+
+
+def _has_retryable_candidates(write_result: dict[str, Any]) -> bool:
+    """Whether any candidate was deferred or failed to write and stays eligible."""
+    return bool(write_result.get("deferred_count", 0) or 0) or bool(
+        write_result.get("errors")
+    )
+
+
+def _marker_safe_to_record(write_result: dict[str, Any]) -> bool:
+    """Whether the marker may be recorded: every candidate resolved terminally.
+
+    keep/promote/discard are terminal decisions — the review of each candidate
+    is complete and must not be reprocessed next cycle, even though a kept
+    candidate stays ``proposed``. defer and failed writes (a non-empty
+    ``errors`` list) are retryable, so leave the marker unrecorded while any
+    defer or failed candidate remains and reconsider them next cycle.
+    """
+    return _terminal_write_count(write_result) > 0 and not _has_retryable_candidates(
+        write_result
+    )
+
+
+def _unmarked_cycle_result(
+    *,
+    eligibility: Any,
+    payload: ExtractionPayload,
+    merge_decisions: MergeDecisions,
+    write_result: dict[str, Any],
+) -> ConsolidationCycleResult:
+    """Cycle result when the batch marker stays unset.
+
+    Whether the batch marker is safe to record is independent of whether useful
+    writes happened: a cycle that promoted or discarded a candidate made real
+    progress even while another candidate stays deferred or failed to write, so
+    report that progress instead of "nothing consolidated".
+    """
+    applied = _terminal_write_count(write_result) > 0
+    return ConsolidationCycleResult(
+        applied=applied,
+        reason_code=PARTIAL_CONSOLIDATION_REASON if applied else "NOTHING_CONSOLIDATED",
+        eligibility_reason_code=eligibility.reason_code,
+        state_hash=eligibility.state_hash,
+        payload=payload,
+        merge_decisions=merge_decisions,
+        write_result=write_result,
+        marker_result=None,
+    )
+
+
 def apply_consolidation_marker(
     working_state: Any,
     *,
@@ -205,6 +264,13 @@ def run_consolidation_cycle(
         merge_decisions=merge_decisions,
         target_scope=target_scope,
     )
+    if not _marker_safe_to_record(write_result):
+        return _unmarked_cycle_result(
+            eligibility=eligibility,
+            payload=payload,
+            merge_decisions=merge_decisions,
+            write_result=write_result,
+        )
     marker_result = apply_consolidation_marker(
         working_state,
         session_id=session_id,

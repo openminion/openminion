@@ -11,6 +11,15 @@ This file tracks package-facing release notes for `openminion`.
   follow-up `run --session <id>` executes the new input instead of replaying the
   settled first turn; continuing that thread still requires `--resume` (Refs #556).
 
+- Record the memory-consolidation marker only when the review resolved every
+  candidate with a terminal decision (keep/promote/discard) and nothing was
+  deferred or failed to write. A cycle that deferred any candidate, or whose
+  writes partly failed, leaves `last_consolidation_state_hash` untouched, so
+  those still-`proposed` candidates stay eligible for the next consolidation
+  cycle instead of being blocked as already consolidated. Such a cycle still
+  reports the terminal writes it did make (`PARTIALLY_CONSOLIDATED`) rather than
+  claiming nothing was consolidated (Refs #477).
+
 - Normalize raw SQLite bm25 scores in the correct direction, so a stronger match scores higher instead of lower. (Refs #479)
 
 - Keep runtime migration 14 portable to SQLite older than 3.33: the
