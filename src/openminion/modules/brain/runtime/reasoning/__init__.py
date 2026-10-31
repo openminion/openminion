@@ -1,5 +1,8 @@
 from openminion.modules.llm.reasoning import (
     THINKING_INTERFACE_VERSION,
+    THINKING_ROUTE_BRIDGE,
+    THINKING_ROUTE_DIRECT,
+    THINKING_ROUTE_OLLAMA,
     ModeThinkingPolicy,
     ThinkingCtl,
     ThinkingCtlInterface,
@@ -17,6 +20,9 @@ from openminion.modules.llm.reasoning import (
 
 __all__ = [
     "THINKING_INTERFACE_VERSION",
+    "THINKING_ROUTE_BRIDGE",
+    "THINKING_ROUTE_DIRECT",
+    "THINKING_ROUTE_OLLAMA",
     "ModeThinkingPolicy",
     "ThinkingCtl",
     "ThinkingCtlInterface",

@@ -11,6 +11,9 @@ from openminion.modules.context.input_boundaries import (
     route_and_ledger as _pidf_route_and_ledger,
 )
 from openminion.modules.brain.runtime.reasoning import (
+    THINKING_ROUTE_BRIDGE,
+    THINKING_ROUTE_DIRECT,
+    THINKING_ROUTE_OLLAMA,
     ThinkingCtl,
     ThinkingRequest,
     ThinkingResolutionInput,
@@ -129,6 +132,23 @@ def _thinking_on_default_profile(cfg: OpenMinionConfig) -> str:
         return ""
     profile = cfg.agents.get(_id)
     return str(getattr(profile, "thinking", "") or "")
+
+
+def _thinking_execution_route(*, provider_name: str, uses_llm_runtime: bool) -> str:
+    """Return the execution route a thinking resolution will actually take.
+
+    A request resolved on the legacy provider path runs through the llmctl
+    bridge, which forwards the resolved effort through the shared provider
+    metadata contract. A request resolved on the live runtime path runs through
+    the direct provider adapter; only the ollama adapter transmits the effort
+    (as an explicit `think` flag), while the direct
+    OpenAI/Anthropic/Groq/Cerebras/OpenRouter adapters never carry it.
+    """
+    if not uses_llm_runtime:
+        return THINKING_ROUTE_BRIDGE
+    if provider_name.strip().lower() == "ollama":
+        return THINKING_ROUTE_OLLAMA
+    return THINKING_ROUTE_DIRECT
 
 
 def _provider_facade(
@@ -591,6 +611,10 @@ class AgentService(AgentTurnFlowMixin):
             or getattr(self._provider, "model", "")
             or ""
         ).strip()
+        route = _thinking_execution_route(
+            provider_name=provider_name,
+            uses_llm_runtime=self._llm_runtime is not None,
+        )
         resolved = self._thinking_ctl.resolve(
             request=ThinkingRequest(
                 purpose=str(metadata.get("purpose", "") or "").strip() or None,
@@ -598,6 +622,7 @@ class AgentService(AgentTurnFlowMixin):
                 or None,
                 provider=provider_name or None,
                 model=model_name or None,
+                route=route,
                 metadata=metadata,
             ),
             layers=ThinkingResolutionInput(

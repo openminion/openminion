@@ -22,6 +22,14 @@ MODULE_ID = "thinking"
 
 THINKING_SOURCE_MODE_POLICY = "mode_policy"
 
+# Execution routes a reasoning-effort request can take. Only the routes whose
+# adapter actually transmits the resolved effort to the upstream provider may
+# claim support; the direct OpenAI/Anthropic/Groq/Cerebras/OpenRouter adapters
+# build request payloads that never carry the effort, so they must not.
+THINKING_ROUTE_DIRECT = "direct"
+THINKING_ROUTE_BRIDGE = "bridge"
+THINKING_ROUTE_OLLAMA = "ollama"
+
 THINKING_DEGRADE_UNKNOWN_PROFILE = "unknown_reasoning_profile_normalized"
 THINKING_DEGRADE_PROVIDER_UNSUPPORTED = "provider_effort_unsupported"
 THINKING_DEGRADE_MODE_CLAMP = "mode_policy_clamp"

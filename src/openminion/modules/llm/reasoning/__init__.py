@@ -6,6 +6,11 @@ from .interfaces import (
     ensure_thinking_compatibility,
 )
 from .mapping import normalize_optional_reasoning_profile
+from .constants import (
+    THINKING_ROUTE_BRIDGE,
+    THINKING_ROUTE_DIRECT,
+    THINKING_ROUTE_OLLAMA,
+)
 from .resolver import (
     build_runtime_thinking_diagnostics,
     resolve_mode_aware_thinking,
@@ -24,6 +29,9 @@ __version__ = OPENMINION_VERSION
 
 __all__ = [
     "THINKING_INTERFACE_VERSION",
+    "THINKING_ROUTE_BRIDGE",
+    "THINKING_ROUTE_DIRECT",
+    "THINKING_ROUTE_OLLAMA",
     "ModeThinkingPolicy",
     "ThinkingCtl",
     "ThinkingCtlInterface",

@@ -7,6 +7,7 @@ from typing import Any, Dict, Mapping, Sequence
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.modules.llm.client_call import provider_history_payload
 from openminion.modules.llm.reasoning import (
+    THINKING_ROUTE_BRIDGE,
     ThinkingCtl,
     ThinkingRequest,
     ThinkingResolutionInput,
@@ -252,6 +253,7 @@ class LLMCTLBridgeProvider(LLMProvider):
                 requested_profile=requested_profile or None,
                 provider=self.name or None,
                 model=self._model or None,
+                route=THINKING_ROUTE_BRIDGE,
                 metadata=metadata,
             ),
             layers=ThinkingResolutionInput(

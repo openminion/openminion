@@ -13,6 +13,7 @@ class ThinkingRequest:
     requested_profile: str | None = None
     provider: str | None = None
     model: str | None = None
+    route: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
