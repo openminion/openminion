@@ -1,7 +1,9 @@
 import fnmatch
 import errno
 import os
+import re
 import stat
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, cast
 
@@ -40,6 +42,53 @@ _SEARCH_PRUNED_DIRS = frozenset(
         ".ruff_cache",
     }
 )
+
+
+@lru_cache(maxsize=128)
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+    """Compile a glob ``pattern`` into an anchored regular expression.
+
+    ``**/`` maps to ``(?:.*/)?`` (zero or more leading directories), ``**``
+    to ``.*``, ``*`` to ``[^/]*`` so a single star never crosses a directory
+    boundary, ``?`` to ``[^/]``, and every other character is escaped
+    literally. The result is anchored with ``^`` and ``$`` so a path pattern
+    matches the whole root-relative path rather than any trailing suffix.
+    """
+    tokens: list[str] = []
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            tokens.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            tokens.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            tokens.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            tokens.append("[^/]")
+            i += 1
+        else:
+            tokens.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("^" + "".join(tokens) + "$")
+
+
+def _matches_glob(pattern: str, name: str, relative_path: str) -> bool:
+    """Return whether ``name`` matches ``pattern``.
+
+    ``relative_path`` is the slash-separated path relative to the search
+    root. Basename-only patterns (no separator) match ``name`` with
+    :func:`fnmatch.fnmatch`, so they keep recursing across directories as
+    before. Patterns containing a separator are translated to a regex (see
+    :func:`_glob_to_regex`) and matched against ``relative_path``, giving
+    root-relative anchoring, single-star directory boundaries, recursive
+    ``**`` depth, and a leading ``**/`` directory prefix.
+    """
+    if "/" not in pattern:
+        return fnmatch.fnmatch(name, pattern)
+    return _glob_to_regex(pattern).match(relative_path) is not None
 
 
 class LocalStorageBackend:
@@ -280,10 +329,7 @@ class LocalStorageBackend:
                 for name in files:
                     full_path = Path(root) / name
                     relative_path = full_path.relative_to(target).as_posix()
-                    basename_pattern = pattern.removeprefix("**/")
-                    if fnmatch.fnmatch(name, basename_pattern) or fnmatch.fnmatch(
-                        relative_path, pattern
-                    ):
+                    if _matches_glob(pattern, name, relative_path):
                         matches.append(
                             MatchInfo(
                                 name=name,
@@ -345,14 +391,8 @@ class LocalStorageBackend:
                     dirs[:] = [name for name in dirs if name not in _SEARCH_PRUNED_DIRS]
                 for name in files:
                     candidate = Path(root) / name
-                    if not any(
-                        fnmatch.fnmatch(value, file_glob)
-                        for value in (
-                            name,
-                            str(candidate),
-                            candidate.relative_to(target).as_posix(),
-                        )
-                    ):
+                    relative_path = candidate.relative_to(target).as_posix()
+                    if not _matches_glob(file_glob, name, relative_path):
                         continue
                     if not candidate.is_file() or candidate.is_symlink():
                         continue
