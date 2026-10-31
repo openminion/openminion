@@ -78,6 +78,26 @@ class ConsolidationCycleResult:
     marker_result: MarkerWriteResult | None = None
 
 
+_TERMINAL_CONSOLIDATION_COUNT_KEYS = ("promoted_count", "discarded_count", "kept_count")
+
+
+def _terminal_candidates_advanced(write_result: dict[str, Any]) -> bool:
+    """Return whether the write advanced any candidate to a terminal outcome.
+
+    ``apply_merge_decisions_via_service`` increments each per-action counter
+    only after the matching write succeeds, so a candidate that stayed
+    ``proposed`` (explicit defer, an empty/invalid merge fallback, or a failed
+    terminal application) contributes nothing here.
+    """
+    return (
+        sum(
+            int(write_result.get(key, 0) or 0)
+            for key in _TERMINAL_CONSOLIDATION_COUNT_KEYS
+        )
+        > 0
+    )
+
+
 def apply_consolidation_marker(
     working_state: Any,
     *,
@@ -205,6 +225,23 @@ def run_consolidation_cycle(
         merge_decisions=merge_decisions,
         target_scope=target_scope,
     )
+    if not _terminal_candidates_advanced(write_result):
+        # No candidate reached a terminal outcome (promote/discard/keep): the
+        # merge either explicitly deferred everything, returned no usable
+        # decisions, or every requested terminal write failed. Skip the marker
+        # so ``last_consolidation_state_hash`` stays unchanged and the set
+        # remains eligible next cycle instead of being blocked as
+        # ``ALREADY_CONSOLIDATED``.
+        return ConsolidationCycleResult(
+            applied=False,
+            reason_code="NOTHING_CONSOLIDATED",
+            eligibility_reason_code=eligibility.reason_code,
+            state_hash=eligibility.state_hash,
+            payload=payload,
+            merge_decisions=merge_decisions,
+            write_result=write_result,
+            marker_result=None,
+        )
     marker_result = apply_consolidation_marker(
         working_state,
         session_id=session_id,
