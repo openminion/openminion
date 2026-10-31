@@ -449,12 +449,14 @@ def _parse_cron_field(
         else:
             start = int(base)
             end = int(base)
-        if allow_sunday_7:
-            start = 0 if start == 7 else start
-            end = 0 if end == 7 else end
-        if start < minimum or end > maximum or end < start:
+        upper_bound = 7 if allow_sunday_7 else maximum
+        if start < minimum or end > upper_bound or end < start:
             raise ValueError(f"cron field token out of range: {chunk}")
         values.update(range(start, end + 1, step))
+
+    if allow_sunday_7 and 7 in values:
+        values.remove(7)
+        values.add(0)
 
     if not values:
         raise ValueError("cron field does not resolve to any values")
