@@ -4,7 +4,9 @@ import fnmatch
 import hashlib
 import errno
 import os
+import re
 import stat
+from functools import lru_cache
 from pathlib import Path
 from types import ModuleType
 from typing import Callable, cast
@@ -69,6 +71,145 @@ _SEARCH_PRUNED_DIRS = frozenset(
         ".ruff_cache",
     }
 )
+
+
+def _find_char_class_end(pattern: str, start: int) -> int | None:
+    """Return the index of the ``]`` closing a glob class at ``start``.
+
+    A ``!`` immediately after ``[`` is a negation marker, and a ``]``
+    immediately after ``[`` (or after the marker) is a literal ``]``,
+    matching fnmatch. ``^`` is *not* a marker: fnmatch keeps it as a literal
+    inside the class. Returns ``None`` for an unterminated class, which the
+    caller then treats as a literal ``[``.
+    """
+    j = start + 1
+    if j < len(pattern) and pattern[j] == "!":
+        j += 1
+    if j < len(pattern) and pattern[j] == "]":
+        j += 1
+    while j < len(pattern) and pattern[j] != "]":
+        j += 1
+    return j if j < len(pattern) else None
+
+
+def _escape_class_lead(body: str) -> str:
+    """Keep a leading ``]`` literal inside a negated class body."""
+    return "\\" + body if body.startswith("]") else body
+
+
+def _translate_char_class(body: str) -> str:
+    """Translate a fnmatch ``[...]`` body into a regex character class.
+
+    Mirrors :func:`fnmatch.translate` exactly: ``!`` is the only negation
+    operator (``^`` stays a literal), ``a-z`` ranges are preserved, and an
+    invalid/descending range such as ``z-a`` collapses to 'never match'
+    instead of raising. An empty negated body matches any non-separator
+    character; an empty plain body never matches.
+    """
+    stuff = body
+    if "-" not in stuff:
+        stuff = stuff.replace("\\", r"\\")
+    else:
+        chunks: list[str] = []
+        i = 0
+        j = len(body)
+        k = 2 if body.startswith("!") else 1
+        while True:
+            k = body.find("-", k, j)
+            if k < 0:
+                break
+            chunks.append(body[i:k])
+            i = k + 1
+            k = k + 3
+        chunk = body[i:j]
+        if chunk:
+            chunks.append(chunk)
+        else:
+            chunks[-1] += "-"
+        for k in range(len(chunks) - 1, 0, -1):
+            if chunks[k - 1][-1] > chunks[k][0]:
+                chunks[k - 1] = chunks[k - 1][:-1] + chunks[k][1:]
+                del chunks[k]
+        stuff = "-".join(s.replace("\\", r"\\").replace("-", r"\-") for s in chunks)
+    stuff = re.sub(r"([&~|])", r"\\\1", stuff)
+
+    if not stuff:
+        return "(?!)"
+    if stuff == "!":
+        return "[^/]"
+    if stuff[0] == "!":
+        # The negation must not consume the path separator, or `a[!x]b` would
+        # match `a/b`; fnmatch has no separator concept, a path matcher does.
+        stuff = "^/" + _escape_class_lead(stuff[1:])
+    elif stuff[0] in ("^", "["):
+        stuff = "\\" + stuff
+    class_body = "[" + stuff + "]"
+    # A positive class can still cover the separator through a range such as
+    # `[.-0]`, which would let one component pattern match across directories.
+    if re.fullmatch(class_body, "/"):
+        return "(?!/)" + class_body
+    return class_body
+
+
+@lru_cache(maxsize=128)
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+    """Compile a glob ``pattern`` into an anchored regular expression.
+
+    ``**/`` maps to ``(?:.*/)?`` (zero or more leading directories), ``**``
+    to ``.*``, ``*`` to ``[^/]*`` so a single star never crosses a directory
+    boundary, ``?`` to ``[^/]``, and a ``[...]`` character class keeps its
+    fnmatch semantics: ``!`` negates, ``^`` stays literal, ``a-z`` ranges are
+    preserved, and neither negation nor a range may consume the path
+    separator. Every other character is escaped literally. The result is
+    anchored with ``^``/``\\Z`` and compiled with ``re.S``, so a path pattern
+    matches the whole root-relative path — including directory names that
+    contain a newline — rather than any trailing suffix.
+    """
+    tokens: list[str] = []
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            tokens.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            tokens.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            tokens.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            tokens.append("[^/]")
+            i += 1
+        elif pattern[i] == "[":
+            end = _find_char_class_end(pattern, i)
+            if end is None:
+                tokens.append(r"\[")
+                i += 1
+            else:
+                tokens.append(_translate_char_class(pattern[i + 1 : end]))
+                i = end + 1
+        else:
+            tokens.append(re.escape(pattern[i]))
+            i += 1
+    # DOTALL so ``*``/``**`` also match a name containing a newline, and ``\Z``
+    # so a trailing newline cannot satisfy the anchor.
+    return re.compile("^" + "".join(tokens) + r"\Z", re.S)
+
+
+def _matches_glob(pattern: str, name: str, relative_path: str) -> bool:
+    """Return whether ``name`` matches ``pattern``.
+
+    ``relative_path`` is the slash-separated path relative to the search
+    root. Basename-only patterns (no separator) match ``name`` with
+    :func:`fnmatch.fnmatch`, so they keep recursing across directories as
+    before. Patterns containing a separator are translated to a regex (see
+    :func:`_glob_to_regex`) and matched against ``relative_path``, giving
+    root-relative anchoring, single-star directory boundaries, recursive
+    ``**`` depth, and a leading ``**/`` directory prefix.
+    """
+    if "/" not in pattern:
+        return fnmatch.fnmatch(name, pattern)
+    return _glob_to_regex(pattern).match(relative_path) is not None
 
 
 class LocalStorageBackend:
@@ -365,10 +506,7 @@ class LocalStorageBackend:
                 for name in files:
                     full_path = Path(root) / name
                     relative_path = full_path.relative_to(target).as_posix()
-                    basename_pattern = pattern.removeprefix("**/")
-                    if fnmatch.fnmatch(name, basename_pattern) or fnmatch.fnmatch(
-                        relative_path, pattern
-                    ):
+                    if _matches_glob(pattern, name, relative_path):
                         matches.append(
                             MatchInfo(
                                 name=name,
@@ -430,14 +568,8 @@ class LocalStorageBackend:
                     dirs[:] = [name for name in dirs if name not in _SEARCH_PRUNED_DIRS]
                 for name in files:
                     candidate = Path(root) / name
-                    if not any(
-                        fnmatch.fnmatch(value, file_glob)
-                        for value in (
-                            name,
-                            str(candidate),
-                            candidate.relative_to(target).as_posix(),
-                        )
-                    ):
+                    relative_path = candidate.relative_to(target).as_posix()
+                    if not _matches_glob(file_glob, name, relative_path):
                         continue
                     if not candidate.is_file() or candidate.is_symlink():
                         continue
