@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Respect directory boundaries in `find`/`search` file globs: a single `*` no longer
+  crosses a separator, `**` recurses to any depth, character classes and ranges match like
+  `fnmatch` without matching `/`, and hidden, pruning and limit behaviour is unchanged
+  (Refs #492).
+
 - `SQLiteSessionStore(":memory:")` and `PostgresSessionStore(":memory:")` now remove
   only the temporary storage directory they created on `close()` (idempotently across
   repeated calls) and clean up owned resources (`_owned_temp_root`, owned default

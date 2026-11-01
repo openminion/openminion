@@ -8,6 +8,7 @@ from openminion.modules.tool.contracts.model_ids import MODEL_FILE_SEARCH
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool import ToolRegistry, resolve_workspace_root
 from openminion.tools.file.plugin import (
+    _h_find_files,
     _h_search_files,
     register,
     _reset_backend_cache_for_tests,
@@ -273,3 +274,29 @@ def test_register_adds_file_search():
     register(registry)
     tools = registry.list()
     assert MODEL_FILE_SEARCH in tools
+
+
+def test_glob_character_class_range_never_crosses_a_directory(
+    workspace,
+):
+    """`[.-0]` covers `.` and `0`; it must not also cover the separator."""
+    src = workspace / "src"
+    src.mkdir()
+    (src / "a.b.py").write_text("alpha\n", encoding="utf-8")
+    (src / "a0b.py").write_text("alpha\n", encoding="utf-8")
+    (src / "a" / "b.py").parent.mkdir(parents=True)
+    (src / "a" / "b.py").write_text("alpha\n", encoding="utf-8")
+    ctx = _FakeCtx(workspace)
+
+    found = _h_find_files({"path": str(workspace), "pattern": "src/a[.-0]b.py"}, ctx)
+    searched = _h_search_files(
+        {"path": str(workspace), "query": "alpha", "file_glob": "src/a[.-0]b.py"}, ctx
+    )
+
+    assert found["ok"] is True
+    assert sorted(Path(match["path"]).name for match in found["matches"]) == [
+        "a.b.py",
+        "a0b.py",
+    ]
+    names = sorted(Path(match["path"]).name for match in searched["matches"])
+    assert names == ["a.b.py", "a0b.py"]
