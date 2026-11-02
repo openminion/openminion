@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Recognize Ubuntu 26.04's system coreutils directory for allowlisted host
+  commands. Commands such as `whoami` resolve through `/usr/bin` symlinks to
+  `/usr/lib/cargo/bin/coreutils`; that specific directory is now trusted by
+  default. Executable-name restrictions, resolved-target checks, host-execution
+  enablement, approvals and explicit trusted-directory overrides still apply
+  (Refs #557).
+
 - Honor `since_ts`/`until_ts` in the in-memory audit store. `MemoryAuditStore`
   ignored the time-window filters when listing audit records; it now filters
   by `since_ts` and `until_ts` the same way the SQLite store does (Refs #489).
