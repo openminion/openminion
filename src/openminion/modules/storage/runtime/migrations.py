@@ -559,12 +559,10 @@ DEFAULT_MIGRATIONS: Tuple[Migration, ...] = (
             """,
             # Existing participants keep the order they listed in before the
             # upgrade: each session's rows are numbered in (joined_at, id)
-            # order. The correlated subquery keeps those semantics on both
-            # backends: UPDATE ... FROM needs SQLite 3.33, while the package
-            # still installs and runs on system Python builds linked against
-            # 3.31 (Ubuntu 20.04, Debian 11). Which of two participants with
-            # one joined_at joined first was not stored, so ties keep their
-            # id order.
+            # order. UPDATE ... FROM needs SQLite 3.33; the correlated
+            # subquery keeps the same numbering on SQLite and PostgreSQL.
+            # Which participant of two with one joined_at joined first was
+            # not stored, so ties keep their id order.
             """
             UPDATE room_participants
             SET join_seq = (
