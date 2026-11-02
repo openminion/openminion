@@ -8,6 +8,7 @@ from openminion.modules.llm.providers.base import (
     ProviderError,
     ProviderRequest,
     ProviderResponse,
+    ProviderToolSpec,
 )
 from openminion.modules.telemetry.trace.layout import (
     resolve_trace_root,
@@ -46,6 +47,13 @@ def _request() -> ProviderRequest:
         user_message="hello",
         system_prompt="system",
         metadata={"purpose": "act", "request_id": "req-1", "trace_id": "trace-1"},
+        tools=[
+            ProviderToolSpec(
+                name="private.lookup",
+                description="must not be persisted",
+                parameters={"type": "object", "properties": {"secret": {"type": "string"}}},
+            )
+        ],
     )
 
 
@@ -107,6 +115,11 @@ async def test_response_artifacts_publish_before_completed_event() -> None:
     assert completed["cost_source"] == "provider"
     assert completed["provider"] == "provider-1"
     assert completed["model"] == "model-1"
+    assert completed["purpose"] == "act"
+    assert completed["tool_schema_count"] == 1
+    assert completed["tool_schema_bytes"] > 0
+    assert "private.lookup" not in json.dumps(completed)
+    assert "must not be persisted" not in json.dumps(completed)
 
 
 @pytest.mark.asyncio
@@ -147,6 +160,10 @@ async def test_failed_call_retains_published_request_and_raw_artifacts() -> None
     ]
     assert failed["trace_artifacts_complete"] is True
     assert failed["service_vendor"] == "cortensor"
+    assert failed["purpose"] == "act"
+    assert failed["tool_schema_count"] == 1
+    assert failed["tool_schema_bytes"] > 0
+    assert "private.lookup" not in json.dumps(failed)
     assert failed["error"] == {
         "type": "ProviderError",
         "code": "RATE_LIMITED",

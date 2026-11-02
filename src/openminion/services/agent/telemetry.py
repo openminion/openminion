@@ -457,6 +457,19 @@ async def generate_with_provider_call_telemetry(
 
     llm_call_id = str(uuid4())
     correlation = _llm_correlation_fields(request)
+    tool_payload = _provider_request_tools_payload(list(request.tools or []))
+    call_fields = {
+        "llm_call_id": llm_call_id,
+        "provider": provider_name,
+        "provider_name": provider_name,
+        "service_vendor": service_vendor or provider_name,
+        "purpose": str(request.metadata.get("purpose") or "act"),
+        "tool_schema_count": len(tool_payload),
+        "tool_schema_bytes": len(
+            json.dumps(tool_payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+        ),
+        **correlation,
+    }
     started_at = time.monotonic()
     publication = read_trace_publication()
     await _emit_llm_call_event(
@@ -465,13 +478,8 @@ async def generate_with_provider_call_telemetry(
         turn_id=turn_id,
         event_type="llm.call.started",
         payload={
-            "llm_call_id": llm_call_id,
             "model": str(getattr(request, "model", "") or ""),
-            "provider": provider_name,
-            "provider_name": provider_name,
-            "service_vendor": service_vendor or provider_name,
-            "purpose": str(request.metadata.get("purpose") or "act"),
-            **correlation,
+            **call_fields,
             **publication.event_fields(final=False),
         },
         status="started",
@@ -488,14 +496,10 @@ async def generate_with_provider_call_telemetry(
                 turn_id=turn_id,
                 event_type="llm.call.failed",
                 payload={
-                    "llm_call_id": llm_call_id,
-                    "provider": provider_name,
                     "model": str(getattr(request, "model", "") or ""),
-                    "provider_name": provider_name,
-                    "service_vendor": service_vendor or provider_name,
                     "provider_round_trip_ms": (time.monotonic() - started_at) * 1000,
                     "error": _llm_error_payload(exc),
-                    **correlation,
+                    **call_fields,
                     **publication.event_fields(final=True),
                 },
                 status="failed",
@@ -508,11 +512,7 @@ async def generate_with_provider_call_telemetry(
         turn_id=turn_id,
         event_type="llm.call.completed",
         payload={
-            "llm_call_id": llm_call_id,
-            "provider": provider_name,
             "model": str(getattr(response, "model", "") or ""),
-            "provider_name": provider_name,
-            "service_vendor": service_vendor or provider_name,
             "response_model": str(getattr(response, "model", "") or ""),
             "provider_round_trip_ms": (time.monotonic() - started_at) * 1000,
             "usage": usage_payload_from_response_usage(
@@ -520,7 +520,7 @@ async def generate_with_provider_call_telemetry(
             ),
             **response_cost_payload(response),
             "finish_reason": str(getattr(response, "finish_reason", "") or ""),
-            **correlation,
+            **call_fields,
             **publication.event_fields(final=True),
         },
         status="completed",
