@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Make `openminion run` acknowledge delivery of its returned one-shot reply, so a
+  follow-up `run --session <id>` executes the new input instead of replaying the
+  settled first turn; continuing that thread still requires `--resume` (Refs #556).
+
 - Normalize raw SQLite bm25 scores in the correct direction, so a stronger match scores higher instead of lower. (Refs #479)
 
 - Keep runtime migration 14 portable to SQLite older than 3.33: the
