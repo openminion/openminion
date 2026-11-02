@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import time
+from pathlib import Path
 from typing import get_args
 
 import pytest
@@ -884,34 +885,62 @@ def test_host_allowlist_accepts_profile_policy_binary(tmp_path, monkeypatch):
 
 
 def test_host_security_allowlist(tmp_path):
+    echo_path = shutil.which("echo")
+    whoami_path = shutil.which("whoami")
+    assert echo_path is not None
+    assert whoami_path is not None
     ctx = _ctx(
         tmp_path,
         env=EnvironmentConfig.from_sources(
             process_env={
+                "OPENMINION_TOOL_EXEC_ALLOWLIST_PATHS": echo_path,
                 "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
                 "OPENMINION_TOOL_EXEC_SAFE_BINS": "echo,sleep",
             }
         ),
     )
     result = _h_exec_run(
-        {"command": "echo hi", "host": "node", "security": "allowlist", "ask": "off"},
+        {
+            "command": f"{echo_path} hi",
+            "host": "node",
+            "security": "allowlist",
+            "ask": "off",
+        },
         ctx,
     )
     assert result["status"] == "ok"
     result2 = _h_exec_run(
-        {"command": "whoami", "host": "node", "security": "allowlist", "ask": "off"},
+        {
+            "command": whoami_path,
+            "host": "node",
+            "security": "allowlist",
+            "ask": "off",
+        },
         ctx,
     )
     assert result2["status"] == "denied"
 
 
 def test_host_security_allowlist_accepts_default_identity_probe(tmp_path):
+    whoami_path = shutil.which("whoami")
+    assert whoami_path is not None
+    resolved_path = Path(whoami_path).resolve()
     result = _h_exec_run(
-        {"command": "whoami", "host": "node", "security": "allowlist", "ask": "off"},
+        {
+            "command": str(resolved_path),
+            "host": "node",
+            "security": "allowlist",
+            "ask": "off",
+        },
         _ctx(
             tmp_path,
             env=EnvironmentConfig.from_sources(
-                process_env={"OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1"}
+                process_env={
+                    "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
+                    "OPENMINION_TOOL_EXEC_SAFE_BIN_TRUSTED_DIRS": str(
+                        resolved_path.parent
+                    ),
+                }
             ),
         ),
     )
