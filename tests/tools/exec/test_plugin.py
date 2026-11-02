@@ -333,10 +333,15 @@ def test_exec_run_accepts_cmd_alias(tmp_path):
 def test_exec_run_defaults_to_allowlisted_gateway_when_host_exec_is_enabled(
     tmp_path,
 ) -> None:
+    whoami_path = shutil.which("whoami")
+    assert whoami_path is not None
     ctx = _ctx(
         tmp_path,
         env=EnvironmentConfig.from_sources(
-            process_env={"OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1"}
+            process_env={
+                "OPENMINION_TOOL_EXEC_ALLOWLIST_PATHS": whoami_path,
+                "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
+            }
         ),
     )
 
@@ -349,10 +354,15 @@ def test_exec_run_defaults_to_allowlisted_gateway_when_host_exec_is_enabled(
 def test_exec_run_falls_back_from_unavailable_sandbox_when_host_exec_is_enabled(
     tmp_path,
 ) -> None:
+    whoami_path = shutil.which("whoami")
+    assert whoami_path is not None
     ctx = _ctx(
         tmp_path,
         env=EnvironmentConfig.from_sources(
-            process_env={"OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1"}
+            process_env={
+                "OPENMINION_TOOL_EXEC_ALLOWLIST_PATHS": whoami_path,
+                "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
+            }
         ),
     )
 
@@ -873,10 +883,16 @@ def test_host_allowlist_accepts_profile_policy_binary(tmp_path, monkeypatch):
     assert details["checked"][0]["exec"] == "custom-tool"
 
 
-def test_host_security_allowlist(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC", "1")
-    monkeypatch.setenv("OPENMINION_TOOL_EXEC_SAFE_BINS", "echo,sleep")
-    ctx = _ctx(tmp_path)
+def test_host_security_allowlist(tmp_path):
+    ctx = _ctx(
+        tmp_path,
+        env=EnvironmentConfig.from_sources(
+            process_env={
+                "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
+                "OPENMINION_TOOL_EXEC_SAFE_BINS": "echo,sleep",
+            }
+        ),
+    )
     result = _h_exec_run(
         {"command": "echo hi", "host": "node", "security": "allowlist", "ask": "off"},
         ctx,
@@ -889,12 +905,15 @@ def test_host_security_allowlist(tmp_path, monkeypatch):
     assert result2["status"] == "denied"
 
 
-def test_host_security_allowlist_accepts_default_identity_probe(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC", "1")
-
+def test_host_security_allowlist_accepts_default_identity_probe(tmp_path):
     result = _h_exec_run(
         {"command": "whoami", "host": "node", "security": "allowlist", "ask": "off"},
-        _ctx(tmp_path),
+        _ctx(
+            tmp_path,
+            env=EnvironmentConfig.from_sources(
+                process_env={"OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1"}
+            ),
+        ),
     )
 
     assert result["status"] == "ok"

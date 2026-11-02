@@ -1,11 +1,13 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-10-29
+Last updated: 2026-11-01
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-01
 
 - Honor `since_ts`/`until_ts` in the in-memory audit store. `MemoryAuditStore`
   ignored the time-window filters when listing audit records; it now filters
