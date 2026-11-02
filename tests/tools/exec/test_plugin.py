@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import shutil
 import time
-from pathlib import Path
 from typing import get_args
 
 import pytest
@@ -884,65 +883,87 @@ def test_host_allowlist_accepts_profile_policy_binary(tmp_path, monkeypatch):
     assert details["checked"][0]["exec"] == "custom-tool"
 
 
-def test_host_security_allowlist(tmp_path):
-    echo_path = shutil.which("echo")
-    whoami_path = shutil.which("whoami")
-    assert echo_path is not None
-    assert whoami_path is not None
+@pytest.mark.parametrize(
+    ("resolved", "allowed"),
+    [
+        ("/usr/lib/cargo/bin/coreutils/whoami", True),
+        ("/usr/lib/cargo/bin/coreutils/rm", False),
+        ("/usr/lib/cargo/bin/whoami", False),
+        ("/usr/lib/cargo/bin/coreutils-other/whoami", False),
+    ],
+)
+def test_host_allowlist_coreutils_directory(tmp_path, monkeypatch, resolved, allowed):
+    ctx = _ctx(tmp_path, env=EnvironmentConfig.from_sources(process_env={}))
+    monkeypatch.setattr("openminion.tools.exec.policy.shutil.which", lambda _: resolved)
+
+    result, _, _ = _validate_host_allowlist(resolved.rsplit("/", 1)[-1], ctx)
+
+    assert result is allowed
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"OPENMINION_TOOL_EXEC_SAFE_BIN_TRUSTED_DIRS": "/usr/local/bin"},
+        {"OPENMINION_TOOL_EXEC_SAFE_BINS": "cat"},
+    ],
+)
+def test_host_allowlist_coreutils_respects_overrides(tmp_path, monkeypatch, overrides):
+    ctx = _ctx(tmp_path, env=EnvironmentConfig.from_sources(process_env=overrides))
+    monkeypatch.setattr(
+        "openminion.tools.exec.policy.shutil.which",
+        lambda _: "/usr/lib/cargo/bin/coreutils/whoami",
+    )
+
+    allowed, _, _ = _validate_host_allowlist("whoami", ctx)
+
+    assert allowed is False
+
+
+def test_host_allowlist_rejects_symlink_to_untrusted_target(tmp_path, monkeypatch):
+    trusted = tmp_path / "trusted"
+    trusted.mkdir()
+    target = tmp_path / "whoami"
+    target.touch()
+    (trusted / "whoami").symlink_to(target)
     ctx = _ctx(
         tmp_path,
         env=EnvironmentConfig.from_sources(
-            process_env={
-                "OPENMINION_TOOL_EXEC_ALLOWLIST_PATHS": echo_path,
-                "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
-                "OPENMINION_TOOL_EXEC_SAFE_BINS": "echo,sleep",
-            }
+            process_env={"OPENMINION_TOOL_EXEC_SAFE_BIN_TRUSTED_DIRS": str(trusted)}
         ),
     )
+    monkeypatch.setattr(
+        "openminion.tools.exec.policy.shutil.which", lambda _: str(trusted / "whoami")
+    )
+
+    allowed, _, details = _validate_host_allowlist("whoami", ctx)
+
+    assert allowed is False
+    assert details["resolved_path"] == str(target.resolve())
+
+
+def test_host_security_allowlist(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC", "1")
+    monkeypatch.setenv("OPENMINION_TOOL_EXEC_SAFE_BINS", "echo,sleep")
+    ctx = _ctx(tmp_path)
     result = _h_exec_run(
-        {
-            "command": f"{echo_path} hi",
-            "host": "node",
-            "security": "allowlist",
-            "ask": "off",
-        },
+        {"command": "echo hi", "host": "node", "security": "allowlist", "ask": "off"},
         ctx,
     )
     assert result["status"] == "ok"
     result2 = _h_exec_run(
-        {
-            "command": whoami_path,
-            "host": "node",
-            "security": "allowlist",
-            "ask": "off",
-        },
+        {"command": "whoami", "host": "node", "security": "allowlist", "ask": "off"},
         ctx,
     )
     assert result2["status"] == "denied"
 
 
-def test_host_security_allowlist_accepts_default_identity_probe(tmp_path):
-    whoami_path = shutil.which("whoami")
-    assert whoami_path is not None
-    resolved_path = Path(whoami_path).resolve()
+def test_host_security_allowlist_accepts_default_identity_probe(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC", "1")
+
     result = _h_exec_run(
-        {
-            "command": str(resolved_path),
-            "host": "node",
-            "security": "allowlist",
-            "ask": "off",
-        },
-        _ctx(
-            tmp_path,
-            env=EnvironmentConfig.from_sources(
-                process_env={
-                    "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
-                    "OPENMINION_TOOL_EXEC_SAFE_BIN_TRUSTED_DIRS": str(
-                        resolved_path.parent
-                    ),
-                }
-            ),
-        ),
+        {"command": "whoami", "host": "node", "security": "allowlist", "ask": "off"},
+        _ctx(tmp_path),
     )
 
     assert result["status"] == "ok"

@@ -46,7 +46,7 @@ EXEC_SAFE_BINS_DEFAULT: frozenset[str] = frozenset(
     }
 )
 EXEC_SAFE_BIN_TRUSTED_DIRS_DEFAULT: frozenset[str] = frozenset(
-    {"/bin", "/usr/bin", "/usr/local/bin"}
+    {"/bin", "/usr/bin", "/usr/local/bin", "/usr/lib/cargo/bin/coreutils"}
 )
 EXEC_DENY_HOST_ENV_PREFIXES: tuple[str, ...] = ("LD_", "DYLD_")
 EXEC_APPROVAL_PENDING_STATUSES: frozenset[str] = frozenset({"on-miss", "always"})
