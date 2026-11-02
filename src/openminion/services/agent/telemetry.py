@@ -464,12 +464,12 @@ async def generate_with_provider_call_telemetry(
         "provider_name": provider_name,
         "service_vendor": service_vendor or provider_name,
         "purpose": str(request.metadata.get("purpose") or "act"),
-        "tool_schema_count": len(tool_payload),
-        "tool_schema_bytes": len(
-            json.dumps(tool_payload, sort_keys=True, separators=(",", ":"), default=str).encode()
-        ),
         **correlation,
     }
+    terminal_fields = dict(call_fields, tool_schema_count=len(tool_payload))
+    terminal_fields["tool_schema_bytes"] = len(
+        json.dumps(tool_payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+    )
     started_at = time.monotonic()
     publication = read_trace_publication()
     await _emit_llm_call_event(
@@ -499,7 +499,7 @@ async def generate_with_provider_call_telemetry(
                     "model": str(getattr(request, "model", "") or ""),
                     "provider_round_trip_ms": (time.monotonic() - started_at) * 1000,
                     "error": _llm_error_payload(exc),
-                    **call_fields,
+                    **terminal_fields,
                     **publication.event_fields(final=True),
                 },
                 status="failed",
@@ -520,7 +520,7 @@ async def generate_with_provider_call_telemetry(
             ),
             **response_cost_payload(response),
             "finish_reason": str(getattr(response, "finish_reason", "") or ""),
-            **call_fields,
+            **terminal_fields,
             **publication.event_fields(final=True),
         },
         status="completed",
