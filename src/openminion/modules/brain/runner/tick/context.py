@@ -11,7 +11,7 @@ from ...constants import (
     BRAIN_CONFIRM_RESPONSE_UNCLEAR,
 )
 from ...diagnostics.events import CanonicalEventLogger
-from ...schemas import BudgetStopReason
+from ...schemas.state.clarify import BudgetStopReason
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..core import BrainRunner
@@ -20,13 +20,19 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 from ...execution.delegation import _runner_delegate  # noqa: F401
 
 
-def _budget_exhaustion_message(reason: BudgetStopReason) -> str:
+def _budget_exhaustion_message(reason: str, *, used: int, limit: int) -> str:
     if reason == BudgetStopReason.TIME_EXHAUSTED:
+        used_seconds = used / 1000
+        limit_seconds = limit / 1000
         return (
-            "Turn time budget exhausted before this plan could finish. "
-            "Narrow scope, split the task, or continue in a new turn."
+            "Stopped: turn time limit reached "
+            f"({used_seconds:g}s/{limit_seconds:g}s). "
+            "Continue in a new turn to resume, or narrow the scope."
         )
-    return "Tick budget exhausted. Narrow scope or continue in a new turn."
+    return (
+        f"Stopped: turn step limit reached ({used}/{limit}). "
+        "Continue in a new turn to resume, or narrow the scope."
+    )
 
 
 def _grant_once_from_confirmation(

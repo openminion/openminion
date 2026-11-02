@@ -20,7 +20,7 @@ def build_controlplane_store(
         return SQLiteControlPlaneStore(sqlite_path)
 
     if backend == "record.postgres":
-        engine = StorageEngine.from_config(config=config)
+        engine = StorageEngine.from_config(config=config, module_id="controlplane")
         return PostgresControlPlaneStore(record_store=engine.record_store)
 
     raise ValueError(

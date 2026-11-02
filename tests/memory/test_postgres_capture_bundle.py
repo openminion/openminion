@@ -229,6 +229,7 @@ def test_postgres_bootstrap_creates_capture_receipt_table(monkeypatch) -> None:
     )
     store = object.__new__(PostgresMemoryStore)
     store._engine = engine
+    store._postgres_schema = None
 
     store._bootstrap_schema(Path("/tmp/postgres-memory-placeholder"))
 

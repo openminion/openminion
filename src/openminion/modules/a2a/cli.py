@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import secrets
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,7 @@ from openminion.modules.a2a.storage import (
     SQLiteAuditStore,
     SQLiteStateStore,
 )
+from openminion.modules.a2a.transport import HTTPTransport, serve_a2a
 from openminion.modules.cli_common import (
     add_common_module_root_args,
     apply_home_data_root_env,
@@ -53,6 +56,12 @@ def main(argv: list[str] | None = None) -> int:
             data_root=data_root,
         )
 
+    if args.cmd == "serve":
+        return _run_serve(args)
+
+    if args.cmd == "call" and str(getattr(args, "url", "") or "").strip():
+        return _run_remote_call(args)
+
     runtime = _build_runtime(Path(args.config))
     try:
         _dispatch(runtime, args)
@@ -61,6 +70,43 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(1)
     finally:
         runtime.close()
+    return 0
+
+
+def _run_serve(args: argparse.Namespace) -> int:
+    token = str(getattr(args, "token", "") or "").strip()
+    if not token:
+        token = secrets.token_urlsafe(32)
+        print(f"a2actl serve: generated token: {token}", file=sys.stderr)
+    print(
+        f"a2actl serve: listening on http://{args.host}:{args.port} "
+        f"(agent card: /.well-known/agent.json)",
+        file=sys.stderr,
+    )
+    runtime = _build_runtime(Path(args.config))
+    try:
+        try:
+            serve_a2a(
+                runtime,
+                host=str(args.host),
+                port=int(args.port),
+                token=token,
+            )
+        except KeyboardInterrupt:
+            return 0
+    finally:
+        runtime.close()
+    return 0
+
+
+def _run_remote_call(args: argparse.Namespace) -> int:
+    transport = HTTPTransport(str(args.url), str(args.token))
+    try:
+        result = transport.call(_request_envelope(args, "call"))
+    except A2AError as exc:
+        _print_json({"ok": False, "error": exc.to_dict()})
+        raise SystemExit(1)
+    _print_json(result.to_dict())
     return 0
 
 
@@ -81,12 +127,39 @@ def _build_parser() -> argparse.ArgumentParser:
 
     call = sub.add_parser("call", help="Execute synchronous call")
     call.add_argument("--from-agent", default="cli")
-    call.add_argument("--to-agent", default="agent.echo")
+    call.add_argument("--to-agent", "--agent", dest="to_agent", default="agent.echo")
     call.add_argument("--to-capability", default="")
     call.add_argument("--method", required=True)
-    call.add_argument("--params", default="{}", help="JSON object")
+    call.add_argument(
+        "--params",
+        "--payload-json",
+        dest="params",
+        default="{}",
+        help="JSON object",
+    )
     call.add_argument("--idempotency-key", default="")
     call.add_argument("--timeout-ms", type=int, default=30_000)
+    call.add_argument(
+        "--url",
+        default="",
+        help="Remote A2A HTTP server base URL (e.g. http://host:18790). "
+        "When set, the call is routed through HTTPTransport.",
+    )
+    call.add_argument(
+        "--token",
+        default="",
+        help="Bearer token for the remote A2A HTTP server.",
+    )
+
+    serve = sub.add_parser("serve", help="Serve A2A over HTTP with token auth")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=18790)
+    serve.add_argument(
+        "--token",
+        default="",
+        help="Bearer token. When omitted, a random secret is generated and "
+        "printed to stderr.",
+    )
 
     job = sub.add_parser("job", help="Async job operations")
     job_sub = job.add_subparsers(dest="job_cmd", required=True)

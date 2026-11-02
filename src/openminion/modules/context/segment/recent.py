@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from ..constants import CONTEXT_BUCKET_RECENT_WINDOW
-from ..mode_ranking import _MODE_ACT, _MODE_RESPOND, normalize_mode_name
 from ..schemas import BuildPackRequest, SessionSlice
 from .messages import (
     assistant_tail_for_recent_window,
@@ -29,18 +28,6 @@ def _dedupe_current_query_turns(
     return recent_turns
 
 
-def _recent_turn_budget(
-    runtime: _SegmentAssemblyRuntime, request: BuildPackRequest
-) -> int:
-    recent_turn_budget = runtime.budgets.recent_turn_tokens
-    mode_name = normalize_mode_name(request.mode_name)
-    if mode_name == _MODE_RESPOND:
-        return max(160, min(recent_turn_budget, recent_turn_budget // 2))
-    if mode_name == _MODE_ACT:
-        return max(220, min(recent_turn_budget, recent_turn_budget - 120))
-    return recent_turn_budget
-
-
 def _trim_recent_turns_to_budget(
     runtime: _SegmentAssemblyRuntime,
     *,
@@ -51,7 +38,7 @@ def _trim_recent_turns_to_budget(
     turn_tokens = sum(
         runtime.estimate_tokens(content) for content in recent_turn_contents
     )
-    while recent_turns and turn_tokens > _recent_turn_budget(runtime, request):
+    while recent_turns and turn_tokens > runtime.budgets.recent_turn_tokens:
         protected_indexes = protected_decide_recent_turn_indexes(
             recent_turns,
             purpose=request.purpose,

@@ -7,10 +7,12 @@ from typing import Any, Dict, Mapping, Sequence
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.modules.llm.client_call import provider_history_payload
 from openminion.modules.llm.reasoning import (
+    THINKING_ROUTE_BRIDGE,
     ThinkingCtl,
     ThinkingRequest,
     ThinkingResolutionInput,
 )
+from openminion.modules.llm.reasoning.mapping import reconcile_route_support_metadata
 from openminion.modules.llm.constants import (
     LLM_TOOL_CALL_STRATEGY_NATIVE,
     LLM_TOOL_CHOICE_AUTO,
@@ -227,14 +229,19 @@ class LLMCTLBridgeProvider(LLMProvider):
             str(key): str(value)
             for key, value in dict(getattr(request, "metadata", {}) or {}).items()
         }
-        if metadata.get("thinking_reasoning_profile"):
+        reasoning_profile = str(
+            metadata.get("thinking_reasoning_profile", "") or ""
+        ).strip()
+        if reasoning_profile:
+            reconcile_route_support_metadata(
+                reasoning_profile=reasoning_profile,
+                provider_name=self.name or None,
+                model_name=self._model or None,
+                route=THINKING_ROUTE_BRIDGE,
+                metadata=metadata,
+            )
             request.metadata = metadata
-            if not str(getattr(request, "thinking", "") or "").strip():
-                request.thinking = str(
-                    metadata.get("thinking_provider_effort")
-                    or metadata.get("thinking")
-                    or ""
-                ).strip()
+            request.thinking = str(metadata.get("thinking_provider_effort") or "")
             return request
 
         requested_profile = (
@@ -252,6 +259,7 @@ class LLMCTLBridgeProvider(LLMProvider):
                 requested_profile=requested_profile or None,
                 provider=self.name or None,
                 model=self._model or None,
+                route=THINKING_ROUTE_BRIDGE,
                 metadata=metadata,
             ),
             layers=ThinkingResolutionInput(

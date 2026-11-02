@@ -77,7 +77,13 @@ record is skipped with `brain.decision_memory.skipped`
 pending. The working state keeps the decision metadata. The turn's own capture
 is authorized only when the answer is `allow` and its capture is neither
 excluded nor disabled. A `BrainRunner` used without the service keeps both
-writes.
+writes. Whatever the answer, no `tool_outcome` candidate is staged for an
+outcome classified as `policy_denied`. That category holds every ask-user
+command returned for a tool call, such as the user's denial, a pending
+confirmation or a policy denial, and every tool result with status
+`needs_user` or `blocked`, which includes a tool that ran and returned
+`requires_user_takeover`. Failure, timeout and allowlisted success outcomes
+are staged as before.
 
 ## Backend options
 

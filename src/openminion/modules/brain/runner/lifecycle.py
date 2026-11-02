@@ -15,6 +15,8 @@ from ..diagnostics.events import CanonicalEventLogger
 from ..meta.evaluator import MetaRulesEngine
 from ..execution.mission import mission_is_active, set_mission_status
 from ..schemas import MetaResult
+from ..schemas.state.clarify import BudgetStopReason
+from .tick.context import _budget_exhaustion_message
 
 RUN_TRIGGER_USER_INPUT = "user_input"
 RUN_TRIGGER_PLAN_CONTINUATION = "plan_continuation"
@@ -134,6 +136,16 @@ def _turn_reached_plan_boundary(
     )
 
 
+def _tick_exhaustion_message(runner: "BrainRunner", result: "StepOutput") -> str:
+    limit = int(runner.profile.budgets.max_ticks_per_user_turn)
+    remaining = int(result.working_state.budgets_remaining.ticks)
+    return _budget_exhaustion_message(
+        BudgetStopReason.TICKS_EXHAUSTED,
+        used=max(0, limit - remaining),
+        limit=limit,
+    )
+
+
 def run_until_idle(
     runner: "BrainRunner",
     *,
@@ -186,10 +198,7 @@ def run_until_idle(
                 runner,
                 last=last,
                 event="brain.loop_safety.budget_exhausted",
-                message=(
-                    "Paused autonomous execution because tick budget is exhausted. "
-                    "Continue in a new turn."
-                ),
+                message=_tick_exhaustion_message(runner, last),
                 details={
                     "iterations": iterations,
                     "ticks_remaining": last.working_state.budgets_remaining.ticks,

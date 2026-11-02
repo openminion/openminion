@@ -66,6 +66,12 @@ def _headers(
     return headers
 
 
+def _resolve_max_tokens(request: LLMRequest, config: Dict[str, Any]) -> int:
+    if request.max_output_tokens is not None and request.max_output_tokens > 0:
+        return request.max_output_tokens
+    return _as_int(config.get("max_tokens"), 1024)
+
+
 class AnthropicProvider:
     name = "anthropic"
     contract_version = LLM_RESPONSE_INTERFACE_VERSION
@@ -305,9 +311,7 @@ class AnthropicProvider:
         payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "max_tokens": _as_int(
-                config.get("max_tokens"), request.max_output_tokens or 1024
-            ),
+            "max_tokens": _resolve_max_tokens(request, config),
         }
         if system_prompt:
             payload["system"] = system_prompt
@@ -362,9 +366,7 @@ class AnthropicProvider:
             payload: Dict[str, Any] = {
                 "model": model,
                 "messages": messages,
-                "max_tokens": _as_int(
-                    config.get("max_tokens"), request.max_output_tokens or 1024
-                ),
+                "max_tokens": _resolve_max_tokens(request, config),
                 "stream": True,
             }
             if system_prompt:

@@ -43,7 +43,7 @@ from openminion.services.runtime.bootstrap import (
 )
 from tests._csc_fixtures import _csc_install_default_agent
 from tests._memory_retention_scenarios import check_session_lifecycle_runs_once
-from tests.storage.postgres_test_utils import schema_url
+from tests.storage.postgres_test_utils import drop_schemas, schema_url
 
 pytestmark = pytest.mark.postgres
 
@@ -74,8 +74,7 @@ def memory_database() -> Iterator[tuple[str, Callable[[], int]]]:
     try:
         yield url, server_connections
     finally:
-        with admin_engine.begin() as conn:
-            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+        drop_schemas(admin_engine, schema_name)
         admin_engine.dispose()
 
 
@@ -471,9 +470,14 @@ def test_capture_recovery_on_the_postgres_memory_store_extracts_and_commits_once
         engine = sa.create_engine(memory_url, future=True)
         try:
             with engine.connect() as conn:
+                # The memory store keeps its tables in its own schema (#446).
+                base = conn.execute(sa.text("SELECT current_schema()")).scalar_one()
                 receipts = (
                     conn.execute(
-                        sa.text("SELECT capture_id FROM memory_capture_bundle_receipts")
+                        sa.text(
+                            f'SELECT capture_id FROM "{base}__memory"'
+                            ".memory_capture_bundle_receipts"
+                        )
                     )
                     .scalars()
                     .all()

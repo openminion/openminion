@@ -11,10 +11,14 @@ from openminion.modules.context.input_boundaries import (
     route_and_ledger as _pidf_route_and_ledger,
 )
 from openminion.modules.brain.runtime.reasoning import (
+    THINKING_ROUTE_BRIDGE,
+    THINKING_ROUTE_DIRECT,
+    THINKING_ROUTE_OLLAMA,
     ThinkingCtl,
     ThinkingRequest,
     ThinkingResolutionInput,
 )
+from openminion.modules.llm.reasoning.mapping import reconcile_route_support_metadata
 from openminion.modules.llm.client_call import (
     provider_history_payload,
     usage_payload_from_response_usage as _provider_usage_payload,
@@ -129,6 +133,15 @@ def _thinking_on_default_profile(cfg: OpenMinionConfig) -> str:
         return ""
     profile = cfg.agents.get(_id)
     return str(getattr(profile, "thinking", "") or "")
+
+
+def _thinking_execution_route(*, provider_name: str, uses_llm_runtime: bool) -> str:
+    """Return the execution route a thinking resolution will take."""
+    if not uses_llm_runtime:
+        return cast(str, THINKING_ROUTE_BRIDGE)
+    if provider_name.strip().lower() == "ollama":
+        return cast(str, THINKING_ROUTE_OLLAMA)
+    return cast(str, THINKING_ROUTE_DIRECT)
 
 
 def _provider_facade(
@@ -562,8 +575,33 @@ class AgentService(AgentTurnFlowMixin):
             str(key): str(value)
             for key, value in dict(getattr(request, "metadata", {}) or {}).items()
         }
-        if metadata.get("thinking_reasoning_profile"):
+        provider_name = str(
+            getattr(self._llm_runtime, "name", "")
+            or getattr(self._provider, "name", "")
+            or ""
+        ).strip()
+        model_name = str(
+            getattr(self._llm_runtime, "model", "")
+            or getattr(self._provider, "model", "")
+            or ""
+        ).strip()
+        route = _thinking_execution_route(
+            provider_name=provider_name,
+            uses_llm_runtime=self._llm_runtime is not None,
+        )
+        reasoning_profile = str(
+            metadata.get("thinking_reasoning_profile", "") or ""
+        ).strip()
+        if reasoning_profile:
+            reconcile_route_support_metadata(
+                reasoning_profile=reasoning_profile,
+                provider_name=provider_name or None,
+                model_name=model_name or None,
+                route=route,
+                metadata=metadata,
+            )
             request.metadata = metadata
+            request.thinking = str(metadata.get("thinking_provider_effort") or "")
             return
 
         from openminion.base.config.core import resolve_default_agent_id
@@ -581,16 +619,6 @@ class AgentService(AgentTurnFlowMixin):
                 )
         except Exception:  # noqa: BLE001
             agent_runtime_thinking = None
-        provider_name = str(
-            getattr(self._llm_runtime, "name", "")
-            or getattr(self._provider, "name", "")
-            or ""
-        ).strip()
-        model_name = str(
-            getattr(self._llm_runtime, "model", "")
-            or getattr(self._provider, "model", "")
-            or ""
-        ).strip()
         resolved = self._thinking_ctl.resolve(
             request=ThinkingRequest(
                 purpose=str(metadata.get("purpose", "") or "").strip() or None,
@@ -598,6 +626,7 @@ class AgentService(AgentTurnFlowMixin):
                 or None,
                 provider=provider_name or None,
                 model=model_name or None,
+                route=route,
                 metadata=metadata,
             ),
             layers=ThinkingResolutionInput(

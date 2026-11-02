@@ -126,6 +126,35 @@ def test_audit_query_filters_before_selecting_newest_bounded_window(
     ]
 
 
+def test_memory_audit_store_honors_since_and_until_ts() -> None:
+    store = MemoryAuditStore()
+    start = datetime.now(timezone.utc) - timedelta(minutes=5)
+    for offset, suffix in enumerate(("old", "recent")):
+        store.append_audit(
+            _audit_record(
+                ts=(start + timedelta(minutes=offset)).isoformat(),
+                msg_id=f"msg-{suffix}",
+                trace_id=f"trace-{suffix}",
+                method="job.status",
+                status="FAILED",
+                error_code="FAILED",
+            )
+        )
+    older = start.isoformat()
+    newer = (start + timedelta(minutes=1)).isoformat()
+
+    assert [row.msg_id for row in store.query_audit({"since_ts": newer})] == [
+        "msg-recent"
+    ]
+    assert [row.msg_id for row in store.query_audit({"until_ts": older})] == ["msg-old"]
+    assert [
+        row.msg_id for row in store.query_audit({"since_ts": older, "until_ts": newer})
+    ] == ["msg-old", "msg-recent"]
+    assert [
+        row.msg_id for row in store.query_audit({"since_ts": older, "limit": 1})
+    ] == ["msg-recent"]
+
+
 def test_default_capture_keeps_only_structural_allowlist(tmp_path: Path) -> None:
     store = SQLiteAuditStore(tmp_path / "audit")
     record = _audit_record(

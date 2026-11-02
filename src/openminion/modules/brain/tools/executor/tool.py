@@ -127,7 +127,7 @@ def _tool_outcome_should_stage(
     outcome: str,
 ) -> bool:
     if outcome != "success":
-        return True
+        return outcome != "policy_denied"
     return str(tool_name or "").strip() in TOOL_OUTCOME_SUCCESS_ALLOWLIST
 
 

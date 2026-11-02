@@ -71,6 +71,21 @@ Returning true grants that invocation once; false or a callback failure prevents
 execution. Without a callback, the interactive confirmation flow remains in
 place. Submitted turns deliver the same request through approval stream events.
 
+In that flow the turn ends with `respond_kind` `policy_confirmation_prompt` in
+its metadata, and the call waits on the turn's thread. A later `run()` without
+a thread starts a new thread, so it does not answer the confirmation. To answer
+it, pass the earlier result's `thread_id` to `run()` or `run_stream()`: the
+runtime then resumes that thread. Omitted or blank, `thread_id` changes
+nothing. A thread id from another session does not answer that session's
+confirmation, and with `approval_callback` the callback still decides.
+
+```python
+first = agent.run("Remember that I write code in Iosevka 14.")
+if first.metadata.get("respond_kind") == "policy_confirmation_prompt":
+    # Answer the confirmation on the thread that is waiting for it.
+    answer = agent.run("yes", thread_id=first.thread_id)
+```
+
 Stable exported root symbols are recorded in `API_COMPATIBILITY.md`.
 Advanced turn lifecycle types are exported from `openminion.api` rather than
 added to the root package.

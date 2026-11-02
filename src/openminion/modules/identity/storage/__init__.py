@@ -24,7 +24,7 @@ def build_identity_store(
             f"Unsupported identity record backend: {config.record_backend!r}"
         )
 
-    engine = StorageEngine.from_config(config=config)
+    engine = StorageEngine.from_config(config=config, module_id="identity")
     return PostgresIdentityStore(record_store=engine.record_store)
 
 

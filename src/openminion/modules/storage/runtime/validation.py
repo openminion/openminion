@@ -71,6 +71,7 @@ def validate_postgres_config(
         from openminion.modules.storage.migrations.registry import (
             POSTGRES_VALIDATED_MODULES,
         )
+        from openminion.modules.storage.migrations.errors import SchemaOwnershipError
         from openminion.modules.storage.migrations.module_ids import (
             MODULE_APPLICATION_IDS,
         )
@@ -87,6 +88,7 @@ def validate_postgres_config(
                 module_application_id=app_id,
                 backend_type="postgres",
                 engine=engine,
+                select_postgres_schema=True,
             )
             try:
                 state = runner.detect()
@@ -97,6 +99,8 @@ def validate_postgres_config(
                         module_id,
                         module_id,
                     )
+            except SchemaOwnershipError as exc:
+                logger.warning("Postgres module '%s': %s", module_id, exc)
             except Exception:
                 pass  # detect failure is non-fatal at startup
         engine.dispose()

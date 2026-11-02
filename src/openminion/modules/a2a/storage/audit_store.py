@@ -13,6 +13,7 @@ from openminion.modules.a2a.config import validate_audit_retention
 from openminion.modules.a2a.models import AuditRecord
 from openminion.modules.a2a.storage.base import AuditStore, audit_record_for_storage
 from openminion.modules.storage.migrations.module_ids import get_module_application_id
+from openminion.modules.storage.migrations.postgres_schema import ModuleSchema
 from openminion.modules.storage.migrations.runner import MigrationRunner
 from openminion.modules.storage.record_store import RecordStoreSQLite
 
@@ -192,8 +193,10 @@ class PostgresAuditStore(AuditStore):
         archive_retention_days: int = 0,
         database_path: str | Path | None = None,
         owns_engine: bool = False,
+        postgres_schema: ModuleSchema | None = None,
     ) -> None:
         self._engine = pool
+        self._postgres_schema = postgres_schema
         self.capture_payloads = bool(capture_payloads)
         self.retention_days, self.archive_retention_days = validate_audit_retention(
             retention_days,
@@ -288,6 +291,7 @@ class PostgresAuditStore(AuditStore):
             module_application_id=get_module_application_id("a2a"),
             backend_type="postgres",
             engine=self._engine,
+            postgres_schema=self._postgres_schema,
         )
         report = runner.migrate(target="head")
         if not report.success:

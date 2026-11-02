@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,6 +20,7 @@ from openminion.modules.storage.migrations.errors import (
     DbIdentityError,
     MigrationApplyError,
     RehydrateError,
+    SchemaOwnershipError,
     VerificationError,
 )
 from openminion.modules.storage.migrations.models import (
@@ -29,6 +30,12 @@ from openminion.modules.storage.migrations.models import (
     RehydrateReport,
 )
 from openminion.modules.storage.migrations.meta_rows import rows_to_meta
+from openminion.modules.storage.migrations.postgres_schema import (
+    ModuleSchema,
+    check_module_connection,
+    enter_module_schema,
+    select_module_schema,
+)
 from openminion.modules.storage.migrations.verify import VerifierHook, run_verification
 from openminion.modules.storage.telemetry import (
     NoopStorageTelemetryHook,
@@ -59,7 +66,18 @@ class MigrationRunner:
         backend_type: str = "sqlite",
         engine: Engine | None = None,
         telemetry_hook: StorageTelemetryHook | None = None,
+        postgres_schema: ModuleSchema | None = None,
+        select_postgres_schema: bool = False,
     ) -> None:
+        """On PostgreSQL the module writes into one schema (#446).
+
+        ``postgres_schema`` is a schema its caller already selected with
+        ``postgres_schema.select_module_schema`` or ``select_postgres_module_schema``; the
+        runner trusts it and checks nothing more. Otherwise, with ``select_postgres_schema``
+        the engine is connected with the configured storage URL and the runner selects the
+        module's schema under it; without it the engine's own current schema must hold the
+        module's proven history or nothing but its objects.
+        """
         self.module_id = module_id.strip()
         self.db_path = Path(db_path).expanduser().resolve(strict=False)
         self.module_application_id = module_application_id
@@ -87,6 +105,8 @@ class MigrationRunner:
         self.verifier_hook = verifier_hook
         self.backend_type = backend_type.strip().lower() or "sqlite"
         self.engine = engine
+        self.postgres_schema = postgres_schema
+        self.select_postgres_schema = select_postgres_schema
         self._telemetry_hook = (
             telemetry_hook if telemetry_hook is not None else NoopStorageTelemetryHook()
         )
@@ -624,11 +644,22 @@ class MigrationRunner:
             )
         return self.engine
 
+    def postgres_module_schema(self) -> ModuleSchema:
+        """The schema this module uses on PostgreSQL; raises before any write if unproven."""
+        if self.postgres_schema is None:
+            engine = self._require_engine()
+            self.postgres_schema = (
+                select_module_schema(engine, self.module_id)
+                if self.select_postgres_schema
+                else check_module_connection(engine, self.module_id)
+            )
+        return self.postgres_schema
+
     def _detect_postgres(self) -> DbState:
         engine = self._require_engine()
+        schema = self.postgres_module_schema().schema
         with engine.connect() as connection:
-            revision = self._read_alembic_revision_pg(connection)
-            om_meta = self._read_om_meta_pg(connection)
+            revision, om_meta = self._read_postgres_ledgers(connection, schema)
         return DbState(
             module_id=self.module_id,
             db_path=str(self.db_path),
@@ -648,8 +679,12 @@ class MigrationRunner:
         auto_rollback: bool,
     ) -> MigrationReport:
         started = time.monotonic()
-        before = self.detect()
         engine = self._require_engine()
+        try:
+            selection = self.postgres_module_schema()
+        except SchemaOwnershipError as exc:
+            return self._refused_postgres_report(target, started, str(exc))
+        before = self.detect()
         backup_artifact = BackupArtifact(
             module_id=self.module_id,
             source_db_path=str(self.db_path),
@@ -668,6 +703,7 @@ class MigrationRunner:
             with engine.connect() as connection:
                 transaction = connection.begin()
                 try:
+                    enter_module_schema(connection, selection)
                     self._apply_alembic_upgrade(target=target, connection=connection)
                     self._update_metadata_after_migration(
                         target=target,
@@ -692,6 +728,7 @@ class MigrationRunner:
                         )
                     transaction.commit()
                     success = True
+                    self.postgres_schema = replace(selection, create=False)
                 except Exception:
                     if transaction.is_active:
                         transaction.rollback()
@@ -716,6 +753,70 @@ class MigrationRunner:
             rolled_back=rolled_back,
             error=error,
         )
+
+    def _refused_postgres_report(
+        self, target: str, started: float, error: str
+    ) -> MigrationReport:
+        state = DbState(
+            module_id=self.module_id,
+            db_path=str(self.db_path),
+            exists=True,
+            application_id=None,
+            expected_application_id=self.module_application_id,
+            application_id_matches=True,
+            user_version=0,
+            alembic_revision=None,
+            om_meta={},
+        )
+        return MigrationReport(
+            module_id=self.module_id,
+            db_path=str(self.db_path),
+            target=target,
+            before=state,
+            after=state,
+            backup=BackupArtifact(
+                module_id=self.module_id,
+                source_db_path=str(self.db_path),
+                snapshot_path="",
+                mode="transactional_ddl",
+                created_at=datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat(),
+                user_version=0,
+                schema_head=None,
+            ),
+            verification=self.verify(level="quick"),
+            success=False,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            rolled_back=False,
+            error=error,
+        )
+
+    @staticmethod
+    def _read_postgres_ledgers(
+        conn: SAConnection, schema: str
+    ) -> tuple[str | None, dict[str, str]]:
+        """``alembic_version`` and ``om_meta`` of one schema, read with its explicit name."""
+        from sqlalchemy import text
+
+        quoted = '"' + schema.replace('"', '""') + '"'
+        revision: str | None = None
+        om_meta: dict[str, str] = {}
+        if conn.execute(
+            text("SELECT to_regclass(:n)"), {"n": f"{quoted}.alembic_version"}
+        ).scalar():
+            row = conn.execute(
+                text(f"SELECT version_num FROM {quoted}.alembic_version LIMIT 1")
+            ).fetchone()
+            revision = None if row is None or row[0] is None else str(row[0])
+        if conn.execute(
+            text("SELECT to_regclass(:n)"), {"n": f"{quoted}.om_meta"}
+        ).scalar():
+            rows = conn.execute(text(f"SELECT key, value FROM {quoted}.om_meta"))
+            om_meta = {
+                str(key): "" if value is None else str(value) for key, value in rows
+            }
+        return revision, om_meta
 
     @staticmethod
     def _read_om_meta_pg(conn: SAConnection) -> dict[str, str]:

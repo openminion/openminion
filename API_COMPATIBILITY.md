@@ -66,6 +66,14 @@ canonical result ID plus copied metadata and stats. Structured Pydantic output
 should be exact JSON; during `0.1.x`, one schema-valid JSON object wrapped in
 provider prose remains accepted for compatibility.
 
+Unreleased: `Agent.run()` and `Agent.run_stream()` also accept an optional
+keyword-only `thread_id`. A non-blank value is sent as the turn's
+`inbound_metadata["thread_id"]`, so the runtime resumes that thread, for
+example to answer a waiting confirmation; omitted or blank, the request is
+unchanged. `AgentRunResult.thread_id` is the returned metadata's `thread_id`,
+stripped, or `None`. It is the last dataclass field, so positional
+construction keeps its meaning.
+
 ### Provider failures
 
 After the configured retry budget is exhausted, `Agent.run()` and

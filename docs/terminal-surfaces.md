@@ -26,6 +26,14 @@ Without `--session`, interactive startup creates a fresh session. Use
 interactive terminal, `/new` starts a fresh session, `/resume` selects a durable
 session, and `/close` closes the active session and releases its runtime context.
 
+Interactive sessions can also be named and resumed by name: `/rename <name>`
+sets the active session's runtime name, and `openminion --resume "<name>"`
+(alias `-c`) resumes the session whose runtime name matches, scoped to the
+current agent and directory (most-recent match wins on duplicates). This
+runtime name is the session's `name` metadata field and is distinct from the
+standalone `sessctl` session `title` field, which lives in a separate session
+store.
+
 The default terminal leaves mouse-wheel input with the terminal for native
 scrollback. It captures the mouse only while a clickable completion menu is
 open, then returns control to the terminal when the menu closes.

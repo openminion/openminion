@@ -18,6 +18,7 @@ from openminion.modules.artifact.refs import (
     remove_reference_edges,
 )
 from openminion.modules.storage.migrations.module_ids import get_module_application_id
+from openminion.modules.storage.migrations.postgres_schema import ModuleSchema
 from openminion.modules.storage.migrations.runner import MigrationRunner
 
 from ..base import MemoryStore
@@ -93,8 +94,10 @@ class PostgresMemoryStore(MemoryStore):
         database_path: str | Path | None = None,
         artifactctl: Any = _ARTIFACTCTL_UNSET,
         owns_engine: bool = False,
+        postgres_schema: ModuleSchema | None = None,
     ) -> None:
         self._engine = pool
+        self._postgres_schema = postgres_schema
         self._artifactctl = artifactctl
         self._owns_artifactctl = artifactctl is _ARTIFACTCTL_UNSET
         self._owns_engine = owns_engine
@@ -129,6 +132,7 @@ class PostgresMemoryStore(MemoryStore):
             target_user_version=TARGET_USER_VERSION,
             backend_type="postgres",
             engine=self._engine,
+            postgres_schema=self._postgres_schema,
         )
         report = runner.migrate(target="head")
         if not report.success:

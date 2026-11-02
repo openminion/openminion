@@ -127,6 +127,9 @@ def _make_runner(
     )
     if engine is not None:
         kwargs["engine"] = engine
+        # The engine uses the configured URL: the runner selects the module's own
+        # schema under its base schema (#446).
+        kwargs["select_postgres_schema"] = backend_type == "postgres"
     return MigrationRunner(**kwargs)
 
 

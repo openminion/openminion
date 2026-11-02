@@ -24,7 +24,7 @@ def build_skill_store(
     if backend != "record.postgres":
         raise ValueError(f"Unsupported skill record backend: {config.record_backend!r}")
 
-    engine = StorageEngine.from_config(config=config)
+    engine = StorageEngine.from_config(config=config, module_id="skill")
     return PostgresSkillStore(record_store=engine.record_store)
 
 

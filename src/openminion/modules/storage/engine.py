@@ -327,7 +327,16 @@ class StorageEngine:
         config: StorageEngineConfig,
         registry: BackendRegistry | None = None,
         telemetry_hook: StorageTelemetryHook | None = None,
+        module_id: str | None = None,
     ) -> StorageEngine:
+        if module_id is not None and config.record_backend == "record.postgres":
+            from openminion.modules.storage.migrations.postgres_schema import (
+                module_storage_config,
+            )
+
+            # A module store uses its own PostgreSQL schema under the configured
+            # one, created before its first table (#446).
+            config = module_storage_config(config, module_id)
         root, sqlite, fallback = _storage_engine_paths(config)
         namespace = normalize_namespace(config.default_namespace)
         backend_registry = (

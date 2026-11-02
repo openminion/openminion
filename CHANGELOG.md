@@ -1,11 +1,160 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-10-29
+Last updated: 2026-11-01
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-01
+
+- Recognize Ubuntu 26.04's system coreutils directory for allowlisted host
+  commands. Commands such as `whoami` resolve through `/usr/bin` symlinks to
+  `/usr/lib/cargo/bin/coreutils`; that specific directory is now trusted by
+  default. Executable-name restrictions, resolved-target checks, host-execution
+  enablement, approvals and explicit trusted-directory overrides still apply
+  (Refs #557).
+
+- Honor `since_ts`/`until_ts` in the in-memory audit store. `MemoryAuditStore`
+  ignored the time-window filters when listing audit records; it now filters
+  by `since_ts` and `until_ts` the same way the SQLite store does (Refs #489).
+
+- Add interactive session naming: `/rename <name>` sets the active session's
+  runtime name (its `name` metadata field), and `openminion --resume "<name>"`
+  (alias `-c`) resumes the session with that name, scoped to the current agent
+  and directory with most-recent duplicate ordering. This runtime name is
+  distinct from the standalone `sessctl` session `title` field, which lives in
+  a separate session store.
+
+- Reject duplicate Handoff resolved names when an agent is built or a delegate
+  family is compiled, so two handoffs resolving to the same name fail with an
+  actionable message instead of a `profile_id values must be unique` error at
+  registration time (Refs #476).
+
+- Resolve reasoning-effort support by the execution route actually selected.
+  The direct OpenAI/Anthropic/Groq/Cerebras/OpenRouter adapters never carry the
+  effort in their request payloads, so they no longer claim `supported=true`
+  for it; the llmctl bridge and the ollama adapter (which maps the effort to an
+  explicit `think` flag) still do, and echo is never labeled as transmitted
+  effort (Refs #481).
+
+- Close the call-owned storage probe on every health service exit so the
+  probe's storage handle is released on all exit paths (Refs #487).
+
+- Make the filesystem blob store's repeated put of the same bytes idempotent:
+  `put_bytes` and `put_file` reuse the existing representation and preserve its
+  first-write metadata, and `gc` evicts every owned payload of an evicted
+  digest together with its metadata sidecar so the digest is not left reachable
+  through a sibling representation, accounts for eviction at the same digest
+  unit it deletes at, and ignores unrelated files that merely share a digest's
+  hash prefix (Refs #484).
+
+- Add a cross-machine A2A HTTP transport with mandatory token auth. The new
+  `HTTPTransport` client and stdlib `A2AHTTPServer`/`serve_a2a` server let two
+  OpenMinion machines call each other's agents over HTTP, and `a2actl serve`
+  (with `--host`/`--port`/`--token`, generating a secret when omitted) plus
+  `a2actl call --url ... --token ...` expose it from the CLI. The server binds
+  to `127.0.0.1` by default, requires a non-empty `Bearer` token on every
+  endpoint, and serves a Google-A2A-style agent card at
+  `/.well-known/agent.json`. This is an OpenMinion custom endpoint transport
+  (its `/a2a/...` endpoints speak OpenMinion's own `Envelope` JSON), not a
+  complete interoperable Google A2A protocol server; `a2actl serve` only
+  registers the built-in `agent.echo`/`agent.worker` demo agents, which do not
+  demonstrate cross-machine calls to configured application agents. Error
+  code/message/details are preserved across the wire. See
+  `docs/a2a-remote.md`.
+
+- Keep native structured-output instructions limited to formatting so research
+  synthesis can answer from supplied evidence. Preserve forced `submit_output`,
+  schema validation, and caller-owned routing/judgment contracts (Refs #530).
+
+- Give the first two decision turns the normal `2,200`-token context-pack
+  target instead of the former `1,500`-token target. This leaves more room for
+  the user's initial request, instructions and early clarification without
+  changing later-turn scaling, completion budgets, provider output limits or
+  saved agent profiles.
+
+- Stage no `tool_outcome` memory candidate for an outcome classified as
+  `policy_denied`. When the user denied a tool call, or the call was still
+  waiting for the user's confirmation, the brain staged a `policy_denied`
+  `tool_outcome` candidate in agent scope whose content and metadata held the
+  call's arguments, also when the agent's memory policy allowed the write. No
+  candidate is now staged for any `policy_denied` outcome: an ask-user command
+  returned for a tool call, such as the user's denial, a pending confirmation
+  or a policy denial, and a tool result with status `needs_user` or
+  `blocked`, which includes a tool that ran and returned
+  `requires_user_takeover`. Failure, timeout and allowlisted success
+  candidates, the turn's `memory.write` answer and the policy and approval
+  events are unchanged (Refs #524).
+
+- Give each PostgreSQL module its own schema, and refuse a layout whose
+  ownership is not proven before any table is written. Runtime storage and
+  every module wrote into the one schema the configured URL selects, so they
+  shared `alembic_version` and `om_meta`, and `CREATE TABLE IF NOT EXISTS`
+  let one owner adopt another's `sessions`, `events`, `idempotency_keys`,
+  `memory_records`, `migrations` or `agents`. Runtime storage keeps that
+  schema; each module now uses `<base>__<module id>`, created inside its
+  migration transaction (or, for a store without Alembic, in its own
+  transaction before its first table), on a connection that keeps the URL's
+  options and adds `-c search_path`. A module whose history is already in the
+  base schema, such as a dedicated PostgreSQL memory database, stays there
+  with no move or stamp. A table counts as an owner's only when that owner's
+  ledger is recorded in the schema and the table exactly matches one listed
+  for that ledger in `postgres_histories.json`, which was measured from every
+  published release and this code. An existing `<base>__<module id>` is used
+  only when it is empty or holds the module's proven history; one with tables
+  but no ledger of the module, such as a first start stopped before
+  `om_meta`, is refused. A shared or unknown layout, for example
+  the A2A audit store on the runtime URL, or memory first and then runtime
+  storage, is refused with a message that names its tables, for the owners
+  that use them only. Upgrade: run `openminion storage migrate --backend
+  postgres` before the module stores start, and connect the module stores
+  directly or through a pooler that passes the `options` startup parameter.
+  `docs/runtime-database-upgrades.md` gives the details and the operator's
+  relocation steps (Refs #446).
+
+- Document the upgrade for memory consolidation jobs from packages before
+  0.1.15. Since 0.1.15 the daemon runs a job as memory consolidation only when
+  its task record has the `memory_consolidation` kind that
+  `task.consolidate_memory` stores. A job created by `task.consolidate_memory`
+  of a package before 0.1.15, or any job with the reserved payload and no such
+  record, fails its first run with the provenance message, without a turn or
+  capture recovery, and is paused. `docs/runtime-database-upgrades.md` now
+  describes how to inspect those jobs, cancel or pause each one before
+  creating its replacement through `task.consolidate_memory`, and check that
+  the old job is not enabled and the replacement is, for the same agent; that
+  jobs created by 0.1.15 or later keep running next to the replacements and
+  are not replaced on later upgrades; that the raw cron API rejects the
+  reserved payload; and that pending capture intents are kept and recovered as
+  before. New tests create the job through the tool's handler and run it
+  through the daemon's scheduler, whose own task manager reads the stored kind
+  (Refs #456).
+
+- Let `Agent.run()` and `Agent.run_stream()` answer a waiting confirmation.
+  A second `run()` after "Policy confirmation required." started a new thread,
+  so the reply did not reach the tool call waiting on the first one. Both
+  methods now accept an optional `thread_id` that sends the turn to that
+  thread, and `AgentRunResult.thread_id` returns the turn's thread. Omitted or
+  blank, it changes nothing (Refs #541).
+
+- Order the `memory` and `self_awareness` context segments before
+  `turn_input` so that recalled memories and the self model render ahead of
+  the final user input (Refs #483).
+
+- Honour `Field` defaults and `default_factory` declared inside `Annotated`
+  (e.g. `x: Annotated[int, Field(default=5)]` or
+  `x: Annotated[list[int], Field(default_factory=list)]`) when a `@tool`
+  argument has no Python default, while still preserving `Field` defaults,
+  `default_factory`, aliases and constraints declared as the argument's Python
+  default (e.g. `x: int = Field(default=7, alias="external", ge=1)` or
+  `x: list[int] = Field(default_factory=list)`) (Refs #475).
+
+- Apply the recent-window mode budget bias (respond halving / act -120) only
+  once. The recent-window trimmer read the already-biased budget and applied
+  the mode adjustment a second time, halving the respond budget or subtracting
+  120 tokens from the act budget again; it now reads the biased budget
+  directly, so the adjustment lands exactly once (Refs #482).
 
 ## Current package line - 2026-10-29
 

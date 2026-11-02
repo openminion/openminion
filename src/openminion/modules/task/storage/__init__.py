@@ -20,7 +20,7 @@ def build_task_store(
     if str(config.record_backend).strip() != "record.postgres":
         raise ValueError(f"Unsupported task record backend: {config.record_backend!r}")
 
-    engine = StorageEngine.from_config(config=config)
+    engine = StorageEngine.from_config(config=config, module_id="task")
     return PostgresTaskStore(record_store=engine.record_store)
 
 

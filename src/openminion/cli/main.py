@@ -137,6 +137,7 @@ def _run_default_interactive(
                 no_interactive=no_interactive,
                 agent=getattr(args, "agent", None),
                 session=getattr(args, "session", None),
+                resume_name=getattr(args, "resume_name", None),
                 dir=getattr(args, "dir", None),
                 add_dir=list(getattr(args, "add_dir", []) or []),
                 theme=getattr(args, "theme", None),

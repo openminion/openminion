@@ -39,12 +39,6 @@ from tests.runtime.test_turn_capture_authorization import (
 )
 
 DENIED_REPLY = "Confirmation denied. The action was not run."
-TOOL_OUTCOME = (
-    "tool_outcome:memory.write:policy_denied",
-    f"agent:{AGENT_ID}",
-    "proposed",
-    "policy_denied",
-)
 
 
 def _optional_rows(runtime: Any) -> dict[str, list[Any]]:
@@ -170,7 +164,7 @@ def test_turn_without_memory_write_writes_no_decision_record_or_tool_outcome(
 @pytest.mark.parametrize(
     "case", ["neutral-constraint", "no-identity", "no-security-policy"]
 )
-def test_allowed_turn_writes_decision_records_and_tool_outcome_as_before(
+def test_allowed_turn_writes_decision_records_as_before(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     provider: _Provider,
@@ -189,9 +183,11 @@ def test_allowed_turn_writes_decision_records_and_tool_outcome_as_before(
     finally:
         runtime.close()
 
+    # The user denied the model's call, so it did not run and stages no
+    # tool_outcome candidate (#524).
     assert rows == {
         "decision": ["Decision: respond", "Decision: act"],
-        "tool_outcome": [TOOL_OUTCOME],
+        "tool_outcome": [],
     }
     assert events == [("brain.decision_memory.completed", None)] * 2
     assert [(d[1], *d[4:]) for d in recorder.decisions] == (

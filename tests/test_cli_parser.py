@@ -178,6 +178,16 @@ print(json.dumps(results, sort_keys=True))
 
         self.assertTrue(args.allow_unsandboxed_exec)
 
+    def test_resume_flag_populates_resume_name(self) -> None:
+        args = build_parser().parse_args(["--resume", "My Session"])
+        self.assertEqual(args.resume_name, "My Session")
+
+        alias_args = build_parser().parse_args(["-c", "Other Session"])
+        self.assertEqual(alias_args.resume_name, "Other Session")
+
+        default_args = build_parser().parse_args([])
+        self.assertIsNone(default_args.resume_name)
+
     def test_daemon_start_parse(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["daemon", "start"])

@@ -1,7 +1,7 @@
 """PostgreSQL `0001_baseline` of `controlplane` and `telemetry`, with their stores (#494).
 
-Each test migrates a new schema of its own, because modules on one database share
-one `alembic_version` table (#446).
+Each test starts from a new schema of its own. `storage migrate` puts a module in
+its own schema under it, `<schema>__<module id>` (#446), where the tests read it.
 """
 
 from __future__ import annotations
@@ -22,12 +22,14 @@ from openminion.modules.storage.backends.postgres import RecordStorePostgres
 from openminion.modules.storage.migrations.alembic import (
     discover_module_alembic_paths,
 )
+from openminion.modules.storage.migrations.module_ids import get_module_application_id
+from openminion.modules.storage.migrations.runner import MigrationRunner
 from openminion.modules.telemetry.schemas import (
     TelemetryEvent,
     normalize_telemetry_event,
 )
 from openminion.modules.telemetry.storage.store import PostgresTelemetryStore
-from tests.storage.postgres_test_utils import schema_url
+from tests.storage.postgres_test_utils import drop_schemas, schema_url
 
 pytestmark = pytest.mark.postgres
 
@@ -53,9 +55,23 @@ def schema() -> Iterator[str]:
     try:
         yield schema_url(postgres_url, schema_name)
     finally:
-        with admin_engine.begin() as conn:
-            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+        drop_schemas(admin_engine, schema_name)
         admin_engine.dispose()
+
+
+def _module_url(url: str, module_id: str) -> str:
+    """The module's own schema under the test schema, `<schema>__<module id>` (#446)."""
+    return schema_url(_server_url(), f"{_schema_name(url)}__{module_id}")
+
+
+def _schema_name(url: str) -> str:
+    sa = pytest.importorskip("sqlalchemy")
+    options = str(sa.engine.make_url(url).query["options"])
+    return options.split("search_path=", 1)[1]
+
+
+def _server_url() -> str:
+    return str(os.getenv("OPENMINION_TEST_POSTGRES_URL", "")).strip()
 
 
 def _migrate(url: str, module_id: str, tmp_path, capsys) -> dict[str, Any]:
@@ -212,25 +228,28 @@ def test_baseline_applies_to_an_empty_schema(
     schema: str, module_id: str, tmp_path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     entry = _migrate(schema, module_id, tmp_path, capsys)
+    module = _module_url(schema, module_id)
 
     assert entry == {"exit": 0, "module_id": module_id, "status": "ok", "success": True}
-    assert _revision(schema) == [HEADS[module_id]]
-    assert _scalars(schema, "SELECT value FROM om_meta WHERE key = 'module_id'") == [
+    assert _tables(schema) == []
+    assert _revision(module) == [HEADS[module_id]]
+    assert _scalars(module, "SELECT value FROM om_meta WHERE key = 'module_id'") == [
         module_id
     ]
     for table_name in SERIAL_ID_TABLES[module_id]:
-        assert _columns(schema, table_name)["id"] == (
+        assert _columns(module, table_name)["id"] == (
             "integer",
             f"nextval('{table_name}_id_seq'::regclass)",
         )
     if module_id == "telemetry":
-        assert _columns(schema, "events")["timestamp"][0] == "double precision"
+        assert _columns(module, "events")["timestamp"][0] == "double precision"
 
 
 def test_controlplane_store_round_trips_on_the_baseline_schema(
     schema: str, tmp_path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert _migrate(schema, "controlplane", tmp_path, capsys)["status"] == "ok"
+    schema = _module_url(schema, "controlplane")
     columns = {table: _columns(schema, table) for table in _tables(schema)}
 
     with _module_store(schema, "controlplane") as store:
@@ -274,6 +293,7 @@ def test_telemetry_store_keeps_timestamp_precision_on_the_baseline_schema(
     schema: str, tmp_path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert _migrate(schema, "telemetry", tmp_path, capsys)["status"] == "ok"
+    schema = _module_url(schema, "telemetry")
 
     with _module_store(schema, "telemetry") as store:
         _write(store, "telemetry", 0)
@@ -293,15 +313,16 @@ def test_second_upgrade_changes_nothing(
     schema: str, module_id: str, tmp_path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert _migrate(schema, module_id, tmp_path, capsys)["status"] == "ok"
-    with _module_store(schema, module_id) as store:
+    module = _module_url(schema, module_id)
+    with _module_store(module, module_id) as store:
         _write(store, module_id, 0)
-    before = _snapshot(schema, module_id)
+    before = _snapshot(module, module_id)
 
     entry = _migrate(schema, module_id, tmp_path, capsys)
 
     assert entry == {"exit": 0, "module_id": module_id, "status": "ok", "success": True}
-    assert _snapshot(schema, module_id) == before
-    with _module_store(schema, module_id) as store:
+    assert _snapshot(module, module_id) == before
+    with _module_store(module, module_id) as store:
         assert _read(store, module_id) == _expected_rows(module_id, 1)
 
 
@@ -310,16 +331,17 @@ def test_downgrade_removes_the_baseline_and_upgrade_restores_it(
     schema: str, module_id: str, tmp_path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert _migrate(schema, module_id, tmp_path, capsys)["status"] == "ok"
-    created = _tables(schema)
+    module = _module_url(schema, module_id)
+    created = _tables(module)
 
-    _downgrade_to_base(schema, module_id)
+    _downgrade_to_base(module, module_id)
 
-    assert _revision(schema) == []
+    assert _revision(module) == []
     # The module's Alembic environment writes om_meta again after every run.
-    assert _tables(schema) == ["alembic_version", "om_meta"]
+    assert _tables(module) == ["alembic_version", "om_meta"]
     assert (
         _scalars(
-            schema,
+            module,
             "SELECT sequence_name FROM information_schema.sequences "
             "WHERE sequence_schema = current_schema()",
         )
@@ -329,9 +351,9 @@ def test_downgrade_removes_the_baseline_and_upgrade_restores_it(
     entry = _migrate(schema, module_id, tmp_path, capsys)
 
     assert entry == {"exit": 0, "module_id": module_id, "status": "ok", "success": True}
-    assert _tables(schema) == created
-    assert _revision(schema) == [HEADS[module_id]]
-    with _module_store(schema, module_id) as store:
+    assert _tables(module) == created
+    assert _revision(module) == [HEADS[module_id]]
+    with _module_store(module, module_id) as store:
         _write(store, module_id, 0)
         assert _read(store, module_id) == _expected_rows(module_id, 1)
 
@@ -417,13 +439,41 @@ def test_existing_table_with_other_types_is_not_adopted(
         engine.dispose()
     columns = _columns(schema, table_name)
 
+    # `storage migrate` refuses the table before any write: no ledger proves it is
+    # the module's (#446).
     entry = _migrate(schema, module_id, tmp_path, capsys)
 
     assert entry["exit"] == 1
     assert (entry["status"], entry["success"]) == ("error", False)
     assert (
+        f"no {module_id} ledger is recorded there; {table_name} matches no recorded "
+        "ledger" in entry["error"]
+    )
+    assert "Nothing was written" in entry["error"]
+    assert _tables(schema) == [table_name]
+
+    # The revision itself, run in that schema, does not adopt the table either.
+    from openminion.modules.storage.migrations.postgres_schema import ModuleSchema
+
+    engine = sa.create_engine(schema, future=True)
+    try:
+        report = MigrationRunner(
+            module_id=module_id,
+            db_path=tmp_path / f"{module_id}.db",
+            module_application_id=get_module_application_id(module_id),
+            backend_type="postgres",
+            engine=engine,
+            postgres_schema=ModuleSchema(
+                module_id, _schema_name(schema), _schema_name(schema)
+            ),
+        ).migrate()
+    finally:
+        engine.dispose()
+
+    assert report.success is False
+    assert (
         "Existing tables differ from this revision and are not adopted: " + message
-    ) in entry["error"]
+    ) in str(report.error)
     assert _tables(schema) == [table_name]
     assert _columns(schema, table_name) == columns
     with _connect(schema) as conn:

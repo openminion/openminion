@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -37,10 +38,12 @@ from openminion.modules.brain.loop.tools.contracts import (
 from openminion.modules.brain.adapters.tool.permission_mode import (
     canonical_permission_mode,
 )
+from openminion.modules.brain.adapters.tool.results import run_tool_spec
 from openminion.modules.brain.tools.executor import (
     RunnerCommandExecutor,
     execute_action,
 )
+from openminion.modules.brain.tools.executor.tool import _tool_outcome_from_result
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.modules.policy.adapters.brain import PolicyCtlBrainAdapter
 from openminion.modules.policy.models import RiskSpec
@@ -833,7 +836,7 @@ def test_finalize_tool_result_success_does_not_stage_non_allowlisted_tool_outcom
         assert entries == []
 
 
-def test_prepare_tool_dispatch_confirmation_stages_policy_denied_tool_outcome() -> None:
+def test_prepare_tool_dispatch_confirmation_stages_no_tool_outcome() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         runner, session = _build_runner(Path(tmp), policy_api=ConfirmPolicyAdapter())
         state = runner._load_or_init_state("s-tool-outcome-confirm")
@@ -857,23 +860,178 @@ def test_prepare_tool_dispatch_confirmation_stages_policy_denied_tool_outcome() 
             logger=logger,
         )
 
+        # The call did not run (#524): no candidate, the policy event is kept.
         assert isinstance(prepared, PrepareOutcome)
         assert prepared.action_result.status == "needs_user"
-        entries = [
+        assert [
             entry
             for entry in _memory_entries(runner)
             if entry.get("kind") == "candidate"
-        ]
-        assert len(entries) == 1
-        assert entries[0]["content"]["outcome"] == "policy_denied"
-        assert entries[0]["title"] == "tool_outcome:echo:policy_denied"
-        assert entries[0]["content"]["args_signature"] == '{"msg":"hi"}'
-        assert entries[0]["confidence"] == 0.4
+        ] == []
+        assert state.memory_candidates == []
+        assert "staged_count" not in state.module_state.get("tool_outcome_memory", {})
+        types = [event["type"] for event in session.list_events(state.session_id)]
+        assert "policy.applied" in types
+
+
+def test_tool_call_that_did_not_run_stages_no_tool_outcome() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, session = _build_runner(Path(tmp), policy_api=ConfirmPolicyAdapter())
+        state = runner._load_or_init_state("s-tool-outcome-not-run")
+        logger = CanonicalEventLogger(
+            session_api=session,
+            session_id=state.session_id,
+            agent_id=runner.profile.agent_id,
+        )
+        executor = RunnerCommandExecutor(runner)
+        # The ask-user branch of execute_command.
+        outcome = executor.execute_command(
+            state=state,
+            command=ToolCommand(
+                command_id="cmd-not-run-ask",
+                title="Tool call: echo",
+                tool_name="echo",
+                args={"msg": "hi"},
+            ),
+            logger=logger,
+        )
+        assert outcome.action_result is not None
+        assert outcome.action_result.status == "needs_user"
+        # A result that needs the user or is blocked, for an allowlisted tool.
+        for status, code in [
+            ("needs_user", "CONFIRM_REQUIRED"),
+            ("blocked", "PERMISSION_DENIED_READONLY"),
+        ]:
+            command = ToolCommand(
+                command_id=f"cmd-not-run-{status}",
+                title="Tool call: web.fetch",
+                tool_name="web.fetch",
+                args={"url": "https://example.com"},
+            )
+            prepared = PreparedToolDispatch(
+                approved_command=command,
+                original_command=command,
+                command_id=command.command_id,
+                tool_name=command.tool_name,
+                validated_args=dict(command.args),
+                session_id=state.session_id,
+                trace_id=str(state.trace_id or ""),
+                agent_id=runner.profile.agent_id,
+                lineage={},
+                permission_mode="ask",
+                payload={},
+            )
+            result = ActionResult(
+                command_id=command.command_id,
+                status=status,
+                summary="not run",
+                error=ActionError(code=code, message="not run"),
+            )
+            with patch.object(
+                runner, "_normalize_execution_result", return_value=(result, None)
+            ):
+                executor.finalize_tool_result(
+                    state=state,
+                    prepared_dispatch=prepared,
+                    raw_result=RawToolResult(
+                        command_id=command.command_id,
+                        tool_name=command.tool_name,
+                        raw_output={"ok": False},
+                    ),
+                    logger=logger,
+                )
+
+        assert [
+            entry
+            for entry in _memory_entries(runner)
+            if entry.get("kind") == "candidate"
+        ] == []
+        assert state.memory_candidates == []
+        assert "staged_count" not in state.module_state.get("tool_outcome_memory", {})
+
+
+def test_executed_takeover_result_is_policy_denied_and_stages_no_tool_outcome() -> None:
+    # Intentional tradeoff of #524: a tool that ran and returned
+    # requires_user_takeover gets the status needs_user, so its outcome is
+    # policy_denied and stages no candidate. The same call without takeover
+    # stages its allowlisted success candidate.
+    calls: list[dict[str, object]] = []
+
+    def _run_tool(takeover: bool) -> dict[str, object]:
+        def _handler(args, _context):
+            calls.append(dict(args))
+            return {"ok": True, "requires_user_takeover": takeover}
+
+        with patch(
+            "openminion.modules.brain.adapters.tool.results.emit_tool_execution_event"
+        ):
+            return run_tool_spec(
+                spec=SimpleNamespace(name="web.fetch", handler=_handler),
+                validated_args={"url": "https://example.com"},
+                context=SimpleNamespace(tool_call_id="call-takeover", artifacts=[]),
+                start_time=time.monotonic(),
+                background_write_authorized=False,
+                tool_name="web.fetch",
+            )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, session = _build_runner(Path(tmp), policy_api=LocalPolicyAdapter())
+        state = runner._load_or_init_state("s-tool-outcome-takeover")
+        logger = CanonicalEventLogger(
+            session_api=session,
+            session_id=state.session_id,
+            agent_id=runner.profile.agent_id,
+        )
+        executor = RunnerCommandExecutor(runner)
+        results = {}
+        for takeover in (False, True):
+            command = ToolCommand(
+                command_id=f"cmd-takeover-{str(takeover).lower()}",
+                title="Tool call: web.fetch",
+                tool_name="web.fetch",
+                args={"url": "https://example.com"},
+                success_criteria={"status": "success"},
+            )
+            prepared = PreparedToolDispatch(
+                approved_command=command,
+                original_command=command,
+                command_id=command.command_id,
+                tool_name=command.tool_name,
+                validated_args=dict(command.args),
+                session_id=state.session_id,
+                trace_id=str(state.trace_id or ""),
+                agent_id=runner.profile.agent_id,
+                lineage={},
+                permission_mode="ask",
+                payload={},
+            )
+            results[takeover] = executor.finalize_tool_result(
+                state=state,
+                prepared_dispatch=prepared,
+                raw_result=RawToolResult(
+                    command_id=command.command_id,
+                    tool_name=command.tool_name,
+                    raw_output=_run_tool(takeover),
+                ),
+                logger=logger,
+            ).action_result
+
+        assert calls == [{"url": "https://example.com"}] * 2
+        assert results[False] is not None and results[False].status == "success"
+        assert results[True] is not None and results[True].status == "needs_user"
+        assert _tool_outcome_from_result(action_result=results[True]) == (
+            "policy_denied"
+        )
+        assert [
+            entry["title"]
+            for entry in _memory_entries(runner)
+            if entry.get("kind") == "candidate"
+        ] == ["tool_outcome:web.fetch:success"]
 
 
 def test_tool_outcome_is_not_staged_when_the_turn_may_not_write_memory() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        runner, session = _build_runner(Path(tmp), policy_api=ConfirmPolicyAdapter())
+        runner, session = _build_runner(Path(tmp), policy_api=LocalPolicyAdapter())
         runner._memory_write_allowed_for_turn = False
         state = runner._load_or_init_state("s-tool-outcome-not-authorized")
         logger = CanonicalEventLogger(
@@ -881,22 +1039,48 @@ def test_tool_outcome_is_not_staged_when_the_turn_may_not_write_memory() -> None
             session_id="s-tool-outcome-not-authorized",
             agent_id=runner.profile.agent_id,
         )
+        # A failed call, whose candidate the turn's answer alone suppresses: a
+        # call that did not run stages none either way (#524).
         command = ToolCommand(
             command_id="cmd-tool-not-authorized",
-            title="Tool call: echo",
-            tool_name="echo",
-            args={"msg": "hi"},
+            title="Tool call: file.read",
+            tool_name="file.read",
+            args={"path": "/tmp/missing.txt"},
             success_criteria={"status": "success"},
         )
-
-        prepared = RunnerCommandExecutor(runner).prepare_tool_dispatch(
-            state=state,
-            command=command,
-            logger=logger,
+        prepared = PreparedToolDispatch(
+            approved_command=command,
+            original_command=command,
+            command_id=command.command_id,
+            tool_name=command.tool_name,
+            validated_args=dict(command.args),
+            session_id=state.session_id,
+            trace_id=str(state.trace_id or ""),
+            agent_id=runner.profile.agent_id,
+            lineage={},
+            permission_mode="ask",
+            payload={},
         )
+        failed = ActionResult(
+            command_id=command.command_id,
+            status="failed",
+            summary="read failed",
+            error=ActionError(code="READ_ERROR", message="boom"),
+        )
+        with patch.object(
+            runner, "_normalize_execution_result", return_value=(failed, None)
+        ):
+            RunnerCommandExecutor(runner).finalize_tool_result(
+                state=state,
+                prepared_dispatch=prepared,
+                raw_result=RawToolResult(
+                    command_id=command.command_id,
+                    tool_name=command.tool_name,
+                    raw_output={"ok": False},
+                ),
+                logger=logger,
+            )
 
-        assert isinstance(prepared, PrepareOutcome)
-        assert prepared.action_result.status == "needs_user"
         assert [
             entry
             for entry in _memory_entries(runner)

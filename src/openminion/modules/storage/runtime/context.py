@@ -133,6 +133,14 @@ def build_runtime_storage(
             check_connection=True,
             check_migrations=True,
         )
+        if backend_id == "record.postgres":
+            from openminion.modules.storage.migrations.postgres_schema import (
+                check_runtime_postgres_url,
+            )
+
+            # Read only: refuse a base schema runtime storage cannot prove is its
+            # own before the engine or a migration writes anything (#446).
+            check_runtime_postgres_url(_pg_url)
     engine = StorageEngine.from_config(
         config=StorageEngineConfig(
             root_dir=resolved_path.parent,

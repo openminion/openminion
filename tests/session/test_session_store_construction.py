@@ -90,9 +90,10 @@ def test_build_module_session_store_uses_storage_engine_for_sqlite(
     captured: dict[str, object] = {}
     original = StorageEngine.from_config
 
-    def wrapped(cls, *, config, registry=None):  # type: ignore[no-untyped-def]
+    def wrapped(cls, *, config, registry=None, module_id=None):  # type: ignore[no-untyped-def]
         captured["config"] = config
-        return original(config=config, registry=registry)
+        captured["module_id"] = module_id
+        return original(config=config, registry=registry, module_id=module_id)
 
     monkeypatch.setattr(StorageEngine, "from_config", classmethod(wrapped))
 
@@ -107,6 +108,8 @@ def test_build_module_session_store_uses_storage_engine_for_sqlite(
     )
     try:
         assert "config" in captured
+        # The module id selects a PostgreSQL schema only; SQLite ignores it (#446).
+        assert captured["module_id"] == "session"
         assert isinstance(store, SQLiteSessionStore)
         assert store._hybrid_store.record_store is store._record_store  # noqa: SLF001
     finally:

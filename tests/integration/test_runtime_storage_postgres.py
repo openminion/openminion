@@ -1397,7 +1397,8 @@ class _InjectedStartFailure(RuntimeError):
     "case",
     [
         "started-then-closed",
-        "sessions-table-exists",
+        "v1-migration-fails",
+        "refused-before-engine",
         "stack-gateway-after-agent",
         "construction-post-init",
         "after-construction-runtime-manager",
@@ -1409,7 +1410,8 @@ def test_postgres_failed_start_closes_the_owned_engine_and_emitter(
     """A failed start closes the record store's engine and stops its emitter (#447).
 
     Automatic garbage collection is off, so the checks right after the
-    exception see what the owners closed, not what a collection freed.
+    exception see what the owners closed, not what a collection freed. A start
+    that the schema check refuses (#446) creates no engine at all.
     """
     from openminion.api import runtime as runtime_module
     from openminion.api.core import bootstrap
@@ -1437,28 +1439,36 @@ def test_postgres_failed_start_closes_the_owned_engine_and_emitter(
         monkeypatch.setattr(bootstrap, "build_runtime_manager", fail)
     root = tmp_path / "root"
     with _runtime_database("om447_start") as database, automatic_gc_off():
-        if case == "sessions-table-exists":
+        setup_sql = {
+            # Not a table, so the schema check passes; v1 then fails on it.
+            "v1-migration-fails": "CREATE SEQUENCE idx_sessions_channel_target",
+            "refused-before-engine": "CREATE TABLE sessions (session_id TEXT PRIMARY KEY)",
+        }.get(case)
+        if setup_sql:
             setup = sqlalchemy.create_engine(database.url, future=True)
             with setup.begin() as conn:
-                conn.execute(
-                    sqlalchemy.text(
-                        "CREATE TABLE sessions (session_id TEXT PRIMARY KEY)"
-                    )
-                )
+                conn.execute(sqlalchemy.text(setup_sql))
             setup.dispose()
         config_path = write_runtime_config(root, postgres_url=database.url)
         threads = set(threading.enumerate())
 
         if case == "started-then-closed":
             start_runtime(config_path).close()
-        elif case == "sessions-table-exists":
-            with pytest.raises(MigrationError, match="sessions"):
+        elif case == "v1-migration-fails":
+            with pytest.raises(MigrationError, match="idx_sessions_channel_target"):
+                start_runtime(config_path)
+        elif case == "refused-before-engine":
+            from openminion.modules.storage.migrations.errors import (
+                SchemaOwnershipError,
+            )
+
+            with pytest.raises(SchemaOwnershipError, match="sessions"):
                 start_runtime(config_path)
         else:
             with pytest.raises(_InjectedStartFailure) as excinfo:
                 start_runtime(config_path)
             assert excinfo.value is injected
 
-        assert len(engine_closes) == 1
+        assert len(engine_closes) == (0 if case == "refused-before-engine" else 1)
         assert database.connections() == 0
         assert_released(root, threads)

@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from openminion.modules.storage.engine import StorageEngine, StorageEngineConfig
+from openminion.modules.storage.migrations.postgres_schema import (
+    select_postgres_module_schema,
+)
 
 from .audit_store import PostgresAuditStore, SQLiteAuditStore
 from .base import AuditStore, StateStore
@@ -22,7 +25,7 @@ def build_a2a_state_store(
         )
 
     _require_postgres_backend(backend)
-    engine = StorageEngine.from_config(config=config)
+    engine = StorageEngine.from_config(config=config, module_id="a2a")
     return PostgresStateStore(record_store=engine.record_store)
 
 
@@ -58,15 +61,22 @@ def build_a2a_audit_store(
         raise ValueError(
             "Postgres-backed a2a audit storage requires record backend URL"
         )
-    engine = create_engine(url, future=True)
-    return PostgresAuditStore(
-        engine,
-        capture_payloads=capture_payloads,
-        retention_days=retention_days,
-        archive_retention_days=archive_retention_days,
-        database_path=raw_audit_root / "audit.db",
-        owns_engine=True,
-    )
+    # The a2a module's own schema under the configured base schema (#446).
+    selection = select_postgres_module_schema(url, "a2a")
+    engine = create_engine(selection.url(url), future=True)
+    try:
+        return PostgresAuditStore(
+            engine,
+            capture_payloads=capture_payloads,
+            retention_days=retention_days,
+            archive_retention_days=archive_retention_days,
+            database_path=raw_audit_root / "audit.db",
+            owns_engine=True,
+            postgres_schema=selection,
+        )
+    except BaseException:
+        engine.dispose()
+        raise
 
 
 def _require_postgres_backend(backend: str) -> None:

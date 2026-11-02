@@ -323,6 +323,27 @@ class JobRecord:
             "heartbeat_at": self.heartbeat_at,
         }
 
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "JobRecord":
+        return cls(
+            task_id=str(raw.get("task_id", "")),
+            trace_id=str(raw.get("trace_id", "")),
+            idempotency_key=str(raw.get("idempotency_key", "")),
+            agent_id=str(raw.get("agent_id", "")),
+            method=str(raw.get("method", "")),
+            state=str(raw.get("state", "")),
+            current_step=str(raw.get("current_step", "")),
+            progress=float(raw.get("progress", 0.0)),
+            result_inline=_optional_dict(raw, "result_inline"),
+            result_ref=_optional_string(raw, "result_ref"),
+            error=_optional_dict(raw, "error"),
+            owner_agent_id=str(raw.get("owner_agent_id", "")),
+            idempotency_scope=str(raw.get("idempotency_scope", "")),
+            created_at=str(raw.get("created_at", iso_now())),
+            updated_at=str(raw.get("updated_at", iso_now())),
+            heartbeat_at=str(raw.get("heartbeat_at", iso_now())),
+        )
+
 
 @dataclass
 class AgentDescriptor:
@@ -390,3 +411,8 @@ def _artifact_refs_from_raw(raw_items: Any) -> list[ArtifactRef]:
 def _optional_string(raw: dict[str, Any], key: str) -> str | None:
     value = raw.get(key)
     return None if value is None else str(value)
+
+
+def _optional_dict(raw: dict[str, Any], key: str) -> dict[str, Any] | None:
+    value = raw.get(key)
+    return dict(value) if isinstance(value, dict) else None
