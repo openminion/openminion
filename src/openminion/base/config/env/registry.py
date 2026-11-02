@@ -236,7 +236,7 @@ ENV_VAR_SPECS: tuple[EnvVarSpec, ...] = (
     EnvVarSpec(
         name="OPENMINION_TOOL_EXEC_SAFE_BIN_TRUSTED_DIRS",
         value_type="csv paths",
-        default="/bin,/usr/bin,/usr/local/bin",
+        default="/bin,/usr/bin,/usr/local/bin,/usr/lib/cargo/bin/coreutils",
         owner="tools/exec",
         description="Trusted directories for safe executable names.",
     ),
