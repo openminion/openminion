@@ -333,10 +333,15 @@ def test_exec_run_accepts_cmd_alias(tmp_path):
 def test_exec_run_defaults_to_allowlisted_gateway_when_host_exec_is_enabled(
     tmp_path,
 ) -> None:
+    whoami_path = shutil.which("whoami")
+    assert whoami_path is not None
     ctx = _ctx(
         tmp_path,
         env=EnvironmentConfig.from_sources(
-            process_env={"OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1"}
+            process_env={
+                "OPENMINION_TOOL_EXEC_ALLOWLIST_PATHS": whoami_path,
+                "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
+            }
         ),
     )
 
@@ -349,10 +354,15 @@ def test_exec_run_defaults_to_allowlisted_gateway_when_host_exec_is_enabled(
 def test_exec_run_falls_back_from_unavailable_sandbox_when_host_exec_is_enabled(
     tmp_path,
 ) -> None:
+    whoami_path = shutil.which("whoami")
+    assert whoami_path is not None
     ctx = _ctx(
         tmp_path,
         env=EnvironmentConfig.from_sources(
-            process_env={"OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1"}
+            process_env={
+                "OPENMINION_TOOL_EXEC_ALLOWLIST_PATHS": whoami_path,
+                "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
+            }
         ),
     )
 

@@ -1,11 +1,13 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-10-29
+Last updated: 2026-11-01
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-01
 
 - Recognize Ubuntu 26.04's system coreutils directory for allowlisted host
   commands. Commands such as `whoami` resolve through `/usr/bin` symlinks to
