@@ -129,7 +129,9 @@ def _provider_payload(base_url: str, model: str = "gpt-4.1-mini") -> dict:
 
 
 def test_saved_config_has_one_provider_authority(tmp_path: Path) -> None:
-    config = OpenMinionConfig.from_dict({"providers": _provider_payload("https://gw/v1")})
+    config = OpenMinionConfig.from_dict(
+        {"providers": _provider_payload("https://gw/v1")}
+    )
     path = save_config(config, str(tmp_path / "agents.json"))
 
     persisted = json.loads(path.read_text(encoding="utf-8"))
@@ -138,7 +140,9 @@ def test_saved_config_has_one_provider_authority(tmp_path: Path) -> None:
 
 
 def test_editing_the_top_level_providers_block_is_effective(tmp_path: Path) -> None:
-    config = OpenMinionConfig.from_dict({"providers": _provider_payload("https://old/v1")})
+    config = OpenMinionConfig.from_dict(
+        {"providers": _provider_payload("https://old/v1")}
+    )
     path = save_config(config, str(tmp_path / "agents.json"))
 
     persisted = json.loads(path.read_text(encoding="utf-8"))
