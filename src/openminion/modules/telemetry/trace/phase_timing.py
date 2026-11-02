@@ -8,6 +8,10 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Iterator, Literal
 
+from openminion.modules.tool.contracts.provider_types import (
+    provider_tool_schema_payload,
+)
+
 
 ChatPhase = Literal[
     "runtime_bootstrap",
@@ -263,7 +267,7 @@ class ChatPhaseTimer:
     ) -> None:
         normalized_purpose = str(purpose or "unknown").strip() or "unknown"
         message_payload = [_jsonable(item) for item in messages]
-        tool_payload = [_jsonable(item) for item in tools]
+        tool_payload = provider_tool_schema_payload(tools)
         with self._lock:
             self._provider_call_purposes.append(normalized_purpose)
             self._provider_call_latency_ms.append(

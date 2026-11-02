@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from collections.abc import Iterable
 from typing import Any
 
 from openminion.modules.tool.constants import PROVIDER_TOOL_CALL_DEFAULT_SOURCE
@@ -22,7 +23,28 @@ class ProviderToolCall:
     approval_id: str = ""
 
 
+def provider_tool_schema_payload(
+    tools: Iterable[object],
+) -> list[dict[str, Any]]:
+    """Return the exact content-bearing schema fields sent to a provider."""
+
+    return [
+        {
+            "name": str(getattr(tool, "name", "")),
+            "description": str(getattr(tool, "description", "")),
+            "parameters": getattr(
+                tool,
+                "parameters",
+                getattr(tool, "input_schema", {}),
+            ),
+            "strict": bool(getattr(tool, "strict", False)),
+        }
+        for tool in tools
+    ]
+
+
 __all__ = [
     "ProviderToolCall",
     "ProviderToolSpec",
+    "provider_tool_schema_payload",
 ]

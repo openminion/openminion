@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -16,6 +17,9 @@ from openminion.modules.telemetry.trace.phase_timing import (
 )
 from openminion.modules.telemetry.events.catalog import CHAT_PHASE_TIMING
 from openminion.modules.llm.schemas import LLMResponse, Message, ToolSpec, UsageInfo
+from openminion.modules.tool.contracts.provider_types import (
+    provider_tool_schema_payload,
+)
 
 
 def test_chat_phases_closed_set_matches_contract():
@@ -349,7 +353,16 @@ def test_active_timer_aggregates_provider_call_costs():
     assert payload.provider_request_bytes > 0
     assert payload.provider_response_bytes > 0
     assert payload.tool_schema_count_max == 1
-    assert payload.tool_schema_bytes_total > 0
+    assert payload.tool_schema_bytes_total == sum(
+        len(
+            json.dumps(
+                provider_tool_schema_payload(call_tools),
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        )
+        for call_tools in (tools, [])
+    )
 
 
 def test_active_timer_records_provider_attempt_sequence():

@@ -36,7 +36,9 @@ from openminion.modules.telemetry.trace.metadata import (
 )
 from openminion.modules.telemetry.trace.structured import write_structured_trace
 from openminion.modules.llm.thinking import serialize_thinking_blocks
-from openminion.modules.tool.dispatch import get_registry_manager
+from openminion.modules.tool.contracts.provider_types import (
+    provider_tool_schema_payload,
+)
 
 
 def _public_trace_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -69,31 +71,7 @@ def _trace_enabled() -> bool:
 
 
 def _provider_request_tools_payload(tools) -> list[dict[str, Any]]:
-    manager = get_registry_manager()
-
-    def _schema_for_tool_name(tool_name: str) -> dict[str, Any]:
-        if manager is None or not callable(getattr(manager, "schema_for", None)):
-            return {}
-        try:
-            schema = manager.schema_for(tool_name)
-        except Exception:
-            return {}
-        return dict(schema) if isinstance(schema, dict) else {}
-
-    payload: list[dict[str, Any]] = []
-    for tool in tools or []:
-        name = str(getattr(tool, "name", "") or "")
-        payload.append(
-            {
-                "name": name,
-                "description": str(getattr(tool, "description", "") or ""),
-                "parameters": _schema_for_tool_name(name)
-                or getattr(tool, "parameters", {})
-                or {},
-                "risk": str(getattr(tool, "risk", "") or ""),
-            }
-        )
-    return payload
+    return provider_tool_schema_payload(tools or [])
 
 
 def _provider_request_payload(

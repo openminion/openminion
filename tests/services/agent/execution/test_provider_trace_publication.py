@@ -18,6 +18,9 @@ from openminion.modules.telemetry.trace.structured import (
     TraceArtifactPublication,
     trace_context_payload,
 )
+from openminion.modules.tool.contracts.provider_types import (
+    provider_tool_schema_payload,
+)
 from openminion.services.agent.telemetry import (
     generate_with_provider_call_telemetry,
     trace_provider_request,
@@ -119,9 +122,22 @@ async def test_response_artifacts_publish_before_completed_event() -> None:
     assert completed["model"] == "model-1"
     assert completed["purpose"] == "act"
     assert completed["tool_schema_count"] == 1
-    assert completed["tool_schema_bytes"] > 0
-    assert "private.lookup" not in json.dumps(completed)
-    assert "must not be persisted" not in json.dumps(completed)
+    expected_tool_payload = provider_tool_schema_payload(_request().tools)
+    assert completed["tool_schema_bytes"] == len(
+        json.dumps(
+            expected_tool_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    )
+    serialized = json.dumps(completed)
+    for private_value in (
+        "private.lookup",
+        "must not be persisted",
+        "properties",
+        "secret",
+    ):
+        assert private_value not in serialized
 
 
 @pytest.mark.asyncio
@@ -165,7 +181,14 @@ async def test_failed_call_retains_published_request_and_raw_artifacts() -> None
     assert failed["purpose"] == "act"
     assert failed["tool_schema_count"] == 1
     assert failed["tool_schema_bytes"] > 0
-    assert "private.lookup" not in json.dumps(failed)
+    serialized = json.dumps(failed)
+    for private_value in (
+        "private.lookup",
+        "must not be persisted",
+        "properties",
+        "secret",
+    ):
+        assert private_value not in serialized
     assert failed["error"] == {
         "type": "ProviderError",
         "code": "RATE_LIMITED",
