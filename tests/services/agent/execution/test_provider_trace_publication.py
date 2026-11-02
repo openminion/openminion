@@ -105,6 +105,8 @@ async def test_response_artifacts_publish_before_completed_event() -> None:
     assert started["service_vendor"] == "cortensor"
     assert started["request_id"] == "req-1"
     assert started["trace_id"] == "trace-1"
+    assert "tool_schema_count" not in started
+    assert "tool_schema_bytes" not in started
     assert completed["trace_artifact_paths"] == [
         "llm/request.json",
         "llm/response.json",
