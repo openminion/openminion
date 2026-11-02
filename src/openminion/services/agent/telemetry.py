@@ -70,10 +70,6 @@ def _trace_enabled() -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _provider_request_tools_payload(tools) -> list[dict[str, Any]]:
-    return provider_tool_schema_payload(tools or [])
-
-
 def _provider_request_payload(
     *,
     provider_request: ProviderRequest,
@@ -95,7 +91,7 @@ def _provider_request_payload(
             {"role": item.role, "content": item.content}
             for item in list(provider_request.history or [])
         ],
-        "tools": _provider_request_tools_payload(list(provider_request.tools or [])),
+        "tools": provider_tool_schema_payload(list(provider_request.tools or [])),
         "tool_choice": getattr(provider_request, "tool_choice", "auto"),
         "tool_call_strategy": str(
             getattr(provider_request, "tool_call_strategy", "") or ""
@@ -435,7 +431,7 @@ async def generate_with_provider_call_telemetry(
 
     llm_call_id = str(uuid4())
     correlation = _llm_correlation_fields(request)
-    tool_payload = _provider_request_tools_payload(list(request.tools or []))
+    tool_payload = provider_tool_schema_payload(list(request.tools or []))
     call_fields = {
         "llm_call_id": llm_call_id,
         "provider": provider_name,
