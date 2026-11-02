@@ -316,7 +316,7 @@ src/openminion/services/agent/execution/tool_plan.py	1	0	current broad-handler b
 src/openminion/services/agent/identity_binding.py	8	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/agent/memory/gateway_adapter.py	6	4	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/agent/service.py	4	0	AOBS/TCPL best-effort telemetry/binding boundary; ratchet by narrowing in agent service cleanup
-src/openminion/services/agent/telemetry.py	2	0	AOBS/TCPL trace/export best-effort telemetry boundary; ratchet by narrowing in telemetry cleanup
+src/openminion/services/agent/telemetry.py	1	0	AOBS/TCPL trace/export best-effort telemetry boundary; ratchet by narrowing in telemetry cleanup
 src/openminion/services/brain/client.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/factory/retrieve.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/factory/rlm.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
