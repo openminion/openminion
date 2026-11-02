@@ -21,6 +21,8 @@ from tests._room_participant_scenarios import (
     LEGACY_ORDER,
     PRE_UPGRADE_ORDER_SQL,
     check_upgraded_join_order,
+    join_agents,
+    join_seq_by_participant,
     legacy_participant_rows,
 )
 
@@ -483,11 +485,49 @@ def test_join_seq_migration_numbers_participants_in_pre_upgrade_order(
     assert migrate_database(path).applied_versions == (14, 15)
 
     with closing(connect_database(path)) as conn:
+        indexes = {
+            row[1]: row for row in conn.execute("PRAGMA index_list(room_participants)")
+        }
+        join_seq_index = indexes["idx_room_participants_session_join_seq"]
+        assert join_seq_index[2] == 1
         assert [
-            row[0]
+            row[2]
             for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'index' "
-                "AND tbl_name = 'room_participants' AND sql LIKE 'CREATE UNIQUE%'"
+                "PRAGMA index_info('idx_room_participants_session_join_seq')"
             )
-        ] == ["idx_room_participants_session_join_seq"]
+        ] == ["session_id", "join_seq"]
         check_upgraded_join_order(SessionStore(conn), counted)
+        upgraded = {
+            str(row[0]): int(row[1])
+            for row in conn.execute("SELECT id, join_seq FROM room_participants")
+        }
+
+    # Reopening runs the runner again: migration 14 is already applied and the
+    # numbering it wrote is unchanged.
+    assert migrate_database(path).applied_versions == ()
+    with closing(connect_database(path)) as conn:
+        assert {
+            str(row[0]): int(row[1])
+            for row in conn.execute("SELECT id, join_seq FROM room_participants")
+        } == upgraded
+
+
+def test_join_seq_fresh_database_numbers_new_participants(tmp_path: Path) -> None:
+    path = tmp_path / "openminion.db"
+    assert migrate_database(path).applied_versions == tuple(range(1, 16))
+
+    with closing(connect_database(path)) as conn:
+        sessions = SessionStore(conn)
+        room = sessions.create_room(channel="cli", target="fresh-join-seq")
+        joined = join_agents(sessions, room.id, ("first", "second", "third"), ids="fc0")
+
+        assert [item.participant_id for item in joined] == [
+            "first",
+            "second",
+            "third",
+        ]
+        assert join_seq_by_participant(sessions, room.id) == {
+            "first": 1,
+            "second": 2,
+            "third": 3,
+        }

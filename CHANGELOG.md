@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Keep runtime migration 14 portable to SQLite older than 3.33: the
+  join-sequence backfill now uses a correlated subquery instead of
+  `UPDATE ... FROM`, preserving the per-session `(joined_at, id)` numbering on
+  SQLite and PostgreSQL (Refs #564).
+
 ## Current package line - 2026-11-01
 
 - Recognize Ubuntu 26.04's system coreutils directory for allowlisted host
