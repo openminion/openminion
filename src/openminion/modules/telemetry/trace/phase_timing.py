@@ -8,11 +8,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Iterator, Literal
 
-from openminion.modules.tool.contracts.provider_types import (
-    provider_tool_schema_payload,
-)
-
-
 ChatPhase = Literal[
     "runtime_bootstrap",
     "daemon_probe_start",
@@ -541,6 +536,24 @@ def _jsonable(value: object) -> object:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
     return value
+
+
+def provider_tool_schema_payload(tools: list[object]) -> list[dict[str, object]]:
+    """Return stable schema fields for a provider-facing tool list."""
+
+    return [
+        {
+            "name": str(getattr(tool, "name", "")),
+            "description": str(getattr(tool, "description", "")),
+            "parameters": getattr(
+                tool,
+                "parameters",
+                getattr(tool, "input_schema", {}),
+            ),
+            "strict": bool(getattr(tool, "strict", False)),
+        }
+        for tool in tools
+    ]
 
 
 def _json_bytes(value: object) -> int:

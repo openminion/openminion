@@ -36,7 +36,7 @@ from openminion.modules.telemetry.trace.metadata import (
 )
 from openminion.modules.telemetry.trace.structured import write_structured_trace
 from openminion.modules.llm.thinking import serialize_thinking_blocks
-from openminion.modules.tool.contracts.provider_types import (
+from openminion.modules.telemetry.trace.phase_timing import (
     provider_tool_schema_payload,
 )
 

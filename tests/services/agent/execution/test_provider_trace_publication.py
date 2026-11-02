@@ -18,7 +18,7 @@ from openminion.modules.telemetry.trace.structured import (
     TraceArtifactPublication,
     trace_context_payload,
 )
-from openminion.modules.tool.contracts.provider_types import (
+from openminion.modules.telemetry.trace.phase_timing import (
     provider_tool_schema_payload,
 )
 from openminion.services.agent.telemetry import (

@@ -12,14 +12,12 @@ from openminion.modules.telemetry.trace.phase_timing import (
     active_chat_phase,
     mark_active_chat_first_text,
     mark_active_chat_provider_token,
+    provider_tool_schema_payload,
     record_active_chat_provider_call,
     use_chat_phase_timer,
 )
 from openminion.modules.telemetry.events.catalog import CHAT_PHASE_TIMING
 from openminion.modules.llm.schemas import LLMResponse, Message, ToolSpec, UsageInfo
-from openminion.modules.tool.contracts.provider_types import (
-    provider_tool_schema_payload,
-)
 
 
 def test_chat_phases_closed_set_matches_contract():
