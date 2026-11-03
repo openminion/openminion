@@ -10,13 +10,7 @@ EXPLICIT_SESSION_ID = "run-delivery-session"
 
 
 class RunOnceDeliveryAcknowledgementTestCase(GatewayServiceTestCase):
-    """Lock the one-shot delivery-acknowledgement contract.
-
-    `cli/commands/run.py` runs turns with `deliver=False` and returns the reply
-    to the caller. The caller handles that delivery, so it must signal
-    `caller_handles_delivery=true`; otherwise the reply stays a pending outbound
-    and the next `run --session` call replays it instead of running a new turn.
-    """
+    """A ``deliver=False`` reply stays pending until the caller acknowledges delivery."""
 
     def test_deliver_false_without_caller_delivery_replays_pending_response(
         self,

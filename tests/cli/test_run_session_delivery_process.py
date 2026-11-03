@@ -1,13 +1,8 @@
-"""Real-process contract for one-shot ``openminion run`` delivery acknowledgement.
+"""One-shot ``openminion run`` delivery across separate source CLI processes.
 
-``openminion run`` executes a turn with ``deliver=False`` and returns the reply to the
-caller, so it must signal ``caller_handles_delivery=true`` at both request boundaries
-(in-process runtime and daemon). Without that signal the reply stays a pending outbound
-and the next invocation replays it instead of running new work.
-
-These tests drive the installed CLI in separate processes against a controlled
-local OpenAI-compatible provider so the command contract, the transport boundary and
-the persisted acknowledgement are locked together.
+Each case runs the CLI from this checkout with the source ``PYTHONPATH`` — not an
+installed package — against a controlled local HTTP provider, for the in-process
+and daemon request shapes.
 """
 
 from __future__ import annotations
@@ -262,8 +257,6 @@ def _assert_session_contract(
         assert f"reply to: {prompt}" in completed.stdout, completed.stdout
         return completed
 
-    # Cycle one: a repeated invocation with an explicit session must run new work
-    # instead of replaying the settled reply, and must persist the acknowledgement.
     run_cli_run("first turn")
     first_events = _delivered_events(storage_path)
     assert len(first_events) == 1
