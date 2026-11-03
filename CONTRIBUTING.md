@@ -91,8 +91,8 @@ or expired handoffs, and avoid duplicate reminders when nothing has changed.
 
 ### Implementation and review
 
-Every contributor, including maintainers and contributors using code-generation
-tools, must follow [Code Quality and Hygiene](CODE_QUALITY.md). Before requesting
+Every contributor and coding agent, including maintainers and contributors
+using code-generation tools, must follow [Code Quality and Hygiene](CODE_QUALITY.md). Before requesting
 review, inspect the final diff for duplicate helpers, unnecessary abstractions,
 and comments or docstrings that repeat the code. Names, types and direct control
 flow should carry the explanation; retain only necessary context. See the
