@@ -356,7 +356,6 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 ctx.state.decision_sub_intent_refs,
                 existing=[],
             )
-
         runner = runner_from_context(ctx)
         consolidation_overrides = _memory_consolidation_profile_overrides(ctx)
         watch_overrides = (
