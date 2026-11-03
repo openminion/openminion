@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Log the identity-profile fallback at `DEBUG` instead of `WARNING`: a missing
+  identity profile is the default state, so a stock install no longer warns on
+  every single turn (Refs #572).
+
 - Treat a `4xx` daemon response as the definitive answer instead of falling back
   to the in-process runtime, so a rejected or failed tool call is neither executed
   twice nor replaced by a locally produced error (Refs #574).
