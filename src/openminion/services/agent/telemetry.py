@@ -442,7 +442,9 @@ async def generate_with_provider_call_telemetry(
     }
     terminal_fields = dict(call_fields, tool_schema_count=len(tool_payload))
     terminal_fields["tool_schema_bytes"] = len(
-        json.dumps(tool_payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+        json.dumps(
+            tool_payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode()
     )
     started_at = time.monotonic()
     publication = read_trace_publication()

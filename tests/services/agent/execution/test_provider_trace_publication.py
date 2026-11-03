@@ -54,7 +54,10 @@ def _request() -> ProviderRequest:
             ProviderToolSpec(
                 name="private.lookup",
                 description="must not be persisted",
-                parameters={"type": "object", "properties": {"secret": {"type": "string"}}},
+                parameters={
+                    "type": "object",
+                    "properties": {"secret": {"type": "string"}},
+                },
             )
         ],
     )

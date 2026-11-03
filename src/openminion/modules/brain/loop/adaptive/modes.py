@@ -478,7 +478,8 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
             allowed_tools=effective_allowed_tools,
             allow_plan_tool=(decision_reason_code != "research_iteration_fallback"),
             provider_parallel_tool_capacity=(
-                0 if consolidation_overrides is not None
+                0
+                if consolidation_overrides is not None
                 else (1 if watch_overrides is not None else 2)
             ),
             max_iterations=_effective_max_iterations,
