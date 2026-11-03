@@ -11,6 +11,11 @@ This file tracks package-facing release notes for `openminion`.
   identity profile is the default state, so a stock install no longer warns on
   every single turn (Refs #572).
 
+- Run one-shot `run` turns with the caller's working directory as the tool
+  workspace root when `runtime.tool_workspace_root` is unset, so file tools see
+  the files the user is working on; an explicit `--dir` overrides a configured
+  root (Refs #575).
+
 - Treat a `4xx` daemon response as the definitive answer instead of falling back
   to the in-process runtime, so a rejected or failed tool call is neither executed
   twice nor replaced by a locally produced error (Refs #574).
