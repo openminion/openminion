@@ -97,6 +97,58 @@ def test_tools_auto_reports_inproc_fallback(monkeypatch) -> None:
     assert payload["runtime_fallback_reason"] == "daemon down"
 
 
+def test_runtime_source_returns_definitive_4xx_daemon_answer(monkeypatch) -> None:
+    import openminion.cli.transport.runtime_source as runtime_source
+
+    monkeypatch.setattr(
+        runtime_source,
+        "ensure_daemon_running",
+        lambda *_args, **_kwargs: SimpleNamespace(host="127.0.0.1", port=1),
+    )
+    inproc_calls: list[str] = []
+
+    def _inproc() -> dict[str, object]:
+        inproc_calls.append("called")
+        return {"ok": False, "error": {"code": "local_copy"}}
+
+    result = call_daemon_or_inproc(
+        args=Namespace(runtime_source="auto", config=None),
+        auto_start=False,
+        daemon_call=lambda _endpoint: (
+            400,
+            {"ok": False, "tool": {"error": "denied by daemon policy"}},
+        ),
+        inproc_call=_inproc,
+    )
+
+    # The daemon already answered: no local re-execution, no misleading reason.
+    assert result.source == "daemon"
+    assert result.payload["tool"]["error"] == "denied by daemon policy"
+    assert result.fallback_reason == ""
+    assert inproc_calls == []
+
+
+def test_runtime_source_still_falls_back_on_server_error(monkeypatch) -> None:
+    import openminion.cli.transport.runtime_source as runtime_source
+
+    monkeypatch.setattr(
+        runtime_source,
+        "ensure_daemon_running",
+        lambda *_args, **_kwargs: SimpleNamespace(host="127.0.0.1", port=1),
+    )
+
+    result = call_daemon_or_inproc(
+        args=Namespace(runtime_source="auto", config=None),
+        auto_start=False,
+        daemon_call=lambda _endpoint: (503, {"ok": False}),
+        inproc_call=lambda: {"ok": True, "value": "local"},
+    )
+
+    assert result.source == "inproc"
+    assert result.payload["value"] == "local"
+    assert result.fallback_reason == "daemon request failed (503)"
+
+
 def test_service_list_json_surfaces_major_runtime_services(capsys) -> None:
     code = service_command.run_service(Namespace(service_command="list", json=True))
 

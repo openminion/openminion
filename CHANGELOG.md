@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Treat a `4xx` daemon response as the definitive answer instead of falling back
+  to the in-process runtime, so a rejected or failed tool call is neither executed
+  twice nor replaced by a locally produced error (Refs #574).
+
 - Make `openminion run` acknowledge delivery of its returned one-shot reply, so a
   follow-up `run --session <id>` executes the new input instead of replaying the
   settled first turn; continuing that thread still requires `--resume` (Refs #556).
