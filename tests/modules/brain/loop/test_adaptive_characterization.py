@@ -935,6 +935,7 @@ def test_execute_builds_profile_variants_and_shortlisting(
         config={
             "max_adaptive_iterations": 2,
             "max_adaptive_tool_calls_per_loop": 3,
+            "max_adaptive_llm_calls_per_loop": 2,
             "adaptive_reflection_policy": "always",
         },
         runner=SimpleNamespace(
@@ -945,6 +946,7 @@ def test_execute_builds_profile_variants_and_shortlisting(
     result = mode.execute(_ctx())
     assert result.status == "done"
     assert captured[-1]["profile"].profile_name == "general_adaptive_v1"
+    assert captured[-1]["profile"].max_llm_calls_per_loop == 2
     assert "security.scan_code" in captured[-1]["profile"].allowed_tools
     assert captured[-1]["requestable_tool_specs"][0].name == "tool.request"
     assert (
