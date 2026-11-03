@@ -4,6 +4,7 @@ import json
 import logging
 from argparse import Namespace
 from types import SimpleNamespace
+from typing import Any
 
 from openminion.cli.commands import run as run_command
 
@@ -192,3 +193,50 @@ def test_run_openminion_honors_explicit_log_level(monkeypatch, caplog) -> None:
 
     assert code == 0
     assert "requested setup detail" in caplog.text
+
+
+def test_run_openminion_marks_caller_handles_delivery_inproc(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(run_command, "load_config", lambda _cfg: _run_config())
+    monkeypatch.setattr(
+        run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
+    )
+    monkeypatch.setattr(
+        run_command,
+        "run_turn",
+        lambda **kwargs: (
+            captured.update(kwargs) or {"run_id": "trace-556", "final_text": "done"}
+        ),
+    )
+
+    assert run_command.run_openminion(_run_args()) == 0
+
+    inbound = captured["payload"]["inbound_metadata"]
+    assert inbound["caller_handles_delivery"] == "true"
+
+
+def test_run_openminion_marks_caller_handles_delivery_daemon(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        run_command, "load_config", lambda _cfg: _run_config(process_mode="daemon")
+    )
+    monkeypatch.setattr(run_command, "resolve_default_agent_id", lambda _cfg: "agent")
+    monkeypatch.setattr(
+        run_command,
+        "daemon_request",
+        lambda **kwargs: (
+            calls.append(dict(kwargs))
+            or (200, {"ok": True, "turn": {"final_text": "done"}})
+        ),
+    )
+
+    def _call_source(**kwargs):
+        _status, payload = kwargs["daemon_call"](SimpleNamespace())
+        return SimpleNamespace(payload=payload, source="daemon", fallback_reason="")
+
+    monkeypatch.setattr(run_command, "call_daemon_or_inproc", _call_source)
+
+    assert run_command.run_openminion(_run_args()) == 0
+
+    meta = calls[0]["payload"]["meta"]
+    assert meta["inbound_metadata"]["caller_handles_delivery"] == "true"

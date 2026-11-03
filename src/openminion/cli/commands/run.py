@@ -21,6 +21,7 @@ from openminion.cli.parser.flags import (
     add_runtime_source_flag,
 )
 from openminion.api.turns import run_turn
+from openminion.services.gateway.constants import CALLER_HANDLES_DELIVERY_METADATA_KEY
 
 load_config = load_cli_config_from_args
 
@@ -50,6 +51,9 @@ def run_openminion(args: Any) -> int:
             "source": "openminion.run",
             "resume": str(bool(getattr(args, "resume", False))).lower(),
             "reset_session": str(bool(getattr(args, "reset_session", False))).lower(),
+            "inbound_metadata": {
+                CALLER_HANDLES_DELIVERY_METADATA_KEY: "true",
+            },
         },
     }
 
@@ -136,6 +140,7 @@ def _run_inproc(
             "reset_session": request_payload.get("meta", {}).get(
                 "reset_session", "false"
             ),
+            CALLER_HANDLES_DELIVERY_METADATA_KEY: "true",
         },
     }
     runtime = None
