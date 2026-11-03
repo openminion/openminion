@@ -218,6 +218,15 @@ For built-in providers, OpenMinion selects the API adapter automatically. The
 adapter describes compatibility, not provider identity. MiniMax remains the
 provider when it uses the OpenAI-compatible adapter.
 
+Provider settings in `agents.json` have one edit location: the top-level
+`providers` block. `openminion config init` writes `providers.<id>` once and
+does not duplicate it under `system.providers`, so editing
+`providers.openai.base_url` (or another field) takes effect on the next load.
+Older configs that define only `system.providers` still load, and a config that
+deliberately defines both blocks keeps the existing precedence (`system.providers`
+wins); a save then writes the effective values back to the top-level block and
+removes the duplicate mirror.
+
 Environment credentials are preferred. For example, OpenAI setup reads
 `OPENAI_API_KEY`; MiniMax setup reads `MINIMAX_API_KEY` while using the existing
 OpenAI-compatible adapter. Compatibility does not imply a shared account or

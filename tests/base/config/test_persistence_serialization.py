@@ -116,3 +116,65 @@ def test_save_config_skips_posix_permissions_on_windows(
     path = save_config(_config_with_mcp_secrets(), str(tmp_path / "agents.json"))
 
     assert path.exists()
+
+
+def _provider_payload(base_url: str, model: str = "gpt-4.1-mini") -> dict:
+    return {
+        "openai": {
+            "base_url": base_url,
+            "api_key_env": "GATEWAY_API_KEY",
+            "model": model,
+        }
+    }
+
+
+def test_saved_config_has_one_provider_authority(tmp_path: Path) -> None:
+    config = OpenMinionConfig.from_dict(
+        {"providers": _provider_payload("https://gw/v1")}
+    )
+    path = save_config(config, str(tmp_path / "agents.json"))
+
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["providers"]["openai"]["base_url"] == "https://gw/v1"
+    assert "providers" not in persisted.get("system", {})
+
+
+def test_editing_the_top_level_providers_block_is_effective(tmp_path: Path) -> None:
+    config = OpenMinionConfig.from_dict(
+        {"providers": _provider_payload("https://old/v1")}
+    )
+    path = save_config(config, str(tmp_path / "agents.json"))
+
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    persisted["providers"]["openai"]["base_url"] = "https://edited/v1"
+    path.write_text(json.dumps(persisted), encoding="utf-8")
+
+    reloaded = load_config(str(path))
+    assert reloaded.providers.openai.base_url == "https://edited/v1"
+
+
+def test_system_only_provider_config_still_loads() -> None:
+    config = OpenMinionConfig.from_dict(
+        {"system": {"providers": _provider_payload("https://system-only/v1")}}
+    )
+
+    assert config.providers.openai.base_url == "https://system-only/v1"
+
+
+def test_mixed_provider_input_keeps_precedence_then_saves_one_authority(
+    tmp_path: Path,
+) -> None:
+    config = OpenMinionConfig.from_dict(
+        {
+            "providers": _provider_payload("https://top-level/v1"),
+            "system": {"providers": _provider_payload("https://system-wins/v1")},
+        }
+    )
+    assert config.providers.openai.base_url == "https://system-wins/v1"
+
+    path = save_config(config, str(tmp_path / "agents.json"))
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["providers"]["openai"]["base_url"] == "https://system-wins/v1"
+    assert "providers" not in persisted["system"]
+
+    assert load_config(str(path)).providers.openai.base_url == "https://system-wins/v1"

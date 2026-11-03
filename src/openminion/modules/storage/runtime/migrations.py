@@ -559,22 +559,24 @@ DEFAULT_MIGRATIONS: Tuple[Migration, ...] = (
             """,
             # Existing participants keep the order they listed in before the
             # upgrade: each session's rows are numbered in (joined_at, id)
-            # order, on both backends (UPDATE ... FROM needs SQLite 3.33).
-            # Which of two participants with one joined_at joined first was
+            # order. UPDATE ... FROM needs SQLite 3.33; the correlated
+            # subquery keeps the same numbering on SQLite and PostgreSQL.
+            # Which participant of two with one joined_at joined first was
             # not stored, so ties keep their id order.
             """
             UPDATE room_participants
-            SET join_seq = numbered.join_seq
-            FROM (
-                SELECT
-                    id,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY session_id
-                        ORDER BY joined_at ASC, id ASC
-                    ) AS join_seq
-                FROM room_participants
-            ) AS numbered
-            WHERE room_participants.id = numbered.id
+            SET join_seq = (
+                SELECT COUNT(*) + 1
+                FROM room_participants AS earlier
+                WHERE earlier.session_id = room_participants.session_id
+                  AND (
+                      earlier.joined_at < room_participants.joined_at
+                      OR (
+                          earlier.joined_at = room_participants.joined_at
+                          AND earlier.id < room_participants.id
+                      )
+                  )
+            )
             """,
             """
             CREATE UNIQUE INDEX idx_room_participants_session_join_seq

@@ -7,6 +7,18 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Normalize raw SQLite bm25 scores in the correct direction, so a stronger match scores higher instead of lower. (Refs #479)
+
+- Keep runtime migration 14 portable to SQLite older than 3.33: the
+  join-sequence backfill now uses a correlated subquery instead of
+  `UPDATE ... FROM`, preserving the per-session `(joined_at, id)` numbering on
+  SQLite and PostgreSQL (Refs #564).
+
+- Write provider settings to one place: `config init` no longer emits a duplicate
+  `system.providers` mirror, so editing the top-level `providers` block takes
+  effect on the next load. Older system-only configs and deliberate mixed input
+  keep their existing load precedence (Refs #566).
+
 ## Current package line - 2026-11-01
 
 - Recognize Ubuntu 26.04's system coreutils directory for allowlisted host
