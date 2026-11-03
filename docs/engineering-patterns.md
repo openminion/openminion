@@ -62,6 +62,15 @@ Use this source-tree ladder when deciding where code belongs:
 5. Fix repeated symptoms at the shared owner instead of copying small
    workarounds across callers.
 
+## Comments and review
+
+Use names, types and direct structure to explain the code. Internal comments
+and helper docstrings are optional; keep concise rationale for non-obvious
+constraints instead of narrating operations or repeating an explanation across
+source and tests. Preserve short module explainers and public contracts.
+Apply the [comment review rule](../CODE_QUALITY.md#2-code-should-explain-itself)
+to the final PR diff; automated checks do not replace this review.
+
 ## Use with
 
 Read this doc together with:
