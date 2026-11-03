@@ -45,6 +45,23 @@ Avoid:
 2. section-banner comments
 3. helper-history prose
 4. comments that just paraphrase the code
+5. the same explanation repeated in a function docstring, inline comment and test
+
+Before submitting a PR, read every added or changed comment and docstring in
+context. If removing it loses no information beyond the names, types and code,
+remove it. Simplify unclear code before adding a walkthrough. Keep one concise
+explanation beside the owner when a constraint is genuinely non-obvious.
+
+Apply this review to tests too: keep the regression condition or surprising
+oracle, but remove narration of setup, calls and assertions that already read
+clearly. Preserve public API/tool descriptions consumed by users or models,
+license notices, required directives, and useful safety or compatibility notes.
+Those are contracts, not comment-count targets.
+
+Reviewers should point to the exact redundant text and the code it repeats.
+Passing lint or CI does not replace this readability review. For debt already
+merged, check current `dev` and existing reports before opening one bounded
+cleanup issue; keep unrelated cleanup out of a feature PR.
 
 ## 3. Keep runtime behavior structural, not speculative
 
