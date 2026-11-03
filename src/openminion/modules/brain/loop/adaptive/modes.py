@@ -209,6 +209,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
     def __init__(self) -> None:
         self._max_iterations = ADAPTIVE_MAX_ITERATIONS
         self._max_tool_calls_per_loop = ADAPTIVE_MAX_TOOL_CALLS
+        self._max_llm_calls_per_loop: int | None = None
         self._tool_schema_shortlisting_enabled = TOOL_SCHEMA_SHORTLISTING_ENABLED
         self._reflection_policy: Literal["never", "always", "anomaly"] = "never"
 
@@ -216,6 +217,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         del profile
         max_iterations = getattr(config, "max_adaptive_iterations", None)
         max_tool_calls = getattr(config, "max_adaptive_tool_calls_per_loop", None)
+        max_llm_calls = getattr(config, "max_adaptive_llm_calls_per_loop", None)
         reflection_policy = getattr(config, "adaptive_reflection_policy", None)
         tss_enabled = getattr(config, "tool_schema_shortlisting_enabled", None)
         if isinstance(config, dict):
@@ -223,6 +225,8 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 max_iterations = config.get("max_adaptive_iterations")
             if max_tool_calls is None:
                 max_tool_calls = config.get("max_adaptive_tool_calls_per_loop")
+            if max_llm_calls is None:
+                max_llm_calls = config.get("max_adaptive_llm_calls_per_loop")
             if reflection_policy is None:
                 reflection_policy = config.get("adaptive_reflection_policy")
             if tss_enabled is None:
@@ -241,6 +245,9 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         self._max_tool_calls_per_loop = max(
             1,
             int(max_tool_calls or ADAPTIVE_MAX_TOOL_CALLS),
+        )
+        self._max_llm_calls_per_loop = (
+            max(1, int(max_llm_calls)) if max_llm_calls is not None else None
         )
         if tss_enabled is not None:
             self._tool_schema_shortlisting_enabled = bool(tss_enabled)
@@ -471,12 +478,12 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
             allowed_tools=effective_allowed_tools,
             allow_plan_tool=(decision_reason_code != "research_iteration_fallback"),
             provider_parallel_tool_capacity=(
-                0
-                if consolidation_overrides is not None
+                0 if consolidation_overrides is not None
                 else (1 if watch_overrides is not None else 2)
             ),
             max_iterations=_effective_max_iterations,
             max_tool_calls_per_loop=self._max_tool_calls_per_loop,
+            max_llm_calls_per_loop=self._max_llm_calls_per_loop,
             reflection_policy=self._reflection_policy,
             max_macro_corrections=2,
             macro_correction_cooldown=1,
