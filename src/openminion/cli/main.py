@@ -40,6 +40,41 @@ def format_fail_fast_message(**kwargs: Any) -> str:
     return str(_format_fail_fast_message(**kwargs))
 
 
+_MISSING_CONFIG_HINT = (
+    "To create one, run `openminion config init --provider <name>` "
+    "(for example `--provider echo`), or pass `--config <path>`."
+)
+
+
+def _config_absent(args: object, home_root: str) -> bool:
+    """Whether the config this invocation would load is absent (first-run state).
+
+    Uses the same resolver the config manager loads through, so the check cannot
+    disagree with the failure that brought us here. Malformed JSON or a permission
+    failure resolves to an existing path and keeps its own message.
+    """
+    try:
+        resolved = resolve_config_path(
+            getattr(args, "config", None),
+            home_root=Path(home_root) if home_root else None,
+        )
+    except (OSError, ValueError):
+        return False
+    return not resolved.exists()
+
+
+def format_cli_error(exc: BaseException, *, missing_config: bool = False) -> str:
+    """Render a CLI error, adding the next step when the config file is absent.
+
+    Only the first-run case gains guidance: a malformed config, a permission
+    failure or any other runtime error is returned unchanged.
+    """
+    message = str(exc)
+    if missing_config:
+        return f"{message}\n{_MISSING_CONFIG_HINT}"
+    return message
+
+
 def _prepare_runtime_roots(
     args: object, env_config: EnvironmentConfig
 ) -> tuple[str, str, str, str, str]:
@@ -311,7 +346,10 @@ def main(argv: Sequence[str] | None = None, *, owns_process: bool = False) -> in
                 return int(handler(args, app) or 0)
             return int(handler(args) or 0)
     except (ConfigError, RuntimeError, KeyError) as exc:
-        parser.exit(status=2, message=f"openminion: {exc}\n")
+        message = format_cli_error(
+            exc, missing_config=_config_absent(args, home_root or effective_home_root)
+        )
+        parser.exit(status=2, message=f"openminion: {message}\n")
         return 2
     except KeyboardInterrupt:
         print("openminion: cancelled", file=sys.stderr)

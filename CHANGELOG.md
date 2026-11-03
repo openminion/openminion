@@ -7,6 +7,14 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Give the first-run missing-config error a next step: `run`, `doctor` and `tools`
+  now point at `openminion config init --provider <name>` or `--config <path>`
+  instead of printing a bare path. The hint is added only for the typed
+  `ConfigMissingError` the config owner raises for an absent resolved path, so an
+  unrelated runtime error keeps its own message; the message text, the stream and
+  the exit statuses are unchanged (Refs #573).
+
+
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
   instead of being silently dropped, with the 5 retained / 15 total default preserved
