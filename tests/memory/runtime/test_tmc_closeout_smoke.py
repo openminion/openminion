@@ -27,4 +27,4 @@ def test_tmc_closeout_smoke_writes_summary_json(tmp_path: Path) -> None:
     assert out_path == artifact_root / "summary.json"
     payload = out_path.read_text(encoding="utf-8")
     assert '"merge_model_name": "gpt-4.2-mini"' in payload
-    assert '"maintenance_marker_updated": true' in payload
+    assert '"maintenance_marker_skipped_when_pending": true' in payload
