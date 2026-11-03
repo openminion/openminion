@@ -68,7 +68,8 @@ VALIDATE_PATTERN_MODULES := \
 	validate.method_loc \
 	validate.broad_exception \
 	validate.filename_underscore_hygiene \
-	validate.type_ignore_hygiene
+	validate.type_ignore_hygiene \
+	validate.test_skip_budget
 
 # Compatibility mirror for tests and simple file-existence audits. Keep these
 # entries aligned with VALIDATE_PATTERN_MODULES, but expressed as repo-relative
@@ -116,7 +117,8 @@ VALIDATE_PATTERN_SCRIPTS := \
 	validate/method_loc \
 	validate/broad_exception \
 	validate/filename_underscore_hygiene \
-	validate/type_ignore_hygiene
+	validate/type_ignore_hygiene \
+	validate/test_skip_budget
 
 _VP_TARGETS := $(addprefix _vp-, $(VALIDATE_PATTERN_MODULES)) _vp-validate.direct_env_calls _vp-direct-env-calls
 

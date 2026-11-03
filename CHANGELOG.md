@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Ratchet `skip`/`skipif`/`xfail` markers in the test suite against a per-file
+  baseline, so silencing a case becomes a counted, reviewed change: adding a
+  marker fails the build, and a literal conditional skip turned unconditional
+  fails even when the total is unchanged. Only literal marker forms are
+  classified; the count records which markers apply, not whether a case runs
+  (see `CODE_QUALITY.md`).
+
 - Log the identity-profile fallback at `DEBUG` instead of `WARNING`: a missing
   identity profile is the default state, so a stock install no longer warns on
   every single turn (Refs #572).

@@ -126,6 +126,30 @@ make lint
 
 If your change touches behavior, also run the smallest focused tests that actually prove the change.
 
+The test suite has its own ceiling: `scripts/validate/test_skip_budget.py` counts
+`skip`/`skipif`/`xfail` markers per file and fails when a file gains one or when a
+baselined count drops without `--emit-baseline`. It reads markers written on a test
+or class, in a module-level `pytestmark` list, and inside
+`pytest.param(..., marks=...)`.
+
+A marker counts as unconditional when it statically applies to every run: `skip`, a
+bare `pytest.mark.<kind>`, a marker with no conditions at all (`skipif()`), and a
+`skipif`/`xfail` where any condition is a truthy literal. `condition=` overrides
+positional arguments; otherwise every positional condition is considered and one
+applying is enough. Boolean and numeric literals count directly; a string condition
+counts only when it parses to a single literal, because pytest evaluates condition
+strings as expressions.
+
+The budget records which markers apply, not whether a case executes. Names, calls,
+operator forms and non-literal strings are never evaluated, so they stay conditional
+in the count whatever they evaluate to. An applied `xfail` may still run the test
+(`run=False` prevents execution once the condition applies), and an indirect form
+(a shared decorator, a `marks=` list assembled at runtime) is invisible to a static
+scan. A file that cannot be parsed is reported as a scan error instead of
+being counted as marker-free. Each baseline row carries an authored reason; `--emit-baseline` lowers
+existing rows only and refuses new ones, so adding a marker means writing down why it
+exists and defending it in review.
+
 Committed numeric debt baselines are ceilings, not quality scores. Their
 normal checks are read-only. When an existing owner improves, use that
 validator's explicit `--emit-baseline` command to record only the lower value;
