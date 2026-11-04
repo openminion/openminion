@@ -1,10 +1,24 @@
-from collections.abc import Iterable, Mapping
-from typing import Any
+"""Skill proposal drafts and structural task-shape projection."""
 
-from pydantic import BaseModel, ConfigDict, Field
+from collections.abc import Iterable, Mapping
+from typing import Annotated, Any
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from openminion.modules.skill.constants import RISK_CLASS_LOW
 from openminion.modules.skill.models import normalize_text_list, slugify, stable_hash
+
+
+ProcedureText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class SkillProcedure(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    when_to_use: list[ProcedureText] = Field(min_length=1)
+    do_not_use: list[ProcedureText] = Field(min_length=1)
+    steps: list[ProcedureText] = Field(min_length=1)
+    validation: list[ProcedureText] = Field(min_length=1)
 
 
 class SkillProposalDraft(BaseModel):
@@ -21,6 +35,7 @@ class SkillProposalDraft(BaseModel):
     applies_to: dict[str, list[str]] = Field(default_factory=dict)
     inputs_schema: list[dict[str, Any]] = Field(default_factory=list)
     verification_rules: list[str] = Field(default_factory=list)
+    procedure: SkillProcedure | None = None
 
 
 class SkillProposal(BaseModel):
@@ -35,6 +50,7 @@ class SkillProposal(BaseModel):
     proposer_policy_id: str = ""
     proposed_at: str = ""
     requires_replay_proof: bool = False
+    agent_id: str = ""
 
 
 def _shape_field(shape: Any, field: str) -> Any:
@@ -154,7 +170,7 @@ def propose_skills_from_task_shapes(
             {
                 "source_task_shape_ref": source_task_shape_ref,
                 "proposer_policy_id": str(policy_id or ""),
-                "draft": draft.model_dump(mode="json"),
+                "draft": draft.model_dump(mode="json", exclude={"procedure"}),
                 "evidence_refs": evidence_refs,
             }
         )
@@ -174,6 +190,7 @@ def propose_skills_from_task_shapes(
 
 
 __all__ = (
+    "SkillProcedure",
     "SkillProposal",
     "SkillProposalDraft",
     "propose_skills_from_task_shapes",

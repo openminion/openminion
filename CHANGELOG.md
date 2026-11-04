@@ -1,11 +1,86 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-01
+Last updated: 2026-11-04
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-04
+
+- Add a reviewed learning lifecycle that can retain successful substantive
+  work, author a procedure, evaluate transfer separately, and admit or roll
+  back an exact agent-scoped version. Application remains pending until an
+  operator admits it, and the available source support does not establish a
+  live learning-benefit claim.
+
+- Add finite read-only recurring security assessments with visible consumed
+  and remaining attempts, separate latest-attempt and last-successful evidence,
+  and exact-task pause and resume controls. Source support is available, but
+  the composed live lifecycle has not completed acceptance and does not provide
+  unlimited monitoring, autonomous repair, or security certification.
+
+- Account for LLM responses across a whole turn, including reflection, action,
+  judgment, and continuation steps, in public stats and persisted usage facts.
+  Preserve reported cache usage and missing-usage coverage, and prevent call-event
+  replay from counting tokens twice (Refs #516). Child tool-result accounting and
+  research budget settlement remain separate (#531, #542).
+
+- Ratchet `skip`/`skipif`/`xfail` markers in the test suite against a per-file
+  baseline, so silencing a case becomes a counted, reviewed change: adding a
+  marker fails the build, and a literal conditional skip turned unconditional
+  fails even when the total is unchanged. Only literal marker forms are
+  classified; the count records which markers apply, not whether a case runs
+  (see `CODE_QUALITY.md`).
+
+- Log the identity-profile fallback at `DEBUG` instead of `WARNING`: a missing
+  identity profile is the default state, so a stock install no longer warns on
+  every single turn (Refs #572).
+
+- Run one-shot `run` turns with the caller's working directory as the tool
+  workspace root when `runtime.tool_workspace_root` is unset, so file tools see
+  the files the user is working on; an explicit `--dir` overrides a configured
+  root (Refs #575).
+
+- Treat a `4xx` daemon response as the definitive answer instead of falling back
+  to the in-process runtime, so a rejected or failed tool call is neither executed
+  twice nor replaced by a locally produced error (Refs #574).
+
+- Make `openminion run` acknowledge delivery of its returned one-shot reply, so a
+  follow-up `run --session <id>` executes the new input instead of replaying the
+  settled first turn; continuing that thread still requires `--resume` (Refs #556).
+
+- Parse porcelain v2 rename/copy records without the rename score and old-path suffix, keeping the destination path (including spaces). (Refs #491)
+
+- Reject unsupported arithmetic in `calculate_expression` — zero to a negative power and complex-valued results now use the structured `INVALID_ARGUMENT` path instead of raising raw exceptions. (Refs #490)
+
+- Support positional-only parameters in `@tool` handlers, so a function with a positional-only argument no longer crashes during argument binding. (Refs #474)
+
+- Record the memory-consolidation marker only when the review resolved every
+  candidate with a terminal decision (keep/promote/discard) and nothing was
+  deferred or failed to write. A cycle that deferred any candidate, or whose
+  writes partly failed, leaves `last_consolidation_state_hash` untouched, so
+  those still-`proposed` candidates stay eligible for the next consolidation
+  cycle instead of being blocked as already consolidated. Such a cycle still
+  reports the terminal writes it did make (`PARTIALLY_CONSOLIDATED`) rather than
+  claiming nothing was consolidated (Refs #477).
+
+- Normalize raw SQLite bm25 scores in the correct direction, so a stronger match scores higher instead of lower. (Refs #479)
+
+- Keep runtime migration 14 portable to SQLite older than 3.33: the
+  join-sequence backfill now uses a correlated subquery instead of
+  `UPDATE ... FROM`, preserving the per-session `(joined_at, id)` numbering on
+  SQLite and PostgreSQL (Refs #564).
+
+- Write provider settings to one place: `config init` no longer emits a duplicate
+  `system.providers` mirror, so editing the top-level `providers` block takes
+  effect on the next load. Older system-only configs and deliberate mixed input
+  keep their existing load precedence (Refs #566).
+
+- Keep the Focus PTY test emulator cursor aligned with rows clipped during resize,
+  preventing stale composer copies during split redraws. Runtime rendering and
+  the existing layout assertions are unchanged (Refs #569).
 
 ## Current package line - 2026-11-01
 

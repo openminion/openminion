@@ -35,9 +35,9 @@ _HTTP_404_CODES = frozenset(
     }
 )
 
-# Raw exceptions the A2A runtime's storage/policy dependencies can surface when
-# they fail. Kept as a narrow explicit tuple (never `Exception`) so the HTTP
-# boundary stays typed and does not trip the broad-exception ratchet.
+# Raw exceptions the A2A runtime's storage and policy dependencies raise on
+# failure: an explicit, narrow tuple (never `Exception`) keeps the HTTP boundary
+# typed.
 _RUNTIME_DEPENDENCY_ERRORS = (
     sqlite3.Error,
     ValueError,
@@ -111,8 +111,6 @@ class A2AHTTPRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         return
 
-    # -- auth -----------------------------------------------------------
-
     def _authorized(self) -> bool:
         header = self.headers.get("Authorization", "")
         expected = f"Bearer {self._token}"
@@ -122,8 +120,6 @@ class A2AHTTPRequestHandler(BaseHTTPRequestHandler):
             )
             return False
         return True
-
-    # -- endpoints ------------------------------------------------------
 
     def _handle_call(self, body: dict[str, Any]) -> None:
         try:
@@ -204,8 +200,6 @@ class A2AHTTPRequestHandler(BaseHTTPRequestHandler):
             )
             return
         self._send_json(HTTPStatus.OK, record.to_dict())
-
-    # -- helpers --------------------------------------------------------
 
     def _envelope_from_body(self, body: dict[str, Any]) -> Envelope:
         if not isinstance(body, dict):

@@ -42,9 +42,6 @@ def _brain_metadata(*, provider: str, profile: str) -> dict[str, str]:
     return ctl.build_provider_metadata(resolved=resolved)
 
 
-# --- Bridge owner fakes -----------------------------------------------------
-
-
 class _BridgeAgentProfile:
     def __init__(self, name, default_provider, default_model, tool_policy=None):
         del name, default_provider, default_model, tool_policy
@@ -124,9 +121,6 @@ def _bridge(*, provider_name: str) -> LLMCTLBridgeProvider:
             model="example-model",
             provider_config={"api_key": "test-key"},
         )
-
-
-# --- AgentService owner fakes -----------------------------------------------
 
 
 class _RuntimeOkResponse:
@@ -212,9 +206,6 @@ def _presolved_request(*, provider: str, profile: str, structured: bool = False)
     )
 
 
-# --- Bridge route integration tests -----------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_bridge_presolved_supported_provider_transmits_effort() -> None:
     bridge = _bridge(provider_name="openai")
@@ -286,9 +277,6 @@ async def test_bridge_presolved_thinking_retry_control() -> None:
         _SUBMIT_OUTPUT_TOOL_CHOICE,
         "auto",
     ]
-
-
-# --- Direct/ollama runtime route integration tests ---------------------------
 
 
 def test_runtime_presolved_direct_openai_degrades() -> None:

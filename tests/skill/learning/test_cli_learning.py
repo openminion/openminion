@@ -1,3 +1,5 @@
+"""Operator learning CLI inputs, retained evidence, and admission boundaries."""
+
 from __future__ import annotations
 
 import io
@@ -12,8 +14,11 @@ from openminion.modules.artifact.control import ArtifactCtl
 from openminion.modules.skill.cli import main
 from openminion.modules.skill.interfaces import SkillIngestAuthority
 from openminion.modules.skill.learning.shapes import WorkflowShape, command_fingerprint
-from openminion.modules.skill.learning.replay import ReplayEvaluationResult
-from openminion.modules.skill.models import stable_hash
+from openminion.modules.skill.learning.replay import (
+    ReplayEvaluationResult,
+    proposal_draft_hash,
+)
+from openminion.modules.skill.proposal.base import SkillProposal
 from openminion.modules.skill.runtime.skill import Skill
 
 
@@ -221,7 +226,9 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
     assert result["status"] == "staged"
     proposal_id = result["proposal"]["proposal_id"]
     shape_ref = result["proposal"]["source_task_shape_ref"]
-    candidate_hash = stable_hash(result["proposal"]["proposed_skill_definition"])
+    candidate_hash = proposal_draft_hash(
+        SkillProposal.model_validate(result["proposal"])
+    )
 
     _run_cli(
         [
@@ -346,3 +353,83 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
     assert trust["trust"]["active_version_hash"] == addition["version_hash"]
     assert trust["trust"]["admission_count"] == 1
     assert trust["trust"]["success_count"] == 1
+
+
+def test_learning_cli_stages_authored_content_from_stored_agent_shape(
+    tmp_path: Path,
+) -> None:
+    cfg = _config_path(tmp_path)
+    skill = Skill(cfg)
+    try:
+        for index in range(2):
+            observation = skill.observe_workflow(
+                agent_id="agent-a",
+                source_run_ref=f"run-{index}",
+                intent_category="modify",
+                capability_category="code",
+                tool_names=["file.write", "exec.run"],
+            )
+    finally:
+        skill.close()
+    draft = {
+        "name": "verify-local-repair",
+        "short_description": "Repair a local defect and verify its regression.",
+        "risk_class": "medium",
+        "tools": ["exec.run"],
+        "procedure": {
+            "when_to_use": ["A local defect is reproduced."],
+            "do_not_use": ["Do not apply to remote systems."],
+            "steps": ["Fix the owner of the reproduced defect."],
+            "validation": ["Run the regression and relevant tests."],
+        },
+    }
+    path = _write_json(tmp_path, "procedure.json", draft)
+    argv = [
+        "--config",
+        str(cfg),
+        "learning-propose",
+        "--agent-id",
+        "agent-a",
+        "--shape-id",
+        observation.shape_id,
+        "--procedure-file",
+        str(path),
+    ]
+    first = _run_cli(argv)["result"]
+    repeated = _run_cli(argv)["result"]
+    assert first["proposal"] == repeated["proposal"]
+    assert (
+        first["proposal"]["proposed_skill_definition"]["procedure"]
+        == draft["procedure"]
+    )
+    assert first["proposal"]["proposed_at"]
+    assert repeated["queue_record"]["created_now"] is False
+    argv[4] = "agent-b"
+    rejected = _run_cli_expect_failure(argv)
+    assert rejected["error"]["code"] == "INVALID_ARGUMENT"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--shape-json", "shape.json", "--agent-id", "agent-a"],
+        ["--shape-json", "shape.json", "--procedure-file", "draft.json"],
+        ["--shape-id", "shape-a"],
+        ["--shape-id", "shape-a", "--agent-id", "agent-a"],
+        ["--shape-id", "shape-a", "--procedure-file", "draft.json"],
+    ],
+)
+def test_learning_cli_rejects_mixed_or_incomplete_authoring_inputs(tmp_path, arguments):
+    cfg = _config_path(tmp_path)
+    rejected = _run_cli_expect_failure(
+        ["--config", str(cfg), "learning-propose", *arguments]
+    )
+    assert rejected["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_learning_cli_requires_one_shape_source(capsys):
+    for arguments in ([], ["--shape-json", "shape.json", "--shape-id", "shape-a"]):
+        with pytest.raises(SystemExit) as error:
+            main(["learning-propose", *arguments])
+        assert error.value.code == 2
+    assert "--shape" in capsys.readouterr().err

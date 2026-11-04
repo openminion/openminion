@@ -92,12 +92,10 @@ class HTTPTransport(Transport):  # type: ignore[misc]
         payload: dict[str, Any],
         path: str,
     ) -> Any:
-        """Build a model from a 2xx body, translating decode errors to A2AError.
+        """Decode a 2xx body, surfacing a contract violation as INTERNAL_ERROR.
 
-        A successful response that is a JSON dict but does not satisfy the
-        model contract (wrong field types, a missing key, a non-numeric
-        ``progress``, ...) must surface as the documented INTERNAL_ERROR rather
-        than a raw ``ValueError``/``AttributeError`` traceback.
+        A malformed 2xx body must not escape as a raw decode error: callers see
+        the documented A2A error instead.
         """
         try:
             return factory(payload)
@@ -108,13 +106,12 @@ class HTTPTransport(Transport):  # type: ignore[misc]
             ) from exc
 
     def _error_from_response(self, response: httpx.Response, path: str) -> A2AError:
-        """Build an A2AError from a >= 400 response, preserving the error envelope.
+        """Map a >= 400 response to A2AError, keeping a usable error envelope.
 
-        When the body is a valid ``{"error": {"code", "message", "details"}}``
-        envelope the original code/message/details are preserved verbatim (only
-        the code is normalized). Anything else — a plain-text body, a non-dict
-        payload, or a malformed envelope — falls back to INTERNAL_ERROR with the
-        raw body captured in details.
+        A mapping ``error`` with string ``code``/``message`` keeps both (the code
+        is normalized); mapping ``details`` are kept, non-mapping details become
+        empty. Anything else becomes INTERNAL_ERROR with ``_error_details`` as its
+        details.
         """
         try:
             payload = response.json()

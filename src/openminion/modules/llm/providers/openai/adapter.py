@@ -778,9 +778,9 @@ class OpenAIProvider:
                     "message_keys": sorted(str(k) for k in message_payload.keys()),
                     "response_keys": sorted(str(k) for k in response_payload.keys()),
                 },
+                usage=_usage_from_openai_like(response_payload.get("usage")),
             )
 
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
         assistant_messages = [Message(role="assistant", content=text)] if text else []
         usage = _usage_from_openai_like(response_payload.get("usage"))
         return adapter_result_to_llm_response(
@@ -792,7 +792,7 @@ class OpenAIProvider:
                 tool_calls=tool_calls,
                 thinking=thinking_blocks,
                 usage=usage,
-                latency_ms=elapsed_ms,
+                latency_ms=int((time.perf_counter() - started) * 1000),
                 finish_reason=str(first_choice.get("finish_reason", "")).strip(),
                 provider_raw=response_payload,
                 telemetry={"request_id": response_metadata["request_id"]}

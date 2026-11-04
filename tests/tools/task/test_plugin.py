@@ -1944,3 +1944,34 @@ def test_task_schedule_ignores_spurious_goal_origin_marker_without_goal_context(
         ctx,
     )
     assert result["ok"] is True
+
+
+def test_task_show_preserves_canonical_security_scan(tmp_path):
+    from tests.tools.security.test_schedule import admission
+    from openminion.modules.task.surface import build_task_surface
+
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "tasks.db")
+    )
+    scope = admission(tmp_path)
+    record = manager.schedule_user_task(
+        name="source audit",
+        instruction="audit",
+        agent_id=scope.agent_id,
+        schedule={"kind": "every", "every_ms": 60000},
+        security_scan=scope.model_dump(mode="json"),
+    )["record"]
+    ctx = _ctx(tmp_path, agent_id=scope.agent_id)
+    ctx.task_manager = manager
+    expected = build_task_surface(manager, agent_id=scope.agent_id).show_task(
+        record.task_id
+    )
+    assert (
+        _h_task_show({"task_id": record.task_id}, ctx)["task"]["security_scan"]
+        == expected["security_scan"]
+    )
+    ctx = _ctx(tmp_path, agent_id="other")
+    ctx.task_manager = manager
+    with pytest.raises(ToolRuntimeError):
+        _h_task_show({"task_id": record.task_id}, ctx)
+    manager.close()

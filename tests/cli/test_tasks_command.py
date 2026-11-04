@@ -472,3 +472,42 @@ def test_tasks_cli_tool_control_uses_configured_default_agent(
     )
     assert seen["agent_id"] == "agent-default"
     capsys.readouterr()
+
+
+def test_tasks_cli_shows_canonical_security_scan(tmp_path, capsys):
+    import json
+    from tests.tools.security.test_schedule import admission
+
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "tasks.db")
+    )
+    scope = admission(tmp_path)
+    record = manager.schedule_user_task(
+        name="source audit",
+        instruction="audit",
+        agent_id=scope.agent_id,
+        schedule={"kind": "every", "every_ms": 60000},
+        security_scan=scope.model_dump(mode="json"),
+    )["record"]
+    args = Namespace(
+        tasks_command="show",
+        task_id=record.task_id,
+        agent_id=scope.agent_id,
+        session="",
+        limit=10,
+        json=True,
+    )
+    app = SimpleNamespace(
+        task_manager=manager, scheduler_readiness=lambda: {"state": "ready"}
+    )
+    assert run_tasks(args, app) == 0
+    scan = json.loads(capsys.readouterr().out)["task"]["security_scan"]
+    assert scan["max_runs"] == 2 and scan["last_attempt"] is None
+    args.json = False
+    assert run_tasks(args, app) == 0
+    human = capsys.readouterr().out
+    assert "max_runs: 2" in human
+    assert "remaining_runs: unavailable" in human
+    assert "last_attempt: unavailable" in human
+    assert "config_fingerprint" not in human
+    manager.close()

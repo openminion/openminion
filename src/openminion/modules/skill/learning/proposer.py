@@ -15,7 +15,9 @@ from openminion.modules.skill.proposal.base import (
     propose_skills_from_task_shapes,
 )
 from openminion.modules.skill.storage.base import SkillStore
+from openminion.modules.skill.models import stable_hash
 
+from .runtime import list_runtime_workflow_shapes
 from .shapes import WorkflowShape
 
 
@@ -128,4 +130,60 @@ def stage_shape_as_skill_proposal(
     )
 
 
-__all__ = ("LearningProposalResult", "stage_shape_as_skill_proposal")
+def stage_authored_skill_proposal(
+    *,
+    store: SkillStore,
+    agent_id: str,
+    shape_id: str,
+    draft: SkillProposalDraft,
+) -> LearningProposalResult:
+    agent_id = agent_id.strip()
+    shapes = list_runtime_workflow_shapes(store, agent_id=agent_id)
+    shape = next((item for item in shapes if item.shape_id == shape_id), None)
+    if shape is None:
+        raise ValueError("shape is not stored for the selected agent")
+    if shape.success_count < 2:
+        return LearningProposalResult(
+            status="not_ready",
+            shape_id=shape.shape_id,
+            reason_code="recurrence_required",
+        )
+    if draft.procedure is None:
+        raise ValueError("authored proposal requires procedure content")
+    if not draft.name.strip() or not draft.short_description.strip():
+        raise ValueError("authored proposal requires name and short_description")
+    if draft.risk_class != shape.risk_level:
+        raise ValueError("authored risk must equal stored shape risk")
+    if not set(draft.tools).issubset(shape.tool_names):
+        raise ValueError("authored tools must be a subset of stored shape tools")
+    policy_id = "workflow_learning_authored_v1"
+    proposal = SkillProposal(
+        proposal_id=stable_hash(
+            {
+                "proposer_policy_id": policy_id,
+                "agent_id": agent_id,
+                "source_task_shape_ref": shape.task_shape_ref,
+                "draft": draft.model_dump(mode="json"),
+            }
+        ),
+        source_task_shape_ref=shape.task_shape_ref,
+        proposed_skill_definition=draft,
+        evidence_refs=list(shape.evidence_refs),
+        proposer_policy_id=policy_id,
+        requires_replay_proof=True,
+        agent_id=agent_id,
+    )
+    queue_record = proposal_queue.create_proposal(store, proposal)
+    return LearningProposalResult(
+        status="staged",
+        shape_id=shape.shape_id,
+        proposal=SkillProposal.model_validate(queue_record["proposal"]),
+        queue_record=dict(queue_record),
+    )
+
+
+__all__ = (
+    "LearningProposalResult",
+    "stage_authored_skill_proposal",
+    "stage_shape_as_skill_proposal",
+)

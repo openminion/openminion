@@ -77,7 +77,11 @@ def _bind_tool_workspace_root(
     workspace_path = (
         Path(workspace_root).expanduser() if workspace_root else tool_api.workspace_root
     )
-    return tool_api.workspace_override(workspace_path, added_roots=added_roots)
+    return tool_api.workspace_override(
+        workspace_path,
+        added_roots=added_roots,
+        security_scan_context=metadata_source.get("security_scan_context"),
+    )
 
 
 def _take_added_workspace_roots(metadata: dict[str, Any]) -> tuple[Path, ...]:
@@ -576,13 +580,11 @@ from .context import (  # noqa: E402
     _append_runtime_grounding_block,
     _apply_runtime_system_prompt_override,
     _build_runtime_memory_context,
-    _collect_llm_call_counts_by_purpose,
     _collect_system_history_context,
     _hydrate_runner_session_context,
     _inject_gateway_system_context,
     _inject_resume_task_hints,
     _is_state_machine_error_text,
-    _normalize_llm_purpose,
     _normalize_turn_content,
     _pending_history_turns_to_hydrate,
     _prior_turn_context_hint,
@@ -634,10 +636,6 @@ from .reset import (  # noqa: E402
 )
 
 BrainBridgeTurnMixin._resolve_turn_session_ids = staticmethod(_resolve_turn_session_ids)
-BrainBridgeTurnMixin._normalize_llm_purpose = staticmethod(_normalize_llm_purpose)
-BrainBridgeTurnMixin._collect_llm_call_counts_by_purpose = staticmethod(
-    _collect_llm_call_counts_by_purpose
-)
 BrainBridgeTurnMixin._append_runtime_grounding_block = _append_runtime_grounding_block
 BrainBridgeTurnMixin._build_runtime_memory_context = _build_runtime_memory_context
 BrainBridgeTurnMixin._inject_gateway_system_context = _inject_gateway_system_context

@@ -44,6 +44,13 @@ def call_daemon_or_inproc(
         status, payload = daemon_call(endpoint)
         if status < 400:
             return RuntimeSourceResult(source="daemon", payload=payload)
+        if status < 500:
+            # A 4xx is the daemon's definitive answer to this request
+            # (validation, policy, not-found, unknown tool), not a sign that the
+            # endpoint is unusable. Re-running in-process would repeat the
+            # operation — a double-execution hazard for mutating tools — and
+            # replace the authoritative result with a locally produced one.
+            return RuntimeSourceResult(source="daemon", payload=payload)
         message = _format_daemon_status_error(payload, status)
     except RuntimeError as exc:
         message = str(exc)

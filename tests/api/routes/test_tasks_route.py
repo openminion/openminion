@@ -597,3 +597,39 @@ def test_tasks_route_maps_inventory_and_expired_resume_errors(tmp_path) -> None:
     assert rejected is not None
     assert rejected.status == HTTPStatus.BAD_REQUEST
     assert rejected.payload["error"]["code"] == "TASK_RESUME_EXPIRED_ONE_SHOT"
+
+
+def test_tasks_route_returns_canonical_security_scan(tmp_path):
+    from tests.tools.security.test_schedule import admission
+    from openminion.modules.task.surface import build_task_surface
+
+    ctx, manager, _ = _control_ctx(tmp_path)
+    scope = admission(tmp_path)
+    record = manager.schedule_user_task(
+        name="source audit",
+        instruction="audit",
+        agent_id=scope.agent_id,
+        schedule={"kind": "every", "every_ms": 60000},
+        security_scan=scope.model_dump(mode="json"),
+    )["record"]
+    response = handle_request(
+        ctx,
+        method_name="GET",
+        path=f"/v1/tasks/{record.task_id}",
+        body=None,
+        query=f"agent_id={scope.agent_id}",
+    )
+    assert response.status == HTTPStatus.OK
+    expected = build_task_surface(manager, agent_id=scope.agent_id).show_task(
+        record.task_id
+    )
+    assert response.payload["task"]["security_scan"] == expected["security_scan"]
+    denied = handle_request(
+        ctx,
+        method_name="GET",
+        path=f"/v1/tasks/{record.task_id}",
+        body=None,
+        query="agent_id=other",
+    )
+    assert denied.status == HTTPStatus.FORBIDDEN
+    manager.close()

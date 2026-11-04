@@ -91,6 +91,15 @@ or expired handoffs, and avoid duplicate reminders when nothing has changed.
 
 ### Implementation and review
 
+Every contributor and coding agent, including maintainers and contributors
+using code-generation tools, must follow [Code Quality and Hygiene](CODE_QUALITY.md). Before requesting
+review, inspect the final diff for duplicate helpers, unnecessary abstractions,
+and comments or docstrings that repeat the code. Names, types and direct control
+flow should carry the explanation; retain only necessary context. See the
+[comment review rule](CODE_QUALITY.md#2-code-should-explain-itself), including its
+public-contract and test exceptions. Green CI alone is not readability approval.
+
+
 1. Follow existing style and project conventions.
 2. Keep PRs small and reviewable.
 3. Include validation commands and results in the PR description.

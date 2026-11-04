@@ -656,6 +656,7 @@ class AgentService(AgentTurnFlowMixin):
         model_name: str = "",
         allowed_tool_names: list[str] | None = None,
     ) -> ProviderResponse:
+        usage_payload = _provider_usage_payload(getattr(response, "usage", None))
         if not bool(getattr(response, "ok", False)):
             error = getattr(response, "error", None)
             error_code = str(getattr(error, "code", "") or "").strip()
@@ -678,7 +679,7 @@ class AgentService(AgentTurnFlowMixin):
                             or self._provider_name()
                             or "model"
                         ),
-                        usage={},
+                        usage=usage_payload,
                         tool_calls=[],
                         finish_reason=str(getattr(response, "finish_reason", "") or ""),
                         normalization=normalization,
@@ -696,8 +697,6 @@ class AgentService(AgentTurnFlowMixin):
                 code=error_code or "PROVIDER_ERROR",
                 details=dict(getattr(error, "details", {}) or {}),
             )
-
-        usage_payload = _provider_usage_payload(getattr(response, "usage", None))
 
         tool_calls: list[ProviderToolCall] = []
         for call in list(getattr(response, "tool_calls", []) or []):

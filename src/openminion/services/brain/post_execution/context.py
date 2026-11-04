@@ -40,10 +40,6 @@ _HYDRATION_METADATA_KEYS = frozenset(
         "turn_id",
     }
 )
-_LLM_PURPOSES = (
-    "act decide entry judge plan reflect self_compaction "
-    "skill_selection summarize tool_shortlist"
-).split()
 
 
 class GatewayHistoryHydrationError(RuntimeError):
@@ -65,51 +61,6 @@ def _resolve_turn_session_ids(*, message: Message) -> tuple[str, str]:
     if not conversation_id:
         return runtime_session_id, runtime_session_id
     return runtime_session_id, f"{runtime_session_id}::conv:{conversation_id}"
-
-
-def _normalize_llm_purpose(purpose: str) -> str | None:
-    normalized = str(purpose or "").strip().lower()
-    if normalized in _LLM_PURPOSES:
-        return normalized
-    if normalized in {"respond_followup", "follow_up"}:
-        return "follow_up"
-    return None
-
-
-def _collect_llm_call_counts_by_purpose(
-    *,
-    runner: BrainRunner,
-    session_id: str,
-    trace_id: str | None,
-    fallback_total_llm_calls: int,
-) -> dict[str, int]:
-    counts: dict[str, int] = {purpose: 0 for purpose in (*_LLM_PURPOSES, "follow_up")}
-    try:
-        events = runner.session_api.list_events(session_id)
-    except Exception:  # noqa: BLE001
-        events = []
-
-    normalized_trace = str(trace_id or "").strip()
-    for event in events:
-        if not isinstance(event, dict):
-            continue
-        if str(event.get("type", "")).strip() != "llm.call.completed":
-            continue
-        if normalized_trace:
-            event_trace = str(event.get("trace_id", "")).strip()
-            if event_trace and event_trace != normalized_trace:
-                continue
-        payload = event.get("payload", {})
-        if not isinstance(payload, dict):
-            continue
-        normalized = _normalize_llm_purpose(str(payload.get("purpose", "")))
-        if normalized is None:
-            continue
-        counts[normalized] += 1
-
-    if sum(counts.values()) == 0 and fallback_total_llm_calls > 0:
-        counts["decide"] = max(0, int(fallback_total_llm_calls))
-    return counts
 
 
 def _inject_gateway_system_context(
@@ -809,13 +760,11 @@ def _is_state_machine_error_text(value: str) -> bool:
 
 __all__ = [
     "_apply_runtime_system_prompt_override",
-    "_collect_llm_call_counts_by_purpose",
     "_collect_system_history_context",
     "_hydrate_runner_session_context",
     "_inject_gateway_system_context",
     "_inject_resume_task_hints",
     "_is_state_machine_error_text",
-    "_normalize_llm_purpose",
     "_normalize_turn_content",
     "_pending_history_turns_to_hydrate",
     "_resolve_turn_session_ids",
