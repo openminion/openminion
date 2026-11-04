@@ -234,7 +234,15 @@ class FileSearchArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str | None = Field(default=".", description="Directory to search")
-    query: str = Field(..., min_length=1, description="Search query")
+    query: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Search query (alias: pattern). Unlike file.find, this is text or a "
+            "regex over file contents, not a glob; use file_glob to filter files"
+        ),
+        validation_alias=AliasChoices("query", "pattern"),
+    )
     regex: bool = Field(default=False, description="Use regex matching")
     case_sensitive: bool = Field(default=False, description="Case-sensitive matching")
     context_lines: int = Field(

@@ -34,6 +34,10 @@ This file tracks package-facing release notes for `openminion`.
   its own `--session` with a default, which overwrote the root value so
   `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
 
+- Accept `pattern` as an alias for `file.search`'s `query`, matching the argument
+  name `file.find` uses, and say in the description that it is a content search
+  rather than a glob (Refs #606).
+
 ## Current package line - 2026-11-04
 
 - Add a reviewed learning lifecycle that can retain successful substantive
