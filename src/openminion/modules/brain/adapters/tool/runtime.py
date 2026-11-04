@@ -91,6 +91,9 @@ _ADDED_WORKSPACE_ROOTS: ContextVar[tuple[Path, ...]] = ContextVar(
     "openminion_tool_added_workspace_roots",
     default=(),
 )
+_SECURITY_SCAN_CONTEXT: ContextVar[str | None] = ContextVar(
+    "openminion_security_scan_context", default=None
+)
 _TURN_TOOL_ALLOWLIST: ContextVar[frozenset[str] | None] = ContextVar(
     "openminion_turn_tool_allowlist", default=None
 )
@@ -240,16 +243,6 @@ class ToolAdapter:
             exposure_service=getattr(self.registry, "exposure_service", None),
         )
 
-    def _project_security_lab_context(
-        self, policy_raw: dict[str, Any], session_id: str
-    ) -> dict[str, Any]:
-        context_metadata = cast(dict[str, Any], policy_raw["context_metadata"])
-        context_metadata.setdefault("agent_id", self.agent_id)
-        self._build_execution_context_builder().project_security_lab(
-            context_metadata, session_id
-        )
-        return context_metadata
-
     def _project_execution_context(
         self,
         policy: Policy,
@@ -263,7 +256,14 @@ class ToolAdapter:
             return
         policy_raw["agent_id"] = self.agent_id
         _merge_orchestration_context_metadata(policy_raw, orchestration_metadata)
-        context_metadata = self._project_security_lab_context(policy_raw, session_id)
+        context_metadata = cast(dict[str, Any], policy_raw["context_metadata"])
+        context_metadata.setdefault("agent_id", self.agent_id)
+        self._build_execution_context_builder().project_security_lab(
+            context_metadata, session_id
+        )
+        scan_context = _SECURITY_SCAN_CONTEXT.get()
+        if scan_context is not None:
+            context_metadata["security_scan_context"] = scan_context
         context_metadata.update(replay_confirmation_metadata)
 
     def close(self) -> None:
@@ -395,15 +395,18 @@ class ToolAdapter:
         workspace_root: Path,
         *,
         added_roots: tuple[Path, ...] = (),
+        security_scan_context: str | None = None,
     ) -> Iterator[None]:
         workspace = Path(workspace_root).expanduser()
         workspace_token = _WORKSPACE_OVERRIDE.set(workspace)
         roots_token = _ADDED_WORKSPACE_ROOTS.set(
             tuple(Path(root).expanduser().resolve() for root in added_roots)
         )
+        scan_token = _SECURITY_SCAN_CONTEXT.set(security_scan_context)
         try:
             yield
         finally:
+            _SECURITY_SCAN_CONTEXT.reset(scan_token)
             _ADDED_WORKSPACE_ROOTS.reset(roots_token)
             _WORKSPACE_OVERRIDE.reset(workspace_token)
 

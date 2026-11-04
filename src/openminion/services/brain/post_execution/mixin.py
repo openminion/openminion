@@ -77,7 +77,11 @@ def _bind_tool_workspace_root(
     workspace_path = (
         Path(workspace_root).expanduser() if workspace_root else tool_api.workspace_root
     )
-    return tool_api.workspace_override(workspace_path, added_roots=added_roots)
+    return tool_api.workspace_override(
+        workspace_path,
+        added_roots=added_roots,
+        security_scan_context=metadata_source.get("security_scan_context"),
+    )
 
 
 def _take_added_workspace_roots(metadata: dict[str, Any]) -> tuple[Path, ...]:
