@@ -1,6 +1,6 @@
 # Verified learning and ongoing responsibility
 
-Status: implemented in source; live learning qualification blocked
+Status: implemented in source; live acceptance incomplete
 Last updated: 2026-11-04
 
 OpenMinion can retain a reviewed procedure from an agent's completed work,
@@ -165,6 +165,11 @@ resume the same schedule for a fresh assessment. Restart preserves consumed
 allowance; it does not authorize extra runs. Exhaustion, expiry, revocation, or
 cancellation stops further admission. A null comparison baseline stays null
 unless explicitly changed through the existing schedule contract.
+
+The composed live lifecycle has not yet passed acceptance. Initial scans and a
+verified approved repair have succeeded, but model errors prevented a complete
+restart, rescan and exhaustion proof. Keep this qualification separate from the
+available task controls and locally tested state projection.
 
 This supports bounded ownership of a declared task. It does not provide
 unlimited monitoring, autonomous repair, or security certification.
