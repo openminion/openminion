@@ -28,6 +28,8 @@ This file tracks package-facing release notes for `openminion`.
 
 - Reject unsupported arithmetic in `calculate_expression` — zero to a negative power and complex-valued results now use the structured `INVALID_ARGUMENT` path instead of raising raw exceptions. (Refs #490)
 
+- Support positional-only parameters in `@tool` handlers, so a function with a positional-only argument no longer crashes during argument binding. (Refs #474)
+
 - Record the memory-consolidation marker only when the review resolved every
   candidate with a terminal decision (keep/promote/discard) and nothing was
   deferred or failed to write. A cycle that deferred any candidate, or whose

@@ -95,6 +95,26 @@ def test_decorator_handler_invokes_underlying_function() -> None:
     assert decl.handler(args) == 12
 
 
+def test_decorator_handler_supports_positional_only_parameters() -> None:
+    @tool
+    def add(a: int, b: int, /) -> int:
+        return a + b
+
+    decl = add.tool_decl
+    assert decl.handler(decl.args_model(a=2, b=3)) == 5
+    assert decl.handler({"a": 4, "b": 5}) == 9
+
+
+def test_decorator_handler_supports_mixed_positional_only_parameters() -> None:
+    @tool
+    def mix(a: int, /, b: int, *, c: int = 3) -> tuple[int, int, int]:
+        return a, b, c
+
+    decl = mix.tool_decl
+    assert decl.handler(decl.args_model(a=1, b=2, c=7)) == (1, 2, 7)
+    assert decl.handler({"a": 1, "b": 2}) == (1, 2, 3)
+
+
 def test_decorator_tool_family_spec_wraps_decl() -> None:
     @tool
     def ping() -> str:
