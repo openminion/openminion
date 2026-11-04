@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from openminion.modules.brain.config import TOOL_TRANSCRIPT_MAX_REPLAYED_CALLS
+from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 from openminion.modules.brain.schemas import ActionError, ActionResult
 from openminion.modules.llm.schemas import Message, ToolCall
 from openminion.modules.tool.diagnostics.events import (
@@ -173,7 +174,7 @@ def _session_writer(loop_ctx: AdaptiveToolLoopContext) -> tuple[Any | None, str]
 
 
 def _research_invocation_fields(loop_ctx: AdaptiveToolLoopContext) -> dict[str, str]:
-    research = getattr(loop_ctx.state, "module_state", {}).get("research", {})
+    research = getattr(loop_ctx.state, STATE_KEY_MODULE_STATE, {}).get("research", {})
     invocation_id = research.get("invocation_id") if research.get("child") else None
     return {"research_invocation_id": str(invocation_id)} if invocation_id else {}
 

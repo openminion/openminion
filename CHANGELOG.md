@@ -14,6 +14,12 @@ This file tracks package-facing release notes for `openminion`.
   Whole-turn LLM response reporting continues to use the existing canonical
   event projection introduced by #596 (Refs #531, Refs #542).
 
+- Retain a completed research child's answer ahead of raw tool-output prefixes,
+  with the existing source URLs and evidence references. Use a successful
+  action summary when the completed message is empty and usable tool evidence
+  exists. Keep partial-child evidence salvage and the 200/800-character prompt
+  projections unchanged (Refs #543).
+
 - Make identity `clear_cache` prefix matching case-sensitive, so it no longer deletes other agents' snippets through a case-insensitive `LIKE`. (Refs #485)
 
 - Forward the query string on POST requests, so query-parameter POST routes resolve their parameters. (Refs #486)
