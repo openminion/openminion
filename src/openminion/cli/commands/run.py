@@ -243,7 +243,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         default=argparse.SUPPRESS,
         help_text="Configured profile id",
     )
-    run.add_argument("--session", default=None, help="Session id")
+    run.add_argument(
+        "--session",
+        default=argparse.SUPPRESS,
+        help="Session id",
+    )
     run.add_argument(
         "--resume",
         action="store_true",
