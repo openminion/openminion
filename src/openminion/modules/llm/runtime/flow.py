@@ -424,6 +424,7 @@ def _complete_provider_attempt(
             code=exc.code,
             message=exc.message,
             details=exc.details,
+            usage=exc.usage,
         )
     except Exception as exc:
         return client._error_response(
@@ -756,6 +757,7 @@ def _apply_tool_policy_post(
                 ]
             },
             tool_calls=updated_calls,
+            usage=response.usage,
         )
     return response
 
@@ -811,6 +813,7 @@ def _apply_cost_budget(client: Any, response: LLMResponse) -> LLMResponse:
         message="Response cost exceeded max_cost_usd budget",
         details=details,
         tool_calls=response.tool_calls,
+        usage=response.usage,
     )
 
 
@@ -868,6 +871,7 @@ def _error_response(
     message: str,
     details: Optional[Dict[str, Any]] = None,
     tool_calls: Optional[List[ToolCall]] = None,
+    usage: UsageInfo | None = None,
 ) -> LLMResponse:
     safe = _safe_code(code)
     return LLMResponse(
@@ -877,7 +881,7 @@ def _error_response(
         output_text="",
         assistant_messages=[],
         tool_calls=tool_calls or [],
-        usage=UsageInfo(input_tokens=0, output_tokens=0, total_tokens=0),
+        usage=usage if usage is not None else UsageInfo(),
         latency_ms=0,
         finish_reason="error",
         provider_raw=None,

@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Account for LLM responses across a whole turn, including reflection, action,
+  judgment, and continuation steps, in public stats and persisted usage facts.
+  Preserve reported cache usage and missing-usage coverage, and prevent call-event
+  replay from counting tokens twice (Refs #516). Child tool-result accounting and
+  research budget settlement remain separate (#531, #542).
+
 - Ratchet `skip`/`skipif`/`xfail` markers in the test suite against a per-file
   baseline, so silencing a case becomes a counted, reviewed change: adding a
   marker fails the build, and a literal conditional skip turned unconditional

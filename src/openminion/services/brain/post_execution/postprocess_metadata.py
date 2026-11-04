@@ -6,8 +6,11 @@ from openminion.base.config.core import resolve_default_agent_id
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
 from openminion.modules.session.capture import capture_response_metadata
+from openminion.modules.telemetry.usage.coverage import coverage_from_session_events
 from openminion.services.brain.post_execution.usage import (
-    collect_llm_usage_summary_from_events,
+    collect_llm_call_events,
+    count_llm_calls,
+    summarize_llm_usage,
 )
 
 _STRUCTURED_ACTION_OUTPUT_METADATA_KEYS: tuple[str, ...] = (
@@ -41,39 +44,27 @@ def _build_turn_response_metadata(
     llm_steps: int,
     termination_reason: str,
 ) -> dict[str, str]:
-    llm_call_counts = self._collect_llm_call_counts_by_purpose(
-        runner=runner,
-        session_id=session_id,
-        trace_id=request_id,
-        fallback_total_llm_calls=max(0, llm_steps),
-    )
+    working_state = getattr(step_out, STATE_KEY_WORKING, None)
     action_outputs = getattr(getattr(step_out, "action_result", None), "outputs", None)
     if not isinstance(action_outputs, dict):
         action_outputs = {}
-    total_input_tokens_used = int(action_outputs.get("total_input_tokens_used", 0) or 0)
-    total_output_tokens_used = int(
-        action_outputs.get("total_output_tokens_used", 0) or 0
-    )
-    total_tokens_used = int(action_outputs.get("total_tokens_used", 0) or 0)
-    (
-        event_input_tokens,
-        event_output_tokens,
-        event_total_tokens,
-        max_single_call_input_tokens,
-        max_single_call_output_tokens,
-        max_single_call_total_tokens,
-    ) = collect_llm_usage_summary_from_events(
+    events = collect_llm_call_events(
         runner=runner,
         session_id=session_id,
         trace_id=request_id,
+        run_id=str(getattr(working_state, "root_turn_id", "") or ""),
     )
-    if total_tokens_used <= 0 and event_total_tokens > 0:
-        total_input_tokens_used = event_input_tokens
-        total_output_tokens_used = event_output_tokens
-        total_tokens_used = event_total_tokens
+    llm_call_counts = count_llm_calls(events, max(0, llm_steps))
+    usage = summarize_llm_usage(events)
+    if not events:
+        for key in (
+            "total_input_tokens_used",
+            "total_output_tokens_used",
+            "total_tokens_used",
+        ):
+            usage[key] = int(action_outputs.get(key, 0) or 0)
     tool_calls_count = int(action_outputs.get("tool_calls_count", 0) or 0)
     _default_agent_id = resolve_default_agent_id(self._config)
-    working_state = getattr(step_out, STATE_KEY_WORKING, None)
     metadata = {
         "agent": self._config.agents[_default_agent_id].name or _default_agent_id,
         "provider": str(getattr(self._provider, "name", "brain-orchestrator")),
@@ -88,13 +79,14 @@ def _build_turn_response_metadata(
         "llm_call_counts_by_purpose": json.dumps(llm_call_counts, sort_keys=True),
         "llm_calls_count": str(sum(llm_call_counts.values())),
         "tool_calls_count": str(tool_calls_count),
-        "total_input_tokens_used": str(total_input_tokens_used),
-        "total_output_tokens_used": str(total_output_tokens_used),
-        "total_tokens_used": str(total_tokens_used),
-        "max_single_call_input_tokens": str(max_single_call_input_tokens),
-        "max_single_call_output_tokens": str(max_single_call_output_tokens),
-        "max_single_call_total_tokens": str(max_single_call_total_tokens),
+        **{key: str(value) for key, value in usage.items()},
     }
+    metadata["llm_usage_coverage"] = json.dumps(
+        coverage_from_session_events(
+            [{**event, "event_type": event["type"]} for event in events]
+        ).as_payload(),
+        sort_keys=True,
+    )
     metadata.update(capture_response_metadata(step_out))
     _attach_session_task_plan_metadata(
         metadata=metadata,

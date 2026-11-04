@@ -769,7 +769,7 @@ class SQLiteSessionStore(SessionStore):
         trace_id: str | None = None,
         agent_id: str | None = None,
         status: str | None = None,
-        limit: int | None = None,
+        limit: int | None = 100,
     ) -> list[dict[str, Any]]:
         return self._event_store.list_events_compat(
             session_id,

@@ -301,11 +301,13 @@ class SessctlAdapter:
         *,
         event_type: str | None = None,
         trace_id: str | None = None,
+        limit: int | None = 100,
     ) -> list[dict[str, Any]]:
         return self.store.list_events(
             session_id,
             event_type=event_type,
             trace_id=trace_id,
+            limit=limit,
         )
 
     def get_active_task_plan(self, session_id: str) -> dict[str, Any] | None:

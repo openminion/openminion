@@ -110,7 +110,7 @@ class SessionStore(ABC):
         trace_id: str | None = None,
         agent_id: str | None = None,
         status: str | None = None,
-        limit: int | None = None,
+        limit: int | None = 100,
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod

@@ -166,6 +166,36 @@ def _entry_response_bytes(response: Any) -> int:
     )
 
 
+def _emit_entry_response(
+    logger: CanonicalEventLogger,
+    state: WorkingState,
+    response: Any,
+    *,
+    call_id: str,
+    metrics: dict[str, Any],
+    attempt: int,
+) -> dict[str, Any]:
+    usage_payload = _response_usage_payload(response)
+    logger.emit(
+        "llm.call.completed",
+        {
+            "llm_call_id": call_id,
+            "purpose": "entry",
+            "run_id": str(state.root_turn_id or ""),
+            "provider": str(getattr(response, "provider", "") or "").strip(),
+            "usage": usage_payload,
+            **response_cost_payload(response),
+            **metrics,
+            "response_bytes": _entry_response_bytes(response),
+            "retry_count": attempt,
+            "finish_reason": str(getattr(response, "finish_reason", "") or ""),
+            **response_telemetry_event_fields(response),
+        },
+        trace_id=state.trace_id,
+    )
+    return usage_payload
+
+
 def _apply_entry_freshness(
     *,
     runner: Any,
@@ -191,7 +221,6 @@ def _apply_entry_freshness(
         logger.emit("brain.freshness.entry_fallback", payload, trace_id=state.trace_id)
         return
 
-    fallback_call_id = new_uuid()
     result = classify_request_freshness(
         runner,
         state=state,
@@ -207,29 +236,6 @@ def _apply_entry_freshness(
         {"llm_call_id": llm_call_id, "reason": "missing_or_invalid_contract"},
         trace_id=state.trace_id,
     )
-    if callable(getattr(runner.llm_api, "call_structured", None)) and result[
-        2
-    ].classifier_mode not in {
-        "skipped_direct_tool_request",
-        "skipped_empty_request",
-        "skipped_missing_llm",
-    }:
-        fallback_payload = {
-            "llm_call_id": fallback_call_id,
-            "purpose": "freshness_classify_fallback",
-            "model": model,
-            "auxiliary": True,
-        }
-        logger.emit("llm.call.started", fallback_payload, trace_id=state.trace_id)
-        logger.emit(
-            "llm.call.completed",
-            {
-                **fallback_payload,
-                "usage": {},
-                "fallback_reason": "missing_or_invalid_entry_contract",
-            },
-            trace_id=state.trace_id,
-        )
     _apply_freshness_result(state=state, logger=logger, result=result)
 
 
@@ -359,9 +365,7 @@ def decide(
     capability_category: str | None = None,
 ) -> Decision:
     has_new_input = bool(user_input and str(user_input).strip())
-    normalized_capability_category = (
-        str(capability_category or "").strip().lower() or None
-    )
+    capability_category = str(capability_category or "").strip().lower() or None
     is_idle_tick_entry = str(getattr(state, "run_trigger", "") or "") == "idle_tick"
     if (
         state.plan is not None
@@ -477,7 +481,7 @@ def decide(
         tool_specs = [
             spec for spec in tool_specs if spec.name == "clarify" or spec.name in forced
         ]
-    if normalized_capability_category:
+    if capability_category:
         available_tool_names = {
             str(spec.name or "").strip()
             for spec in tool_specs
@@ -487,7 +491,7 @@ def decide(
         preferred_tool = _runner_delegate(
             "_resolve_capability_tool_fallback",
             runner,
-            category=normalized_capability_category,
+            category=capability_category,
             available_tools=available_tool_names,
         )
         if preferred_tool:
@@ -551,8 +555,8 @@ def decide(
             style_overrides["entry_inactive_tool_directory"] = (
                 build_entry_inactive_tool_directory(requestable_tool_specs)
             )
-    if normalized_capability_category:
-        hints["capability_category"] = normalized_capability_category
+    if capability_category:
+        hints["capability_category"] = capability_category
     if str(getattr(state, "run_trigger", "") or "") == "idle_tick":
         hints["idle_tick_entry"] = True
         hints["idle_tick_v1_actions"] = ["continue_plan", "no_op"]
@@ -614,10 +618,16 @@ def decide(
     max_retries = retry_policy.max_retries
     last_detection = None
     base_messages = list(_messages_from_context(context))
-    request_metrics = _entry_request_metrics(
+    request_metrics: dict[str, Any] = _entry_request_metrics(
         messages=base_messages,
         tool_specs=tool_specs,
         context_tokens=int(_estimate or 0),
+    )
+    request_metrics.update(
+        model=model,
+        prompt_context_id=context.get("prompt_context_id"),
+        entry_tool_spec_count=len(tool_specs),
+        configured_output_limit=budget_max_tokens,
     )
     has_real_tools = any(spec.name != "clarify" for spec in tool_specs)
     entry_metadata: dict[str, Any] = {
@@ -625,7 +635,7 @@ def decide(
         "mode_name": "act",
         "agent_id": state.agent_id,
         "trace_id": state.trace_id,
-        "capability_category": normalized_capability_category,
+        "capability_category": capability_category,
         REQUESTABLE_TOOL_NAMES_METADATA_KEY: _tool_names_json(requestable_tool_specs),
         **_entry_trailer_metadata(hints),
     }
@@ -641,10 +651,11 @@ def decide(
     clarification_reconsidered = False
     project_control_retried = False
     for attempt in range(max_retries + 2):
+        call_id = f"{llm_call_id}:{attempt}" if attempt else llm_call_id
         logger.emit(
             "llm.identity_audit",
             {
-                "llm_call_id": llm_call_id,
+                "llm_call_id": call_id,
                 "purpose": "entry",
                 "agent_id": state.agent_id,
                 "profile_version": getattr(
@@ -679,27 +690,13 @@ def decide(
             request_id_payload = provider_request_id_payload(
                 getattr(exc, "details", None)
             )
-            if retryable and attempt < max_retries:
-                backoff_ms = compute_backoff_ms(retry_policy, attempt)
-                logger.emit(
-                    "llm.call.retry",
-                    {
-                        "llm_call_id": llm_call_id,
-                        "attempt": attempt + 1,
-                        "reason": "provider_transient_error",
-                        "error_category": error_category,
-                        "backoff_ms": int(backoff_ms),
-                        **request_id_payload,
-                    },
-                    trace_id=state.trace_id,
-                )
-                _BACKOFF_SLEEP(backoff_ms / 1000.0)
-                continue
             logger.emit(
                 "llm.call.failed",
                 {
-                    "llm_call_id": llm_call_id,
+                    "llm_call_id": call_id,
                     "purpose": "entry",
+                    "run_id": str(state.root_turn_id or ""),
+                    "usage": {},
                     "model": model,
                     "error": str(exc),
                     "error_category": error_category,
@@ -710,10 +707,34 @@ def decide(
                 status="error",
                 error={"code": "LLM_CALL_FAILED", "message": str(exc)},
             )
+            if retryable and attempt < max_retries:
+                backoff_ms = compute_backoff_ms(retry_policy, attempt)
+                logger.emit(
+                    "llm.call.retry",
+                    {
+                        "llm_call_id": call_id,
+                        "attempt": attempt + 1,
+                        "reason": "provider_transient_error",
+                        "error_category": error_category,
+                        "backoff_ms": int(backoff_ms),
+                        **request_id_payload,
+                    },
+                    trace_id=state.trace_id,
+                )
+                _BACKOFF_SLEEP(backoff_ms / 1000.0)
+                continue
             provider_error = _provider_failure_error(exc)
             if provider_error is not None:
                 raise provider_error from exc
             raise
+        usage_payload = _emit_entry_response(
+            logger,
+            state,
+            response,
+            call_id=call_id,
+            metrics=request_metrics,
+            attempt=attempt,
+        )
         last_detection = detect_entry_path(response)
         if (
             last_detection.path == "clarify"
@@ -726,7 +747,7 @@ def decide(
             logger.emit(
                 "llm.call.retry",
                 {
-                    "llm_call_id": llm_call_id,
+                    "llm_call_id": call_id,
                     "attempt": attempt + 1,
                     "reason": "clarify_before_tool_investigation",
                 },
@@ -753,7 +774,7 @@ def decide(
             logger.emit(
                 "llm.call.empty_response_accepted",
                 {
-                    "llm_call_id": llm_call_id,
+                    "llm_call_id": call_id,
                     "reason": "idle_tick_noop",
                 },
                 trace_id=state.trace_id,
@@ -763,7 +784,7 @@ def decide(
             logger.emit(
                 "llm.call.retry",
                 {
-                    "llm_call_id": llm_call_id,
+                    "llm_call_id": call_id,
                     "attempt": attempt + 1,
                     "reason": "empty_entry_response",
                 },
@@ -773,7 +794,7 @@ def decide(
         logger.emit(
             "llm.call.failed",
             {
-                "llm_call_id": llm_call_id,
+                "llm_call_id": call_id,
                 "purpose": "entry",
                 "model": model,
                 "error": "exhausted_retries_empty_response",
@@ -790,7 +811,7 @@ def decide(
             state=state,
             reason_code="llm_empty_response",
             source="entry_empty_response_retry_exhausted",
-            metadata={"llm_call_id": llm_call_id, "attempts": max_retries + 1},
+            metadata={"llm_call_id": call_id, "attempts": max_retries + 1},
         )
         return _respond_decision(
             confidence=0.5,
@@ -815,7 +836,6 @@ def decide(
         llm_call_id=llm_call_id,
     )
 
-    usage_payload = _response_usage_payload(response)
     state.llm_calls_used += 1
     _runner_delegate("_debit_tokens", runner, state, {"usage": usage_payload}, logger)
     _runner_delegate("_track_call_completed", runner, llm_call_id)
@@ -854,26 +874,6 @@ def decide(
             },
         )
 
-    logger.emit(
-        "llm.call.completed",
-        {
-            "llm_call_id": llm_call_id,
-            "purpose": "entry",
-            "provider": str(getattr(response, "provider", "") or "").strip(),
-            "model": model,
-            "prompt_context_id": context.get("prompt_context_id"),
-            "usage": usage_payload,
-            **response_cost_payload(response),
-            "entry_tool_spec_count": len(tool_specs),
-            **request_metrics,
-            "response_bytes": _entry_response_bytes(response),
-            "retry_count": attempt,
-            "finish_reason": str(getattr(response, "finish_reason", "") or ""),
-            "configured_output_limit": budget_max_tokens,
-            **response_telemetry_event_fields(response),
-        },
-        trace_id=state.trace_id,
-    )
     logger.emit(
         "brain.entry.path_detected",
         {
@@ -923,7 +923,7 @@ def decide(
             runner=runner,
             state=state,
             user_input=user_input,
-            capability_category=normalized_capability_category,
+            capability_category=capability_category,
             decision=decision,
             response=response,
             logger=logger,

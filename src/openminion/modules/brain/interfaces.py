@@ -123,6 +123,7 @@ class SessionAPI(Protocol):
         *,
         event_type: str | None = None,
         trace_id: str | None = None,
+        limit: int | None = 100,
     ) -> list[dict[str, Any]]: ...
 
     def get_active_task_plan(self, session_id: str) -> dict[str, Any] | None: ...
