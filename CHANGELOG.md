@@ -34,6 +34,10 @@ This file tracks package-facing release notes for `openminion`.
   its own `--session` with a default, which overwrote the root value so
   `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
 
+- Await async `@tool` handlers in the shared execution path: an `async def` tool
+  registered successfully but was never awaited, so callers received a coroutine
+  object instead of the handler's return value (Refs #612).
+
 ## Current package line - 2026-11-04
 
 - Add a reviewed learning lifecycle that can retain successful substantive
