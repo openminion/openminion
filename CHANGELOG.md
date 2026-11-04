@@ -34,6 +34,10 @@ This file tracks package-facing release notes for `openminion`.
   its own `--session` with a default, which overwrote the root value so
   `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
 
+- `daemon stop` now names the resolved endpoint and the expected PID-file path when
+  the endpoint answers but no PID file exists, states that nothing was signalled,
+  and still exits 1 instead of a bare reachable-without-PID line (Refs #592).
+
 ## Current package line - 2026-11-04
 
 - Add a reviewed learning lifecycle that can retain successful substantive
