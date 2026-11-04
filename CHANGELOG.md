@@ -1,11 +1,25 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-01
+Last updated: 2026-11-04
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-04
+
+- Add a reviewed learning lifecycle that can retain successful substantive
+  work, author a procedure, evaluate transfer separately, and admit or roll
+  back an exact agent-scoped version. Application remains pending until an
+  operator admits it, and the available source support does not establish a
+  live learning-benefit claim.
+
+- Add finite read-only recurring security assessments with visible consumed
+  and remaining attempts, separate latest-attempt and last-successful evidence,
+  and exact-task pause and resume controls. Source support is available, but
+  the composed live lifecycle has not completed acceptance and does not provide
+  unlimited monitoring, autonomous repair, or security certification.
 
 - Account for LLM responses across a whole turn, including reflection, action,
   judgment, and continuation steps, in public stats and persisted usage facts.
