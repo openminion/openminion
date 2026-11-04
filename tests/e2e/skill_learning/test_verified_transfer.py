@@ -27,6 +27,8 @@ from tests.e2e.skill_learning.live_evidence import (
 from tests.e2e.skill_learning.live_transfer import TransferCampaign
 from tests.helpers.runtime_roots import configure_runtime_roots, RUNTIME_ROOT_ENV_VARS
 
+pytestmark = pytest.mark.e2e
+
 
 def _events():
     return [
@@ -35,6 +37,7 @@ def _events():
             "data": {
                 "usage": {"input_tokens": 90, "output_tokens": 10},
                 "trace_id": "trace-a",
+                "llm_call_id": "call-a",
             },
         },
         {
@@ -43,7 +46,6 @@ def _events():
                 "provider_input_tokens": 90,
                 "provider_output_tokens": 10,
                 "provider_calls_total": 1,
-                "provider_usage_complete": True,
                 "provider_attempts": [
                     {"outcome": "ok", "provider": "fixture", "model": "model-a"},
                 ],
@@ -56,23 +58,61 @@ def test_usage_counts_the_canonical_phase_once():
     assert canonical_usage(_events(), provider="fixture", model="model-a") == 100
 
 
-def test_complete_phase_counts_sparse_adaptive_and_auxiliary_calls():
+def test_old_sparse_completion_stream_stays_unavailable():
     events = _events()
     phase = events[-1]["data"]
     phase.update(
         provider_input_tokens=36319, provider_output_tokens=963, provider_calls_total=7
     )
     phase["provider_attempts"] = [dict(phase["provider_attempts"][0]) for _ in range(7)]
-    assert canonical_usage(events, provider="fixture", model="model-a") == 37282
+    assert canonical_usage(events, provider="fixture", model="model-a") is None
+
+
+def test_alias_usage_counts_all_response_calls_once():
+    events = _events()
+    events.insert(
+        1,
+        {
+            "event_type": "llm.call.completed",
+            "data": {
+                "llm_call_id": "call-b",
+                "purpose": "reflect",
+                "usage": {"prompt_tokens": 8, "completion_tokens": 2},
+            },
+        },
+    )
+    events[-1]["data"].update(
+        provider_input_tokens=98, provider_output_tokens=12, provider_calls_total=2
+    )
+    events[-1]["data"]["provider_attempts"].append(
+        dict(events[-1]["data"]["provider_attempts"][0])
+    )
+    assert canonical_usage(events, provider="fixture", model="model-a") == 110
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {},
+        {"prompt_tokens": 90},
+        {"completion_tokens": 10},
+        {"input_tokens": None, "output_tokens": 10},
+        {"input_tokens": -1, "output_tokens": 10},
+    ],
+)
+def test_partial_response_usage_stays_unavailable(usage):
+    events = _events()
+    events[0]["data"]["usage"] = usage
+    assert canonical_usage(events, provider="fixture", model="model-a") is None
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("provider_usage_complete", None),
-        ("provider_usage_complete", False),
         ("provider_input_tokens", None),
         ("provider_output_tokens", None),
+        ("provider_input_tokens", 91),
+        ("provider_output_tokens", 11),
         ("provider_calls_total", 2),
         ("provider_attempts", []),
     ],
@@ -93,10 +133,36 @@ def test_attempt_identity_and_success_must_match(field, value):
     assert canonical_usage(events, provider="fixture", model="model-a") is None
 
 
-def test_old_complete_looking_record_stays_unavailable():
+@pytest.mark.parametrize("missing", ["usage", "llm_call_id"])
+def test_missing_response_fact_stays_unavailable(missing):
     events = _events()
-    events[-1]["data"].pop("provider_usage_complete")
+    events[0]["data"].pop(missing)
     assert canonical_usage(events, provider="fixture", model="model-a") is None
+
+
+def test_duplicate_call_cannot_replace_missing_response():
+    events = _events()
+    events.insert(1, deepcopy(events[0]))
+    events[-1]["data"].update(
+        provider_input_tokens=180, provider_output_tokens=20, provider_calls_total=2
+    )
+    events[-1]["data"]["provider_attempts"].append(
+        dict(events[-1]["data"]["provider_attempts"][0])
+    )
+    assert canonical_usage(events, provider="fixture", model="model-a") is None
+
+
+def test_failed_call_never_counts_as_complete_usage():
+    events = _events()
+    events[0]["event_type"] = "llm.call.failed"
+    assert canonical_usage(events, provider="fixture", model="model-a") is None
+
+
+def test_reported_zero_usage_is_known():
+    events = _events()
+    events[0]["data"]["usage"] = {"prompt_tokens": 0, "completion_tokens": 0}
+    events[-1]["data"].update(provider_input_tokens=0, provider_output_tokens=0)
+    assert canonical_usage(events, provider="fixture", model="model-a") == 0
 
 
 def test_retained_observations_have_distinct_session_identity_and_owner(

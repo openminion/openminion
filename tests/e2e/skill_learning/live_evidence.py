@@ -10,6 +10,13 @@ import subprocess
 import time
 
 from openminion.modules.skill.learning.measurement import MeasurementObservation
+from openminion.modules.telemetry.usage.constants import LLM_USAGE_EVENT_TYPES
+from openminion.modules.telemetry.usage.coverage import (
+    coverage_from_session_events,
+    INPUT_TOKEN_KEYS,
+    observed_token_value,
+    OUTPUT_TOKEN_KEYS,
+)
 from tests.e2e.cli.focus.harness import FocusProbe, FocusScenario
 from tests.e2e.cli.focus.harness.assertions import read_focus_evidence
 from tests.e2e.cli.focus.test_live_skill_confirmed_save import _selected_skill_events
@@ -40,19 +47,35 @@ def canonical_usage(events: list[dict], *, provider: str, model: str) -> int | N
     phase = phases[0]
     attempts = phase.get("provider_attempts", [])
     counts = [phase.get("provider_input_tokens"), phase.get("provider_output_tokens")]
+    calls = [event for event in events if event["event_type"] in LLM_USAGE_EVENT_TYPES]
+    coverage = coverage_from_session_events(
+        [
+            {"event_type": event["event_type"], "payload": event["data"]}
+            for event in calls
+        ]
+    )
     if (
         not attempts
-        or phase.get("provider_usage_complete") is not True
         or not all(isinstance(value, int) and value >= 0 for value in counts)
         or len(attempts) != phase.get("provider_calls_total")
+        or coverage.observed_llm_call_events != len(attempts)
+        or coverage.input_tokens.reported != len(attempts)
+        or coverage.output_tokens.reported != len(attempts)
+        or coverage.llm_call_id_present_events != len(attempts)
+        or len({event["data"]["llm_call_id"] for event in calls}) != len(attempts)
+        or coverage.failed_llm_call_events
         or any(
             attempt["outcome"] != "ok"
             or attempt["provider"] != provider
             or attempt["model"] != model
             for attempt in attempts
         )
-        or any(event["event_type"] == "llm.call.failed" for event in events)
     ):
+        return None
+    if counts != [
+        sum(observed_token_value(event["data"]["usage"], keys).value for event in calls)
+        for keys in (INPUT_TOKEN_KEYS, OUTPUT_TOKEN_KEYS)
+    ]:
         return None
     return sum(counts)
 

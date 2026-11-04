@@ -99,7 +99,7 @@ say `no_demonstrated_gain`, `regression`, or `inconclusive`.
 The initial live acquisition stopped before candidate authoring, and complete
 usage could not be recovered from its retained evidence. No live learning benefit
 has been established. Future runs require a reviewed frozen experiment and
-complete response-usage evidence from the existing phase timer.
+complete retained usage for every model call, reconciled with physical call counts.
 
 Record the evaluator's result artifact. When it contains a measurement report,
 also supply the independently frozen manifest reference:
