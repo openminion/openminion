@@ -333,7 +333,7 @@ class LLMCTLBridgeProvider(LLMProvider):
                 synthesized = ProviderResponse(
                     text=recovered_text,
                     model=str(getattr(response, "model", "") or self._model),
-                    usage={},
+                    usage=_bridge_usage_payload(response.usage),
                     tool_calls=[],
                     finish_reason=str(getattr(response, "finish_reason", "") or ""),
                     normalization={

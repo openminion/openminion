@@ -474,29 +474,6 @@ def normalized_provider_response(
     )
 
 
-def token_usage_values(
-    usage_payload: dict[str, Any],
-) -> tuple[int | None, int | None, int, int, int, int]:
-    prompt_tokens = usage_payload.get("prompt_tokens")
-    completion_tokens = usage_payload.get("completion_tokens")
-    total_tokens = usage_payload.get("total_tokens")
-    if total_tokens is None:
-        total_tokens = int(prompt_tokens or 0) + int(completion_tokens or 0)
-    input_tokens = int(prompt_tokens) if isinstance(prompt_tokens, (int, float)) else 0
-    output_tokens = (
-        int(completion_tokens) if isinstance(completion_tokens, (int, float)) else 0
-    )
-    cached_tokens = int(usage_payload.get("cached_tokens", 0) or 0)
-    return (
-        prompt_tokens,
-        completion_tokens,
-        total_tokens,
-        input_tokens,
-        output_tokens,
-        cached_tokens,
-    )
-
-
 def llm_response_kwargs(
     *,
     resp: ProviderResponse,
@@ -506,9 +483,6 @@ def llm_response_kwargs(
     trace_context: dict[str, Any],
 ) -> dict[str, Any]:
     usage_payload = usage_payload_from_response_usage(resp.usage)
-    prompt_tokens, completion_tokens, total_tokens, _input, _output, cached_tokens = (
-        token_usage_values(usage_payload)
-    )
     # Tool transcript events are keyed by (turn, call_id). A provider that
     # omits call ids must not hand two response batches in one turn the same
     # "call_1", so each batch gets its own full UUID prefix (#410).
@@ -542,11 +516,11 @@ def llm_response_kwargs(
         "tool_calls": tool_calls,
         "thinking": serialize_thinking_blocks(list(resp.thinking or [])),
         "usage": UsageInfo(
-            input_tokens=optional_int(prompt_tokens),
-            output_tokens=optional_int(completion_tokens),
-            total_tokens=optional_int(total_tokens),
+            input_tokens=optional_int(usage_payload.get("prompt_tokens")),
+            output_tokens=optional_int(usage_payload.get("completion_tokens")),
+            total_tokens=optional_int(usage_payload.get("total_tokens")),
             total_source=str(usage_payload.get("total_source") or "") or None,
-            cached_tokens=cached_tokens,
+            cached_tokens=usage_payload.get("cached_tokens"),
             cache_creation_tokens=usage_payload.get("cache_creation_tokens"),
             reasoning_tokens=usage_payload.get("reasoning_tokens"),
         ),
@@ -576,7 +550,6 @@ __all__ = [
     "response_cost_payload",
     "response_telemetry_event_fields",
     "split_system_and_conversation",
-    "token_usage_values",
     "trim_submit_output_history",
     "usage_payload_from_response_usage",
 ]
