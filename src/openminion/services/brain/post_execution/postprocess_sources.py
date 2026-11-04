@@ -179,7 +179,10 @@ def _cumulative_tool_results_from_step_output(
         for item in candidates
         if trace_id and str(item.get("turn_scope_id", "") or "") == trace_id
     ]
-    return list(_dedupe_tool_results(candidates + (tool_results_payload or [])))
+    deduped: list[dict[str, Any]] = _dedupe_tool_results(
+        candidates + (tool_results_payload or [])
+    )
+    return deduped
 
 
 def _action_result_termination_reason(action_result: Any | None) -> str:

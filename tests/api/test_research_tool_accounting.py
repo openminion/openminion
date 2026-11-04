@@ -6,10 +6,14 @@ postprocessing, gateway and database closeout run without a provider.
 
 import json
 
+import pytest
+
 from openminion import Agent, APIRuntime
 from openminion.base.config import OpenMinionConfig, save_config
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.brain.schemas import ActDecision, ActionResult
+from openminion.modules.brain.schemas.agent import ModeProfileConfig
+from openminion.modules.brain.loop.strategies.research import RESEARCH_MODE
 from openminion.modules.brain.loop.strategies.research.handler import ResearchMode
 from openminion.modules.brain.loop.strategies.research.schemas import ResearchSynthesis
 from tests._csc_fixtures import _csc_install_default_agent
@@ -97,8 +101,9 @@ def test_public_research_tool_totals_and_persistence(tmp_path, monkeypatch):
         runtime.close()
 
 
+@pytest.mark.parametrize("reuse_call_ids", [False, True])
 def test_real_child_tool_execution_matches_public_and_durable_records(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, reuse_call_ids
 ):
     from openminion import tool
     from openminion.modules.brain.loop.tools import DefaultAdaptiveToolLoopLLMRuntime
@@ -135,7 +140,10 @@ def test_real_child_tool_execution_matches_public_and_durable_records(
         return "LOCAL_FACT=731"
 
     def complete(self, *, messages, tools, model, **kwargs):
-        if not any(m.role == "tool" for m in messages):
+        latest_user = max(
+            i for i, message in enumerate(messages) if message.role == "user"
+        )
+        if not any(m.role == "tool" for m in messages[latest_user + 1 :]):
             assert any(spec.name == "local_evidence" for spec in tools)
             return LLMResponse(
                 ok=True,
@@ -143,7 +151,9 @@ def test_real_child_tool_execution_matches_public_and_durable_records(
                 model=model,
                 tool_calls=[
                     ToolCall(
-                        id=f"read-{len(executed)}", name="local_evidence", arguments={}
+                        id="read" if reuse_call_ids else f"read-{len(executed)}",
+                        name="local_evidence",
+                        arguments={},
                     )
                 ],
                 finish_reason="tool_calls",
@@ -167,27 +177,50 @@ def test_real_child_tool_execution_matches_public_and_durable_records(
         str(config_path), home_root=tmp_path, data_root=tmp_path / "data"
     )
     try:
+        runner = runtime.resolve_agent_service("openminion")._get_runner()
+        runner.profile.mode_config[RESEARCH_MODE] = ModeProfileConfig(
+            max_research_iterations=2
+        )
         with Agent(runtime=runtime, tools=[local_evidence]) as agent:
             result = agent.run("Research the local evidence", timeout_seconds=30)
         assert executed
         store, session_id, trace_id = turn_sources[0]
         canonical = [
             event
-            for event in store.list_events(session_id, limit=10000)
+            for event in store.get_replay_events(session_id)
             if event.get("payload", {}).get("turn_scope_id") == trace_id
         ]
         requested = [
             event["payload"]["call_id"]
             for event in canonical
-            if event["type"] == "tool.call.requested"
+            if event["event_type"] == "tool.call.requested"
         ]
         completed = [
             event["payload"]["call_id"]
             for event in canonical
-            if event["type"] == "tool.call.completed"
+            if event["event_type"] == "tool.call.completed"
         ]
         assert sorted(requested) == sorted(completed)
-        assert len(set(completed)) == len(executed)
+        assert len(completed) == len(executed)
+        assert len(executed) > 1
+        assert len(set(completed)) == (1 if reuse_call_ids else len(executed))
+        requests = {
+            event["event_id"]: event
+            for event in canonical
+            if event["event_type"] == "tool.call.requested"
+        }
+        terminals = [
+            event for event in canonical if event["event_type"] == "tool.call.completed"
+        ]
+        assert len(requests) == len(executed)
+        assert len({event["parent_event_id"] for event in terminals}) == len(executed)
+        for event in terminals:
+            parent = requests[event["parent_event_id"]]
+            assert event["payload"]["call_id"] == parent["payload"]["call_id"]
+            assert (
+                event["payload"]["research_invocation_id"]
+                == parent["payload"]["research_invocation_id"]
+            )
         assert result.stats["tool_calls"] == len(executed)
         assert int(result.metadata["tool_calls_count"]) == len(executed)
         assert json.loads(result.metadata["run_stats_json"])["tool_calls"] == len(

@@ -245,3 +245,69 @@ def test_replay_selects_canonical_or_legacy_lane_without_rewrite(
     assert legacy["transcript_lane"] == "legacy_history"
     assert legacy["causal_fidelity"] == "best_effort"
     assert store.get_replay_events(legacy_session) == before
+
+
+@pytest.mark.parametrize("status", ["success", "blocked"])
+def test_research_invocations_preserve_colliding_provider_ids_and_retry_identity(
+    store, status
+):
+    session_id = _session(store)
+    request_ids = []
+    terminal_ids = []
+    for invocation in (None, "child-a", "child-b"):
+        provenance = {"research_invocation_id": invocation} if invocation else {}
+        requested = _requested_payload(**provenance)
+        request_id = store.append_event(
+            session_id, event_type="tool.call.requested", payload=requested
+        )
+        request_ids.append(request_id)
+        assert (
+            store.append_event(
+                session_id, event_type="tool.call.requested", payload=requested
+            )
+            == request_id
+        )
+        terminal = {
+            "schema_version": 1,
+            "turn_scope_id": "turn-1",
+            "call_id": "call-1",
+            "status": status,
+            **provenance,
+            **(
+                {"output": {"fact": "731"}}
+                if status == "success"
+                else {"error": {"code": "DENIED"}}
+            ),
+        }
+        event_type = (
+            "tool.call.completed" if status == "success" else "tool.call.blocked"
+        )
+        terminal_id = store.append_event(
+            session_id,
+            event_type=event_type,
+            parent_event_id=request_id,
+            payload=terminal,
+        )
+        terminal_ids.append(terminal_id)
+        assert (
+            store.append_event(
+                session_id,
+                event_type=event_type,
+                parent_event_id=request_id,
+                payload=terminal,
+            )
+            == terminal_id
+        )
+    assert len(set(request_ids)) == len(set(terminal_ids)) == 3
+    from openminion.modules.session.storage.replay import build_tool_transcript
+
+    transcript = build_tool_transcript(store.get_replay_events(session_id))
+    assert transcript["causal_fidelity"] == "exact"
+    assert len(transcript["events"]) == 6
+    with pytest.raises(ValueError, match="research invocation does not match"):
+        store.append_event(
+            session_id,
+            event_type=event_type,
+            parent_event_id=request_ids[1],
+            payload=terminal,
+        )

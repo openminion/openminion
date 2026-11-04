@@ -1,5 +1,3 @@
-"""Concurrent turns and exceptional child snapshot coverage."""
-
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from types import SimpleNamespace

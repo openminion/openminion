@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from copy import deepcopy
 from typing import Any
+from uuid import uuid4
 
 from openminion.base.constants import STATE_KEY_WORKING
 from openminion.modules.brain.schemas import BudgetCounters, WorkingState
@@ -35,6 +36,7 @@ def settle_child(
     child: WorkingState,
     starting_budget: BudgetCounters,
     starting_llm_calls: int,
+    invocation_id: str,
     action_result: Any = None,
 ) -> None:
     """Called once, in the invocation's finally block, including cancellation.
@@ -68,11 +70,12 @@ def settle_child(
         if isinstance(item, dict) and item.get("turn_scope_id") == parent.trace_id
     ]
     current.extend(
-        deepcopy(item)
+        {**deepcopy(item), "research_invocation_id": invocation_id}
         for item in results
         if isinstance(item, dict) and item.get("turn_scope_id") == parent.trace_id
     )
-    # Keep the original call IDs/scope for the existing turn collector to dedupe.
+    # Provider IDs can repeat in sibling/parent requests. Preserve correlation,
+    # but qualify copies from this invocation before the shared collector dedupes.
     parent.module_state.setdefault("research", {})["tool_results"] = (
         dedupe_tool_results(current)
     )
@@ -90,6 +93,8 @@ def account_child(
     """One settlement site for normal return, exception and BaseException exits."""
     starting_budget = child.budgets_remaining.model_copy(deep=True)
     starting_llm_calls = child.llm_calls_used
+    invocation_id = uuid4().hex
+    child.module_state.setdefault("research", {})["invocation_id"] = invocation_id
     execution = ChildExecution()
     try:
         yield execution
@@ -101,6 +106,7 @@ def account_child(
             child=returned_state if isinstance(returned_state, WorkingState) else child,
             starting_budget=starting_budget,
             starting_llm_calls=starting_llm_calls,
+            invocation_id=invocation_id,
             action_result=getattr(result, "action_result", None),
         )
 

@@ -393,7 +393,7 @@ def dedupe_tool_results(
     tool_results_payload: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for item in tool_results_payload:
         if not isinstance(item, dict):
             continue
@@ -402,8 +402,9 @@ def dedupe_tool_results(
         ).strip()
         if not stable_id:
             stable_id = json.dumps(item, sort_keys=True, default=str)
-        if stable_id in seen:
+        identity = (str(item.get("research_invocation_id") or ""), stable_id)
+        if identity in seen:
             continue
-        seen.add(stable_id)
+        seen.add(identity)
         deduped.append(item)
     return deduped

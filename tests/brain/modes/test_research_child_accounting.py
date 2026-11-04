@@ -1,5 +1,3 @@
-"""Real adaptive child loops under an enclosing research tool budget."""
-
 from types import SimpleNamespace
 from asyncio import CancelledError
 
@@ -28,8 +26,10 @@ from tests.brain.tool_loops.test_engine import (
 
 
 @pytest.mark.parametrize("parent_tool_budget", [9, 3])
+@pytest.mark.parametrize("reuse_call_ids", [False, True])
+@pytest.mark.parametrize("parent_collision", [False, True])
 def test_enclosing_budget_caps_three_actual_adaptive_child_loops(
-    tmp_path, monkeypatch, parent_tool_budget
+    tmp_path, monkeypatch, parent_tool_budget, reuse_call_ids, parent_collision
 ):
     tm = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
     ctx, _ = _ctx(tm, research_query="Gather evidence in up to three passes.")
@@ -38,6 +38,18 @@ def test_enclosing_budget_caps_three_actual_adaptive_child_loops(
     ctx.state.llm_calls_max = 30
     mode = _make_mode(max_iterations=3)
     runs = []
+    parent_records = []
+    if parent_collision:
+        parent_records = [
+            {
+                "call_id": "read-0" if reuse_call_ids else "pass-0-read-0",
+                "tool_name": "file.read",
+                "ok": True,
+                "content": "parent evidence",
+                "turn_scope_id": ctx.state.trace_id,
+            }
+        ]
+        ctx.state.module_state["adaptive_loop"] = {"tool_results": parent_records}
 
     def invoke_child(runner, **kwargs):
         child = kwargs["state"]
@@ -49,7 +61,7 @@ def test_enclosing_budget_caps_three_actual_adaptive_child_loops(
                 model="fake-model",
                 tool_calls=[
                     ToolCall(
-                        id=f"pass-{i}-read-{k}",
+                        id=f"read-{k}" if reuse_call_ids else f"pass-{i}-read-{k}",
                         name="file.read",
                         arguments={"path": f"evidence-{i}-{k}.txt"},
                     )
@@ -149,7 +161,18 @@ def test_enclosing_budget_caps_three_actual_adaptive_child_loops(
         _cumulative_tool_results_from_step_output,
     )
 
-    assert len(_cumulative_tool_results_from_step_output(result, [])) == total
+    records = _cumulative_tool_results_from_step_output(result, parent_records)
+    assert len(records) == total + len(parent_records)
+    assert total == parent_tool_budget
+    if reuse_call_ids:
+        assert sum(item["call_id"] == "read-0" for item in records) == len(runs) + len(
+            parent_records
+        )
+    # Serialized/replayed copies retain execution provenance and count once.
+    import json
+
+    replay = json.loads(json.dumps(records))
+    assert _cumulative_tool_results_from_step_output(result, replay * 2) == records
 
 
 HANDLER = (
@@ -196,7 +219,8 @@ def test_child_settles_all_exit_paths_without_merging_state(
         child = kwargs["state"]
         children.append(child)
         assert "adaptive_loop" not in child.module_state
-        assert child.module_state["research"] == {"child": True}
+        assert child.module_state["research"]["child"] is True
+        assert child.module_state["research"]["invocation_id"]
         _consume(child)
         child.goal = "private child goal"
         child.module_state["private"] = {"secret": "must not cross boundary"}
