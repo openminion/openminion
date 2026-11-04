@@ -914,6 +914,8 @@ def _repair(probe: FocusProbe, ctl: ArtifactCtl, handoff: str, command: str) -> 
     return {
         "launch": "operator-approved existing launch_project + schedule_project_wake APIs",
         "run_id": run.run_id,
+        "task_id": run.task_id,
+        "project_run_id": checkpoint.project_run.project_run_id,
         "proof_packet_ref": run.proof_packet_ref,
         "accepted_child_ref": accepted_ref,
         "checkpoint_tasks": [
