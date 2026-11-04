@@ -101,7 +101,10 @@ class BridgeIdentityClient:
                     omitted_fields=list(getattr(snippet, "omitted_fields", []) or []),
                     warnings=list(getattr(snippet, "warnings", []) or []),
                 )
-            _LOGGER.warning(
+            # A missing identity profile is the normal state for a default
+            # install, not a degraded condition: keep the sentinel for
+            # diagnostics but stop emitting a WARNING on every single turn.
+            _LOGGER.debug(
                 "identity.bridge_fallback reason=profile_absent agent_id=%s purpose=%s sentinel=%s",
                 agent_id,
                 purpose,

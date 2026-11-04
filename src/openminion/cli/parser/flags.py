@@ -41,6 +41,13 @@ def add_interactive_session_flags(parser: argparse.ArgumentParser) -> None:
         help="Existing interactive session id to resume",
     )
     parser.add_argument(
+        "--resume",
+        "-c",
+        dest="resume_name",
+        default=None,
+        help="Resume the interactive session with this name",
+    )
+    parser.add_argument(
         "--dir",
         default=None,
         help="Working directory for the interactive session",

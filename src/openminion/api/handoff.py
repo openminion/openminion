@@ -192,6 +192,26 @@ def build_delegate_tool(handoff: Handoff) -> ToolDecl:
     )
 
 
+def _validate_unique_resolved_names(handoffs: list[Handoff]) -> None:
+    """Reject handoffs whose resolved tool names collide.
+
+    ``build_delegate_family_spec`` derives one exposure ``profile_id`` per
+    resolved name, so two handoffs resolving to the same name would collide at
+    registration time with a confusing ``profile_id values must be unique``
+    runtime error. Reject them early with an actionable message instead.
+    """
+
+    seen: set[str] = set()
+    for handoff in handoffs:
+        resolved = handoff.resolved_name()
+        if resolved in seen:
+            raise ValueError(
+                f'duplicate Handoff resolved name "{resolved}"; '
+                f"set a distinct name= on each Handoff"
+            )
+        seen.add(resolved)
+
+
 def build_delegate_family_spec(handoffs: list[Handoff]) -> ToolFamilySpec | None:
     """Compile a list of handoffs into a single one-off tool family spec.
 
@@ -201,6 +221,7 @@ def build_delegate_family_spec(handoffs: list[Handoff]) -> ToolFamilySpec | None
 
     if not handoffs:
         return None
+    _validate_unique_resolved_names(handoffs)
     decls = tuple(build_delegate_tool(h) for h in handoffs)
     return ToolFamilySpec(
         module_id="openminion.api.handoff.delegate",

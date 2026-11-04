@@ -873,6 +873,65 @@ def test_host_allowlist_accepts_profile_policy_binary(tmp_path, monkeypatch):
     assert details["checked"][0]["exec"] == "custom-tool"
 
 
+@pytest.mark.parametrize(
+    ("resolved", "allowed"),
+    [
+        ("/usr/lib/cargo/bin/coreutils/whoami", True),
+        ("/usr/lib/cargo/bin/coreutils/rm", False),
+        ("/usr/lib/cargo/bin/whoami", False),
+        ("/usr/lib/cargo/bin/coreutils-other/whoami", False),
+    ],
+)
+def test_host_allowlist_coreutils_directory(tmp_path, monkeypatch, resolved, allowed):
+    ctx = _ctx(tmp_path, env=EnvironmentConfig.from_sources(process_env={}))
+    monkeypatch.setattr("openminion.tools.exec.policy.shutil.which", lambda _: resolved)
+
+    result, _, _ = _validate_host_allowlist(resolved.rsplit("/", 1)[-1], ctx)
+
+    assert result is allowed
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"OPENMINION_TOOL_EXEC_SAFE_BIN_TRUSTED_DIRS": "/usr/local/bin"},
+        {"OPENMINION_TOOL_EXEC_SAFE_BINS": "cat"},
+    ],
+)
+def test_host_allowlist_coreutils_respects_overrides(tmp_path, monkeypatch, overrides):
+    ctx = _ctx(tmp_path, env=EnvironmentConfig.from_sources(process_env=overrides))
+    monkeypatch.setattr(
+        "openminion.tools.exec.policy.shutil.which",
+        lambda _: "/usr/lib/cargo/bin/coreutils/whoami",
+    )
+
+    allowed, _, _ = _validate_host_allowlist("whoami", ctx)
+
+    assert allowed is False
+
+
+def test_host_allowlist_rejects_symlink_to_untrusted_target(tmp_path, monkeypatch):
+    trusted = tmp_path / "trusted"
+    trusted.mkdir()
+    target = tmp_path / "whoami"
+    target.touch()
+    (trusted / "whoami").symlink_to(target)
+    ctx = _ctx(
+        tmp_path,
+        env=EnvironmentConfig.from_sources(
+            process_env={"OPENMINION_TOOL_EXEC_SAFE_BIN_TRUSTED_DIRS": str(trusted)}
+        ),
+    )
+    monkeypatch.setattr(
+        "openminion.tools.exec.policy.shutil.which", lambda _: str(trusted / "whoami")
+    )
+
+    allowed, _, details = _validate_host_allowlist("whoami", ctx)
+
+    assert allowed is False
+    assert details["resolved_path"] == str(target.resolve())
+
+
 def test_host_security_allowlist(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC", "1")
     monkeypatch.setenv("OPENMINION_TOOL_EXEC_SAFE_BINS", "echo,sleep")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import fields
 from threading import Event
 from typing import Any
 from unittest.mock import patch
@@ -192,6 +193,114 @@ def test_agent_run_passes_existing_turn_controls_to_runtime() -> None:
     assert internal_callback is not approve
     assert asyncio.run(internal_callback("file.write", {}, "approval-1", {})) is True
     assert runtime.last_run_kwargs["cancel_event"] is cancel_event
+
+
+_RESULT_FIELDS = (
+    "output",
+    "text",
+    "raw",
+    "run_id",
+    "run_state",
+    "session_id",
+    "id",
+    "metadata",
+    "stats",
+)
+
+
+def test_agent_run_result_keeps_its_positional_field_order() -> None:
+    result = AgentRunResult(
+        "output",
+        "text",
+        {"body": "text"},
+        "run-1",
+        "done",
+        "session-1",
+        "result-1",
+        {"thread_id": "session-1:thread-1"},
+        {"tokens_in": 3},
+    )
+
+    # thread_id follows the existing fields and defaults to None.
+    assert tuple(item.name for item in fields(AgentRunResult)) == (
+        *_RESULT_FIELDS,
+        "thread_id",
+    )
+    assert (result.id, result.metadata, result.stats) == (
+        "result-1",
+        {"thread_id": "session-1:thread-1"},
+        {"tokens_in": 3},
+    )
+    assert result.thread_id is None
+
+
+@pytest.mark.parametrize("method", ["run", "run_stream"])
+@pytest.mark.parametrize("thread_id", [None, "", "   "], ids=["none", "empty", "blank"])
+def test_agent_run_without_a_thread_id_sends_the_same_payload(
+    method: str, thread_id: str | None
+) -> None:
+    runtime = _FakeRuntime()
+    agent = Agent(runtime=runtime, session_id="sdk-session")
+    getattr(agent, method)("yes")
+    default_payload = runtime.last_payload
+
+    getattr(agent, method)("yes", thread_id=thread_id)
+
+    assert runtime.last_payload == default_payload
+    assert runtime.last_payload["inbound_metadata"] == {
+        CALLER_HANDLES_DELIVERY_METADATA_KEY: "true"
+    }
+
+
+@pytest.mark.parametrize("method", ["run", "run_stream"])
+def test_agent_run_sends_an_explicit_thread_id(method: str) -> None:
+    runtime = _FakeRuntime()
+
+    getattr(Agent(runtime=runtime), method)("yes", thread_id=" sdk-session:thread-1 ")
+
+    assert runtime.last_payload["inbound_metadata"] == {
+        CALLER_HANDLES_DELIVERY_METADATA_KEY: "true",
+        "thread_id": "sdk-session:thread-1",
+    }
+
+
+class _MetadataRuntime(_FakeRuntime):
+    """Returns the given result metadata."""
+
+    def __init__(self, metadata: dict[str, Any]) -> None:
+        super().__init__()
+        self.metadata = metadata
+
+    def run_turn(self, *, payload, progress_callback=None, **kwargs):
+        result = super().run_turn(
+            payload=payload, progress_callback=progress_callback, **kwargs
+        )
+        result["metadata"] = self.metadata
+        return result
+
+
+@pytest.mark.parametrize(
+    ("returned", "expected"),
+    [
+        ({"thread_id": " sdk-session:thread-1 "}, "sdk-session:thread-1"),
+        ({"thread_id": "  "}, None),
+        ({}, None),
+    ],
+    ids=["thread", "blank", "missing"],
+)
+def test_agent_run_result_thread_id_comes_from_the_returned_metadata(
+    returned: dict[str, str], expected: str | None
+) -> None:
+    metadata = {"request_id": "req-1", **returned}
+    runtime = _MetadataRuntime(metadata)
+
+    result = Agent(runtime=runtime).run("yes")
+
+    assert result.thread_id == expected
+    # The metadata is copied as returned; the runtime's dict is not changed.
+    assert result.metadata == {"request_id": "req-1", **returned}
+    assert result.metadata is not metadata
+    assert metadata == {"request_id": "req-1", **returned}
 
 
 def test_agent_extracts_json_when_reply_has_prose_wrapper() -> None:

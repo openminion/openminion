@@ -1828,6 +1828,59 @@ class ProviderHTTPTests(unittest.TestCase):
         self.assertEqual(response.output_text, "Hello from Anthropic")
         self.assertEqual(response.usage.total_tokens, 14)
 
+    def test_anthropic_request_output_limits_override_config(self) -> None:
+        provider = AnthropicProvider()
+        response = {
+            "model": "claude-3-5-sonnet-latest",
+            "content": [{"type": "text", "text": "Hello"}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+        for request_limit in (333, 2048):
+            with self.subTest(request_limit=request_limit):
+                request = LLMRequest(
+                    messages=[Message(role="user", content="hello")],
+                    max_output_tokens=request_limit,
+                )
+                with patch(
+                    "openminion.modules.llm.providers.anthropic.adapter._http_json_post",
+                    return_value=response,
+                ) as post:
+                    provider.complete(
+                        request,
+                        {
+                            "api_key": "test-key",
+                            "base_url": "https://api.anthropic.com/v1",
+                            "max_tokens": 512,
+                        },
+                    )
+
+                self.assertEqual(
+                    post.call_args.kwargs["payload"]["max_tokens"], request_limit
+                )
+
+    def test_anthropic_config_output_limit_is_fallback(self) -> None:
+        provider = AnthropicProvider()
+        request = LLMRequest(messages=[Message(role="user", content="hello")])
+        response = {
+            "model": "claude-3-5-sonnet-latest",
+            "content": [{"type": "text", "text": "Hello"}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+        with patch(
+            "openminion.modules.llm.providers.anthropic.adapter._http_json_post",
+            return_value=response,
+        ) as post:
+            provider.complete(
+                request,
+                {
+                    "api_key": "test-key",
+                    "base_url": "https://api.anthropic.com/v1",
+                    "max_tokens": 512,
+                },
+            )
+
+        self.assertEqual(post.call_args.kwargs["payload"]["max_tokens"], 512)
+
     def test_anthropic_hybrid_parses_fallback_tool_markup(self) -> None:
         provider = AnthropicProvider()
         request = LLMRequest.model_validate(
@@ -2160,6 +2213,30 @@ class ProviderHTTPTests(unittest.TestCase):
         self.assertEqual(
             [event.delta_text for event in events if event.delta_text], ["Hi", "!"]
         )
+        self.assertEqual(events[-1].type, "done")
+
+    def test_anthropic_stream_uses_request_output_limit(self) -> None:
+        provider = AnthropicProvider()
+        request = LLMRequest(
+            messages=[Message(role="user", content="hello")],
+            max_output_tokens=2048,
+        )
+        with patch(
+            "openminion.modules.llm.providers.anthropic.adapter.iter_sse_post_lines",
+            return_value=iter(["event: message_stop", 'data: {"type":"message_stop"}']),
+        ) as stream:
+            events = list(
+                provider.stream(
+                    request,
+                    {
+                        "api_key": "test-key",
+                        "base_url": "https://api.anthropic.com/v1",
+                        "max_tokens": 512,
+                    },
+                )
+            )
+
+        self.assertEqual(stream.call_args.kwargs["payload"]["max_tokens"], 2048)
         self.assertEqual(events[-1].type, "done")
 
     def test_anthropic_stream_malformed_recognized_event_has_stable_detail(

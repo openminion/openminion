@@ -140,3 +140,98 @@ def test_extract_ephemeral_prompt_metadata_forwards_added_roots_in_memory() -> N
     )
 
     assert extracted == {"openminion_ephemeral_workspace_roots": raw_roots}
+
+
+def test_actual_inbound_message_preserves_only_admitted_security_context(tmp_path):
+    import json
+    from types import SimpleNamespace
+    from openminion.services.gateway.turn.flow_agent import (
+        GatewayTurnAgentExecutionMixin,
+    )
+    from openminion.services.gateway.turn.lifecycle import _GatewayTurnLifecycleOps
+    from openminion.tools.security.trusted_source import run_context
+    from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+    from openminion.modules.tool.registry import ToolRegistry, ToolSpec
+    from openminion.services.brain.post_execution.mixin import _bind_tool_workspace_root
+
+    scope = json.dumps(
+        {
+            "job_id": "job",
+            "run_id": "run",
+            "revision": "a" * 40,
+            "admission_fingerprint": "b" * 64,
+        }
+    )
+    gateway = GatewayTurnAgentExecutionMixin()
+    gateway._lifecycle_ops = SimpleNamespace(
+        optional_ids=_GatewayTurnLifecycleOps.optional_ids
+    )
+    routing = SimpleNamespace(
+        normalized_inbound_metadata={
+            "security_scan_context": scope,
+            "workspace_root": str(tmp_path),
+            "permission_mode": "readonly",
+            "unrelated_security_hint": "excluded",
+        },
+        session=SimpleNamespace(id="security-run"),
+        normalized_request_id="request",
+        routing_action="new",
+        routing_reason="explicit",
+        lifecycle=SimpleNamespace(thread_state="new", qualifier=""),
+        conversation_id="run",
+        thread_id="",
+        attach_id="",
+    )
+    message = gateway._build_inbound_message(
+        routing,
+        channel="console",
+        target="cron",
+        body="audit",
+        run_id="run",
+        authenticity_decision=SimpleNamespace(
+            reason_code="local", verified=True, mode="local"
+        ),
+        participant_id="configured-agent",
+    )
+    assert message.metadata["security_scan_context"] == scope
+    assert message.metadata["workspace_root"] == str(tmp_path)
+    assert message.metadata["permission_mode"] == "readonly"
+    assert "unrelated_security_hint" not in message.metadata
+    observed = []
+
+    def handler(_args, context):
+        observed.append(
+            (run_context(context), context.workspace, context.permission_mode)
+        )
+        return {"ok": True}
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="blockchain.debug",
+            args_model=dict,
+            min_scope="READ_ONLY",
+            handler=handler,
+        )
+    )
+    adapter = ToolAdapter(
+        workspace_root=tmp_path,
+        runtime_registry=registry,
+        artifactctl=SimpleNamespace(),
+    )
+    try:
+        with _bind_tool_workspace_root(adapter, message.metadata, ()):
+            result = adapter.execute(
+                command={
+                    "tool_name": "blockchain.debug",
+                    "args": {},
+                    "inputs": {"permission_mode": "readonly"},
+                },
+                session_id="run",
+                trace_id="trace",
+            )
+        assert result["status"] == "success"
+        assert observed == [(json.loads(scope), tmp_path, "readonly")]
+        assert "security_scan_context" not in adapter.policy.raw["context_metadata"]
+    finally:
+        adapter.close()

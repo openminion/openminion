@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -11,6 +12,7 @@ from openminion.modules.telemetry.trace.phase_timing import (
     active_chat_phase,
     mark_active_chat_first_text,
     mark_active_chat_provider_token,
+    provider_tool_schema_payload,
     record_active_chat_provider_call,
     use_chat_phase_timer,
 )
@@ -349,7 +351,16 @@ def test_active_timer_aggregates_provider_call_costs():
     assert payload.provider_request_bytes > 0
     assert payload.provider_response_bytes > 0
     assert payload.tool_schema_count_max == 1
-    assert payload.tool_schema_bytes_total > 0
+    assert payload.tool_schema_bytes_total == sum(
+        len(
+            json.dumps(
+                provider_tool_schema_payload(call_tools),
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        )
+        for call_tools in (tools, [])
+    )
 
 
 def test_active_timer_records_provider_attempt_sequence():

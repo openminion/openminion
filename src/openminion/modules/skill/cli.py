@@ -1,7 +1,8 @@
+"""Operator commands for skill storage, review, admission, and learning."""
+
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shlex
 from pathlib import Path
@@ -14,7 +15,12 @@ from openminion.modules.skill.cli_admission import (
     add_admission_subcommands,
     run_admission_command,
 )
+from openminion.modules.skill.learning.cli import (
+    LEARNING_COMMANDS,
+    dispatch_learning_command,
+)
 from openminion.modules.skill.learning.cli_args import (
+    add_learning_subcommands,
     parse_criterion_args,
 )
 from openminion.cli.identity.operator import local_operator_id
@@ -33,20 +39,6 @@ from openminion.modules.cli_common import (
 from openminion.modules.storage.module_cli import (
     add_storage_subcommands,
     run_module_storage_command,
-)
-
-_LEARNING_COMMANDS = frozenset(
-    {
-        "learning-scan",
-        "learning-inspect",
-        "learning-save-workflow",
-        "learning-observation-list",
-        "learning-shape-list",
-        "learning-propose",
-        "learning-replay-proof",
-        "learning-apply-proved",
-        "learning-trust-status",
-    }
 )
 
 
@@ -321,7 +313,7 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
     )
     proposal_apply.add_argument("proposal_id")
 
-    _add_learning_subcommands(sub)
+    add_learning_subcommands(sub)
 
     _add_suggestion_subcommands(sub)
 
@@ -374,67 +366,6 @@ def _add_suggestion_subcommands(sub: Any) -> None:
         default=None,
         help="Override the minimum proposal age in seconds.",
     )
-
-
-def _add_learning_subcommands(sub: Any) -> None:
-    observation_list = sub.add_parser(
-        "learning-observation-list",
-        help="List retained runtime workflow observations for one agent.",
-    )
-    observation_list.add_argument("--agent-id", required=True)
-
-    shape_list = sub.add_parser(
-        "learning-shape-list",
-        help="List derived workflow shapes for one agent.",
-    )
-    shape_list.add_argument("--agent-id", required=True)
-
-    learning_scan = sub.add_parser(
-        "learning-scan",
-        help="Mine workflow shapes from a JSON list of evidence bundles.",
-    )
-    learning_scan.add_argument("--bundle-json", required=True)
-
-    learning_inspect = sub.add_parser(
-        "learning-inspect",
-        help="Inspect one workflow-shape JSON file.",
-    )
-    learning_inspect.add_argument("--shape-json", required=True)
-
-    learning_save = sub.add_parser(
-        "learning-save-workflow",
-        help="Emit an explicit save-workflow signal for one shape.",
-    )
-    learning_save.add_argument("--shape-json", required=True)
-    learning_save.add_argument("--actor-id", required=True)
-    learning_save.add_argument("--source-run-ref", default="")
-
-    learning_propose = sub.add_parser(
-        "learning-propose",
-        help="Stage a workflow shape through the existing proposal queue.",
-    )
-    learning_propose.add_argument("--shape-json", required=True)
-
-    learning_replay = sub.add_parser(
-        "learning-replay-proof",
-        help="Retain an evaluator-owned replay result artifact.",
-    )
-    learning_replay.add_argument("--proposal-id", required=True)
-    learning_replay.add_argument("--result-ref", required=True)
-
-    learning_apply = sub.add_parser(
-        "learning-apply-proved",
-        help="Persist a proved proposal as a pending-admission skill draft.",
-        description="Persist a proved proposal as a pending-admission skill draft.",
-    )
-    learning_apply.add_argument("--proposal-id", required=True)
-
-    learning_trust = sub.add_parser(
-        "learning-trust-status",
-        help="Show initial execution-trust status for a learned skill.",
-    )
-    learning_trust.add_argument("--skill-id", required=True)
-    learning_trust.add_argument("--shape-id", required=True)
 
 
 def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
@@ -665,8 +596,8 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
         _dispatch_proposal_cmd(ctl, args)
         return
 
-    if args.cmd in _LEARNING_COMMANDS:
-        _dispatch_learning_cmd(ctl, args)
+    if args.cmd in LEARNING_COMMANDS:
+        dispatch_learning_command(ctl, args)
         return
 
     if args.cmd in {"suggestion-inbox", "suggestion-status", "suggestion-surface-pass"}:
@@ -764,6 +695,9 @@ def _dispatch_proposal_cmd(ctl: Skill, args: argparse.Namespace) -> None:
                 "Proposal not found",
                 {"proposal_id": args.proposal_id},
             )
+        proof = record.get("replay_proof") or {}
+        if proof.get("measurement_ref"):
+            record["measurement"] = _read_measurement_summary(proof["measurement_ref"])
         _print_json({"ok": True, "proposal": record})
         return
 
@@ -825,156 +759,22 @@ def _dispatch_proposal_cmd(ctl: Skill, args: argparse.Namespace) -> None:
     raise SkillError("INVALID_ARGUMENT", "Unsupported proposal command")
 
 
-def _dispatch_runtime_observation_cmd(ctl: Skill, args: argparse.Namespace) -> bool:
-    from openminion.modules.skill.learning.runtime import WorkflowObservationError
-
-    if args.cmd == "learning-observation-list":
-        try:
-            observations = ctl.list_workflow_observations(agent_id=args.agent_id)
-        except WorkflowObservationError as exc:
-            raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
-        _print_json({"ok": True, "observations": observations})
-        return True
-
-    if args.cmd == "learning-shape-list":
-        from openminion.modules.skill.learning import WorkflowShapeMiner
-
-        try:
-            shapes = ctl.list_workflow_shapes(agent_id=args.agent_id)
-        except WorkflowObservationError as exc:
-            raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
-        miner = WorkflowShapeMiner()
-        _print_json(
-            {
-                "ok": True,
-                "shapes": [
-                    {
-                        **shape.model_dump(mode="json"),
-                        "state": (
-                            "authoring_ready"
-                            if miner.is_skill_ready(shape)
-                            else "observed"
-                        ),
-                    }
-                    for shape in shapes
-                ],
-            }
-        )
-        return True
-    return False
-
-
-def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
-    from openminion.modules.skill.learning import (
-        execution_trust_diagnostic,
-        WorkflowEvidenceBundle,
-        WorkflowShape,
-        WorkflowShapeMiner,
-        stage_shape_as_skill_proposal,
-    )
-
-    if _dispatch_runtime_observation_cmd(ctl, args):
-        return
-
-    if args.cmd == "learning-scan":
-        raw = _read_json_path(args.bundle_json)
-        bundles = [
-            WorkflowEvidenceBundle.model_validate(item)
-            for item in (raw if isinstance(raw, list) else [raw])
-        ]
-        shapes = WorkflowShapeMiner().mine(bundles)
-        _print_json(
-            {
-                "ok": True,
-                "shapes": [shape.model_dump(mode="json") for shape in shapes],
-            }
-        )
-        return
-
-    if args.cmd == "learning-inspect":
-        shape = WorkflowShape.model_validate(_read_json_path(args.shape_json))
-        _print_json({"ok": True, "shape": shape.model_dump(mode="json")})
-        return
-
-    if args.cmd == "learning-save-workflow":
-        shape = WorkflowShape.model_validate(_read_json_path(args.shape_json))
-        actor_id = str(args.actor_id or "").strip()
-        if not actor_id:
-            raise SkillError("INVALID_ARGUMENT", "--actor-id is required")
-        _print_json(
-            {
-                "ok": True,
-                "save_workflow": {
-                    "shape_id": shape.shape_id,
-                    "actor_id": actor_id,
-                    "source_run_ref": str(args.source_run_ref or ""),
-                    "explicit_save": True,
-                },
-            }
-        )
-        return
-
-    if args.cmd == "learning-propose":
-        shape = WorkflowShape.model_validate(_read_json_path(args.shape_json))
-        result = stage_shape_as_skill_proposal(
-            shape,
-            store=ctl.store,
-            current_catalog=ctl.list_skills({}) or [],
-        )
-        _print_json({"ok": True, "result": result.model_dump(mode="json")})
-        return
-
-    if args.cmd == "learning-replay-proof":
-        from openminion.modules.artifact.control import ArtifactCtl
-        from openminion.modules.artifact.errors import ArtifactCtlError
-        from openminion.modules.skill.proposal.queue import record_replay_proof
-
-        try:
-            with ArtifactCtl({}) as artifactctl:
-                retained = record_replay_proof(
-                    ctl.store,
-                    proposal_id=args.proposal_id,
-                    result_ref=args.result_ref,
-                    artifactctl=artifactctl,
-                )
-        except (ArtifactCtlError, ValueError) as exc:
-            raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
-        _print_json({"ok": True, "proof": retained})
-        return
-
-    if args.cmd == "learning-apply-proved":
-        _dispatch_learning_apply_proved(ctl, args)
-        return
-
-    if args.cmd == "learning-trust-status":
-        record = execution_trust_diagnostic(
-            skill_id=args.skill_id,
-            shape_id=args.shape_id,
-            lifecycle_facts=ctl.store.get_skill_lifecycle_facts(skill_id=args.skill_id),
-        )
-        _print_json({"ok": True, "trust": record.model_dump(mode="json")})
-        return
-
-    raise SkillError("INVALID_ARGUMENT", "Unsupported learning command")
-
-
-def _dispatch_learning_apply_proved(ctl: Skill, args: argparse.Namespace) -> None:
-    from openminion.modules.skill.learning import apply_proposal_with_replay
-    from openminion.modules.skill.learning.replay import ReplayGateError
+def _read_measurement_summary(measurement_ref: str) -> dict[str, str]:
+    from openminion.modules.artifact.control import ArtifactCtl
+    from openminion.modules.artifact.errors import ArtifactCtlError
+    from openminion.modules.skill.learning.measurement import MeasurementReport
 
     try:
-        addition = apply_proposal_with_replay(
-            ctl.store,
-            proposal_id=args.proposal_id,
-            current_catalog=ctl.list_skills({}) or [],
-        )
-    except (ReplayGateError, ValueError) as exc:
+        with ArtifactCtl({}) as artifactctl:
+            report = MeasurementReport.model_validate_json(
+                artifactctl.read_bytes(measurement_ref)
+            )
+    except (ArtifactCtlError, ValueError) as exc:
         raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
-    _print_json({"ok": True, "addition": addition.model_dump(mode="json")})
-
-
-def _read_json_path(path: str) -> Any:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return {
+        "ref": measurement_ref,
+        "verdict": report.verdict,
+    }
 
 
 def _print_json(payload: dict[str, Any]) -> None:

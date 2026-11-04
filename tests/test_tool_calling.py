@@ -345,7 +345,9 @@ class ToolCallingHelpersTests(unittest.TestCase):
         messages = _messages_openai_like(request, include_fallback_instruction=False)
         self.assertEqual(len(messages), 2)
         self.assertEqual(messages[0]["role"], "system")
-        self.assertIn("Schema-only control phase", messages[0]["content"])
+        self.assertIn("Structured output contract", messages[0]["content"])
+        self.assertNotIn("Schema-only control phase", messages[0]["content"])
+        self.assertNotIn("must not execute the user's task", messages[0]["content"])
         self.assertIn("Use only the `submit_output` tool", messages[0]["content"])
         self.assertNotIn("Tool-calling contract", messages[0]["content"])
         self.assertEqual(messages[1]["role"], "user")
@@ -373,7 +375,9 @@ class ToolCallingHelpersTests(unittest.TestCase):
 
         self.assertEqual(messages[0]["role"], "system")
         self.assertIn("Native tool-calling contract.", messages[0]["content"])
-        self.assertIn("Schema-only control phase", messages[0]["content"])
+        self.assertIn("Structured output contract", messages[0]["content"])
+        self.assertNotIn("Schema-only control phase", messages[0]["content"])
+        self.assertNotIn("must not execute the user's task", messages[0]["content"])
         self.assertIn(
             "Do not call, describe, or wrap any other tool", messages[0]["content"]
         )

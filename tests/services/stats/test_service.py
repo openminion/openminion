@@ -561,3 +561,66 @@ def test_session_stats_can_fall_back_to_persisted_outbound_message_stats(
         assert summary.stats.output_tokens == 2
         assert summary.stats.llm_calls == 1
         connection.close()
+
+
+@pytest.mark.parametrize("trace_id", [None, "request"])
+def test_completed_call_replay_does_not_settle_usage_twice(store, trace_id):
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    store.create_run_record(session_id, run_type="llm", run_id="replay-run")
+    payload = {
+        "run_id": "replay-run",
+        "llm_call_id": "call-1",
+        "purpose": "act",
+        "usage": {"prompt_tokens": 12, "completion_tokens": 5, "cached_tokens": 3},
+    }
+    first = store.append_event(
+        session_id, "llm.call.completed", payload, trace_id="turn-1"
+    )
+    replay = store.append_event(
+        session_id, "llm.call.completed", payload, trace_id="turn-1"
+    )
+    assert first == replay
+    assert store.get_run_record("replay-run")["input_tokens"] == 12
+    assert store.get_run_record("replay-run")["output_tokens"] == 5
+    service = StatsService(store)
+    stats = service.get_run_stats("replay-run").stats
+    assert (
+        stats.llm_calls,
+        stats.input_tokens,
+        stats.output_tokens,
+        stats.cache_read_tokens,
+    ) == (1, 12, 5, 3)
+    usage = service.get_run_token_usage("replay-run")
+    assert (usage.total_input_tokens, usage.total_output_tokens) == (12, 5)
+    with pytest.raises(ValueError, match="idempotency conflict"):
+        store.append_event(
+            session_id,
+            "llm.call.completed",
+            {**payload, "usage": {"prompt_tokens": 100}},
+            trace_id="turn-1",
+        )
+    assert store.get_run_record("replay-run")["input_tokens"] == 12
+    second = store.append_event(
+        session_id, "llm.call.completed", payload, trace_id="turn-2"
+    )
+    assert second != first
+    assert store.get_run_record("replay-run")["input_tokens"] == 24
+
+
+def test_explicit_unlimited_event_read_preserves_default_limit(store):
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    for number in range(105):
+        store.append_event(
+            session_id,
+            "llm.call.completed",
+            {"llm_call_id": str(number), "usage": {"prompt_tokens": 1}},
+            trace_id="long-turn",
+        )
+    assert len(store.list_events(session_id, event_type="llm.call.completed")) == 100
+    events = store.list_events(session_id, event_type="llm.call.completed", limit=None)
+    assert len(events) == 105
+    assert events[0]["payload"]["llm_call_id"] == "0"

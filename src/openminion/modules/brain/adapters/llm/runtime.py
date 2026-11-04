@@ -1,6 +1,7 @@
 import json
 from typing import Any, cast
 
+from openminion.modules.brain.diagnostics.usage import record_llm_response
 from openminion.modules.brain.adapters.llm.model_profiles import (
     RetryStrategy,
     resolve_capability_profile_for_context,
@@ -353,6 +354,7 @@ class LlmctlAdapter(LLMAPI):
             temperature=temperature,
         )
         response = self.client.call(request)
+        record_llm_response(purpose=purpose, response=response)
         record_active_chat_provider_call(
             purpose=purpose,
             messages=list(request.messages),

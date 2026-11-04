@@ -267,14 +267,26 @@ class SessionEventWriter:
         self._invalidate_slice_cache(session_id)
         return turn_id
 
-    def _prepare_tool_event(
+    def _prepare_event(
         self,
         *,
         session_id: str,
         event_name: str,
         payload: dict[str, Any],
         parent_event_id: str | None,
+        trace_id: str | None,
     ) -> tuple[dict[str, Any], str | None]:
+        scope_id = trace_id or str(payload.get("run_id") or "")
+        if (
+            event_name in {"llm.call.completed", "llm.call.failed"}
+            and (call_id := str(payload.get("llm_call_id") or "").strip())
+            and scope_id
+        ):
+            return payload, uuid5(
+                NAMESPACE_URL,
+                f"openminion:llm:v1:{session_id}:{scope_id}:{call_id}:{event_name}",
+            ).hex
+
         is_canonical = event_name == "tool.call.requested" or (
             event_name in _TOOL_TRANSCRIPT_EVENTS and payload.get("schema_version") == 1
         )
@@ -352,16 +364,10 @@ class SessionEventWriter:
         if memory_refs is not None:
             refs_obj["memory_refs"] = list(memory_refs)
 
-        trace_obj = dict(trace or {})
-        trace_id_value = (
-            str(trace_obj["trace_id"]) if trace_obj.get("trace_id") else trace_id
-        )
-        span_id_value = (
-            str(trace_obj["span_id"]) if trace_obj.get("span_id") else span_id
-        )
-        task_id_value = (
-            str(trace_obj["task_id"]) if trace_obj.get("task_id") else task_id
-        )
+        trace_obj = {key: str(value) for key, value in (trace or {}).items() if value}
+        trace_id_value = trace_obj.get("trace_id", trace_id)
+        span_id_value = trace_obj.get("span_id", span_id)
+        task_id_value = trace_obj.get("task_id", task_id)
 
         actor_type_value = str(actor_type).strip() or "system"
         actor_id_value = actor_id or agent_id
@@ -369,17 +375,19 @@ class SessionEventWriter:
             actor_type_value = "agent"
 
         resolved_parent_id = parent_event_id or parent_id
-        payload_obj, event_id = self._prepare_tool_event(
+        payload_obj, event_id = self._prepare_event(
             session_id=session_id,
             event_name=event_name,
             payload=payload_obj,
             parent_event_id=resolved_parent_id,
+            trace_id=trace_id_value,
         )
-        if event_id is not None:
+        if event_id is not None and event_name in _TOOL_TRANSCRIPT_EVENTS:
             redaction = "bounded"
 
         now = self._utc_now_iso()
         with self._record_store.transaction():
+            existed = bool(event_id and self._event_store.get_event_by_id(event_id))
             task_id_value = self._task_plan_step_task_id(
                 session_id=session_id,
                 event_name=event_name,
@@ -403,10 +411,11 @@ class SessionEventWriter:
                 verify_session_exists=True,
                 event_id=event_id,
             )
-            self._maybe_backfill_run_usage(
-                event_type=event_name,
-                payload=payload_obj,
-            )
+            if not existed:
+                self._maybe_backfill_run_usage(
+                    event_type=event_name,
+                    payload=payload_obj,
+                )
             self._touch_session_tx(session_id=session_id, ts=now)
         self._add_artifact_refs(
             session_id=session_id,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import tempfile
 import unittest
@@ -2139,7 +2140,7 @@ class AdapterInterfaceContractTests(unittest.TestCase):
         self.assertIn("agent_id=a-ctx", rendered)
         self.assertNotIn("identity_mode=brain-bridge-stub", rendered)
 
-    def test_factory_context_adapter_identity_fallback_emits_warning_and_sentinel(
+    def test_factory_context_adapter_identity_fallback_emits_debug_sentinel(
         self,
     ) -> None:
         try:
@@ -2164,7 +2165,7 @@ class AdapterInterfaceContractTests(unittest.TestCase):
                 }
 
         with self.assertLogs(
-            "openminion.modules.brain.adapters.context.bridges", level="WARNING"
+            "openminion.modules.brain.adapters.context.bridges", level="DEBUG"
         ) as captured:
             adapter = create_context_adapter(
                 mode="auto",
@@ -2185,8 +2186,21 @@ class AdapterInterfaceContractTests(unittest.TestCase):
 
         self.assertEqual(payload.get("profile_version"), "brain-bridge:fallback:v1")
         self.assertEqual(payload.get("render_version"), "brain-bridge:fallback:v1")
+        fallback_records = [
+            record
+            for record in captured.records
+            if "identity.bridge_fallback" in record.getMessage()
+        ]
+        self.assertTrue(fallback_records)
+        # assertLogs(level="DEBUG") would also accept WARNING; pin the level so a
+        # regression back to the noisy WARNING behaviour fails this test.
         self.assertTrue(
-            any("identity.bridge_fallback" in entry for entry in captured.output)
+            all(
+                "reason=profile_absent" in record.getMessage()
+                and record.levelno == logging.DEBUG
+                for record in fallback_records
+            ),
+            [(record.levelname, record.getMessage()) for record in fallback_records],
         )
         self.assertTrue(
             any(
@@ -2237,7 +2251,7 @@ class AdapterInterfaceContractTests(unittest.TestCase):
                 )
 
             with self.assertLogs(
-                "openminion.modules.brain.adapters.context.bridges", level="WARNING"
+                "openminion.modules.brain.adapters.context.bridges", level="DEBUG"
             ) as captured:
                 payload = adapter.build(
                     session_id="s-cold",
@@ -2249,7 +2263,37 @@ class AdapterInterfaceContractTests(unittest.TestCase):
 
         self.assertEqual(payload.get("profile_version"), "brain-bridge:fallback:v1")
         self.assertEqual(payload.get("render_version"), "brain-bridge:fallback:v1")
-        self.assertIn("reason=profile_absent", captured.output[0])
+        self.assertTrue(
+            any(
+                "reason=profile_absent" in record.getMessage()
+                and record.levelno == logging.DEBUG
+                for record in captured.records
+            )
+        )
+
+    def test_identity_bridge_unavailable_still_warns(self) -> None:
+        from openminion.modules.brain.adapters.context.bridges.identity import (
+            BridgeIdentityClient,
+        )
+
+        client = BridgeIdentityClient(backing_store=object())
+        with patch.object(
+            BridgeIdentityClient, "_resolve_identityctl", return_value=None
+        ):
+            with self.assertLogs(
+                "openminion.modules.brain.adapters.context.bridges", level="WARNING"
+            ) as captured:
+                client.render(agent_id="ops-agent", purpose="act", max_tokens=180)
+
+        # The genuinely degraded condition keeps its WARNING level.
+        self.assertTrue(
+            any(
+                "reason=identityctl_unavailable" in record.getMessage()
+                and record.levelno == logging.WARNING
+                for record in captured.records
+            ),
+            [record.levelname for record in captured.records],
+        )
 
     def test_identity_bridge_does_not_mask_invalid_identity_config(self) -> None:
         from openminion.modules.brain.adapters.context.bridges.identity import (
@@ -2280,10 +2324,17 @@ class AdapterInterfaceContractTests(unittest.TestCase):
                 patch("openminion.modules.identity.config.load_config") as load,
                 self.assertLogs(
                     "openminion.modules.brain.adapters.context.bridges",
-                    level="WARNING",
-                ),
+                    level="DEBUG",
+                ) as captured,
             ):
                 client.render(agent_id="ops-agent", purpose="act", max_tokens=180)
+            self.assertTrue(
+                any(
+                    "reason=profile_absent" in record.getMessage()
+                    and record.levelno == logging.DEBUG
+                    for record in captured.records
+                )
+            )
             client.close()
 
             load.assert_not_called()

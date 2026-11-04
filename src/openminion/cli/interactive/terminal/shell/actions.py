@@ -59,6 +59,7 @@ from .permissions import (
 from .sessions import (
     close_current_session,
     handle_room_slash,
+    rename_session,
     resume_session,
     start_new_session,
 )
@@ -609,6 +610,10 @@ async def _handle_session_slash(
             console=console,
             transcript=transcript,
             overlay=overlay,
+        )
+    elif cmd == "/rename":
+        rename_session(
+            runtime=runtime, console=console, text=text, transcript=transcript
         )
     elif cmd == "/status":
         _render_status_block(runtime=runtime, console=console, working_dir=working_dir)

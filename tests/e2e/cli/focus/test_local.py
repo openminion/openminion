@@ -450,6 +450,31 @@ def test_focus_pty_inspects_telemetry_after_a_turn(
     )
 
 
+def test_focus_pty_explains_exhausted_turn_limit(
+    focus_probe: FocusProbe,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("OPENMINION_BRAIN_MAX_TICKS", "1")
+
+    with focus_probe.session() as session:
+        focus_probe.wait_ready(session)
+        transcript = focus_probe.run_turn(
+            session,
+            FocusScenario(
+                scenario_id="local_turn_limit",
+                prompt="Reply with exactly: turn limit check",
+                expected_markers=(
+                    "Stopped: turn step limit reached (1/1)",
+                    "Continue in a new turn to resume",
+                ),
+                timeout=60,
+            ),
+        )
+
+    write_transcript(artifact_root(tmp_path), "local-turn-limit", transcript)
+
+
 def test_focus_pty_status_reports_last_turn_timing(
     focus_probe: FocusProbe,
     tmp_path,

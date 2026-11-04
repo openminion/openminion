@@ -45,6 +45,23 @@ Avoid:
 2. section-banner comments
 3. helper-history prose
 4. comments that just paraphrase the code
+5. the same explanation repeated in a function docstring, inline comment and test
+
+Before submitting a PR, read every added or changed comment and docstring in
+context. If removing it loses no information beyond the names, types and code,
+remove it. Simplify unclear code before adding a walkthrough. Keep one concise
+explanation beside the owner when a constraint is genuinely non-obvious.
+
+Apply this review to tests too: keep the regression condition or surprising
+oracle, but remove narration of setup, calls and assertions that already read
+clearly. Preserve public API/tool descriptions consumed by users or models,
+license notices, required directives, and useful safety or compatibility notes.
+Those are contracts, not comment-count targets.
+
+Reviewers should point to the exact redundant text and the code it repeats.
+Passing lint or CI does not replace this readability review. For debt already
+merged, check current `dev` and existing reports before opening one bounded
+cleanup issue; keep unrelated cleanup out of a feature PR.
 
 ## 3. Keep runtime behavior structural, not speculative
 
@@ -108,6 +125,30 @@ make lint
 ```
 
 If your change touches behavior, also run the smallest focused tests that actually prove the change.
+
+The test suite has its own ceiling: `scripts/validate/test_skip_budget.py` counts
+`skip`/`skipif`/`xfail` markers per file and fails when a file gains one or when a
+baselined count drops without `--emit-baseline`. It reads markers written on a test
+or class, in a module-level `pytestmark` list, and inside
+`pytest.param(..., marks=...)`.
+
+A marker counts as unconditional when it statically applies to every run: `skip`, a
+bare `pytest.mark.<kind>`, a marker with no conditions at all (`skipif()`), and a
+`skipif`/`xfail` where any condition is a truthy literal. `condition=` overrides
+positional arguments; otherwise every positional condition is considered and one
+applying is enough. Boolean and numeric literals count directly; a string condition
+counts only when it parses to a single literal, because pytest evaluates condition
+strings as expressions.
+
+The budget records which markers apply, not whether a case executes. Names, calls,
+operator forms and non-literal strings are never evaluated, so they stay conditional
+in the count whatever they evaluate to. An applied `xfail` may still run the test
+(`run=False` prevents execution once the condition applies), and an indirect form
+(a shared decorator, a `marks=` list assembled at runtime) is invisible to a static
+scan. A file that cannot be parsed is reported as a scan error instead of
+being counted as marker-free. Each baseline row carries an authored reason; `--emit-baseline` lowers
+existing rows only and refuses new ones, so adding a marker means writing down why it
+exists and defending it in review.
 
 Committed numeric debt baselines are ceilings, not quality scores. Their
 normal checks are read-only. When an existing owner improves, use that

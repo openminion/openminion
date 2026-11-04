@@ -68,7 +68,8 @@ VALIDATE_PATTERN_MODULES := \
 	validate.method_loc \
 	validate.broad_exception \
 	validate.filename_underscore_hygiene \
-	validate.type_ignore_hygiene
+	validate.type_ignore_hygiene \
+	validate.test_skip_budget
 
 # Compatibility mirror for tests and simple file-existence audits. Keep these
 # entries aligned with VALIDATE_PATTERN_MODULES, but expressed as repo-relative
@@ -116,7 +117,8 @@ VALIDATE_PATTERN_SCRIPTS := \
 	validate/method_loc \
 	validate/broad_exception \
 	validate/filename_underscore_hygiene \
-	validate/type_ignore_hygiene
+	validate/type_ignore_hygiene \
+	validate/test_skip_budget
 
 _VP_TARGETS := $(addprefix _vp-, $(VALIDATE_PATTERN_MODULES)) _vp-validate.direct_env_calls _vp-direct-env-calls
 
@@ -287,7 +289,10 @@ test-e2e-ci: $(DEV_STAMP)
 		"$(REPO_ROOT)/tests/e2e/cli/focus/test_simple_input_project.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/test_runner_summary.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/test_harness_assertions.py" \
+		"$(REPO_ROOT)/tests/e2e/cli/focus/harness/test_pty.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/test_security_harnesses.py" \
+		"$(REPO_ROOT)/tests/e2e/skill_learning/test_verified_transfer.py" \
+		"$(REPO_ROOT)/tests/e2e/skill_learning/test_workflow_learning_pipeline.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/test_goal_only.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/harness/test_provider_session_resilience.py"
 

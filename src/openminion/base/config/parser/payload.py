@@ -162,7 +162,6 @@ def openminion_config_to_dict(
         "enabled_plugins": list(config.enabled_plugins),
         "system": {
             "runtime": _system_runtime_mirror(config.runtime),
-            "providers": _providers_config_to_payload(config.providers),
         },
     }
     if default_agent := config.default_agent.strip():

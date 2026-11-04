@@ -1,7 +1,7 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-10-29
+Last updated: 2026-11-04
 
 This file tracks package-facing release notes for `openminion`.
 
@@ -12,6 +12,147 @@ This file tracks package-facing release notes for `openminion`.
   action summary when the completed message is empty and usable tool evidence
   exists. Keep partial-child evidence salvage and the 200/800-character prompt
   projections unchanged (Refs #543).
+
+- Make identity `clear_cache` prefix matching case-sensitive, so it no longer deletes other agents' snippets through a case-insensitive `LIKE`. (Refs #485)
+
+- Forward the query string on POST requests, so query-parameter POST routes resolve their parameters. (Refs #486)
+
+## Current package line - 2026-11-04
+
+- Add a reviewed learning lifecycle that can retain successful substantive
+  work, author a procedure, evaluate transfer separately, and admit or roll
+  back an exact agent-scoped version. Application remains pending until an
+  operator admits it, and the available source support does not establish a
+  live learning-benefit claim.
+
+- Add finite read-only recurring security assessments with visible consumed
+  and remaining attempts, separate latest-attempt and last-successful evidence,
+  and exact-task pause and resume controls. Source support is available, but
+  the composed live lifecycle has not completed acceptance and does not provide
+  unlimited monitoring, autonomous repair, or security certification.
+
+- Account for LLM responses across a whole turn, including reflection, action,
+  judgment, and continuation steps, in public stats and persisted usage facts.
+  Preserve reported cache usage and missing-usage coverage, and prevent call-event
+  replay from counting tokens twice (Refs #516). Child tool-result accounting and
+  research budget settlement remain separate (#531, #542).
+
+- Ratchet `skip`/`skipif`/`xfail` markers in the test suite against a per-file
+  baseline, so silencing a case becomes a counted, reviewed change: adding a
+  marker fails the build, and a literal conditional skip turned unconditional
+  fails even when the total is unchanged. Only literal marker forms are
+  classified; the count records which markers apply, not whether a case runs
+  (see `CODE_QUALITY.md`).
+
+- Log the identity-profile fallback at `DEBUG` instead of `WARNING`: a missing
+  identity profile is the default state, so a stock install no longer warns on
+  every single turn (Refs #572).
+
+- Run one-shot `run` turns with the caller's working directory as the tool
+  workspace root when `runtime.tool_workspace_root` is unset, so file tools see
+  the files the user is working on; an explicit `--dir` overrides a configured
+  root (Refs #575).
+
+- Treat a `4xx` daemon response as the definitive answer instead of falling back
+  to the in-process runtime, so a rejected or failed tool call is neither executed
+  twice nor replaced by a locally produced error (Refs #574).
+
+- Make `openminion run` acknowledge delivery of its returned one-shot reply, so a
+  follow-up `run --session <id>` executes the new input instead of replaying the
+  settled first turn; continuing that thread still requires `--resume` (Refs #556).
+
+- Parse porcelain v2 rename/copy records without the rename score and old-path suffix, keeping the destination path (including spaces). (Refs #491)
+
+- Reject unsupported arithmetic in `calculate_expression` — zero to a negative power and complex-valued results now use the structured `INVALID_ARGUMENT` path instead of raising raw exceptions. (Refs #490)
+
+- Support positional-only parameters in `@tool` handlers, so a function with a positional-only argument no longer crashes during argument binding. (Refs #474)
+
+- Record the memory-consolidation marker only when the review resolved every
+  candidate with a terminal decision (keep/promote/discard) and nothing was
+  deferred or failed to write. A cycle that deferred any candidate, or whose
+  writes partly failed, leaves `last_consolidation_state_hash` untouched, so
+  those still-`proposed` candidates stay eligible for the next consolidation
+  cycle instead of being blocked as already consolidated. Such a cycle still
+  reports the terminal writes it did make (`PARTIALLY_CONSOLIDATED`) rather than
+  claiming nothing was consolidated (Refs #477).
+
+- Normalize raw SQLite bm25 scores in the correct direction, so a stronger match scores higher instead of lower. (Refs #479)
+
+- Keep runtime migration 14 portable to SQLite older than 3.33: the
+  join-sequence backfill now uses a correlated subquery instead of
+  `UPDATE ... FROM`, preserving the per-session `(joined_at, id)` numbering on
+  SQLite and PostgreSQL (Refs #564).
+
+- Write provider settings to one place: `config init` no longer emits a duplicate
+  `system.providers` mirror, so editing the top-level `providers` block takes
+  effect on the next load. Older system-only configs and deliberate mixed input
+  keep their existing load precedence (Refs #566).
+
+- Keep the Focus PTY test emulator cursor aligned with rows clipped during resize,
+  preventing stale composer copies during split redraws. Runtime rendering and
+  the existing layout assertions are unchanged (Refs #569).
+
+## Current package line - 2026-11-01
+
+- Recognize Ubuntu 26.04's system coreutils directory for allowlisted host
+  commands. Commands such as `whoami` resolve through `/usr/bin` symlinks to
+  `/usr/lib/cargo/bin/coreutils`; that specific directory is now trusted by
+  default. Executable-name restrictions, resolved-target checks, host-execution
+  enablement, approvals and explicit trusted-directory overrides still apply
+  (Refs #557).
+
+- Honor `since_ts`/`until_ts` in the in-memory audit store. `MemoryAuditStore`
+  ignored the time-window filters when listing audit records; it now filters
+  by `since_ts` and `until_ts` the same way the SQLite store does (Refs #489).
+
+- Add interactive session naming: `/rename <name>` sets the active session's
+  runtime name (its `name` metadata field), and `openminion --resume "<name>"`
+  (alias `-c`) resumes the session with that name, scoped to the current agent
+  and directory with most-recent duplicate ordering. This runtime name is
+  distinct from the standalone `sessctl` session `title` field, which lives in
+  a separate session store.
+
+- Reject duplicate Handoff resolved names when an agent is built or a delegate
+  family is compiled, so two handoffs resolving to the same name fail with an
+  actionable message instead of a `profile_id values must be unique` error at
+  registration time (Refs #476).
+
+- Resolve reasoning-effort support by the execution route actually selected.
+  The direct OpenAI/Anthropic/Groq/Cerebras/OpenRouter adapters never carry the
+  effort in their request payloads, so they no longer claim `supported=true`
+  for it; the llmctl bridge and the ollama adapter (which maps the effort to an
+  explicit `think` flag) still do, and echo is never labeled as transmitted
+  effort (Refs #481).
+
+- Close the call-owned storage probe on every health service exit so the
+  probe's storage handle is released on all exit paths (Refs #487).
+
+- Make the filesystem blob store's repeated put of the same bytes idempotent:
+  `put_bytes` and `put_file` reuse the existing representation and preserve its
+  first-write metadata, and `gc` evicts every owned payload of an evicted
+  digest together with its metadata sidecar so the digest is not left reachable
+  through a sibling representation, accounts for eviction at the same digest
+  unit it deletes at, and ignores unrelated files that merely share a digest's
+  hash prefix (Refs #484).
+
+- Add a cross-machine A2A HTTP transport with mandatory token auth. The new
+  `HTTPTransport` client and stdlib `A2AHTTPServer`/`serve_a2a` server let two
+  OpenMinion machines call each other's agents over HTTP, and `a2actl serve`
+  (with `--host`/`--port`/`--token`, generating a secret when omitted) plus
+  `a2actl call --url ... --token ...` expose it from the CLI. The server binds
+  to `127.0.0.1` by default, requires a non-empty `Bearer` token on every
+  endpoint, and serves a Google-A2A-style agent card at
+  `/.well-known/agent.json`. This is an OpenMinion custom endpoint transport
+  (its `/a2a/...` endpoints speak OpenMinion's own `Envelope` JSON), not a
+  complete interoperable Google A2A protocol server; `a2actl serve` only
+  registers the built-in `agent.echo`/`agent.worker` demo agents, which do not
+  demonstrate cross-machine calls to configured application agents. Error
+  code/message/details are preserved across the wire. See
+  `docs/a2a-remote.md`.
+
+- Keep native structured-output instructions limited to formatting so research
+  synthesis can answer from supplied evidence. Preserve forced `submit_output`,
+  schema validation, and caller-owned routing/judgment contracts (Refs #530).
 
 - Give the first two decision turns the normal `2,200`-token context-pack
   target instead of the former `1,500`-token target. This leaves more room for
@@ -74,6 +215,31 @@ This file tracks package-facing release notes for `openminion`.
   before. New tests create the job through the tool's handler and run it
   through the daemon's scheduler, whose own task manager reads the stored kind
   (Refs #456).
+
+- Let `Agent.run()` and `Agent.run_stream()` answer a waiting confirmation.
+  A second `run()` after "Policy confirmation required." started a new thread,
+  so the reply did not reach the tool call waiting on the first one. Both
+  methods now accept an optional `thread_id` that sends the turn to that
+  thread, and `AgentRunResult.thread_id` returns the turn's thread. Omitted or
+  blank, it changes nothing (Refs #541).
+
+- Order the `memory` and `self_awareness` context segments before
+  `turn_input` so that recalled memories and the self model render ahead of
+  the final user input (Refs #483).
+
+- Honour `Field` defaults and `default_factory` declared inside `Annotated`
+  (e.g. `x: Annotated[int, Field(default=5)]` or
+  `x: Annotated[list[int], Field(default_factory=list)]`) when a `@tool`
+  argument has no Python default, while still preserving `Field` defaults,
+  `default_factory`, aliases and constraints declared as the argument's Python
+  default (e.g. `x: int = Field(default=7, alias="external", ge=1)` or
+  `x: list[int] = Field(default_factory=list)`) (Refs #475).
+
+- Apply the recent-window mode budget bias (respond halving / act -120) only
+  once. The recent-window trimmer read the already-biased budget and applied
+  the mode adjustment a second time, halving the respond budget or subtracting
+  120 tokens from the act budget again; it now reads the biased budget
+  directly, so the adjustment lands exactly once (Refs #482).
 
 ## Current package line - 2026-10-29
 

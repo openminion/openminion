@@ -28,7 +28,12 @@ from typing import Any
 import pytest
 
 from openminion import Agent, APIRuntime
-from openminion.base.config import ConfigManager, OpenMinionConfig, save_config
+from openminion.base.config import (
+    AgentProfileConfig,
+    ConfigManager,
+    OpenMinionConfig,
+    save_config,
+)
 from openminion.base.types import Message
 from openminion.modules.policy.adapters.memory import memory_capture_recovery_allowed
 from openminion.modules.session.capture import build_capture_identity
@@ -216,12 +221,18 @@ def _runtime(
     *,
     constraint: str | None,
     internal_actor_scopes: tuple[str, ...] = (),
+    extra_agents: tuple[str, ...] = (),
 ) -> Any:
     monkeypatch.setenv("OPENMINION_HOME", str(root))
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(root / ".openminion"))
     monkeypatch.setenv("CAPTURE_AUTHZ_PROVIDER_KEY", "local-dummy-key")
     config = OpenMinionConfig()
     _csc_install_default_agent(config, provider="openai")
+    for name in extra_agents:
+        # A further agent on the same provider, with no identity profile.
+        config.agents[name] = AgentProfileConfig(
+            name=name, provider="openai", default_channel="console"
+        )
     config.providers.openai.api_key_env = "CAPTURE_AUTHZ_PROVIDER_KEY"
     config.providers.openai.base_url = provider.base_url
     config.runtime.process_mode = "single-process"

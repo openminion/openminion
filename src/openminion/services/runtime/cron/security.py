@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -13,6 +14,7 @@ from openminion.modules.tool import RuntimeContext, Policy
 from openminion.modules.tool import preferred_artifact_ref
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.task.cron_payloads import build_cron_request_payload
+from openminion.modules.telemetry.usage import usage_event_session_id
 from openminion.services.config import resolve_services_env
 from openminion.tools.security.derived import comparison, export_sarif_handler
 from openminion.tools.security.schemas import SecurityScanResult
@@ -36,18 +38,11 @@ def prepare_run(
         raise ToolRuntimeError(
             "POLICY_DENIED", "Scheduled security configuration was revoked"
         )
-    stored = next(
-        (
-            item
-            for item in store.list_cron_runs(job_id=job["job_id"], limit=100)
-            if item["run_id"] == run["run_id"]
-        ),
-        None,
-    )
-    if (
-        stored is None
-        or stored.get("state") != "running"
-        or stored.get("attempts") != run.get("attempts")
+    if not any(
+        item["run_id"] == run["run_id"]
+        and item.get("state") == "running"
+        and item.get("attempts") == run.get("attempts")
+        for item in store.list_cron_runs(job_id=job["job_id"], limit=100)
     ):
         raise ToolRuntimeError(
             "POLICY_DENIED", "Security run is not the current claimed attempt"
@@ -65,10 +60,13 @@ def complete_run(
     run: dict[str, Any],
     brain_status: str,
 ) -> dict[str, Any]:
+    evidence_session_id = usage_event_session_id(
+        {"session_id": request.session_id, "metadata": request.meta}
+    )
     records = ctl.list_recent(
         limit=100,
         scope_filters={
-            "session_id": request.session_id,
+            "session_id": evidence_session_id,
             "agent_id": admission.agent_id,
         },
     )
@@ -117,7 +115,7 @@ def complete_run(
             scope="READ_ONLY",
             confirm=False,
             agent_id=admission.agent_id,
-            session_id=request.session_id,
+            session_id=evidence_session_id,
             trace_id=request.trace_id,
             permission_mode="readonly",
             tool_name="security.export_sarif",
@@ -190,6 +188,7 @@ def execute_security_run(
         f"{revision} and include_evidence_artifact=true. Publish one canonical source report. "
         "No repair or network operations are authorized.",
         "session_id": f"cron:{job['job_id']}:{run['run_id']}",
+        "conversation_id": run["run_id"],
         "timeout_seconds": admission.timeout_seconds,
         "permission_mode": "readonly",
         "allowed_tools": admission.allowed_tools,
@@ -206,9 +205,35 @@ def execute_security_run(
     request_payload.update(payload, agent_id=admission.agent_id)
     request = request_builder(request_payload, admission.agent_id, None, None)
     request = bind_request(request, (admission, revision), job, run)
-    result = runtime.runtime_manager.submit_turn(request).result(
-        timeout_s=timeout_s + admission.timeout_seconds
+    exposure = runtime.tools.exposure_service
+    brain_session_id = usage_event_session_id(
+        {"session_id": request.session_id, "metadata": request.meta}
     )
+    owns_activation = not any(
+        card.profile_id == "security_readonly"
+        for card in exposure.cards(session_id=brain_session_id)
+    )
+    if owns_activation:
+        exposure.activate(
+            "security_readonly",
+            session_id=brain_session_id,
+            approved=True,
+            ttl_seconds=min(
+                timeout_s + admission.timeout_seconds,
+                (admission.expires_at - datetime.now(UTC)).total_seconds(),
+            ),
+            agent_id=admission.agent_id,
+            activation_reason="admitted scheduled source scan",
+            policy_source=admission.schema_version,
+            config_fingerprint=admission.config_fingerprint,
+        )
+    try:
+        result = runtime.runtime_manager.submit_turn(request).result(
+            timeout_s=timeout_s + admission.timeout_seconds
+        )
+    finally:
+        if owns_activation:
+            exposure.deactivate("security_readonly", session_id=brain_session_id)
     # Preserve failed-attempt artifacts; completion status is separate from report existence.
     with artifactctl_factory() as ctl:
         evidence = complete_run(
@@ -263,20 +288,18 @@ def compare_report(
             }
         )
     ctx.tool_name = "security.compare_scans"
-    comparison_ref = preferred_artifact_ref(
-        ctx.write_artifact(
-            "security/scheduled-comparison.json",
-            json.dumps(
-                {
-                    "schema_version": "security-report-comparison/v1",
-                    "baseline_ref": admission.baseline_ref,
-                    "current_ref": ref,
-                    "checks": comparisons,
-                    "review_status": "unreviewed",
-                }
-            ).encode(),
-            "application/json",
-            durable=True,
-        )
+    artifact = ctx.write_artifact(
+        "security/scheduled-comparison.json",
+        json.dumps(
+            {
+                "schema_version": "security-report-comparison/v1",
+                "baseline_ref": admission.baseline_ref,
+                "current_ref": ref,
+                "checks": comparisons,
+                "review_status": "unreviewed",
+            }
+        ).encode(),
+        "application/json",
+        durable=True,
     )
-    return cast(str, comparison_ref)
+    return cast(str, preferred_artifact_ref(artifact))

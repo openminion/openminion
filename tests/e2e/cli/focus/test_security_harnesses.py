@@ -1051,6 +1051,8 @@ def test_child_activation_correction_requires_exact_lifecycle(change, target):
     [
         "",
         "primary_usage",
+        "missing_input",
+        "missing_output",
         "marker",
         "missing_phase",
         "actor",
@@ -1062,7 +1064,12 @@ def test_child_activation_correction_requires_exact_lifecycle(change, target):
         "duplicate_phase",
     ],
 )
-def test_repair_usage_correlates_auxiliary_marker_to_physical_turn(change):
+@pytest.mark.parametrize(
+    "token_keys",
+    [("input_tokens", "output_tokens"), ("prompt_tokens", "completion_tokens")],
+    ids=["input_output", "prompt_completion"],
+)
+def test_repair_usage_correlates_auxiliary_marker_to_physical_turn(change, token_keys):
     actor = source._CODE_REVIEWER
     events = [
         {
@@ -1088,7 +1095,7 @@ def test_repair_usage_correlates_auxiliary_marker_to_physical_turn(change):
                 "llm_call_id": "entry",
                 "trace_id": "outer-turn",
                 "purpose": "entry",
-                "usage": {"input_tokens": 5856, "output_tokens": 1355},
+                "usage": dict(zip(token_keys, (5856, 1355), strict=True)),
             },
         },
         {
@@ -1125,6 +1132,10 @@ def test_repair_usage_correlates_auxiliary_marker_to_physical_turn(change):
     ]
     if change == "primary_usage":
         events[1]["data"]["usage"] = {}
+    elif change == "missing_input":
+        del events[1]["data"]["usage"][token_keys[0]]
+    elif change == "missing_output":
+        events[1]["data"]["usage"][token_keys[1]] = None
     elif change == "marker":
         events[0]["data"]["purpose"] = "unknown_auxiliary"
     elif change == "missing_phase":
@@ -1162,3 +1173,84 @@ def test_repair_usage_correlates_auxiliary_marker_to_physical_turn(change):
         assert usage["turn_costs"][0]["provider_calls_total"] == 3
         assert usage["auxiliary_usage_markers"] == [events[0]]
         assert events[0]["data"]["usage"] == {}
+
+
+def test_responsibility_configuration_keeps_finite_readonly_admission(
+    live_config, tmp_path, monkeypatch
+):
+    from datetime import UTC, datetime, timedelta
+    from hashlib import sha256
+    from pathlib import Path
+    from tests.e2e.cli.focus.test_live_security_responsibility import (
+        _schedule_configuration,
+    )
+
+    target = tmp_path / "target"
+    target.mkdir()
+    rules = target / "rule.yml"
+    rules.write_text("rules: []\n")
+    monkeypatch.setenv("OPENMINION_TEST_SECURITY_SCAN_IMAGE", "sha256:" + "a" * 64)
+    monkeypatch.setenv(
+        "OPENMINION_TEST_SECURITY_LAB_DOCKER_SOCKET", "unix:///tmp/docker.sock"
+    )
+    before = datetime.now(UTC)
+    path, _, tokens, scope = _schedule_configuration(tmp_path, target, monkeypatch)
+    config = json.loads(path.read_text())
+    assert tokens == 200
+    assert scope.max_runs == 2 and scope.timeout_seconds == 300
+    assert (
+        before + timedelta(minutes=30)
+        <= scope.expires_at
+        <= datetime.now(UTC) + timedelta(minutes=30)
+    )
+    assert scope.baseline_ref is None and scope.checks == ["code"]
+    assert scope.allowed_tools == ["security.scan_code", "security.publish_report"]
+    scan_path = Path(config["runtime"]["env"]["OPENMINION_SECURITY_SCAN_CONFIG"])
+    assert (
+        scope.config_fingerprint
+        == sha256(scan_path.read_bytes() + rules.read_bytes()).hexdigest()
+    )
+    admissions = json.loads(
+        Path(
+            config["runtime"]["env"]["OPENMINION_SECURITY_SCHEDULE_CONFIG"]
+        ).read_text()
+    )
+    assert admissions == {scope.agent_id: scope.model_dump(mode="json")}
+    assert "unit-provider-credential" not in path.read_text()
+
+
+@pytest.mark.parametrize("input_tokens", [5479, None])
+def test_responsibility_usage_retains_structural_readonly_phase_records(input_tokens):
+    from tests.e2e.cli.focus.test_live_security_responsibility import (
+        _observed_phase_usage,
+    )
+
+    role = "security-researcher-readonly"
+    completion = {
+        "event_type": "llm.call.completed",
+        "agent_id": role,
+        "data": {"structural_only": True, "trace_id": "scheduled-run"},
+    }
+    phase = {
+        "event_type": "chat.phase_timing",
+        "agent_id": role,
+        "id": 123,
+        "data": {
+            "turn_id": "scheduled-run",
+            "agent_id": role,
+            "provider_input_tokens": input_tokens,
+            "provider_output_tokens": 1580,
+            "provider_calls_total": 3,
+        },
+    }
+    usage = _observed_phase_usage([completion, phase], [role])
+    assert usage["usage_by_role"] == {role: [phase]}
+    assert usage["observed_tokens"] == {
+        "input_tokens": input_tokens,
+        "output_tokens": 1580,
+    }
+    assert usage["phase_usage_fields_complete"] is (input_tokens is not None)
+    assert usage["per_call_accounting_complete"] is False
+    absent = _observed_phase_usage([completion], [role])
+    assert absent["observed_tokens"] == {"input_tokens": None, "output_tokens": None}
+    assert absent["phase_usage_fields_complete"] is False

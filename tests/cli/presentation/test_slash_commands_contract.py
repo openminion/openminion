@@ -20,7 +20,7 @@ def test_slash_metadata_has_unique_primary_names() -> None:
 
 
 def test_every_primary_command_has_explicit_usage() -> None:
-    assert len(SLASH_COMMANDS) == 56
+    assert len(SLASH_COMMANDS) == 57
     assert all(command.usage for command in SLASH_COMMANDS)
     assert all(
         all(line.strip() for line in command.usage) for command in SLASH_COMMANDS
@@ -75,6 +75,15 @@ def test_new_metadata_preserves_multi_token_alternate_form() -> None:
     assert "/new session" in command.usage
     assert "/new session" in format_slash_help("new")
     assert format_slash_help("new session").startswith("/help —")
+
+
+def test_rename_metadata_registers_in_catalog() -> None:
+    command = slash_command_metadata("rename")
+
+    assert command is not None
+    assert command.name == "/rename"
+    assert command.description == "Rename the current session"
+    assert "/rename" in terminal_slash_commands()
 
 
 def test_terminal_catalog_preserves_supported_commands_and_aliases() -> None:

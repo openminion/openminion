@@ -46,6 +46,9 @@ package source and release surface.
   boundaries.
 - [`skill-maintenance.md`](skill-maintenance.md): maintainer note for the
   current skill lifecycle, admission, and design boundaries.
+- [`guides/verified-learning-and-responsibility.md`](guides/verified-learning-and-responsibility.md):
+  reviewed procedures, independent transfer measurement, exact-version admission,
+  and finite security-assessment responsibility.
 
 ## Contributor And Quality Topics
 

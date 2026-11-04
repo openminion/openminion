@@ -56,6 +56,7 @@ from ..config import RunnerOptions
 from ..execution.public_taxonomy import public_surface_payload_for_state
 from ..state import MetaApplication
 from ..diagnostics.telemetry import emit_brain_operation
+from ..diagnostics.usage import llm_usage_scope
 
 
 def _resolve_run_capture_identity(
@@ -649,16 +650,19 @@ class BrainRunner:
             )
         result: StepOutput | None = None
         try:
-            result = run_step(
-                self,
-                session_id=session_id,
-                user_input=user_input,
-                trace_id=effective_trace_id,
-                forced_tools=forced_tools,
-                capability_category=capability_category,
-                capture_identity=identity,
-                runtime_conversation_id=runtime_conversation_id,
-            )
+            with llm_usage_scope(
+                self.session_api, session_id, effective_trace_id, identity.root_turn_id
+            ):
+                result = run_step(
+                    self,
+                    session_id=session_id,
+                    user_input=user_input,
+                    trace_id=effective_trace_id,
+                    forced_tools=forced_tools,
+                    capability_category=capability_category,
+                    capture_identity=identity,
+                    runtime_conversation_id=runtime_conversation_id,
+                )
             if not run_owns_turn_outcome:
                 turn_id = (
                     str(result.working_state.trace_id or "").strip()

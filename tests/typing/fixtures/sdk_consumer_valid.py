@@ -29,9 +29,14 @@ assert_type(structured_result.output, Review)
 assert_type(structured_result.id, str | None)
 assert_type(structured_result.metadata, dict[str, Any])
 assert_type(structured_result.stats, dict[str, Any])
+assert_type(structured_result.thread_id, str | None)
 
 plain: Agent[str, str] = Agent()
 assert_type(plain.run("hello").output, str)
+assert_type(
+    plain.run("yes", thread_id=structured_result.thread_id).thread_id, str | None
+)
+assert_type(plain.run_stream("yes", thread_id="thread-1").output, str)
 
 
 def inspect_submitted_turn(handle: RuntimeTurnHandle) -> None:

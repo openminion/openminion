@@ -252,6 +252,7 @@ def _extract_ephemeral_prompt_metadata(
         # scheduled turns expose cron execution context via inbound metadata.
         "cron_job_id",
         "cron_run_id",
+        "security_scan_context",
         "scheduled_for",
         *WATCH_EPHEMERAL_METADATA_KEYS,
         "memory_consolidation_job",

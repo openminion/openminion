@@ -98,8 +98,10 @@ def test_postgres_backend_requires_url():
         registry.create_record("record.postgres", {})
 
 
-def test_default_sqlite_engine_does_not_import_postgres_backend(tmp_path):
-    sys.modules.pop("openminion.modules.storage.backends.postgres", None)
+def test_default_sqlite_engine_does_not_import_postgres_backend(tmp_path, monkeypatch):
+    monkeypatch.delitem(
+        sys.modules, "openminion.modules.storage.backends.postgres", raising=False
+    )
     config = StorageEngineConfig(
         root_dir=tmp_path / "blob",
         sqlite_path=tmp_path / "storage.db",

@@ -22,6 +22,11 @@ MODULE_ID = "thinking"
 
 THINKING_SOURCE_MODE_POLICY = "mode_policy"
 
+# Execution routes a reasoning-effort request can take.
+THINKING_ROUTE_DIRECT = "direct"
+THINKING_ROUTE_BRIDGE = "bridge"
+THINKING_ROUTE_OLLAMA = "ollama"
+
 THINKING_DEGRADE_UNKNOWN_PROFILE = "unknown_reasoning_profile_normalized"
 THINKING_DEGRADE_PROVIDER_UNSUPPORTED = "provider_effort_unsupported"
 THINKING_DEGRADE_MODE_CLAMP = "mode_policy_clamp"

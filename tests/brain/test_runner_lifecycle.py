@@ -5,10 +5,16 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from openminion.modules.brain.runner.lifecycle import run_until_idle
+from openminion.modules.brain.runner.tick.context import _budget_exhaustion_message
 from openminion.modules.brain.runner.tick.orchestrator import (
     _refresh_budget_for_new_trigger,
 )
-from openminion.modules.brain.schemas import BudgetCounters, StepOutput, WorkingState
+from openminion.modules.brain.schemas import (
+    BudgetCounters,
+    BudgetStopReason,
+    StepOutput,
+    WorkingState,
+)
 
 
 def _step_output(*, status: str, ticks: int = 3) -> StepOutput:
@@ -179,6 +185,7 @@ def test_run_until_idle_budget_checks_continue_tick() -> None:
         profile=SimpleNamespace(
             agent_id="router-agent",
             structural_tool_results=False,
+            budgets=SimpleNamespace(max_ticks_per_user_turn=3),
         ),
         session_api=MagicMock(),
         llm_api=MagicMock(),
@@ -194,7 +201,32 @@ def test_run_until_idle_budget_checks_continue_tick() -> None:
     )
 
     assert result.status == "waiting_user"
-    assert "tick budget is exhausted" in str(result.message or "").lower()
+    assert result.message == (
+        "Stopped: turn step limit reached (3/3). "
+        "Continue in a new turn to resume, or narrow the scope."
+    )
+
+
+def test_tick_budget_exhaustion_message_shows_usage() -> None:
+    assert _budget_exhaustion_message(
+        BudgetStopReason.TICKS_EXHAUSTED,
+        used=3,
+        limit=3,
+    ) == (
+        "Stopped: turn step limit reached (3/3). "
+        "Continue in a new turn to resume, or narrow the scope."
+    )
+
+
+def test_time_budget_exhaustion_message_shows_usage() -> None:
+    assert _budget_exhaustion_message(
+        BudgetStopReason.TIME_EXHAUSTED,
+        used=300_000,
+        limit=300_000,
+    ) == (
+        "Stopped: turn time limit reached (300s/300s). "
+        "Continue in a new turn to resume, or narrow the scope."
+    )
 
 
 def test_plan_continuation_refreshes_per_turn_budget_without_resetting_plan() -> None:

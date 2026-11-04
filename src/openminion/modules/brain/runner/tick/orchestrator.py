@@ -22,6 +22,7 @@ from ...loop.tools.confirmation import (
 from ...runner.transitions import guard_waiting_state
 from ...runtime.mrdd.hook import maybe_run_mrdd_pre_dispatch_hook
 from ...schemas import BrainMode, new_uuid
+from ...schemas.state.clarify import BudgetStopReason
 from . import (
     confirmation,
     input_processing,
@@ -148,7 +149,18 @@ def _handle_budget_exhaustion(
 ):
     if budget_stop_reason is None:
         return None
-    message = _budget_exhaustion_message(budget_stop_reason)
+    if budget_stop_reason == BudgetStopReason.TIME_EXHAUSTED:
+        limit = int(runner.profile.budgets.max_elapsed_ms)
+        remaining = int(state.budgets_remaining.time_ms)
+    else:
+        limit = int(runner.profile.budgets.max_ticks_per_user_turn)
+        remaining = int(state.budgets_remaining.ticks)
+    used = max(0, limit - remaining)
+    message = _budget_exhaustion_message(
+        budget_stop_reason,
+        used=used,
+        limit=limit,
+    )
     logger.emit(
         "brain.turn_budget.exhausted",
         {
