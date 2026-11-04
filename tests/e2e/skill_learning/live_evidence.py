@@ -40,22 +40,11 @@ def canonical_usage(events: list[dict], *, provider: str, model: str) -> int | N
     phase = phases[0]
     attempts = phase.get("provider_attempts", [])
     counts = [phase.get("provider_input_tokens"), phase.get("provider_output_tokens")]
-    completions = [
-        event["data"] for event in events if event["event_type"] == "llm.call.completed"
-    ]
     if (
         not attempts
-        or not completions
-        or any(
-            not all(
-                isinstance(call.get("usage", {}).get(key), int)
-                for key in ("input_tokens", "output_tokens")
-            )
-            for call in completions
-        )
+        or phase.get("provider_usage_complete") is not True
         or not all(isinstance(value, int) and value >= 0 for value in counts)
         or len(attempts) != phase.get("provider_calls_total")
-        or len(attempts) != len(completions)
         or any(
             attempt["outcome"] != "ok"
             or attempt["provider"] != provider
@@ -63,11 +52,6 @@ def canonical_usage(events: list[dict], *, provider: str, model: str) -> int | N
             for attempt in attempts
         )
         or any(event["event_type"] == "llm.call.failed" for event in events)
-    ):
-        return None
-    if any(
-        sum(call["usage"][key] for call in completions) != count
-        for key, count in zip(("input_tokens", "output_tokens"), counts, strict=True)
     ):
         return None
     return sum(counts)

@@ -1,6 +1,6 @@
 # Verified learning and ongoing responsibility
 
-Status: implementation validation in progress
+Status: implemented in source; live learning qualification blocked
 Last updated: 2026-11-04
 
 OpenMinion can retain a reviewed procedure from an agent's completed work,
@@ -14,6 +14,9 @@ Enable `skill.runtime_workflow_observation_enabled` in the runtime configuration
 and use the general adaptive profile for development work. The observation
 owner records successful substantive tool use on confirmed completion. Coding,
 seeded replay, and direct-tool turns do not supply this observation evidence.
+Use a local coding permission profile that allows file/code inspection and
+editing alongside `exec.run`. Normal policy can direct read-only shell commands
+to structured tools, so an exec-only allowlist can prevent acquisition.
 Check the selected agent's stored evidence:
 
 ```sh
@@ -93,8 +96,10 @@ and aggregate candidate tokens at most 125% of baseline. Missing usage or
 incomplete evidence cannot establish benefit. A retained report may honestly
 say `no_demonstrated_gain`, `regression`, or `inconclusive`.
 
-The source-checkout live runner is undergoing validation. Its final execution
-inputs and evidence must be reviewed before claiming demonstrated benefit.
+The initial live acquisition stopped before candidate authoring, and complete
+usage could not be recovered from its retained evidence. No live learning benefit
+has been established. Future runs require a reviewed frozen experiment and
+complete response-usage evidence from the existing phase timer.
 
 Record the evaluator's result artifact. When it contains a measurement report,
 also supply the independently frozen manifest reference:

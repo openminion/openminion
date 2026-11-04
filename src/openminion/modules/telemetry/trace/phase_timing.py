@@ -135,6 +135,7 @@ class ChatPhaseTimingPayload:
     provider_response_bytes: int | None = None
     provider_input_tokens: int | None = None
     provider_output_tokens: int | None = None
+    provider_usage_complete: bool | None = None
     tool_schema_count_max: int | None = None
     tool_schema_bytes_total: int | None = None
 
@@ -187,6 +188,7 @@ class ChatPhaseTimingPayload:
             "provider_response_bytes": self.provider_response_bytes,
             "provider_input_tokens": self.provider_input_tokens,
             "provider_output_tokens": self.provider_output_tokens,
+            "provider_usage_complete": self.provider_usage_complete,
             "tool_schema_count_max": self.tool_schema_count_max,
             "tool_schema_bytes_total": self.tool_schema_bytes_total,
         }
@@ -212,6 +214,7 @@ class ChatPhaseTimer:
     _provider_response_bytes: int = 0
     _provider_input_tokens: int = 0
     _provider_output_tokens: int = 0
+    _provider_calls_with_usage: int = 0
     _tool_schema_count_max: int = 0
     _tool_schema_bytes_total: int = 0
     _has_provider_request_bytes: bool = False
@@ -287,6 +290,8 @@ class ChatPhaseTimer:
         input_tokens = getattr(usage, "input_tokens", None)
         output_tokens = getattr(usage, "output_tokens", None)
         with self._lock:
+            if input_tokens is not None and output_tokens is not None:
+                self._provider_calls_with_usage += 1
             if input_tokens is not None:
                 self._provider_input_tokens += max(0, int(input_tokens))
                 self._has_provider_input_tokens = True
@@ -361,6 +366,13 @@ class ChatPhaseTimer:
             provider_call_purposes = tuple(self._provider_call_purposes)
             provider_call_latency_ms = tuple(self._provider_call_latency_ms)
             provider_attempts = tuple(dict(item) for item in self._provider_attempts)
+            provider_usage_complete = (
+                bool(provider_call_purposes)
+                and len(provider_call_purposes)
+                == self._provider_calls_with_usage
+                == len(provider_attempts)
+                and all(item["outcome"] == "ok" for item in provider_attempts)
+            )
             provider_request_bytes = self._provider_request_bytes
             has_provider_request_bytes = self._has_provider_request_bytes
             provider_response_bytes = self._provider_response_bytes
@@ -387,6 +399,7 @@ class ChatPhaseTimer:
             provider_call_purposes=provider_call_purposes,
             provider_call_latency_ms=provider_call_latency_ms,
             provider_attempts=provider_attempts,
+            provider_usage_complete=provider_usage_complete,
             provider_request_bytes=(
                 provider_request_bytes if has_provider_request_bytes else None
             ),

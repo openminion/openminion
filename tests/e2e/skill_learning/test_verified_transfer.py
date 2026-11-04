@@ -15,6 +15,8 @@ from openminion.modules.skill.learning.proposer import stage_authored_skill_prop
 from openminion.modules.skill.learning.runtime import observe_runtime_workflow
 from openminion.modules.skill.proposal.base import SkillProposalDraft, SkillProcedure
 from openminion.modules.skill.runtime.skill import Skill
+from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.runtime.policy import Policy
 from tests.e2e.cli.focus.test_live_skill_confirmed_save import _skill_config
 from tests.e2e.skill_learning.live_evidence import (
     canonical_usage,
@@ -41,6 +43,7 @@ def _events():
                 "provider_input_tokens": 90,
                 "provider_output_tokens": 10,
                 "provider_calls_total": 1,
+                "provider_usage_complete": True,
                 "provider_attempts": [
                     {"outcome": "ok", "provider": "fixture", "model": "model-a"},
                 ],
@@ -53,57 +56,46 @@ def test_usage_counts_the_canonical_phase_once():
     assert canonical_usage(_events(), provider="fixture", model="model-a") == 100
 
 
+def test_complete_phase_counts_sparse_adaptive_and_auxiliary_calls():
+    events = _events()
+    phase = events[-1]["data"]
+    phase.update(
+        provider_input_tokens=36319, provider_output_tokens=963, provider_calls_total=7
+    )
+    phase["provider_attempts"] = [dict(phase["provider_attempts"][0]) for _ in range(7)]
+    assert canonical_usage(events, provider="fixture", model="model-a") == 37282
+
+
 @pytest.mark.parametrize(
-    "missing",
+    ("field", "value"),
     [
-        "retry",
-        "completion_usage",
-        "auxiliary_usage",
-        "completion",
-        "aggregate_mismatch",
-        "phase_usage",
-        "phase",
-        "route",
+        ("provider_usage_complete", None),
+        ("provider_usage_complete", False),
+        ("provider_input_tokens", None),
+        ("provider_output_tokens", None),
+        ("provider_calls_total", 2),
+        ("provider_attempts", []),
     ],
 )
-def test_unknown_physical_usage_cannot_become_zero(missing):
+def test_unknown_physical_usage_cannot_become_zero(field, value):
     events = _events()
-    if missing == "retry":
-        events[-1]["data"]["provider_attempts"].insert(
-            0,
-            {
-                "outcome": "error",
-                "provider": "fixture",
-                "model": "model-a",
-            },
-        )
-    elif missing == "completion_usage":
-        events[0]["data"]["usage"].pop("input_tokens")
-    elif missing == "auxiliary_usage":
-        events.insert(
-            0,
-            {
-                "event_type": "llm.call.completed",
-                "data": {"auxiliary": True, "usage": {}},
-            },
-        )
-        events[-1]["data"]["provider_calls_total"] = 2
-        events[-1]["data"]["provider_attempts"].append(
-            {"outcome": "ok", "provider": "fixture", "model": "model-a"}
-        )
-    elif missing == "phase_usage":
-        events[-1]["data"].pop("provider_output_tokens")
-    elif missing == "completion":
-        events[-1]["data"]["provider_calls_total"] = 2
-        events[-1]["data"]["provider_attempts"].append(
-            {"outcome": "ok", "provider": "fixture", "model": "model-a"}
-        )
-    elif missing == "aggregate_mismatch":
-        events[-1]["data"]["provider_input_tokens"] = 101
-    elif missing == "phase":
-        events.pop()
-    else:
-        events[-1]["data"]["provider_attempts"][0]["model"] = "another-model"
+    events[-1]["data"][field] = value
+    assert canonical_usage(events, provider="fixture", model="model-a") is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("outcome", "error"), ("provider", "other"), ("model", "other")],
+)
+def test_attempt_identity_and_success_must_match(field, value):
+    events = _events()
+    events[-1]["data"]["provider_attempts"][0][field] = value
+    assert canonical_usage(events, provider="fixture", model="model-a") is None
+
+
+def test_old_complete_looking_record_stays_unavailable():
+    events = _events()
+    events[-1]["data"].pop("provider_usage_complete")
     assert canonical_usage(events, provider="fixture", model="model-a") is None
 
 
@@ -248,9 +240,24 @@ def test_fresh_arm_storage_and_loaded_caps(campaign, tmp_path):
         baseline.environment()["OPENMINION_HOME"]
         != candidate.environment()["OPENMINION_HOME"]
     )
-    assert campaign.config["brain"]["tool_policy"]["tools"]["allow_exact"] == [
-        "exec.run"
-    ]
+    policy = Policy(campaign.config["brain"]["tool_policy"])
+    for name in (
+        "exec.run",
+        "file.list_dir",
+        "file.read",
+        "file.read_range",
+        "file.find",
+        "file.search",
+        "file.write",
+        "file.edit",
+        "code.repo_map",
+        "code.grep",
+        "code.patch",
+    ):
+        policy.ensure_tool_allowed(name)
+    for name in ("web.fetch", "file.trash", "delegate", "security.scan_web"):
+        with pytest.raises(ToolRuntimeError, match="not allowed"):
+            policy.ensure_tool_allowed(name)
     before = deepcopy(campaign.state)
     campaign.state["stage"] = "author_started"
     with pytest.raises(AssertionError, match="cannot be repeated"):

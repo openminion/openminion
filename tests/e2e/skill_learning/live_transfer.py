@@ -76,7 +76,19 @@ def experiment_config(original: dict, agent: str) -> dict:
     ] = 40
     config.setdefault("skill", {})["runtime_workflow_observation_enabled"] = True
     config.setdefault("brain", {}).setdefault("tool_policy", {})["tools"] = {
-        "allow_exact": ["exec.run"],
+        "allow_exact": [
+            "exec.run",
+            "file.list_dir",
+            "file.read",
+            "file.read_range",
+            "file.find",
+            "file.search",
+            "file.write",
+            "file.edit",
+            "code.repo_map",
+            "code.grep",
+            "code.patch",
+        ],
         "allow_prefix": [],
         "deny_exact": [],
         "deny_prefix": [],
