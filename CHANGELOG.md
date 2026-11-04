@@ -49,6 +49,10 @@ This file tracks package-facing release notes for `openminion`.
   effect on the next load. Older system-only configs and deliberate mixed input
   keep their existing load precedence (Refs #566).
 
+- Keep the Focus PTY test emulator cursor aligned with rows clipped during resize,
+  preventing stale composer copies during split redraws. Runtime rendering and
+  the existing layout assertions are unchanged (Refs #569).
+
 ## Current package line - 2026-11-01
 
 - Recognize Ubuntu 26.04's system coreutils directory for allowlisted host
