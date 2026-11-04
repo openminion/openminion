@@ -34,6 +34,10 @@ This file tracks package-facing release notes for `openminion`.
   its own `--session` with a default, which overwrote the root value so
   `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
 
+- Require a subcommand for `openminion status` and `openminion service`: a bare
+  group now prints that group's usage and exits 2 instead of falling through to
+  the no-handler interactive/onboarding route (Refs #591).
+
 ## Current package line - 2026-11-04
 
 - Add a reviewed learning lifecycle that can retain successful substantive
