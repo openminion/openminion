@@ -34,6 +34,11 @@ This file tracks package-facing release notes for `openminion`.
   its own `--session` with a default, which overwrote the root value so
   `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
 
+- Document `file.read`'s numeric arguments (character offset, default and maximum
+  length) and return `next_offset` plus a continuation hint when a read is
+  truncated, so following a large file no longer means deriving the window by hand
+  (Refs #605).
+
 ## Current package line - 2026-11-04
 
 - Add a reviewed learning lifecycle that can retain successful substantive

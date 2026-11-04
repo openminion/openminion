@@ -41,7 +41,11 @@ FILE_MODEL_TOOLS = (
     ),
     ModelToolDef(
         model_tool_id=MODEL_FILE_READ,
-        description="Read file contents",
+        description=(
+            "Read file contents. offset is a character offset (not a line number); "
+            "a truncated read returns next_offset for continuation. Use "
+            "file.read_range for line-based reads."
+        ),
         parameters={},
     ),
     ModelToolDef(
