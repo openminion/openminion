@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+from openminion.base.config import OpenMinionConfig
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.registry import ToolRegistry
@@ -73,6 +74,7 @@ def _execute(
 
 def _assert_v2_metadata(results: list[object]) -> None:
     service = AgentService.__new__(AgentService)
+    service._config = OpenMinionConfig()
     batch = SimpleNamespace(
         results=results,
         all_verified=all(getattr(result, "verified", False) for result in results),
