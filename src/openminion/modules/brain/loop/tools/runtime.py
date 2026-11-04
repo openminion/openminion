@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from openminion.modules.brain.diagnostics.usage import record_llm_response
 import platform
 import re
 from collections.abc import Mapping
@@ -610,6 +611,10 @@ class DefaultAdaptiveToolLoopLLMRuntime:
                 metadata=metadata,
             )
             response = self._client.call(request)
+            record_llm_response(
+                purpose=str((metadata or {}).get("purpose", "adaptive")),
+                response=response,
+            )
             record_active_chat_provider_call(
                 purpose=str((metadata or {}).get("purpose", "adaptive")),
                 messages=list(messages),
@@ -634,6 +639,9 @@ class DefaultAdaptiveToolLoopLLMRuntime:
             overrides["metadata"] = metadata
         response = self._client.complete(
             messages, tools if tools else None, **overrides
+        )
+        record_llm_response(
+            purpose=str((metadata or {}).get("purpose", "adaptive")), response=response
         )
         record_active_chat_provider_call(
             purpose=str((metadata or {}).get("purpose", "adaptive")),

@@ -192,7 +192,9 @@ def _response_without_unexecutable_envelope(normalized: LLMResponse) -> LLMRespo
 
 def _response_with_total_usage(normalized: LLMResponse) -> LLMResponse:
     usage = normalized.usage
-    if usage.total_tokens is not None:
+    if usage.total_tokens is not None or (
+        usage.input_tokens is None and usage.output_tokens is None
+    ):
         return normalized
     return normalized.model_copy(update={"usage": _usage_with_derived_total(usage)})
 

@@ -678,10 +678,10 @@ class EventStore:
         trace_id: str | None = None,
         agent_id: str | None = None,
         status: str | None = None,
-        limit: int | None = None,
+        limit: int | None = 100,
     ) -> list[dict[str, Any]]:
         """Return session events in the compat payload shape."""
-        safe_limit = max(1, int(limit or 100))
+        safe_limit = None if limit is None else max(1, int(limit))
         clauses = ["session_id = ?"]
         params: list[Any] = [session_id]
         if event_type:
@@ -701,7 +701,7 @@ class EventStore:
             WHERE {" AND ".join(clauses)}
             ORDER BY seq DESC
         """
-        if status is None:
+        if status is None and safe_limit is not None:
             query += " LIMIT ?"
             params.append(safe_limit)
 
@@ -716,4 +716,4 @@ class EventStore:
             items.append(item)
 
         items.reverse()
-        return items[-safe_limit:]
+        return items[-safe_limit:] if safe_limit is not None else items
