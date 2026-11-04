@@ -70,16 +70,24 @@ def test_budget_idempotence_and_unicode_admission(tmp_path, monkeypatch):
         manager.close()
 
 
-def test_revocation_cannot_fall_back_to_host_scanner(audit_context, monkeypatch):  # noqa: F811
+@pytest.mark.parametrize("configured, error", [(False, "revoked"), (True, "changed")])
+def test_untrusted_schedule_cannot_fall_back_to_host_scanner(
+    audit_context,
+    monkeypatch,
+    configured,
+    error,  # noqa: F811
+):
     ctx, _ = audit_context
     ctx.policy.raw["context_metadata"] = {
-        "security_scan_context": json.dumps({"revision": "a" * 40})
+        "security_scan_context": json.dumps(
+            {"revision": "a" * 40, "admission_fingerprint": "mismatched"}
+        )
     }
     monkeypatch.setattr(
         "openminion.tools.security.trusted_source.configured_admission",
-        lambda **_: None,
+        lambda **_: admission(ctx.workspace) if configured else None,
     )
-    with pytest.raises(ToolRuntimeError, match="revoked"):
+    with pytest.raises(ToolRuntimeError, match=error):
         scheduled_scan(None, ctx=ctx, target=ctx.workspace, config=None, check="code")
 
 

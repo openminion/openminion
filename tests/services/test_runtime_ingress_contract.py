@@ -894,15 +894,21 @@ def test_room_lookup_failure_is_not_masked() -> None:
     assert runtime.gateway.calls == []
 
 
-def test_security_schedule_context_cannot_be_supplied_by_payload():
+@pytest.mark.parametrize("managed", [False, True])
+def test_security_schedule_context_cannot_be_supplied_by_payload(managed):
     runtime = _RuntimeStub()
-    request = runtime_turn_request_from_payload(
-        runtime=runtime,
-        payload={
-            "message": "scan",
-            "inbound_metadata": {"security_scan_context": '{"revision":"forged"}'},
-        },
-    )
+    payload = {
+        "message": "scan",
+        "session_id": "security-run",
+        "inbound_metadata": {"security_scan_context": '{"revision":"forged"}'},
+    }
+    if managed:
+        request = runtime_turn_request_from_manager_request(
+            runtime=runtime,
+            request=build_manager_turn_request(payload, default_agent_id="main"),
+        )
+    else:
+        request = runtime_turn_request_from_payload(runtime=runtime, payload=payload)
     execute_runtime_turn(runtime=runtime, request=request)
     assert "security_scan_context" not in runtime.gateway.calls[0]["inbound_metadata"]
 
