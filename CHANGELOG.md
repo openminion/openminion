@@ -34,6 +34,10 @@ This file tracks package-facing release notes for `openminion`.
   its own `--session` with a default, which overwrote the root value so
   `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
 
+- Describe `--dir` accurately: it selects the interactive workspace and the
+  one-shot `run` tool root, and the root-option form must precede the command
+  (Refs #594).
+
 ## Current package line - 2026-11-04
 
 - Add a reviewed learning lifecycle that can retain successful substantive

@@ -53,7 +53,10 @@ def add_interactive_session_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--dir",
         default=None,
-        help="Working directory for the interactive session",
+        help=(
+            "Working directory for the interactive session and the tool root for a "
+            "one-shot run; place it before the command"
+        ),
     )
     parser.add_argument(
         "--add-dir",
