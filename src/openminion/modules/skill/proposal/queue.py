@@ -1,3 +1,5 @@
+"""Persist proposal review, retained replay evidence, and pending application."""
+
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -115,6 +117,11 @@ def record_proposal_review(
         review_policy_id=review_policy_id,
         criterion_decisions=criterion_decisions,
     )
+    if (
+        proposal.proposed_skill_definition.procedure is not None
+        and review.reviewer_id == proposal.agent_id
+    ):
+        raise ProposalQueueError("authored proposal requires an independent reviewer")
     store.record_proposal_review(
         proposal_id=str(proposal.proposal_id or ""),
         status=str(review.status),
@@ -190,6 +197,7 @@ def apply_proposal(
         review,
         catalog=list(current_catalog),
         skill_definition=draft,
+        proposal=proposal,
     )
     package = new_catalog[-1]
     _persist_pending_package(store, package)
@@ -211,6 +219,7 @@ def record_replay_proof(
     proposal_id: str,
     result_ref: str,
     artifactctl: Any,
+    measurement_manifest_ref: str | None = None,
 ) -> dict[str, Any]:
     record = get_proposal(store, proposal_id=proposal_id)
     if record is None:
@@ -231,6 +240,37 @@ def record_replay_proof(
     proof = evaluation.to_proof(result_ref=meta.to_ref().ref)
     proposal = SkillProposal.model_validate(record["proposal"])
     require_replay_passed(proof, proposal)
+    if proof.measurement_ref:
+        from openminion.modules.skill.learning.measurement import (
+            validate_measurement_attachment,
+        )
+        from openminion.modules.skill.proposal.catalog import prepare_emergent_skill
+
+        if not measurement_manifest_ref:
+            raise ProposalQueueError(
+                "measurement requires an independently frozen manifest ref"
+            )
+        review = SkillProposalReview.model_validate(record["review"])
+        _, package = prepare_emergent_skill(
+            review,
+            skill_definition=proposal.proposed_skill_definition,
+            proposal=proposal,
+        )
+        validate_measurement_attachment(
+            artifactctl,
+            measurement_ref=proof.measurement_ref,
+            manifest_ref=measurement_manifest_ref,
+            acquisition_evidence_refs=proposal.evidence_refs,
+            evaluator_id=proof.evaluator_id,
+            identity={
+                "proposal_id": proposal.proposal_id,
+                "shape_id": proposal.source_task_shape_ref,
+                "agent_id": proposal.agent_id,
+                "candidate_hash": proof.candidate_hash,
+                "skill_id": package.skill_id,
+                "package_hash": package.version_hash,
+            },
+        )
     store.record_proposal_replay_proof(
         proposal_id=proposal_id,
         replay_proof_json=canonical_json(proof.model_dump(mode="json")),

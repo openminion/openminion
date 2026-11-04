@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from openminion.modules.skill.models import slugify
+from openminion.modules.skill.proposal.base import SkillProposalDraft
 
 from .shapes import WorkflowShape
 
@@ -82,4 +83,21 @@ def render_skill_markdown(
     )
 
 
-__all__ = ("SkillDraftError", "render_skill_markdown")
+def render_proposal_markdown(draft: SkillProposalDraft) -> str:
+    if draft.procedure is None:
+        raise SkillDraftError("authored proposal requires procedure content")
+    procedure = draft.procedure
+    sections = (
+        ("When To Use", procedure.when_to_use),
+        ("Pitfalls", procedure.do_not_use),
+        ("Procedure", procedure.steps),
+        ("Verification", procedure.validation),
+    )
+    return "\n\n".join(
+        f"# {heading}\n\n"
+        + "\n".join("- " + item.replace("\n", "\n- ") for item in items)
+        for heading, items in sections
+    )
+
+
+__all__ = ("SkillDraftError", "render_proposal_markdown", "render_skill_markdown")

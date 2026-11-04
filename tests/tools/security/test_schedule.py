@@ -70,16 +70,24 @@ def test_budget_idempotence_and_unicode_admission(tmp_path, monkeypatch):
         manager.close()
 
 
-def test_revocation_cannot_fall_back_to_host_scanner(audit_context, monkeypatch):  # noqa: F811
+@pytest.mark.parametrize("configured, error", [(False, "revoked"), (True, "changed")])
+def test_untrusted_schedule_cannot_fall_back_to_host_scanner(
+    audit_context,
+    monkeypatch,
+    configured,
+    error,  # noqa: F811
+):
     ctx, _ = audit_context
     ctx.policy.raw["context_metadata"] = {
-        "security_scan_context": json.dumps({"revision": "a" * 40})
+        "security_scan_context": json.dumps(
+            {"revision": "a" * 40, "admission_fingerprint": "mismatched"}
+        )
     }
     monkeypatch.setattr(
         "openminion.tools.security.trusted_source.configured_admission",
-        lambda **_: None,
+        lambda **_: admission(ctx.workspace) if configured else None,
     )
-    with pytest.raises(ToolRuntimeError, match="revoked"):
+    with pytest.raises(ToolRuntimeError, match=error):
         scheduled_scan(None, ctx=ctx, target=ctx.workspace, config=None, check="code")
 
 
@@ -294,3 +302,182 @@ def test_dirty_source_retains_partial_report(audit_context):  # noqa: F811
     )
     assert result["status"] == "partial" and result["report_ref"] == report_ref
     assert ctx.artifactctl.read_bytes(result["sarif_ref"])
+
+
+@pytest.mark.parametrize("failure", [None, "submit", "timeout", "completion"])
+@pytest.mark.parametrize("preexisting", [False, True])
+def test_scheduled_turn_exposes_exact_tools_and_releases_only_owned_activation(
+    audit_context,
+    monkeypatch,
+    failure,
+    preexisting,  # noqa: F811
+):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from openminion.base.types import Message
+    from openminion.modules.brain.adapters.tool import ToolAdapter
+    from openminion.modules.brain.loop.entry import build_entry_tool_specs
+    from openminion.modules.brain.loop.services import turn_tool_allowlist
+    from openminion.modules.tool import build_default_tool_registry
+    from openminion.services.brain.post_execution.context import (
+        _resolve_turn_session_ids,
+    )
+    from openminion.services.runtime.cron import security
+    from openminion.services.runtime.daemon import build_turn_request
+
+    ctx, revision = audit_context
+    scope = admission(ctx.workspace).model_copy(
+        update={"expires_at": datetime.now(UTC) + timedelta(seconds=60)}
+    )
+    registry = build_default_tool_registry(strict=False)
+    exposure = registry.exposure_service
+    canonical_session = "cron:job:run::conv:run"
+    unrelated = exposure.activate(
+        "security_readonly", session_id="unrelated", approved=True
+    )
+    previous = (
+        exposure.activate(
+            "security_readonly", session_id=canonical_session, approved=True
+        )
+        if preexisting
+        else None
+    )
+    monkeypatch.setattr(security, "prepare_run", lambda **_: (scope, revision))
+    adapter = ToolAdapter(
+        workspace_root=ctx.workspace,
+        runtime_registry=registry,
+        artifactctl=ctx.artifactctl,
+    )
+    runner = SimpleNamespace(tool_api=adapter)
+    seen = []
+
+    def submit(request):
+        _, actual_session = _resolve_turn_session_ids(
+            message=Message(
+                channel="cron",
+                target="cron",
+                body="audit",
+                metadata={"session_id": request.session_id, **request.meta},
+            )
+        )
+        assert actual_session == canonical_session
+        assert request.trusted_security_scan_context["permission_mode"] == "readonly"
+        allowed = turn_tool_allowlist(request.trusted_security_scan_context)
+        assert set(allowed) == set(scope.allowed_tools)
+        with adapter.restrict_tools(allowed):
+            for session, expected in (
+                (actual_session, set(scope.allowed_tools)),
+                (request.session_id, set()),
+                ("another-run", set()),
+            ):
+                specs, _ = build_entry_tool_specs(
+                    runner,
+                    act_profile="general",
+                    execution_target_kind="local",
+                    metadata={"session_id": session},
+                )
+                assert {spec.name for spec in specs} == expected
+            assert not adapter.is_tool_allowed("security.review_report")
+            assert not adapter.is_tool_allowed("exec.run")
+        active = exposure.resolve_exact_activation(
+            "security_readonly", session_id=actual_session
+        )
+        if previous is None:
+            assert active.expires_at <= scope.expires_at.timestamp() + 0.1
+        seen.append(request)
+        if failure == "submit":
+            raise RuntimeError("submit failed")
+
+        def result(**_):
+            if failure == "timeout":
+                raise TimeoutError("turn expired")
+            return SimpleNamespace(metadata={"brain_status": "done"}, errors=[])
+
+        return SimpleNamespace(result=result)
+
+    def complete(**_):
+        if failure == "completion":
+            raise RuntimeError("completion failed")
+        return {"status": "completed"}
+
+    monkeypatch.setattr(security, "complete_run", complete)
+    kwargs = dict(
+        runtime=SimpleNamespace(
+            tools=registry, runtime_manager=SimpleNamespace(submit_turn=submit)
+        ),
+        manager=None,
+        store=None,
+        job={"job_id": "job", "payload": {}, "agent_id": scope.agent_id},
+        run={"run_id": "run"},
+        request_builder=lambda payload, agent, *_: build_turn_request(
+            payload, default_agent_id=agent
+        ),
+        artifactctl_factory=lambda: nullcontext(ctx.artifactctl),
+        timeout_s=30,
+    )
+    try:
+        if failure:
+            with pytest.raises(TimeoutError if failure == "timeout" else RuntimeError):
+                security.execute_security_run(**kwargs)
+        else:
+            assert (
+                security.execute_security_run(**kwargs)["output"]["security_scan"][
+                    "status"
+                ]
+                == "completed"
+            )
+        assert len(seen) == 1
+        if previous is not None:
+            assert (
+                exposure.resolve_exact_activation(
+                    "security_readonly", session_id=canonical_session
+                )
+                == previous
+            )
+        else:
+            assert (
+                exposure.decide(
+                    "security.scan_code", session_id=canonical_session
+                ).state
+                == "hidden"
+            )
+        assert (
+            exposure.resolve_exact_activation(
+                "security_readonly", session_id="unrelated"
+            )
+            == unrelated
+        )
+    finally:
+        adapter.close()
+
+
+@pytest.mark.parametrize("conversation", ["run", "another-run"])
+def test_completion_reads_only_actual_tool_conversation(audit_context, conversation):  # noqa: F811
+    from openminion.services.runtime.cron.security import complete_run
+
+    ctx, revision = audit_context
+    ctx.session_id = "cron-runtime::conv:run"
+    report_ref, _ = canonical_source_report(ctx, revision)
+    request = TurnRequest(
+        trace_id=ctx.trace_id,
+        agent_id=ctx.agent_id,
+        session_id="cron-runtime",
+        input_text="scan",
+        meta={"conversation_id": conversation},
+    )
+    result = complete_run(
+        ctl=ctx.artifactctl,
+        admission=admission(ctx.workspace),
+        revision=revision,
+        request=request,
+        job={"job_id": "job"},
+        run={"run_id": "run"},
+        brain_status="done",
+    )
+    if conversation == "run":
+        assert result["status"] == "completed" and result["report_ref"] == report_ref
+        assert ctx.artifactctl.get(result["sarif_ref"]).session_id == ctx.session_id
+    else:
+        assert result["status"] == "failed"
+        assert result["reason_code"] == "missing_or_ambiguous_report"
+        assert result["evidence_refs"] == []

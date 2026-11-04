@@ -11,6 +11,8 @@ from types import SimpleNamespace
 import pytest
 
 from openminion.base.config.env import EnvironmentConfig
+from openminion.modules.tool import build_default_tool_registry
+from openminion.modules.telemetry.usage import usage_event_session_id
 from openminion.services.runtime.cron.security import execute_security_run
 from openminion.services.runtime.daemon import build_turn_request
 from openminion.tools.security.plugin import _h_scan_code, _h_publish_report
@@ -66,7 +68,9 @@ def test_two_real_worker_ticks_survive_restart(audit_context, offline_runner, tm
     def submit(request):
         ctx.agent_id, ctx.session_id, ctx.trace_id = (
             request.agent_id,
-            request.session_id,
+            usage_event_session_id(
+                {"session_id": request.session_id, "metadata": request.meta}
+            ),
             request.trace_id,
         )
         ctx.policy.raw["context_metadata"] = request.trusted_security_scan_context
@@ -101,6 +105,7 @@ def test_two_real_worker_ticks_survive_restart(audit_context, offline_runner, tm
         )
 
     runtime = SimpleNamespace(
+        tools=build_default_tool_registry(strict=False),
         config=SimpleNamespace(runtime=SimpleNamespace(env=env)),
         runtime_manager=SimpleNamespace(submit_turn=submit),
     )

@@ -291,6 +291,8 @@ test-e2e-ci: $(DEV_STAMP)
 		"$(REPO_ROOT)/tests/e2e/cli/focus/test_harness_assertions.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/harness/test_pty.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/test_security_harnesses.py" \
+		"$(REPO_ROOT)/tests/e2e/skill_learning/test_verified_transfer.py" \
+		"$(REPO_ROOT)/tests/e2e/skill_learning/test_workflow_learning_pipeline.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/test_goal_only.py" \
 		"$(REPO_ROOT)/tests/e2e/cli/focus/harness/test_provider_session_resilience.py"
 

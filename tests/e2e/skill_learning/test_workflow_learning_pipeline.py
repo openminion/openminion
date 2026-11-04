@@ -1,3 +1,5 @@
+"""Deterministic learning review, admission, persisted reuse, and rollback."""
+
 from __future__ import annotations
 
 import json
@@ -27,6 +29,10 @@ from openminion.modules.skill.learning import (
     stage_shape_as_skill_proposal,
 )
 from openminion.modules.skill.learning.replay import proposal_draft_hash
+from openminion.modules.skill.learning.proposer import stage_authored_skill_proposal
+from openminion.modules.skill.learning.runtime import observe_runtime_workflow
+from openminion.modules.skill.proposal.base import SkillProposalDraft, SkillProcedure
+from openminion.modules.skill.proposal.catalog import prepare_emergent_skill
 from openminion.modules.skill.interfaces import SkillIngestAuthority
 from openminion.modules.skill.proposal.queue import (
     PROPOSAL_QUEUE_STATE_PENDING,
@@ -82,7 +88,8 @@ def _proof(run_id: str) -> dict[str, object]:
     }
 
 
-def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
+@pytest.mark.parametrize("authored", [False, True])
+def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path, authored: bool) -> None:
     bundles = [
         bundle_from_autonomy_proof_packet(
             _proof("run-1"),
@@ -102,18 +109,46 @@ def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
     shape = WorkflowShapeMiner().skill_ready_shapes(bundles)[0]
     store = _store(tmp_path)
     try:
-        result = stage_shape_as_skill_proposal(
-            shape,
-            store=store,
-            current_catalog=[],
-        )
+        if authored:
+            for index in range(2):
+                observation = observe_runtime_workflow(
+                    store,
+                    agent_id="agent-1",
+                    source_run_ref=f"run-{index}",
+                    intent_category="modify",
+                    capability_category="code",
+                    tool_names=["exec.run"],
+                )
+            result = stage_authored_skill_proposal(
+                store=store,
+                agent_id="agent-1",
+                shape_id=observation.shape_id,
+                draft=SkillProposalDraft(
+                    name="local-repair-workflow",
+                    short_description="Repair local defects and verify the regression.",
+                    risk_class="medium",
+                    tools=["exec.run"],
+                    procedure=SkillProcedure(
+                        when_to_use=["A reproducible local code defect."],
+                        do_not_use=["Do not apply to remote services."],
+                        steps=["Find and repair the owner of the defect."],
+                        validation=["Run the focused regression tests."],
+                    ),
+                ),
+            )
+        else:
+            result = stage_shape_as_skill_proposal(
+                shape,
+                store=store,
+                current_catalog=[],
+            )
         assert result.status == "staged"
         assert result.proposal is not None
         assert result.queue_record["queue_state"] == PROPOSAL_QUEUE_STATE_PENDING
 
         # Re-creating the same proposal is idempotent and stays pending.
         create_proposal(store, result.proposal)
-        record_proposal_review(
+        review = record_proposal_review(
             store,
             proposal_id=result.proposal.proposal_id,
             reviewer_id="operator-e2e",
@@ -126,6 +161,12 @@ def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
                 }
             ],
         )
+        if authored:
+            _, evaluated_package = prepare_emergent_skill(
+                review,
+                skill_definition=result.proposal.proposed_skill_definition,
+                proposal=result.proposal,
+            )
         proof = ReplayProof(
             proof_id="replay-proof-1",
             proposal_id=result.proposal.proposal_id,
@@ -168,6 +209,8 @@ def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
             replay_proof=proof,
         )
         assert addition.added_skill_id.startswith("emergent.")
+        if authored:
+            assert addition.version_hash == evaluated_package.version_hash
 
         config = {
             "skill": {
@@ -192,6 +235,14 @@ def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
                 authority=authority,
             )
             assert admitted["active_version_hash"] == addition.version_hash
+            if authored:
+                assert skill.catalog_summaries("other-agent") == []
+                snippet, _ = skill.render_snippet(
+                    addition.added_skill_id, addition.version_hash, "act", 2000
+                )
+                assert "Find and repair the owner of the defect." in snippet
+                assert "Run the focused regression tests." in snippet
+                assert "Do not apply to remote services." in snippet
 
             package = skill.get_skill(addition.added_skill_id, addition.version_hash)
             updated_markdown = f"""---
@@ -216,6 +267,8 @@ Updated learned workflow candidate.
                 package.name,
                 updated_markdown,
                 authority=authority,
+                scope="agent" if authored else "global",
+                agent_id="agent-1" if authored else None,
             )
             assert updated_skill_id == addition.added_skill_id
             skill.admit_skill_version(
@@ -257,6 +310,12 @@ Updated learned workflow candidate.
             child_result = json.loads(child.stdout)
             assert child_result["skill_id"] == addition.added_skill_id
             assert child_result["version_hash"] == addition.version_hash
+            if authored:
+                assert (
+                    "Find and repair the owner of the defect."
+                    in child_result["snippet"]
+                )
+                assert "Run the focused regression tests." in child_result["snippet"]
 
             runner = MagicMock()
             runner.skill_api = skill
@@ -364,6 +423,7 @@ try:
         "run_id": run_id,
         "skill_id": match.skill_id,
         "version_hash": match.version_hash,
+        "snippet": skill.render_snippet(skill_id, version_hash, "act", 2000)[0],
     }, sort_keys=True))
 finally:
     skill.close()

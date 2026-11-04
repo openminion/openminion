@@ -385,3 +385,125 @@ def _cursor(task_id: str):
         step_id="s1",
         trace_id=f"trace:{datetime.now(timezone.utc).isoformat()}",
     )
+
+
+@pytest.mark.parametrize(
+    "latest", ["none", "completed", "partial", "failed", "missing", "running"]
+)
+def test_security_scan_detail_keeps_current_attempt_separate(tmp_path, latest):
+    from tests.tools.security.test_schedule import admission
+
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "tasks.db")
+    )
+    scope = admission(tmp_path)
+    created = manager.schedule_user_task(
+        name="source assessment",
+        instruction="audit",
+        schedule={"kind": "every", "every_ms": 60000},
+        agent_id=scope.agent_id,
+        security_scan=scope.model_dump(mode="json"),
+    )
+    record = created["record"]
+    first = {
+        "job_id": record.cron_job_id,
+        "run_id": "first",
+        "status": "completed",
+        "revision": "a" * 40,
+        "report_ref": "artifact://sha256/" + "a" * 64,
+        "sarif_ref": "artifact://sha256/" + "b" * 64,
+        "comparison_ref": None,
+        "baseline_ref": None,
+        "private_payload": "not a public field",
+    }
+    if latest != "none":
+        manager.mutate_task_metadata(
+            task_id=record.task_id,
+            mutate=lambda metadata: {
+                **metadata,
+                "security_scan": {"admitted_runs": 1, "last_admitted_run_id": "first"},
+            },
+        )
+        manager.record_scheduled_outcome(
+            cron_job_id=record.cron_job_id,
+            run={
+                "run_id": "first",
+                "state": "finished",
+                "output": {"security_scan": first},
+            },
+        )
+    if latest in {"partial", "failed", "missing", "running"}:
+        manager.mutate_task_metadata(
+            task_id=record.task_id,
+            mutate=lambda metadata: {
+                **metadata,
+                "security_scan": {
+                    **metadata["security_scan"],
+                    "admitted_runs": 2,
+                    "last_admitted_run_id": "second",
+                    "status": "running",
+                },
+            },
+        )
+        if latest != "running":
+            manager.record_scheduled_outcome(
+                cron_job_id=record.cron_job_id,
+                run={
+                    "run_id": "second",
+                    "state": "failed",
+                    "error": {"code": "provider_failed", "message": "unavailable"},
+                    "output": {
+                        "security_scan": {
+                            "job_id": record.cron_job_id,
+                            "run_id": "second",
+                            "status": latest,
+                            "reason_code": "incomplete_report",
+                            "report_ref": "artifact://sha256/" + "c" * 64,
+                            "evidence_refs": [],
+                            "private_payload": "not public",
+                        }
+                    }
+                    if latest in {"partial", "failed"}
+                    else {},
+                },
+            )
+        manager.set_scheduled_job_enabled(record.task_id, enabled=False)
+    surface = build_task_surface(manager, agent_id=scope.agent_id)
+    task = surface.show_task(record.task_id)
+    scan = task["security_scan"]
+    assert scan["checks"] == ["code"]
+    assert scan["expires_at"] == scope.model_dump(mode="json")["expires_at"]
+    assert scan["max_runs"] == 2
+    assert "private_payload" not in str(scan)
+    assert "config_fingerprint" not in scan and "root" not in scan
+    if latest == "none":
+        assert scan["admitted_runs"] is None and scan["remaining_runs"] is None
+        assert scan["status"] is None and scan["last_successful_evidence"] is None
+    else:
+        assert scan["last_successful_evidence"]["run_id"] == "first"
+        assert scan["last_successful_evidence"]["report_ref"] == first["report_ref"]
+        assert scan["remaining_runs"] == (1 if latest == "completed" else 0)
+    if latest in {"completed", "partial", "failed"}:
+        assert scan["last_attempt"]["status"] == latest
+        assert scan["last_attempt"]["run_id"] == (
+            "first" if latest == "completed" else "second"
+        )
+        if latest != "completed":
+            assert scan["last_attempt"]["report_ref"] != first["report_ref"]
+    else:
+        assert scan["last_attempt"] is None
+    if latest == "missing":
+        assert scan["status"] == "failed" and scan["completed_run_id"] == "second"
+        assert task["last_run"]["last_error"]["code"] == "provider_failed"
+    with pytest.raises(PermissionError):
+        build_task_surface(manager, agent_id="other").show_task(record.task_id)
+    assert build_task_surface(manager, agent_id="other").list_tasks() == []
+    if latest == "completed":
+        manager.pause_task(record.task_id)
+        assert surface.show_task(record.task_id)["security_scan"] == scan
+        manager.resume_task(record.task_id)
+        manager.cancel_task(record.task_id)
+        cancelled = surface.show_task(record.task_id)
+        assert cancelled["lifecycle_state"] == "cancelled"
+        assert cancelled["security_scan"] == scan
+    manager.close()
