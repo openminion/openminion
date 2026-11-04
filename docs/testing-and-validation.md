@@ -86,6 +86,13 @@ package-integration, benchmark, E2E, and slow markers. `make test` and
 `make check` remain broader local commands and are not interchangeable with
 the pull-request selection.
 
+`make lint` also runs the test-suite skip ratchet
+(`scripts/validate/test_skip_budget.py`), which keeps `skip`/`skipif`/`xfail` markers
+countable per file, and records which markers statically apply. It is a static
+count, not evidence that a case runs:
+`CODE_QUALITY.md` section 7 lists the marker forms it understands, the reason each
+baseline row must record, and the lower-only `--emit-baseline` workflow.
+
 GitHub runs these deterministic workflows for pushes and pull requests on both
 `dev` and `main`. Release publication remains limited to `main`, tags, and
 explicit dispatch. A workflow appearing in GitHub does not by itself mean the

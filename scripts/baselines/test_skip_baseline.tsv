@@ -1,0 +1,25 @@
+# path	total	unconditional	reason
+api/test_tool_controls.py	1	1	expected xfail: shared-runtime sanitizing path is not the @tool handler
+cli/interactive/terminal/test_evpf_diff_slash.py	1	0	git is required
+cli/interactive/terminal/test_fvi_composer_streaming.py	2	0	create_pipe_input is unstable on Windows
+cli/interactive/terminal/test_streaming_integration.py	1	0	terminal Escape watcher requires a POSIX pseudo-terminal
+cli/presentation/test_git_diff.py	2	0	git is required
+controlplane/telegram/integration/test_live_smoke.py	1	0	requires live Telegram credentials
+e2e/cli/focus/test_harness_assertions.py	1	0	PTY process groups require POSIX
+e2e/project_worker/test_completion.py	1	0	git binary is required
+e2e/project_worker/test_repository_lifecycle.py	3	0	git binary is required
+e2e/test_live_cli_chat_minimax_official_task_cron.py	4	0	missing live config
+e2e/test_live_focus_daemon_task_delivery.py	2	0	missing live config
+e2e/test_live_github_pr_review_routine.py	2	0	GITHUB_TOKEN not set (live PAT required)
+e2e/test_live_github_write_actions.py	2	0	GITHUB_TOKEN not set (live PAT required)
+mcp/test_stdio_framing_interop.py	2	0	opt-in live MCP interop; npx is required
+services/bootstrap/test_provider_setup.py	2	0	POSIX mode contract
+telemetry/test_performance_baseline_runner.py	2	0	Focus prompt benchmark requires PTY
+test_memory_identity_e2e.py	3	0	openminion not available
+tools/file/test_pphh_local_backend_symlink.py	2	0	symlink unavailable
+tools/git/test_git_remote_operations.py	4	0	git binary not on PATH
+tools/git/test_project_remote_operations.py	8	0	git binary not on PATH
+tools/git/test_workspace_root_resolution.py	4	0	git binary not on PATH
+tools/security/test_audit_report.py	4	0	git binary is required
+tools/security/test_process.py	1	0	POSIX scanner process groups
+tools/test_code_tool_characterization.py	1	0	ripgrep not installed
