@@ -37,6 +37,11 @@ from openminion.modules.brain.execution.worktree_children import (
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 from openminion.modules.task import AutonomyRunStatus, TaskLifecycleState
 from openminion.modules.telemetry.trace.turn_cost import project_turn_cost
+from openminion.modules.telemetry.usage.coverage import (
+    INPUT_TOKEN_KEYS,
+    OUTPUT_TOKEN_KEYS,
+    observed_token_value,
+)
 from openminion.modules.task.constants import (
     DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
 )
@@ -706,8 +711,8 @@ def _repair_usage(events: list[dict], agent_id: str) -> dict:
         data = event["data"]
         assert data["trace_id"] in phases, f"missing provider phase for {agent_id}"
         if all(
-            isinstance(data.get("usage", {}).get(key), int)
-            for key in ("input_tokens", "output_tokens")
+            observed_token_value(data.get("usage", {}), keys).state == "reported"
+            for keys in (INPUT_TOKEN_KEYS, OUTPUT_TOKEN_KEYS)
         ):
             continue
         assert (

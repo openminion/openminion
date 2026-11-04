@@ -1051,6 +1051,8 @@ def test_child_activation_correction_requires_exact_lifecycle(change, target):
     [
         "",
         "primary_usage",
+        "missing_input",
+        "missing_output",
         "marker",
         "missing_phase",
         "actor",
@@ -1062,7 +1064,12 @@ def test_child_activation_correction_requires_exact_lifecycle(change, target):
         "duplicate_phase",
     ],
 )
-def test_repair_usage_correlates_auxiliary_marker_to_physical_turn(change):
+@pytest.mark.parametrize(
+    "token_keys",
+    [("input_tokens", "output_tokens"), ("prompt_tokens", "completion_tokens")],
+    ids=["input_output", "prompt_completion"],
+)
+def test_repair_usage_correlates_auxiliary_marker_to_physical_turn(change, token_keys):
     actor = source._CODE_REVIEWER
     events = [
         {
@@ -1088,7 +1095,7 @@ def test_repair_usage_correlates_auxiliary_marker_to_physical_turn(change):
                 "llm_call_id": "entry",
                 "trace_id": "outer-turn",
                 "purpose": "entry",
-                "usage": {"input_tokens": 5856, "output_tokens": 1355},
+                "usage": dict(zip(token_keys, (5856, 1355), strict=True)),
             },
         },
         {
@@ -1125,6 +1132,10 @@ def test_repair_usage_correlates_auxiliary_marker_to_physical_turn(change):
     ]
     if change == "primary_usage":
         events[1]["data"]["usage"] = {}
+    elif change == "missing_input":
+        del events[1]["data"]["usage"][token_keys[0]]
+    elif change == "missing_output":
+        events[1]["data"]["usage"][token_keys[1]] = None
     elif change == "marker":
         events[0]["data"]["purpose"] = "unknown_auxiliary"
     elif change == "missing_phase":
