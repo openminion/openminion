@@ -6,6 +6,8 @@ import pytest
 
 from tests.e2e.cli.focus.harness.pty import PtySession, _ForkProcess
 
+pytestmark = pytest.mark.e2e
+
 
 @pytest.fixture
 def terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PtySession:
