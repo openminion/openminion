@@ -11,9 +11,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from openminion.modules.a2a.models import Envelope
-from openminion.modules.a2a.runtime import A2ARuntime
-from openminion.modules.a2a.storage import MemoryAuditStore, SQLiteStateStore
+
+from tests.helpers.runtime_roots import isolate_runtime_roots
+
+if __name__ == "__main__":
+    isolate_runtime_roots(prefix="openminion-a2a-crash-")
+
+from openminion.modules.a2a.models import Envelope  # noqa: E402
+from openminion.modules.a2a.runtime import A2ARuntime  # noqa: E402
+from openminion.modules.a2a.storage import MemoryAuditStore, SQLiteStateStore  # noqa: E402
 
 
 def request(sender="client-a", payload="A", session=None):
@@ -82,7 +88,7 @@ def child(root, stage):
 
 def test_fresh_pending_call_not_dispatched(tmp_path):
     p = subprocess.run(
-        [sys.executable, str(Path(__file__).resolve()), str(tmp_path), "after"],
+        [sys.executable, "-m", "tests.a2a.test_call_recovery", str(tmp_path), "after"],
         capture_output=True,
         text=True,
         timeout=20,
@@ -183,7 +189,7 @@ def test_http_running_call_is_not_reclaimed(tmp_path):
 def test_process_recovery(tmp_path, stage, over_http):
     # Crash without unwinding on either side of the durable external effect.
     child_process = subprocess.run(
-        [sys.executable, str(Path(__file__).resolve()), str(tmp_path), stage],
+        [sys.executable, "-m", "tests.a2a.test_call_recovery", str(tmp_path), stage],
         capture_output=True,
         text=True,
         timeout=20,
