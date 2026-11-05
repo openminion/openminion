@@ -1,8 +1,4 @@
-"""Reliability properties: stopping rules, retry bounds, handoff, rollback, budgets.
-
-Each class pins one property in both directions where the property is two-sided
-(stop too early / never stop, retry / never retry, resume / do not claim success).
-"""
+"""Reliability properties: stopping rules, retry bounds, handoff, rollback, budgets."""
 
 from __future__ import annotations
 
@@ -111,8 +107,7 @@ class TestStoppingRuleCorrectness:
             initial=_tool_call_response(step=0),
         )
 
-        # Step 0 is the separate initial response; with responses to spare the loop
-        # still executes exactly its budget of batches and stops on the cap.
+        # The initial response is separate, so a step is one provider call and one batch.
         assert runtime_ops.provider_index == max_steps
         assert runtime_ops.execute_index == max_steps
 
@@ -324,6 +319,15 @@ class TestRollback:
 
             assert plan.cursor == 1
             assert resumed_handler.completed == ["one"]
+
+            # Drive the resumed plan: committed work is not repeated and the rest runs.
+            while plan.has_next_step():
+                step = plan.current_step()
+                result = resumed_handler.execute_step(resumed_ctx, step)
+                resumed_handler.judge_step(resumed_ctx, step, result)
+                plan.cursor += 1
+
+            assert resumed_handler.completed == ["one", "two", "three"]
 
     def test_missing_checkpoint_is_an_explicit_miss_not_a_silent_resume(self) -> None:
         from openminion.modules.task import TaskManager
