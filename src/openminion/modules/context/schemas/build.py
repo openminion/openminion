@@ -9,6 +9,8 @@ class SkillSnippetRef(BaseModel):
 
 
 class BuildConstraints(BaseModel):
+    # The caller supplies canonical call/result replay instead of tool excerpts.
+    canonical_tool_replay: bool = False
     output_schema: Optional[Dict[str, Any]] = None
     style_overrides: Dict[str, str] = Field(default_factory=dict)
     safety_tags: List[str] = Field(default_factory=list)

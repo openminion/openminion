@@ -29,6 +29,8 @@ def _dispatch_subtasks_if_needed(runner: Any, ctx: ExecutionContext) -> None:
     if local_runner is None:
         return
 
+    from openminion.modules.brain.execution.task_binding import capture_binding, binding_matches
+    parent_binding = capture_binding(ctx.state)
     total_subtasks = max(1, len(pending_indices))
     child_budget = _child_budget_payload(runner, ctx, total_subtasks=total_subtasks)
     outcomes: dict[int, ExecutionResult] = {}
@@ -42,6 +44,8 @@ def _dispatch_subtasks_if_needed(runner: Any, ctx: ExecutionContext) -> None:
             subtask_index=index,
             child_budget=child_budget,
         )
+        if not binding_matches(ctx.state, parent_binding):
+            return
         outcomes[index] = result
         _debit_parent_budget_for_subtask(
             runner,
@@ -126,7 +130,10 @@ def _invoke_coding_subtask(
     runner._coding_plan.subtasks[subtask_index] = subtask.model_copy(
         update={"status": "running"}
     )
+    from openminion.modules.brain.execution.task_binding import register_subtask, inherit_child_task, finish_subtask
+    binding = register_subtask(ctx.state, subtask.subtask_id)
     child_state = ctx.state.model_copy(deep=True)
+    inherit_child_task(child_state, ctx.state, subtask.subtask_id)
     child_state.session_id = f"{ctx.state.session_id}::coding:{subtask_index + 1}"
     child_state.goal = subtask.goal
     child_state.module_state = {}
@@ -155,11 +162,7 @@ def _invoke_coding_subtask(
         answer=None,
         success_criteria={"target_files": list(subtask.target_files)},
     )
-    child_prompt = build_coding_subtask_prompt(
-        goal=subtask.goal,
-        target_files=subtask.target_files,
-        success_criteria=subtask.success_criteria,
-    )
+    child_prompt = _coding_subtask_context(ctx, subtask)
     result = invoke_decision_direct(
         runner_obj,
         state=child_state,
@@ -168,6 +171,8 @@ def _invoke_coding_subtask(
         logger=ctx.logger,
         depth=1,
     )
+    if not finish_subtask(ctx.state, binding, completed=result.status == "done"):
+        return ExecutionResult(status="waiting_user", working_state=ctx.state, message="Task changed before the coding result was accepted."), child_state
     runner._coding_plan.subtasks[subtask_index] = subtask.model_copy(
         update={"status": "done" if result.status == "done" else "failed"}
     )
@@ -200,3 +205,26 @@ def _append_subtask_synthesis(
             )
     runner._loop_state.messages.append(Message(role="user", content="\n".join(lines)))
     runner._sync_plan_telemetry()
+
+
+def _coding_subtask_context(ctx: ExecutionContext, subtask: Any) -> str:
+    prompt = build_coding_subtask_prompt(
+        goal=subtask.goal,
+        target_files=subtask.target_files,
+        success_criteria=subtask.success_criteria,
+    )
+    if getattr(ctx.state, "resolved_task_context", None) is None:
+        return prompt
+    from openminion.modules.brain.execution.child_tasks import SubtaskSpec
+    from openminion.modules.brain.execution.orchestrate.strategies import (
+        SummaryInheritancePolicy,
+    )
+
+    return str(
+        SummaryInheritancePolicy()
+        .build_child_context(
+            parent_state=ctx.state,
+            subtask=SubtaskSpec(subtask_id=subtask.subtask_id, goal=prompt),
+        )
+        .prompt
+    )

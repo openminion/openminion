@@ -290,6 +290,7 @@ class RunnerTests(unittest.TestCase):
                 policy_api=LocalPolicyAdapter(),
                 options=RunnerOptions(reflection_enabled=True),
             )
+            runner.profile.budgets.max_total_llm_tokens = 20000
             output = runner.run(
                 session_id="s1",
                 user_input='tool echo {"msg":"hello"}',

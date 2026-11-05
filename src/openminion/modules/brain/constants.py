@@ -18,6 +18,9 @@ from openminion.modules.paths import (
 )
 
 
+TASK_CONTEXT_MAX_CHARS = 12_000
+
+
 class BrainState(StrEnum):
     ACTIVE = "active"
     CONTINUE = "continue"

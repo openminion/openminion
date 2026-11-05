@@ -56,7 +56,7 @@ def _profile() -> AgentProfile:
         max_ticks_per_user_turn=5,
         max_tool_calls=3,
         max_a2a_calls=1,
-        max_total_llm_tokens=1000,
+        max_total_llm_tokens=20000,
         max_elapsed_ms=10000,
     )
     llm_profiles = LLMProfiles(
@@ -1706,6 +1706,7 @@ def test_forced_tool_missing_args_executes_without_runtime_clarify_block() -> No
             policy_api=LocalPolicyAdapter(),
             registry=registry,
         )
+        runner.profile.budgets.max_total_llm_tokens = 20000
         output = runner.step(
             session_id="s-forced-missing",
             user_input="tool file.read {}",

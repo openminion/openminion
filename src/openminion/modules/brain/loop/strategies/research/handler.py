@@ -711,6 +711,8 @@ class ResearchMode(SimpleCheckpointMixin):
         goal: str,
     ) -> WorkingState:
         child_state = parent_state.model_copy(deep=True)
+        from openminion.modules.brain.execution.task_binding import inherit_child_task
+        inherit_child_task(child_state, parent_state)
         child_state.goal = goal
         child_state.plan = None
         child_state.cursor = 0
@@ -743,8 +745,6 @@ class ResearchMode(SimpleCheckpointMixin):
 
         def _split(value: int, *, minimum: int = 1) -> int:
             available = max(0, int(value))
-            if available <= 0:
-                return 0
             return min(available, max(minimum, int(available // remaining_iterations)))
 
         return BudgetCounters(

@@ -51,8 +51,7 @@ from openminion.modules.brain.loop.tools.budget import _debit_llm_usage  # noqa:
 from openminion.modules.brain.loop.tools.budget_extension import (
     consume_approved_extension,
 )
-from openminion.modules.brain.loop.tools.transcript import replay_tool_messages
-from openminion.modules.llm.schemas import Message
+from openminion.modules.brain.execution.task_context import execution_input
 from openminion.modules.memory.runtime.consolidation import (
     apply_memory_consolidation_decisions,
 )
@@ -341,7 +340,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         if self._seeded_commands(ctx):
             return self._execute_seeded_commands(ctx)
         try:
-            runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(ctx.llm_adapter)
+            runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(ctx.llm_adapter, task_state=ctx.state)
         except AdaptiveToolLoopRuntimeUnavailableError as exc:
             return ExecutionResult(
                 status=BRAIN_STATE_ERROR,
@@ -386,18 +385,15 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 frozenset(effective_allowed_tools)
             )
         model = resolve_loop_model(ctx)
-        messages = replay_tool_messages(
-            getattr(runner, "session_api", None),
-            str(ctx.state.session_id or ""),
-        )
         seeded_replay_without_new_input = bool(
             self._seeded_continue_stays_autonomous(ctx)
             and not str(ctx.user_input or "").strip()
         )
-        if ctx.user_input:
-            messages.append(Message(role="user", content=ctx.user_input))
-        elif ctx.state.goal and not seeded_replay_without_new_input:
-            messages.append(Message(role="user", content=str(ctx.state.goal or "")))
+        messages, task_error = execution_input(
+            ctx, autonomous=seeded_replay_without_new_input
+        )
+        if task_error is not None:
+            return task_error
         seed_response = getattr(ctx.decision, "_entry_response", None)
         direct_tool_turn = _direct_tool_turn_context(
             ctx=ctx,

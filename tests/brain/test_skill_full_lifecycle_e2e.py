@@ -209,7 +209,7 @@ def _profile() -> AgentProfile:
             max_ticks_per_user_turn=5,
             max_tool_calls=2,
             max_a2a_calls=1,
-            max_total_llm_tokens=1000,
+            max_total_llm_tokens=20000,
             max_elapsed_ms=10_000,
         ),
         defaults=AgentDefaults(),

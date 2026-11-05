@@ -1,4 +1,5 @@
 import json
+from openminion.modules.brain.execution.task_context import execution_task_text
 from dataclasses import replace
 from typing import Any
 
@@ -398,6 +399,8 @@ def build_child_state(
     child_context: ChildContext,
 ) -> WorkingState:
     child_state = parent_state.model_copy(deep=True)
+    from ..task_binding import inherit_child_task
+    inherit_child_task(child_state, parent_state, child_context.task_subtask_id)
     child_state.trace_id = new_uuid()
     child_state.goal = child_context.goal
     child_state.last_user_input = child_context.prompt
@@ -450,7 +453,7 @@ class LLMSynthesizer(ResultSynthesizer):
         if llm_profiles is not None:
             model = str(getattr(llm_profiles, "summarize_model", model) or model)
         context = {
-            "user_input": ctx.user_input,
+            "user_input": execution_task_text(ctx),
             "subtasks": [
                 {
                     "subtask_id": item.subtask_id,
@@ -569,7 +572,8 @@ class SummaryInheritancePolicy(ContextInheritancePolicy):
         dependency_results: list[SubtaskResult] | None = None,
     ) -> ChildContext:
         summary_parts: list[str] = []
-        goal = str(getattr(parent_state, "goal", "") or "").strip()
+        from ..task_binding import parent_task_background
+        goal = parent_task_background(parent_state, getattr(subtask, "subtask_id", "__unassigned__")).strip()
         if goal:
             summary_parts.append(f"Parent goal: {goal}")
         last_result = getattr(parent_state, "last_result", None)
@@ -598,6 +602,7 @@ class SummaryInheritancePolicy(ContextInheritancePolicy):
             constraints=constraints,
             active_skill_id=getattr(parent_state, "active_skill_id", None),
             delegation_context=delegation_context,
+            task_subtask_id=getattr(subtask, "subtask_id", None),
         )
 
 

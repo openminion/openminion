@@ -724,6 +724,9 @@ def _invoke_and_finalize(
         else request.user_input,
         logger=logger,
     ).to_step_output()
+    if result.status == BRAIN_STATE_DONE and str(getattr(request.decision, "route", "")) not in {"", "respond"}:
+        from ...task_binding import complete_task
+        complete_task(state)
     replay_reason_code = str(getattr(request.decision, "reason_code", "") or "").strip()
     checkpoint_interval = max(
         0, int(getattr(runner.options, "plan_checkpoint_interval", 0) or 0)
