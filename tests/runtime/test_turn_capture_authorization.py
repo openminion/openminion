@@ -1,10 +1,10 @@
 """A turn's own memory capture asks the authorization that recovery asks.
 
 `_Provider` is a scripted OpenAI-compatible server on 127.0.0.1, not a hosted
-model: it answers the auto fact extraction with one `user_preference` item and
-records the kind of every request. Unless a test says otherwise, the agent has
-an identity profile with one hard constraint. Recovery runs through the real
-`CronTurnExecutor` with the real `memory_capture_recovery_allowed`.
+model: it answers the auto fact extraction with one `user_preference` item.
+Unless a test says otherwise, the agent has an identity profile with one hard
+constraint. Recovery runs through the real `CronTurnExecutor` with the real
+`memory_capture_recovery_allowed`.
 """
 
 from __future__ import annotations

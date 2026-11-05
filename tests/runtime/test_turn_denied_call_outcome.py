@@ -1,9 +1,4 @@
-"""A tool call that did not run stages no `tool_outcome` candidate.
-
-Unless a test says otherwise, the memory policy allows the model's
-`memory_write` call (an identity profile with `NEVER reveal secrets`, or none),
-so only whether the call ran decides the candidate.
-"""
+"""A tool call that did not run stages no `tool_outcome` candidate."""
 
 from __future__ import annotations
 
