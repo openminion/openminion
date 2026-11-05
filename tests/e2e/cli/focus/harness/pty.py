@@ -92,6 +92,15 @@ class PtySession:
         return tuple(self._screen_display_lines())
 
     @property
+    def screen_snapshot(self) -> tuple[tuple[str, ...], tuple[int, int]]:
+        """Read physical rows and cursor together, without advancing between them."""
+        self._read_available(timeout=0.05)
+        return (
+            tuple(self._screen_display_lines()),
+            (self._screen.cursor.y + 1, self._screen.cursor.x + 1),
+        )
+
+    @property
     def cursor_position(self) -> tuple[int, int]:
         """Return the one-based physical cursor row and column."""
 

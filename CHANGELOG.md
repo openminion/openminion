@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Check Focus terminal layout against one screen-and-cursor snapshot so resize
+  repaint fragments cannot invalidate an already accepted test frame. Preserve
+  the compositor assertions and existing wait limits (Refs #610).
+
 - Retain a completed research child's answer ahead of raw tool-output prefixes,
   with the existing source URLs and evidence references. Use a successful
   action summary when the completed message is empty and usable tool evidence
