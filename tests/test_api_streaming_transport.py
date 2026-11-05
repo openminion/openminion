@@ -721,6 +721,7 @@ class APIStreamingNegotiationTests(unittest.TestCase):
             "/v1/turn/stream",
             "cfg.json",
             body={"message": "hello"},
+            query="",
             runtime=None,
             runtime_bootstrap_error=None,
             request_headers=handler.headers,
@@ -754,6 +755,94 @@ class APIStreamingNegotiationTests(unittest.TestCase):
             parsed=mock.ANY,
             request_id="req-attach",
         )
+        dispatch.assert_not_called()
+
+
+class APIPostQueryForwardingTests(unittest.TestCase):
+    def test_do_post_forwards_query_string_to_dispatch(self) -> None:
+        handler = object.__new__(_OpenMinionAPIHandler)
+        handler.path = "/v1/tasks?agent_id=agent-1"
+        handler.headers = {
+            "Accept": "application/json",
+            "X-Request-ID": "req-query-1",
+        }
+        handler.config_path = "cfg.json"
+        handler.runtime = None
+        handler.runtime_bootstrap_error = None
+        _install_json_body(handler, {"message": "hello"})
+        handler._write_json = mock.Mock()  # type: ignore[attr-defined]
+
+        with mock.patch(
+            "openminion.api.server.app.dispatch_request",
+            return_value=(HTTPStatus.OK, {"ok": True}),
+        ) as dispatch:
+            _OpenMinionAPIHandler.do_POST(handler)
+
+        dispatch.assert_called_once_with(
+            "POST",
+            "/v1/tasks",
+            "cfg.json",
+            body={"message": "hello"},
+            query="agent_id=agent-1",
+            runtime=None,
+            runtime_bootstrap_error=None,
+            request_headers=handler.headers,
+            request_id="req-query-1",
+        )
+        handler._write_json.assert_called_once_with(  # type: ignore[attr-defined]
+            HTTPStatus.OK, {"ok": True}
+        )
+
+    def test_do_post_invalid_json_with_query_is_rejected(self) -> None:
+        handler = object.__new__(_OpenMinionAPIHandler)
+        handler.path = "/v1/tasks?agent_id=agent-1"
+        handler.headers = {"X-Request-ID": "req-bad-json"}
+        handler.config_path = None
+        handler.runtime = None
+        handler.runtime_bootstrap_error = None
+        raw_body = b"{not-json"
+        handler.headers["Content-Length"] = str(len(raw_body))
+        handler.rfile = io.BytesIO(raw_body)
+        handler.wfile = io.BytesIO()
+        handler.send_response = mock.Mock()
+        handler.send_header = mock.Mock()
+        handler.end_headers = mock.Mock()
+
+        with mock.patch("openminion.api.server.app.dispatch_request") as dispatch:
+            _OpenMinionAPIHandler.do_POST(handler)
+
+        dispatch.assert_not_called()
+        handler.send_response.assert_called_once_with(int(HTTPStatus.BAD_REQUEST))
+        payload = json.loads(handler.wfile.getvalue())
+        self.assertEqual(payload["error"]["code"], "invalid_json")
+
+    def test_do_post_sse_with_query_routes_to_stream_handler(self) -> None:
+        handler = object.__new__(_OpenMinionAPIHandler)
+        handler.path = "/v1/turn/stream?agent_id=agent-1"
+        handler.headers = {
+            "Accept": "text/event-stream",
+            "X-Request-ID": "req-sse-query",
+        }
+        handler.config_path = None
+        handler.runtime = None
+        handler.runtime_bootstrap_error = None
+        _install_json_body(handler, {"message": "hello"})
+        handler._write_json = mock.Mock()  # type: ignore[attr-defined]
+
+        with (
+            mock.patch("openminion.api.server.app.dispatch_request") as dispatch,
+            mock.patch(
+                "openminion.api.server.app.handle_http_turn_stream_request"
+            ) as handle_stream,
+        ):
+            _OpenMinionAPIHandler.do_POST(handler)
+
+        handle_stream.assert_called_once_with(
+            handler,
+            body={"message": "hello"},
+            request_id="req-sse-query",
+        )
+        handler._write_json.assert_not_called()  # type: ignore[attr-defined]
         dispatch.assert_not_called()
 
 

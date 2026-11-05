@@ -30,6 +30,18 @@ This file tracks package-facing release notes for `openminion`.
   excerpts. Source tests do not establish live-model semantic accuracy or
   installed-package verification.
 
+- Retain a completed research child's answer ahead of raw tool-output prefixes,
+  with the existing source URLs and evidence references. Use a successful
+  action summary when the completed message is empty and usable tool evidence
+  exists. Keep partial-child evidence salvage and the 200/800-character prompt
+  projections unchanged (Refs #543).
+
+- Make identity `clear_cache` prefix matching case-sensitive, so it no longer deletes other agents' snippets through a case-insensitive `LIKE`. (Refs #485)
+
+- Forward the query string on POST requests, so query-parameter POST routes resolve their parameters. (Refs #486)
+
+- Expand cron day-of-week ranges before normalizing Sunday-as-7, so ranges that contain Sunday parse correctly. (Refs #488)
+
 ## Current package line - 2026-11-04
 
 - Add a reviewed learning lifecycle that can retain successful substantive

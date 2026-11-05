@@ -726,6 +726,57 @@ def test_sqlite_clear_cache_escapes_like_wildcards(tmp_path: Path) -> None:
     store.close()
 
 
+@pytest.mark.parametrize(
+    "make_store",
+    [
+        lambda tmp: SQLiteIdentityStore(tmp / "identity.db"),
+        lambda tmp: InMemoryIdentityStore(),
+    ],
+)
+def test_clear_cache_prefix_is_case_sensitive_and_literal(
+    tmp_path: Path, make_store
+) -> None:
+    store = make_store(tmp_path)
+    try:
+        for key in (
+            "Alice|act",
+            "alice|act",
+            "bob|act",
+            "a%|act",
+            "a_|act",
+            "a\\|act",
+        ):
+            store.upsert_cached_snippet(
+                cache_key=key,
+                snippet_text=key,
+                used_tokens=1,
+                used_chars=1,
+                sections=None,
+                included_fields=[],
+                omitted_fields=[],
+                warnings=[],
+            )
+
+        store.clear_cache("Alice")
+        assert store.get_cached_snippet("Alice|act") is None
+        assert store.get_cached_snippet("alice|act") is not None
+        assert store.get_cached_snippet("bob|act") is not None
+
+        store.clear_cache("a%")
+        assert store.get_cached_snippet("a%|act") is None
+        assert store.get_cached_snippet("a_|act") is not None
+        assert store.get_cached_snippet("a\\|act") is not None
+
+        store.clear_cache("a_")
+        assert store.get_cached_snippet("a_|act") is None
+        assert store.get_cached_snippet("a\\|act") is not None
+
+        store.clear_cache("a\\")
+        assert store.get_cached_snippet("a\\|act") is None
+    finally:
+        store.close()
+
+
 def test_render_normalizes_budget_before_cache_lookup() -> None:
     identity = IdentityCtl(store=InMemoryIdentityStore())
     profile = _profile(agent_id="normalized-budget-agent")

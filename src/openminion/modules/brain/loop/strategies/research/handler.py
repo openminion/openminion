@@ -77,8 +77,7 @@ from .findings import (
     render_temporal_fact_lines as _render_temporal_fact_lines,
     tool_evidence_from_action_result as _tool_evidence_from_action_result,
     tool_evidence_from_working_state as _tool_evidence_from_working_state,
-    usable_child_action_result_text as _usable_child_action_result_text,
-    usable_child_working_state_text as _usable_child_working_state_text,
+    usable_child_result_text as _usable_child_result_text,
 )
 from .finalization import (
     is_project_owned_turn as _is_project_owned_turn,
@@ -651,7 +650,6 @@ class ResearchMode(SimpleCheckpointMixin):
                         logger=ctx.logger,
                         depth=1,
                     )
-                    result_status = _normalized_text(result.status).lower()
                     action_result = getattr(result, "action_result", None)
                     working_state = getattr(result, STATE_KEY_WORKING, None)
                     evidence_dates = _evidence_dates_from_action_result(action_result)
@@ -662,15 +660,7 @@ class ResearchMode(SimpleCheckpointMixin):
                     tool_evidence = _tool_evidence_from_action_result(action_result)
                     if not tool_evidence.get("source_tools"):
                         tool_evidence = _tool_evidence_from_working_state(working_state)
-                    candidate_content = _usable_child_action_result_text(action_result)
-                    if not candidate_content:
-                        candidate_content = _usable_child_working_state_text(
-                            working_state
-                        )
-                    if not candidate_content and result_status == BRAIN_STATE_DONE:
-                        candidate_content = _normalized_text(result.message)
-                    if candidate_content:
-                        content = candidate_content
+                    content = _usable_child_result_text(result)
             except Exception as exc:
                 trace_id = str(getattr(ctx.state, "trace_id", "") or "").strip()
                 with suppress(Exception):
