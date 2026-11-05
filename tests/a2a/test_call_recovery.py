@@ -17,6 +17,7 @@ from tests.helpers.runtime_roots import isolate_runtime_roots
 if __name__ == "__main__":
     isolate_runtime_roots(prefix="openminion-a2a-crash-")
 
+from openminion.modules.a2a.artifacts import LocalArtifactStore  # noqa: E402
 from openminion.modules.a2a.models import Envelope  # noqa: E402
 from openminion.modules.a2a.runtime import A2ARuntime  # noqa: E402
 from openminion.modules.a2a.storage import MemoryAuditStore, SQLiteStateStore  # noqa: E402
@@ -36,11 +37,11 @@ def request(sender="client-a", payload="A", session=None):
     )
 
 
-def runtime(root, handler):
+def runtime(root, handler, *, stale_after=1):
     rt = A2ARuntime(
         state_store=SQLiteStateStore(root / "runtime.db"),
         audit_store=MemoryAuditStore(),
-        recovery_stale_heartbeat_sec=1,
+        recovery_stale_heartbeat_sec=stale_after,
     )
     rt.register_agent("writer", ["ticket."], handler)
     return rt
@@ -94,13 +95,70 @@ def test_fresh_pending_call_not_dispatched(tmp_path):
         timeout=20,
     )
     assert p.returncode == 72, p.stderr
-    rt = runtime(tmp_path, lambda req: pytest.fail("fresh pending call redispatched"))
+    rt = runtime(
+        tmp_path,
+        lambda req: pytest.fail("fresh pending call redispatched"),
+        stale_after=300,
+    )
     try:
         result = rt.call(request()).params
         assert result["status"] == "IN_PROGRESS"
         assert len(ledger(tmp_path)) == 1
     finally:
         rt.close()
+
+
+def test_artifact_write_failure_after_effect_replays_unknown(tmp_path, monkeypatch):
+    def fail_artifact_write(*args, **kwargs):
+        raise OSError("artifact write failed")
+
+    def handler(req):
+        return effect(tmp_path, req)
+
+    rt = runtime(tmp_path, handler)
+    rt.artifact_store = LocalArtifactStore(tmp_path / "artifacts")
+    rt.max_inline_bytes = 1
+    monkeypatch.setattr(rt.artifact_store, "put_bytes", fail_artifact_write)
+    try:
+        initial = rt.call(request()).params
+    finally:
+        rt.close()
+
+    reopened = runtime(tmp_path, handler)
+    try:
+        replay = reopened.call(request()).params
+    finally:
+        reopened.close()
+
+    assert len(ledger(tmp_path)) == 1
+    for result in (initial, replay):
+        assert not result["ok"]
+        assert result["status"] == result["error"]["code"] == "OUTCOME_UNKNOWN"
+        assert "reconcile" in result["error"]["message"]
+    assert not initial["cached"]
+    assert replay["cached"]
+    assert replay["error"] == initial["error"]
+
+
+def test_receipt_write_failure_leaves_call_reserved(tmp_path, monkeypatch):
+    def fail_receipt_write(*args, **kwargs):
+        raise OSError("receipt write failed")
+
+    def handler(req):
+        return effect(tmp_path, req)
+
+    rt = runtime(tmp_path, handler, stale_after=300)
+    monkeypatch.setattr(rt.state_store, "finish_idempotency", fail_receipt_write)
+    try:
+        initial = rt.call(request()).params
+        replay = rt.call(request()).params
+    finally:
+        rt.close()
+
+    assert initial["status"] == initial["error"]["code"] == "OUTCOME_UNKNOWN"
+    assert not initial["cached"]
+    assert replay["status"] == "IN_PROGRESS"
+    assert len(ledger(tmp_path)) == 1
 
 
 def test_running_call_is_not_reclaimed_as_dead(tmp_path):

@@ -443,21 +443,36 @@ class A2ARuntime:
         error = None
         result_inline, result_ref = None, None
         try:
-            result_inline, result_ref = self._store_result_if_needed(
-                handler(envelope), label=envelope.method
-            )
+            result = handler(envelope)
         except A2AError as exc:
             error = exc.to_dict()
         except Exception as exc:  # noqa: BLE001
             error = {"code": ERROR_CODE_HANDLER_ERROR, "message": str(exc)}
+        else:
+            try:
+                result_inline, result_ref = self._store_result_if_needed(
+                    result, label=envelope.method
+                )
+            except Exception:  # noqa: BLE001
+                error = {
+                    "code": ERROR_CODE_OUTCOME_UNKNOWN,
+                    "message": "Call result could not be stored; reconcile the effect before reissuing.",
+                }
 
-        if not self.state_store.finish_idempotency(
-            reservation,
-            A2A_IDEMPOTENCY_STATUS_FAILED if error else A2A_IDEMPOTENCY_STATUS_SUCCESS,
-            result_inline=result_inline,
-            result_ref=result_ref,
-            error=error,
-        ):
+        try:
+            finished = self.state_store.finish_idempotency(
+                reservation,
+                A2A_IDEMPOTENCY_STATUS_FAILED
+                if error
+                else A2A_IDEMPOTENCY_STATUS_SUCCESS,
+                result_inline=result_inline,
+                result_ref=result_ref,
+                error=error,
+            )
+        except Exception:  # noqa: BLE001
+            _LOG.warning("Could not persist the A2A call receipt")
+            return self._unknown_call_result(envelope, resolved_agent, cached=False)
+        if not finished:
             return self._unknown_call_result(envelope, resolved_agent, cached=False)
 
         if error:

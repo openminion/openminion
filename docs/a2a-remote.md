@@ -96,7 +96,8 @@ stored result or an unresolved status; it does not run the handler again.
 
 - `IN_PROGRESS`: the reservation is recent and no result is stored yet.
 - `OUTCOME_UNKNOWN`: the reservation has aged past the recovery threshold
-  (300 seconds by default), or the handler no longer owns its reservation.
+  (300 seconds by default), the handler no longer owns its reservation, or
+  the runtime could not publish a result after dispatch.
   The effect may or may not have happened. A handler that still owns the
   reservation can finish, and polling with the same key can then return its
   stored result.
