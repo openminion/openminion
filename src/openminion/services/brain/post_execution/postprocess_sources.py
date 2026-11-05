@@ -2,6 +2,9 @@ import json
 import re
 from typing import Any
 
+from openminion.modules.tool.diagnostics.events import (
+    dedupe_tool_results as _dedupe_tool_results,
+)
 from openminion.base.constants import STATE_KEY_WORKING
 from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 
@@ -154,26 +157,6 @@ def _tool_results_from_action_outputs(*, action_result: Any) -> list[dict[str, A
     return []
 
 
-def _dedupe_tool_results(
-    tool_results_payload: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    deduped: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in tool_results_payload:
-        if not isinstance(item, dict):
-            continue
-        stable_id = str(
-            item.get("call_id", "") or item.get("id", "") or item.get("command_id", "")
-        ).strip()
-        if not stable_id:
-            stable_id = json.dumps(item, sort_keys=True, default=str)
-        if stable_id in seen:
-            continue
-        seen.add(stable_id)
-        deduped.append(item)
-    return deduped
-
-
 def _cumulative_tool_results_from_step_output(
     step_out: Any,
     tool_results_payload: list[dict[str, Any]] | None,
@@ -184,6 +167,11 @@ def _cumulative_tool_results_from_step_output(
     )
     trace_id = str(getattr(working_state, "trace_id", "") or "").strip()
     candidates = _coerce_tool_results_payload(adaptive_loop.get("tool_results"))
+    candidates += _coerce_tool_results_payload(
+        getattr(working_state, STATE_KEY_MODULE_STATE, {})
+        .get("research", {})
+        .get("tool_results")
+    )
     last_result = getattr(working_state, "last_result", None)
     candidates += _tool_results_from_action_outputs(action_result=last_result)
     candidates = [
@@ -191,7 +179,10 @@ def _cumulative_tool_results_from_step_output(
         for item in candidates
         if trace_id and str(item.get("turn_scope_id", "") or "") == trace_id
     ]
-    return _dedupe_tool_results(candidates + (tool_results_payload or []))
+    deduped: list[dict[str, Any]] = _dedupe_tool_results(
+        candidates + (tool_results_payload or [])
+    )
+    return deduped
 
 
 def _action_result_termination_reason(action_result: Any | None) -> str:
