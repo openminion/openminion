@@ -73,7 +73,7 @@ from .context.task_entry import (
 )
 
 from .context.task_context import TaskContextBudgetError
-from .tools.runtime import DefaultAdaptiveToolLoopLLMRuntime
+from .context.task_lookup import TaskHistoryEntryRuntime
 from .context.task_entry import (
     task_budget_entry_decision,
     emit_entry_identity_audit,
@@ -594,9 +594,7 @@ def decide(
         return task_error
 
     try:
-        runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(
-            runner.llm_api, task_state=state
-        )
+        runtime = TaskHistoryEntryRuntime.from_runner(runner, state, logger, user_input)
     except Exception as exc:  # noqa: BLE001
         _emit_decide_fail_closed_event(
             logger=logger,
@@ -897,6 +895,8 @@ def decide(
         clarify=last_detection.path == "clarify",
         logger=logger,
         recovery_only=bool(context.get("task_context_recovery_only")),
+        session_api=runner.session_api,
+        history_reads=runtime.history_reads,
     )
     if task_error is not None:
         return task_error

@@ -39,12 +39,18 @@ def reconcile_pending_jobs(
     state: WorkingState,
     logger: CanonicalEventLogger,
 ) -> Any:
+    from ...task_binding import discard_stale_jobs
+
+    discard_stale_jobs(state)
     if state.status != BRAIN_STATE_JOB_PENDING or not state.pending_jobs:
         return None
     job = state.pending_jobs[0]
     from ... import poll_async_job as poll_async_job_barrel
 
     polled = poll_async_job_barrel(runner, state=state, job=job)
+    discard_stale_jobs(state)
+    if job not in state.pending_jobs:
+        return None
     if not isinstance(polled, dict):
         return _pending_response(
             runner=runner, state=state, logger=logger, job=job, message_status="pending"
@@ -66,6 +72,7 @@ def reconcile_pending_jobs(
             message_status=job.status,
         )
     state.pending_jobs = state.pending_jobs[1:]
+    state.task_execution_bindings.pop(job.task_id, None)
     if raw_status in {"success", "completed", "done"}:
         terminal_raw = {
             **polled,
@@ -275,6 +282,9 @@ def _handle_completed_plan(
         "_apply_closure_judgment", runner, state=state, judgment=judgment
     )
     if disposition == BRAIN_DISPOSITION_CLOSE:
+        from ...task_binding import complete_task
+
+        complete_task(state)
         extract_success_memories(
             runner,
             state=state,

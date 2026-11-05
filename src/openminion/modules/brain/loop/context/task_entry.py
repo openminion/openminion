@@ -4,11 +4,12 @@ from typing import Any
 
 from openminion.modules.brain.schemas import RespondDecision
 from openminion.modules.llm.schemas import Message
+from .task_workspace import workspace_entry_update
+from .task_projection import workspace_message
 from .task_context import (
     TASK_UPDATE_INSTRUCTIONS,
     message_token_estimate,
     task_context_message,
-    resolve_entry_task_update,
 )
 
 
@@ -23,11 +24,7 @@ def prepare_task_context_prompt(
         else []
     )
     if has_new_input:
-        required_messages.append(
-            task_context_message(state.resolved_task_context)
-            if state.resolved_task_context is not None
-            else Message(role="user", content="CURRENT TASK: absent (revision 0)")
-        )
+        required_messages.append(workspace_message(state))
     if not required_messages:
         return [], target, None
     reserved_tokens = (
@@ -99,6 +96,8 @@ def apply_entry_task_context(
     clarify: bool,
     logger: Any,
     recovery_only: bool = False,
+    session_api: Any = None,
+    history_reads: dict[str, Any] | None = None,
 ) -> RespondDecision | None:
     if (
         user_input
@@ -111,7 +110,8 @@ def apply_entry_task_context(
         return None
     replacing = any(
         isinstance(call.arguments.get("task_update"), dict)
-        and call.arguments["task_update"].get("operation") in {"replace", "cancel"}
+        and call.arguments["task_update"].get("operation")
+        in {"replace", "cancel", "pause", "complete", "resume"}
         for call in response.tool_calls
     )
     cancelled = any(
@@ -120,12 +120,14 @@ def apply_entry_task_context(
         for call in response.tool_calls
     )
     try:
-        task_context = resolve_entry_task_update(
+        task_context, workspace, operation = workspace_entry_update(
             state,
             response,
             user_input=user_input,
             clarify=clarify,
             recovery_only=recovery_only,
+            session_api=session_api,
+            history_reads=history_reads,
         )
     except ValueError:
         state.task_context_needs_update = True
@@ -145,6 +147,7 @@ def apply_entry_task_context(
         detach_replaced_task_execution(state)
     state.task_context_needs_update = False
     state.resolved_task_context = task_context
+    state.task_workspace = workspace
     if task_context is not None:
         state.goal = task_context_message(task_context).content
 
@@ -158,6 +161,16 @@ def apply_entry_task_context(
             respond_kind="answer",
             answer=str(
                 response.tool_calls[0].arguments.get("answer") or "Task cancelled."
+            ),
+        )
+    if operation in {"pause", "complete"}:
+        return RespondDecision(
+            confidence=1.0,
+            reason_code="entry_task_" + operation,
+            respond_kind="answer",
+            answer=str(
+                response.tool_calls[0].arguments.get("answer")
+                or "Task " + operation + "."
             ),
         )
     return None
@@ -262,6 +275,16 @@ def task_context_recovery_messages(state: Any) -> list[Message]:
 
 
 def entry_task_preflight(state: Any, *, has_new_input: bool) -> RespondDecision | None:
+    task = state.resolved_task_context
+    if task is not None and task.lifecycle != "active" and not has_new_input:
+        return RespondDecision(
+            confidence=1.0,
+            reason_code="task_inactive",
+            respond_kind="answer",
+            answer="The task is "
+            + task.lifecycle
+            + ". A new user instruction is required to continue.",
+        )
     if state.task_context_needs_update and not has_new_input:
         return RespondDecision(
             confidence=1.0,
@@ -278,6 +301,7 @@ def entry_task_tool_specs(
     specs: list[Any], state: Any, *, has_new_input: bool
 ) -> tuple[list[Any], RespondDecision | None]:
     from .task_context import with_task_update_schema
+    from .task_search import history_tool_spec
 
     if not has_new_input:
         return specs, None
@@ -287,7 +311,12 @@ def entry_task_tool_specs(
                 spec, required=state.resolved_task_context is not None
             )
             for spec in specs
-        ], None
+        ] + (
+            [history_tool_spec()]
+            if getattr(state, "task_workspace", None)
+            and state.task_workspace.journal_head
+            else []
+        ), None
     except ValueError:
         return [], RespondDecision(
             confidence=1.0,
