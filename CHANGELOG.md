@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- List every inactive tool by name with its full description at any directory
+  size; the entry-limit branch that replaced descriptions with a 40-character
+  phrase is gone, so two capabilities that differ only after a shared clause stay
+  distinguishable (Refs #619).
+
+
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).
