@@ -597,7 +597,7 @@ PostgreSQL metadata filters (`list_sessions(metadata_filter=...)`, used by ACP
   earlier metadata, so a filter can return it for a value it no longer has,
   and miss it for its new value.
 
-SQLite metadata filters do not read these rows.
+SQLite stores the same rows, but its metadata filters do not read them.
 
 ## Metadata filter behavior by backend
 
@@ -620,8 +620,8 @@ The rows store each name and value as its JSON string text (`json.dumps`,
 ASCII without a NUL byte). PostgreSQL compares that text with `COLLATE "C"`,
 which is a byte comparison, so the database's default collation does not
 affect which sessions match. The indexed `entry_digest` only finds the
-candidate rows; two different entries with one digest still compare their
-full name and value.
+candidate rows, so a long name or value adds no index size limit; two
+different entries with one digest still compare their full name and value.
 
 SQLite keeps its existing `json_extract(metadata_json, '$.' || key) = value`
 reader. It differs from the PostgreSQL behavior where it reads more than a

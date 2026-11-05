@@ -474,9 +474,10 @@ def test_existing_derived_schema_rules() -> None:
     ],
 )
 def test_a_module_schema_without_its_ledger_is_refused(case: str) -> None:
-    # The first two are the layouts of the review of f04b4eae; the last is every table a
-    # registry store's first start creates, exact, without its om_meta row. Tables
-    # without the module's ledger are not evidence, whatever their columns.
+    # Some of a store's tables, a storage engine table with foreign or exact columns, and
+    # a first start stopped before om_meta all lack the module's ledger. Exact columns
+    # cannot tell a copy or a partial start from the module's own history, so each is
+    # refused.
     registry = _history("registry", "store 0001_baseline")
     tables = {
         "one table of the store": lambda: {
