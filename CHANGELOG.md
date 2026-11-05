@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Honour `runtime.agent_loop_tool_result_max_chars`: the setting was declared and
+  range-checked but never read, so inline tool output was always framed at the
+  hardcoded 8192-character threshold. The configured value now drives it, so the
+  4000 default takes effect for existing configurations; raise the setting to 8192
+  to keep the previous threshold (Refs #604).
+
 - Reconcile research child budget consumption before allocating the next pass,
   and include their terminal tool results in the turn's tool/error statistics.
   Preserve isolated child state and settle consumption on partial, failed and
@@ -34,11 +40,9 @@ This file tracks package-facing release notes for `openminion`.
   its own `--session` with a default, which overwrote the root value so
   `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
 
-- Honour `runtime.agent_loop_tool_result_max_chars`: the setting was declared and
-  range-checked but never read, so inline tool output was always framed at the
-  hardcoded 8192-character threshold. The configured value now drives it, so the
-  4000 default takes effect for existing configurations; raise the setting to 8192
-  to keep the previous threshold (Refs #604).
+- Describe `--dir` accurately: it selects the interactive workspace and the
+  one-shot `run` tool root, and the root-option form must precede the command
+  (Refs #594).
 
 ## Current package line - 2026-11-04
 

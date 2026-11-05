@@ -1,10 +1,4 @@
-"""Session metadata filter scenarios shared by the SQLite and PostgreSQL tests (#369).
-
-`SessionStore.list_sessions(metadata_filter=...)` selects the sessions whose
-metadata holds each filter value, as a JSON string, at the filter key. The
-scenarios check that contract on a runtime `SessionStore`, and through the two
-callers that pass a filter: ACP `session/list` (`surface`) and Focus directory
-sessions (`working_dir`).
+"""Session metadata filter scenarios shared by the SQLite and PostgreSQL tests.
 
 pytest does not rewrite the assertions of this module, so each check compares
 one result with its expectation and prints both on failure.
