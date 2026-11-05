@@ -4,6 +4,12 @@ from typing import Any
 
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 from openminion.modules.brain.loop.constants import (
+    BUDGET_ANSWER_ONLY_COLLECTION_ITEM_LIMIT,
+    BUDGET_ANSWER_ONLY_NESTED_TEXT_LIMIT,
+    BUDGET_ANSWER_ONLY_STRING_TEXT_LIMIT,
+    BUDGET_ANSWER_ONLY_TEXT_LIMIT,
+    BUDGET_ANSWER_ONLY_TOOL_NAME_LIMIT,
+    BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT,
     BUDGET_FINALIZATION_STATUS_RETRY_PROMPT,
     FINALIZED_ANSWER_RECOVERY_GUIDANCE,
 )
@@ -63,6 +69,65 @@ def _last_user_message_text(messages: list[Message]) -> str:
         if text:
             return text
     return ""
+
+
+def _truncate_answer_only_text(
+    value: Any, *, limit: int = BUDGET_ANSWER_ONLY_TEXT_LIMIT
+) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}...[truncated]"
+
+
+def _compact_answer_only_value(value: Any, *, depth: int = 0) -> Any:
+    if depth >= 2:
+        return _truncate_answer_only_text(
+            value, limit=BUDGET_ANSWER_ONLY_NESTED_TEXT_LIMIT
+        )
+    if isinstance(value, str):
+        return _truncate_answer_only_text(
+            value, limit=BUDGET_ANSWER_ONLY_STRING_TEXT_LIMIT
+        )
+    if isinstance(value, dict):
+        compacted: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= BUDGET_ANSWER_ONLY_COLLECTION_ITEM_LIMIT:
+                compacted["__truncated__"] = f"{len(value) - index} more key(s)"
+                break
+            compacted[str(key)] = _compact_answer_only_value(item, depth=depth + 1)
+        return compacted
+    if isinstance(value, (list, tuple)):
+        items = []
+        for index, item in enumerate(value):
+            if index >= BUDGET_ANSWER_ONLY_COLLECTION_ITEM_LIMIT:
+                remaining = len(value) - index
+                items.append(f"...[{remaining} more item(s)]")
+                break
+            items.append(_compact_answer_only_value(item, depth=depth + 1))
+        return items
+    return value
+
+
+def _compact_answer_only_tool_results(
+    tool_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for item in tool_results[-BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT:]:
+        compacted.append(
+            {
+                "tool_name": _truncate_answer_only_text(
+                    item.get("tool_name"), limit=BUDGET_ANSWER_ONLY_TOOL_NAME_LIMIT
+                ),
+                "ok": bool(item.get("ok")),
+                "summary": _truncate_answer_only_text(
+                    item.get("content") or item.get("summary")
+                ),
+                "data": _compact_answer_only_value(item.get("data", {})),
+                "error": _compact_answer_only_value(item.get("error")),
+            }
+        )
+    return compacted
 
 
 def _retry_answer_only_completion_if_needed(

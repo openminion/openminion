@@ -234,6 +234,7 @@ def _scripted_agent(
     monkeypatch: pytest.MonkeyPatch,
     *,
     forced_tools: list[str],
+    max_calls_per_run: int | None = None,
 ) -> Iterator[tuple[Agent, list[str]]]:
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802
@@ -256,6 +257,8 @@ def _scripted_agent(
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
     monkeypatch.setenv("TEST_PROVIDER_KEY", "local-dummy-key")
     config = OpenMinionConfig()
+    if max_calls_per_run is not None:
+        config.security.tool_policy.max_calls_per_run = max_calls_per_run
     _csc_install_default_agent(config, provider="openai")
     config.providers.openai.api_key_env = "TEST_PROVIDER_KEY"
     config.providers.openai.base_url = f"http://127.0.0.1:{server.server_port}/v1"
