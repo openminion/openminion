@@ -66,22 +66,33 @@ ENTRY_CLARIFY_RECONSIDERATION_MESSAGE = (
 )
 
 
+def render_inactive_tool_entries(entries: list[tuple[str, str]]) -> list[str]:
+    # Every entry keeps its description at any directory size: a summary inferred from
+    # punctuation or a length prefix can describe the wrong capability, and the full
+    # schema only arrives after activation, which is too late to choose the tool.
+    return [f"- {name}: {description or name}" for name, description in entries]
+
+
 def build_entry_inactive_tool_directory(tool_specs: list[Any]) -> str:
-    lines = [
-        "Execution tool schemas in this directory are inactive and cannot be called "
-        "directly. To use one, call the visible tool-request activation control "
-        "(`tool.request` or provider-safe `tool_request`) with its exact name from "
-        "this directory."
-    ]
+    entries: list[tuple[str, str]] = []
+    seen: set[str] = set()
     for spec in tool_specs:
         name = str(getattr(spec, "name", "") or "").strip()
-        if not name:
+        if not name or name in seen:
             continue
+        seen.add(name)
         description = " ".join(str(getattr(spec, "description", "") or "").split())
         if len(description) > 120:
             description = f"{description[:117].rstrip()}..."
-        lines.append(f"- {name}: {description or name}")
-    return "\n".join(lines)
+        entries.append((name, description))
+
+    header = (
+        "Execution tool schemas in this directory are inactive and cannot be called "
+        "directly. To use one, call the visible tool-request activation control "
+        "(`tool.request` or provider-safe `tool_request`) with its exact name from "
+        f"this directory ({len(entries)} tools)."
+    )
+    return "\n".join([header, *render_inactive_tool_entries(entries)])
 
 
 def fixed_profile_rewrites(default_act_profile: str) -> dict[str, str]:
