@@ -197,7 +197,10 @@ def append_evidence_and_turn_input_segments(
     plugin_registry: Any,
     run_plugin_evidence_pipeline: Callable[..., list[EvidenceItem]],
 ) -> None:
-    tool_events = list(session_slice.recent_tool_events[:3])
+    canonical_replay = (
+        request.constraints is not None and request.constraints.canonical_tool_replay
+    )
+    tool_events = [] if canonical_replay else list(session_slice.recent_tool_events[:3])
     runtime.bucket_stats["evidence_refs"] = {
         "total_available": len(artifact_digests[:10])
         + len(tool_events)
@@ -206,7 +209,7 @@ def append_evidence_and_turn_input_segments(
     }
     evidence_segments = [
         *_recent_artifact_segments(runtime, recent_session_artifact_refs),
-        *_tool_event_segments(runtime, session_slice),
+        *([] if canonical_replay else _tool_event_segments(runtime, session_slice)),
         *_artifact_digest_segments(runtime, artifact_digests),
     ]
     evidence_segments.extend(

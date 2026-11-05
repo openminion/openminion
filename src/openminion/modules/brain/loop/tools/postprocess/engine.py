@@ -8,6 +8,8 @@ from typing import Any
 from openminion.modules.brain.loop.failures import _raise_provider_failure
 from openminion.modules.llm import ProviderError
 from openminion.modules.llm.schemas import Message, ToolCall
+from ...context.task_context import TaskContextBudgetError
+from ...context.task_budget import task_budget_loop_outcome
 from ..budget import (
     _debit_llm_usage,
     _effective_cap,
@@ -462,6 +464,8 @@ class AdaptiveLoopRunnerPostprocessMixin(
         return llm_tools, llm_tool_choice, llm_tool_choice == "none"
 
     def _llm_call_failure_outcome(self, exc: Exception) -> AdaptiveToolLoopOutcome:
+        if isinstance(exc, TaskContextBudgetError):
+            return task_budget_loop_outcome(self, exc)
         self.loop_state.termination_reason = ADAPTIVE_TERM_LLM_ERROR
         emit_adaptive_status(
             self.loop_ctx,

@@ -30,7 +30,7 @@ def _runner_with_llm_result(result: dict[str, object]) -> BrainRunner:
             max_ticks_per_user_turn=10,
             max_tool_calls=5,
             max_a2a_calls=3,
-            max_total_llm_tokens=1000,
+            max_total_llm_tokens=20000,
             max_elapsed_ms=60000,
         ),
     )
@@ -86,7 +86,7 @@ def _state() -> WorkingState:
             ticks=10,
             tool_calls=5,
             a2a_calls=3,
-            tokens=1000,
+            tokens=20000,
             time_ms=60000,
         ),
     )

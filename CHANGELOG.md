@@ -1,11 +1,28 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-04
+Last updated: 2026-11-05
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+- Preserve runtime-tool schema definitions when adding task updates. Include
+  tool schemas and structured messages in task request budget checks, bound
+  explicit output limits by the remaining allowance, and debit each returned
+  entry retry. Preserve unset output limits and plain text answers; require a
+  valid task update before executing an uncommitted change. Reserve required
+  task context and schemas before trimming optional entry context.
+
+- Carry bounded, revisioned task conditions through clarification and execution
+  (Refs #529). Entry can return user-grounded condition deltas alongside its
+  existing action; unchanged conditions survive, corrections overwrite their
+  keys, and explicit replacement detaches the previous local workflow. Preserve
+  pending-question context for short answers, retain state across restarts, and
+  stop execution on invalid updates or insufficient context capacity. Reuse the
+  execution context owner and canonical tool replay without duplicate tool-event
+  excerpts. Source tests do not establish live-model semantic accuracy or
+  installed-package verification.
 
 - Honour `runtime.agent_loop_tool_result_max_chars`: the setting was declared and
   range-checked but never read, so inline tool output was always framed at the

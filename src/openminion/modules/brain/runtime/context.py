@@ -47,6 +47,7 @@ _COMMON_HINT_KEYS = {
     "mode_name",
     "context_budget_tier",
     "live_state_overlay",
+    "canonical_tool_replay",
     "pending_clarifications",
     "pending_conversational_clarification",
     "clarification_responses",

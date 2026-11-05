@@ -705,6 +705,9 @@ class ResearchMode(SimpleCheckpointMixin):
         goal: str,
     ) -> WorkingState:
         child_state = parent_state.model_copy(deep=True)
+        from openminion.modules.brain.execution.task_context import inherit_child_task
+
+        inherit_child_task(child_state, parent_state)
         child_state.module_state.pop("adaptive_loop", None)
         child_state.module_state["research"] = {"child": True}
         child_state.goal = goal

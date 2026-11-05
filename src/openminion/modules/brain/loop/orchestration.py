@@ -5,9 +5,7 @@ from typing import Any
 
 from openminion.modules.brain.adapters.llm.request import (
     _insert_retry_system_message,
-    _messages_from_context,
 )
-from openminion.modules.brain.bootstrap.budget import trim_decide_context_to_budget
 from openminion.modules.brain.bootstrap.context import _inject_decide_prompt_contract
 from openminion.modules.brain.bootstrap.freshness_classify import (
     classify_request_freshness,
@@ -22,9 +20,6 @@ from openminion.modules.brain.bootstrap.recovery import (
     heuristic_decision,
 )
 from openminion.modules.brain.execution.delegation import _runner_delegate
-from openminion.modules.brain.loop.tools.runtime import (
-    DefaultAdaptiveToolLoopLLMRuntime,
-)
 from openminion.modules.llm.client_call import (
     response_cost_payload,
     response_telemetry_event_fields,
@@ -61,6 +56,7 @@ from .entry_routing import (
     _is_empty_entry_response,
     _provisional_entry_route,
     _response_usage_payload,
+    resolve_entry_skill_hints,
     _should_bypass_unified_entry,
 )
 from .entry import (
@@ -68,6 +64,21 @@ from .entry import (
     build_entry_requestable_tool_specs,
     build_entry_tool_specs,
     detect_entry_path,
+)
+from .context.task_entry import (
+    build_task_entry_context,
+    entry_task_preflight,
+    entry_task_tool_specs,
+    apply_entry_task_context,
+)
+
+from .context.task_context import TaskContextBudgetError
+from .tools.runtime import DefaultAdaptiveToolLoopLLMRuntime
+from .context.task_entry import (
+    task_budget_entry_decision,
+    emit_entry_identity_audit,
+    debit_entry_response,
+    emit_entry_call_started,
 )
 from .failures import _internal_failure_answer, _provider_failure_error
 from .providers.retry import (
@@ -365,6 +376,9 @@ def decide(
     capability_category: str | None = None,
 ) -> Decision:
     has_new_input = bool(user_input and str(user_input).strip())
+    task_error = entry_task_preflight(state, has_new_input=has_new_input)
+    if task_error is not None:
+        return task_error
     capability_category = str(capability_category or "").strip().lower() or None
     is_idle_tick_entry = str(getattr(state, "run_trigger", "") or "") == "idle_tick"
     if (
@@ -381,16 +395,9 @@ def decide(
             sub_intents=list(getattr(state, "decision_sub_intents", []) or []),
         )
 
-    skill_hints: dict[str, Any] = {}
-    if has_new_input and user_input is not None:
-        skill_hints = _runner_delegate(
-            "_resolve_skill_hints",
-            runner,
-            intent=user_input,
-            purpose="plan",
-            state=state,
-            logger=logger,
-        )
+    skill_hints = resolve_entry_skill_hints(
+        runner, state=state, user_input=user_input, logger=logger
+    )
 
     if runner.llm_api is None or runner.context_api is None:
         if user_input is not None:
@@ -563,42 +570,33 @@ def decide(
     hints.update(skill_hints)
     _inject_decide_prompt_contract(hints, runner=runner)
 
-    logger.emit(
-        "llm.call.started",
-        {"llm_call_id": llm_call_id, "purpose": "entry", "model": model},
-        trace_id=state.trace_id,
+    tool_specs, task_error = entry_task_tool_specs(
+        tool_specs, state, has_new_input=has_new_input
     )
+    if task_error is not None:
+        return task_error
+
+    emit_entry_call_started(logger, state, llm_call_id, model)
     _runner_delegate("_track_call_started", runner, llm_call_id, "entry", model)
 
     budget_max_tokens = min(2000, state.budgets_remaining.tokens)
-    context = _runner_delegate(
-        "_build_context",
+    context, _estimate, base_messages, task_error = build_task_entry_context(
         runner,
-        state=state,
-        purpose="decide",
-        budget={"max_tokens": budget_max_tokens},
-        hints=hints,
-        logger=logger,
-    )
-    estimate = _runner_delegate(
-        "_estimate_tokens", runner, model=model, context=context
-    )
-    context, _estimate, budget_decision = trim_decide_context_to_budget(
-        runner=runner,
-        state=state,
-        logger=logger,
+        state,
         model=model,
-        budget_max_tokens=budget_max_tokens,
-        hints=hints,
-        context=context,
-        estimate=estimate,
         user_input=user_input,
+        hints=hints,
+        logger=logger,
+        target=budget_max_tokens,
+        tool_specs=tool_specs,
     )
-    if budget_decision is not None:
-        return budget_decision
+    if task_error is not None:
+        return task_error
 
     try:
-        runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(runner.llm_api)
+        runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(
+            runner.llm_api, task_state=state
+        )
     except Exception as exc:  # noqa: BLE001
         _emit_decide_fail_closed_event(
             logger=logger,
@@ -617,7 +615,6 @@ def decide(
     retry_policy = build_provider_retry_policy(runner.options, runner.llm_api)
     max_retries = retry_policy.max_retries
     last_detection = None
-    base_messages = list(_messages_from_context(context))
     request_metrics: dict[str, Any] = _entry_request_metrics(
         messages=base_messages,
         tool_specs=tool_specs,
@@ -652,19 +649,7 @@ def decide(
     project_control_retried = False
     for attempt in range(max_retries + 2):
         call_id = f"{llm_call_id}:{attempt}" if attempt else llm_call_id
-        logger.emit(
-            "llm.identity_audit",
-            {
-                "llm_call_id": call_id,
-                "purpose": "entry",
-                "agent_id": state.agent_id,
-                "profile_version": getattr(
-                    runner.profile, "profile_version", "unknown"
-                ),
-                "trace_id": state.trace_id,
-            },
-            trace_id=state.trace_id,
-        )
+        emit_entry_identity_audit(logger, state, runner, call_id)
         messages = list(base_messages)
         if attempt:
             messages = _insert_retry_system_message(
@@ -686,6 +671,8 @@ def decide(
                 metadata=entry_metadata,
             )
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, TaskContextBudgetError):
+                return task_budget_entry_decision(exc)
             error_category, retryable = classify_retryable(exc)
             request_id_payload = provider_request_id_payload(
                 getattr(exc, "details", None)
@@ -735,6 +722,7 @@ def decide(
             metrics=request_metrics,
             attempt=attempt,
         )
+        debit_entry_response(runner, state, usage_payload, logger)
         last_detection = detect_entry_path(response)
         if (
             last_detection.path == "clarify"
@@ -836,8 +824,6 @@ def decide(
         llm_call_id=llm_call_id,
     )
 
-    state.llm_calls_used += 1
-    _runner_delegate("_debit_tokens", runner, state, {"usage": usage_payload}, logger)
     _runner_delegate("_track_call_completed", runner, llm_call_id)
     _trailer_session_api = getattr(runner, "session_api", None)
     if _trailer_session_api is not None:
@@ -903,6 +889,17 @@ def decide(
         )
         if coerced is not None:
             return coerced
+
+    task_error = apply_entry_task_context(
+        state,
+        response,
+        user_input=user_input,
+        clarify=last_detection.path == "clarify",
+        logger=logger,
+        recovery_only=bool(context.get("task_context_recovery_only")),
+    )
+    if task_error is not None:
+        return task_error
 
     if last_detection.path == "clarify":
         decision = RespondDecision(

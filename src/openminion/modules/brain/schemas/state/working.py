@@ -17,6 +17,7 @@ from ...constants import RESPOND_KIND_ASSISTANT, RespondKindLiteral
 from ..base import ArtifactRef, iso_now
 from ..commands import Command
 from ..decisions import ClarifyContext, PendingTurnContext, RequestReadiness
+from ..task_context import ResolvedTaskContext
 from ..freshness import FreshnessContract, FreshnessDiagnostics, FreshnessObligations
 from ..plan import (
     AdaptiveRevisionCheckpoint,
@@ -98,6 +99,9 @@ class WorkingState(BaseModel):
     session_id: str = Field(..., min_length=1)
     agent_id: str = Field(..., min_length=1)
     goal: str | None = None
+    resolved_task_context: ResolvedTaskContext | None = None
+    task_context_needs_update: bool = False
+    inherited_task_conditions: dict[str, str] = Field(default_factory=dict)
     active_goal_id: str | None = None
     last_user_input: str = ""
     active_mode_name: str | None = None

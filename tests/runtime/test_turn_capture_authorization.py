@@ -35,6 +35,8 @@ from openminion.services.agent.execution.composition import AgentServiceTurnFlow
 from openminion.services.runtime.cron.executor import CronTurnExecutor
 from openminion.services.runtime.daemon import build_turn_request
 from openminion.tools.task.constants import CONSOLIDATION_PAYLOAD_KEY
+from tests.task_context_fixture import replace_entry_task
+
 from tests._csc_fixtures import _csc_install_default_agent
 
 AGENT_ID = "openminion"
@@ -117,7 +119,11 @@ class _Provider:
             def do_POST(self) -> None:  # noqa: N802
                 length = int(self.headers["Content-Length"])
                 body = json.loads(self.rfile.read(length))
-                payload = json.dumps(provider.respond(body)).encode()
+                response = provider.respond(body)
+                response["choices"][0]["message"] = replace_entry_task(
+                    body, response["choices"][0]["message"]
+                )
+                payload = json.dumps(response).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))

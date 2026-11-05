@@ -82,7 +82,7 @@ def _profile(default_act_profile: str | None = None) -> AgentProfile:
             max_ticks_per_user_turn=5,
             max_tool_calls=4,
             max_a2a_calls=2,
-            max_total_llm_tokens=4000,
+            max_total_llm_tokens=20000,
             max_elapsed_ms=60_000,
         ),
         defaults=AgentDefaults(),
@@ -98,7 +98,7 @@ def _state(session_id: str = "s-entry") -> WorkingState:
             ticks=5,
             tool_calls=4,
             a2a_calls=2,
-            tokens=4000,
+            tokens=20000,
             time_ms=60_000,
         ),
         llm_calls_max=5,
@@ -422,7 +422,18 @@ def test_unified_entry_respond_path_carries_expected_trailers_metadata(
 
 def test_unified_entry_clarify_path_returns_waiting_question(tmp_path: Path) -> None:
     llm = _RecordingEntryLLM(
-        _tool_response("clarify", {"question": "Which city should I use?"})
+        _tool_response(
+            "clarify",
+            {
+                "question": "Which city should I use?",
+                "task_update": {
+                    "operation": "start",
+                    "expected_revision": 0,
+                    "objective": "what's the weather today?",
+                    "user_quote": "what's the weather today?",
+                },
+            },
+        )
     )
     runner = _build_runner(tmp_path, llm_api=llm)
     state = _state("entry-clarify")
