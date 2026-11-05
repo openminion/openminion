@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Document the handoff approval pause in `examples/sdk/delegation.py` and the
+  SDK examples README. A handoff without an `approval_callback` returns the
+  policy prompt (`respond_kind` `policy_confirmation_prompt`), not the target's
+  answer; the example's `--approval` flag now shows the pause plus explicit
+  allow/deny operator decisions, where denial keeps the target from running
+  (Refs #526).
+
 - Preserve runtime-tool schema definitions when adding task updates. Include
   tool schemas and structured messages in task request budget checks, bound
   explicit output limits by the remaining allowance, and debit each returned
