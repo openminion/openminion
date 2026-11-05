@@ -95,6 +95,15 @@ def apply_entry_task_context(
     session_api: Any = None,
     history_reads: dict[str, Any] | None = None,
 ) -> RespondDecision | None:
+    if (
+        user_input
+        and state.resolved_task_context is not None
+        and not response.tool_calls
+        and not clarify
+    ):
+        # Text can answer without committing a new executable task revision.
+        state.task_context_needs_update = True
+        return None
     replacing = any(
         isinstance(call.arguments.get("task_update"), dict)
         and call.arguments["task_update"].get("operation")
@@ -172,6 +181,7 @@ def build_task_entry_context(
     hints: dict[str, Any],
     logger: Any,
     target: int,
+    tool_specs: list[Any],
 ) -> tuple[dict[str, Any], int, list[Message], RespondDecision | None]:
     from openminion.modules.brain.execution.delegation import _runner_delegate
     from openminion.modules.brain.adapters.llm.request import _messages_from_context
@@ -186,6 +196,13 @@ def build_task_entry_context(
     )
     if task_error is not None:
         return {}, 0, [], task_error
+    schema_tokens = message_token_estimate(runner, [], model=model, tools=tool_specs)
+    reserved_tokens = schema_tokens + (
+        message_token_estimate(runner, required_messages, model=model)
+        if required_messages
+        else 0
+    )
+    pack_budget = max(1, pack_budget - schema_tokens)
     context = _runner_delegate(
         "_build_context",
         runner,
@@ -195,6 +212,18 @@ def build_task_entry_context(
         hints=hints,
         logger=logger,
     )
+    if reserved_tokens >= state.budgets_remaining.tokens:
+        return (
+            {},
+            0,
+            [],
+            RespondDecision(
+                confidence=1.0,
+                reason_code="task_context_budget_exceeded",
+                respond_kind="clarify",
+                question="The required task and selected tool schemas exceed the remaining token budget. Split the request or increase its budget.",
+            ),
+        )
     estimate = _runner_delegate(
         "_estimate_tokens", runner, model=model, context=context
     )
@@ -208,6 +237,7 @@ def build_task_entry_context(
         context=context,
         estimate=estimate,
         user_input=user_input,
+        reserved_tokens=reserved_tokens,
     )
     if budget_decision is not None:
         return context, _estimate, [], budget_decision

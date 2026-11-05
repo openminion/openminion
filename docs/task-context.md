@@ -144,6 +144,13 @@ Generated task schema definitions are merged without overwriting definitions
 owned by the runtime tool. Only colliding generated names and their references
 are renamed; existing runtime references and validation rules stay intact.
 
+A plain text entry answer can finish a user turn without committing a task
+amendment. The existing task snapshot, revision and journal remain unchanged;
+`task_context_needs_update` stays set. Autonomous continuation and recovery of a
+tool action from that answer are blocked until an explicit valid task update is
+accepted. This retains the text-answer contract without treating an uncommitted
+change as permission to execute against the old task.
+
 The task-aware entry and shared adaptive runtime check every outgoing request
 against the remaining turn token budget, including the selected tool schemas,
 structured message parts and tool arguments/results. This check runs after retry
@@ -151,6 +158,12 @@ messages and tool selection, and is repeated for later calls. Input estimates
 include a serialized-size fallback even when an adapter estimator fails or
 underestimates. This is still a heuristic, not an exact provider tokenizer,
 image-token calculation or a model-context-window guarantee.
+
+Entry reserves the required task messages and selected tool schemas before
+applying the existing optional-context trimming stages. Affordable requests can
+therefore trim and proceed; a genuinely oversized required request still stops
+before the provider call. The 4,000-token regression controls estimate serialized
+messages and schemas and exercise both initial and follow-up entry requests.
 
 A fitting task request retains an explicitly requested output cap, bounded by
 the estimated remaining allowance. An unset output cap remains unset, leaving

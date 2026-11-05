@@ -17,8 +17,11 @@ This file tracks package-facing release notes for `openminion`.
   the bounded execution projection. Child/async results retain owner bindings.
 
 - Preserve runtime-tool schema definitions when adding task updates. Include
-  tool schemas and structured messages in task request budget checks, cap output
-  to the estimated remaining allowance, and debit each returned entry retry.
+  tool schemas and structured messages in task request budget checks, bound
+  explicit output limits by the remaining allowance, and debit each returned
+  entry retry. Preserve unset output limits and plain text answers; require a
+  valid task update before executing an uncommitted change. Reserve required
+  task context and schemas before trimming optional entry context.
 
 - Carry bounded, revisioned task conditions through clarification and execution
   (Refs #529). Entry can return user-grounded condition deltas alongside its

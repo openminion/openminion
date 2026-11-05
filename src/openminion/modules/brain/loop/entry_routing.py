@@ -118,6 +118,8 @@ def _should_bypass_unified_entry(
     route: Any,
     state: WorkingState,
 ) -> bool:
+    if getattr(state, "task_context_needs_update", False):
+        return False
     execution_target_kind = str(
         getattr(getattr(route, "execution_target", None), "kind", "") or ""
     ).strip()

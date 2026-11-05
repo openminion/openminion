@@ -30,6 +30,8 @@ from openminion.base.config import OpenMinionConfig, save_config
 from openminion.modules.brain.diagnostics.events import CanonicalEventLogger
 from openminion.modules.brain.execution.runtime.closure import evaluator
 from openminion.modules.brain.loop import orchestration
+from tests.task_context_fixture import replace_entry_task
+
 from tests._csc_fixtures import _csc_install_default_agent
 
 CODE = "ZEBRA-42"
@@ -99,6 +101,7 @@ class Script:
         self.continuation_entries = 0
         self.kinds: list[str] = []
         self.lock = threading.Lock()
+        self.order = "A-104"
 
     def respond(self, body: dict[str, Any]) -> dict[str, Any]:
         text = _all_text(body)
@@ -113,8 +116,10 @@ class Script:
         users = [
             str(m.get("content") or "") for m in messages if m.get("role") == "user"
         ]
-        request = next((u for u in users if u.startswith("Check order")), "")
-        order = "B-205" if "B-205" in request else "A-104"
+        request = users[-1] if users else ""
+        if request.startswith("Check order"):
+            self.order = "B-205" if "B-205" in request else "A-104"
+        order = self.order
         with self.lock:
             index = len(self.kinds)
             if forced == "submit_output":
@@ -267,7 +272,11 @@ def _scripted_agent(
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            payload = json.dumps(script.respond(body)).encode()
+            response = script.respond(body)
+            response["choices"][0]["message"] = replace_entry_task(
+                body, response["choices"][0]["message"]
+            )
+            payload = json.dumps(response).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))

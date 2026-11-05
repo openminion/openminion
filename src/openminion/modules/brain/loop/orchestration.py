@@ -441,9 +441,7 @@ def decide(
         state=state,
         has_new_user_input=has_new_input,
     )
-    if (
-        not has_new_input or state.resolved_task_context is None
-    ) and _should_bypass_unified_entry(route=provisional_route, state=state):
+    if _should_bypass_unified_entry(route=provisional_route, state=state):
         if state.tier == "T0_direct":
             return _tier_0_restriction_decision(
                 logger=logger,
@@ -590,6 +588,7 @@ def decide(
         hints=hints,
         logger=logger,
         target=budget_max_tokens,
+        tool_specs=tool_specs,
     )
     if task_error is not None:
         return task_error

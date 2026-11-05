@@ -45,8 +45,10 @@ def trim_decide_context_to_budget(
     context: dict[str, Any],
     estimate: int,
     user_input: str | None,
+    reserved_tokens: int = 0,
 ) -> tuple[dict[str, Any], int, Decision | None]:
-    if estimate <= state.budgets_remaining.tokens:
+    available_tokens = max(0, state.budgets_remaining.tokens - reserved_tokens)
+    if estimate <= available_tokens:
         return context, estimate, None
 
     runtime_schemas = hints.get("runtime_tool_schemas")
@@ -61,21 +63,18 @@ def trim_decide_context_to_budget(
             budget_max_tokens=budget_max_tokens,
             hints=hints,
         )
-        logger.emit(
-            "llm.context.trimmed",
-            {
-                "purpose": "decide",
-                "strategy": "runtime_tool_schemas_stubbed",
-                "from_tools": len(runtime_schemas),
-                "to_tools": len(compact_schemas),
-                "estimate_before": estimate,
-                "estimate_after": compact_estimate,
-            },
-            trace_id=state.trace_id,
+        _emit_trimmed(
+            logger,
+            state,
+            "runtime_tool_schemas_stubbed",
+            estimate,
+            compact_estimate,
+            from_tools=len(runtime_schemas),
+            to_tools=len(compact_schemas),
         )
         estimate = compact_estimate
 
-    if estimate > state.budgets_remaining.tokens:
+    if estimate > available_tokens:
         runtime_schemas = hints.get("runtime_tool_schemas")
         if isinstance(runtime_schemas, list) and runtime_schemas:
             shortlisted_schemas = _runner_delegate(
@@ -91,21 +90,18 @@ def trim_decide_context_to_budget(
                     budget_max_tokens=budget_max_tokens,
                     hints=hints,
                 )
-                logger.emit(
-                    "llm.context.trimmed",
-                    {
-                        "purpose": "decide",
-                        "strategy": "runtime_tool_schemas_shortlisted",
-                        "from_tools": len(runtime_schemas),
-                        "to_tools": len(shortlisted_schemas),
-                        "estimate_before": estimate,
-                        "estimate_after": shortlisted_estimate,
-                    },
-                    trace_id=state.trace_id,
+                _emit_trimmed(
+                    logger,
+                    state,
+                    "runtime_tool_schemas_shortlisted",
+                    estimate,
+                    shortlisted_estimate,
+                    from_tools=len(runtime_schemas),
+                    to_tools=len(shortlisted_schemas),
                 )
                 estimate = shortlisted_estimate
 
-    if estimate > state.budgets_remaining.tokens:
+    if estimate > available_tokens:
         runtime_schemas = hints.get("runtime_tool_schemas")
         if isinstance(runtime_schemas, list) and runtime_schemas:
             hints.pop("runtime_tool_schemas", None)
@@ -130,7 +126,7 @@ def trim_decide_context_to_budget(
             )
             estimate = no_tool_estimate
 
-    if estimate > state.budgets_remaining.tokens:
+    if estimate > available_tokens:
         compact_modes = _compact_decide_mode_descriptions(
             hints.get("decision_route_descriptions")
         )
@@ -157,7 +153,7 @@ def trim_decide_context_to_budget(
             )
             estimate = compact_mode_estimate
 
-    if estimate > state.budgets_remaining.tokens:
+    if estimate > available_tokens:
         style_overrides = hints.get("style_overrides")
         if isinstance(style_overrides, dict) and style_overrides:
             hints.pop("style_overrides", None)
@@ -181,7 +177,7 @@ def trim_decide_context_to_budget(
             )
             estimate = no_style_estimate
 
-    if estimate > state.budgets_remaining.tokens:
+    if estimate > available_tokens:
         return (
             context,
             estimate,
@@ -196,3 +192,24 @@ def trim_decide_context_to_budget(
         )
 
     return context, estimate, None
+
+
+def _emit_trimmed(
+    logger: CanonicalEventLogger,
+    state: WorkingState,
+    strategy: str,
+    before: int,
+    after: int,
+    **details: Any,
+) -> None:
+    logger.emit(
+        "llm.context.trimmed",
+        {
+            "purpose": "decide",
+            "strategy": strategy,
+            "estimate_before": before,
+            "estimate_after": after,
+            **details,
+        },
+        trace_id=state.trace_id,
+    )
