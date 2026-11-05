@@ -1,29 +1,11 @@
-"""Room participant join-order scenarios shared by the SQLite and Postgres tests (#364).
+"""Room participant scenarios shared by the SQLite and Postgres tests.
 
-The scenarios join participants with the participant clock patched to one
-timestamp and the participant row ids patched so that each id sorts before the
-id of the participant that joined before it, as in the issue. The contract:
-
-- `list_participants` returns the active participants in join order;
-- a participant added again while active keeps its place and `joined_at`;
-- a participant that leaves and rejoins takes a new place, after every earlier
-  join, with the rejoin's `joined_at`;
-- an explicitly selected active agent stays selected;
-- when the active agent leaves, the earliest remaining agent join is selected.
-
-The active-agent scenarios (#393) cover the join's activation on two
-connections: a join makes its agent the active agent only when the room has
-none, read and written under the session-row lock in the join's transaction.
-The first activation a join commits stays until an explicit selection or a
-leave changes it, and a join, selection or leave on another connection waits
-for that commit, then applies as it would on its own.
-
-The selection scenarios (#495) cover `set_active_agent` and a leave of the
-agent it selects, on two connections: the selection reads the agent's
-membership after taking the session-row lock and writes the active agent in
-the same transaction. A leave during a selection waits for its commit, finds
-the agent active and runs its fallback; a selection during a leave waits for
-the leave to commit and is refused.
+Joins run with the participant clock patched to one timestamp and the row ids
+patched so that each id sorts before the id of the earlier join, so neither
+`joined_at` nor the id gives the join order. A join, selection or leave reads
+and writes the active agent under the session-row lock in its own transaction;
+the two-connection scenarios hold one of them there and check that the other
+connection's call waits for its commit.
 """
 
 from __future__ import annotations
