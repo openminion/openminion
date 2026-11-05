@@ -393,6 +393,8 @@ class StepOutput(BaseModel):
     message: str | None = None
     working_state: WorkingState
     action_result: ActionResult | None = None
+    # Current-response policy confirmation fact, set only by the owner that denied.
+    confirmation_outcome: dict[str, str] | None = None
     terminal_capture_intent_receipt: TerminalCaptureIntentReceipt | None = None
     memory_capture_bundle_result: dict[str, Any] | None = None
     # explicit structural no-op marker. Set True by
