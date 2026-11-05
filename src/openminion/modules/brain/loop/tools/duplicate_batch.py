@@ -271,14 +271,13 @@ def _duplicate_batch_answer_only_messages(
     *,
     loop_ctx: AdaptiveToolLoopContext,
     loop_state: AdaptiveToolLoopState,
-    tool_calls: list[Any],
 ) -> list[Message]:
-    del tool_calls
     tool_results = _successful_substantive_tool_results(loop_state)
     return _answer_only_finalization_messages(
         loop_ctx=loop_ctx,
         loop_state=loop_state,
         tool_results=tool_results,
+        preserve_turn_steering=True,
         reason=(
             "You have repeated an identical successful tool batch. Do not call "
             "more tools. This must be the final answer for the current turn."
@@ -515,17 +514,17 @@ def _force_duplicate_batch_answer_only_closure(
         return None, 0, 0
     facts["answer_only_closure_consumed"] = True
     loop_state.scratchpad["duplicate_batch_answer_only_closure_forced"] = True
-    finalization_messages = _duplicate_batch_answer_only_messages(
-        loop_ctx=loop_ctx,
-        loop_state=loop_state,
-        tool_calls=tool_calls,
-    )
     emit_adaptive_status(
         loop_ctx,
         profile=profile,
         loop_state=loop_state,
         detail_text=f"{public_mode_tag} duplicate batch answer-only closure",
         mode_state="duplicate_tool_closure",
+    )
+    loop_ctx.apply_turn_steering(loop_state.messages)
+    finalization_messages = _duplicate_batch_answer_only_messages(
+        loop_ctx=loop_ctx,
+        loop_state=loop_state,
     )
     closure_start = time.monotonic()
     try:

@@ -859,6 +859,7 @@ def _circular_answer_only_messages(
         loop_ctx=loop_ctx,
         loop_state=loop_state,
         tool_results=tool_results,
+        preserve_turn_steering=True,
         reason=(
             "You have repeated the same tool pattern. Do not call more tools. "
             "This must be the final answer for the current turn."
@@ -891,11 +892,6 @@ def _force_circular_pattern_answer_only_finalization(
     if not tool_results:
         return None
     loop_state.scratchpad["circular_pattern_answer_only_finalization_forced"] = True
-    finalization_messages = _circular_answer_only_messages(
-        loop_ctx=loop_ctx,
-        loop_state=loop_state,
-        tool_results=tool_results,
-    )
     emit_adaptive_status(
         loop_ctx,
         profile=profile,
@@ -904,6 +900,16 @@ def _force_circular_pattern_answer_only_finalization(
         mode_state="circular_pattern_answer_only_finalization",
     )
     for attempt in range(2):
+        loop_ctx.apply_turn_steering(loop_state.messages)
+        finalization_messages = _circular_answer_only_messages(
+            loop_ctx=loop_ctx,
+            loop_state=loop_state,
+            tool_results=tool_results,
+        )
+        if attempt:
+            finalization_messages.append(
+                Message(role="system", content=EMPTY_FINALIZATION_RETRY_PROMPT)
+            )
         try:
             response = runtime.complete(
                 messages=finalization_messages,
@@ -934,9 +940,6 @@ def _force_circular_pattern_answer_only_finalization(
                 "Circular finalization recovery exceeded budget",
                 code="EMPTY_PROVIDER_RESPONSE",
             )
-        finalization_messages.append(
-            Message(role="system", content=EMPTY_FINALIZATION_RETRY_PROMPT)
-        )
     for assistant_message in list(getattr(response, "assistant_messages", []) or []):
         loop_state.messages.append(assistant_message)
     if list(getattr(response, "tool_calls", []) or []):
