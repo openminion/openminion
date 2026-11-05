@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -65,6 +66,13 @@ from openminion.modules.a2a.interfaces import A2A_INTERFACE_VERSION
 
 
 _LOG = get_logger("a2a.runtime")
+_RECEIPT_WRITE_ERRORS: tuple[type[Exception], ...] = (OSError, sqlite3.Error)
+try:
+    from sqlalchemy.exc import SQLAlchemyError
+except ImportError:
+    pass
+else:
+    _RECEIPT_WRITE_ERRORS += (SQLAlchemyError,)
 
 
 class A2ARuntime:
@@ -453,7 +461,7 @@ class A2ARuntime:
                 result_inline, result_ref = self._store_result_if_needed(
                     result, label=envelope.method
                 )
-            except Exception:  # noqa: BLE001
+            except (OSError, TypeError, ValueError, RecursionError):
                 error = {
                     "code": ERROR_CODE_OUTCOME_UNKNOWN,
                     "message": "Call result could not be stored; reconcile the effect before reissuing.",
@@ -469,7 +477,7 @@ class A2ARuntime:
                 result_ref=result_ref,
                 error=error,
             )
-        except Exception:  # noqa: BLE001
+        except _RECEIPT_WRITE_ERRORS:
             _LOG.warning("Could not persist the A2A call receipt")
             return self._unknown_call_result(envelope, resolved_agent, cached=False)
         if not finished:

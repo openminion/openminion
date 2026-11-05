@@ -4,6 +4,7 @@ import json
 from contextlib import contextmanager
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -142,7 +143,7 @@ def test_artifact_write_failure_after_effect_replays_unknown(tmp_path, monkeypat
 
 def test_receipt_write_failure_leaves_call_reserved(tmp_path, monkeypatch):
     def fail_receipt_write(*args, **kwargs):
-        raise OSError("receipt write failed")
+        raise sqlite3.OperationalError("receipt write failed")
 
     def handler(req):
         return effect(tmp_path, req)
