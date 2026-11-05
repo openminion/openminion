@@ -1,6 +1,5 @@
 from types import SimpleNamespace
 from threading import Lock
-from ..task_binding import bound_subtask
 from typing import Any
 
 from pydantic import Field
@@ -788,7 +787,6 @@ class OrchestrateMode:
             action_result=action_result,
         )
 
-    @bound_subtask
     def _run_subtask(
         self,
         *,

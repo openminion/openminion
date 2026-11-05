@@ -122,7 +122,6 @@ class ChildContext:
     constraints: list[str] | None = None
     active_skill_id: str | None = None
     delegation_context: Any | None = None
-    task_subtask_id: str | None = None
 
 
 SubtaskExecutor = Callable[

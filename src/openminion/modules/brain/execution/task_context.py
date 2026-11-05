@@ -93,3 +93,25 @@ def execution_input(ctx: Any, *, autonomous: bool = False) -> tuple[list[Message
             working_state=ctx.state,
             message="The required task conditions do not fit the remaining context budget. Please split the task or increase the budget.",
         )
+
+
+def inherit_child_task(child: Any, parent: Any) -> None:
+    """Keep child goals separate while carrying current parent conditions."""
+    task = getattr(parent, "resolved_task_context", None)
+    child.resolved_task_context = None
+    child.task_context_needs_update = False
+    child.inherited_task_conditions = dict(
+        getattr(parent, "inherited_task_conditions", {})
+    )
+    if task is not None:
+        child.inherited_task_conditions.update(
+            {
+                key: value
+                + (
+                    "\nClarification question: " + task.condition_questions[key]
+                    if key in task.condition_questions
+                    else ""
+                )
+                for key, value in task.conditions.items()
+            }
+        )

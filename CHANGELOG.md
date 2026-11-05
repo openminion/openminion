@@ -7,15 +7,6 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
-- Add bounded task-journal lookup and same-turn selective restoration with
-  user/owner-bound evidence references. Preserve unrelated current conditions,
-  account for lookup calls, and keep historical tool batches before new input.
-
-- Task conditions now have explicit conversation/task/subtask ownership, with user
-  quote evidence for conversation scope. Tasks support pause, completion and
-  revision-checked restoration; accepted changes are journaled separately from
-  the bounded execution projection. Child/async results retain owner bindings.
-
 - Preserve runtime-tool schema definitions when adding task updates. Include
   tool schemas and structured messages in task request budget checks, bound
   explicit output limits by the remaining allowance, and debit each returned

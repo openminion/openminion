@@ -18,7 +18,6 @@ from ..base import ArtifactRef, iso_now
 from ..commands import Command
 from ..decisions import ClarifyContext, PendingTurnContext, RequestReadiness
 from ..task_context import ResolvedTaskContext
-from ..task_workspace import TaskWorkspace, TaskExecutionBinding
 from ..freshness import FreshnessContract, FreshnessDiagnostics, FreshnessObligations
 from ..plan import (
     AdaptiveRevisionCheckpoint,
@@ -102,10 +101,7 @@ class WorkingState(BaseModel):
     goal: str | None = None
     resolved_task_context: ResolvedTaskContext | None = None
     task_context_needs_update: bool = False
-    task_workspace: TaskWorkspace = Field(default_factory=TaskWorkspace)
-    task_execution_bindings: dict[str, TaskExecutionBinding] = Field(default_factory=dict)
     inherited_task_conditions: dict[str, str] = Field(default_factory=dict)
-    inherited_task_binding: TaskExecutionBinding | None = None
     active_goal_id: str | None = None
     last_user_input: str = ""
     active_mode_name: str | None = None

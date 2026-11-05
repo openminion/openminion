@@ -1,4 +1,4 @@
-"""Wire compaction preserves validation and complete historical evidence."""
+"""Compact entry schemas retain the full validation contract."""
 
 import json
 from copy import deepcopy
@@ -8,13 +8,9 @@ from jsonschema import Draft202012Validator
 
 from openminion.modules.brain.loop.context.task_context import (
     _validation_schema,
-    task_context_message,
     with_task_update_schema,
 )
-from openminion.modules.brain.loop.context.task_history import history_fields
 from openminion.modules.brain.schemas.task_context import (
-    ResolvedTaskContext,
-    TaskConditionEvidence,
     TaskContextUpdate,
 )
 from openminion.modules.llm.schemas import ToolSpec
@@ -75,42 +71,3 @@ def test_runtime_tool_schema_annotations_are_unchanged():
     assert _validation_schema(
         {"properties": {"title": {"type": "string", "title": "Annotation"}}}
     ) == {"properties": {"title": {"type": "string"}}}
-
-
-def test_history_pool_preserves_questions_events_order_and_persistent_state():
-    events = [
-        TaskConditionEvidence(
-            quote="yes",
-            question_quote=f"Use width {i % 2 + 120}?",
-            source=str(i % 10) * 64,
-        )
-        for i in range(30)
-    ]
-    task = ResolvedTaskContext(
-        revision=31,
-        objective="Draw a rectangle",
-        conditions={"width": "Keep width"},
-        condition_history={"width": events},
-        consumed_input="f" * 64,
-    )
-    before = task.model_dump()
-    text = task_context_message(task).content
-    payload = json.loads(text.splitlines()[1])
-    encoded = payload["condition_history"]["width"]
-    decoded = [encoded["evidence"][index] for index in encoded["sequence"]]
-    expected = [
-        event.model_dump(exclude={"source"}, exclude_none=True) for event in events
-    ]
-    assert decoded == expected
-    assert len(encoded["evidence"]) == 2
-    assert len(json.dumps(encoded)) < len(json.dumps(expected))
-    assert "indexes evidence from zero" in payload["history_rule"]
-    assert task.model_dump() == before
-
-
-def test_small_history_keeps_simple_shape_and_omits_null_question():
-    item = TaskConditionEvidence(quote="excluding archived rows", source="f" * 64)
-    fields = history_fields({"archive": [item]})
-    assert fields["condition_history"] == {"archive": [{"quote": item.quote}]}
-    assert "pooled" not in fields["history_rule"]
-    assert history_fields({}) == {}

@@ -33,7 +33,7 @@ def build_child_state(
     child_budget: BudgetCounters,
     goal: str,
 ) -> WorkingState:
-    from openminion.modules.brain.execution.task_binding import inherit_child_task
+    from openminion.modules.brain.execution.task_context import inherit_child_task
 
     child_state = parent_state.model_copy(deep=True)
     inherit_child_task(child_state, parent_state)
