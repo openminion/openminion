@@ -63,7 +63,10 @@ The implementation checks historical scope/owner against a present destination
 key before restoration, and reserves proposed detached-job capacity before
 appending an amendment. Regression controls cover key reuse across subtasks,
 same-owner short answers, and the 128/129 handle boundary followed by reload and
-the actual job reconciler. These controls validate the local failure paths;
+the actual job reconciler. Further controls reject outgoing-only subtask owners
+on replacement while allowing explicit new decomposition, same-task amendments
+and archive/resume. Reconciliation consumes matching persisted handle reservations
+once and still supports legacy states without reservations. These controls validate the local failure paths;
 they do not replace the maintainer scope decision or live/package acceptance.
 
 Existing core sessions load additive empty workspace/active lifecycle defaults.

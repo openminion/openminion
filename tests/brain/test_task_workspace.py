@@ -620,3 +620,178 @@ def test_idle_reconciliation_keeps_workspace_identity_and_cleans_orphan_binding(
     assert state.task_workspace.model_dump() == before
     assert set(state.task_execution_bindings) == {"live"}
     assert state.pending_jobs[0].task_id == "live"
+
+
+@pytest.mark.parametrize("registration", ["none", "registry", "child", "both"])
+def test_replacement_refuses_owner_registered_only_on_outgoing_task(
+    tmp_path, registration
+):
+    state = new_state()
+    if registration in {"registry", "both"}:
+        state.resolved_task_context.subtasks["old-only"] = "active"
+    if registration in {"child", "both"}:
+        state.child_tasks = {"old-only": "old-child"}
+    api = SessctlAdapter(tmp_path / "sessions.db")
+    try:
+        before = state.model_dump()
+        events = committed_checkpoints(api, state)
+        response = _tool_response(
+            "respond",
+            {
+                "answer": "OK",
+                "task_update": update(
+                    state,
+                    "New task BETA",
+                    op="replace",
+                    objective="New task",
+                    conditions=[
+                        dict(
+                            key="parser",
+                            quote="BETA",
+                            scope="subtask",
+                            owner_id="old-only",
+                        )
+                    ],
+                ),
+            },
+        )
+        decision = apply_entry_task_context(
+            state,
+            response,
+            user_input="New task BETA",
+            clarify=False,
+            logger=Mock(),
+            session_api=api,
+        )
+        assert decision.reason_code == "invalid_task_context_update"
+        assert state.model_dump() == dict(before, task_context_needs_update=True)
+        assert committed_checkpoints(api, state) == events
+    finally:
+        api.close()
+
+
+@pytest.mark.parametrize("journal", [False, True])
+@pytest.mark.parametrize("selected_owner", ["new-only", "old-only"])
+def test_replacement_accepts_only_explicitly_selected_destination_subtasks(
+    tmp_path, journal, selected_owner
+):
+    state = new_state()
+    state.resolved_task_context.subtasks["old-only"] = "active"
+    state.child_tasks = {"old-only": "old-child"}
+    old = state.resolved_task_context.model_copy(deep=True)
+    api = SessctlAdapter(tmp_path / "sessions.db") if journal else None
+    try:
+        response = _tool_response(
+            "decompose",
+            {
+                "subtasks": [
+                    dict(id=selected_owner, description="Parse"),
+                    dict(id="other-new", description="Check"),
+                ],
+                "task_update": update(
+                    state,
+                    "New task BETA",
+                    op="replace",
+                    objective="New task",
+                    conditions=[
+                        dict(
+                            key="parser",
+                            quote="BETA",
+                            scope="subtask",
+                            owner_id=selected_owner,
+                        )
+                    ],
+                ),
+            },
+        )
+        assert (
+            apply_entry_task_context(
+                state,
+                response,
+                user_input="New task BETA",
+                clarify=False,
+                logger=Mock(),
+                session_api=api,
+            )
+            is None
+        )
+        task = state.resolved_task_context
+        assert task.task_id != old.task_id
+        assert task.subtasks == {selected_owner: "pending", "other-new": "pending"}
+        assert task.conditions == {"parser": "BETA"}
+        assert task.condition_owners["parser"].owner_id == selected_owner
+        assert state.child_tasks == {}
+        restored = commit(
+            state,
+            "Resume old task",
+            api,
+            op="resume",
+            target_task_id=old.task_id,
+            target_revision=old.revision,
+        )
+        assert restored.task_id == old.task_id
+        assert restored.subtasks == old.subtasks
+        assert restored.conditions == old.conditions
+    finally:
+        if api:
+            api.close()
+
+
+@pytest.mark.parametrize("registration", ["registry", "child"])
+def test_same_task_amendment_keeps_its_registered_subtask_owner(registration):
+    state = new_state()
+    old_id = state.resolved_task_context.task_id
+    if registration == "registry":
+        state.resolved_task_context.subtasks["own"] = "active"
+    else:
+        state.child_tasks = {"own": "own-child"}
+    task = commit(
+        state,
+        "Use ALPHA",
+        conditions=[dict(key="parser", quote="ALPHA", scope="subtask", owner_id="own")],
+    )
+    assert task.task_id == old_id
+    assert task.subtasks["own"] == "active"
+    assert task.conditions["parser"] == "ALPHA"
+
+
+@pytest.mark.parametrize("reload", [False, True])
+@pytest.mark.parametrize("reserved", [False, True])
+def test_reconciliation_consumes_saved_detachment_once_and_handles_legacy_state(
+    tmp_path, monkeypatch, reload, reserved
+):
+    from openminion.modules.brain.execution import task_binding
+    from openminion.modules.brain.execution.runtime.turn.jobs import (
+        reconcile_pending_jobs,
+    )
+
+    state = new_state()
+    state.pending_jobs = [
+        JobHandle(task_id="job", command_id="cmd", provider="tool", status="pending")
+    ]
+    register_job_binding(state, "job")
+    build = Mock(wraps=task_binding.DetachedTaskExecution)
+    monkeypatch.setattr(task_binding, "DetachedTaskExecution", build)
+    poll = Mock()
+    monkeypatch.setattr("openminion.modules.brain.execution.poll_async_job", poll)
+    api = SessctlAdapter(tmp_path / "sessions.db")
+    try:
+        commit(state, "CSV", api, conditions=[dict(key="format", quote="CSV")])
+        assert build.call_count == 1
+        if not reserved:
+            state.task_workspace.detached_jobs.clear()
+        if reload:
+            state = type(state).model_validate_json(state.model_dump_json())
+        workspace = state.task_workspace
+        validate = Mock(wraps=TaskWorkspace.model_validate)
+        monkeypatch.setattr(TaskWorkspace, "model_validate", validate)
+        state.status = "job_pending"
+        assert reconcile_pending_jobs(Mock(), state=state, logger=Mock()) is None
+        assert build.call_count == (1 if reserved else 2)
+        assert validate.call_count == (0 if reserved else 1)
+        assert (state.task_workspace is workspace) == reserved
+        assert not state.pending_jobs and not state.task_execution_bindings
+        assert state.task_workspace.detached_jobs["job"].handle["command_id"] == "cmd"
+        poll.assert_not_called()
+    finally:
+        api.close()

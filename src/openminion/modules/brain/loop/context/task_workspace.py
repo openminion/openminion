@@ -73,11 +73,13 @@ def _sync_conversation(workspace: TaskWorkspace, task: ResolvedTaskContext) -> N
     }
 
 
-def selected_subtasks(state: Any, response: Any) -> dict[str, Any]:
-    task = state.resolved_task_context
+def selected_subtasks(state: Any, response: Any, operation: str) -> dict[str, Any]:
+    new_task = operation in {"start", "replace"}
+    task = None if new_task else state.resolved_task_context
     known = dict(task.subtasks) if task else {}
-    for key in getattr(state, "child_tasks", {}):
-        known.setdefault(key, "active")
+    if not new_task:
+        for key in getattr(state, "child_tasks", {}):
+            known.setdefault(key, "active")
     for call in response.tool_calls or []:
         if call.name == "decompose":
             for subtask in call.arguments.get("subtasks", []):
@@ -136,7 +138,7 @@ def workspace_entry_update(
             user_input=user_input,
             clarify=clarify,
             recovery_only=recovery_only,
-            known_subtasks=selected_subtasks(state, response),
+            known_subtasks=selected_subtasks(state, response, operation),
             retain_history=not journal_available,
             allow_restore=True,
         )
@@ -260,7 +262,7 @@ def _persist_entry_update(
             user_input=user_input,
             clarify=clarify,
             recovery_only=recovery_only,
-            known_subtasks=selected_subtasks(state, original_response),
+            known_subtasks=selected_subtasks(state, original_response, operation),
             retain_history=True,
             allow_restore=True,
         )

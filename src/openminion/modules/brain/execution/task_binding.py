@@ -159,15 +159,26 @@ def plan_job_detachment(
     }
     if not stale:
         return workspace, stale
-    detached = dict(workspace.detached_jobs)
+    additions = {}
     for job in state.pending_jobs:
         if job.task_id in stale:
-            detached[job.task_id] = DetachedTaskExecution(
-                binding=state.task_execution_bindings[job.task_id],
-                handle=job.model_dump(mode="json"),
+            binding = state.task_execution_bindings[job.task_id]
+            handle = job.model_dump(mode="json")
+            parked = workspace.detached_jobs.get(job.task_id)
+            if (
+                parked is not None
+                and parked.binding == binding
+                and parked.handle == handle
+            ):
+                continue
+            additions[job.task_id] = DetachedTaskExecution(
+                binding=binding,
+                handle=handle,
             )
+    if not additions:
+        return workspace, stale
     workspace = TaskWorkspace.model_validate(
-        workspace.model_dump() | {"detached_jobs": detached}
+        workspace.model_dump() | {"detached_jobs": workspace.detached_jobs | additions}
     )
     return workspace, stale
 

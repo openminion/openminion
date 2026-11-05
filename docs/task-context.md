@@ -85,7 +85,11 @@ preserves ownership for an existing key. `conversation` requires `scope_quote`
 from the current user explicitly extending the rule to the conversation; changing
 that scope or withdrawing such a condition requires current-user scope evidence.
 The backend checks the exact quote, while the model must interpret its meaning.
-`subtask` requires a registered `owner_id`. Unknown owners are rejected. Children
+`subtask` requires a registered `owner_id`. Unknown owners are rejected. Starting
+or replacing a task admits only subtasks explicitly selected by that entry's
+decomposition; the outgoing task's registry and child executions do not register
+owners on the destination task. Same-task amendments retain their registrations,
+and resume uses the archived destination task's registry. Children
 receive shared conditions plus only their own open local conditions. Completed
 or cancelled subtask conditions remain stored but are omitted from execution;
 other siblings do not inherit them or their history snapshots.
@@ -118,7 +122,10 @@ Exceeding the 128-handle or serialized workspace limit refuses the amendment:
 the previous task revision, committed journal head and pending job binding survive,
 so reconciliation can still poll that job after state reload. Existing handles
 are not evicted to make room. Idle reconciliation removes orphan bindings without
-copying or revalidating an unchanged workspace. This is an owner
+copying or revalidating an unchanged workspace. Reconciliation also consumes an
+identical persisted handle reservation without constructing or validating it
+again, including after reload. Legacy states without a reservation, or changed
+handle/binding contents, take the validated construction path. This is an owner
 check, not a distributed compare-and-swap or rollback of tool side effects.
 
 The runtime validates structure, revision, current-user quotes, condition keys,
