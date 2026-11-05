@@ -1,11 +1,11 @@
 # Task-context extensions: separate owner/contract proposal
 
 Status: proposed; maintainer scope approval required before upstream integration.
-This branch preserves the complete experiment at `f04fddbd12d5e9119941c8f260813924852364ed`.
-It is a reference implementation, not an approved follow-up ready to merge.
-PR #625 is being narrowed to current-task clarification and execution handoff.
-The eventual extension patch must be adapted to the accepted core, preserving
-its child-goal, short-answer, budget and external-task-owner guarantees.
+The original experiment is preserved at
+`f04fddbd12d5e9119941c8f260813924852364ed`. This separate follow-up adapts its
+extensions to the merged core in PR #625, preserving the accepted child-goal,
+short-answer, budget and external-task-owner guarantees. The implementation is
+proposed for review; the extended contract still needs maintainer agreement.
 
 ## Problem beyond the first fix
 
