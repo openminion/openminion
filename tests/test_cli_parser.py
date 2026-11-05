@@ -45,6 +45,24 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(args.command, "autonomy")
         self.assertEqual(args.autonomy_command, "list")
 
+    def test_root_session_reaches_lazy_loaded_run_command(self) -> None:
+        args = build_parser().parse_args(["--session", "probe-x", "run", "hi"])
+
+        self.assertEqual(args.command, "run")
+        self.assertEqual(args.session, "probe-x")
+
+    def test_run_session_flag_overrides_root_session(self) -> None:
+        args = build_parser().parse_args(
+            ["--session", "root-id", "run", "--session", "sub-id", "hi"]
+        )
+
+        self.assertEqual(args.session, "sub-id")
+
+    def test_run_without_session_flags_leaves_default(self) -> None:
+        args = build_parser().parse_args(["run", "hi"])
+
+        self.assertIsNone(args.session)
+
     def test_gateway_once_parse(self) -> None:
         parser = build_parser()
         args = parser.parse_args(

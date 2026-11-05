@@ -19,6 +19,10 @@ This file tracks package-facing release notes for `openminion`.
 
 - Expand cron day-of-week ranges before normalizing Sunday-as-7, so ranges that contain Sunday parse correctly. (Refs #488)
 
+- Honour the root `--session` value for one-shot `run`: the subcommand declared
+  its own `--session` with a default, which overwrote the root value so
+  `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
+
 ## Current package line - 2026-11-04
 
 - Add a reviewed learning lifecycle that can retain successful substantive

@@ -38,7 +38,10 @@ def add_interactive_session_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--session",
         default=None,
-        help="Existing interactive session id to resume",
+        help=(
+            "Session id: resume this interactive session, or run a one-shot "
+            "turn under it"
+        ),
     )
     parser.add_argument(
         "--resume",

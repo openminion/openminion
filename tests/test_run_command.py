@@ -38,6 +38,57 @@ def _run_config(*, process_mode: str = "single-process") -> SimpleNamespace:
     )
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--session", "probe-x", "run", "hi"],
+        ["run", "--session", "probe-x", "hi"],
+    ],
+)
+def test_run_payload_carries_session_from_both_flag_positions(
+    monkeypatch, argv: list[str]
+) -> None:
+    from openminion.cli.parser.base import build_parser
+
+    args = build_parser().parse_args(argv)
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(run_command, "load_config", lambda _cfg: _run_config())
+    monkeypatch.setattr(
+        run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
+    )
+    monkeypatch.setattr(
+        run_command,
+        "run_turn",
+        lambda **kwargs: (
+            captured.update(kwargs) or {"run_id": "trace-1", "final_text": "done"}
+        ),
+    )
+
+    assert run_command.run_openminion(args) == 0
+    assert captured["payload"]["session_id"] == "probe-x"
+
+
+def test_run_payload_defaults_to_cli_run_without_session(monkeypatch, capsys) -> None:
+    from openminion.cli.parser.base import build_parser
+
+    args = build_parser().parse_args(["run", "hi"])
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(run_command, "load_config", lambda _cfg: _run_config())
+    monkeypatch.setattr(
+        run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
+    )
+    monkeypatch.setattr(
+        run_command,
+        "run_turn",
+        lambda **kwargs: (
+            captured.update(kwargs) or {"run_id": "trace-1", "final_text": "done"}
+        ),
+    )
+
+    assert run_command.run_openminion(args) == 0
+    assert captured["payload"]["session_id"] == "cli-run"
+
+
 def test_run_openminion_json_output_single_process(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         run_command,
