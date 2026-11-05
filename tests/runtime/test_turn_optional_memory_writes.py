@@ -1,12 +1,7 @@
-"""Decision records and tool outcome candidates need the turn's memory.write answer (#496).
+"""Decision records and tool outcome candidates need the turn's memory.write answer.
 
-The tests reuse the #448 harness in `test_turn_capture_authorization.py`: a real
-`APIRuntime` for one agent whose `openai` provider is a scripted
-OpenAI-compatible server on 127.0.0.1, an identity profile with one hard
-constraint unless a test says otherwise, and call-through recorders on the
-security policy's `memory.write` decisions. They read the `decision` records in
-`memory_records`, the `tool_outcome` candidates in `memory_candidates`, and the
-events of `write_decision_memory`.
+Unless a test says otherwise, the agent's identity profile has one hard
+constraint.
 """
 
 from __future__ import annotations

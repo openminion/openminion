@@ -24,6 +24,10 @@ This file tracks package-facing release notes for `openminion`.
   repaint fragments cannot invalidate an already accepted test frame. Preserve
   the compositor assertions and existing wait limits (Refs #610).
 
+- Await async `@tool` handlers in the shared execution path: an `async def` tool
+  registered successfully but was never awaited, so callers received a coroutine
+  object instead of the handler's return value (Refs #612).
+
 - Make identity `clear_cache` prefix matching case-sensitive, so it no longer deletes other agents' snippets through a case-insensitive `LIKE`. (Refs #485)
 
 - Forward the query string on POST requests, so query-parameter POST routes resolve their parameters. (Refs #486)
@@ -34,9 +38,9 @@ This file tracks package-facing release notes for `openminion`.
   its own `--session` with a default, which overwrote the root value so
   `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
 
-- Await async `@tool` handlers in the shared execution path: an `async def` tool
-  registered successfully but was never awaited, so callers received a coroutine
-  object instead of the handler's return value (Refs #612).
+- Describe `--dir` accurately: it selects the interactive workspace and the
+  one-shot `run` tool root, and the root-option form must precede the command
+  (Refs #594).
 
 ## Current package line - 2026-11-04
 
