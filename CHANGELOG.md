@@ -13,15 +13,15 @@ This file tracks package-facing release notes for `openminion`.
   exists. Keep partial-child evidence salvage and the 200/800-character prompt
   projections unchanged (Refs #543).
 
+- Check Focus terminal layout against one screen-and-cursor snapshot so resize
+  repaint fragments cannot invalidate an already accepted test frame. Preserve
+  the compositor assertions and existing wait limits (Refs #610).
+
 - Make identity `clear_cache` prefix matching case-sensitive, so it no longer deletes other agents' snippets through a case-insensitive `LIKE`. (Refs #485)
 
 - Forward the query string on POST requests, so query-parameter POST routes resolve their parameters. (Refs #486)
 
 - Expand cron day-of-week ranges before normalizing Sunday-as-7, so ranges that contain Sunday parse correctly. (Refs #488)
-
-- Check Focus terminal layout against one screen-and-cursor snapshot so resize
-  repaint fragments cannot invalidate an already accepted test frame. Preserve
-  the compositor assertions and existing wait limits (Refs #610).
 
 ## Current package line - 2026-11-04
 
