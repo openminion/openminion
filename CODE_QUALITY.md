@@ -28,6 +28,13 @@ Avoid:
 3. ad hoc wrappers
 4. "just for this file" copies of shared logic
 
+For each new layer, fallback or retry, identify the caller or failure it serves.
+Prefer the existing owner when it can satisfy that case directly. Keep validation
+where external data enters and preserve permission, compatibility, replay and
+cleanup guarantees. If a second check serves the same contract, show what
+can change between the two checks. Apply this review to the final diff before
+merging, including maintainer PRs.
+
 ## 2. Code should explain itself
 
 Write code so names, types, and structure do most of the explaining.
