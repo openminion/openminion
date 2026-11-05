@@ -28,15 +28,19 @@ This file tracks package-facing release notes for `openminion`.
 
 - Forward the query string on POST requests, so query-parameter POST routes resolve their parameters. (Refs #486)
 
+- Accept `pattern` as an alias for `file.search`'s `query`, matching the argument
+  name `file.find` uses, and say in the description that it is a content search
+  rather than a glob (Refs #606).
+
 - Expand cron day-of-week ranges before normalizing Sunday-as-7, so ranges that contain Sunday parse correctly. (Refs #488)
 
 - Honour the root `--session` value for one-shot `run`: the subcommand declared
   its own `--session` with a default, which overwrote the root value so
   `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
 
-- Accept `pattern` as an alias for `file.search`'s `query`, matching the argument
-  name `file.find` uses, and say in the description that it is a content search
-  rather than a glob (Refs #606).
+- Describe `--dir` accurately: it selects the interactive workspace and the
+  one-shot `run` tool root, and the root-option form must precede the command
+  (Refs #594).
 
 ## Current package line - 2026-11-04
 
