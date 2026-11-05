@@ -323,6 +323,24 @@ in the export; credential values, including authentication headers, do not.
 See [turn budgets and token cost](turn-budgets.md) before changing limits to
 address an early stop or an expensive turn.
 
+A `file.read` includes `content_sha256` for the full UTF-8 text before newline
+conversion or slicing. Local reads retain their existing universal-newline text
+view; the fingerprint distinguishes the original LF, CRLF and CR bytes. In-memory
+reads preserve the original newline characters. Complete local reads also include
+an opaque `version`. For conditional overwrites, `file.write` accepts
+`expected_content_sha256` (pass `content_sha256` from the read directly)
+and `expected_version`. A mismatch returns
+`PRECONDITION_FAILED` before truncation. Conditional append is rejected. Local
+conditional replacement requires advisory file locking and fails closed when it
+is unavailable; the locks coordinate participating writers, not arbitrary external
+processes. The in-memory backend supports the content precondition.
+
+The adaptive loop permits one identical safe read retry after a structured
+transient failure. It can also retry an identical overwrite once after a complete,
+same-path readback contradicts the acknowledged content, adding the content and
+available version preconditions. Permissions and budgets are checked again.
+Append, external effects and partial readbacks do not receive this recovery.
+
 File tools preserve newline bytes outside edited spans and reject invalid UTF-8
 content before modifying a file. `file.read_range` counts the actual file and
 rejects a start beyond EOF. `file.search` supports search-root-relative globs

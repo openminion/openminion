@@ -184,6 +184,15 @@ class FileWriteArgs(BaseModel):
         description="Content to write",
         validation_alias=AliasChoices("content", "text", "body"),
     )
+    expected_content_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Write only if the full content matches content_sha256 from file.read.",
+    )
+    expected_version: str | None = Field(
+        default=None,
+        description="Write only if the file version from file.read is unchanged.",
+    )
     append: bool = Field(default=False, description="Append to existing file")
     create_dirs: bool = Field(
         default=True, description="Create parent directories if missing"
@@ -469,6 +478,10 @@ def _h_read_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         "returned_length": result.returned_length,
         "source": _FILE_TOOL_SOURCE,
     }
+    if result.version is not None:
+        payload["version"] = result.version
+    if result.content_sha256 is not None:
+        payload["content_sha256"] = result.content_sha256
     if result.truncated:
         payload["next_offset"] = validated.offset + result.returned_length
         payload["hint"] = (
@@ -540,6 +553,15 @@ def _h_write_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             content,
             append=validated.append,
             create_dirs=validated.create_dirs,
+            **(
+                {
+                    "expected_content_sha256": validated.expected_content_sha256,
+                    "expected_version": validated.expected_version,
+                }
+                if validated.expected_content_sha256 is not None
+                or validated.expected_version is not None
+                else {}
+            ),
         )
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e)

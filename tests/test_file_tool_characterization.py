@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -191,6 +192,8 @@ def test_read_file_returns_content(tmp_path: Path):
 
     result = _h_read_file({"path": "alpha.txt"}, ctx)
 
+    assert isinstance(result.pop("version"), str)
+    assert result.pop("content_sha256") == hashlib.sha256(b"alpha beta").hexdigest()
     assert result == {
         "ok": True,
         "path": str(ctx.workspace / "alpha.txt"),
@@ -208,6 +211,8 @@ def test_read_file_applies_offset_and_truncation(tmp_path: Path):
 
     result = _h_read_file({"path": "alpha.txt", "offset": 3, "max_chars": 4}, ctx)
 
+    assert isinstance(result.pop("version"), str)
+    assert result.pop("content_sha256") == hashlib.sha256(b"abcdefghij").hexdigest()
     assert result == {
         "ok": True,
         "path": str(ctx.workspace / "alpha.txt"),
