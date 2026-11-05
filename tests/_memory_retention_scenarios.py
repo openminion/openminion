@@ -1,10 +1,8 @@
-"""Memory retention scenarios shared by the SQLite and PostgreSQL tests (#392).
+"""Memory retention scenarios shared by the SQLite and PostgreSQL tests.
 
-The runtime session lifecycle hands the four retention helpers its
-``AuditedMemoryStore``. Each helper scenario seeds records into a store, runs
-the helper on that store or on an audited wrapper around it, and checks the
-records and the audit sink. The SDK scenario runs two echo turns of one
-session on a runtime whose memory store is seeded when the runtime creates it.
+The runtime session lifecycle hands the retention helpers its
+``AuditedMemoryStore``, so each helper scenario runs on a store or on an audited
+wrapper around it.
 """
 
 from __future__ import annotations

@@ -1,20 +1,12 @@
-"""A failed `APIRuntime` start closes what it built, at the owner that built it (#447).
+"""A failed `APIRuntime` start closes what it built, at the owner that built it.
 
-Each case makes one step of a SQLite runtime start fail, by injecting an error
-or with a configuration that fails, while automatic garbage collection is off.
-Right after the exception, before any collection, it checks that:
-
-- the caller gets the original exception;
-- every owner that had built something closed it through its existing close,
-  each object exactly once, and nothing else was closed;
-- no file under the runtime home is open (on Windows every file there can also
-  be renamed and deleted), and no runtime manager thread is alive.
-
-Objects that several owners use, such as the record store behind the session
-views, the telemetry service behind the storage telemetry hook, the action
-policy that the ops and tool authoring services use, and the retrieve service
-of the session context and memory assembly, are closed once, by their owner.
-`APIRuntime.close()` runs only once the runtime object exists.
+Each case fails one step of a SQLite runtime start with automatic garbage
+collection off, so collection releases nothing. Right after the caller gets the
+original exception, each object an owner built is closed once by that owner and
+nothing else is closed; an object several owners use is closed by its owner. No
+file under the runtime home is open (on Windows each can also be renamed and
+deleted) and no runtime manager thread is alive. `APIRuntime.close()` runs only
+once the runtime object exists.
 """
 
 from __future__ import annotations

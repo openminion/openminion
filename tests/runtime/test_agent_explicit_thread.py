@@ -1,12 +1,8 @@
-"""`Agent.run` and `Agent.run_stream` can answer a confirmation on its thread (#541).
+"""`Agent.run` and `Agent.run_stream` answer a confirmation on the thread they name.
 
-The tests reuse the #448 harness in `test_turn_capture_authorization.py` and the
-#524 handler recorder in `test_turn_denied_call_outcome.py`: a real `APIRuntime`
-whose agent's `openai` provider is a scripted OpenAI-compatible server on
-127.0.0.1. Once armed with arguments, the scripted model calls `memory_write`
-with them. Without an approval callback that call then waits for the user's
-confirmation, and the turn ends with "Policy confirmation required.". The
-recorder lists each run of the tool's handler with the model's arguments.
+A real `APIRuntime` runs against the scripted OpenAI-compatible server of
+`test_turn_capture_authorization.py` on 127.0.0.1, not a hosted model. Without
+an approval callback, the model's `memory_write` call waits for confirmation.
 """
 
 from __future__ import annotations

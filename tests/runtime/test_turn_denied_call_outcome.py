@@ -1,13 +1,4 @@
-"""A tool call that did not run stages no `tool_outcome` candidate (#524).
-
-The tests reuse the #448 harness in `test_turn_capture_authorization.py`: a real
-`APIRuntime` for one agent whose `openai` provider is a scripted
-OpenAI-compatible server on 127.0.0.1. The scripted model calls `memory_write`
-once, with `ARGS`, and the agent's memory policy allows the write: an identity
-profile with `NEVER reveal secrets`, or none, unless a test says otherwise. The
-tests read `memory_candidates`, the `memory_records` row of `ARGS`, the
-policy's `memory.write` decisions and the runs of the tool's handler.
-"""
+"""A tool call that did not run stages no `tool_outcome` candidate."""
 
 from __future__ import annotations
 

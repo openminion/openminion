@@ -1,12 +1,4 @@
-"""Entry freshness on a step of the same turn (#395).
-
-`_apply_entry_freshness` runs on every entry step. A valid typed `freshness`
-contract in the entry response replaces the turn's state; otherwise new user
-input is classified. A step with neither, on a turn that already has a
-contract, keeps that contract, its obligations and its diagnostics. A first
-step with neither and no contract keeps the classifier's default for empty
-input.
-"""
+"""`_apply_entry_freshness` on the entry steps of one turn."""
 
 from __future__ import annotations
 
